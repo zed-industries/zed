@@ -13,7 +13,7 @@ pub struct IdentifierParts;
 
 impl IdentifierParts {
     pub fn within_string(text: &str) -> impl Iterator<Item = HashFrom<Self>> {
-        IdentifierHashedParts::new(text.chars())
+        IdentifierHashedParts::new(text.bytes())
     }
 
     pub fn within_strings<'a>(
@@ -21,32 +21,32 @@ impl IdentifierParts {
     ) -> impl Iterator<Item = HashFrom<Self>> {
         strings
             .into_iter()
-            .flat_map(|text| IdentifierHashedParts::new(text.chars()))
+            .flat_map(|text| IdentifierHashedParts::new(text.bytes()))
     }
 }
 
 /// Splits alphanumeric runs on camelCase, PascalCase, snake_case, and kebab-case.
-struct IdentifierHashedParts<I: Iterator<Item = char>> {
-    chars: Peekable<I>,
+struct IdentifierHashedParts<I: Iterator<Item = u8>> {
+    str_bytes: Peekable<I>,
     hasher: Option<FxHasher>,
     prev_char_is_uppercase: bool,
 }
 
-impl<I: Iterator<Item = char>> IdentifierHashedParts<I> {
-    fn new(chars: I) -> Self {
+impl<I: Iterator<Item = u8>> IdentifierHashedParts<I> {
+    fn new(str_bytes: I) -> Self {
         Self {
-            chars: chars.peekable(),
+            str_bytes: str_bytes.peekable(),
             hasher: None,
             prev_char_is_uppercase: false,
         }
     }
 }
 
-impl<I: Iterator<Item = char>> Iterator for IdentifierHashedParts<I> {
+impl<I: Iterator<Item = u8>> Iterator for IdentifierHashedParts<I> {
     type Item = HashFrom<IdentifierParts>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        while let Some(ch) = self.chars.next() {
+        while let Some(ch) = self.str_bytes.next() {
             let included = !ch.is_ascii() || ch.is_ascii_alphanumeric();
             if let Some(mut hasher) = self.hasher.take() {
                 if !included {
@@ -58,7 +58,7 @@ impl<I: Iterator<Item = char>> Iterator for IdentifierHashedParts<I> {
                 let should_split = is_uppercase
                     && (!self.prev_char_is_uppercase ||
                         // sequences like "XMLParser" -> ["XML", "Parser"]
-                        self.chars
+                        self.str_bytes
                             .peek()
                             .map_or(false, |c| c.is_ascii_lowercase()));
 
@@ -78,7 +78,7 @@ impl<I: Iterator<Item = char>> Iterator for IdentifierHashedParts<I> {
                 let mut hasher = FxHasher::default();
                 ch.to_ascii_lowercase().hash(&mut hasher);
                 self.hasher = Some(hasher);
-                self.prev_char_is_uppercase = ch.is_uppercase();
+                self.prev_char_is_uppercase = ch.is_ascii_uppercase();
             }
         }
 
@@ -104,7 +104,7 @@ mod test {
         #[track_caller]
         fn check_identifier_parts(text: &str, expected: &[&str]) {
             assert_eq!(
-                IdentifierHashedParts::new(text.chars()).collect::<Vec<_>>(),
+                IdentifierHashedParts::new(text.bytes()).collect::<Vec<_>>(),
                 expected
                     .iter()
                     .map(|part| fx_hash_ascii_lowercase(part).into())
@@ -112,16 +112,16 @@ mod test {
             );
         }
 
-        check_identifier_parts("snake_case", &["snake", "case"]);
-        check_identifier_parts("kebab-case", &["kebab", "case"]);
-        check_identifier_parts("PascalCase", &["Pascal", "Case"]);
-        check_identifier_parts("camelCase", &["camel", "Case"]);
-        check_identifier_parts("XMLParser", &["XML", "Parser"]);
         check_identifier_parts("", &[]);
         check_identifier_parts("a", &["a"]);
         check_identifier_parts("ABC", &["ABC"]);
         check_identifier_parts("abc", &["abc"]);
         check_identifier_parts("123", &["123"]);
+        check_identifier_parts("snake_case", &["snake", "case"]);
+        check_identifier_parts("kebab-case", &["kebab", "case"]);
+        check_identifier_parts("PascalCase", &["Pascal", "Case"]);
+        check_identifier_parts("camelCase", &["camel", "Case"]);
+        check_identifier_parts("XMLParser", &["XML", "Parser"]);
         check_identifier_parts("a1B2c3", &["a1", "B2c3"]);
         check_identifier_parts("HTML5Parser", &["HTML5", "Parser"]);
         check_identifier_parts("_leading_underscore", &["leading", "underscore"]);
