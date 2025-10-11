@@ -281,11 +281,35 @@ impl ThemeSelectorDelegate {
             .unwrap_or(self.selected_index);
     }
 
-    fn set_theme(theme: Arc<Theme>, cx: &mut App) {
+    fn set_theme(new_theme: Arc<Theme>, cx: &mut App) {
+        let new_theme_is_light = new_theme.appearance().is_light();
+
         SettingsStore::update_global(cx, |store, _| {
             let mut theme_settings = store.get::<ThemeSettings>(None).clone();
-            let name = theme.as_ref().name.clone().into();
-            theme_settings.theme = theme::ThemeSelection::Static(theme::ThemeName(name));
+            let theme_name = ThemeName(new_theme.as_ref().name.clone().into());
+
+            let new_theme_selection = match &theme_settings.theme {
+                ThemeSelection::Static(_) => ThemeSelection::Static(theme_name),
+                // If the current theme selection is dynamic, then, check what mode describes this
+                // theme the best (light or dark) and set the selection to that instead.
+                ThemeSelection::Dynamic { light, dark, .. } => {
+                    if new_theme_is_light {
+                        ThemeSelection::Dynamic {
+                            mode: ThemeAppearanceMode::Light,
+                            light: theme_name,
+                            dark: dark.clone(),
+                        }
+                    } else {
+                        ThemeSelection::Dynamic {
+                            mode: ThemeAppearanceMode::Dark,
+                            light: light.clone(),
+                            dark: theme_name,
+                        }
+                    }
+                }
+            };
+
+            theme_settings.theme = new_theme_selection;
             store.override_global(theme_settings);
         });
     }
