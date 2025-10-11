@@ -147,16 +147,21 @@ fn register_language_model_providers(
     );
     registry.register_provider(
         // NEW REGISTRATION BY DIAB
-        GoogleVertexLanguageModelProvider::new(client.http_client(), cx),
+        Arc::new(GoogleVertexLanguageModelProvider::new(
+            client.http_client(),
+            cx,
+        )),
         cx,
     );
     registry.register_provider(
         // NEW REGISTRATION BY DIAB
-        AnthropicVertexLanguageModelProvider::new(client.http_client(), cx),
+        Arc::new(AnthropicVertexLanguageModelProvider::new(
+            client.http_client(),
+            cx,
+        )),
         cx,
     );
     registry.register_provider(
-        MistralLanguageModelProvider::new(client.http_client(), cx),
         Arc::new(BedrockLanguageModelProvider::new(client.http_client(), cx)),
         cx,
     );
