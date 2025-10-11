@@ -2715,7 +2715,16 @@ impl Editor {
         self.workspace.as_ref()?.0.upgrade()
     }
 
-    fn workspace_id(&self) -> Option<WorkspaceId> {
+    fn workspace_id(&self, cx: &App) -> Option<WorkspaceId> {
+        let is_zed_file = self
+            .buffer
+            .read(cx)
+            .paths()
+            .next()
+            .map_or(false, |p| p.path().starts_with("zed://"));
+        if is_zed_file {
+            return None;
+        }
         self.serialize_dirty_buffers
             .then(|| self.workspace.as_ref().and_then(|workspace| workspace.1))
             .flatten()
@@ -3214,7 +3223,7 @@ impl Editor {
 
             if WorkspaceSettings::get(None, cx).restore_on_startup
                 != RestoreOnStartupBehavior::None
-                && let Some(workspace_id) = self.workspace_id()
+                && let Some(workspace_id) = self.workspace_id(cx)
             {
                 let snapshot = self.buffer().read(cx).snapshot(cx);
                 let selections = selections.clone();
@@ -3277,7 +3286,7 @@ impl Editor {
             data.folds = inmemory_folds;
         });
 
-        let Some(workspace_id) = self.workspace_id() else {
+        let Some(workspace_id) = self.workspace_id(cx) else {
             return;
         };
         let background_executor = cx.background_executor().clone();
