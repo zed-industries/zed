@@ -188,6 +188,7 @@ impl SelectionLayout {
 pub struct EditorElement {
     editor: Entity<Editor>,
     style: EditorStyle,
+    vertical_scrollbar_on_left: bool,
 }
 
 type DisplayRowDelta = u32;
@@ -199,7 +200,13 @@ impl EditorElement {
         Self {
             editor: editor.clone(),
             style,
+            vertical_scrollbar_on_left: false,
         }
+    }
+
+    pub fn with_vertical_scrollbar_on_left(mut self, on_left: bool) -> Self {
+        self.vertical_scrollbar_on_left = on_left;
+        self
     }
 
     fn register_actions(&self, window: &mut Window, cx: &mut App) {
@@ -1814,6 +1821,17 @@ impl EditorElement {
             .then_some(content_offset)
             .unwrap_or_default();
 
+        let font_id = window.text_system().resolve_font(&self.style.text.font());
+        let font_size = self.style.text.font_size.to_pixels(window.rem_size());
+        let gutter_dimensions = snapshot
+            .gutter_dimensions(
+                font_id,
+                font_size,
+                self.max_line_number_width(&snapshot, window),
+                cx,
+            )
+            .unwrap_or_default();
+
         Some(EditorScrollbars::from_scrollbar_axes(
             ScrollbarAxes {
                 horizontal: scrollbar_settings.axes.horizontal
@@ -1829,6 +1847,8 @@ impl EditorElement {
             editor_width,
             show_scrollbars,
             self.editor.read(cx).scroll_manager.active_scrollbar_state(),
+            self.vertical_scrollbar_on_left,
+            gutter_dimensions.width,
             window,
         ))
     }
@@ -9824,6 +9844,8 @@ impl EditorScrollbars {
         editor_width: Pixels,
         show_scrollbars: bool,
         scrollbar_state: Option<&ActiveScrollbarState>,
+        vertical_scrollbar_on_left: bool,
+        gutter_width: Pixels,
         window: &mut Window,
     ) -> Self {
         let ScrollbarLayoutInformation {
@@ -9845,11 +9867,21 @@ impl EditorScrollbars {
                     scrollbar_width,
                 ),
             ),
-            ScrollbarAxis::Vertical => Bounds::from_corner_and_size(
-                Corner::TopRight,
-                editor_bounds.top_right(),
-                size(scrollbar_width, viewport_size.height),
-            ),
+            ScrollbarAxis::Vertical => {
+                if vertical_scrollbar_on_left {
+                    Bounds::from_corner_and_size(
+                        Corner::TopLeft,
+                        point(editor_bounds.left() - gutter_width, editor_bounds.top()),
+                        size(scrollbar_width, viewport_size.height),
+                    )
+                } else {
+                    Bounds::from_corner_and_size(
+                        Corner::TopRight,
+                        editor_bounds.corner(Corner::TopRight),
+                        size(scrollbar_width, viewport_size.height),
+                    )
+                }
+            }
         };
 
         let mut create_scrollbar_layout = |axis| {

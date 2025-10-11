@@ -187,7 +187,6 @@ impl PathKey {
         }
     }
 
-    #[cfg(any(test, feature = "test-support"))]
     pub fn path(&self) -> &Arc<RelPath> {
         &self.path
     }

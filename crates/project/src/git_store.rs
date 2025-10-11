@@ -4863,6 +4863,36 @@ impl Repository {
     pub fn barrier(&mut self) -> oneshot::Receiver<()> {
         self.send_job(None, |_, _| async {})
     }
+
+    /// Get the committed text for a file at the given repository path.
+    pub fn get_committed_text(&mut self, repo_path: RepoPath, cx: &App) -> Task<String> {
+        let id = self.id;
+        let rx = self.send_job(None, move |state, _| async move {
+            match state {
+                RepositoryState::Local { backend, .. } => Ok::<String, anyhow::Error>(
+                    backend
+                        .load_committed_text(repo_path)
+                        .await
+                        .unwrap_or_default(),
+                ),
+                RepositoryState::Remote { project_id, client } => {
+                    let request = client.request(proto::LoadCommittedText {
+                        project_id: project_id.0,
+                        repository_id: id.to_proto(),
+                        path: repo_path.to_proto(),
+                    });
+                    let response = request.await?;
+                    Ok(response.text)
+                }
+            }
+        });
+
+        cx.spawn(|_: &mut AsyncApp| async move {
+            rx.await
+                .unwrap_or_else(|_| Ok(String::new()))
+                .unwrap_or_default()
+        })
+    }
 }
 
 fn get_permalink_in_rust_registry_src(
