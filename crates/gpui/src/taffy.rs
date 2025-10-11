@@ -1,5 +1,6 @@
 use crate::{
     AbsoluteLength, App, Bounds, DefiniteLength, Edges, Length, Pixels, Point, Size, Style, Window,
+    point, size,
 };
 use collections::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
@@ -37,7 +38,7 @@ const EXPECT_MESSAGE: &str = "we should avoid taffy layout errors by constructio
 impl TaffyLayoutEngine {
     pub fn new() -> Self {
         let mut taffy = TaffyTree::new();
-        taffy.disable_rounding();
+        taffy.enable_rounding();
         TaffyLayoutEngine {
             taffy,
             absolute_layout_bounds: FxHashMap::default(),
@@ -55,9 +56,10 @@ impl TaffyLayoutEngine {
         &mut self,
         style: Style,
         rem_size: Pixels,
+        scale_factor: f32,
         children: &[LayoutId],
     ) -> LayoutId {
-        let taffy_style = style.to_taffy(rem_size);
+        let taffy_style = style.to_taffy(rem_size, scale_factor);
 
         if children.is_empty() {
             self.taffy
@@ -79,6 +81,7 @@ impl TaffyLayoutEngine {
         &mut self,
         style: Style,
         rem_size: Pixels,
+        scale_factor: f32,
         measure: impl FnMut(
             Size<Option<Pixels>>,
             Size<AvailableSpace>,
@@ -87,7 +90,7 @@ impl TaffyLayoutEngine {
         ) -> Size<Pixels>
         + 'static,
     ) -> LayoutId {
-        let taffy_style = style.to_taffy(rem_size);
+        let taffy_style = style.to_taffy(rem_size, scale_factor);
 
         self.taffy
             .new_leaf_with_context(
@@ -181,7 +184,20 @@ impl TaffyLayoutEngine {
             }
         }
 
-        // let started_at = std::time::Instant::now();
+        let scale_factor = window.scale_factor();
+
+        let transform = |v: AvailableSpace| match v {
+            AvailableSpace::Definite(pixels) => {
+                AvailableSpace::Definite(Pixels(pixels.0 * scale_factor))
+            }
+            AvailableSpace::MinContent => AvailableSpace::MinContent,
+            AvailableSpace::MaxContent => AvailableSpace::MaxContent,
+        };
+        let available_space = size(
+            transform(available_space.width),
+            transform(available_space.height),
+        );
+
         self.taffy
             .compute_layout_with_measure(
                 id.into(),
@@ -192,32 +208,50 @@ impl TaffyLayoutEngine {
                     };
 
                     let known_dimensions = Size {
-                        width: known_dimensions.width.map(Pixels),
-                        height: known_dimensions.height.map(Pixels),
+                        width: known_dimensions.width.map(|e| Pixels(e / scale_factor)),
+                        height: known_dimensions.height.map(|e| Pixels(e / scale_factor)),
                     };
 
-                    (node_context.measure)(known_dimensions, available_space.into(), window, cx)
-                        .into()
+                    let available_space: Size<AvailableSpace> = available_space.into();
+                    let untransform = |ev: AvailableSpace| match ev {
+                        AvailableSpace::Definite(pixels) => {
+                            AvailableSpace::Definite(Pixels(pixels.0 / scale_factor))
+                        }
+                        AvailableSpace::MinContent => AvailableSpace::MinContent,
+                        AvailableSpace::MaxContent => AvailableSpace::MaxContent,
+                    };
+                    let available_space = size(
+                        untransform(available_space.width),
+                        untransform(available_space.height),
+                    );
+
+                    let a: Size<Pixels> =
+                        (node_context.measure)(known_dimensions, available_space, window, cx);
+                    size(a.width.0 * scale_factor, a.height.0 * scale_factor).into()
                 },
             )
             .expect(EXPECT_MESSAGE);
-
-        // println!("compute_layout took {:?}", started_at.elapsed());
     }
 
-    pub fn layout_bounds(&mut self, id: LayoutId) -> Bounds<Pixels> {
+    pub fn layout_bounds(&mut self, id: LayoutId, scale_factor: f32) -> Bounds<Pixels> {
         if let Some(layout) = self.absolute_layout_bounds.get(&id).cloned() {
             return layout;
         }
 
         let layout = self.taffy.layout(id.into()).expect(EXPECT_MESSAGE);
         let mut bounds = Bounds {
-            origin: layout.location.into(),
-            size: layout.size.into(),
+            origin: point(
+                Pixels(layout.location.x / scale_factor),
+                Pixels(layout.location.y / scale_factor),
+            ),
+            size: size(
+                Pixels(layout.size.width / scale_factor),
+                Pixels(layout.size.height / scale_factor),
+            ),
         };
 
         if let Some(parent_id) = self.taffy.parent(id.0) {
-            let parent_bounds = self.layout_bounds(parent_id.into());
+            let parent_bounds = self.layout_bounds(parent_id.into(), scale_factor);
             bounds.origin += parent_bounds.origin;
         }
         self.absolute_layout_bounds.insert(id, bounds);
@@ -250,11 +284,11 @@ impl From<LayoutId> for NodeId {
 }
 
 trait ToTaffy<Output> {
-    fn to_taffy(&self, rem_size: Pixels) -> Output;
+    fn to_taffy(&self, rem_size: Pixels, scale_factor: f32) -> Output;
 }
 
 impl ToTaffy<taffy::style::Style> for Style {
-    fn to_taffy(&self, rem_size: Pixels) -> taffy::style::Style {
+    fn to_taffy(&self, rem_size: Pixels, scale_factor: f32) -> taffy::style::Style {
         use taffy::style_helpers::{fr, length, minmax, repeat};
 
         fn to_grid_line(
@@ -277,24 +311,24 @@ impl ToTaffy<taffy::style::Style> for Style {
         taffy::style::Style {
             display: self.display.into(),
             overflow: self.overflow.into(),
-            scrollbar_width: self.scrollbar_width.to_taffy(rem_size),
+            scrollbar_width: self.scrollbar_width.to_taffy(rem_size, scale_factor),
             position: self.position.into(),
-            inset: self.inset.to_taffy(rem_size),
-            size: self.size.to_taffy(rem_size),
-            min_size: self.min_size.to_taffy(rem_size),
-            max_size: self.max_size.to_taffy(rem_size),
+            inset: self.inset.to_taffy(rem_size, scale_factor),
+            size: self.size.to_taffy(rem_size, scale_factor),
+            min_size: self.min_size.to_taffy(rem_size, scale_factor),
+            max_size: self.max_size.to_taffy(rem_size, scale_factor),
             aspect_ratio: self.aspect_ratio,
-            margin: self.margin.to_taffy(rem_size),
-            padding: self.padding.to_taffy(rem_size),
-            border: self.border_widths.to_taffy(rem_size),
+            margin: self.margin.to_taffy(rem_size, scale_factor),
+            padding: self.padding.to_taffy(rem_size, scale_factor),
+            border: self.border_widths.to_taffy(rem_size, scale_factor),
             align_items: self.align_items.map(|x| x.into()),
             align_self: self.align_self.map(|x| x.into()),
             align_content: self.align_content.map(|x| x.into()),
             justify_content: self.justify_content.map(|x| x.into()),
-            gap: self.gap.to_taffy(rem_size),
+            gap: self.gap.to_taffy(rem_size, scale_factor),
             flex_direction: self.flex_direction.into(),
             flex_wrap: self.flex_wrap.into(),
-            flex_basis: self.flex_basis.to_taffy(rem_size),
+            flex_basis: self.flex_basis.to_taffy(rem_size, scale_factor),
             flex_grow: self.flex_grow,
             flex_shrink: self.flex_shrink,
             grid_template_rows: to_grid_repeat(&self.grid_rows),
@@ -315,41 +349,53 @@ impl ToTaffy<taffy::style::Style> for Style {
 }
 
 impl ToTaffy<f32> for AbsoluteLength {
-    fn to_taffy(&self, rem_size: Pixels) -> f32 {
+    fn to_taffy(&self, rem_size: Pixels, scale_factor: f32) -> f32 {
         match self {
-            AbsoluteLength::Pixels(pixels) => pixels.into(),
-            AbsoluteLength::Rems(rems) => (*rems * rem_size).into(),
+            AbsoluteLength::Pixels(pixels) => {
+                let pixels: f32 = pixels.into();
+                pixels * scale_factor
+            }
+            AbsoluteLength::Rems(rems) => {
+                let pixels: f32 = (*rems * rem_size).into();
+                pixels * scale_factor
+            }
         }
     }
 }
 
 impl ToTaffy<taffy::style::LengthPercentageAuto> for Length {
-    fn to_taffy(&self, rem_size: Pixels) -> taffy::prelude::LengthPercentageAuto {
+    fn to_taffy(
+        &self,
+        rem_size: Pixels,
+        scale_factor: f32,
+    ) -> taffy::prelude::LengthPercentageAuto {
         match self {
-            Length::Definite(length) => length.to_taffy(rem_size),
+            Length::Definite(length) => length.to_taffy(rem_size, scale_factor),
             Length::Auto => taffy::prelude::LengthPercentageAuto::auto(),
         }
     }
 }
 
 impl ToTaffy<taffy::style::Dimension> for Length {
-    fn to_taffy(&self, rem_size: Pixels) -> taffy::prelude::Dimension {
+    fn to_taffy(&self, rem_size: Pixels, scale_factor: f32) -> taffy::prelude::Dimension {
         match self {
-            Length::Definite(length) => length.to_taffy(rem_size),
+            Length::Definite(length) => length.to_taffy(rem_size, scale_factor),
             Length::Auto => taffy::prelude::Dimension::auto(),
         }
     }
 }
 
 impl ToTaffy<taffy::style::LengthPercentage> for DefiniteLength {
-    fn to_taffy(&self, rem_size: Pixels) -> taffy::style::LengthPercentage {
+    fn to_taffy(&self, rem_size: Pixels, scale_factor: f32) -> taffy::style::LengthPercentage {
         match self {
             DefiniteLength::Absolute(length) => match length {
                 AbsoluteLength::Pixels(pixels) => {
-                    taffy::style::LengthPercentage::length(pixels.into())
+                    let pixels: f32 = pixels.into();
+                    taffy::style::LengthPercentage::length(pixels * scale_factor)
                 }
                 AbsoluteLength::Rems(rems) => {
-                    taffy::style::LengthPercentage::length((*rems * rem_size).into())
+                    let pixels: f32 = (*rems * rem_size).into();
+                    taffy::style::LengthPercentage::length(pixels * scale_factor)
                 }
             },
             DefiniteLength::Fraction(fraction) => {
@@ -360,14 +406,16 @@ impl ToTaffy<taffy::style::LengthPercentage> for DefiniteLength {
 }
 
 impl ToTaffy<taffy::style::LengthPercentageAuto> for DefiniteLength {
-    fn to_taffy(&self, rem_size: Pixels) -> taffy::style::LengthPercentageAuto {
+    fn to_taffy(&self, rem_size: Pixels, scale_factor: f32) -> taffy::style::LengthPercentageAuto {
         match self {
             DefiniteLength::Absolute(length) => match length {
                 AbsoluteLength::Pixels(pixels) => {
-                    taffy::style::LengthPercentageAuto::length(pixels.into())
+                    let pixels: f32 = pixels.into();
+                    taffy::style::LengthPercentageAuto::length(pixels * scale_factor)
                 }
                 AbsoluteLength::Rems(rems) => {
-                    taffy::style::LengthPercentageAuto::length((*rems * rem_size).into())
+                    let pixels: f32 = (*rems * rem_size).into();
+                    taffy::style::LengthPercentageAuto::length(pixels * scale_factor)
                 }
             },
             DefiniteLength::Fraction(fraction) => {
@@ -378,12 +426,15 @@ impl ToTaffy<taffy::style::LengthPercentageAuto> for DefiniteLength {
 }
 
 impl ToTaffy<taffy::style::Dimension> for DefiniteLength {
-    fn to_taffy(&self, rem_size: Pixels) -> taffy::style::Dimension {
+    fn to_taffy(&self, rem_size: Pixels, scale_factor: f32) -> taffy::style::Dimension {
         match self {
             DefiniteLength::Absolute(length) => match length {
-                AbsoluteLength::Pixels(pixels) => taffy::style::Dimension::length(pixels.into()),
+                AbsoluteLength::Pixels(pixels) => {
+                    let pixels: f32 = pixels.into();
+                    taffy::style::Dimension::length(pixels * scale_factor)
+                }
                 AbsoluteLength::Rems(rems) => {
-                    taffy::style::Dimension::length((*rems * rem_size).into())
+                    taffy::style::Dimension::length((*rems * rem_size * scale_factor).into())
                 }
             },
             DefiniteLength::Fraction(fraction) => taffy::style::Dimension::percent(*fraction),
@@ -392,11 +443,15 @@ impl ToTaffy<taffy::style::Dimension> for DefiniteLength {
 }
 
 impl ToTaffy<taffy::style::LengthPercentage> for AbsoluteLength {
-    fn to_taffy(&self, rem_size: Pixels) -> taffy::style::LengthPercentage {
+    fn to_taffy(&self, rem_size: Pixels, scale_factor: f32) -> taffy::style::LengthPercentage {
         match self {
-            AbsoluteLength::Pixels(pixels) => taffy::style::LengthPercentage::length(pixels.into()),
+            AbsoluteLength::Pixels(pixels) => {
+                let pixels: f32 = pixels.into();
+                taffy::style::LengthPercentage::length(pixels * scale_factor)
+            }
             AbsoluteLength::Rems(rems) => {
-                taffy::style::LengthPercentage::length((*rems * rem_size).into())
+                let pixels: f32 = (*rems * rem_size).into();
+                taffy::style::LengthPercentage::length(pixels * scale_factor)
             }
         }
     }
@@ -431,10 +486,10 @@ impl<T, U> ToTaffy<TaffySize<U>> for Size<T>
 where
     T: ToTaffy<U> + Clone + Debug + Default + PartialEq,
 {
-    fn to_taffy(&self, rem_size: Pixels) -> TaffySize<U> {
+    fn to_taffy(&self, rem_size: Pixels, scale_factor: f32) -> TaffySize<U> {
         TaffySize {
-            width: self.width.to_taffy(rem_size),
-            height: self.height.to_taffy(rem_size),
+            width: self.width.to_taffy(rem_size, scale_factor),
+            height: self.height.to_taffy(rem_size, scale_factor),
         }
     }
 }
@@ -443,12 +498,12 @@ impl<T, U> ToTaffy<TaffyRect<U>> for Edges<T>
 where
     T: ToTaffy<U> + Clone + Debug + Default + PartialEq,
 {
-    fn to_taffy(&self, rem_size: Pixels) -> TaffyRect<U> {
+    fn to_taffy(&self, rem_size: Pixels, scale_factor: f32) -> TaffyRect<U> {
         TaffyRect {
-            top: self.top.to_taffy(rem_size),
-            right: self.right.to_taffy(rem_size),
-            bottom: self.bottom.to_taffy(rem_size),
-            left: self.left.to_taffy(rem_size),
+            top: self.top.to_taffy(rem_size, scale_factor),
+            right: self.right.to_taffy(rem_size, scale_factor),
+            bottom: self.bottom.to_taffy(rem_size, scale_factor),
+            left: self.left.to_taffy(rem_size, scale_factor),
         }
     }
 }

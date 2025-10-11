@@ -581,18 +581,6 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                     metadata: None,
                     files: USER,
                 }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Use System Window Tabs",
-                    description: "(macOS-only) Whether to allow windows to merge based on the user's tabbing preference",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| &settings_content.workspace.use_system_window_tabs,
-                        pick_mut: |settings_content| {
-                            &mut settings_content.workspace.use_system_window_tabs
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
                 SettingsPageItem::SectionHeader("Window"),
                 // todo(settings_ui): Should we filter by platform?
                 SettingsPageItem::SettingItem(SettingItem {
@@ -3928,6 +3916,519 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                 }),
             ],
         },
+        SettingsPage {
+            title: "Terminal",
+            items: vec![
+                SettingsPageItem::SectionHeader("Environment"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Shell",
+                    description: "What shell to use when opening a terminal",
+                    field: Box::new(
+                        SettingField {
+                            pick: |settings_content| {
+                                if let Some(terminal) = &settings_content.terminal {
+                                    &terminal.project.shell
+                                } else {
+                                    &None
+                                }
+                            },
+                            pick_mut: |settings_content| {
+                                &mut settings_content
+                                    .terminal
+                                    .get_or_insert_default()
+                                    .project
+                                    .shell
+                            },
+                        }
+                        .unimplemented(),
+                    ),
+                    metadata: None,
+                    files: USER | LOCAL,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Working Directory",
+                    description: "What working directory to use when launching the terminal",
+                    field: Box::new(
+                        SettingField {
+                            pick: |settings_content| {
+                                if let Some(terminal) = &settings_content.terminal {
+                                    &terminal.project.working_directory
+                                } else {
+                                    &None
+                                }
+                            },
+                            pick_mut: |settings_content| {
+                                &mut settings_content
+                                    .terminal
+                                    .get_or_insert_default()
+                                    .project
+                                    .working_directory
+                            },
+                        }
+                        .unimplemented(),
+                    ),
+                    metadata: None,
+                    files: USER | LOCAL,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Environment Variables",
+                    description: "Key-value pairs to add to the terminal's environment",
+                    field: Box::new(
+                        SettingField {
+                            pick: |settings_content| {
+                                if let Some(terminal) = &settings_content.terminal {
+                                    &terminal.project.env
+                                } else {
+                                    &None
+                                }
+                            },
+                            pick_mut: |settings_content| {
+                                &mut settings_content
+                                    .terminal
+                                    .get_or_insert_default()
+                                    .project
+                                    .env
+                            },
+                        }
+                        .unimplemented(),
+                    ),
+                    metadata: None,
+                    files: USER | LOCAL,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Detect Virtual Environment",
+                    description: "Activates the python virtual environment, if one is found, in the terminal's working directory",
+                    field: Box::new(
+                        SettingField {
+                            pick: |settings_content| {
+                                if let Some(terminal) = &settings_content.terminal {
+                                    &terminal.project.detect_venv
+                                } else {
+                                    &None
+                                }
+                            },
+                            pick_mut: |settings_content| {
+                                &mut settings_content
+                                    .terminal
+                                    .get_or_insert_default()
+                                    .project
+                                    .detect_venv
+                            },
+                        }
+                        .unimplemented(),
+                    ),
+                    metadata: None,
+                    files: USER | LOCAL,
+                }),
+                SettingsPageItem::SectionHeader("Font"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Font Size",
+                    description: "Font size for terminal text. If not set, defaults to buffer font size",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(terminal) = &settings_content.terminal {
+                                &terminal.font_size
+                            } else if settings_content.theme.buffer_font_size.is_some() {
+                                &settings_content.theme.buffer_font_size
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content.terminal.get_or_insert_default().font_size
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Font Family",
+                    description: "Font family for terminal text. If not set, defaults to buffer font family",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(terminal) = &settings_content.terminal
+                                && terminal.font_family.is_some()
+                            {
+                                &terminal.font_family
+                            } else if settings_content.theme.buffer_font_family.is_some() {
+                                &settings_content.theme.buffer_font_family
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .terminal
+                                .get_or_insert_default()
+                                .font_family
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Font Fallbacks",
+                    description: "Font fallbacks for terminal text. If not set, defaults to buffer font fallbacks",
+                    field: Box::new(
+                        SettingField {
+                            pick: |settings_content| {
+                                if let Some(terminal) = &settings_content.terminal {
+                                    &terminal.font_fallbacks
+                                } else {
+                                    &None
+                                }
+                            },
+                            pick_mut: |settings_content| {
+                                &mut settings_content
+                                    .terminal
+                                    .get_or_insert_default()
+                                    .font_fallbacks
+                            },
+                        }
+                        .unimplemented(),
+                    ),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Font Weight",
+                    description: "Font weight for terminal text in CSS weight units (100-900)",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(terminal) = &settings_content.terminal {
+                                &terminal.font_weight
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .terminal
+                                .get_or_insert_default()
+                                .font_weight
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Font Features",
+                    description: "Font features for terminal text",
+                    field: Box::new(
+                        SettingField {
+                            pick: |settings_content| {
+                                if let Some(terminal) = &settings_content.terminal {
+                                    &terminal.font_features
+                                } else {
+                                    &None
+                                }
+                            },
+                            pick_mut: |settings_content| {
+                                &mut settings_content
+                                    .terminal
+                                    .get_or_insert_default()
+                                    .font_features
+                            },
+                        }
+                        .unimplemented(),
+                    ),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SectionHeader("Display Settings"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Line Height",
+                    description: "Line height for terminal text",
+                    field: Box::new(
+                        SettingField {
+                            pick: |settings_content| {
+                                if let Some(terminal) = &settings_content.terminal {
+                                    &terminal.line_height
+                                } else {
+                                    &None
+                                }
+                            },
+                            pick_mut: |settings_content| {
+                                &mut settings_content
+                                    .terminal
+                                    .get_or_insert_default()
+                                    .line_height
+                            },
+                        }
+                        .unimplemented(),
+                    ),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Cursor Shape",
+                    description: "Default cursor shape for the terminal (bar, block, underline, or hollow)",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(terminal) = &settings_content.terminal {
+                                &terminal.cursor_shape
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .terminal
+                                .get_or_insert_default()
+                                .cursor_shape
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Cursor Blinking",
+                    description: "Sets the cursor blinking behavior in the terminal",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(terminal) = &settings_content.terminal {
+                                &terminal.blinking
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content.terminal.get_or_insert_default().blinking
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Alternate Scroll",
+                    description: "Whether Alternate Scroll mode is active by default (converts mouse scroll to arrow keys in apps like vim)",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(terminal) = &settings_content.terminal {
+                                &terminal.alternate_scroll
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .terminal
+                                .get_or_insert_default()
+                                .alternate_scroll
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Minimum Contrast",
+                    description: "The minimum APCA perceptual contrast between foreground and background colors (0-106)",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(terminal) = &settings_content.terminal {
+                                &terminal.minimum_contrast
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .terminal
+                                .get_or_insert_default()
+                                .minimum_contrast
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SectionHeader("Behavior Settings"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Option As Meta",
+                    description: "Whether the option key behaves as the meta key",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(terminal) = &settings_content.terminal {
+                                &terminal.option_as_meta
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .terminal
+                                .get_or_insert_default()
+                                .option_as_meta
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Copy On Select",
+                    description: "Whether selecting text in the terminal automatically copies to the system clipboard",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(terminal) = &settings_content.terminal {
+                                &terminal.copy_on_select
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .terminal
+                                .get_or_insert_default()
+                                .copy_on_select
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Keep Selection On Copy",
+                    description: "Whether to keep the text selection after copying it to the clipboard",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(terminal) = &settings_content.terminal {
+                                &terminal.keep_selection_on_copy
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .terminal
+                                .get_or_insert_default()
+                                .keep_selection_on_copy
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SectionHeader("Layout Settings"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Default Width",
+                    description: "Default width when the terminal is docked to the left or right (in pixels)",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(terminal) = &settings_content.terminal {
+                                &terminal.default_width
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .terminal
+                                .get_or_insert_default()
+                                .default_width
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Default Height",
+                    description: "Default height when the terminal is docked to the bottom (in pixels)",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(terminal) = &settings_content.terminal {
+                                &terminal.default_height
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .terminal
+                                .get_or_insert_default()
+                                .default_height
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SectionHeader("Advanced Settings"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Max Scroll History Lines",
+                    description: "Maximum number of lines to keep in scrollback history (max: 100,000; 0 disables scrolling)",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(terminal) = &settings_content.terminal {
+                                &terminal.max_scroll_history_lines
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .terminal
+                                .get_or_insert_default()
+                                .max_scroll_history_lines
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SectionHeader("Toolbar"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Breadcrumbs",
+                    description: "Whether to display the terminal title in breadcrumbs inside the terminal pane",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(terminal) = &settings_content.terminal {
+                                if let Some(toolbar) = &terminal.toolbar {
+                                    &toolbar.breadcrumbs
+                                } else {
+                                    &None
+                                }
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .terminal
+                                .get_or_insert_default()
+                                .toolbar
+                                .get_or_insert_default()
+                                .breadcrumbs
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SectionHeader("Scrollbar"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Show Scrollbar",
+                    description: "When to show the scrollbar in the terminal",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(terminal) = &settings_content.terminal
+                                && let Some(scrollbar) = &terminal.scrollbar
+                                && scrollbar.show.is_some()
+                            {
+                                &scrollbar.show
+                            } else if let Some(scrollbar) = &settings_content.editor.scrollbar {
+                                &scrollbar.show
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .terminal
+                                .get_or_insert_default()
+                                .scrollbar
+                                .get_or_insert_default()
+                                .show
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+            ],
+        },
     ]
 }
 
@@ -4336,27 +4837,6 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                     })
                 },
             }),
-            metadata: None,
-            files: USER | LOCAL,
-        }),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Code Actions On Format",
-            description: "Which code actions to run on save after the formatter. These are not run if formatting is off",
-            field: Box::new(
-                SettingField {
-                    pick: |settings_content| {
-                        language_settings_field(settings_content, |language| {
-                            &language.code_actions_on_format
-                        })
-                    },
-                    pick_mut: |settings_content| {
-                        language_settings_field_mut(settings_content, |language| {
-                            &mut language.code_actions_on_format
-                        })
-                    },
-                }
-                .unimplemented(),
-            ),
             metadata: None,
             files: USER | LOCAL,
         }),

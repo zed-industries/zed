@@ -1155,7 +1155,13 @@ impl Project {
             });
 
             let agent_server_store = cx.new(|cx| {
-                AgentServerStore::local(node.clone(), fs.clone(), environment.clone(), cx)
+                AgentServerStore::local(
+                    node.clone(),
+                    fs.clone(),
+                    environment.clone(),
+                    client.http_client(),
+                    cx,
+                )
             });
 
             cx.subscribe(&lsp_store, Self::on_lsp_store_event).detach();
@@ -1325,7 +1331,7 @@ impl Project {
             });
 
             let agent_server_store =
-                cx.new(|cx| AgentServerStore::remote(REMOTE_SERVER_PROJECT_ID, remote.clone(), cx));
+                cx.new(|_| AgentServerStore::remote(REMOTE_SERVER_PROJECT_ID, remote.clone()));
 
             cx.subscribe(&remote, Self::on_remote_client_event).detach();
 

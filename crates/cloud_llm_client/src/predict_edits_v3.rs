@@ -142,6 +142,8 @@ pub struct DeclarationScoreComponents {
     pub normalized_import_similarity: f32,
     pub wildcard_import_similarity: f32,
     pub normalized_wildcard_import_similarity: f32,
+    pub included_by_others: usize,
+    pub includes_others: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

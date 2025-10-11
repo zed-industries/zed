@@ -17,6 +17,7 @@ test-support = []
 
 [dependencies]
 anyhow.workspace = true
+bm25 = "2.3.2"
 heck.workspace = true
 editor.workspace = true
 feature_flags.workspace = true
@@ -39,6 +40,7 @@ workspace-hack.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
 log.workspace = true
+title_bar.workspace = true
 
 [dev-dependencies]
 assets.workspace = true
