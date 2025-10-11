@@ -238,7 +238,7 @@ impl RenderOnce for TableRow {
             .flex_row()
             .border_b_1()
             .border_color(rgb(0xE0E0E0))
-            .bg(if self.ix % 2 == 0 {
+            .bg(if self.ix.is_multiple_of(2) {
                 rgb(0xFFFFFF)
             } else {
                 rgb(0xFAFAFA)

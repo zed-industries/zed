@@ -11,12 +11,12 @@ fi
 function finalize {
   # after packages install (curl, etc), get the rust toolchain
   which rustup > /dev/null 2>&1 || curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-  # verify the mold situation
-  if ! command -v mold >/dev/null 2>&1; then
-    echo "Warning: Mold binaries are unavailable on your system." >&2
-    echo "    Builds will be slower without mold. Try: script/install-mold" >&2
-  fi
-  echo "Finished installing Linux dependencies with script/linux"
+  cat <<EOF
+Note: It's recommended to install and configure Wild or Mold for faster builds.
+      Run script/install-wild or script/install-mold.
+
+Finished installing Linux dependencies with script/linux
+EOF
 }
 
 # Ubuntu, Debian, Mint, Kali, Pop!_OS, Raspbian, etc.

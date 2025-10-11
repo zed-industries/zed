@@ -1,3 +1,4 @@
+use std::fmt::Display;
 use std::num;
 
 use collections::HashMap;
@@ -54,8 +55,6 @@ pub struct EditorSettingsContent {
     ///
     /// Default: 300
     pub hover_popover_delay: Option<u64>,
-    /// Status bar related settings
-    pub status_bar: Option<StatusBarContent>,
     /// Toolbar related settings
     pub toolbar: Option<ToolbarContent>,
     /// Scrollbar related settings
@@ -155,7 +154,8 @@ pub struct EditorSettingsContent {
     ///
     /// Values range from 0 to 106. Set to 0 to disable adjustments.
     /// Default: 45
-    pub minimum_contrast_for_highlights: Option<f32>,
+    #[schemars(range(min = 0, max = 106))]
+    pub minimum_contrast_for_highlights: Option<MinimumContrast>,
 
     /// Whether to follow-up empty go to definition responses from the language server or not.
     /// `FindAllReferences` allows to look up references of the same symbol instead.
@@ -191,20 +191,6 @@ pub struct EditorSettingsContent {
     ///
     /// Default: [`DocumentColorsRenderMode::Inlay`]
     pub lsp_document_colors: Option<DocumentColorsRenderMode>,
-}
-
-// Status bar related settings
-#[skip_serializing_none]
-#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
-pub struct StatusBarContent {
-    /// Whether to display the active language button in the status bar.
-    ///
-    /// Default: true
-    pub active_language_button: Option<bool>,
-    /// Whether to show the cursor position button in the status bar.
-    ///
-    /// Default: true
-    pub cursor_position_button: Option<bool>,
 }
 
 // Toolbar related settings
@@ -363,7 +349,19 @@ pub enum DocumentColorsRenderMode {
     Background,
 }
 
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom)]
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum CurrentLineHighlight {
     // Don't highlight the current line.
@@ -377,7 +375,19 @@ pub enum CurrentLineHighlight {
 }
 
 /// When to populate a new search's query based on the text under the cursor.
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom)]
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum SeedQuerySetting {
     /// Always populate the search query with the word under the cursor.
@@ -390,7 +400,18 @@ pub enum SeedQuerySetting {
 
 /// What to do when multibuffer is double clicked in some of its excerpts (parts of singleton buffers).
 #[derive(
-    Default, Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom,
+    Default,
+    Copy,
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum DoubleClickInMultibuffer {
@@ -406,7 +427,18 @@ pub enum DoubleClickInMultibuffer {
 ///
 /// Default: always
 #[derive(
-    Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq,
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    Eq,
+    strum::VariantArray,
+    strum::VariantNames,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum MinimapThumb {
@@ -421,7 +453,18 @@ pub enum MinimapThumb {
 ///
 /// Default: left_open
 #[derive(
-    Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq,
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    Eq,
+    strum::VariantArray,
+    strum::VariantNames,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum MinimapThumbBorder {
@@ -441,7 +484,19 @@ pub enum MinimapThumbBorder {
 /// Which diagnostic indicators to show in the scrollbar.
 ///
 /// Default: all
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    Eq,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
 #[serde(rename_all = "lowercase")]
 pub enum ScrollbarDiagnostics {
     /// Show all diagnostic levels: hint, information, warnings, error.
@@ -459,7 +514,19 @@ pub enum ScrollbarDiagnostics {
 /// The key to use for adding multiple cursors
 ///
 /// Default: alt
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    Eq,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum MultiCursorModifier {
     Alt,
@@ -470,7 +537,19 @@ pub enum MultiCursorModifier {
 /// Whether the editor will scroll beyond the last line.
 ///
 /// Default: one_page
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    Eq,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum ScrollBeyondLastLine {
     /// The editor will not scroll beyond the last line.
@@ -485,7 +564,18 @@ pub enum ScrollBeyondLastLine {
 
 /// The shape of a selection cursor.
 #[derive(
-    Copy, Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom,
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum CursorShape {
@@ -502,7 +592,18 @@ pub enum CursorShape {
 
 /// What to do when go to definition yields no results.
 #[derive(
-    Copy, Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom,
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum GoToDefinitionFallback {
@@ -517,7 +618,18 @@ pub enum GoToDefinitionFallback {
 ///
 /// Default: on_typing_and_movement
 #[derive(
-    Copy, Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom,
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum HideMouseMode {
@@ -534,7 +646,18 @@ pub enum HideMouseMode {
 ///
 /// Default: inline
 #[derive(
-    Copy, Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom,
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum SnippetSortOrder {
@@ -595,7 +718,18 @@ pub struct DragAndDropSelectionContent {
 ///
 /// Default: never
 #[derive(
-    Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq,
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    Eq,
+    strum::VariantArray,
+    strum::VariantNames,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum ShowMinimap {
@@ -612,7 +746,18 @@ pub enum ShowMinimap {
 ///
 /// Default: all_editors
 #[derive(
-    Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq,
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    Eq,
+    strum::VariantArray,
+    strum::VariantNames,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum DisplayIn {
@@ -621,4 +766,29 @@ pub enum DisplayIn {
     /// Show the minimap on the active editor only.
     #[default]
     ActiveEditor,
+}
+
+/// Minimum APCA perceptual contrast for text over highlight backgrounds.
+///
+/// Valid range: 0.0 to 106.0
+/// Default: 45.0
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    PartialOrd,
+    derive_more::FromStr,
+)]
+#[serde(transparent)]
+pub struct MinimumContrast(pub f32);
+
+impl Display for MinimumContrast {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:.1}", self.0)
+    }
 }

@@ -75,12 +75,9 @@ impl Render for ToolbarControls {
                                 &ToggleDiagnosticsRefresh,
                             ))
                             .on_click(cx.listener(move |toolbar_controls, _, _, cx| {
-                                match toolbar_controls.editor() {
-                                    Some(editor) => {
-                                        editor.stop_updating(cx);
-                                        cx.notify();
-                                    }
-                                    None => {}
+                                if let Some(editor) = toolbar_controls.editor() {
+                                    editor.stop_updating(cx);
+                                    cx.notify();
                                 }
                             })),
                     )
@@ -95,11 +92,10 @@ impl Render for ToolbarControls {
                                 &ToggleDiagnosticsRefresh,
                             ))
                             .on_click(cx.listener({
-                                move |toolbar_controls, _, window, cx| match toolbar_controls
-                                    .editor()
-                                {
-                                    Some(editor) => editor.refresh_diagnostics(window, cx),
-                                    None => {}
+                                move |toolbar_controls, _, window, cx| {
+                                    if let Some(editor) = toolbar_controls.editor() {
+                                        editor.refresh_diagnostics(window, cx)
+                                    }
                                 }
                             })),
                     )
@@ -110,9 +106,10 @@ impl Render for ToolbarControls {
                     .icon_color(warning_color)
                     .shape(IconButtonShape::Square)
                     .tooltip(Tooltip::text(warning_tooltip))
-                    .on_click(cx.listener(|this, _, window, cx| match &this.editor {
-                        Some(editor) => editor.toggle_warnings(window, cx),
-                        None => {}
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        if let Some(editor) = &this.editor {
+                            editor.toggle_warnings(window, cx)
+                        }
                     })),
             )
     }

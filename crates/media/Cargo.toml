@@ -1,9 +1,10 @@
 [package]
-name = "media"
+name = "zed-media"
 version = "0.1.0"
 edition.workspace = true
-publish.workspace = true
+publish = true
 license = "Apache-2.0"
+description = "Bindings to macos media handling APIs for Zed"
 
 [lints]
 workspace = true

@@ -4,7 +4,6 @@ use http_client::{AsyncBody, HttpClient, HttpRequestExt, Method, Request as Http
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 pub use settings::KeepAlive;
-use std::time::Duration;
 
 pub const OLLAMA_API_URL: &str = "http://localhost:11434";
 
@@ -37,6 +36,7 @@ fn get_max_tokens(name: &str) -> u64 {
         "cogito" | "command-r" | "deepseek-coder-v2" | "deepseek-r1" | "deepseek-v3"
         | "devstral" | "gemma3" | "gpt-oss" | "granite3.3" | "llama3.1" | "llama3.2"
         | "llama3.3" | "mistral-nemo" | "phi3" | "phi3.5" | "phi4" | "qwen3" | "yi-coder" => 128000,
+        "qwen3-coder" => 256000,
         _ => DEFAULT_TOKENS,
     }
     .clamp(1, MAXIMUM_TOKENS)
@@ -137,14 +137,6 @@ pub struct ChatRequest {
     pub think: Option<bool>,
 }
 
-impl ChatRequest {
-    pub fn with_tools(mut self, tools: Vec<OllamaTool>) -> Self {
-        self.stream = false;
-        self.tools = tools;
-        self
-    }
-}
-
 // https://github.com/ollama/ollama/blob/main/docs/modelfile.md#valid-parameters-and-values
 #[derive(Serialize, Default, Debug)]
 pub struct ChatOptions {
@@ -157,14 +149,10 @@ pub struct ChatOptions {
 
 #[derive(Deserialize, Debug)]
 pub struct ChatResponseDelta {
-    #[allow(unused)]
     pub model: String,
-    #[allow(unused)]
     pub created_at: String,
     pub message: ChatMessage,
-    #[allow(unused)]
     pub done_reason: Option<String>,
-    #[allow(unused)]
     pub done: bool,
     pub prompt_eval_count: Option<u64>,
     pub eval_count: Option<u64>,
@@ -201,10 +189,74 @@ pub struct ModelDetails {
     pub quantization_level: String,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Debug)]
 pub struct ModelShow {
-    #[serde(default)]
     pub capabilities: Vec<String>,
+    pub context_length: Option<u64>,
+    pub architecture: Option<String>,
+}
+
+impl<'de> Deserialize<'de> for ModelShow {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        use serde::de::{self, MapAccess, Visitor};
+        use std::fmt;
+
+        struct ModelShowVisitor;
+
+        impl<'de> Visitor<'de> for ModelShowVisitor {
+            type Value = ModelShow;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("a ModelShow object")
+            }
+
+            fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+            where
+                A: MapAccess<'de>,
+            {
+                let mut capabilities: Vec<String> = Vec::new();
+                let mut architecture: Option<String> = None;
+                let mut context_length: Option<u64> = None;
+
+                while let Some(key) = map.next_key::<String>()? {
+                    match key.as_str() {
+                        "capabilities" => {
+                            capabilities = map.next_value()?;
+                        }
+                        "model_info" => {
+                            let model_info: Value = map.next_value()?;
+                            if let Value::Object(obj) = model_info {
+                                architecture = obj
+                                    .get("general.architecture")
+                                    .and_then(|v| v.as_str())
+                                    .map(String::from);
+
+                                if let Some(arch) = &architecture {
+                                    context_length = obj
+                                        .get(&format!("{}.context_length", arch))
+                                        .and_then(|v| v.as_u64());
+                                }
+                            }
+                        }
+                        _ => {
+                            let _: de::IgnoredAny = map.next_value()?;
+                        }
+                    }
+                }
+
+                Ok(ModelShow {
+                    capabilities,
+                    context_length,
+                    architecture,
+                })
+            }
+        }
+
+        deserializer.deserialize_map(ModelShowVisitor)
+    }
 }
 
 impl ModelShow {
@@ -219,38 +271,6 @@ impl ModelShow {
 
     pub fn supports_thinking(&self) -> bool {
         self.capabilities.iter().any(|v| v == "thinking")
-    }
-}
-
-pub async fn complete(
-    client: &dyn HttpClient,
-    api_url: &str,
-    request: ChatRequest,
-) -> Result<ChatResponseDelta> {
-    let uri = format!("{api_url}/api/chat");
-    let request_builder = HttpRequest::builder()
-        .method(Method::POST)
-        .uri(uri)
-        .header("Content-Type", "application/json");
-
-    let serialized_request = serde_json::to_string(&request)?;
-    let request = request_builder.body(AsyncBody::from(serialized_request))?;
-
-    let mut response = client.send(request).await?;
-
-    let mut body = Vec::new();
-    response.body_mut().read_to_end(&mut body).await?;
-
-    if response.status().is_success() {
-        let response_message: ChatResponseDelta = serde_json::from_slice(&body)?;
-        Ok(response_message)
-    } else {
-        let body_str = std::str::from_utf8(&body)?;
-        anyhow::bail!(
-            "Failed to connect to API: {} {}",
-            response.status(),
-            body_str
-        );
     }
 }
 
@@ -296,7 +316,6 @@ pub async fn get_models(
     client: &dyn HttpClient,
     api_url: &str,
     api_key: Option<&str>,
-    _: Option<Duration>,
 ) -> Result<Vec<LocalModelListing>> {
     let uri = format!("{api_url}/api/tags");
     let request = HttpRequest::builder()
@@ -515,6 +534,9 @@ mod tests {
         assert!(result.supports_tools());
         assert!(result.capabilities.contains(&"tools".to_string()));
         assert!(result.capabilities.contains(&"completion".to_string()));
+
+        assert_eq!(result.architecture, Some("llama".to_string()));
+        assert_eq!(result.context_length, Some(131072));
     }
 
     #[test]

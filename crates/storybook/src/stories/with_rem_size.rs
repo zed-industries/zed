@@ -54,7 +54,7 @@ impl RenderOnce for Example {
                 .p_2()
                 .border_2()
                 .border_color(self.border_color)
-                .child(Label::new(format!("1rem = {}px", self.rem_size.0)))
+                .child(Label::new(format!("1rem = {}px", f32::from(self.rem_size))))
                 .children(self.children),
         )
     }

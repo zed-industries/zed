@@ -6,14 +6,13 @@ Learn about all the settings you can customize in Zed's Agent Panel.
 
 ### Default Model {#default-model}
 
-If you're using [Zed's hosted LLM service](./plans-and-usage.md), it sets `claude-sonnet-4` as the default model.
-But if you're not subscribed to it or simply just want to change it, you can do it so either via the model dropdown in the Agent Panel's bottom-right corner or by manually editing the `default_model` object in your settings:
+If you're using [Zed's hosted LLM service](./subscription.md), it sets `claude-sonnet-4` as the default model for agentic work (agent panel, inline assistant) and `gpt-5-nano` as the default "fast" model (thread summarization, git commit messages). If you're not subscribed or want to change these defaults, you can manually edit the `default_model` object in your settings:
 
 ```json
 {
   "agent": {
     "default_model": {
-      "provider": "zed.dev",
+      "provider": "openai",
       "model": "gpt-4o"
     }
   }
@@ -22,7 +21,7 @@ But if you're not subscribed to it or simply just want to change it, you can do 
 
 ### Feature-specific Models {#feature-specific-models}
 
-Assign distinct and specific models for the following AI-powered features in Zed:
+You can assign distinct and specific models for the following AI-powered features:
 
 - Thread summary model: Used for generating thread summaries
 - Inline assistant model: Used for the inline assistant feature
@@ -63,7 +62,7 @@ When configured, the inline assist UI will surface controls to cycle between the
 The models you specify here are always used in _addition_ to your [default model](#default-model).
 
 For example, the following configuration will generate two outputs for every assist.
-One with Claude Sonnet 4 (the default model), and one with GPT-4o.
+One with Claude Sonnet 4 (the default model), and one with GPT-5-mini.
 
 ```json
 {
@@ -75,7 +74,7 @@ One with Claude Sonnet 4 (the default model), and one with GPT-4o.
     "inline_alternatives": [
       {
         "provider": "zed.dev",
-        "model": "gpt-4o"
+        "model": "gpt-4-mini"
       }
     ]
   }
@@ -123,9 +122,23 @@ You can choose between `thread` (the default) and `text_thread`:
 }
 ```
 
+### Font Size
+
+Use the `agent_font_size` setting to change the font size of rendered agent responses in the panel.
+
+```json
+{
+  "agent": {
+    "agent_font_size": 18
+  }
+}
+```
+
+> Editors in the Agent Panel—whether that is the main message textarea or previous messages—use monospace fonts and therefore, are controlled by the `buffer_font_size` setting, which is defined globally in your `settings.json`.
+
 ### Auto-run Commands
 
-Control whether you want to allow the agent to run commands without asking you for permission.
+Control whether to allow the agent to run commands without asking you for permission.
 The default value is `false`.
 
 ```json
@@ -136,11 +149,9 @@ The default value is `false`.
 }
 ```
 
-> This setting is available via the Agent Panel's settings UI.
-
 ### Single-file Review
 
-Control whether you want to see review actions (accept & reject) in single buffers after the agent is done performing edits.
+Control whether to display review actions (accept & reject) in single buffers after the agent is done performing edits.
 The default value is `false`.
 
 ```json
@@ -153,11 +164,9 @@ The default value is `false`.
 
 When set to false, these controls are only available in the multibuffer review tab.
 
-> This setting is available via the Agent Panel's settings UI.
-
 ### Sound Notification
 
-Control whether you want to hear a notification sound when the agent is done generating changes or needs your input.
+Control whether to hear a notification sound when the agent is done generating changes or needs your input.
 The default value is `false`.
 
 ```json
@@ -167,8 +176,6 @@ The default value is `false`.
   }
 }
 ```
-
-> This setting is available via the Agent Panel's settings UI.
 
 ### Message Editor Size
 
@@ -183,8 +190,6 @@ It is set to `4` by default, and the max number of lines is always double of the
 }
 ```
 
-> This setting is currently available only in Preview.
-
 ### Modifier to Send
 
 Make a modifier (`cmd` on macOS, `ctrl` on Linux) required to send messages.
@@ -198,8 +203,6 @@ The default value is `false`.
   }
 }
 ```
-
-> This setting is available via the Agent Panel's settings UI.
 
 ### Edit Card
 
@@ -229,7 +232,7 @@ It is set to `true` by default, but if set to false, the card will be fully coll
 
 ### Feedback Controls
 
-Control whether you want to see the thumbs up/down buttons to give Zed feedback about the agent's performance.
+Control whether to display the thumbs up/down buttons at the bottom of each agent response, allowing to give Zed feedback about the agent's performance.
 The default value is `true`.
 
 ```json

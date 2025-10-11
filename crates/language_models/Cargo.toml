@@ -28,7 +28,6 @@ convert_case.workspace = true
 copilot.workspace = true
 credentials_provider.workspace = true
 deepseek = { workspace = true, features = ["schemars"] }
-editor.workspace = true
 fs.workspace = true
 futures.workspace = true
 google_ai = { workspace = true, features = ["schemars"] }
@@ -52,7 +51,6 @@ serde_json.workspace = true
 settings.workspace = true
 smol.workspace = true
 strum.workspace = true
-theme.workspace = true
 thiserror.workspace = true
 tiktoken-rs.workspace = true
 tokio = { workspace = true, features = ["rt", "rt-multi-thread"] }

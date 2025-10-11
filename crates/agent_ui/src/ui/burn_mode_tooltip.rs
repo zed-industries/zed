@@ -48,7 +48,7 @@ impl Render for BurnModeTooltip {
         let keybinding = KeyBinding::for_action(&ToggleBurnMode, window, cx)
             .map(|kb| kb.size(rems_from_px(12.)));
 
-        tooltip_container(window, cx, |this, _, _| {
+        tooltip_container(cx, |this, _| {
             this
                 .child(
                     h_flex()

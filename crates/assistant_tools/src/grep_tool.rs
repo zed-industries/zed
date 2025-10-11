@@ -125,6 +125,7 @@ impl Tool for GrepTool {
                 .as_ref()
                 .into_iter()
                 .collect::<Vec<_>>(),
+            project.read(cx).path_style(cx),
         ) {
             Ok(matcher) => matcher,
             Err(error) => {
@@ -141,7 +142,7 @@ impl Tool for GrepTool {
                 .iter()
                 .chain(global_settings.private_files.sources().iter());
 
-            match PathMatcher::new(exclude_patterns) {
+            match PathMatcher::new(exclude_patterns, project.read(cx).path_style(cx)) {
                 Ok(matcher) => matcher,
                 Err(error) => {
                     return Task::ready(Err(anyhow!("invalid exclude pattern: {error}"))).into();

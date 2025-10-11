@@ -1,6 +1,7 @@
+use std::borrow::Borrow;
 use std::rc::Rc;
 
-use gpui::{Action, AnyElement, AnyView, AppContext as _, FocusHandle, IntoElement, Render};
+use gpui::{Action, AnyElement, AnyView, AppContext, FocusHandle, IntoElement, Render};
 use settings::Settings;
 use theme::ThemeSettings;
 
@@ -195,8 +196,8 @@ impl Tooltip {
 }
 
 impl Render for Tooltip {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        tooltip_container(window, cx, |el, _, _| {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        tooltip_container(cx, |el, _| {
             el.child(
                 h_flex()
                     .gap_4()
@@ -216,23 +217,23 @@ impl Render for Tooltip {
     }
 }
 
-pub fn tooltip_container<V, ContentsBuilder: FnOnce(Div, &mut Window, &mut Context<V>) -> Div>(
-    window: &mut Window,
-    cx: &mut Context<V>,
-    f: ContentsBuilder,
-) -> impl IntoElement + use<V, ContentsBuilder> {
-    let ui_font = ThemeSettings::get_global(cx).ui_font.clone();
+pub fn tooltip_container<C>(cx: &mut C, f: impl FnOnce(Div, &mut C) -> Div) -> impl IntoElement
+where
+    C: AppContext + Borrow<App>,
+{
+    let app = (*cx).borrow();
+    let ui_font = ThemeSettings::get_global(app).ui_font.clone();
 
     // padding to avoid tooltip appearing right below the mouse cursor
     div().pl_2().pt_2p5().child(
         v_flex()
-            .elevation_2(cx)
+            .elevation_2(app)
             .font(ui_font)
-            .text_ui(cx)
-            .text_color(cx.theme().colors().text)
+            .text_ui(app)
+            .text_color(app.theme().colors().text)
             .py_1()
             .px_2()
-            .map(|el| f(el, window, cx)),
+            .map(|el| f(el, cx)),
     )
 }
 
@@ -261,8 +262,8 @@ impl LinkPreview {
 }
 
 impl Render for LinkPreview {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        tooltip_container(window, cx, |el, _, _| {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        tooltip_container(cx, |el, _| {
             el.child(
                 Label::new(self.link.clone())
                     .size(LabelSize::XSmall)

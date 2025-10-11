@@ -328,7 +328,12 @@ impl PickerDelegate for RecentProjectsDelegate {
             &Default::default(),
             cx.background_executor().clone(),
         ));
-        self.matches.sort_unstable_by_key(|m| m.candidate_id);
+        self.matches.sort_unstable_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score) // Descending score
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| a.candidate_id.cmp(&b.candidate_id)) // Ascending candidate_id for ties
+        });
 
         if self.reset_selected_match_index {
             self.selected_match_index = self
@@ -463,8 +468,7 @@ impl PickerDelegate for RecentProjectsDelegate {
             .map(|path| {
                 let highlighted_text =
                     highlights_for_path(path.as_ref(), &hit.positions, path_start_offset);
-
-                path_start_offset += highlighted_text.1.char_count;
+                path_start_offset += highlighted_text.1.text.len();
                 highlighted_text
             })
             .unzip();
@@ -590,34 +594,33 @@ fn highlights_for_path(
     path_start_offset: usize,
 ) -> (Option<HighlightedMatch>, HighlightedMatch) {
     let path_string = path.to_string_lossy();
-    let path_char_count = path_string.chars().count();
+    let path_text = path_string.to_string();
+    let path_byte_len = path_text.len();
     // Get the subset of match highlight positions that line up with the given path.
     // Also adjusts them to start at the path start
     let path_positions = match_positions
         .iter()
         .copied()
         .skip_while(|position| *position < path_start_offset)
-        .take_while(|position| *position < path_start_offset + path_char_count)
+        .take_while(|position| *position < path_start_offset + path_byte_len)
         .map(|position| position - path_start_offset)
         .collect::<Vec<_>>();
 
     // Again subset the highlight positions to just those that line up with the file_name
     // again adjusted to the start of the file_name
     let file_name_text_and_positions = path.file_name().map(|file_name| {
-        let text = file_name.to_string_lossy();
-        let char_count = text.chars().count();
-        let file_name_start = path_char_count - char_count;
+        let file_name_text = file_name.to_string_lossy().into_owned();
+        let file_name_start_byte = path_byte_len - file_name_text.len();
         let highlight_positions = path_positions
             .iter()
             .copied()
-            .skip_while(|position| *position < file_name_start)
-            .take_while(|position| *position < file_name_start + char_count)
-            .map(|position| position - file_name_start)
+            .skip_while(|position| *position < file_name_start_byte)
+            .take_while(|position| *position < file_name_start_byte + file_name_text.len())
+            .map(|position| position - file_name_start_byte)
             .collect::<Vec<_>>();
         HighlightedMatch {
-            text: text.to_string(),
+            text: file_name_text,
             highlight_positions,
-            char_count,
             color: Color::Default,
         }
     });
@@ -625,9 +628,8 @@ fn highlights_for_path(
     (
         file_name_text_and_positions,
         HighlightedMatch {
-            text: path_string.to_string(),
+            text: path_text,
             highlight_positions: path_positions,
-            char_count: path_char_count,
             color: Color::Default,
         },
     )
@@ -686,8 +688,8 @@ struct MatchTooltip {
 }
 
 impl Render for MatchTooltip {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        tooltip_container(window, cx, |div, _, _| {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        tooltip_container(cx, |div, _| {
             self.highlighted_location.render_paths_children(div)
         })
     }

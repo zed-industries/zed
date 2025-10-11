@@ -1,7 +1,7 @@
 use crate::{
     DebuggerTextObject, LanguageScope, Outline, OutlineConfig, RunnableCapture, RunnableTag,
     TextObject, TreeSitterOptions,
-    diagnostic_set::{DiagnosticEntry, DiagnosticGroup},
+    diagnostic_set::{DiagnosticEntry, DiagnosticEntryRef, DiagnosticGroup},
     language_settings::{LanguageSettings, language_settings},
     outline::OutlineItem,
     syntax_map::{
@@ -41,13 +41,12 @@ use std::{
     cell::Cell,
     cmp::{self, Ordering, Reverse},
     collections::{BTreeMap, BTreeSet},
-    ffi::OsStr,
     future::Future,
     iter::{self, Iterator, Peekable},
     mem,
     num::NonZeroU32,
     ops::{Deref, Range},
-    path::{Path, PathBuf},
+    path::PathBuf,
     rc,
     sync::{Arc, LazyLock},
     time::{Duration, Instant},
@@ -65,7 +64,7 @@ pub use text::{
 use theme::{ActiveTheme as _, SyntaxTheme};
 #[cfg(any(test, feature = "test-support"))]
 use util::RandomCharIter;
-use util::{RangeExt, debug_panic, maybe};
+use util::{RangeExt, debug_panic, maybe, paths::PathStyle, rel_path::RelPath};
 
 #[cfg(any(test, feature = "test-support"))]
 pub use {tree_sitter_python, tree_sitter_rust, tree_sitter_typescript};
@@ -349,15 +348,18 @@ pub trait File: Send + Sync + Any {
     fn disk_state(&self) -> DiskState;
 
     /// Returns the path of this file relative to the worktree's root directory.
-    fn path(&self) -> &Arc<Path>;
+    fn path(&self) -> &Arc<RelPath>;
 
     /// Returns the path of this file relative to the worktree's parent directory (this means it
     /// includes the name of the worktree's root folder).
     fn full_path(&self, cx: &App) -> PathBuf;
 
+    /// Returns the path style of this file.
+    fn path_style(&self, cx: &App) -> PathStyle;
+
     /// Returns the last component of this handle's absolute path. If this handle refers to the root
     /// of its worktree, then this method will return the name of the worktree itself.
-    fn file_name<'a>(&'a self, cx: &'a App) -> &'a OsStr;
+    fn file_name<'a>(&'a self, cx: &'a App) -> &'a str;
 
     /// Returns the id of the worktree to which this file belongs.
     ///
@@ -579,7 +581,7 @@ pub struct HighlightedText {
 #[derive(Default, Debug)]
 struct HighlightedTextBuilder {
     pub text: String,
-    pub highlights: Vec<(Range<usize>, HighlightStyle)>,
+    highlights: Vec<(Range<usize>, HighlightStyle)>,
 }
 
 impl HighlightedText {
@@ -622,10 +624,11 @@ impl HighlightedText {
         let preview_highlights = self
             .highlights
             .into_iter()
+            .skip_while(|(range, _)| range.end <= preview_start_ix)
             .take_while(|(range, _)| range.start < newline_ix)
             .filter_map(|(mut range, highlight)| {
                 range.start = range.start.saturating_sub(preview_start_ix);
-                range.end = range.end.saturating_sub(preview_start_ix).min(newline_ix);
+                range.end = range.end.min(newline_ix).saturating_sub(preview_start_ix);
                 if range.is_empty() {
                     None
                 } else {
@@ -1310,9 +1313,8 @@ impl Buffer {
         mtime: Option<MTime>,
         cx: &mut Context<Self>,
     ) {
-        self.saved_version = version;
-        self.has_unsaved_edits
-            .set((self.saved_version().clone(), false));
+        self.saved_version = version.clone();
+        self.has_unsaved_edits.set((version, false));
         self.has_conflict = false;
         self.saved_mtime = mtime;
         self.was_changed();
@@ -3756,11 +3758,9 @@ impl BufferSnapshot {
         theme: Option<&SyntaxTheme>,
     ) -> Vec<OutlineItem<Anchor>> {
         let position = position.to_offset(self);
-        let mut items = self.outline_items_containing(
-            position.saturating_sub(1)..self.len().min(position + 1),
-            false,
-            theme,
-        );
+        let start = self.clip_offset(position.saturating_sub(1), Bias::Left);
+        let end = self.clip_offset(position + 1, Bias::Right);
+        let mut items = self.outline_items_containing(start..end, false, theme);
         let mut prev_depth = None;
         items.retain(|item| {
             let result = prev_depth.is_none_or(|prev_depth| item.depth > prev_depth);
@@ -3894,9 +3894,6 @@ impl BufferSnapshot {
                 text: item.text,
                 highlight_ranges: item.highlight_ranges,
                 name_ranges: item.name_ranges,
-                signature_range: item
-                    .signature_range
-                    .map(|r| self.anchor_after(r.start)..self.anchor_before(r.end)),
                 body_range: item
                     .body_range
                     .map(|r| self.anchor_after(r.start)..self.anchor_before(r.end)),
@@ -3940,15 +3937,6 @@ impl BufferSnapshot {
         let mut open_point = None;
         let mut close_point = None;
 
-        let mut signature_start = None;
-        let mut signature_end = None;
-        let mut extend_signature_range = |node: tree_sitter::Node| {
-            if signature_start.is_none() {
-                signature_start = Some(Point::from_ts_point(node.start_position()));
-            }
-            signature_end = Some(Point::from_ts_point(node.end_position()));
-        };
-
         let mut buffer_ranges = Vec::new();
         let mut add_to_buffer_ranges = |node: tree_sitter::Node, node_is_name| {
             let mut range = node.start_byte()..node.end_byte();
@@ -3965,12 +3953,10 @@ impl BufferSnapshot {
         for capture in mat.captures {
             if capture.index == config.name_capture_ix {
                 add_to_buffer_ranges(capture.node, true);
-                extend_signature_range(capture.node);
             } else if Some(capture.index) == config.context_capture_ix
                 || (Some(capture.index) == config.extra_context_capture_ix && include_extra_context)
             {
                 add_to_buffer_ranges(capture.node, false);
-                extend_signature_range(capture.node);
             } else {
                 if Some(capture.index) == config.open_capture_ix {
                     open_point = Some(Point::from_ts_point(capture.node.end_position()));
@@ -4033,17 +4019,12 @@ impl BufferSnapshot {
             last_buffer_range_end = buffer_range.end;
         }
 
-        let signature_range = signature_start
-            .zip(signature_end)
-            .map(|(start, end)| start..end);
-
         Some(OutlineItem {
             depth: 0, // We'll calculate the depth later
             range: item_point_range,
             text,
             highlight_ranges,
             name_ranges,
-            signature_range,
             body_range: open_point.zip(close_point).map(|(start, end)| start..end),
             annotation_range: None,
         })
@@ -4121,8 +4102,7 @@ impl BufferSnapshot {
         range: Range<T>,
     ) -> impl Iterator<Item = BracketMatch> + '_ {
         // Find bracket pairs that *inclusively* contain the given range.
-        let range = range.start.to_offset(self).saturating_sub(1)
-            ..self.len().min(range.end.to_offset(self) + 1);
+        let range = range.start.to_previous_offset(self)..range.end.to_next_offset(self);
         self.all_bracket_ranges(range)
             .filter(|pair| !pair.newline_only)
     }
@@ -4131,8 +4111,7 @@ impl BufferSnapshot {
         &self,
         range: Range<T>,
     ) -> impl Iterator<Item = (Range<usize>, DebuggerTextObject)> + '_ {
-        let range = range.start.to_offset(self).saturating_sub(1)
-            ..self.len().min(range.end.to_offset(self) + 1);
+        let range = range.start.to_previous_offset(self)..range.end.to_next_offset(self);
 
         let mut matches = self.syntax.matches_with_options(
             range.clone(),
@@ -4200,8 +4179,8 @@ impl BufferSnapshot {
         range: Range<T>,
         options: TreeSitterOptions,
     ) -> impl Iterator<Item = (Range<usize>, TextObject)> + '_ {
-        let range = range.start.to_offset(self).saturating_sub(1)
-            ..self.len().min(range.end.to_offset(self) + 1);
+        let range =
+            range.start.to_previous_offset(self)..self.len().min(range.end.to_next_offset(self));
 
         let mut matches =
             self.syntax
@@ -4540,7 +4519,7 @@ impl BufferSnapshot {
         &'a self,
         search_range: Range<T>,
         reversed: bool,
-    ) -> impl 'a + Iterator<Item = DiagnosticEntry<O>>
+    ) -> impl 'a + Iterator<Item = DiagnosticEntryRef<'a, O>>
     where
         T: 'a + Clone + ToOffset,
         O: 'a + FromAnchor,
@@ -4573,12 +4552,20 @@ impl BufferSnapshot {
                 })?;
             iterators[next_ix]
                 .next()
-                .map(|DiagnosticEntry { range, diagnostic }| DiagnosticEntry {
-                    diagnostic,
-                    range: FromAnchor::from_anchor(&range.start, self)
-                        ..FromAnchor::from_anchor(&range.end, self),
-                })
+                .map(
+                    |DiagnosticEntryRef { range, diagnostic }| DiagnosticEntryRef {
+                        diagnostic,
+                        range: FromAnchor::from_anchor(&range.start, self)
+                            ..FromAnchor::from_anchor(&range.end, self),
+                    },
+                )
         })
+    }
+
+    /// Raw access to the diagnostic sets. Typically `diagnostic_groups` or `diagnostic_group`
+    /// should be used instead.
+    pub fn diagnostic_sets(&self) -> &SmallVec<[(LanguageServerId, DiagnosticSet); 2]> {
+        &self.diagnostics
     }
 
     /// Returns all the diagnostic groups associated with the given
@@ -4587,7 +4574,7 @@ impl BufferSnapshot {
     pub fn diagnostic_groups(
         &self,
         language_server_id: Option<LanguageServerId>,
-    ) -> Vec<(LanguageServerId, DiagnosticGroup<Anchor>)> {
+    ) -> Vec<(LanguageServerId, DiagnosticGroup<'_, Anchor>)> {
         let mut groups = Vec::new();
 
         if let Some(language_server_id) = language_server_id {
@@ -4618,7 +4605,7 @@ impl BufferSnapshot {
     pub fn diagnostic_group<O>(
         &self,
         group_id: usize,
-    ) -> impl Iterator<Item = DiagnosticEntry<O>> + '_
+    ) -> impl Iterator<Item = DiagnosticEntryRef<'_, O>> + use<'_, O>
     where
         O: FromAnchor + 'static,
     {
@@ -4643,13 +4630,12 @@ impl BufferSnapshot {
         self.file.as_ref()
     }
 
-    /// Resolves the file path (relative to the worktree root) associated with the underlying file.
-    pub fn resolve_file_path(&self, cx: &App, include_root: bool) -> Option<PathBuf> {
+    pub fn resolve_file_path(&self, include_root: bool, cx: &App) -> Option<String> {
         if let Some(file) = self.file() {
             if file.path().file_name().is_none() || include_root {
-                Some(file.full_path(cx))
+                Some(file.full_path(cx).to_string_lossy().into_owned())
             } else {
-                Some(file.path().to_path_buf())
+                Some(file.path().display(file.path_style(cx)).to_string())
             }
         } else {
             None
@@ -5134,19 +5120,19 @@ impl IndentSize {
 
 #[cfg(any(test, feature = "test-support"))]
 pub struct TestFile {
-    pub path: Arc<Path>,
+    pub path: Arc<RelPath>,
     pub root_name: String,
     pub local_root: Option<PathBuf>,
 }
 
 #[cfg(any(test, feature = "test-support"))]
 impl File for TestFile {
-    fn path(&self) -> &Arc<Path> {
+    fn path(&self) -> &Arc<RelPath> {
         &self.path
     }
 
     fn full_path(&self, _: &gpui::App) -> PathBuf {
-        PathBuf::from(&self.root_name).join(self.path.as_ref())
+        PathBuf::from(self.root_name.clone()).join(self.path.as_std_path())
     }
 
     fn as_local(&self) -> Option<&dyn LocalFile> {
@@ -5161,7 +5147,7 @@ impl File for TestFile {
         unimplemented!()
     }
 
-    fn file_name<'a>(&'a self, _: &'a gpui::App) -> &'a std::ffi::OsStr {
+    fn file_name<'a>(&'a self, _: &'a gpui::App) -> &'a str {
         self.path().file_name().unwrap_or(self.root_name.as_ref())
     }
 
@@ -5176,6 +5162,10 @@ impl File for TestFile {
     fn is_private(&self) -> bool {
         false
     }
+
+    fn path_style(&self, _cx: &App) -> PathStyle {
+        PathStyle::local()
+    }
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -5183,7 +5173,7 @@ impl LocalFile for TestFile {
     fn abs_path(&self, _cx: &App) -> PathBuf {
         PathBuf::from(self.local_root.as_ref().unwrap())
             .join(&self.root_name)
-            .join(self.path.as_ref())
+            .join(self.path.as_std_path())
     }
 
     fn load(&self, _cx: &App) -> Task<Result<String>> {

@@ -33,7 +33,6 @@ use crate::{
     },
     prettier_store::{self, PrettierStore, PrettierStoreEvent},
     project_settings::{LspSettings, ProjectSettings},
-    relativize_path, resolve_path,
     toolchain_store::{LocalToolchainStore, ToolchainStoreEvent},
     worktree_store::{WorktreeStore, WorktreeStoreEvent},
     yarn::YarnPathStore,
@@ -88,7 +87,7 @@ use postage::{mpsc, sink::Sink, stream::Stream, watch};
 use rand::prelude::*;
 use rpc::{
     AnyProtoClient,
-    proto::{FromProto, LspRequestId, LspRequestMessage as _, ToProto},
+    proto::{LspRequestId, LspRequestMessage as _},
 };
 use serde::Serialize;
 use settings::{Settings, SettingsLocation, SettingsStore};
@@ -116,8 +115,9 @@ use text::{Anchor, BufferId, LineEnding, OffsetRangeExt, ToPoint as _};
 
 use util::{
     ConnectionResult, ResultExt as _, debug_panic, defer, maybe, merge_json_value_into,
-    paths::{PathExt, SanitizedPath},
+    paths::{PathStyle, SanitizedPath},
     post_inc,
+    rel_path::RelPath,
 };
 
 pub use fs::*;
@@ -158,7 +158,7 @@ impl FormatTrigger {
 #[derive(Clone)]
 struct UnifiedLanguageServer {
     id: LanguageServerId,
-    project_roots: HashSet<Arc<Path>>,
+    project_roots: HashSet<Arc<RelPath>>,
 }
 
 #[derive(Clone, Hash, PartialEq, Eq)]
@@ -209,7 +209,7 @@ pub struct LocalLspStore {
     diagnostics: HashMap<
         WorktreeId,
         HashMap<
-            Arc<Path>,
+            Arc<RelPath>,
             Vec<(
                 LanguageServerId,
                 Vec<DiagnosticEntry<Unclipped<PointUtf16>>>,
@@ -406,15 +406,14 @@ impl LocalLspStore {
                         adapter.clone(),
                     );
 
-                    let did_change_configuration_params =
-                        Arc::new(lsp::DidChangeConfigurationParams {
-                            settings: workspace_config,
-                        });
+                    let did_change_configuration_params = lsp::DidChangeConfigurationParams {
+                        settings: workspace_config,
+                    };
                     let language_server = cx
                         .update(|cx| {
                             language_server.initialize(
                                 initialization_params,
-                                did_change_configuration_params.clone(),
+                                Arc::new(did_change_configuration_params.clone()),
                                 cx,
                             )
                         })?
@@ -430,11 +429,9 @@ impl LocalLspStore {
                             }
                         })?;
 
-                    language_server
-                        .notify::<lsp::notification::DidChangeConfiguration>(
-                            &did_change_configuration_params,
-                        )
-                        .ok();
+                    language_server.notify::<lsp::notification::DidChangeConfiguration>(
+                        did_change_configuration_params,
+                    )?;
 
                     anyhow::Ok(language_server)
                 }
@@ -1086,7 +1083,7 @@ impl LocalLspStore {
         if let Some((file, language)) = File::from_dyn(buffer.file()).zip(buffer.language()) {
             let worktree_id = file.worktree_id(cx);
 
-            let path: Arc<Path> = file
+            let path: Arc<RelPath> = file
                 .path()
                 .parent()
                 .map(Arc::from)
@@ -1338,29 +1335,8 @@ impl LocalLspStore {
             })?;
         }
 
-        // Formatter for `code_actions_on_format` that runs before
-        // the rest of the formatters
-        let mut code_actions_on_format_formatter = None;
-        let should_run_code_actions_on_format = !matches!(
-            (trigger, &settings.format_on_save),
-            (FormatTrigger::Save, &FormatOnSave::Off)
-        );
-        if should_run_code_actions_on_format {
-            let have_code_actions_to_run_on_format = settings
-                .code_actions_on_format
-                .values()
-                .any(|enabled| *enabled);
-            if have_code_actions_to_run_on_format {
-                zlog::trace!(logger => "going to run code actions on format");
-                code_actions_on_format_formatter = Some(Formatter::CodeActions(
-                    settings.code_actions_on_format.clone(),
-                ));
-            }
-        }
-
         let formatters = match (trigger, &settings.format_on_save) {
             (FormatTrigger::Save, FormatOnSave::Off) => &[],
-            (FormatTrigger::Save, FormatOnSave::List(formatters)) => formatters.as_ref(),
             (FormatTrigger::Manual, _) | (FormatTrigger::Save, FormatOnSave::On) => {
                 match &settings.formatter {
                     SelectedFormatter::Auto => {
@@ -1376,8 +1352,6 @@ impl LocalLspStore {
                 }
             }
         };
-
-        let formatters = code_actions_on_format_formatter.iter().chain(formatters);
 
         for formatter in formatters {
             match formatter {
@@ -1512,7 +1486,7 @@ impl LocalLspStore {
                         },
                     )?;
                 }
-                Formatter::CodeActions(code_actions) => {
+                Formatter::CodeAction(code_action_name) => {
                     let logger = zlog::scoped!(logger => "code-actions");
                     zlog::trace!(logger => "formatting");
                     let _timer = zlog::time!(logger => "Formatting buffer using code actions");
@@ -1521,17 +1495,9 @@ impl LocalLspStore {
                         zlog::warn!(logger => "Cannot format buffer that is not backed by a file on disk using code actions. Skipping");
                         continue;
                     };
-                    let code_action_kinds = code_actions
-                        .iter()
-                        .filter_map(|(action_kind, enabled)| {
-                            enabled.then_some(action_kind.clone().into())
-                        })
-                        .collect::<Vec<_>>();
-                    if code_action_kinds.is_empty() {
-                        zlog::trace!(logger => "No code action kinds enabled, skipping");
-                        continue;
-                    }
-                    zlog::trace!(logger => "Attempting to resolve code actions {:?}", &code_action_kinds);
+
+                    let code_action_kind: CodeActionKind = code_action_name.clone().into();
+                    zlog::trace!(logger => "Attempting to resolve code actions {:?}", &code_action_kind);
 
                     let mut actions_and_servers = Vec::new();
 
@@ -1539,23 +1505,25 @@ impl LocalLspStore {
                         let actions_result = Self::get_server_code_actions_from_action_kinds(
                             &lsp_store,
                             language_server.server_id(),
-                            code_action_kinds.clone(),
+                            vec![code_action_kind.clone()],
                             &buffer.handle,
                             cx,
                         )
                         .await
-                        .with_context(
-                            || format!("Failed to resolve code actions with kinds {:?} for language server {}",
-                                code_action_kinds.iter().map(|kind| kind.as_str()).join(", "),
-                                language_server.name())
-                        );
+                        .with_context(|| {
+                            format!(
+                                "Failed to resolve code action {:?} with language server {}",
+                                code_action_kind,
+                                language_server.name()
+                            )
+                        });
                         let Ok(actions) = actions_result else {
                             // note: it may be better to set result to the error and break formatters here
                             // but for now we try to execute the actions that we can resolve and skip the rest
                             zlog::error!(
                                 logger =>
-                                "Failed to resolve code actions with kinds {:?} with language server {}",
-                                code_action_kinds.iter().map(|kind| kind.as_str()).join(", "),
+                                "Failed to resolve code action {:?} with language server {}",
+                                code_action_kind,
                                 language_server.name()
                             );
                             continue;
@@ -1600,7 +1568,7 @@ impl LocalLspStore {
 
                         if let Some(edit) = action.lsp_action.edit().cloned() {
                             // NOTE: code below duplicated from `Self::deserialize_workspace_edit`
-                            // but filters out and logs warnings for code actions that cause unreasonably
+                            // but filters out and logs warnings for code actions that require unreasonably
                             // difficult handling on our part, such as:
                             // - applying edits that call commands
                             //   which can result in arbitrary workspace edits being sent from the server that
@@ -1740,7 +1708,12 @@ impl LocalLspStore {
                                 formatting_transaction_id,
                                 cx,
                                 |buffer, cx| {
+                                    zlog::info!(
+                                        "Applying edits {edits:?}. Content: {:?}",
+                                        buffer.text()
+                                    );
                                     buffer.edit(edits, None, cx);
+                                    zlog::info!("Applied edits. New Content: {:?}", buffer.text());
                                 },
                             )?;
                         }
@@ -1842,17 +1815,19 @@ impl LocalLspStore {
                             }
 
                             if !project_transaction_command.0.is_empty() {
-                                let extra_buffers = project_transaction_command
-                                    .0
-                                    .keys()
-                                    .filter_map(|buffer_handle| {
-                                        buffer_handle
-                                            .read_with(cx, |b, cx| b.project_path(cx))
-                                            .ok()
-                                            .flatten()
-                                    })
-                                    .map(|p| p.path.to_sanitized_string())
-                                    .join(", ");
+                                let mut extra_buffers = String::new();
+                                for buffer in project_transaction_command.0.keys() {
+                                    buffer
+                                        .read_with(cx, |b, cx| {
+                                            if let Some(path) = b.project_path(cx) {
+                                                if !extra_buffers.is_empty() {
+                                                    extra_buffers.push_str(", ");
+                                                }
+                                                extra_buffers.push_str(path.path.as_unix_str());
+                                            }
+                                        })
+                                        .ok();
+                                }
                                 zlog::warn!(
                                     logger =>
                                     "Unexpected edits to buffers other than the buffer actively being formatted due to command {}. Impacted buffers: [{}].",
@@ -2347,7 +2322,7 @@ impl LocalLspStore {
         let Some(language) = buffer.language().cloned() else {
             return;
         };
-        let path: Arc<Path> = file
+        let path: Arc<RelPath> = file
             .path()
             .parent()
             .map(Arc::from)
@@ -2403,8 +2378,7 @@ impl LocalLspStore {
                     let path = &disposition.path;
 
                     {
-                        let uri =
-                            Uri::from_file_path(worktree.read(cx).abs_path().join(&path.path));
+                        let uri = Uri::from_file_path(worktree.read(cx).absolutize(&path.path));
 
                         let server_id = self.get_or_insert_language_server(
                             &worktree,
@@ -2484,7 +2458,7 @@ impl LocalLspStore {
                     name: None,
                     message: proto::update_language_server::Variant::RegisteredForBuffer(
                         proto::RegisteredForBuffer {
-                            buffer_abs_path: abs_path.to_string_lossy().to_string(),
+                            buffer_abs_path: abs_path.to_string_lossy().into_owned(),
                             buffer_id: buffer_id.to_proto(),
                         },
                     ),
@@ -3172,7 +3146,7 @@ impl LocalLspStore {
                     if let Some((tree, glob)) =
                         worktree.as_local_mut().zip(Glob::new(&pattern).log_err())
                     {
-                        tree.add_path_prefix_to_scan(literal_prefix.into());
+                        tree.add_path_prefix_to_scan(literal_prefix);
                         worktree_globs
                             .entry(tree.id())
                             .or_insert_with(GlobSetBuilder::new)
@@ -3187,7 +3161,7 @@ impl LocalLspStore {
                         let pattern = watcher_path
                             .as_path()
                             .strip_prefix(&path)
-                            .map(|p| p.to_string_lossy().to_string())
+                            .map(|p| p.to_string_lossy().into_owned())
                             .unwrap_or_else(|e| {
                                 debug_panic!(
                                     "Failed to strip prefix for string pattern: {}, with prefix: {}, with error: {}",
@@ -3195,7 +3169,7 @@ impl LocalLspStore {
                                     path.display(),
                                     e
                                 );
-                                watcher_path.as_path().to_string_lossy().to_string()
+                                watcher_path.as_path().to_string_lossy().into_owned()
                             });
                         (path, pattern)
                     }
@@ -3211,7 +3185,7 @@ impl LocalLspStore {
                         let path = glob_literal_prefix(Path::new(&rp.pattern));
                         let pattern = Path::new(&rp.pattern)
                             .strip_prefix(&path)
-                            .map(|p| p.to_string_lossy().to_string())
+                            .map(|p| p.to_string_lossy().into_owned())
                             .unwrap_or_else(|e| {
                                 debug_panic!(
                                     "Failed to strip prefix for relative pattern: {}, with prefix: {}, with error: {}",
@@ -3268,10 +3242,11 @@ impl LocalLspStore {
         worktrees: &[Entity<Worktree>],
         watcher: &FileSystemWatcher,
         cx: &App,
-    ) -> Option<(Entity<Worktree>, PathBuf, String)> {
+    ) -> Option<(Entity<Worktree>, Arc<RelPath>, String)> {
         worktrees.iter().find_map(|worktree| {
             let tree = worktree.read(cx);
             let worktree_root_path = tree.abs_path();
+            let path_style = tree.path_style();
             match &watcher.glob_pattern {
                 lsp::GlobPattern::String(s) => {
                     let watcher_path = SanitizedPath::new(s);
@@ -3282,8 +3257,8 @@ impl LocalLspStore {
                     let literal_prefix = glob_literal_prefix(relative);
                     Some((
                         worktree.clone(),
-                        literal_prefix,
-                        relative.to_string_lossy().to_string(),
+                        RelPath::new(&literal_prefix, path_style).ok()?.into_arc(),
+                        relative.to_string_lossy().into_owned(),
                     ))
                 }
                 lsp::GlobPattern::Relative(rp) => {
@@ -3296,7 +3271,11 @@ impl LocalLspStore {
                     let relative = base_uri.strip_prefix(&worktree_root_path).ok()?;
                     let mut literal_prefix = relative.to_owned();
                     literal_prefix.push(glob_literal_prefix(Path::new(&rp.pattern)));
-                    Some((worktree.clone(), literal_prefix, rp.pattern.clone()))
+                    Some((
+                        worktree.clone(),
+                        RelPath::new(&literal_prefix, path_style).ok()?.into_arc(),
+                        rp.pattern.clone(),
+                    ))
                 }
             }
         })
@@ -3483,7 +3462,7 @@ pub struct LspStore {
     _maintain_workspace_config: (Task<Result<()>>, watch::Sender<()>),
     _maintain_buffer_languages: Task<()>,
     diagnostic_summaries:
-        HashMap<WorktreeId, HashMap<Arc<Path>, HashMap<LanguageServerId, DiagnosticSummary>>>,
+        HashMap<WorktreeId, HashMap<Arc<RelPath>, HashMap<LanguageServerId, DiagnosticSummary>>>,
     pub lsp_server_capabilities: HashMap<LanguageServerId, lsp::ServerCapabilities>,
     lsp_document_colors: HashMap<BufferId, DocumentColorData>,
     lsp_code_lens: HashMap<BufferId, CodeLensData>,
@@ -3569,11 +3548,28 @@ struct CoreSymbol {
     pub language_server_name: LanguageServerName,
     pub source_worktree_id: WorktreeId,
     pub source_language_server_id: LanguageServerId,
-    pub path: ProjectPath,
+    pub path: SymbolLocation,
     pub name: String,
     pub kind: lsp::SymbolKind,
     pub range: Range<Unclipped<PointUtf16>>,
-    pub signature: [u8; 32],
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SymbolLocation {
+    InProject(ProjectPath),
+    OutsideProject {
+        abs_path: Arc<Path>,
+        signature: [u8; 32],
+    },
+}
+
+impl SymbolLocation {
+    fn file_name(&self) -> Option<&str> {
+        match self {
+            Self::InProject(path) => path.path.file_name(),
+            Self::OutsideProject { abs_path, .. } => abs_path.file_name()?.to_str(),
+        }
+    }
 }
 
 impl LspStore {
@@ -3684,15 +3680,6 @@ impl LspStore {
             .detach();
         cx.subscribe(&toolchain_store, Self::on_toolchain_store_event)
             .detach();
-        if let Some(extension_events) = extension::ExtensionEvents::try_global(cx).as_ref() {
-            cx.subscribe(
-                extension_events,
-                Self::reload_zed_json_schemas_on_extensions_changed,
-            )
-            .detach();
-        } else {
-            log::debug!("No extension events global found. Skipping JSON schema auto-reload setup");
-        }
         cx.observe_global::<SettingsStore>(Self::on_settings_changed)
             .detach();
         subscribe_to_binary_statuses(&languages, cx).detach();
@@ -3966,100 +3953,6 @@ impl LspStore {
         }
 
         Ok(())
-    }
-
-    pub fn reload_zed_json_schemas_on_extensions_changed(
-        &mut self,
-        _: Entity<extension::ExtensionEvents>,
-        evt: &extension::Event,
-        cx: &mut Context<Self>,
-    ) {
-        match evt {
-            extension::Event::ExtensionInstalled(_)
-            | extension::Event::ExtensionUninstalled(_)
-            | extension::Event::ConfigureExtensionRequested(_) => return,
-            extension::Event::ExtensionsInstalledChanged => {}
-        }
-        if self.as_local().is_none() {
-            return;
-        }
-        cx.spawn(async move |this, cx| {
-            let weak_ref = this.clone();
-
-            let servers = this
-                .update(cx, |this, cx| {
-                    let local = this.as_local()?;
-
-                    let mut servers = Vec::new();
-                    for (seed, state) in &local.language_server_ids {
-
-                            let Some(states) = local.language_servers.get(&state.id) else {
-                                continue;
-                            };
-                            let (json_adapter, json_server) = match states {
-                                LanguageServerState::Running {
-                                    adapter, server, ..
-                                } if adapter.adapter.is_primary_zed_json_schema_adapter() => {
-                                    (adapter.adapter.clone(), server.clone())
-                                }
-                                _ => continue,
-                            };
-
-                            let Some(worktree) = this
-                                .worktree_store
-                                .read(cx)
-                                .worktree_for_id(seed.worktree_id, cx)
-                            else {
-                                continue;
-                            };
-                            let json_delegate: Arc<dyn LspAdapterDelegate> =
-                                LocalLspAdapterDelegate::new(
-                                    local.languages.clone(),
-                                    &local.environment,
-                                    weak_ref.clone(),
-                                    &worktree,
-                                    local.http_client.clone(),
-                                    local.fs.clone(),
-                                    cx,
-                                );
-
-                            servers.push((json_adapter, json_server, json_delegate));
-
-                    }
-                    Some(servers)
-                })
-                .ok()
-                .flatten();
-
-            let Some(servers) = servers else {
-                return;
-            };
-
-            for (adapter, server, delegate) in servers {
-                adapter.clear_zed_json_schema_cache().await;
-
-                let Some(json_workspace_config) = LocalLspStore::workspace_configuration_for_adapter(
-                        adapter,
-                        &delegate,
-                        None,
-                        cx,
-                    )
-                    .await
-                    .context("generate new workspace configuration for JSON language server while trying to refresh JSON Schemas")
-                    .ok()
-                else {
-                    continue;
-                };
-                server
-                    .notify::<lsp::notification::DidChangeConfiguration>(
-                        &lsp::DidChangeConfigurationParams {
-                            settings: json_workspace_config,
-                        },
-                    )
-                    .ok();
-            }
-        })
-        .detach();
     }
 
     pub(crate) fn register_buffer_with_language_servers(
@@ -4353,7 +4246,7 @@ impl LspStore {
             let mut summaries = diangostic_summaries.iter().flat_map(|(path, summaries)| {
                 summaries
                     .iter()
-                    .map(|(server_id, summary)| summary.to_proto(*server_id, path))
+                    .map(|(server_id, summary)| summary.to_proto(*server_id, path.as_ref()))
             });
             if let Some(summary) = summaries.next() {
                 client
@@ -4655,7 +4548,6 @@ impl LspStore {
                         .unwrap_or_else(|| file.path().clone());
                     let worktree_path = ProjectPath { worktree_id, path };
                     let abs_path = file.abs_path(cx);
-                    let worktree_root = worktree.read(cx).abs_path();
                     let nodes = rebase
                         .walk(
                             worktree_path,
@@ -4668,7 +4560,7 @@ impl LspStore {
                     for node in nodes {
                         let server_id = node.server_id_or_init(|disposition| {
                             let path = &disposition.path;
-                            let uri = Uri::from_file_path(worktree_root.join(&path.path));
+                            let uri = Uri::from_file_path(worktree.read(cx).absolutize(&path.path));
                             let key = LanguageServerSeed {
                                 worktree_id,
                                 name: disposition.server_name.clone(),
@@ -4703,7 +4595,9 @@ impl LspStore {
                                 message:
                                     proto::update_language_server::Variant::RegisteredForBuffer(
                                         proto::RegisteredForBuffer {
-                                            buffer_abs_path: abs_path.to_string_lossy().to_string(),
+                                            buffer_abs_path: abs_path
+                                                .to_string_lossy()
+                                                .into_owned(),
                                             buffer_id: buffer_id.to_proto(),
                                         },
                                     ),
@@ -6965,7 +6859,6 @@ impl LspStore {
                 server_id: LanguageServerId,
                 lsp_adapter: Arc<CachedLspAdapter>,
                 worktree: WeakEntity<Worktree>,
-                worktree_abs_path: Arc<Path>,
                 lsp_symbols: Vec<(String, SymbolKind, lsp::Location)>,
             }
 
@@ -7004,7 +6897,6 @@ impl LspStore {
                 if !supports_workspace_symbol_request {
                     continue;
                 }
-                let worktree_abs_path = worktree.abs_path().clone();
                 let worktree_handle = worktree_handle.clone();
                 let server_id = server.server_id();
                 requests.push(
@@ -7044,7 +6936,6 @@ impl LspStore {
                                     server_id,
                                     lsp_adapter,
                                     worktree: worktree_handle.downgrade(),
-                                    worktree_abs_path,
                                     lsp_symbols,
                                 }
                             }),
@@ -7069,33 +6960,29 @@ impl LspStore {
                                 let source_worktree = result.worktree.upgrade()?;
                                 let source_worktree_id = source_worktree.read(cx).id();
 
-                                let path;
-                                let worktree;
-                                if let Some((tree, rel_path)) =
+                                let path = if let Some((tree, rel_path)) =
                                     this.worktree_store.read(cx).find_worktree(&abs_path, cx)
                                 {
-                                    worktree = tree;
-                                    path = rel_path;
+                                    let worktree_id = tree.read(cx).id();
+                                    SymbolLocation::InProject(ProjectPath {
+                                        worktree_id,
+                                        path: rel_path,
+                                    })
                                 } else {
-                                    worktree = source_worktree;
-                                    path = relativize_path(&result.worktree_abs_path, &abs_path);
-                                }
-
-                                let worktree_id = worktree.read(cx).id();
-                                let project_path = ProjectPath {
-                                    worktree_id,
-                                    path: path.into(),
+                                    SymbolLocation::OutsideProject {
+                                        signature: this.symbol_signature(&abs_path),
+                                        abs_path: abs_path.into(),
+                                    }
                                 };
-                                let signature = this.symbol_signature(&project_path);
+
                                 Some(CoreSymbol {
                                     source_language_server_id: result.server_id,
                                     language_server_name: result.lsp_adapter.name.clone(),
                                     source_worktree_id,
-                                    path: project_path,
+                                    path,
                                     kind: symbol_kind,
                                     name: symbol_name,
                                     range: range_from_lsp(symbol_location.range),
-                                    signature,
                                 })
                             })
                             .collect()
@@ -7285,7 +7172,7 @@ impl LspStore {
 
             language_server
                 .notify::<lsp::notification::DidChangeTextDocument>(
-                    &lsp::DidChangeTextDocumentParams {
+                    lsp::DidChangeTextDocumentParams {
                         text_document: lsp::VersionedTextDocumentIdentifier::new(
                             uri.clone(),
                             next_version,
@@ -7322,7 +7209,7 @@ impl LspStore {
                 };
                 server
                     .notify::<lsp::notification::DidSaveTextDocument>(
-                        &lsp::DidSaveTextDocumentParams {
+                        lsp::DidSaveTextDocumentParams {
                             text_document: text_document.clone(),
                             text,
                         },
@@ -7393,7 +7280,7 @@ impl LspStore {
                                             .ok()?;
                                         server
                                             .notify::<lsp::notification::DidChangeConfiguration>(
-                                                &lsp::DidChangeConfigurationParams { settings },
+                                                lsp::DidChangeConfigurationParams { settings },
                                             )
                                             .ok()?;
                                         Some(())
@@ -7638,7 +7525,7 @@ impl LspStore {
             let worktree_id = worktree.read(cx).id();
             let project_path = ProjectPath {
                 worktree_id,
-                path: relative_path.into(),
+                path: relative_path,
             };
 
             if let Some(buffer_handle) = self.buffer_store.read(cx).get_by_path(&project_path) {
@@ -7735,7 +7622,7 @@ impl LspStore {
         &mut self,
         worktree_id: WorktreeId,
         server_id: LanguageServerId,
-        path_in_worktree: Arc<Path>,
+        path_in_worktree: Arc<RelPath>,
         diagnostics: Vec<DiagnosticEntry<Unclipped<PointUtf16>>>,
         _: &mut Context<Worktree>,
     ) -> Result<ControlFlow<(), Option<(u64, proto::DiagnosticSummary)>>> {
@@ -7827,18 +7714,21 @@ impl LspStore {
                 )));
             };
 
-            let worktree_abs_path = if let Some(worktree_abs_path) = self
-                .worktree_store
-                .read(cx)
-                .worktree_for_id(symbol.path.worktree_id, cx)
-                .map(|worktree| worktree.read(cx).abs_path())
-            {
-                worktree_abs_path
-            } else {
-                return Task::ready(Err(anyhow!("worktree not found for symbol")));
+            let symbol_abs_path = match &symbol.path {
+                SymbolLocation::InProject(project_path) => self
+                    .worktree_store
+                    .read(cx)
+                    .absolutize(&project_path, cx)
+                    .context("no such worktree"),
+                SymbolLocation::OutsideProject {
+                    abs_path,
+                    signature: _,
+                } => Ok(abs_path.to_path_buf()),
             };
-
-            let symbol_abs_path = resolve_path(&worktree_abs_path, &symbol.path.path);
+            let symbol_abs_path = match symbol_abs_path {
+                Ok(abs_path) => abs_path,
+                Err(err) => return Task::ready(Err(err)),
+            };
             let symbol_uri = if let Ok(uri) = lsp::Uri::from_file_path(symbol_abs_path) {
                 uri
             } else {
@@ -7891,8 +7781,7 @@ impl LspStore {
                         worktree_store.find_worktree(&worktree_root_target, cx)
                     })
                 })? {
-                let relative_path =
-                    known_relative_path.unwrap_or_else(|| Arc::<Path>::from(result.1));
+                let relative_path = known_relative_path.unwrap_or_else(|| result.1.clone());
                 (result.0, relative_path)
             } else {
                 let worktree = lsp_store
@@ -7919,7 +7808,8 @@ impl LspStore {
                 let relative_path = if let Some(known_path) = known_relative_path {
                     known_path
                 } else {
-                    abs_path.strip_prefix(worktree_root)?.into()
+                    RelPath::new(abs_path.strip_prefix(worktree_root)?, PathStyle::local())?
+                        .into_arc()
                 };
                 (worktree, relative_path)
             };
@@ -8326,39 +8216,56 @@ impl LspStore {
         mut cx: AsyncApp,
     ) -> Result<proto::ProjectEntryResponse> {
         let entry_id = ProjectEntryId::from_proto(envelope.payload.entry_id);
-        let (worktree_id, worktree, old_path, is_dir) = this
+        let new_worktree_id = WorktreeId::from_proto(envelope.payload.new_worktree_id);
+        let new_path =
+            RelPath::from_proto(&envelope.payload.new_path).context("invalid relative path")?;
+
+        let (worktree_store, old_worktree, new_worktree, old_entry) = this
             .update(&mut cx, |this, cx| {
-                this.worktree_store
+                let (worktree, entry) = this
+                    .worktree_store
                     .read(cx)
-                    .worktree_and_entry_for_id(entry_id, cx)
-                    .map(|(worktree, entry)| {
-                        (
-                            worktree.read(cx).id(),
-                            worktree,
-                            entry.path.clone(),
-                            entry.is_dir(),
-                        )
-                    })
+                    .worktree_and_entry_for_id(entry_id, cx)?;
+                let new_worktree = this
+                    .worktree_store
+                    .read(cx)
+                    .worktree_for_id(new_worktree_id, cx)?;
+                Some((
+                    this.worktree_store.clone(),
+                    worktree,
+                    new_worktree,
+                    entry.clone(),
+                ))
             })?
             .context("worktree not found")?;
-        let (old_abs_path, new_abs_path) = {
-            let root_path = worktree.read_with(&cx, |this, _| this.abs_path())?;
-            let new_path = PathBuf::from_proto(envelope.payload.new_path.clone());
-            (root_path.join(&old_path), root_path.join(&new_path))
-        };
+        let (old_abs_path, old_worktree_id) = old_worktree.read_with(&cx, |worktree, _| {
+            (worktree.absolutize(&old_entry.path), worktree.id())
+        })?;
+        let new_abs_path =
+            new_worktree.read_with(&cx, |worktree, _| worktree.absolutize(&new_path))?;
 
         let _transaction = Self::will_rename_entry(
             this.downgrade(),
-            worktree_id,
+            old_worktree_id,
             &old_abs_path,
             &new_abs_path,
-            is_dir,
+            old_entry.is_dir(),
             cx.clone(),
         )
         .await;
-        let response = Worktree::handle_rename_entry(worktree, envelope.payload, cx.clone()).await;
+        let response = WorktreeStore::handle_rename_project_entry(
+            worktree_store,
+            envelope.payload,
+            cx.clone(),
+        )
+        .await;
         this.read_with(&cx, |this, _| {
-            this.did_rename_entry(worktree_id, &old_abs_path, &new_abs_path, is_dir);
+            this.did_rename_entry(
+                old_worktree_id,
+                &old_abs_path,
+                &new_abs_path,
+                old_entry.is_dir(),
+            );
         })
         .ok();
         response
@@ -8381,7 +8288,7 @@ impl LspStore {
             {
                 let project_path = ProjectPath {
                     worktree_id,
-                    path: Arc::<Path>::from_proto(message_summary.path),
+                    path: RelPath::from_proto(&message_summary.path).context("invalid path")?,
                 };
                 let path = project_path.path.clone();
                 let server_id = LanguageServerId(message_summary.language_server_id as usize);
@@ -8595,15 +8502,16 @@ impl LspStore {
         cx: AsyncApp,
     ) -> Result<proto::Ack> {
         let server_id = LanguageServerId(envelope.payload.language_server_id as usize);
-        lsp_store.read_with(&cx, |lsp_store, _| {
+        let task = lsp_store.read_with(&cx, |lsp_store, _| {
             if let Some(server) = lsp_store.language_server_for_id(server_id) {
-                server
-                    .notify::<lsp_store::lsp_ext_command::LspExtCancelFlycheck>(&())
-                    .context("handling lsp ext cancel flycheck")
+                Some(server.notify::<lsp_store::lsp_ext_command::LspExtCancelFlycheck>(()))
             } else {
-                anyhow::Ok(())
+                None
             }
-        })??;
+        })?;
+        if let Some(task) = task {
+            task.context("handling lsp ext cancel flycheck")?;
+        }
 
         Ok(proto::Ack {})
     }
@@ -8637,14 +8545,11 @@ impl LspStore {
                 } else {
                     None
                 };
-                server
-                    .notify::<lsp_store::lsp_ext_command::LspExtRunFlycheck>(
-                        &lsp_store::lsp_ext_command::RunFlycheckParams { text_document },
-                    )
-                    .context("handling lsp ext run flycheck")
-            } else {
-                anyhow::Ok(())
+                server.notify::<lsp_store::lsp_ext_command::LspExtRunFlycheck>(
+                    lsp_store::lsp_ext_command::RunFlycheckParams { text_document },
+                )?;
             }
+            anyhow::Ok(())
         })??;
 
         Ok(proto::Ack {})
@@ -8656,15 +8561,15 @@ impl LspStore {
         cx: AsyncApp,
     ) -> Result<proto::Ack> {
         let server_id = LanguageServerId(envelope.payload.language_server_id as usize);
-        lsp_store.read_with(&cx, |lsp_store, _| {
-            if let Some(server) = lsp_store.language_server_for_id(server_id) {
-                server
-                    .notify::<lsp_store::lsp_ext_command::LspExtClearFlycheck>(&())
-                    .context("handling lsp ext clear flycheck")
-            } else {
-                anyhow::Ok(())
-            }
-        })??;
+        lsp_store
+            .read_with(&cx, |lsp_store, _| {
+                if let Some(server) = lsp_store.language_server_for_id(server_id) {
+                    Some(server.notify::<lsp_store::lsp_ext_command::LspExtClearFlycheck>(()))
+                } else {
+                    None
+                }
+            })
+            .context("handling lsp ext clear flycheck")?;
 
         Ok(proto::Ack {})
     }
@@ -8803,7 +8708,7 @@ impl LspStore {
 
                 if filter.should_send_did_rename(&old_uri, is_dir) {
                     language_server
-                        .notify::<DidRenameFiles>(&RenameFilesParams {
+                        .notify::<DidRenameFiles>(RenameFilesParams {
                             files: vec![FileRename {
                                 old_uri: old_uri.clone(),
                                 new_uri: new_uri.clone(),
@@ -8917,7 +8822,7 @@ impl LspStore {
             if !changes.is_empty() {
                 server
                     .notify::<lsp::notification::DidChangeWatchedFiles>(
-                        &lsp::DidChangeWatchedFilesParams { changes },
+                        lsp::DidChangeWatchedFilesParams { changes },
                     )
                     .ok();
             }
@@ -9436,10 +9341,16 @@ impl LspStore {
         let peer_id = envelope.original_sender_id().unwrap_or_default();
         let symbol = envelope.payload.symbol.context("invalid symbol")?;
         let symbol = Self::deserialize_symbol(symbol)?;
-        let symbol = this.read_with(&cx, |this, _| {
-            let signature = this.symbol_signature(&symbol.path);
-            anyhow::ensure!(signature == symbol.signature, "invalid symbol signature");
-            Ok(symbol)
+        this.read_with(&cx, |this, _| {
+            if let SymbolLocation::OutsideProject {
+                abs_path,
+                signature,
+            } = &symbol.path
+            {
+                let new_signature = this.symbol_signature(&abs_path);
+                anyhow::ensure!(&new_signature == signature, "invalid symbol signature");
+            }
+            Ok(())
         })??;
         let buffer = this
             .update(&mut cx, |this, cx| {
@@ -9452,7 +9363,6 @@ impl LspStore {
                         name: symbol.name,
                         kind: symbol.kind,
                         range: symbol.range,
-                        signature: symbol.signature,
                         label: CodeLabel {
                             text: Default::default(),
                             runs: Default::default(),
@@ -9484,10 +9394,9 @@ impl LspStore {
         })?
     }
 
-    fn symbol_signature(&self, project_path: &ProjectPath) -> [u8; 32] {
+    fn symbol_signature(&self, abs_path: &Path) -> [u8; 32] {
         let mut hasher = Sha256::new();
-        hasher.update(project_path.worktree_id.to_proto().to_be_bytes());
-        hasher.update(project_path.path.to_string_lossy().as_bytes());
+        hasher.update(abs_path.to_string_lossy().as_bytes());
         hasher.update(self.nonce.to_be_bytes());
         hasher.finalize().as_slice().try_into().unwrap()
     }
@@ -10233,7 +10142,7 @@ impl LspStore {
 
         let project_path = ProjectPath {
             worktree_id: worktree.read(cx).id(),
-            path: relative_path.into(),
+            path: relative_path,
         };
 
         Some(
@@ -10646,7 +10555,7 @@ impl LspStore {
                 name: Some(adapter.name()),
                 message: proto::update_language_server::Variant::RegisteredForBuffer(
                     proto::RegisteredForBuffer {
-                        buffer_abs_path: abs_path.to_string_lossy().to_string(),
+                        buffer_abs_path: abs_path.to_string_lossy().into_owned(),
                         buffer_id: buffer_id.to_proto(),
                     },
                 ),
@@ -10723,7 +10632,7 @@ impl LspStore {
                     if progress.is_cancellable {
                         server
                             .notify::<lsp::notification::WorkDoneProgressCancel>(
-                                &WorkDoneProgressCancelParams {
+                                WorkDoneProgressCancelParams {
                                     token: lsp::NumberOrString::String(token.clone()),
                                 },
                             )
@@ -10799,7 +10708,7 @@ impl LspStore {
     pub(super) fn update_local_worktree_language_servers(
         &mut self,
         worktree_handle: &Entity<Worktree>,
-        changes: &[(Arc<Path>, ProjectEntryId, PathChange)],
+        changes: &[(Arc<RelPath>, ProjectEntryId, PathChange)],
         cx: &mut Context<Self>,
     ) {
         if changes.is_empty() {
@@ -10821,7 +10730,7 @@ impl LspStore {
         language_server_ids.sort();
         language_server_ids.dedup();
 
-        let abs_path = worktree_handle.read(cx).abs_path();
+        // let abs_path = worktree_handle.read(cx).abs_path();
         for server_id in &language_server_ids {
             if let Some(LanguageServerState::Running { server, .. }) =
                 local.language_servers.get(server_id)
@@ -10834,7 +10743,7 @@ impl LspStore {
                     changes: changes
                         .iter()
                         .filter_map(|(path, _, change)| {
-                            if !watched_paths.is_match(path) {
+                            if !watched_paths.is_match(path.as_std_path()) {
                                 return None;
                             }
                             let typ = match change {
@@ -10844,22 +10753,23 @@ impl LspStore {
                                 PathChange::Updated => lsp::FileChangeType::CHANGED,
                                 PathChange::AddedOrUpdated => lsp::FileChangeType::CHANGED,
                             };
-                            Some(lsp::FileEvent {
-                                uri: lsp::Uri::from_file_path(abs_path.join(path)).unwrap(),
-                                typ,
-                            })
+                            let uri = lsp::Uri::from_file_path(
+                                worktree_handle.read(cx).absolutize(&path),
+                            )
+                            .ok()?;
+                            Some(lsp::FileEvent { uri, typ })
                         })
                         .collect(),
                 };
                 if !params.changes.is_empty() {
                     server
-                        .notify::<lsp::notification::DidChangeWatchedFiles>(&params)
+                        .notify::<lsp::notification::DidChangeWatchedFiles>(params)
                         .ok();
                 }
             }
         }
         for (path, _, _) in changes {
-            if let Some(file_name) = path.file_name().and_then(|file_name| file_name.to_str())
+            if let Some(file_name) = path.file_name()
                 && local.watched_manifest_filenames.contains(file_name)
             {
                 self.request_workspace_config_refresh();
@@ -10879,12 +10789,10 @@ impl LspStore {
     }
 
     fn serialize_symbol(symbol: &Symbol) -> proto::Symbol {
-        proto::Symbol {
+        let mut result = proto::Symbol {
             language_server_name: symbol.language_server_name.0.to_string(),
             source_worktree_id: symbol.source_worktree_id.to_proto(),
             language_server_id: symbol.source_language_server_id.to_proto(),
-            worktree_id: symbol.path.worktree_id.to_proto(),
-            path: symbol.path.path.as_ref().to_proto(),
             name: symbol.name.clone(),
             kind: unsafe { mem::transmute::<lsp::SymbolKind, i32>(symbol.kind) },
             start: Some(proto::PointUtf16 {
@@ -10895,17 +10803,45 @@ impl LspStore {
                 row: symbol.range.end.0.row,
                 column: symbol.range.end.0.column,
             }),
-            signature: symbol.signature.to_vec(),
+            worktree_id: Default::default(),
+            path: Default::default(),
+            signature: Default::default(),
+        };
+        match &symbol.path {
+            SymbolLocation::InProject(path) => {
+                result.worktree_id = path.worktree_id.to_proto();
+                result.path = path.path.to_proto();
+            }
+            SymbolLocation::OutsideProject {
+                abs_path,
+                signature,
+            } => {
+                result.path = abs_path.to_string_lossy().into_owned();
+                result.signature = signature.to_vec();
+            }
         }
+        result
     }
 
     fn deserialize_symbol(serialized_symbol: proto::Symbol) -> Result<CoreSymbol> {
         let source_worktree_id = WorktreeId::from_proto(serialized_symbol.source_worktree_id);
         let worktree_id = WorktreeId::from_proto(serialized_symbol.worktree_id);
         let kind = unsafe { mem::transmute::<i32, lsp::SymbolKind>(serialized_symbol.kind) };
-        let path = ProjectPath {
-            worktree_id,
-            path: Arc::<Path>::from_proto(serialized_symbol.path),
+
+        let path = if serialized_symbol.signature.is_empty() {
+            SymbolLocation::InProject(ProjectPath {
+                worktree_id,
+                path: RelPath::from_proto(&serialized_symbol.path)
+                    .context("invalid symbol path")?,
+            })
+        } else {
+            SymbolLocation::OutsideProject {
+                abs_path: Path::new(&serialized_symbol.path).into(),
+                signature: serialized_symbol
+                    .signature
+                    .try_into()
+                    .map_err(|_| anyhow!("invalid signature"))?,
+            }
         };
 
         let start = serialized_symbol.start.context("invalid start")?;
@@ -10921,10 +10857,6 @@ impl LspStore {
             range: Unclipped(PointUtf16::new(start.row, start.column))
                 ..Unclipped(PointUtf16::new(end.row, end.column)),
             kind,
-            signature: serialized_symbol
-                .signature
-                .try_into()
-                .map_err(|_| anyhow!("invalid signature"))?,
         })
     }
 
@@ -12484,7 +12416,7 @@ impl DiagnosticSummary {
     pub fn to_proto(
         self,
         language_server_id: LanguageServerId,
-        path: &Path,
+        path: &RelPath,
     ) -> proto::DiagnosticSummary {
         proto::DiagnosticSummary {
             path: path.to_proto(),
@@ -12657,7 +12589,7 @@ pub fn language_server_settings<'a>(
     language_server_settings_for(
         SettingsLocation {
             worktree_id: delegate.worktree_id(),
-            path: delegate.worktree_root_path(),
+            path: RelPath::empty(),
         },
         language,
         cx,
@@ -12789,7 +12721,10 @@ impl LspAdapterDelegate for LocalLspAdapterDelegate {
 
     #[cfg(not(target_os = "windows"))]
     async fn which(&self, command: &OsStr) -> Option<PathBuf> {
-        let worktree_abs_path = self.worktree.abs_path();
+        let mut worktree_abs_path = self.worktree_root_path().to_path_buf();
+        if self.fs.is_file(&worktree_abs_path).await {
+            worktree_abs_path.pop();
+        }
         let shell_path = self.shell_env().await.get("PATH").cloned();
         which::which_in(command, shell_path.as_ref(), worktree_abs_path).ok()
     }
@@ -12803,7 +12738,10 @@ impl LspAdapterDelegate for LocalLspAdapterDelegate {
     }
 
     async fn try_exec(&self, command: LanguageServerBinary) -> Result<()> {
-        let working_dir = self.worktree_root_path();
+        let mut working_dir = self.worktree_root_path().to_path_buf();
+        if self.fs.is_file(&working_dir).await {
+            working_dir.pop();
+        }
         let output = util::command::new_smol_command(&command.path)
             .args(command.arguments)
             .envs(command.env.clone().unwrap_or_default())
@@ -12847,16 +12785,12 @@ impl LspAdapterDelegate for LocalLspAdapterDelegate {
         Some(dir)
     }
 
-    async fn read_text_file(&self, path: PathBuf) -> Result<String> {
+    async fn read_text_file(&self, path: &RelPath) -> Result<String> {
         let entry = self
             .worktree
-            .entry_for_path(&path)
+            .entry_for_path(path)
             .with_context(|| format!("no worktree entry for path {path:?}"))?;
-        let abs_path = self
-            .worktree
-            .absolutize(&entry.path)
-            .with_context(|| format!("cannot absolutize path {path:?}"))?;
-
+        let abs_path = self.worktree.absolutize(&entry.path);
         self.fs.load(&abs_path).await
     }
 }
@@ -12870,14 +12804,17 @@ async fn populate_labels_for_symbols(
     #[allow(clippy::mutable_key_type)]
     let mut symbols_by_language = HashMap::<Option<Arc<Language>>, Vec<CoreSymbol>>::default();
 
-    let mut unknown_paths = BTreeSet::new();
+    let mut unknown_paths = BTreeSet::<Arc<str>>::new();
     for symbol in symbols {
+        let Some(file_name) = symbol.path.file_name() else {
+            continue;
+        };
         let language = language_registry
-            .language_for_file_path(&symbol.path.path)
+            .load_language_for_file_path(Path::new(file_name))
             .await
             .ok()
             .or_else(|| {
-                unknown_paths.insert(symbol.path.path.clone());
+                unknown_paths.insert(file_name.into());
                 None
             });
         symbols_by_language
@@ -12887,10 +12824,7 @@ async fn populate_labels_for_symbols(
     }
 
     for unknown_path in unknown_paths {
-        log::info!(
-            "no language found for symbol path {}",
-            unknown_path.display()
-        );
+        log::info!("no language found for symbol in file {unknown_path:?}");
     }
 
     let mut label_params = Vec::new();
@@ -12933,7 +12867,6 @@ async fn populate_labels_for_symbols(
                 name,
                 kind: symbol.kind,
                 range: symbol.range,
-                signature: symbol.signature,
             });
         }
     }

@@ -10,14 +10,6 @@ use ui::{
 use workspace::dock::DockPosition;
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
-pub struct ScrollbarSettingsContent {
-    /// When to show the scrollbar in the git panel.
-    ///
-    /// Default: inherits editor scrollbar settings
-    pub show: Option<Option<ShowScrollbar>>,
-}
-
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ScrollbarSettings {
     pub show: Option<ShowScrollbar>,
 }
@@ -51,7 +43,7 @@ impl ScrollbarVisibility for GitPanelSettings {
 }
 
 impl Settings for GitPanelSettings {
-    fn from_settings(content: &settings::SettingsContent, _cx: &mut ui::App) -> Self {
+    fn from_settings(content: &settings::SettingsContent) -> Self {
         let git_panel = content.git_panel.clone().unwrap();
         Self {
             button: git_panel.button.unwrap(),
