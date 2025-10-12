@@ -20,6 +20,8 @@ util.workspace = true
 workspace-hack.workspace = true
 zed.workspace = true
 zlog.workspace = true
+task.workspace = true
+theme.workspace = true
 
 [lints]
 workspace = true

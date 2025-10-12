@@ -5028,6 +5028,8 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
+ "task",
+ "theme",
  "workspace-hack",
  "zed",
  "zed-util",
