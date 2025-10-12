@@ -8,6 +8,7 @@ pub mod fs_watcher;
 use anyhow::{Context as _, Result, anyhow};
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use ashpd::desktop::trash;
+use encoding_rs::Encoding;
 use gpui::App;
 use gpui::BackgroundExecutor;
 use gpui::Global;
@@ -58,9 +59,9 @@ use smol::io::AsyncReadExt;
 #[cfg(any(test, feature = "test-support"))]
 use std::ffi::OsStr;
 
-use crate::encodings::to_utf8;
 use crate::encodings::EncodingWrapper;
 use crate::encodings::from_utf8;
+use crate::encodings::to_utf8;
 
 pub trait Watcher: Send + Sync {
     fn add(&self, path: &Path) -> Result<()>;
@@ -121,9 +122,18 @@ pub trait Fs: Send + Sync {
         &self,
         path: &Path,
         encoding: EncodingWrapper,
+        force: bool,
         detect_utf16: bool,
+        buffer_encoding: Option<Arc<std::sync::Mutex<&'static Encoding>>>,
     ) -> Result<String> {
-        Ok(to_utf8(self.load_bytes(path).await?, encoding, detect_utf16, None).await?)
+        Ok(to_utf8(
+            self.load_bytes(path).await?,
+            encoding,
+            force,
+            detect_utf16,
+            buffer_encoding,
+        )
+        .await?)
     }
 
     async fn load_bytes(&self, path: &Path) -> Result<Vec<u8>>;

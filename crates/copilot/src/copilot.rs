@@ -1194,6 +1194,7 @@ async fn get_copilot_lsp(fs: Arc<dyn Fs>, node_runtime: NodeRuntime) -> anyhow::
 mod tests {
     use super::*;
     use fs::encodings::EncodingWrapper;
+    use encoding_rs::Encoding;
     use gpui::TestAppContext;
     use util::path;
 
@@ -1400,7 +1401,7 @@ mod tests {
             self.abs_path.clone()
         }
 
-        fn load(&self, _: &App, _: EncodingWrapper, _: bool) -> Task<Result<String>> {
+        fn load(&self, _: &App, _: EncodingWrapper, _: bool, _: bool, _: Option<Arc<std::sync::Mutex<&'static Encoding>>>) -> Task<Result<String>> {
             unimplemented!()
         }
 

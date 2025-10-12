@@ -1,6 +1,6 @@
 /// This module contains the encoding selectors for saving or reopening files with a different encoding.
 /// It provides a modal view that allows the user to choose between saving with a different encoding
-/// or reopening with a different encoding, and then selecting the desired encoding from a list.
+/// or reopening with a different encoding.
 pub mod save_or_reopen {
     use editor::Editor;
     use gpui::Styled;
@@ -277,10 +277,14 @@ pub mod save_or_reopen {
 
 /// This module contains the encoding selector for choosing an encoding to save or reopen a file with.
 pub mod encoding {
+    use editor::Editor;
+    use fs::encodings::EncodingWrapper;
     use std::{path::PathBuf, sync::atomic::AtomicBool};
 
     use fuzzy::{StringMatch, StringMatchCandidate};
-    use gpui::{AppContext, DismissEvent, Entity, EventEmitter, Focusable, WeakEntity};
+    use gpui::{
+        AppContext, DismissEvent, Entity, EventEmitter, Focusable, WeakEntity, http_client::anyhow,
+    };
     use language::Buffer;
     use picker::{Picker, PickerDelegate};
     use ui::{
@@ -288,7 +292,7 @@ pub mod encoding {
         Window, rems, v_flex,
     };
     use util::{ResultExt, TryFutureExt};
-    use workspace::{ModalView, Workspace};
+    use workspace::{CloseActiveItem, ModalView, OpenOptions, Workspace};
 
     use crate::encoding_from_name;
 
@@ -436,50 +440,84 @@ pub mod encoding {
                 .unwrap();
 
             if let Some(buffer) = &self.buffer
-                && let Some(buffer) = buffer.upgrade()
+                && let Some(buffer_entity) = buffer.upgrade()
             {
-                buffer.update(cx, |buffer, cx| {
-                    let buffer_encoding = buffer.encoding.clone();
-                    let buffer_encoding = &mut *buffer_encoding.lock().unwrap();
-                    *buffer_encoding =
-                        encoding_from_name(self.matches[self.current_selection].string.as_str());
-                    if self.action == Action::Reopen {
-                        let executor = cx.background_executor().clone();
-                        executor.spawn(buffer.reload(cx)).detach();
-                    } else if self.action == Action::Save {
-                        let executor = cx.background_executor().clone();
+                let buffer = buffer_entity.read(cx);
 
-                        executor
-                            .spawn(workspace.update(cx, |workspace, cx| {
-                                workspace
-                                    .save_active_item(workspace::SaveIntent::Save, window, cx)
-                                    .log_err()
-                            }))
-                            .detach();
-                    }
-                });
-            } else {
-                workspace.update(cx, |workspace, cx| {
-                    *workspace.encoding.lock().unwrap() =
+                // Since the encoding will be accessed in `reload`,
+                // the lock must be released before calling `reload`.
+                // By limiting the scope, we ensure that it is released
+                {
+                    let buffer_encoding = buffer.encoding.clone();
+                    *buffer_encoding.lock().unwrap() =
                         encoding_from_name(self.matches[self.current_selection].string.as_str());
-                    workspace
-                        .open_abs_path(
-                            self.selector
-                                .upgrade()
-                                .unwrap()
-                                .read(cx)
-                                .path
-                                .as_ref()
-                                .unwrap()
-                                .clone(),
-                            Default::default(),
-                            window,
-                            cx,
-                        )
-                        .detach();
-                })
+                }
+
+                self.dismissed(window, cx);
+
+                if self.action == Action::Reopen {
+                    buffer_entity.update(cx, |buffer, cx| {
+                        let rec = buffer.reload(cx);
+                        cx.spawn(async move |_, _| rec.await).detach()
+                    });
+                } else if self.action == Action::Save {
+                    let task = workspace.update(cx, |workspace, cx| {
+                        workspace
+                            .save_active_item(workspace::SaveIntent::Save, window, cx)
+                            .log_err()
+                    });
+                    cx.spawn(async |_, _| task).detach();
+                }
+            } else {
+                if let Some(path) = self.selector.upgrade().unwrap().read(cx).path.clone() {
+                    workspace.update(cx, |workspace, cx| {
+                        workspace.active_pane().update(cx, |pane, cx| {
+                            pane.close_active_item(&CloseActiveItem::default(), window, cx)
+                                .detach();
+                        });
+                    });
+
+                    let encoding =
+                        encoding_from_name(self.matches[self.current_selection].string.as_str());
+
+                    let open_task = workspace.update(cx, |workspace, cx| {
+                        *workspace.encoding_options.encoding.lock().unwrap() =
+                            EncodingWrapper::new(encoding);
+
+                        workspace.open_abs_path(path, OpenOptions::default(), window, cx)
+                    });
+
+                    cx.spawn(async move |_, cx| {
+                        if let Ok(_) = {
+                            let result = open_task.await;
+                            workspace
+                                .update(cx, |workspace, _| {
+                                    *workspace.encoding_options.force.get_mut() = false;
+                                })
+                                .unwrap();
+
+                            result
+                        } && let Ok(Ok((_, buffer, _))) =
+                            workspace.read_with(cx, |workspace, cx| {
+                                if let Some(active_item) = workspace.active_item(cx)
+                                    && let Some(editor) = active_item.act_as::<Editor>(cx)
+                                {
+                                    Ok(editor.read(cx).active_excerpt(cx).unwrap())
+                                } else {
+                                    Err(anyhow!("error"))
+                                }
+                            })
+                        {
+                            buffer
+                                .read_with(cx, |buffer, _| {
+                                    *buffer.encoding.lock().unwrap() = encoding;
+                                })
+                                .log_err();
+                        }
+                    })
+                    .detach();
+                }
             }
-            self.dismissed(window, cx);
         }
 
         fn dismissed(&mut self, _: &mut Window, cx: &mut Context<Picker<Self>>) {
