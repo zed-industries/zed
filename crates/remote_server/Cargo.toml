@@ -60,6 +60,7 @@ settings.workspace = true
 shellexpand.workspace = true
 smol.workspace = true
 sysinfo.workspace = true
+task.workspace = true
 util.workspace = true
 watch.workspace = true
 worktree.workspace = true
