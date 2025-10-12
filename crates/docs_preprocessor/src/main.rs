@@ -53,9 +53,20 @@ fn main() -> Result<()> {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 enum PreprocessorError {
-    ActionNotFound { action_name: String },
-    DeprecatedActionUsed { used: String, should_be: String },
+    ActionNotFound {
+        action_name: String,
+    },
+    DeprecatedActionUsed {
+        used: String,
+        should_be: String,
+    },
     InvalidFrontmatterLine(String),
+    InvalidSettingsJson {
+        file: std::path::PathBuf,
+        line: usize,
+        snippet: String,
+        error: String,
+    },
 }
 
 impl PreprocessorError {
@@ -71,6 +82,20 @@ impl PreprocessorError {
             }
         }
         PreprocessorError::ActionNotFound { action_name }
+    }
+
+    fn new_for_invalid_settings_json(
+        chapter: &Chapter,
+        location: usize,
+        snippet: String,
+        error: String,
+    ) -> Self {
+        PreprocessorError::InvalidSettingsJson {
+            file: chapter.path.clone().expect("chapter has path"),
+            line: chapter.content[..location].lines().count(),
+            snippet,
+            error,
+        }
     }
 }
 
@@ -88,6 +113,21 @@ impl std::fmt::Display for PreprocessorError {
                 "Deprecated action used: {} should be {}",
                 used, should_be
             ),
+            PreprocessorError::InvalidSettingsJson {
+                file,
+                line,
+                snippet,
+                error,
+            } => {
+                write!(
+                    f,
+                    "Invalid settings JSON at {}:{}\nError: {}\n\n{}",
+                    file.display(),
+                    line,
+                    error,
+                    snippet
+                )
+            }
         }
     }
 }
@@ -105,6 +145,7 @@ fn handle_preprocessing() -> Result<()> {
     template_big_table_of_actions(&mut book);
     template_and_validate_keybindings(&mut book, &mut errors);
     template_and_validate_actions(&mut book, &mut errors);
+    template_and_validate_settings_snippet(&mut book, &mut errors);
 
     if !errors.is_empty() {
         const ANSI_RED: &str = "\x1b[31m";
@@ -232,6 +273,63 @@ fn find_binding(os: &str, action: &str) -> Option<String> {
                 None
             }
         })
+    })
+}
+
+fn template_and_validate_settings_snippet(
+    book: &mut Book,
+    errors: &mut HashSet<PreprocessorError>,
+) {
+    for_each_chapter_mut(book, |chapter| {
+        let mut offset = 0;
+        const SETTINGS_SNIPPET_TAG: &'static str = "```json [settings]";
+        let (json_code_block, settings_block) = SETTINGS_SNIPPET_TAG.split_once(' ').unwrap();
+        while let Some(loc) = chapter.content[offset..].find(SETTINGS_SNIPPET_TAG) {
+            let loc = loc + offset;
+            let settings_block_range =
+                loc + json_code_block.len()..loc + SETTINGS_SNIPPET_TAG.len();
+            assert_eq!(
+                &chapter.content[settings_block_range.clone()][1..],
+                settings_block
+            );
+            chapter.content.replace_range(settings_block_range, "");
+            let snippet_start = loc + json_code_block.len();
+            let Some(snippet_end) = chapter.content[snippet_start..].find("```") else {
+                errors.insert(PreprocessorError::new_for_invalid_settings_json(
+                    chapter,
+                    loc,
+                    chapter.content[loc..loc + json_code_block.len()].to_string(),
+                    "Missing closing code block".to_string(),
+                ));
+                offset = loc + json_code_block.len();
+                continue;
+            };
+            let snippet_end = snippet_start + snippet_end;
+            let snippet_json = &chapter.content[snippet_start..snippet_end].trim();
+            if !snippet_json.starts_with('{') || !snippet_json.ends_with('}') {
+                errors.insert(PreprocessorError::new_for_invalid_settings_json(
+                    chapter,
+                    loc,
+                    snippet_json.to_string(),
+                    "Settings JSON snippets should be valid JSON objects".to_string(),
+                ));
+                offset = loc + json_code_block.len();
+                continue;
+            }
+            let parse_result = settings::parse_json_with_comments::<settings::SettingsContent>(
+                snippet_json.trim(),
+            );
+            if let Err(err) = parse_result {
+                errors.insert(PreprocessorError::new_for_invalid_settings_json(
+                    chapter,
+                    loc,
+                    snippet_json.to_string(),
+                    err.to_string(),
+                ));
+            }
+
+            offset = snippet_end + 3;
+        }
     })
 }
 
