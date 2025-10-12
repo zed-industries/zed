@@ -109,10 +109,10 @@ pub struct ParsedMarkdownTable {
     pub column_alignments: Vec<ParsedMarkdownTableAlignment>,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 #[cfg_attr(test, derive(PartialEq))]
 pub enum ParsedMarkdownTableAlignment {
-    /// Default text alignment.
+    #[default]
     None,
     Left,
     Center,
@@ -123,6 +123,7 @@ pub enum ParsedMarkdownTableAlignment {
 #[cfg_attr(test, derive(PartialEq))]
 pub struct ParsedMarkdownTableColumn {
     pub col_span: usize,
+    pub row_span: usize,
     pub is_header: bool,
     pub children: MarkdownParagraph,
 }

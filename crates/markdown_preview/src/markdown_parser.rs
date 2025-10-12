@@ -487,6 +487,7 @@ impl<'a> MarkdownParser<'a> {
                     let cell_contents = self.parse_text(false, Some(source_range));
                     row_columns.push(ParsedMarkdownTableColumn {
                         col_span: 1,
+                        row_span: 1,
                         is_header: in_header,
                         children: cell_contents,
                     });
@@ -991,6 +992,12 @@ impl<'a> MarkdownParser<'a> {
                 Some(ParsedMarkdownTableColumn {
                     col_span: std::cmp::max(
                         Self::attr_value(attrs, local_name!("colspan"))
+                            .and_then(|span| span.parse().ok())
+                            .unwrap_or(1),
+                        1,
+                    ),
+                    row_span: std::cmp::max(
+                        Self::attr_value(attrs, local_name!("rowspan"))
                             .and_then(|span| span.parse().ok())
                             .unwrap_or(1),
                         1,
@@ -2399,6 +2406,7 @@ fn main() {
     ) -> ParsedMarkdownTableColumn {
         ParsedMarkdownTableColumn {
             col_span,
+            row_span: 1,
             is_header,
             children,
         }
