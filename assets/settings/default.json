@@ -722,7 +722,9 @@
     // Whether to enable drag-and-drop operations in the project panel.
     "drag_and_drop": true,
     // Whether to hide the root entry when only one folder is open in the window.
-    "hide_root": false
+    "hide_root": false,
+    // Whether to hide the hidden entries in the project panel.
+    "hide_hidden": false
   },
   "outline_panel": {
     // Whether to show the outline panel button in the status bar
