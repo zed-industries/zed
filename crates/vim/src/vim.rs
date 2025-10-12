@@ -1525,6 +1525,7 @@ impl Vim {
                 post_count
                     .checked_mul(10)
                     .and_then(|post_count| post_count.checked_add(number))
+                    .filter(|post_count| *post_count < isize::MAX as usize)
                     .unwrap_or(post_count),
             )
         } else {
@@ -1534,6 +1535,7 @@ impl Vim {
                 pre_count
                     .checked_mul(10)
                     .and_then(|pre_count| pre_count.checked_add(number))
+                    .filter(|pre_count| *pre_count < isize::MAX as usize)
                     .unwrap_or(pre_count),
             )
         }
