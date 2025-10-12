@@ -1,4 +1,4 @@
-use std::{cmp, ops::Range};
+use std::{cmp, ops::Range, time::Duration};
 
 use collections::HashMap;
 use futures::future::join_all;
@@ -193,7 +193,12 @@ impl Editor {
                 })
                 .collect::<Vec<_>>()
         });
-        cx.spawn(async move |editor, cx| {
+
+        self.refresh_colors_task = cx.spawn(async move |editor, cx| {
+            cx.background_executor()
+                .timer(Duration::from_millis(150))
+                .await;
+
             let all_colors = join_all(all_colors_task).await;
             if all_colors.is_empty() {
                 return;
@@ -420,7 +425,6 @@ impl Editor {
                     }
                 })
                 .ok();
-        })
-        .detach();
+        });
     }
 }

@@ -1189,6 +1189,7 @@ pub struct Editor {
     inline_value_cache: InlineValueCache,
     selection_drag_state: SelectionDragState,
     colors: Option<LspColorData>,
+    refresh_colors_task: Task<()>,
     folding_newlines: Task<()>,
     pub lookup_key: Option<Box<dyn Any + Send + Sync>>,
 }
@@ -2244,6 +2245,7 @@ impl Editor {
             tasks_update_task: None,
             pull_diagnostics_task: Task::ready(()),
             colors: None,
+            refresh_colors_task: Task::ready(()),
             next_color_inlay_id: 0,
             linked_edit_ranges: Default::default(),
             in_project_search: false,
