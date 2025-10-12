@@ -13020,6 +13020,7 @@ dependencies = [
  "shellexpand 2.1.2",
  "smol",
  "sysinfo",
+ "task",
  "thiserror 2.0.12",
  "toml 0.8.20",
  "unindent",
