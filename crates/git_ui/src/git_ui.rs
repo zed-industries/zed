@@ -44,6 +44,8 @@ pub mod picker_prompt;
 pub mod project_diff;
 pub(crate) mod remote_output;
 pub mod repository_selector;
+pub mod split_diff_model;
+pub mod split_diff_settings;
 pub mod stash_picker;
 pub mod text_diff_view;
 
@@ -57,6 +59,7 @@ actions!(
 
 pub fn init(cx: &mut App) {
     GitPanelSettings::register(cx);
+    split_diff_settings::SplitDiffSettings::register(cx);
 
     editor::set_blame_renderer(blame_ui::GitBlameRenderer, cx);
 
