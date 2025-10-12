@@ -1,6 +1,8 @@
 use futures::{FutureExt, future::Shared};
 use language::Buffer;
-use std::{path::Path, sync::Arc};
+use remote::RemoteClient;
+use rpc::proto::{self, REMOTE_SERVER_PROJECT_ID};
+use std::{collections::VecDeque, path::Path, sync::Arc};
 use task::Shell;
 use util::ResultExt;
 use worktree::Worktree;
@@ -16,10 +18,9 @@ use crate::{
 
 pub struct ProjectEnvironment {
     cli_environment: Option<HashMap<String, String>>,
-    environments: HashMap<Arc<Path>, Shared<Task<Option<HashMap<String, String>>>>>,
-    shell_based_environments:
-        HashMap<(Shell, Arc<Path>), Shared<Task<Option<HashMap<String, String>>>>>,
-    environment_error_messages: HashMap<Arc<Path>, EnvironmentErrorMessage>,
+    local_environments: HashMap<(Shell, Arc<Path>), Shared<Task<Option<HashMap<String, String>>>>>,
+    remote_environments: HashMap<(Shell, Arc<Path>), Shared<Task<Option<HashMap<String, String>>>>>,
+    environment_error_messages: VecDeque<EnvironmentErrorMessage>,
 }
 
 pub enum ProjectEnvironmentEvent {
@@ -32,8 +33,8 @@ impl ProjectEnvironment {
     pub fn new(cli_environment: Option<HashMap<String, String>>) -> Self {
         Self {
             cli_environment,
-            environments: Default::default(),
-            shell_based_environments: Default::default(),
+            local_environments: Default::default(),
+            remote_environments: Default::default(),
             environment_error_messages: Default::default(),
         }
     }
@@ -46,19 +47,6 @@ impl ProjectEnvironment {
         } else {
             None
         }
-    }
-
-    /// Returns an iterator over all pairs `(abs_path, error_message)` of
-    /// environment errors associated with this project environment.
-    pub(crate) fn environment_errors(
-        &self,
-    ) -> impl Iterator<Item = (&Arc<Path>, &EnvironmentErrorMessage)> {
-        self.environment_error_messages.iter()
-    }
-
-    pub(crate) fn remove_environment_error(&mut self, abs_path: &Path, cx: &mut Context<Self>) {
-        self.environment_error_messages.remove(abs_path);
-        cx.emit(ProjectEnvironmentEvent::ErrorsUpdated);
     }
 
     pub(crate) fn get_buffer_environment(
@@ -115,15 +103,16 @@ impl ProjectEnvironment {
             abs_path = parent.into();
         }
 
-        self.get_directory_environment(abs_path, cx)
+        self.get_local_directory_environment(&Shell::System, abs_path, cx)
     }
 
     /// Returns the project environment, if possible.
     /// If the project was opened from the CLI, then the inherited CLI environment is returned.
     /// If it wasn't opened from the CLI, and an absolute path is given, then a shell is spawned in
     /// that directory, to get environment variables as if the user has `cd`'d there.
-    pub fn get_directory_environment(
+    pub fn get_local_directory_environment(
         &mut self,
+        shell: &Shell,
         abs_path: Arc<Path>,
         cx: &mut Context<Self>,
     ) -> Shared<Task<Option<HashMap<String, String>>>> {
@@ -136,25 +125,52 @@ impl ProjectEnvironment {
             return Task::ready(Some(cli_environment)).shared();
         }
 
-        self.environments
-            .entry(abs_path.clone())
+        self.local_environments
+            .entry((shell.clone(), abs_path.clone()))
             .or_insert_with(|| {
-                get_directory_env_impl(&Shell::System, abs_path.clone(), cx).shared()
+                get_local_directory_environment_impl(shell, abs_path.clone(), cx).shared()
             })
             .clone()
     }
 
-    /// Returns the project environment, if possible, with the given shell.
-    pub fn get_directory_environment_for_shell(
+    pub fn get_remote_directory_environment(
         &mut self,
         shell: &Shell,
         abs_path: Arc<Path>,
+        remote_client: Entity<RemoteClient>,
         cx: &mut Context<Self>,
     ) -> Shared<Task<Option<HashMap<String, String>>>> {
-        self.shell_based_environments
+        if cfg!(any(test, feature = "test-support")) {
+            return Task::ready(Some(HashMap::default())).shared();
+        }
+
+        self.remote_environments
             .entry((shell.clone(), abs_path.clone()))
-            .or_insert_with(|| get_directory_env_impl(shell, abs_path.clone(), cx).shared())
+            .or_insert_with(|| {
+                let response =
+                    remote_client
+                        .read(cx)
+                        .proto_client()
+                        .request(proto::GetDirectoryEnvironment {
+                            project_id: REMOTE_SERVER_PROJECT_ID,
+                            shell: Some(shell.clone().to_proto()),
+                            directory: abs_path.to_string_lossy().to_string(),
+                        });
+                cx.spawn(async move |_, _| {
+                    let environment = response.await.log_err()?;
+                    Some(environment.environment.into_iter().collect())
+                })
+                .shared()
+            })
             .clone()
+    }
+
+    pub fn peek_environment_error(&self) -> Option<&EnvironmentErrorMessage> {
+        self.environment_error_messages.front()
+    }
+
+    pub fn pop_environment_error(&mut self) -> Option<EnvironmentErrorMessage> {
+        self.environment_error_messages.pop_front()
     }
 }
 
@@ -307,7 +323,7 @@ async fn load_shell_environment(
     }
 }
 
-fn get_directory_env_impl(
+fn get_local_directory_environment_impl(
     shell: &Shell,
     abs_path: Arc<Path>,
     cx: &Context<ProjectEnvironment>,
@@ -341,8 +357,8 @@ fn get_directory_env_impl(
 
         if let Some(error) = error_message {
             this.update(cx, |this, cx| {
-                log::error!("{error}",);
-                this.environment_error_messages.insert(abs_path, error);
+                log::error!("{error}");
+                this.environment_error_messages.push_back(error);
                 cx.emit(ProjectEnvironmentEvent::ErrorsUpdated)
             })
             .log_err();

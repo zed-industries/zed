@@ -1912,20 +1912,24 @@ impl Project {
         cx: &mut App,
     ) -> Shared<Task<Option<HashMap<String, String>>>> {
         self.environment.update(cx, |environment, cx| {
-            environment.get_directory_environment_for_shell(shell, abs_path, cx)
+            if let Some(remote_client) = self.remote_client.clone() {
+                environment.get_remote_directory_environment(shell, abs_path, remote_client, cx)
+            } else {
+                environment.get_local_directory_environment(shell, abs_path, cx)
+            }
         })
     }
 
-    pub fn shell_environment_errors<'a>(
+    pub fn peek_environment_error<'a>(
         &'a self,
         cx: &'a App,
-    ) -> impl Iterator<Item = (&'a Arc<Path>, &'a EnvironmentErrorMessage)> {
-        self.environment.read(cx).environment_errors()
+    ) -> Option<&'a EnvironmentErrorMessage> {
+        self.environment.read(cx).peek_environment_error()
     }
 
-    pub fn remove_environment_error(&mut self, abs_path: &Path, cx: &mut Context<Self>) {
-        self.environment.update(cx, |environment, cx| {
-            environment.remove_environment_error(abs_path, cx);
+    pub fn pop_environment_error(&mut self, cx: &mut Context<Self>) {
+        self.environment.update(cx, |environment, _| {
+            environment.pop_environment_error();
         });
     }
 
