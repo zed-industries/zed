@@ -4,6 +4,8 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use std::sync::atomic::AtomicBool;
+
 use anyhow::Result;
 use encoding_rs::Encoding;
 
@@ -24,8 +26,6 @@ impl Default for EncodingWrapper {
         EncodingWrapper(encoding_rs::UTF_8)
     }
 }
-
-pub struct EncodingWrapperVisitor;
 
 impl PartialEq for EncodingWrapper {
     fn eq(&self, other: &Self) -> bool {
@@ -55,11 +55,13 @@ impl EncodingWrapper {
         &mut self,
         input: Vec<u8>,
         force: bool,
+        detect_utf16: bool,
         buffer_encoding: Option<Arc<Mutex<&'static Encoding>>>,
     ) -> Result<String> {
-        // Check if the input starts with a BOM for UTF-16 encodings only if not forced to
-        // use the encoding specified.
-        if !force {
+        // Check if the input starts with a BOM for UTF-16 encodings only if detect_utf16 is true.
+        println!("{}", force);
+        println!("{}", detect_utf16);
+        if detect_utf16 {
             if let Some(encoding) = match input.get(..2) {
                 Some([0xFF, 0xFE]) => Some(encoding_rs::UTF_16LE),
                 Some([0xFE, 0xFF]) => Some(encoding_rs::UTF_16BE),
@@ -67,20 +69,23 @@ impl EncodingWrapper {
             } {
                 self.0 = encoding;
 
-                if let Some(v) = buffer_encoding {
-                    if let Ok(mut v) = (*v).lock() {
-                        *v = encoding;
-                    }
+                if let Some(v) = buffer_encoding
+                    && let Ok(mut v) = v.lock()
+                {
+                    *v = encoding;
                 }
             }
         }
 
-        let (cow, _had_errors) = self.0.decode_with_bom_removal(&input);
+        let (cow, had_errors) = self.0.decode_with_bom_removal(&input);
 
-        if !_had_errors {
+        if force {
+            return Ok(cow.to_string());
+        }
+
+        if !had_errors {
             Ok(cow.to_string())
         } else {
-            // If there were decoding errors, return an error.
             Err(anyhow::anyhow!(
                 "The file contains invalid bytes for the specified encoding: {}.\nThis usually means that the file is not a regular text file, or is encoded in a different encoding.\nContinuing to open it may result in data loss if saved.",
                 self.0.name()
@@ -107,9 +112,7 @@ impl EncodingWrapper {
             return Ok(data);
         } else {
             let (cow, _encoding_used, _had_errors) = self.0.encode(&input);
-            // `encoding_rs` handles unencodable characters by replacing them with
-            // appropriate substitutes in the output, so we return the result even if there were errors.
-            // This maintains consistency with the decode behaviour.
+
             Ok(cow.into_owned())
         }
     }
@@ -120,12 +123,31 @@ pub async fn to_utf8(
     input: Vec<u8>,
     mut encoding: EncodingWrapper,
     force: bool,
+    detect_utf16: bool,
     buffer_encoding: Option<Arc<Mutex<&'static Encoding>>>,
 ) -> Result<String> {
-    encoding.decode(input, force, buffer_encoding).await
+    encoding
+        .decode(input, force, detect_utf16, buffer_encoding)
+        .await
 }
 
 /// Convert a UTF-8 string to a byte vector in a specified encoding.
 pub async fn from_utf8(input: String, target: EncodingWrapper) -> Result<Vec<u8>> {
     target.encode(input).await
+}
+
+pub struct EncodingOptions {
+    pub encoding: Arc<Mutex<EncodingWrapper>>,
+    pub force: AtomicBool,
+    pub detect_utf16: AtomicBool,
+}
+
+impl Default for EncodingOptions {
+    fn default() -> Self {
+        EncodingOptions {
+            encoding: Arc::new(Mutex::new(EncodingWrapper::default())),
+            force: AtomicBool::new(false),
+            detect_utf16: AtomicBool::new(true),
+        }
+    }
 }

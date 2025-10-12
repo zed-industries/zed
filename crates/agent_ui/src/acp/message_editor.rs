@@ -515,7 +515,7 @@ impl MessageEditor {
                                 worktree_id,
                                 path: worktree_path,
                             };
-                            buffer_store.open_buffer(project_path, cx)
+                            buffer_store.open_buffer(project_path, None, false, true, cx)
                         })
                     });
 
