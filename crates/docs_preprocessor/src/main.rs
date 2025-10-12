@@ -140,6 +140,7 @@ fn handle_preprocessing() -> Result<()> {
     let (_ctx, mut book) = CmdPreprocessor::parse_input(input.as_bytes())?;
 
     let mut errors = HashSet::<PreprocessorError>::new();
+    handle_frontmatter(&mut book, &mut errors);
     template_big_table_of_actions(&mut book);
     template_and_validate_keybindings(&mut book, &mut errors);
     template_and_validate_actions(&mut book, &mut errors);
