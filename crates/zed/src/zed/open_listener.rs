@@ -46,6 +46,7 @@ pub enum OpenRequestKind {
     Extension { extension_id: String },
     AgentPanel,
     DockMenuAction { index: usize },
+    BuiltinJsonSchema { schema_path: String },
 }
 
 impl OpenRequest {
@@ -88,6 +89,10 @@ impl OpenRequest {
                 });
             } else if url == "zed://agent" {
                 this.kind = Some(OpenRequestKind::AgentPanel);
+            } else if let Some(schema_path) = url.strip_prefix("zed://schemas/") {
+                this.kind = Some(OpenRequestKind::BuiltinJsonSchema {
+                    schema_path: schema_path.to_string(),
+                });
             } else if url.starts_with("ssh://") {
                 this.parse_ssh_file_path(&url, cx)?
             } else if let Some(request_path) = parse_zed_link(&url, cx) {
@@ -429,7 +434,7 @@ async fn open_workspaces(
                     let workspace_paths = workspace_paths
                         .paths()
                         .iter()
-                        .map(|path| path.to_string_lossy().to_string())
+                        .map(|path| path.to_string_lossy().into_owned())
                         .collect();
 
                     let workspace_failed_to_open = open_local_workspace(

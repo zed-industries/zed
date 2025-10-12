@@ -5,6 +5,8 @@ Zed supports terminal-based agents through the [Agent Client Protocol (ACP)](htt
 Currently, [Gemini CLI](https://github.com/google-gemini/gemini-cli) serves as the reference implementation.
 [Claude Code](https://www.anthropic.com/claude-code) is also included by default, and you can [add custom ACP-compatible agents](#add-custom-agents) as well.
 
+Zed's affordance for external agents is strictly UI-based; the billing and legal/terms arrangement is directly between you and the agent provider. Zed does not charge for use of external agents, and our [zero-data retention agreements/privacy guarantees](./ai-improvement.md) are **_only_** applicable for Zed's hosted models.
+
 ## Gemini CLI {#gemini-cli}
 
 Zed provides the ability to run [Gemini CLI](https://github.com/google-gemini/gemini-cli) directly in the [agent panel](./agent-panel.md).
@@ -18,7 +20,7 @@ As of [Zed Stable v0.201.5](https://zed.dev/releases/stable/0.201.5) you should 
 
 If you'd like to bind this to a keyboard shortcut, you can do so by editing your `keymap.json` file via the `zed: open keymap` command to include:
 
-```json
+```json [keymap]
 [
   {
     "bindings": {
@@ -34,7 +36,7 @@ The first time you create a Gemini CLI thread, Zed will install [@google/gemini-
 
 By default, Zed will use this managed version of Gemini CLI even if you have it installed globally. However, you can configure it to use a version in your `PATH` by adding this to your settings:
 
-```json
+```json [settings]
 {
   "agent_servers": {
     "gemini": {
@@ -75,7 +77,7 @@ Open the agent panel with {#kb agent::ToggleFocus}, and then use the `+` button 
 
 If you'd like to bind this to a keyboard shortcut, you can do so by editing your `keymap.json` file via the `zed: open keymap` command to include:
 
-```json
+```json [keymap]
 [
   {
     "bindings": {
@@ -122,7 +124,7 @@ If you don't have a `CLAUDE.md` file, you can ask Claude Code to create one for 
 
 You can run any agent speaking ACP in Zed by changing your settings as follows:
 
-```json
+```json [settings]
 {
   "agent_servers": {
     "Custom Agent": {

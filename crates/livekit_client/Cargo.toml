@@ -41,6 +41,7 @@ serde_urlencoded.workspace = true
 settings.workspace = true
 smallvec.workspace = true
 tokio-tungstenite.workspace = true
+ui.workspace = true
 util.workspace = true
 workspace-hack.workspace = true
 

@@ -5,6 +5,8 @@ use collections::HashMap;
 use futures::future::join_all;
 use gpui::{App, AppContext, AsyncApp, Task};
 use http_client::github::{AssetKind, GitHubLspBinaryVersion, build_asset_url};
+use http_client::github_download::download_server_binary;
+use itertools::Itertools as _;
 use language::{
     ContextLocation, ContextProvider, File, LanguageName, LanguageToolchainStore, LspAdapter,
     LspAdapterDelegate, LspInstaller, Toolchain,
@@ -18,13 +20,13 @@ use std::{
     borrow::Cow,
     ffi::OsString,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, LazyLock},
 };
 use task::{TaskTemplate, TaskTemplates, VariableName};
-use util::merge_json_value_into;
 use util::{ResultExt, fs::remove_matching, maybe};
+use util::{merge_json_value_into, rel_path::RelPath};
 
-use crate::{PackageJson, PackageJsonData, github_download::download_server_binary};
+use crate::{PackageJson, PackageJsonData};
 
 pub(crate) struct TypeScriptContextProvider {
     fs: Arc<dyn Fs>,
@@ -263,12 +265,12 @@ impl TypeScriptContextProvider {
         &self,
         fs: Arc<dyn Fs>,
         worktree_root: &Path,
-        file_relative_path: &Path,
+        file_relative_path: &RelPath,
         cx: &App,
     ) -> Task<anyhow::Result<PackageJsonData>> {
         let new_json_data = file_relative_path
             .ancestors()
-            .map(|path| worktree_root.join(path))
+            .map(|path| worktree_root.join(path.as_std_path()))
             .map(|parent_path| {
                 self.package_json_data(&parent_path, self.last_package_json.clone(), fs.clone(), cx)
             })
@@ -511,9 +513,9 @@ fn eslint_server_binary_arguments(server_path: &Path) -> Vec<OsString> {
 }
 
 fn replace_test_name_parameters(test_name: &str) -> String {
-    let pattern = regex::Regex::new(r"(%|\$)[0-9a-zA-Z]+").unwrap();
-
-    regex::escape(&pattern.replace_all(test_name, "(.+?)"))
+    static PATTERN: LazyLock<regex::Regex> =
+        LazyLock::new(|| regex::Regex::new(r"(\$([A-Za-z0-9_\.]+|[\#])|%[psdifjo#\$%])").unwrap());
+    PATTERN.split(test_name).map(regex::escape).join("(.+?)")
 }
 
 pub struct TypeScriptLspAdapter {
@@ -532,7 +534,7 @@ impl TypeScriptLspAdapter {
     }
     async fn tsdk_path(&self, adapter: &Arc<dyn LspAdapterDelegate>) -> Option<&'static str> {
         let is_yarn = adapter
-            .read_text_file(PathBuf::from(".yarn/sdks/typescript/lib/typescript.js"))
+            .read_text_file(RelPath::unix(".yarn/sdks/typescript/lib/typescript.js").unwrap())
             .await
             .is_ok();
 
@@ -852,7 +854,7 @@ impl LspInstaller for EsLintLspAdapter {
             remove_matching(&container_dir, |_| true).await;
 
             download_server_binary(
-                delegate,
+                &*delegate.http_client(),
                 &version.url,
                 None,
                 &destination_path,
@@ -1013,9 +1015,11 @@ mod tests {
     use serde_json::json;
     use task::TaskTemplates;
     use unindent::Unindent;
-    use util::path;
+    use util::{path, rel_path::rel_path};
 
-    use crate::typescript::{PackageJsonData, TypeScriptContextProvider};
+    use crate::typescript::{
+        PackageJsonData, TypeScriptContextProvider, replace_test_name_parameters,
+    };
 
     #[gpui::test]
     async fn test_outline(cx: &mut TestAppContext) {
@@ -1161,7 +1165,7 @@ mod tests {
                 provider.combined_package_json_data(
                     fs.clone(),
                     path!("/root").as_ref(),
-                    "sub/file1.js".as_ref(),
+                    rel_path("sub/file1.js"),
                     cx,
                 )
             })
@@ -1226,5 +1230,38 @@ mod tests {
                 ),
             ]
         );
+    }
+    #[test]
+    fn test_escaping_name() {
+        let cases = [
+            ("plain test name", "plain test name"),
+            ("test name with $param_name", "test name with (.+?)"),
+            ("test name with $nested.param.name", "test name with (.+?)"),
+            ("test name with $#", "test name with (.+?)"),
+            ("test name with $##", "test name with (.+?)\\#"),
+            ("test name with %p", "test name with (.+?)"),
+            ("test name with %s", "test name with (.+?)"),
+            ("test name with %d", "test name with (.+?)"),
+            ("test name with %i", "test name with (.+?)"),
+            ("test name with %f", "test name with (.+?)"),
+            ("test name with %j", "test name with (.+?)"),
+            ("test name with %o", "test name with (.+?)"),
+            ("test name with %#", "test name with (.+?)"),
+            ("test name with %$", "test name with (.+?)"),
+            ("test name with %%", "test name with (.+?)"),
+            ("test name with %q", "test name with %q"),
+            (
+                "test name with regex chars .*+?^${}()|[]\\",
+                "test name with regex chars \\.\\*\\+\\?\\^\\$\\{\\}\\(\\)\\|\\[\\]\\\\",
+            ),
+            (
+                "test name with multiple $params and %pretty and %b and (.+?)",
+                "test name with multiple (.+?) and (.+?)retty and %b and \\(\\.\\+\\?\\)",
+            ),
+        ];
+
+        for (input, expected) in cases {
+            assert_eq!(replace_test_name_parameters(input), expected);
+        }
     }
 }

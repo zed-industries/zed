@@ -45,7 +45,6 @@ url.workspace = true
 util.workspace = true
 uuid.workspace = true
 watch.workspace = true
-which.workspace = true
 workspace-hack.workspace = true
 
 [dev-dependencies]

@@ -165,6 +165,7 @@ pub enum IconName {
     Option,
     PageDown,
     PageUp,
+    Paperclip,
     Pencil,
     PencilUnavailable,
     Person,
@@ -263,6 +264,7 @@ pub enum IconName {
     ZedPredictError,
     ZedPredictUp,
     ZedXCopilot,
+    Linux,
 }
 
 impl IconName {

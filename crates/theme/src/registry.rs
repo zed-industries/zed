@@ -73,6 +73,11 @@ impl ThemeRegistry {
         cx.default_global::<GlobalThemeRegistry>().0.clone()
     }
 
+    /// Returns the global [`ThemeRegistry`] if it exists.
+    pub fn try_global(cx: &mut App) -> Option<Arc<Self>> {
+        cx.try_global::<GlobalThemeRegistry>().map(|t| t.0.clone())
+    }
+
     /// Sets the global [`ThemeRegistry`].
     pub(crate) fn set_global(assets: Box<dyn AssetSource>, cx: &mut App) {
         cx.set_global(GlobalThemeRegistry(Arc::new(ThemeRegistry::new(assets))));

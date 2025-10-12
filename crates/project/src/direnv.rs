@@ -1,7 +1,6 @@
 use crate::environment::EnvironmentErrorMessage;
 use std::process::ExitStatus;
 
-#[cfg(not(any(target_os = "windows", test, feature = "test-support")))]
 use {collections::HashMap, std::path::Path, util::ResultExt};
 
 #[derive(Clone)]
@@ -28,7 +27,6 @@ impl From<DirenvError> for Option<EnvironmentErrorMessage> {
     }
 }
 
-#[cfg(not(any(target_os = "windows", test, feature = "test-support")))]
 pub async fn load_direnv_environment(
     env: &HashMap<String, String>,
     dir: &Path,
@@ -65,7 +63,7 @@ pub async fn load_direnv_environment(
     let output = String::from_utf8_lossy(&direnv_output.stdout);
     if output.is_empty() {
         // direnv outputs nothing when it has no changes to apply to environment variables
-        return Ok(HashMap::new());
+        return Ok(HashMap::default());
     }
 
     match serde_json::from_str(&output) {

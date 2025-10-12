@@ -33,6 +33,7 @@ impl Database {
         connection: ConnectionId,
         worktrees: &[proto::WorktreeMetadata],
         is_ssh_project: bool,
+        windows_paths: bool,
     ) -> Result<TransactionGuard<(ProjectId, proto::Room)>> {
         self.room_transaction(room_id, |tx| async move {
             let participant = room_participant::Entity::find()
@@ -69,6 +70,7 @@ impl Database {
                     connection.owner_id as i32,
                 ))),
                 id: ActiveValue::NotSet,
+                windows_paths: ActiveValue::set(windows_paths),
             }
             .insert(&*tx)
             .await?;
@@ -280,6 +282,7 @@ impl Database {
                         git_status: ActiveValue::set(None),
                         is_external: ActiveValue::set(entry.is_external),
                         is_deleted: ActiveValue::set(false),
+                        is_hidden: ActiveValue::set(entry.is_hidden),
                         scan_id: ActiveValue::set(update.scan_id as i64),
                         is_fifo: ActiveValue::set(entry.is_fifo),
                     }
@@ -298,6 +301,7 @@ impl Database {
                         worktree_entry::Column::MtimeNanos,
                         worktree_entry::Column::CanonicalPath,
                         worktree_entry::Column::IsIgnored,
+                        worktree_entry::Column::IsHidden,
                         worktree_entry::Column::ScanId,
                     ])
                     .to_owned(),
@@ -903,6 +907,7 @@ impl Database {
                         canonical_path: db_entry.canonical_path,
                         is_ignored: db_entry.is_ignored,
                         is_external: db_entry.is_external,
+                        is_hidden: db_entry.is_hidden,
                         // This is only used in the summarization backlog, so if it's None,
                         // that just means we won't be able to detect when to resummarize
                         // based on total number of backlogged bytes - instead, we'd go
@@ -1046,6 +1051,12 @@ impl Database {
             .all(tx)
             .await?;
 
+        let path_style = if project.windows_paths {
+            PathStyle::Windows
+        } else {
+            PathStyle::Posix
+        };
+
         let project = Project {
             id: project.id,
             role,
@@ -1073,6 +1084,7 @@ impl Database {
                     capabilities: language_server.capabilities,
                 })
                 .collect(),
+            path_style,
         };
         Ok((project, replica_id as ReplicaId))
     }

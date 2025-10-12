@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+
+
+# Ensure we're in a clean state on an up-to-date `main` branch.
+if [[ -n $(git status --short --untracked-files=no) ]]; then
+  echo "can't bump versions with uncommitted changes"
+  exit 1
+fi
+if [[ $(git rev-parse --abbrev-ref HEAD) != "main" ]]; then
+  echo "this command must be run on main"
+  exit 1
+fi
+git pull -q --ff-only origin main
+
+
+# Parse the current version
+version=$(script/get-crate-version gpui)
+major=$(echo $version | cut -d. -f1)
+minor=$(echo $version | cut -d. -f2)
+next_minor=$(expr $minor + 1)
+
+next_minor_branch_name="bump-gpui-to-v${major}.${next_minor}.0"
+
+git checkout -b ${next_minor_branch_name}
+
+script/lib/bump-version.sh gpui gpui-v "" minor true
+
+git checkout -q main

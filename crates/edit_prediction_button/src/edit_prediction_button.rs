@@ -1,6 +1,7 @@
 use anyhow::Result;
 use client::{UserStore, zed_urls};
 use cloud_llm_client::UsageLimit;
+use codestral::CodestralCompletionProvider;
 use copilot::{Copilot, Status};
 use editor::{Editor, SelectionEffects, actions::ShowEditPrediction, scroll::Autoscroll};
 use feature_flags::{FeatureFlagAppExt, PredictEditsRateCompletionsFeatureFlag};
@@ -132,7 +133,8 @@ impl Render for EditPredictionButton {
                 div().child(
                     PopoverMenu::new("copilot")
                         .menu(move |window, cx| {
-                            Some(match status {
+                            let current_status = Copilot::global(cx)?.read(cx).status();
+                            Some(match current_status {
                                 Status::Authorized => this.update(cx, |this, cx| {
                                     this.build_copilot_context_menu(window, cx)
                                 }),
@@ -227,6 +229,67 @@ impl Render for EditPredictionButton {
                                 } else {
                                     Tooltip::text(tooltip_text.clone())(window, cx)
                                 }
+                            },
+                        )
+                        .with_handle(self.popover_menu_handle.clone()),
+                )
+            }
+
+            EditPredictionProvider::Codestral => {
+                let enabled = self.editor_enabled.unwrap_or(true);
+                let has_api_key = CodestralCompletionProvider::has_api_key(cx);
+                let fs = self.fs.clone();
+                let this = cx.entity();
+
+                div().child(
+                    PopoverMenu::new("codestral")
+                        .menu(move |window, cx| {
+                            if has_api_key {
+                                Some(this.update(cx, |this, cx| {
+                                    this.build_codestral_context_menu(window, cx)
+                                }))
+                            } else {
+                                Some(ContextMenu::build(window, cx, |menu, _, _| {
+                                    let fs = fs.clone();
+                                    menu.entry("Use Zed AI instead", None, move |_, cx| {
+                                        set_completion_provider(
+                                            fs.clone(),
+                                            cx,
+                                            EditPredictionProvider::Zed,
+                                        )
+                                    })
+                                    .separator()
+                                    .entry(
+                                        "Configure Codestral API Key",
+                                        None,
+                                        move |window, cx| {
+                                            window.dispatch_action(
+                                                zed_actions::agent::OpenSettings.boxed_clone(),
+                                                cx,
+                                            );
+                                        },
+                                    )
+                                }))
+                            }
+                        })
+                        .anchor(Corner::BottomRight)
+                        .trigger_with_tooltip(
+                            IconButton::new("codestral-icon", IconName::AiMistral)
+                                .shape(IconButtonShape::Square)
+                                .when(!has_api_key, |this| {
+                                    this.indicator(Indicator::dot().color(Color::Error))
+                                        .indicator_border_color(Some(
+                                            cx.theme().colors().status_bar_background,
+                                        ))
+                                })
+                                .when(has_api_key && !enabled, |this| {
+                                    this.indicator(Indicator::dot().color(Color::Ignored))
+                                        .indicator_border_color(Some(
+                                            cx.theme().colors().status_bar_background,
+                                        ))
+                                }),
+                            move |window, cx| {
+                                Tooltip::for_action("Codestral", &ToggleMenu, window, cx)
                             },
                         )
                         .with_handle(self.popover_menu_handle.clone()),
@@ -490,6 +553,7 @@ impl EditPredictionButton {
             EditPredictionProvider::Zed
                 | EditPredictionProvider::Copilot
                 | EditPredictionProvider::Supermaven
+                | EditPredictionProvider::Codestral
         ) {
             menu = menu
                 .separator()
@@ -716,6 +780,25 @@ impl EditPredictionButton {
         })
     }
 
+    fn build_codestral_context_menu(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<ContextMenu> {
+        let fs = self.fs.clone();
+        ContextMenu::build(window, cx, |menu, window, cx| {
+            self.build_language_settings_menu(menu, window, cx)
+                .separator()
+                .entry("Use Zed AI instead", None, move |_, cx| {
+                    set_completion_provider(fs.clone(), cx, EditPredictionProvider::Zed)
+                })
+                .separator()
+                .entry("Configure Codestral API Key", None, move |window, cx| {
+                    window.dispatch_action(zed_actions::agent::OpenSettings.boxed_clone(), cx);
+                })
+        })
+    }
+
     fn build_zeta_context_menu(
         &self,
         window: &mut Window,
@@ -908,8 +991,10 @@ async fn open_disabled_globs_setting_in_editor(
             let settings = cx.global::<SettingsStore>();
 
             // Ensure that we always have "edit_predictions { "disabled_globs": [] }"
-            let edits = settings.edits_for_update::<AllLanguageSettings>(&text, |file| {
-                file.edit_predictions
+            let edits = settings.edits_for_update(&text, |file| {
+                file.project
+                    .all_languages
+                    .edit_predictions
                     .get_or_insert_with(Default::default)
                     .disabled_globs
                     .get_or_insert_with(Vec::new);
@@ -946,9 +1031,12 @@ async fn open_disabled_globs_setting_in_editor(
 }
 
 fn set_completion_provider(fs: Arc<dyn Fs>, cx: &mut App, provider: EditPredictionProvider) {
-    update_settings_file::<AllLanguageSettings>(fs, cx, move |file, _| {
-        file.features
-            .get_or_insert(Default::default())
+    update_settings_file(fs, cx, move |settings, _| {
+        settings
+            .project
+            .all_languages
+            .features
+            .get_or_insert_default()
             .edit_prediction_provider = Some(provider);
     });
 }
@@ -960,18 +1048,24 @@ fn toggle_show_edit_predictions_for_language(
 ) {
     let show_edit_predictions =
         all_language_settings(None, cx).show_edit_predictions(Some(&language), cx);
-    update_settings_file::<AllLanguageSettings>(fs, cx, move |file, _| {
-        file.languages
+    update_settings_file(fs, cx, move |settings, _| {
+        settings
+            .project
+            .all_languages
+            .languages
             .0
-            .entry(language.name())
+            .entry(language.name().0)
             .or_default()
             .show_edit_predictions = Some(!show_edit_predictions);
     });
 }
 
 fn hide_copilot(fs: Arc<dyn Fs>, cx: &mut App) {
-    update_settings_file::<AllLanguageSettings>(fs, cx, move |file, _| {
-        file.features
+    update_settings_file(fs, cx, move |settings, _| {
+        settings
+            .project
+            .all_languages
+            .features
             .get_or_insert(Default::default())
             .edit_prediction_provider = Some(EditPredictionProvider::None);
     });
@@ -982,13 +1076,14 @@ fn toggle_edit_prediction_mode(fs: Arc<dyn Fs>, mode: EditPredictionsMode, cx: &
     let current_mode = settings.edit_predictions_mode();
 
     if current_mode != mode {
-        update_settings_file::<AllLanguageSettings>(fs, cx, move |settings, _cx| {
-            if let Some(edit_predictions) = settings.edit_predictions.as_mut() {
-                edit_predictions.mode = mode;
+        update_settings_file(fs, cx, move |settings, _cx| {
+            if let Some(edit_predictions) = settings.project.all_languages.edit_predictions.as_mut()
+            {
+                edit_predictions.mode = Some(mode);
             } else {
-                settings.edit_predictions =
-                    Some(language_settings::EditPredictionSettingsContent {
-                        mode,
+                settings.project.all_languages.edit_predictions =
+                    Some(settings::EditPredictionSettingsContent {
+                        mode: Some(mode),
                         ..Default::default()
                     });
             }

@@ -151,9 +151,9 @@ impl From<Hsla> for Rgba {
         };
 
         Rgba {
-            r,
-            g,
-            b,
+            r: r.clamp(0., 1.),
+            g: g.clamp(0., 1.),
+            b: b.clamp(0., 1.),
             a: color.a,
         }
     }
@@ -362,7 +362,7 @@ pub const fn transparent_black() -> Hsla {
     }
 }
 
-/// Transparent black in [`Hsla`]
+/// Transparent white in [`Hsla`]
 pub const fn transparent_white() -> Hsla {
     Hsla {
         h: 0.,

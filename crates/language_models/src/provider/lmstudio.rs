@@ -2,7 +2,7 @@ use anyhow::{Result, anyhow};
 use collections::HashMap;
 use futures::Stream;
 use futures::{FutureExt, StreamExt, future::BoxFuture, stream::BoxStream};
-use gpui::{AnyView, App, AsyncApp, Context, Subscription, Task};
+use gpui::{AnyView, App, AsyncApp, Context, Entity, Subscription, Task};
 use http_client::HttpClient;
 use language_model::{
     AuthenticateError, LanguageModelCompletionError, LanguageModelCompletionEvent,
@@ -15,8 +15,7 @@ use language_model::{
     LanguageModelRequest, RateLimiter, Role,
 };
 use lmstudio::{ModelType, get_models};
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+pub use settings::LmStudioAvailableModel as AvailableModel;
 use settings::{Settings, SettingsStore};
 use std::pin::Pin;
 use std::str::FromStr;
@@ -40,18 +39,9 @@ pub struct LmStudioSettings {
     pub available_models: Vec<AvailableModel>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub struct AvailableModel {
-    pub name: String,
-    pub display_name: Option<String>,
-    pub max_tokens: u64,
-    pub supports_tool_calls: bool,
-    pub supports_images: bool,
-}
-
 pub struct LmStudioLanguageModelProvider {
     http_client: Arc<dyn HttpClient>,
-    state: gpui::Entity<State>,
+    state: Entity<State>,
 }
 
 pub struct State {
@@ -111,7 +101,30 @@ impl State {
         }
 
         let fetch_models_task = self.fetch_models(cx);
-        cx.spawn(async move |_this, _cx| Ok(fetch_models_task.await?))
+        cx.spawn(async move |_this, _cx| {
+            match fetch_models_task.await {
+                Ok(()) => Ok(()),
+                Err(err) => {
+                    // If any cause in the error chain is an std::io::Error with
+                    // ErrorKind::ConnectionRefused, treat this as "credentials not found"
+                    // (i.e. LM Studio not running).
+                    let mut connection_refused = false;
+                    for cause in err.chain() {
+                        if let Some(io_err) = cause.downcast_ref::<std::io::Error>() {
+                            if io_err.kind() == std::io::ErrorKind::ConnectionRefused {
+                                connection_refused = true;
+                                break;
+                            }
+                        }
+                    }
+                    if connection_refused {
+                        Err(AuthenticateError::ConnectionRefused)
+                    } else {
+                        Err(AuthenticateError::Other(err))
+                    }
+                }
+            }
+        })
     }
 }
 
@@ -149,7 +162,7 @@ impl LmStudioLanguageModelProvider {
 impl LanguageModelProviderState for LmStudioLanguageModelProvider {
     type ObservableEntity = State;
 
-    fn observable_entity(&self) -> Option<gpui::Entity<Self::ObservableEntity>> {
+    fn observable_entity(&self) -> Option<Entity<Self::ObservableEntity>> {
         Some(self.state.clone())
     }
 }
@@ -622,12 +635,12 @@ fn add_message_content_part(
 }
 
 struct ConfigurationView {
-    state: gpui::Entity<State>,
+    state: Entity<State>,
     loading_models_task: Option<Task<()>>,
 }
 
 impl ConfigurationView {
-    pub fn new(state: gpui::Entity<State>, cx: &mut Context<Self>) -> Self {
+    pub fn new(state: Entity<State>, cx: &mut Context<Self>) -> Self {
         let loading_models_task = Some(cx.spawn({
             let state = state.clone();
             async move |this, cx| {

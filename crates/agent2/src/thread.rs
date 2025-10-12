@@ -15,10 +15,11 @@ use agent_settings::{
 use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::adapt_schema_to_format;
 use chrono::{DateTime, Utc};
-use client::{ModelRequestUsage, RequestUsage};
-use cloud_llm_client::{CompletionIntent, CompletionRequestStatus, UsageLimit};
+use client::{ModelRequestUsage, RequestUsage, UserStore};
+use cloud_llm_client::{CompletionIntent, CompletionRequestStatus, Plan, UsageLimit};
 use collections::{HashMap, HashSet, IndexMap};
 use fs::Fs;
+use futures::stream;
 use futures::{
     FutureExt,
     channel::{mpsc, oneshot},
@@ -34,7 +35,7 @@ use language_model::{
     LanguageModelImage, LanguageModelProviderId, LanguageModelRegistry, LanguageModelRequest,
     LanguageModelRequestMessage, LanguageModelRequestTool, LanguageModelToolResult,
     LanguageModelToolResultContent, LanguageModelToolSchemaFormat, LanguageModelToolUse,
-    LanguageModelToolUseId, Role, SelectedModel, StopReason, TokenUsage,
+    LanguageModelToolUseId, Role, SelectedModel, StopReason, TokenUsage, ZED_CLOUD_PROVIDER_ID,
 };
 use project::{
     Project,
@@ -585,6 +586,7 @@ pub struct Thread {
     pending_title_generation: Option<Task<()>>,
     summary: Option<SharedString>,
     messages: Vec<Message>,
+    user_store: Entity<UserStore>,
     completion_mode: CompletionMode,
     /// Holds the task that handles agent interaction until the end of the turn.
     /// Survives across multiple requests as the model performs tool calls and
@@ -641,6 +643,7 @@ impl Thread {
             pending_title_generation: None,
             summary: None,
             messages: Vec::new(),
+            user_store: project.read(cx).user_store(),
             completion_mode: AgentSettings::get_global(cx).preferred_completion_mode,
             running_turn: None,
             pending_message: None,
@@ -820,6 +823,7 @@ impl Thread {
             pending_title_generation: None,
             summary: db_thread.detailed_summary,
             messages: db_thread.messages,
+            user_store: project.read(cx).user_store(),
             completion_mode: db_thread.completion_mode.unwrap_or_default(),
             running_turn: None,
             pending_message: None,
@@ -879,27 +883,11 @@ impl Thread {
             .map(|worktree| Self::worktree_snapshot(worktree, git_store.clone(), cx))
             .collect();
 
-        cx.spawn(async move |_, cx| {
+        cx.spawn(async move |_, _| {
             let worktree_snapshots = futures::future::join_all(worktree_snapshots).await;
-
-            let mut unsaved_buffers = Vec::new();
-            cx.update(|app_cx| {
-                let buffer_store = project.read(app_cx).buffer_store();
-                for buffer_handle in buffer_store.read(app_cx).buffers() {
-                    let buffer = buffer_handle.read(app_cx);
-                    if buffer.is_dirty()
-                        && let Some(file) = buffer.file()
-                    {
-                        let path = file.path().to_string_lossy().to_string();
-                        unsaved_buffers.push(path);
-                    }
-                }
-            })
-            .ok();
 
             Arc::new(ProjectSnapshot {
                 worktree_snapshots,
-                unsaved_buffer_paths: unsaved_buffers,
                 timestamp: Utc::now(),
             })
         })
@@ -914,7 +902,7 @@ impl Thread {
             // Get worktree path and snapshot
             let worktree_info = cx.update(|app_cx| {
                 let worktree = worktree.read(app_cx);
-                let path = worktree.abs_path().to_string_lossy().to_string();
+                let path = worktree.abs_path().to_string_lossy().into_owned();
                 let snapshot = worktree.snapshot();
                 (path, snapshot)
             });
@@ -1265,12 +1253,12 @@ impl Thread {
             );
 
             log::debug!("Calling model.stream_completion, attempt {}", attempt);
-            let mut events = model
-                .stream_completion(request, cx)
-                .await
-                .map_err(|error| anyhow!(error))?;
+
+            let (mut events, mut error) = match model.stream_completion(request, cx).await {
+                Ok(events) => (events, None),
+                Err(err) => (stream::empty().boxed(), Some(err)),
+            };
             let mut tool_results = FuturesUnordered::new();
-            let mut error = None;
             while let Some(event) = events.next().await {
                 log::trace!("Received completion event: {:?}", event);
                 match event {
@@ -1318,8 +1306,10 @@ impl Thread {
 
             if let Some(error) = error {
                 attempt += 1;
-                let retry =
-                    this.update(cx, |this, _| this.handle_completion_error(error, attempt))??;
+                let retry = this.update(cx, |this, cx| {
+                    let user_store = this.user_store.read(cx);
+                    this.handle_completion_error(error, attempt, user_store.plan())
+                })??;
                 let timer = cx.background_executor().timer(retry.duration);
                 event_stream.send_retry(retry);
                 timer.await;
@@ -1346,8 +1336,23 @@ impl Thread {
         &mut self,
         error: LanguageModelCompletionError,
         attempt: u8,
+        plan: Option<Plan>,
     ) -> Result<acp_thread::RetryStatus> {
-        if self.completion_mode == CompletionMode::Normal {
+        let Some(model) = self.model.as_ref() else {
+            return Err(anyhow!(error));
+        };
+
+        let auto_retry = if model.provider_id() == ZED_CLOUD_PROVIDER_ID {
+            match plan {
+                Some(Plan::V2(_)) => true,
+                Some(Plan::V1(_)) => self.completion_mode == CompletionMode::Burn,
+                None => false,
+            }
+        } else {
+            true
+        };
+
+        if !auto_retry {
             return Err(anyhow!(error));
         }
 
@@ -2477,8 +2482,11 @@ impl ToolCallEventStream {
             "always_allow" => {
                 if let Some(fs) = fs.clone() {
                     cx.update(|cx| {
-                        update_settings_file::<AgentSettings>(fs, cx, |settings, _| {
-                            settings.set_always_allow_tool_actions(true);
+                        update_settings_file(fs, cx, |settings, _| {
+                            settings
+                                .agent
+                                .get_or_insert_default()
+                                .set_always_allow_tool_actions(true);
                         });
                     })?;
                 }

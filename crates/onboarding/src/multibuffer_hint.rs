@@ -79,7 +79,7 @@ impl MultibufferHint {
             return ToolbarItemLocation::Hidden;
         };
 
-        if active_pane_item.is_singleton(cx)
+        if active_pane_item.buffer_kind(cx) == ItemBufferKind::Singleton
             || active_pane_item.breadcrumbs(cx.theme(), cx).is_none()
             || !active_pane_item.can_save(cx)
         {

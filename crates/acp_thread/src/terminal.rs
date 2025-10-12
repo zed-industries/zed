@@ -28,7 +28,7 @@ pub struct TerminalOutput {
 impl Terminal {
     pub fn new(
         id: acp::TerminalId,
-        command: String,
+        command_label: &str,
         working_dir: Option<PathBuf>,
         output_byte_limit: Option<usize>,
         terminal: Entity<terminal::Terminal>,
@@ -40,7 +40,7 @@ impl Terminal {
             id,
             command: cx.new(|cx| {
                 Markdown::new(
-                    format!("```\n{}\n```", command).into(),
+                    format!("```\n{}\n```", command_label).into(),
                     Some(language_registry.clone()),
                     None,
                     cx,

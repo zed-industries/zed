@@ -22,8 +22,8 @@ mod toolchain;
 #[cfg(test)]
 pub mod buffer_tests;
 
-pub use crate::language_settings::EditPredictionsMode;
 use crate::language_settings::SoftWrap;
+pub use crate::language_settings::{EditPredictionsMode, IndentGuideSettings};
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 use collections::{HashMap, HashSet, IndexSet};
@@ -55,7 +55,7 @@ use std::{
     str,
     sync::{
         Arc, LazyLock,
-        atomic::{AtomicU64, AtomicUsize, Ordering::SeqCst},
+        atomic::{AtomicUsize, Ordering::SeqCst},
     },
 };
 use syntax_map::{QueryCursorHandle, SyntaxSnapshot};
@@ -70,18 +70,21 @@ pub use toolchain::{
     ToolchainMetadata, ToolchainScope,
 };
 use tree_sitter::{self, Query, QueryCursor, WasmStore, wasmtime};
+use util::rel_path::RelPath;
 use util::serde::default_true;
 
 pub use buffer::Operation;
 pub use buffer::*;
-pub use diagnostic_set::{DiagnosticEntry, DiagnosticGroup};
+pub use diagnostic_set::{DiagnosticEntry, DiagnosticEntryRef, DiagnosticGroup};
 pub use language_registry::{
     AvailableLanguage, BinaryStatus, LanguageNotFound, LanguageQueries, LanguageRegistry,
     QUERY_FILENAME_PREFIXES,
 };
 pub use lsp::{LanguageServerId, LanguageServerName};
 pub use outline::*;
-pub use syntax_map::{OwnedSyntaxLayer, SyntaxLayer, ToTreeSitterPoint, TreeSitterOptions};
+pub use syntax_map::{
+    OwnedSyntaxLayer, SyntaxLayer, SyntaxMapMatches, ToTreeSitterPoint, TreeSitterOptions,
+};
 pub use text::{AnchorRangeExt, LineEnding};
 pub use tree_sitter::{Node, Parser, Tree, TreeCursor};
 
@@ -166,7 +169,6 @@ pub struct CachedLspAdapter {
     pub disk_based_diagnostics_progress_token: Option<String>,
     language_ids: HashMap<LanguageName, String>,
     pub adapter: Arc<dyn LspAdapter>,
-    pub reinstall_attempt_count: AtomicU64,
     cached_binary: ServerBinaryCache,
 }
 
@@ -183,7 +185,6 @@ impl Debug for CachedLspAdapter {
                 &self.disk_based_diagnostics_progress_token,
             )
             .field("language_ids", &self.language_ids)
-            .field("reinstall_attempt_count", &self.reinstall_attempt_count)
             .finish_non_exhaustive()
     }
 }
@@ -202,7 +203,6 @@ impl CachedLspAdapter {
             language_ids,
             adapter,
             cached_binary: Default::default(),
-            reinstall_attempt_count: AtomicU64::new(0),
         })
     }
 
@@ -308,7 +308,7 @@ pub trait LspAdapterDelegate: Send + Sync {
     ) -> Result<Option<(PathBuf, String)>>;
     async fn which(&self, command: &OsStr) -> Option<PathBuf>;
     async fn shell_env(&self) -> HashMap<String, String>;
-    async fn read_text_file(&self, path: PathBuf) -> Result<String>;
+    async fn read_text_file(&self, path: &RelPath) -> Result<String>;
     async fn try_exec(&self, binary: LanguageServerBinary) -> Result<()>;
 }
 
@@ -461,17 +461,6 @@ pub trait LspAdapter: 'static + Send + Sync + DynLspInstaller {
     /// files
     fn is_primary_zed_json_schema_adapter(&self) -> bool {
         false
-    }
-
-    /// Method only implemented by the default JSON language server adapter.
-    /// Used to clear the cache of JSON schemas that are used to provide
-    /// autocompletion and diagnostics in Zed settings and keybinds files.
-    /// Should not be called unless the callee is sure that
-    /// `Self::is_primary_zed_json_schema_adapter` returns `true`
-    async fn clear_zed_json_schema_cache(&self) {
-        unreachable!(
-            "Not implemented for this adapter. This method should only be called on the default JSON language server adapter"
-        );
     }
 
     /// True for the extension adapter and false otherwise.
@@ -760,6 +749,7 @@ pub struct LanguageConfig {
     pub hard_tabs: Option<bool>,
     /// How many columns a tab should occupy.
     #[serde(default)]
+    #[schemars(range(min = 1, max = 128))]
     pub tab_size: Option<NonZeroU32>,
     /// How to soft-wrap long lines of text.
     #[serde(default)]
@@ -781,9 +771,21 @@ pub struct LanguageConfig {
     /// A list of characters that Zed should treat as word characters for completion queries.
     #[serde(default)]
     pub completion_query_characters: HashSet<char>,
+    /// A list of characters that Zed should treat as word characters for linked edit operations.
+    #[serde(default)]
+    pub linked_edit_characters: HashSet<char>,
     /// A list of preferred debuggers for this language.
     #[serde(default)]
     pub debuggers: IndexSet<SharedString>,
+    /// A list of import namespace segments that aren't expected to appear in file paths. For
+    /// example, "super" and "crate" in Rust.
+    #[serde(default)]
+    pub ignored_import_segments: HashSet<Arc<str>>,
+    /// Regular expression that matches substrings to omit from import paths, to make the paths more
+    /// similar to how they are specified when imported. For example, "/mod\.rs$" or "/__init__\.py$".
+    #[serde(default, deserialize_with = "deserialize_regex")]
+    #[schemars(schema_with = "regex_json_schema")]
+    pub import_path_strip_regex: Option<Regex>,
 }
 
 #[derive(Clone, Debug, Deserialize, Default, JsonSchema)]
@@ -853,6 +855,7 @@ pub struct BlockCommentConfig {
     /// A character to add as a prefix when a new line is added to a block comment.
     pub prefix: Arc<str>,
     /// A indent to add for prefix and end line upon new line.
+    #[schemars(range(min = 1, max = 128))]
     pub tab_size: u32,
 }
 
@@ -917,6 +920,8 @@ pub struct LanguageConfigOverride {
     #[serde(default)]
     pub completion_query_characters: Override<HashSet<char>>,
     #[serde(default)]
+    pub linked_edit_characters: Override<HashSet<char>>,
+    #[serde(default)]
     pub opt_into_language_servers: Vec<LanguageServerName>,
     #[serde(default)]
     pub prefer_label_for_snippet: Option<bool>,
@@ -975,7 +980,10 @@ impl Default for LanguageConfig {
             hidden: false,
             jsx_tag_auto_close: None,
             completion_query_characters: Default::default(),
+            linked_edit_characters: Default::default(),
             debuggers: Default::default(),
+            ignored_import_segments: Default::default(),
+            import_path_strip_regex: None,
         }
     }
 }
@@ -1154,7 +1162,7 @@ pub struct Grammar {
     id: GrammarId,
     pub ts_language: tree_sitter::Language,
     pub(crate) error_query: Option<Query>,
-    pub(crate) highlights_query: Option<Query>,
+    pub highlights_config: Option<HighlightsConfig>,
     pub(crate) brackets_config: Option<BracketsConfig>,
     pub(crate) redactions_config: Option<RedactionConfig>,
     pub(crate) runnable_config: Option<RunnableConfig>,
@@ -1165,7 +1173,13 @@ pub struct Grammar {
     pub(crate) injection_config: Option<InjectionConfig>,
     pub(crate) override_config: Option<OverrideConfig>,
     pub(crate) debug_variables_config: Option<DebugVariablesConfig>,
+    pub(crate) imports_config: Option<ImportsConfig>,
     pub(crate) highlight_map: Mutex<HighlightMap>,
+}
+
+pub struct HighlightsConfig {
+    pub query: Query,
+    pub identifier_capture_indices: Vec<u32>,
 }
 
 struct IndentConfig {
@@ -1312,6 +1326,17 @@ pub struct DebugVariablesConfig {
     pub objects_by_capture_ix: Vec<(u32, DebuggerTextObject)>,
 }
 
+pub struct ImportsConfig {
+    pub query: Query,
+    pub import_ix: u32,
+    pub name_ix: Option<u32>,
+    pub namespace_ix: Option<u32>,
+    pub source_ix: Option<u32>,
+    pub list_ix: Option<u32>,
+    pub wildcard_ix: Option<u32>,
+    pub alias_ix: Option<u32>,
+}
+
 impl Language {
     pub fn new(config: LanguageConfig, ts_language: Option<tree_sitter::Language>) -> Self {
         Self::new_with_id(LanguageId::new(), config, ts_language)
@@ -1332,7 +1357,7 @@ impl Language {
             grammar: ts_language.map(|ts_language| {
                 Arc::new(Grammar {
                     id: GrammarId::new(),
-                    highlights_query: None,
+                    highlights_config: None,
                     brackets_config: None,
                     outline_config: None,
                     text_object_config: None,
@@ -1344,6 +1369,7 @@ impl Language {
                     runnable_config: None,
                     error_query: Query::new(&ts_language, "(ERROR) @error").ok(),
                     debug_variables_config: None,
+                    imports_config: None,
                     ts_language,
                     highlight_map: Default::default(),
                 })
@@ -1425,12 +1451,39 @@ impl Language {
                 .with_debug_variables_query(query.as_ref())
                 .context("Error loading debug variables query")?;
         }
+        if let Some(query) = queries.imports {
+            self = self
+                .with_imports_query(query.as_ref())
+                .context("Error loading imports query")?;
+        }
         Ok(self)
     }
 
     pub fn with_highlights_query(mut self, source: &str) -> Result<Self> {
         let grammar = self.grammar_mut()?;
-        grammar.highlights_query = Some(Query::new(&grammar.ts_language, source)?);
+        let query = Query::new(&grammar.ts_language, source)?;
+
+        let mut identifier_capture_indices = Vec::new();
+        for name in [
+            "variable",
+            "constant",
+            "constructor",
+            "function",
+            "function.method",
+            "function.method.call",
+            "function.special",
+            "property",
+            "type",
+            "type.interface",
+        ] {
+            identifier_capture_indices.extend(query.capture_index_for_name(name));
+        }
+
+        grammar.highlights_config = Some(HighlightsConfig {
+            query,
+            identifier_capture_indices,
+        });
+
         Ok(self)
     }
 
@@ -1569,6 +1622,45 @@ impl Language {
             objects_by_capture_ix,
         });
         Ok(self)
+    }
+
+    pub fn with_imports_query(mut self, source: &str) -> Result<Self> {
+        let query = Query::new(&self.expect_grammar()?.ts_language, source)?;
+
+        let mut import_ix = 0;
+        let mut name_ix = None;
+        let mut namespace_ix = None;
+        let mut source_ix = None;
+        let mut list_ix = None;
+        let mut wildcard_ix = None;
+        let mut alias_ix = None;
+        if populate_capture_indices(
+            &query,
+            &self.config.name,
+            "imports",
+            &[],
+            &mut [
+                Capture::Required("import", &mut import_ix),
+                Capture::Optional("name", &mut name_ix),
+                Capture::Optional("namespace", &mut namespace_ix),
+                Capture::Optional("source", &mut source_ix),
+                Capture::Optional("list", &mut list_ix),
+                Capture::Optional("wildcard", &mut wildcard_ix),
+                Capture::Optional("alias", &mut alias_ix),
+            ],
+        ) {
+            self.grammar_mut()?.imports_config = Some(ImportsConfig {
+                query,
+                import_ix,
+                name_ix,
+                namespace_ix,
+                source_ix,
+                list_ix,
+                wildcard_ix,
+                alias_ix,
+            });
+        }
+        return Ok(self);
     }
 
     pub fn with_brackets_query(mut self, source: &str) -> Result<Self> {
@@ -1856,7 +1948,10 @@ impl Language {
             let tree = grammar.parse_text(text, None);
             let captures =
                 SyntaxSnapshot::single_tree_captures(range.clone(), text, &tree, self, |grammar| {
-                    grammar.highlights_query.as_ref()
+                    grammar
+                        .highlights_config
+                        .as_ref()
+                        .map(|config| &config.query)
                 });
             let highlight_maps = vec![grammar.highlight_map()];
             let mut offset = 0;
@@ -1885,10 +1980,10 @@ impl Language {
 
     pub fn set_theme(&self, theme: &SyntaxTheme) {
         if let Some(grammar) = self.grammar.as_ref()
-            && let Some(highlights_query) = &grammar.highlights_query
+            && let Some(highlights_config) = &grammar.highlights_config
         {
             *grammar.highlight_map.lock() =
-                HighlightMap::new(highlights_query.capture_names(), theme);
+                HighlightMap::new(highlights_config.query.capture_names(), theme);
         }
     }
 
@@ -1979,6 +2074,15 @@ impl LanguageScope {
             self.config_override()
                 .map(|o| &o.completion_query_characters),
             Some(&self.language.config.completion_query_characters),
+        )
+    }
+
+    /// Returns a list of language-specific characters that are considered part of
+    /// identifiers during linked editing operations.
+    pub fn linked_edit_characters(&self) -> Option<&HashSet<char>> {
+        Override::as_option(
+            self.config_override().map(|o| &o.linked_edit_characters),
+            Some(&self.language.config.linked_edit_characters),
         )
     }
 
@@ -2103,14 +2207,19 @@ impl Grammar {
 
     pub fn highlight_id_for_name(&self, name: &str) -> Option<HighlightId> {
         let capture_id = self
-            .highlights_query
+            .highlights_config
             .as_ref()?
+            .query
             .capture_index_for_name(name)?;
         Some(self.highlight_map.lock().get(capture_id))
     }
 
     pub fn debug_variables_config(&self) -> Option<&DebugVariablesConfig> {
         self.debug_variables_config.as_ref()
+    }
+
+    pub fn imports_config(&self) -> Option<&ImportsConfig> {
+        self.imports_config.as_ref()
     }
 }
 

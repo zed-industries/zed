@@ -35,6 +35,7 @@ members = [
     "crates/cloud_api_client",
     "crates/cloud_api_types",
     "crates/cloud_llm_client",
+    "crates/cloud_zeta2_prompt",
     "crates/collab",
     "crates/collab_ui",
     "crates/collections",
@@ -52,10 +53,13 @@ members = [
     "crates/debugger_tools",
     "crates/debugger_ui",
     "crates/deepseek",
+    "crates/denoise",
     "crates/diagnostics",
     "crates/docs_preprocessor",
     "crates/edit_prediction",
     "crates/edit_prediction_button",
+    "crates/edit_prediction_context",
+    "crates/zeta2_tools",
     "crates/editor",
     "crates/eval",
     "crates/explorer_command_injector",
@@ -86,9 +90,8 @@ members = [
     "crates/image_viewer",
     "crates/inspector_ui",
     "crates/install_cli",
-    "crates/jj",
-    "crates/jj_ui",
     "crates/journal",
+    "crates/json_schema_store",
     "crates/keymap_editor",
     "crates/language",
     "crates/language_extension",
@@ -147,9 +150,9 @@ members = [
     "crates/semantic_version",
     "crates/session",
     "crates/settings",
+    "crates/settings_macros",
     "crates/settings_profile_selector",
     "crates/settings_ui",
-    "crates/settings_ui_macros",
     "crates/snippet",
     "crates/snippet_provider",
     "crates/snippets_ui",
@@ -161,6 +164,7 @@ members = [
     "crates/sum_tree",
     "crates/supermaven",
     "crates/supermaven_api",
+    "crates/codestral",
     "crates/svg_preview",
     "crates/system_specs",
     "crates/tab_switcher",
@@ -197,6 +201,7 @@ members = [
     "crates/zed_actions",
     "crates/zed_env_vars",
     "crates/zeta",
+    "crates/zeta2",
     "crates/zeta_cli",
     "crates/zlog",
     "crates/zlog_settings",
@@ -208,15 +213,14 @@ members = [
     "extensions/glsl",
     "extensions/html",
     "extensions/proto",
-    "extensions/ruff",
     "extensions/slash-commands-example",
-    "extensions/snippets",
     "extensions/test-extension",
 
     #
     # Tooling
     #
 
+    "tooling/perf",
     "tooling/workspace-hack",
     "tooling/xtask",
 ]
@@ -267,9 +271,10 @@ clock = { path = "crates/clock" }
 cloud_api_client = { path = "crates/cloud_api_client" }
 cloud_api_types = { path = "crates/cloud_api_types" }
 cloud_llm_client = { path = "crates/cloud_llm_client" }
+cloud_zeta2_prompt = { path = "crates/cloud_zeta2_prompt" }
 collab = { path = "crates/collab" }
 collab_ui = { path = "crates/collab_ui" }
-collections = { path = "crates/collections" }
+collections = { path = "crates/collections", package = "zed-collections", version = "0.1.0" }
 command_palette = { path = "crates/command_palette" }
 command_palette_hooks = { path = "crates/command_palette_hooks" }
 component = { path = "crates/component" }
@@ -285,6 +290,7 @@ debug_adapter_extension = { path = "crates/debug_adapter_extension" }
 debugger_tools = { path = "crates/debugger_tools" }
 debugger_ui = { path = "crates/debugger_ui" }
 deepseek = { path = "crates/deepseek" }
+derive_refineable = { path = "crates/refineable/derive_refineable", package = "zed-derive-refineable", version = "0.1.0" }
 diagnostics = { path = "crates/diagnostics" }
 editor = { path = "crates/editor" }
 extension = { path = "crates/extension" }
@@ -303,20 +309,21 @@ git_ui = { path = "crates/git_ui" }
 go_to_line = { path = "crates/go_to_line" }
 google_ai = { path = "crates/google_ai" }
 gpui = { path = "crates/gpui", default-features = false }
-gpui_macros = { path = "crates/gpui_macros" }
+gpui_macros = { path = "crates/gpui_macros", package = "gpui-macros", version = "0.1.0" }
 gpui_tokio = { path = "crates/gpui_tokio" }
 html_to_markdown = { path = "crates/html_to_markdown" }
-http_client = { path = "crates/http_client" }
+http_client = { path = "crates/http_client", package = "zed-http-client", version = "0.1.0" }
 http_client_tls = { path = "crates/http_client_tls" }
 icons = { path = "crates/icons" }
 image_viewer = { path = "crates/image_viewer" }
 edit_prediction = { path = "crates/edit_prediction" }
 edit_prediction_button = { path = "crates/edit_prediction_button" }
+edit_prediction_context = { path = "crates/edit_prediction_context" }
+zeta2_tools = { path = "crates/zeta2_tools" }
 inspector_ui = { path = "crates/inspector_ui" }
 install_cli = { path = "crates/install_cli" }
-jj = { path = "crates/jj" }
-jj_ui = { path = "crates/jj_ui" }
 journal = { path = "crates/journal" }
+json_schema_store = { path = "crates/json_schema_store" }
 keymap_editor = { path = "crates/keymap_editor" }
 language = { path = "crates/language" }
 language_extension = { path = "crates/language_extension" }
@@ -334,7 +341,7 @@ lsp = { path = "crates/lsp" }
 markdown = { path = "crates/markdown" }
 markdown_preview = { path = "crates/markdown_preview" }
 svg_preview = { path = "crates/svg_preview" }
-media = { path = "crates/media" }
+media = { path = "crates/media", package = "zed-media", version = "0.1.0" }
 menu = { path = "crates/menu" }
 migrator = { path = "crates/migrator" }
 mistral = { path = "crates/mistral" }
@@ -351,6 +358,7 @@ outline = { path = "crates/outline" }
 outline_panel = { path = "crates/outline_panel" }
 panel = { path = "crates/panel" }
 paths = { path = "crates/paths" }
+perf = { path = "tooling/perf", package = "zed-perf", version = "0.1.0" }
 picker = { path = "crates/picker" }
 plugin = { path = "crates/plugin" }
 plugin_macros = { path = "crates/plugin_macros" }
@@ -362,7 +370,7 @@ project_symbols = { path = "crates/project_symbols" }
 prompt_store = { path = "crates/prompt_store" }
 proto = { path = "crates/proto" }
 recent_projects = { path = "crates/recent_projects" }
-refineable = { path = "crates/refineable" }
+refineable = { path = "crates/refineable", package = "zed-refineable", version = "0.1.0" }
 release_channel = { path = "crates/release_channel" }
 scheduler = { path = "crates/scheduler" }
 remote = { path = "crates/remote" }
@@ -370,16 +378,16 @@ remote_server = { path = "crates/remote_server" }
 repl = { path = "crates/repl" }
 reqwest_client = { path = "crates/reqwest_client" }
 rich_text = { path = "crates/rich_text" }
-rodio = { git = "https://github.com/RustAudio/rodio", branch = "better_wav_output"}
+rodio = { git = "https://github.com/RustAudio/rodio" }
 rope = { path = "crates/rope" }
 rpc = { path = "crates/rpc" }
 rules_library = { path = "crates/rules_library" }
 search = { path = "crates/search" }
-semantic_version = { path = "crates/semantic_version" }
+semantic_version = { path = "crates/semantic_version", package = "zed-semantic-version", version = "0.1.0" }
 session = { path = "crates/session" }
 settings = { path = "crates/settings" }
+settings_macros = { path = "crates/settings_macros" }
 settings_ui = { path = "crates/settings_ui" }
-settings_ui_macros = { path = "crates/settings_ui_macros" }
 snippet = { path = "crates/snippet" }
 snippet_provider = { path = "crates/snippet_provider" }
 snippets_ui = { path = "crates/snippets_ui" }
@@ -388,9 +396,10 @@ sqlez_macros = { path = "crates/sqlez_macros" }
 story = { path = "crates/story" }
 storybook = { path = "crates/storybook" }
 streaming_diff = { path = "crates/streaming_diff" }
-sum_tree = { path = "crates/sum_tree" }
+sum_tree = { path = "crates/sum_tree", package = "zed-sum-tree", version = "0.1.0" }
 supermaven = { path = "crates/supermaven" }
 supermaven_api = { path = "crates/supermaven_api" }
+codestral = { path = "crates/codestral" }
 system_specs = { path = "crates/system_specs" }
 tab_switcher = { path = "crates/tab_switcher" }
 task = { path = "crates/task" }
@@ -411,8 +420,8 @@ ui = { path = "crates/ui" }
 ui_input = { path = "crates/ui_input" }
 ui_macros = { path = "crates/ui_macros" }
 ui_prompt = { path = "crates/ui_prompt" }
-util = { path = "crates/util" }
-util_macros = { path = "crates/util_macros" }
+util = { path = "crates/util", package = "zed-util", version = "0.1.0" }
+util_macros = { path = "crates/util_macros", package = "zed-util-macros", version = "0.1.0" }
 vercel = { path = "crates/vercel" }
 vim = { path = "crates/vim" }
 vim_mode_setting = { path = "crates/vim_mode_setting" }
@@ -427,6 +436,7 @@ zed = { path = "crates/zed" }
 zed_actions = { path = "crates/zed_actions" }
 zed_env_vars = { path = "crates/zed_env_vars" }
 zeta = { path = "crates/zeta" }
+zeta2 = { path = "crates/zeta2" }
 zlog = { path = "crates/zlog" }
 zlog_settings = { path = "crates/zlog_settings" }
 
@@ -434,9 +444,9 @@ zlog_settings = { path = "crates/zlog_settings" }
 # External crates
 #
 
-agent-client-protocol = { version = "0.2.1", features = ["unstable"] }
+agent-client-protocol = { version = "0.4.3", features = ["unstable"] }
 aho-corasick = "1.1"
-alacritty_terminal = { git = "https://github.com/zed-industries/alacritty.git", branch = "add-hush-login-flag" }
+alacritty_terminal = "0.25.1-rc1"
 any_vec = "0.14"
 anyhow = "1.0.86"
 arrayvec = { version = "0.7.4", features = ["serde"] }
@@ -465,10 +475,9 @@ backtrace = "0.3"
 base64 = "0.22"
 bincode = "1.2.1"
 bitflags = "2.6.0"
-blade-graphics = { git = "https://github.com/kvark/blade", rev = "bfa594ea697d4b6326ea29f747525c85ecf933b9" }
-blade-macros = { git = "https://github.com/kvark/blade", rev = "bfa594ea697d4b6326ea29f747525c85ecf933b9" }
-blade-util = { git = "https://github.com/kvark/blade", rev = "bfa594ea697d4b6326ea29f747525c85ecf933b9" }
-blake3 = "1.5.3"
+blade-graphics = { version = "0.7.0" }
+blade-macros = { version = "0.3.0" }
+blade-util = { version = "0.3.0" }
 bytes = "1.0"
 cargo_metadata = "0.19"
 cargo_toml = "0.21"
@@ -505,6 +514,7 @@ futures-lite = "1.13"
 git2 = { version = "0.20.1", default-features = false }
 globset = "0.4"
 handlebars = "4.3"
+hashbrown = "0.15.3"
 heck = "0.5"
 heed = { version = "0.21.0", features = ["read-txn-no-tls"] }
 hex = "0.4.3"
@@ -520,7 +530,6 @@ indexmap = { version = "2.7.0", features = ["serde"] }
 indoc = "2"
 inventory = "0.3.19"
 itertools = "0.14.0"
-jj-lib = { git = "https://github.com/jj-vcs/jj", rev = "e18eb8e05efaa153fad5ef46576af145bba1807f" }
 json_dotpath = "1.1"
 jsonschema = "0.30.0"
 jsonwebtoken = "9.3"
@@ -541,6 +550,7 @@ nanoid = "0.4"
 nbformat = {  git = "https://github.com/ConradIrwin/runtimed", rev = "7130c804216b6914355d15d0b91ea91f6babd734" }
 nix = "0.29"
 num-format = "0.4.4"
+num-traits = "0.2"
 objc = "0.2"
 objc2-foundation = { version = "0.3", default-features = false, features = [
     "NSArray",
@@ -582,6 +592,7 @@ pet-fs = { git = "https://github.com/microsoft/python-environment-tools.git", re
 pet-pixi = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "845945b830297a50de0e24020b980a65e4820559" }
 pet-poetry = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "845945b830297a50de0e24020b980a65e4820559" }
 pet-reporter = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "845945b830297a50de0e24020b980a65e4820559" }
+pet-virtualenv = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "845945b830297a50de0e24020b980a65e4820559" }
 portable-pty = "0.9.0"
 postage = { version = "0.5", features = ["futures-traits"] }
 pretty_assertions = { version = "1.3.0", features = ["unstable"] }
@@ -596,7 +607,8 @@ rand = "0.9"
 rayon = "1.8"
 ref-cast = "1.0.24"
 regex = "1.5"
-reqwest = { git = "https://github.com/zed-industries/reqwest.git", rev = "951c770a32f1998d6e999cef3e59e0013e6c4415", default-features = false, features = [
+# WARNING: If you change this, you must also publish a new version of zed-reqwest to crates.io
+reqwest = { git = "https://github.com/zed-industries/reqwest.git", rev = "c15662463bda39148ba154100dd44d3fba5873a4", default-features = false, features = [
     "charset",
     "http2",
     "macos-system-configuration",
@@ -604,22 +616,21 @@ reqwest = { git = "https://github.com/zed-industries/reqwest.git", rev = "951c77
     "rustls-tls-native-roots",
     "socks",
     "stream",
-] }
+], package = "zed-reqwest", version = "0.12.15-zed" }
 rsa = "0.9.6"
 runtimelib = {  git = "https://github.com/ConradIrwin/runtimed", rev = "7130c804216b6914355d15d0b91ea91f6babd734", default-features = false, features = [
     "async-dispatcher-runtime",
 ] }
 rust-embed = { version = "8.4", features = ["include-exclude"] }
-rustc-demangle = "0.1.23"
 rustc-hash = "2.1.0"
 rustls = { version = "0.23.26" }
 rustls-platform-verifier = "0.5.0"
-scap = { git = "https://github.com/zed-industries/scap", rev = "808aa5c45b41e8f44729d02e38fd00a2fe2722e7", default-features = false }
+# WARNING: If you change this, you must also publish a new version of zed-scap to crates.io
+scap = { git = "https://github.com/zed-industries/scap", rev = "4afea48c3b002197176fb19cd0f9b180dd36eaac", default-features = false, package = "zed-scap", version = "0.0.8-zed" }
 schemars = { version = "1.0", features = ["indexmap2"] }
 semver = "1.0"
-serde = { version = "1.0", features = ["derive", "rc"] }
-serde_derive = { version = "1.0", features = ["deserialize_in_place"] }
-serde_json = { version = "1.0", features = ["preserve_order", "raw_value"] }
+serde = { version = "1.0.221", features = ["derive", "rc"] }
+serde_json = { version = "1.0.144", features = ["preserve_order", "raw_value"] }
 serde_json_lenient = { version = "0.2", features = [
     "preserve_order",
     "raw_value",
@@ -627,10 +638,12 @@ serde_json_lenient = { version = "0.2", features = [
 serde_path_to_error = "0.1.17"
 serde_repr = "0.1"
 serde_urlencoded = "0.7"
+serde_with = "3.4.0"
 sha2 = "0.10"
 shellexpand = "2.1.0"
 shlex = "1.3.0"
 simplelog = "0.12.2"
+slotmap = "1.0.6"
 smallvec = { version = "1.6", features = ["union"] }
 smol = "2.0"
 sqlformat = "0.2"
@@ -639,7 +652,7 @@ streaming-iterator = "0.1"
 strsim = "0.11"
 strum = { version = "0.27.0", features = ["derive"] }
 subtle = "2.5.0"
-syn = { version = "2.0.101", features = ["full", "extra-traits"] }
+syn = { version = "2.0.101", features = ["full", "extra-traits", "visit-mut"] }
 sys-locale = "0.3.1"
 sysinfo = "0.31.0"
 take-until = "0.2.0"
@@ -657,8 +670,9 @@ tiny_http = "0.8"
 tokio = { version = "1" }
 tokio-tungstenite = { version = "0.26", features = ["__rustls-tls"] }
 toml = "0.8"
+toml_edit = { version = "0.22", default-features = false, features = ["display", "parse", "serde"] }
 tower-http = "0.4.4"
-tree-sitter = { version = "0.25.6", features = ["wasm"] }
+tree-sitter = { version = "0.25.10", features = ["wasm"] }
 tree-sitter-bash = "0.25.0"
 tree-sitter-c = "0.23"
 tree-sitter-cpp = { git = "https://github.com/tree-sitter/tree-sitter-cpp", rev = "5cb9b693cfd7bfacab1d9ff4acac1a4150700609" }
@@ -675,11 +689,11 @@ tree-sitter-html = "0.23"
 tree-sitter-jsdoc = "0.23"
 tree-sitter-json = "0.24"
 tree-sitter-md = { git = "https://github.com/tree-sitter-grammars/tree-sitter-markdown", rev = "9a23c1a96c0513d8fc6520972beedd419a973539" }
-tree-sitter-python = { git = "https://github.com/zed-industries/tree-sitter-python", rev = "218fcbf3fda3d029225f3dec005cb497d111b35e" }
+tree-sitter-python = "0.25"
 tree-sitter-regex = "0.24"
 tree-sitter-ruby = "0.23"
 tree-sitter-rust = "0.24"
-tree-sitter-typescript = "0.23"
+tree-sitter-typescript = { git = "https://github.com/zed-industries/tree-sitter-typescript", rev = "e2c53597d6a5d9cf7bbe8dccde576fe1e46c5899" } # https://github.com/tree-sitter/tree-sitter-typescript/pull/347
 tree-sitter-yaml = { git = "https://github.com/zed-industries/tree-sitter-yaml", rev = "baff0b51c64ef6a1fb1f8390f3ad6015b83ec13a" }
 unicase = "2.6"
 unicode-script = "0.5.7"
@@ -706,6 +720,7 @@ windows-core = "0.61"
 wit-component = "0.221"
 workspace-hack = "0.1.0"
 yawc = "0.2.5"
+zeroize = "1.8"
 zstd = "0.11"
 
 [workspace.dependencies.windows]
@@ -732,6 +747,7 @@ features = [
     "Win32_Networking_WinSock",
     "Win32_Security",
     "Win32_Security_Credentials",
+    "Win32_Security_Cryptography",
     "Win32_Storage_FileSystem",
     "Win32_System_Com",
     "Win32_System_Com_StructuredStorage",
@@ -789,7 +805,7 @@ wasmtime = { opt-level = 3 }
 activity_indicator = { codegen-units = 1 }
 assets = { codegen-units = 1 }
 breadcrumbs = { codegen-units = 1 }
-collections = { codegen-units = 1 }
+zed-collections = { codegen-units = 1 }
 command_palette = { codegen-units = 1 }
 command_palette_hooks = { codegen-units = 1 }
 extension_cli = { codegen-units = 1 }
@@ -800,6 +816,7 @@ image_viewer = { codegen-units = 1 }
 edit_prediction_button = { codegen-units = 1 }
 install_cli = { codegen-units = 1 }
 journal = { codegen-units = 1 }
+json_schema_store = { codegen-units = 1 }
 lmstudio = { codegen-units = 1 }
 menu = { codegen-units = 1 }
 notifications = { codegen-units = 1 }
@@ -808,11 +825,11 @@ outline = { codegen-units = 1 }
 paths = { codegen-units = 1 }
 prettier = { codegen-units = 1 }
 project_symbols = { codegen-units = 1 }
-refineable = { codegen-units = 1 }
+zed-refineable = { codegen-units = 1 }
 release_channel = { codegen-units = 1 }
 reqwest_client = { codegen-units = 1 }
 rich_text = { codegen-units = 1 }
-semantic_version = { codegen-units = 1 }
+zed-semantic-version = { codegen-units = 1 }
 session = { codegen-units = 1 }
 snippet = { codegen-units = 1 }
 snippets_ui = { codegen-units = 1 }
@@ -851,6 +868,7 @@ todo = "deny"
 declare_interior_mutable_const = "deny"
 
 redundant_clone = "deny"
+disallowed_methods = "deny"
 
 # We currently do not restrict any style rules
 # as it slows down shipping code to Zed.

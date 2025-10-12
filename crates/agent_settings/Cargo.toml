@@ -19,6 +19,7 @@ convert_case.workspace = true
 fs.workspace = true
 gpui.workspace = true
 language_model.workspace = true
+project.workspace = true
 schemars.workspace = true
 serde.workspace = true
 settings.workspace = true

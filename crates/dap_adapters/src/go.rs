@@ -415,11 +415,11 @@ impl DebugAdapter for GoDebugAdapter {
         let dlv_path = adapter_path.join("dlv");
 
         let delve_path = if let Some(path) = user_installed_path {
-            path.to_string_lossy().to_string()
+            path.to_string_lossy().into_owned()
         } else if let Some(path) = delegate.which(OsStr::new("dlv")).await {
-            path.to_string_lossy().to_string()
+            path.to_string_lossy().into_owned()
         } else if delegate.fs().is_file(&dlv_path).await {
-            dlv_path.to_string_lossy().to_string()
+            dlv_path.to_string_lossy().into_owned()
         } else {
             let go = delegate
                 .which(OsStr::new("go"))
@@ -443,7 +443,7 @@ impl DebugAdapter for GoDebugAdapter {
                 );
             }
 
-            adapter_path.join("dlv").to_string_lossy().to_string()
+            adapter_path.join("dlv").to_string_lossy().into_owned()
         };
 
         let cwd = Some(

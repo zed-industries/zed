@@ -3,6 +3,7 @@ use async_trait::async_trait;
 use futures::StreamExt;
 use gpui::{App, AsyncApp};
 use http_client::github::{AssetKind, GitHubLspBinaryVersion, latest_github_release};
+use http_client::github_download::{GithubBinaryMetadata, download_server_binary};
 pub use language::*;
 use lsp::{InitializeParams, LanguageServerBinary, LanguageServerName};
 use project::lsp_store::clangd_ext;
@@ -10,8 +11,6 @@ use serde_json::json;
 use smol::fs;
 use std::{env::consts, path::PathBuf, sync::Arc};
 use util::{ResultExt, fs::remove_matching, maybe, merge_json_value_into};
-
-use crate::github_download::{GithubBinaryMetadata, download_server_binary};
 
 pub struct CLspAdapter;
 
@@ -119,7 +118,7 @@ impl LspInstaller for CLspAdapter {
             }
         }
         download_server_binary(
-            delegate,
+            &*delegate.http_client(),
             &url,
             expected_digest.as_deref(),
             &container_dir,
@@ -394,7 +393,7 @@ async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServ
 #[cfg(test)]
 mod tests {
     use gpui::{AppContext as _, BorrowAppContext, TestAppContext};
-    use language::{AutoindentMode, Buffer, language_settings::AllLanguageSettings};
+    use language::{AutoindentMode, Buffer};
     use settings::SettingsStore;
     use std::num::NonZeroU32;
 
@@ -406,8 +405,8 @@ mod tests {
             cx.set_global(test_settings);
             language::init(cx);
             cx.update_global::<SettingsStore, _>(|store, cx| {
-                store.update_user_settings::<AllLanguageSettings>(cx, |s| {
-                    s.defaults.tab_size = NonZeroU32::new(2);
+                store.update_user_settings(cx, |s| {
+                    s.project.all_languages.defaults.tab_size = NonZeroU32::new(2);
                 });
             });
         });
