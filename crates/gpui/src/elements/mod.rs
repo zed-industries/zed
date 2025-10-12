@@ -9,6 +9,7 @@ mod list;
 mod surface;
 mod svg;
 mod text;
+mod transition;
 mod uniform_list;
 
 pub use anchored::*;
@@ -22,4 +23,5 @@ pub use list::*;
 pub use surface::*;
 pub use svg::*;
 pub use text::*;
+pub use transition::*;
 pub use uniform_list::*;
