@@ -393,7 +393,7 @@ Contexts are nested, so when you're editing a file, the context is the `"Editor"
 {
   "context": "Workspace",
   "bindings": {
-    "ctrl-s": "file::Save"
+    "ctrl-s": "workspace::Save"
   }
 }
 ```

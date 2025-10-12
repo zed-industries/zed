@@ -943,7 +943,7 @@ List of `string` values
 
 ```json [settings]
 {
-  "diagnostics_max_severity": "all"
+  "show_diagnostics": "all"
 }
 ```
 
@@ -951,7 +951,7 @@ List of `string` values
 
 ```json [settings]
 {
-  "diagnostics_max_severity": "off"
+  "show_diagnostics": "off"
 }
 ```
 
@@ -959,7 +959,7 @@ List of `string` values
 
 ```json [settings]
 {
-  "diagnostics_max_severity": "error"
+  "show_diagnostics": "error"
 }
 ```
 
@@ -967,7 +967,7 @@ List of `string` values
 
 ```json [settings]
 {
-  "diagnostics_max_severity": "warning"
+  "show_diagnostics": "warning"
 }
 ```
 
@@ -975,7 +975,7 @@ List of `string` values
 
 ```json [settings]
 {
-  "diagnostics_max_severity": "info"
+  "show_diagnostics": "info"
 }
 ```
 
