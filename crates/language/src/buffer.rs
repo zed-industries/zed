@@ -414,8 +414,14 @@ pub trait LocalFile: File {
     fn abs_path(&self, cx: &App) -> PathBuf;
 
     /// Loads the file contents from disk and returns them as a UTF-8 encoded string.
-    fn load(&self, cx: &App, encoding: EncodingWrapper, detect_utf16: bool)
-    -> Task<Result<String>>;
+    fn load(
+        &self,
+        cx: &App,
+        encoding: EncodingWrapper,
+        force: bool,
+        detect_utf16: bool,
+        buffer_encoding: Option<Arc<std::sync::Mutex<&'static Encoding>>>,
+    ) -> Task<Result<String>>;
 
     /// Loads the file's contents from disk.
     fn load_bytes(&self, cx: &App) -> Task<Result<Vec<u8>>>;
@@ -840,6 +846,18 @@ impl Buffer {
             None,
             Capability::ReadWrite,
         )
+    }
+
+    /// Replace the text buffer. This function is in contrast to `set_text` in that it does not
+    /// change the buffer's editing state
+    pub fn replace_text_buffer(&mut self, new: TextBuffer, cx: &mut Context<Self>) {
+        self.text = new;
+        self.saved_version = self.version.clone();
+        self.has_unsaved_edits.set((self.version.clone(), false));
+
+        self.was_changed();
+        cx.emit(BufferEvent::DirtyChanged);
+        cx.notify();
     }
 
     /// Create a new buffer with the given base text that has proper line endings and other normalization applied.
@@ -1346,13 +1364,14 @@ impl Buffer {
     pub fn reload(&mut self, cx: &Context<Self>) -> oneshot::Receiver<Option<Transaction>> {
         let (tx, rx) = futures::channel::oneshot::channel();
         let encoding = EncodingWrapper::new(*(self.encoding.lock().unwrap()));
+        let buffer_encoding = self.encoding.clone();
 
         let prev_version = self.text.version();
         self.reload_task = Some(cx.spawn(async move |this, cx| {
             let Some((new_mtime, new_text)) = this.update(cx, |this, cx| {
                 let file = this.file.as_ref()?.as_local()?;
                 Some((file.disk_state().mtime(), {
-                    file.load(cx, encoding, false)
+                    file.load(cx, encoding, false, true, Some(buffer_encoding))
                 }))
             })?
             else {
@@ -1406,6 +1425,9 @@ impl Buffer {
         cx.notify();
     }
 
+    pub fn replace_file(&mut self, new_file: Arc<dyn File>) {
+        self.file = Some(new_file);
+    }
     /// Updates the [`File`] backing this buffer. This should be called when
     /// the file has changed or has been deleted.
     pub fn file_updated(&mut self, new_file: Arc<dyn File>, cx: &mut Context<Self>) {
@@ -5231,7 +5253,9 @@ impl LocalFile for TestFile {
         &self,
         _cx: &App,
         _encoding: EncodingWrapper,
+        _force: bool,
         _detect_utf16: bool,
+        _buffer_encoding: Option<Arc<std::sync::Mutex<&'static Encoding>>>,
     ) -> Task<Result<String>> {
         unimplemented!()
     }

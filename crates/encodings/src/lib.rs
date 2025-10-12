@@ -7,8 +7,12 @@ use gpui::{ClickEvent, Entity, Subscription, WeakEntity};
 use language::Buffer;
 use ui::{App, Button, ButtonCommon, Context, LabelSize, Render, Tooltip, Window, div};
 use ui::{Clickable, ParentElement};
-use workspace::{ItemHandle, StatusItemView, Workspace, with_active_or_new_workspace};
-use zed_actions::encodings::Toggle;
+use util::ResultExt;
+use workspace::{
+    CloseActiveItem, ItemHandle, OpenOptions, StatusItemView, Workspace,
+    with_active_or_new_workspace,
+};
+use zed_actions::encodings::{ForceOpen, Toggle};
 
 use crate::selectors::encoding::EncodingSelector;
 use crate::selectors::save_or_reopen::EncodingSaveOrReopenSelector;
@@ -302,6 +306,38 @@ pub fn init(cx: &mut App) {
             workspace.toggle_modal(window, cx, |window, cx| {
                 EncodingSelector::new(window, cx, Action::Reopen, None, weak_workspace, Some(path))
             });
+        });
+    });
+
+    cx.on_action(|action: &ForceOpen, cx: &mut App| {
+        let ForceOpen(path) = action.clone();
+        let path = path.to_path_buf();
+
+        with_active_or_new_workspace(cx, |workspace, window, cx| {
+            workspace.active_pane().update(cx, |pane, cx| {
+                pane.close_active_item(&CloseActiveItem::default(), window, cx)
+                    .detach();
+            });
+
+            {
+                let force = workspace.encoding_options.force.get_mut();
+
+                *force = true;
+            }
+
+            let open_task = workspace.open_abs_path(path, OpenOptions::default(), window, cx);
+            let weak_workspace = workspace.weak_handle();
+
+            cx.spawn(async move |_, cx| {
+                let workspace = weak_workspace.upgrade().unwrap();
+                open_task.await.log_err();
+                workspace
+                    .update(cx, |workspace: &mut Workspace, _| {
+                        *workspace.encoding_options.force.get_mut() = false;
+                    })
+                    .log_err();
+            })
+            .detach();
         });
     });
 }

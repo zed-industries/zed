@@ -4,7 +4,7 @@ use gpui::{EventEmitter, FocusHandle, Focusable};
 use ui::{
     App, Button, ButtonCommon, ButtonStyle, Clickable, Context, FluentBuilder, InteractiveElement,
     KeyBinding, Label, LabelCommon, LabelSize, ParentElement, Render, SharedString, Styled as _,
-    Window, h_flex, v_flex,
+    TintColor, Window, h_flex, v_flex,
 };
 use zed_actions::workspace::OpenWithSystem;
 
@@ -78,7 +78,8 @@ impl Focusable for InvalidItemView {
 impl Render for InvalidItemView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl gpui::IntoElement {
         let abs_path = self.abs_path.clone();
-        let path = self.abs_path.clone();
+        let path0 = self.abs_path.clone();
+        let path1 = self.abs_path.clone();
 
         v_flex()
             .size_full()
@@ -115,23 +116,44 @@ impl Render for InvalidItemView {
                                     ),
                                 )
                                 .child(
-                                    h_flex().justify_center().child(
-                                        Button::new(
-                                            "open-with-encoding",
-                                            "Open With a Different Encoding",
+                                    h_flex()
+                                        .justify_center()
+                                        .child(
+                                            Button::new(
+                                                "open-with-encoding",
+                                                "Open With a Different Encoding",
+                                            )
+                                            .style(ButtonStyle::Outlined)
+                                            .on_click(
+                                                move |_, window, cx| {
+                                                    window.dispatch_action(
+                                                        Box::new(zed_actions::encodings::Toggle(
+                                                            path0.clone(),
+                                                        )),
+                                                        cx,
+                                                    )
+                                                },
+                                            ),
                                         )
-                                        .style(ButtonStyle::Outlined)
-                                        .on_click(
-                                            move |_, window, cx| {
-                                                window.dispatch_action(
-                                                    Box::new(zed_actions::encodings::Toggle(
-                                                        path.clone(),
-                                                    )),
-                                                    cx,
-                                                )
-                                            },
+                                        .child(
+                                            Button::new(
+                                                "accept-risk-and-open",
+                                                "Accept the Risk and Open",
+                                            )
+                                            .style(ButtonStyle::Tinted(TintColor::Warning))
+                                            .on_click(
+                                                move |_, window, cx| {
+                                                    window.dispatch_action(
+                                                        Box::new(
+                                                            zed_actions::encodings::ForceOpen(
+                                                                path1.clone(),
+                                                            ),
+                                                        ),
+                                                        cx,
+                                                    );
+                                                },
+                                            ),
                                         ),
-                                    ),
                                 )
                         }),
                 ),

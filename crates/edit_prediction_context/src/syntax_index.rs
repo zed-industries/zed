@@ -523,7 +523,7 @@ impl SyntaxIndex {
         };
 
         let snapshot_task = worktree.update(cx, |worktree, cx| {
-            let load_task = worktree.load_file(&project_path.path, None, cx);
+            let load_task = worktree.load_file(&project_path.path, None, false, true, None, cx);
             cx.spawn(async move |_this, cx| {
                 let loaded_file = load_task.await?;
                 let language = language.await?;

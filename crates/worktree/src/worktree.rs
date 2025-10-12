@@ -711,10 +711,15 @@ impl Worktree {
         &self,
         path: &Path,
         encoding: Option<EncodingWrapper>,
+        force: bool,
+        detect_utf16: bool,
+        buffer_encoding: Option<Arc<std::sync::Mutex<&'static Encoding>>>,
         cx: &Context<Worktree>,
     ) -> Task<Result<LoadedFile>> {
         match self {
-            Worktree::Local(this) => this.load_file(path, encoding, cx),
+            Worktree::Local(this) => {
+                this.load_file(path, encoding, force, detect_utf16, buffer_encoding, cx)
+            }
             Worktree::Remote(_) => {
                 Task::ready(Err(anyhow!("remote worktrees can't yet load files")))
             }
@@ -1325,6 +1330,9 @@ impl LocalWorktree {
         &self,
         path: &Path,
         encoding: Option<EncodingWrapper>,
+        force: bool,
+        detect_utf16: bool,
+        buffer_encoding: Option<Arc<std::sync::Mutex<&'static Encoding>>>,
         cx: &Context<Worktree>,
     ) -> Task<Result<LoadedFile>> {
         let path = Arc::from(path);
@@ -1357,7 +1365,9 @@ impl LocalWorktree {
                     } else {
                         EncodingWrapper::new(encoding_rs::UTF_8)
                     },
-                    false,
+                    force,
+                    detect_utf16,
+                    buffer_encoding,
                 )
                 .await?;
 
@@ -3139,13 +3149,15 @@ impl language::LocalFile for File {
         &self,
         cx: &App,
         encoding: EncodingWrapper,
+        force: bool,
         detect_utf16: bool,
+        buffer_encoding: Option<Arc<std::sync::Mutex<&'static Encoding>>>,
     ) -> Task<Result<String>> {
         let worktree = self.worktree.read(cx).as_local().unwrap();
         let abs_path = worktree.absolutize(&self.path);
         let fs = worktree.fs.clone();
         cx.background_spawn(async move {
-            fs.load_with_encoding(&abs_path?, encoding, detect_utf16)
+            fs.load_with_encoding(&abs_path?, encoding, force, detect_utf16, buffer_encoding)
                 .await
         })
     }

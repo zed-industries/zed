@@ -19,7 +19,6 @@ mod workspace_settings;
 
 pub use crate::notifications::NotificationFrame;
 pub use dock::Panel;
-use encoding_rs::Encoding;
 use encoding_rs::UTF_8;
 use fs::encodings::EncodingWrapper;
 pub use path_list::PathList;
@@ -33,6 +32,8 @@ use client::{
 };
 use collections::{HashMap, HashSet, hash_map};
 use dock::{Dock, DockPosition, PanelButtons, PanelHandle, RESIZE_HANDLE_SIZE};
+use fs::encodings::EncodingOptions;
+
 use futures::{
     Future, FutureExt, StreamExt,
     channel::{
@@ -650,7 +651,7 @@ impl ProjectItemRegistry {
                 let project_path = project_path.clone();
                 let EncodingWrapper(encoding) = encoding.unwrap_or_default();
 
-                project.update(cx, |project, _| {*project.encoding.lock().unwrap() = encoding});
+                project.update(cx, |project, _| {*project.encoding_options.encoding.lock().unwrap() = EncodingWrapper::new(encoding)});
 
                 let is_file = project
                     .read(cx)
@@ -1190,7 +1191,7 @@ pub struct Workspace {
     session_id: Option<String>,
     scheduled_tasks: Vec<Task<()>>,
     last_open_dock_positions: Vec<DockPosition>,
-    pub encoding: Arc<std::sync::Mutex<&'static Encoding>>,
+    pub encoding_options: EncodingOptions,
 }
 
 impl EventEmitter<Event> for Workspace {}
@@ -1533,7 +1534,7 @@ impl Workspace {
             session_id: Some(session_id),
             scheduled_tasks: Vec::new(),
             last_open_dock_positions: Vec::new(),
-            encoding: Arc::new(std::sync::Mutex::new(encoding_rs::UTF_8)),
+            encoding_options: Default::default(),
         }
     }
 
@@ -3416,7 +3417,6 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<anyhow::Result<Box<dyn ItemHandle>>> {
-        println!("{:?}", *self.encoding.lock().unwrap());
         cx.spawn_in(window, async move |workspace, cx| {
             let open_paths_task_result = workspace
                 .update_in(cx, |workspace, window, cx| {
@@ -3574,11 +3574,24 @@ impl Workspace {
         window: &mut Window,
         cx: &mut App,
     ) -> Task<Result<(Option<ProjectEntryId>, WorkspaceItemBuilder)>> {
+        let project = self.project();
+
+        project.update(cx, |project, _| {
+            project.encoding_options.force.store(
+                self.encoding_options
+                    .force
+                    .load(std::sync::atomic::Ordering::Relaxed),
+                std::sync::atomic::Ordering::Relaxed,
+            );
+        });
+
         let registry = cx.default_global::<ProjectItemRegistry>().clone();
         registry.open_path(
-            self.project(),
+            project,
             &path,
-            Some(EncodingWrapper::new(*self.encoding.lock().unwrap())),
+            Some(EncodingWrapper::new(
+                (self.encoding_options.encoding.lock().unwrap()).0,
+            )),
             window,
             cx,
         )

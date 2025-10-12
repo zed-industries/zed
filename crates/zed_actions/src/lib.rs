@@ -308,6 +308,9 @@ pub mod encodings {
 
     #[derive(PartialEq, Debug, Clone, Action, JsonSchema, Deserialize)]
     pub struct Toggle(pub Arc<std::path::Path>);
+
+    #[derive(PartialEq, Debug, Clone, Action, JsonSchema, Deserialize)]
+    pub struct ForceOpen(pub Arc<std::path::Path>);
 }
 
 pub mod agent {

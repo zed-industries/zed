@@ -5529,6 +5529,8 @@ version = "0.1.0"
 dependencies = [
  "editor",
  "encoding_rs",
+ "fs",
+ "futures 0.3.31",
  "fuzzy",
  "gpui",
  "language",

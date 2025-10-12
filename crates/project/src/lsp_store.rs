@@ -8336,7 +8336,7 @@ impl LspStore {
             lsp_store
                 .update(cx, |lsp_store, cx| {
                     lsp_store.buffer_store().update(cx, |buffer_store, cx| {
-                        buffer_store.open_buffer(project_path, None, cx)
+                        buffer_store.open_buffer(project_path, None, false, true,cx)
                     })
                 })?
                 .await

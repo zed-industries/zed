@@ -796,7 +796,7 @@ impl BreakpointStore {
                                 worktree_id: worktree.read(cx).id(),
                                 path: relative_path,
                             };
-                            this.open_buffer(path, None, cx)
+                            this.open_buffer(path, None, false, true, cx)
                         })?
                         .await;
                     let Ok(buffer) = buffer else {

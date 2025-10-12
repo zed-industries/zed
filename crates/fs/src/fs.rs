@@ -62,9 +62,9 @@ use std::ffi::OsStr;
 
 #[cfg(any(test, feature = "test-support"))]
 pub use fake_git_repo::{LOAD_HEAD_TEXT_TASK, LOAD_INDEX_TEXT_TASK};
-use crate::encodings::to_utf8;
 use crate::encodings::EncodingWrapper;
 use crate::encodings::from_utf8;
+use crate::encodings::to_utf8;
 
 pub trait Watcher: Send + Sync {
     fn add(&self, path: &Path) -> Result<()>;
@@ -125,9 +125,18 @@ pub trait Fs: Send + Sync {
         &self,
         path: &Path,
         encoding: EncodingWrapper,
+        force: bool,
         detect_utf16: bool,
+        buffer_encoding: Option<Arc<std::sync::Mutex<&'static Encoding>>>,
     ) -> Result<String> {
-        Ok(to_utf8(self.load_bytes(path).await?, encoding, detect_utf16, None).await?)
+        Ok(to_utf8(
+            self.load_bytes(path).await?,
+            encoding,
+            force,
+            detect_utf16,
+            buffer_encoding,
+        )
+        .await?)
     }
 
     async fn load_bytes(&self, path: &Path) -> Result<Vec<u8>>;

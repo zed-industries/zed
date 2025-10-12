@@ -28,9 +28,12 @@ use buffer_diff::BufferDiff;
 use context_server_store::ContextServerStore;
 use encoding_rs::Encoding;
 pub use environment::ProjectEnvironmentEvent;
+use fs::encodings::EncodingOptions;
 use fs::encodings::EncodingWrapper;
 use git::repository::get_git_committer;
 use git_store::{Repository, RepositoryId};
+use std::sync::atomic::AtomicBool;
+
 pub mod search_history;
 mod yarn;
 
@@ -108,6 +111,7 @@ use settings::{InvalidSettingsError, Settings, SettingsLocation, SettingsStore};
 use smol::channel::Receiver;
 use snippet::Snippet;
 use snippet_provider::SnippetProvider;
+use std::ops::Deref;
 use std::{
     borrow::Cow,
     collections::BTreeMap,
@@ -217,7 +221,7 @@ pub struct Project {
     settings_observer: Entity<SettingsObserver>,
     toolchain_store: Option<Entity<ToolchainStore>>,
     agent_location: Option<AgentLocation>,
-    pub encoding: Arc<std::sync::Mutex<&'static Encoding>>,
+    pub encoding_options: EncodingOptions,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1228,7 +1232,11 @@ impl Project {
                 toolchain_store: Some(toolchain_store),
 
                 agent_location: None,
-                encoding: Arc::new(std::sync::Mutex::new(encoding_rs::UTF_8)),
+                encoding_options: EncodingOptions {
+                    encoding: Arc::new(std::sync::Mutex::new(EncodingWrapper::default())),
+                    force: AtomicBool::new(false),
+                    detect_utf16: AtomicBool::new(true),
+                },
             }
         })
     }
@@ -1414,7 +1422,11 @@ impl Project {
 
                 toolchain_store: Some(toolchain_store),
                 agent_location: None,
-                encoding: Arc::new(std::sync::Mutex::new(encoding_rs::UTF_8)),
+                encoding_options: EncodingOptions {
+                    encoding: Arc::new(std::sync::Mutex::new(EncodingWrapper::default())),
+                    force: AtomicBool::new(false),
+                    detect_utf16: AtomicBool::new(false),
+                },
             };
 
             // remote server -> local machine handlers
@@ -1668,8 +1680,14 @@ impl Project {
                 remotely_created_models: Arc::new(Mutex::new(RemotelyCreatedModels::default())),
                 toolchain_store: None,
                 agent_location: None,
-                encoding: Arc::new(std::sync::Mutex::new(encoding_rs::UTF_8)),
+                encoding_options: EncodingOptions {
+                    encoding: Arc::new(std::sync::Mutex::new(EncodingWrapper::default())),
+
+                    force: AtomicBool::new(false),
+                    detect_utf16: AtomicBool::new(false),
+                },
             };
+
             project.set_role(role, cx);
             for worktree in worktrees {
                 project.add_worktree(&worktree, cx);
@@ -2720,7 +2738,17 @@ impl Project {
         self.buffer_store.update(cx, |buffer_store, cx| {
             buffer_store.open_buffer(
                 path.into(),
-                Some(EncodingWrapper::new(self.encoding.lock().as_ref().unwrap())),
+                Some(
+                    self.encoding_options
+                        .encoding
+                        .lock()
+                        .as_ref()
+                        .unwrap()
+                        .deref()
+                        .clone(),
+                ),
+                *self.encoding_options.force.get_mut(),
+                *self.encoding_options.detect_utf16.get_mut(),
                 cx,
             )
         })
