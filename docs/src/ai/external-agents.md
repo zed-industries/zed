@@ -20,7 +20,7 @@ As of [Zed Stable v0.201.5](https://zed.dev/releases/stable/0.201.5) you should 
 
 If you'd like to bind this to a keyboard shortcut, you can do so by editing your `keymap.json` file via the `zed: open keymap` command to include:
 
-```json
+```json [settings]
 [
   {
     "bindings": {
@@ -36,7 +36,7 @@ The first time you create a Gemini CLI thread, Zed will install [@google/gemini-
 
 By default, Zed will use this managed version of Gemini CLI even if you have it installed globally. However, you can configure it to use a version in your `PATH` by adding this to your settings:
 
-```json
+```json [settings]
 {
   "agent_servers": {
     "gemini": {
@@ -77,7 +77,7 @@ Open the agent panel with {#kb agent::ToggleFocus}, and then use the `+` button 
 
 If you'd like to bind this to a keyboard shortcut, you can do so by editing your `keymap.json` file via the `zed: open keymap` command to include:
 
-```json
+```json [settings]
 [
   {
     "bindings": {
@@ -124,7 +124,7 @@ If you don't have a `CLAUDE.md` file, you can ask Claude Code to create one for 
 
 You can run any agent speaking ACP in Zed by changing your settings as follows:
 
-```json
+```json [settings]
 {
   "agent_servers": {
     "Custom Agent": {

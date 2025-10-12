@@ -22,7 +22,7 @@ The extension doesn't attempt to download `lldb-dap` if it's not found.
 
 #### Build and debug a Swift binary
 
-```json
+```json [settings]
 [
   {
     "label": "Debug Swift",

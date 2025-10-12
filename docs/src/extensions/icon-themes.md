@@ -17,7 +17,7 @@ Each icon theme file should adhere to the JSON schema specified at [`https://zed
 
 Here is an example of the structure of an icon theme:
 
-```json
+```json [settings]
 {
   "$schema": "https://zed.dev/schema/icon_themes/v0.3.0.json",
   "name": "My Icon Theme",

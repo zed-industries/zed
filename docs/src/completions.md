@@ -9,7 +9,7 @@ Zed supports two sources for completions:
 
 When there is an appropriate language server available, Zed will provide completions of variable names, functions, and other symbols in the current file. You can disable these by adding the following to your Zed `settings.json` file:
 
-```json
+```json [settings]
 "show_completions_on_input": false
 ```
 
