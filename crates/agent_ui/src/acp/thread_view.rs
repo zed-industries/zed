@@ -2095,6 +2095,74 @@ impl AcpThreadView {
             .into_any_element()
     }
 
+    fn render_tool_params(
+        &self,
+        markdown: Option<Entity<Markdown>>,
+        window: &Window,
+        cx: &Context<Self>,
+    ) -> AnyElement {
+        v_flex()
+            .w_full()
+            .px_2()
+            .py_1p5()
+            .border_t_1()
+            .border_color(self.tool_card_border_color(cx))
+            .child(
+                Label::new("Parameters")
+                    .size(LabelSize::XSmall)
+                    .color(Color::Muted),
+            )
+            .child(if let Some(markdown) = markdown {
+                self.render_markdown(markdown, default_markdown_style(true, false, window, cx))
+                    .into_any_element()
+            } else {
+                Label::new("None")
+                    .size(LabelSize::Small)
+                    .color(Color::Muted)
+                    .into_any_element()
+            })
+            .into_any_element()
+    }
+
+    fn render_tool_results_section(
+        &self,
+        entry_ix: usize,
+        tool_call: &ToolCall,
+        use_card_layout: bool,
+        window: &Window,
+        cx: &Context<Self>,
+    ) -> AnyElement {
+        v_flex()
+            .w_full()
+            .px_2()
+            .py_1p5()
+            .border_t_1()
+            .border_color(self.tool_card_border_color(cx))
+            .child(
+                Label::new("Results")
+                    .size(LabelSize::XSmall)
+                    .color(Color::Muted),
+            )
+            .children(
+                tool_call
+                    .content
+                    .iter()
+                    .enumerate()
+                    .map(|(content_ix, content)| {
+                        self.render_tool_call_content(
+                            entry_ix,
+                            content,
+                            content_ix,
+                            tool_call,
+                            use_card_layout,
+                            window,
+                            cx,
+                        )
+                    }),
+            )
+            .into_any_element()
+    }
+
     fn render_tool_call(
         &self,
         entry_ix: usize,
@@ -2124,15 +2192,32 @@ impl AcpThreadView {
 
         let is_open = needs_confirmation || self.expanded_tool_calls.contains(&tool_call.id);
 
-        let tool_output_display =
-            if is_open {
-                match &tool_call.status {
-                    ToolCallStatus::WaitingForConfirmation { options, .. } => v_flex()
+        let tool_output_display = if is_open {
+            match &tool_call.status {
+                ToolCallStatus::WaitingForConfirmation { options, .. } => {
+                    let is_mcp_tool = matches!(tool_call.kind, acp::ToolKind::Other);
+                    v_flex()
                         .w_full()
-                        .children(tool_call.content.iter().enumerate().map(
-                            |(content_ix, content)| {
-                                div()
-                                    .child(self.render_tool_call_content(
+                        .when(is_mcp_tool, |this| {
+                            this.child(self.render_tool_params(
+                                tool_call.params_markdown.clone(),
+                                window,
+                                cx,
+                            ))
+                        })
+                        .when(is_mcp_tool && !tool_call.content.is_empty(), |this| {
+                            this.child(self.render_tool_results_section(
+                                entry_ix,
+                                tool_call,
+                                use_card_layout,
+                                window,
+                                cx,
+                            ))
+                        })
+                        .when(!is_mcp_tool, |this| {
+                            this.children(tool_call.content.iter().enumerate().map(
+                                |(content_ix, content)| {
+                                    self.render_tool_call_content(
                                         entry_ix,
                                         content,
                                         content_ix,
@@ -2140,10 +2225,10 @@ impl AcpThreadView {
                                         use_card_layout,
                                         window,
                                         cx,
-                                    ))
-                                    .into_any_element()
-                            },
-                        ))
+                                    )
+                                },
+                            ))
+                        })
                         .child(self.render_permission_buttons(
                             tool_call.kind,
                             options,
@@ -2152,40 +2237,62 @@ impl AcpThreadView {
                             window,
                             cx,
                         ))
-                        .into_any(),
-                    ToolCallStatus::Pending | ToolCallStatus::InProgress
-                        if is_edit
-                            && tool_call.content.is_empty()
-                            && self.as_native_connection(cx).is_some() =>
-                    {
-                        self.render_diff_loading(cx).into_any()
-                    }
-                    ToolCallStatus::Pending
-                    | ToolCallStatus::InProgress
-                    | ToolCallStatus::Completed
-                    | ToolCallStatus::Failed
-                    | ToolCallStatus::Canceled => v_flex()
-                        .w_full()
-                        .children(tool_call.content.iter().enumerate().map(
-                            |(content_ix, content)| {
-                                div().child(self.render_tool_call_content(
-                                    entry_ix,
-                                    content,
-                                    content_ix,
-                                    tool_call,
-                                    use_card_layout,
-                                    window,
-                                    cx,
-                                ))
-                            },
-                        ))
-                        .into_any(),
-                    ToolCallStatus::Rejected => Empty.into_any(),
+                        .into_any()
                 }
-                .into()
-            } else {
-                None
-            };
+                ToolCallStatus::Pending | ToolCallStatus::InProgress
+                    if is_edit
+                        && tool_call.content.is_empty()
+                        && self.as_native_connection(cx).is_some() =>
+                {
+                    self.render_diff_loading(cx).into_any()
+                }
+                ToolCallStatus::Pending
+                | ToolCallStatus::InProgress
+                | ToolCallStatus::Completed
+                | ToolCallStatus::Failed
+                | ToolCallStatus::Canceled => {
+                    let is_mcp_tool = matches!(tool_call.kind, acp::ToolKind::Other);
+                    v_flex()
+                        .w_full()
+                        .when(is_mcp_tool, |this| {
+                            this.child(self.render_tool_params(
+                                tool_call.params_markdown.clone(),
+                                window,
+                                cx,
+                            ))
+                        })
+                        .when(is_mcp_tool && !tool_call.content.is_empty(), |this| {
+                            this.child(self.render_tool_results_section(
+                                entry_ix,
+                                tool_call,
+                                use_card_layout,
+                                window,
+                                cx,
+                            ))
+                        })
+                        .when(!is_mcp_tool, |this| {
+                            this.children(tool_call.content.iter().enumerate().map(
+                                |(content_ix, content)| {
+                                    self.render_tool_call_content(
+                                        entry_ix,
+                                        content,
+                                        content_ix,
+                                        tool_call,
+                                        use_card_layout,
+                                        window,
+                                        cx,
+                                    )
+                                },
+                            ))
+                        })
+                        .into_any()
+                }
+                ToolCallStatus::Rejected => Empty.into_any(),
+            }
+            .into()
+        } else {
+            None
+        };
 
         v_flex()
             .map(|this| {

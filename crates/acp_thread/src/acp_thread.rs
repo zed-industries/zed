@@ -179,6 +179,7 @@ pub struct ToolCall {
     pub resolved_locations: Vec<Option<AgentLocation>>,
     pub raw_input: Option<serde_json::Value>,
     pub raw_output: Option<serde_json::Value>,
+    pub params_markdown: Option<Entity<Markdown>>,
 }
 
 impl ToolCall {
@@ -204,6 +205,22 @@ impl ToolCall {
             )?);
         }
 
+        let params_markdown = tool_call
+            .raw_input
+            .as_ref()
+            .and_then(|input| markdown_for_raw_value(input, &language_registry, cx));
+
+        // If content is empty and raw_output exists, use raw_output as fallback content
+        if content.is_empty() {
+            if let Some(ref raw_output) = tool_call.raw_output {
+                if let Some(markdown) = markdown_for_raw_value(raw_output, &language_registry, cx) {
+                    content.push(ToolCallContent::ContentBlock(ContentBlock::Markdown {
+                        markdown,
+                    }));
+                }
+            }
+        }
+
         let result = Self {
             id: tool_call.id,
             label: cx
@@ -215,6 +232,7 @@ impl ToolCall {
             status,
             raw_input: tool_call.raw_input,
             raw_output: tool_call.raw_output,
+            params_markdown,
         };
         Ok(result)
     }
@@ -278,17 +296,34 @@ impl ToolCall {
         }
 
         if let Some(raw_input) = raw_input {
+            self.params_markdown = markdown_for_raw_value(&raw_input, &language_registry, cx);
             self.raw_input = Some(raw_input);
         }
 
         if let Some(raw_output) = raw_output {
-            if self.content.is_empty()
-                && let Some(markdown) = markdown_for_raw_output(&raw_output, &language_registry, cx)
-            {
-                self.content
-                    .push(ToolCallContent::ContentBlock(ContentBlock::Markdown {
-                        markdown,
-                    }));
+            // If content is empty, add the raw_output as fallback content
+            if self.content.is_empty() {
+                if let Some(markdown) = markdown_for_raw_value(&raw_output, &language_registry, cx)
+                {
+                    self.content
+                        .push(ToolCallContent::ContentBlock(ContentBlock::Markdown {
+                            markdown,
+                        }));
+                }
+            } else if self.content.len() == 1 {
+                // If content has exactly one ContentBlock with Markdown, it might be from fallback
+                // Update it with the new raw_output
+                if let ToolCallContent::ContentBlock(ContentBlock::Markdown { markdown: _ }) =
+                    &self.content[0]
+                {
+                    if let Some(new_markdown) =
+                        markdown_for_raw_value(&raw_output, &language_registry, cx)
+                    {
+                        self.content[0] = ToolCallContent::ContentBlock(ContentBlock::Markdown {
+                            markdown: new_markdown,
+                        });
+                    }
+                }
             }
             self.raw_output = Some(raw_output);
         }
@@ -1258,6 +1293,7 @@ impl AcpThread {
                     resolved_locations: Vec::new(),
                     raw_input: None,
                     raw_output: None,
+                    params_markdown: None,
                 };
                 self.push_entry(AgentThreadEntry::ToolCall(failed_tool_call), cx);
                 return Ok(());
@@ -2238,12 +2274,12 @@ impl AcpThread {
     }
 }
 
-fn markdown_for_raw_output(
-    raw_output: &serde_json::Value,
+fn markdown_for_raw_value(
+    raw_value: &serde_json::Value,
     language_registry: &Arc<LanguageRegistry>,
     cx: &mut App,
 ) -> Option<Entity<Markdown>> {
-    match raw_output {
+    match raw_value {
         serde_json::Value::Null => None,
         serde_json::Value::Bool(value) => Some(cx.new(|cx| {
             Markdown::new(
@@ -2269,14 +2305,18 @@ fn markdown_for_raw_output(
                 cx,
             )
         })),
-        value => Some(cx.new(|cx| {
-            Markdown::new(
-                format!("```json\n{}\n```", value).into(),
-                Some(language_registry.clone()),
-                None,
-                cx,
-            )
-        })),
+        value => {
+            let formatted =
+                serde_json::to_string_pretty(value).unwrap_or_else(|_| value.to_string());
+            Some(cx.new(|cx| {
+                Markdown::new(
+                    format!("```json\n{}\n```", formatted).into(),
+                    Some(language_registry.clone()),
+                    None,
+                    cx,
+                )
+            }))
+        }
     }
 }
 
@@ -3724,6 +3764,134 @@ mod tests {
                 }
             } else {
                 panic!("Expected ToolCall entry, got: {:?}", thread.entries[0]);
+            }
+        });
+    }
+
+    #[gpui::test]
+    async fn test_tool_call_params_and_output_markdown(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let connection = Rc::new(FakeAgentConnection::new());
+        let thread = cx
+            .update(|cx| connection.new_thread(project, Path::new(path!("/test")), cx))
+            .await
+            .unwrap();
+
+        let tool_call_id = acp::ToolCallId("test-tool".into());
+        let test_input = serde_json::json!({"file": "test.rs", "query": "hello"});
+        let test_output = serde_json::json!({"result": "success", "count": 42});
+
+        thread.update(cx, |thread, cx| {
+            thread
+                .handle_session_update(
+                    acp::SessionUpdate::ToolCall(acp::ToolCall {
+                        id: tool_call_id.clone(),
+                        title: "Test Tool".into(),
+                        kind: acp::ToolKind::Fetch,
+                        status: acp::ToolCallStatus::Completed,
+                        content: vec![],
+                        locations: vec![],
+                        raw_input: Some(test_input.clone()),
+                        raw_output: Some(test_output.clone()),
+                        meta: None,
+                    }),
+                    cx,
+                )
+                .unwrap();
+
+            assert_eq!(thread.entries.len(), 1);
+            if let AgentThreadEntry::ToolCall(tool_call) = &thread.entries[0] {
+                assert_eq!(tool_call.raw_input, Some(test_input.clone()));
+                assert_eq!(tool_call.raw_output, Some(test_output.clone()));
+
+                // Verify params_markdown was created
+                assert!(
+                    tool_call.params_markdown.is_some(),
+                    "params_markdown should be created when raw_input is present"
+                );
+                let params_text = tool_call
+                    .params_markdown
+                    .as_ref()
+                    .unwrap()
+                    .read(cx)
+                    .source();
+                assert!(
+                    params_text.contains("```json"),
+                    "params_markdown should contain json fence"
+                );
+                assert!(
+                    params_text.contains("test.rs"),
+                    "params_markdown should contain input data"
+                );
+
+                // Verify content was created from raw_output (fallback)
+                assert_eq!(tool_call.content.len(), 1, "content should have output");
+                if let ToolCallContent::ContentBlock(content_block) = &tool_call.content[0] {
+                    if let ContentBlock::Markdown { markdown } = content_block {
+                        let content_text = markdown.read(cx).source();
+                        assert!(
+                            content_text.contains("success"),
+                            "content should contain output data"
+                        );
+                    } else {
+                        panic!("Expected Markdown content block");
+                    }
+                } else {
+                    panic!("Expected ContentBlock");
+                }
+            } else {
+                panic!("Expected ToolCall entry");
+            }
+        });
+
+        // Test that markdown is updated when raw_input/raw_output are updated
+        let updated_output = serde_json::json!({"result": "updated", "count": 99});
+        thread.update(cx, |thread, cx| {
+            thread
+                .handle_session_update(
+                    acp::SessionUpdate::ToolCallUpdate(acp::ToolCallUpdate {
+                        id: tool_call_id.clone(),
+                        fields: acp::ToolCallUpdateFields {
+                            raw_output: Some(updated_output.clone()),
+                            ..Default::default()
+                        },
+                        meta: None,
+                    }),
+                    cx,
+                )
+                .unwrap();
+
+            if let AgentThreadEntry::ToolCall(tool_call) = &thread.entries[0] {
+                assert_eq!(tool_call.raw_output, Some(updated_output.clone()));
+
+                // Verify content was updated with new output
+                assert_eq!(
+                    tool_call.content.len(),
+                    1,
+                    "content should still have output"
+                );
+                if let ToolCallContent::ContentBlock(content_block) = &tool_call.content[0] {
+                    if let ContentBlock::Markdown { markdown } = content_block {
+                        let content_text = markdown.read(cx).source();
+                        assert!(
+                            content_text.contains("updated"),
+                            "content should be updated with new data"
+                        );
+                        assert!(
+                            content_text.contains("99"),
+                            "content should contain updated count"
+                        );
+                    } else {
+                        panic!("Expected Markdown content block");
+                    }
+                } else {
+                    panic!("Expected ContentBlock");
+                }
+            } else {
+                panic!("Expected ToolCall entry");
             }
         });
     }
