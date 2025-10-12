@@ -35,6 +35,7 @@ mod mouse_context_menu;
 pub mod movement;
 mod persistence;
 mod proposed_changes_editor;
+mod rainbow_cache;
 mod rainbow_highlighter;
 mod rainbow_highlighting;
 mod rainbow_identifier;
@@ -1291,6 +1292,7 @@ pub struct Editor {
     folding_newlines: Task<()>,
     pub lookup_key: Option<Box<dyn Any + Send + Sync>>,
     pub(crate) update_semantic_tokens_task: Task<()>,
+    semantic_tokens_debounce_task: Option<Task<()>>,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
@@ -2299,6 +2301,7 @@ impl Editor {
             folding_newlines: Task::ready(()),
             lookup_key: None,
             update_semantic_tokens_task: Task::ready(()),
+            semantic_tokens_debounce_task: None,
         };
 
         if is_minimap {
@@ -6361,22 +6364,54 @@ impl Editor {
         None
     }
 
-    pub(crate) fn update_semantic_tokens(
+    /// Debounced wrapper for semantic token updates during typing
+    /// Delays the actual update by 250ms to avoid performance issues
+    pub(crate) fn update_semantic_tokens_debounced(
         &mut self,
         buffer: &Entity<Buffer>,
         window: &mut Window,
+        cx: &mut Context<Self>
+    ) {
+        const DEBOUNCE_DELAY_MS: u64 = 250;
+        
+        let buffer = buffer.clone();
+        
+        // Cancel any pending debounce task
+        self.semantic_tokens_debounce_task = Some(cx.spawn_in(window, async move |this, cx| {
+            cx.background_executor().timer(std::time::Duration::from_millis(DEBOUNCE_DELAY_MS)).await;
+            
+            this.update(cx, |this, cx| {
+                this.update_semantic_tokens_immediate(&buffer, cx);
+                cx.notify();
+            }).log_err();
+        }));
+    }
+    
+    /// Internal immediate update (for initial load and non-debounced cases)
+    pub(crate) fn update_semantic_tokens(
+        &mut self,
+        buffer: &Entity<Buffer>,
+        _window: &mut Window,
+        cx: &mut Context<Self>
+    ) {
+        self.update_semantic_tokens_immediate(buffer, cx);
+    }
+    
+    fn update_semantic_tokens_immediate(
+        &mut self,
+        buffer: &Entity<Buffer>,
         cx: &mut Context<Self>
     ) {
         if let Some(sema) = self.semantics_provider.as_ref() {
             let buffer_id = buffer.read(cx).remote_id();
             let is_multibuffer = self.buffer.read(cx).as_singleton().is_none();
             
-            log::info!("Requesting semantic tokens for buffer_id={:?}", buffer_id);
+            log::debug!("Requesting semantic tokens for buffer_id={:?}", buffer_id);
             let task = sema
                 .semantic_tokens(buffer.clone(), cx)
                 .map(move |task| task.map(move |tokens| (tokens, buffer_id)));
 
-            let spawned_task = cx.spawn_in(window, async move |this, cx| {
+            let spawned_task = cx.spawn(async move |this, cx| {
                 if let Some(t) = task {
                     let (tokens, buffer_id) = t.await;
 
@@ -6412,7 +6447,7 @@ impl Editor {
                                     cx
                                 );
                                 if let Some(view) = view {
-                                    log::info!("Created semantic token view with {} tokens", view.tokens.len());
+                                    log::debug!("Created semantic token view with {} tokens", view.tokens.len());
                                     display_map.semantic_tokens.insert(buffer_id, Arc::new(view));
                                 } else {
                                     log::warn!("Failed to create semantic token view");
@@ -18799,7 +18834,8 @@ impl Editor {
                     self.update_visible_edit_prediction(window, cx);
                 }
                 if let Some(edited_buffer) = edited_buffer {
-                    self.update_semantic_tokens(edited_buffer, window, cx);
+                    // Use debounced version during typing to prevent performance issues
+                    self.update_semantic_tokens_debounced(edited_buffer, window, cx);
                 }
                 if let Some(project) = self.project.as_ref() && let Some(edited_buffer) = edited_buffer {
                     project.update(cx, |project, cx| {

@@ -1,39 +1,29 @@
+const FNV_OFFSET: u64 = 14695981039346656037;
+const FNV_PRIME: u64 = 1099511628211;
+const GOLDEN_RATIO_MULTIPLIER: u64 = 11400714819323198485u64;
+
+#[inline]
+pub fn fnv1a_hash(s: &str) -> u64 {
+    s.bytes().fold(FNV_OFFSET, |hash, byte| {
+        (hash ^ byte as u64).wrapping_mul(FNV_PRIME)
+    })
+}
+
+#[inline]
+fn fibonacci_hash(hash: u64, palette_size: usize) -> usize {
+    let distributed = hash.wrapping_mul(GOLDEN_RATIO_MULTIPLIER);
+    (distributed as usize) % palette_size
+}
+
 #[allow(dead_code)]
 pub struct RainbowHighlighter;
 
 #[allow(dead_code)]
 impl RainbowHighlighter {
-    /// Maps a variable name to a color index using Fibonacci hashing.
-    /// This provides superior color distribution compared to simple modulo operations,
-    /// preventing color clustering and ensuring variables have visually distinct colors.
     #[inline]
     pub fn hash_to_index(variable_name: &str, palette_size: usize) -> usize {
-        let hash = Self::fnv1a_hash(variable_name);
-        Self::fibonacci_hash(hash, palette_size)
-    }
-    
-    /// FNV-1a hash: deterministic, collision-resistant string hashing
-    #[inline]
-    fn fnv1a_hash(s: &str) -> u64 {
-        const FNV_OFFSET: u64 = 14695981039346656037;
-        const FNV_PRIME: u64 = 1099511628211;
-        
-        s.bytes().fold(FNV_OFFSET, |hash, byte| {
-            (hash ^ byte as u64).wrapping_mul(FNV_PRIME)
-        })
-    }
-    
-    /// Fibonacci hashing: Golden ratio multiplication for perfect distribution
-    /// 
-    /// Magic constant: 2^64 / φ (golden ratio) = 11400714819323198485
-    /// This maps hash values evenly across the full 64-bit range without clustering,
-    /// ensuring adjacent hashes produce well-distributed color indices.
-    #[inline]
-    fn fibonacci_hash(hash: u64, palette_size: usize) -> usize {
-        const GOLDEN_RATIO_MULTIPLIER: u64 = 11400714819323198485u64;
-        
-        let distributed = hash.wrapping_mul(GOLDEN_RATIO_MULTIPLIER);
-        (distributed as usize) % palette_size
+        let hash = fnv1a_hash(variable_name);
+        fibonacci_hash(hash, palette_size)
     }
 }
 
@@ -175,6 +165,47 @@ mod tests {
                     "Similar names '{}' and '{}' have indices too close: {} vs {}",
                     names[i], names[j], indices[i], indices[j]
                 );
+            }
+        }
+    }
+    
+    #[test]
+    fn test_actual_agent_names_distribution() {
+        let palette_size = 32;
+        
+        // Variables from the screenshot
+        let names = vec![
+            "devops_agent",
+            "implementation_plan_agent",
+            "implementation_plan_summary_agent",
+            "initial_code_generation_agent",
+            "solution_architect_agent",
+            "root_agent",
+        ];
+        
+        println!("\n=== Agent Variable Color Distribution (palette_size={}) ===", palette_size);
+        let mut indices = Vec::new();
+        for name in &names {
+            let index = RainbowHighlighter::hash_to_index(name, palette_size);
+            println!("{:<40} -> color index {:2}", name, index);
+            indices.push(index);
+        }
+        
+        // Check for collisions and close colors
+        for i in 0..names.len() {
+            for j in (i+1)..names.len() {
+                if indices[i] == indices[j] {
+                    println!("⚠️  COLLISION: '{}' and '{}' both map to color {}", names[i], names[j], indices[i]);
+                }
+                let diff = if indices[i] > indices[j] { 
+                    indices[i] - indices[j] 
+                } else { 
+                    indices[j] - indices[i] 
+                };
+                if diff <= 2 && diff > 0 {
+                    println!("⚠️  SIMILAR COLORS: '{}' (index {}) and '{}' (index {}) differ by only {}", 
+                        names[i], indices[i], names[j], indices[j], diff);
+                }
             }
         }
     }

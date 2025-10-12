@@ -2,17 +2,11 @@ use gpui::HighlightStyle;
 use language::rainbow_config;
 use theme::SyntaxTheme;
 
+use crate::rainbow_cache::RainbowCache;
 use crate::rainbow_highlighter::RainbowHighlighter;
 
-/// Shared rainbow highlighting utilities for both tree-sitter and LSP semantic tokens.
-/// This module consolidates the common logic to avoid duplication.
-
-/// Attempts to apply rainbow highlighting to an identifier if rainbow highlighting is enabled.
-/// Returns Some(HighlightStyle) if rainbow highlighting should be applied, None otherwise.
-///
-/// This is used by both:
-/// 1. Tree-sitter syntax highlighting (display_map.rs)
-/// 2. LSP semantic tokens (SemanticTokenStylizer)
+/// Shared rainbow highlighting for tree-sitter and LSP semantic tokens.
+/// Provides both uncached and cached variants for different use cases.
 #[inline]
 pub fn try_rainbow_highlight(
     identifier: &str,
@@ -33,11 +27,41 @@ pub fn try_rainbow_highlight(
     theme.rainbow_color(hash_index)
 }
 
-/// Checks if a token type name represents a variable-like token.
-/// This includes variables, parameters, and properties.
+/// Cached version for better performance on repeated identifiers.
+#[inline]
+pub fn try_rainbow_highlight_cached(
+    identifier: &str,
+    is_variable_like: bool,
+    rainbow_enabled: bool,
+    theme: &SyntaxTheme,
+    cache: &mut RainbowCache,
+) -> Option<HighlightStyle> {
+    if !rainbow_enabled || !is_variable_like {
+        return None;
+    }
+    
+    if !rainbow_config::is_valid_identifier(identifier) {
+        return None;
+    }
+    
+    if let Some(cached_style) = cache.get(identifier) {
+        return Some(cached_style);
+    }
+    
+    let palette_size = theme.rainbow_palette_size();
+    let hash_index = RainbowHighlighter::hash_to_index(identifier, palette_size);
+    if let Some(style) = theme.rainbow_color(hash_index) {
+        cache.insert(identifier, style);
+        Some(style)
+    } else {
+        None
+    }
+}
+
+/// Determines if a token type should receive rainbow highlighting.
 #[inline]
 pub fn is_variable_like_token(token_type: &str) -> bool {
-    matches!(token_type, "variable" | "parameter" | "property")
+    matches!(token_type, "variable" | "parameter")
 }
 
 #[cfg(test)]
@@ -48,7 +72,7 @@ mod tests {
     fn test_is_variable_like_token() {
         assert!(is_variable_like_token("variable"));
         assert!(is_variable_like_token("parameter"));
-        assert!(is_variable_like_token("property"));
+        assert!(!is_variable_like_token("property"));
         assert!(!is_variable_like_token("function"));
         assert!(!is_variable_like_token("class"));
         assert!(!is_variable_like_token("keyword"));

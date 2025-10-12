@@ -27010,8 +27010,8 @@ async fn test_rainbow_highlighting_theme_switch(cx: &mut TestAppContext) {
 
     // Verify we have a palette (default should be 12)
     assert_eq!(
-        initial_palette_size, 12,
-        "Default theme should have 12 rainbow colors"
+        initial_palette_size, 32,
+        "Default theme should have 32 rainbow colors"
     );
 
     // Theme switching happens automatically through ThemeSettings
@@ -27129,7 +27129,7 @@ async fn test_rainbow_highlighting_immediate_application(cx: &mut TestAppContext
         let theme_settings = theme::ThemeSettings::get_global(cx);
         theme_settings.active_theme.syntax().rainbow_palette_size()
     });
-    assert_eq!(palette_size, 12, "Palette should have 12 colors");
+    assert_eq!(palette_size, 32, "Palette should have 32 colors");
 
     // Verify different variable names hash to different indices
     use crate::rainbow_highlighter::RainbowHighlighter;

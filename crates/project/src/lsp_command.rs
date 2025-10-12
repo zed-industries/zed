@@ -3642,9 +3642,14 @@ impl LspCommand for SemanticTokensDelta {
                     ) => &opts.semantic_tokens_options,
                 };
 
-                match options.full {
+                match &options.full {
                     Some(lsp::SemanticTokensFullOptions::Delta { delta }) => delta.unwrap_or(false),
-                    // I assume `full: true` means no support for delta.
+                    Some(lsp::SemanticTokensFullOptions::Bool(true)) => {
+                        // Server supports full but doesn't explicitly advertise delta support.
+                        // Some LSP servers (like basedpyright) send `full: true` without delta info.
+                        // We can still try to use delta requests - the server will fall back to full if unsupported.
+                        false
+                    }
                     _ => false,
                 }
             })
