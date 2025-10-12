@@ -1631,17 +1631,17 @@ mod tests {
                 children: vec![ParsedMarkdownElement::Table(table(
                     0..366,
                     vec![row(vec![
-                        column(1, true, text("Id", 0..366)),
-                        column(1, true, text("Name ", 0..366))
+                        column(1, 1, true, text("Id", 0..366)),
+                        column(1, 1, true, text("Name ", 0..366))
                     ])],
                     vec![
                         row(vec![
-                            column(1, false, text("1", 0..366)),
-                            column(1, false, text("Chris", 0..366))
+                            column(1, 1, false, text("1", 0..366)),
+                            column(1, 1, false, text("Chris", 0..366))
                         ]),
                         row(vec![
-                            column(1, false, text("2", 0..366)),
-                            column(1, false, text("Dennis", 0..366))
+                            column(1, 1, false, text("2", 0..366)),
+                            column(1, 1, false, text("Dennis", 0..366))
                         ]),
                     ],
                 ))],
@@ -1675,12 +1675,12 @@ mod tests {
                     vec![],
                     vec![
                         row(vec![
-                            column(1, false, text("1", 0..240)),
-                            column(1, false, text("Chris", 0..240))
+                            column(1, 1, false, text("1", 0..240)),
+                            column(1, 1, false, text("Chris", 0..240))
                         ]),
                         row(vec![
-                            column(1, false, text("2", 0..240)),
-                            column(1, false, text("Dennis", 0..240))
+                            column(1, 1, false, text("2", 0..240)),
+                            column(1, 1, false, text("Dennis", 0..240))
                         ]),
                     ],
                 ))],
@@ -1708,8 +1708,8 @@ mod tests {
                 children: vec![ParsedMarkdownElement::Table(table(
                     0..150,
                     vec![row(vec![
-                        column(1, true, text("Id", 0..150)),
-                        column(1, true, text("Name", 0..150))
+                        column(1, 1, true, text("Id", 0..150)),
+                        column(1, 1, true, text("Name", 0..150))
                     ])],
                     vec![],
                 ))],
@@ -1893,8 +1893,8 @@ Some other content
         let expected_table = table(
             0..48,
             vec![row(vec![
-                column(1, true, text("Header 1", 1..11)),
-                column(1, true, text("Header 2", 12..22)),
+                column(1, 1, true, text("Header 1", 1..11)),
+                column(1, 1, true, text("Header 2", 12..22)),
             ])],
             vec![],
         );
@@ -1916,17 +1916,17 @@ Some other content
         let expected_table = table(
             0..95,
             vec![row(vec![
-                column(1, true, text("Header 1", 1..11)),
-                column(1, true, text("Header 2", 12..22)),
+                column(1, 1, true, text("Header 1", 1..11)),
+                column(1, 1, true, text("Header 2", 12..22)),
             ])],
             vec![
                 row(vec![
-                    column(1, false, text("Cell 1", 49..59)),
-                    column(1, false, text("Cell 2", 60..70)),
+                    column(1, 1, false, text("Cell 1", 49..59)),
+                    column(1, 1, false, text("Cell 2", 60..70)),
                 ]),
                 row(vec![
-                    column(1, false, text("Cell 3", 73..83)),
-                    column(1, false, text("Cell 4", 84..94)),
+                    column(1, 1, false, text("Cell 3", 73..83)),
+                    column(1, 1, false, text("Cell 4", 84..94)),
                 ]),
             ],
         );
@@ -2401,12 +2401,13 @@ fn main() {
 
     fn column(
         col_span: usize,
+        row_span: usize,
         is_header: bool,
         children: MarkdownParagraph,
     ) -> ParsedMarkdownTableColumn {
         ParsedMarkdownTableColumn {
             col_span,
-            row_span: 1,
+            row_span,
             is_header,
             children,
         }

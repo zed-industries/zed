@@ -921,10 +921,14 @@ mod tests {
         })
     }
 
-    fn column(col_span: usize, children: Vec<MarkdownParagraphChunk>) -> ParsedMarkdownTableColumn {
+    fn column(
+        col_span: usize,
+        row_span: usize,
+        children: Vec<MarkdownParagraphChunk>,
+    ) -> ParsedMarkdownTableColumn {
         ParsedMarkdownTableColumn {
             col_span,
-            row_span: 1,
+            row_span,
             is_header: false,
             children,
         }
@@ -950,30 +954,30 @@ mod tests {
         assert_eq!(
             1,
             calculate_table_columns_count(&vec![ParsedMarkdownTableRow::with_columns(vec![
-                column(1, vec![text("column1")])
+                column(1, 1, vec![text("column1")])
             ])])
         );
 
         assert_eq!(
             2,
             calculate_table_columns_count(&vec![ParsedMarkdownTableRow::with_columns(vec![
-                column(1, vec![text("column1")]),
-                column(1, vec![text("column2")]),
+                column(1, 1, vec![text("column1")]),
+                column(1, 1, vec![text("column2")]),
             ])])
         );
 
         assert_eq!(
             2,
             calculate_table_columns_count(&vec![ParsedMarkdownTableRow::with_columns(vec![
-                column(2, vec![text("column1")])
+                column(2, 1, vec![text("column1")])
             ])])
         );
 
         assert_eq!(
             3,
             calculate_table_columns_count(&vec![ParsedMarkdownTableRow::with_columns(vec![
-                column(1, vec![text("column1")]),
-                column(2, vec![text("column2")]),
+                column(1, 1, vec![text("column1")]),
+                column(2, 1, vec![text("column2")]),
             ])])
         );
 
@@ -981,10 +985,10 @@ mod tests {
             2,
             calculate_table_columns_count(&vec![
                 ParsedMarkdownTableRow::with_columns(vec![
-                    column(1, vec![text("column1")]),
-                    column(1, vec![text("column2")]),
+                    column(1, 1, vec![text("column1")]),
+                    column(1, 1, vec![text("column2")]),
                 ]),
-                ParsedMarkdownTableRow::with_columns(vec![column(1, vec![text("column1")]),])
+                ParsedMarkdownTableRow::with_columns(vec![column(1, 1, vec![text("column1")]),])
             ])
         );
 
@@ -992,10 +996,10 @@ mod tests {
             3,
             calculate_table_columns_count(&vec![
                 ParsedMarkdownTableRow::with_columns(vec![
-                    column(1, vec![text("column1")]),
-                    column(1, vec![text("column2")]),
+                    column(1, 1, vec![text("column1")]),
+                    column(1, 1, vec![text("column2")]),
                 ]),
-                ParsedMarkdownTableRow::with_columns(vec![column(3, vec![text("column1")]),])
+                ParsedMarkdownTableRow::with_columns(vec![column(3, 3, vec![text("column1")]),])
             ])
         );
     }
@@ -1007,13 +1011,13 @@ mod tests {
             calculate_table_columns_count(&vec![
                 ParsedMarkdownTableRow::with_columns(vec![
                     column_with_row_span(1, 2, vec![text("spans 2 rows")]),
-                    column(1, vec![text("column2")]),
-                    column(1, vec![text("column3")]),
+                    column(1, 1, vec![text("column2")]),
+                    column(1, 1, vec![text("column3")]),
                 ]),
                 ParsedMarkdownTableRow::with_columns(vec![
                     // First column is covered by row span from above
-                    column(1, vec![text("column2 row2")]),
-                    column(1, vec![text("column3 row2")]),
+                    column(1, 1, vec![text("column2 row2")]),
+                    column(1, 1, vec![text("column3 row2")]),
                 ])
             ])
         );
@@ -1024,17 +1028,17 @@ mod tests {
                 ParsedMarkdownTableRow::with_columns(vec![
                     column_with_row_span(1, 3, vec![text("spans 3 rows")]),
                     column_with_row_span(2, 1, vec![text("spans 2 cols")]),
-                    column(1, vec![text("column4")]),
+                    column(1, 1, vec![text("column4")]),
                 ]),
                 ParsedMarkdownTableRow::with_columns(vec![
                     // First column covered by row span
-                    column(1, vec![text("column2")]),
-                    column(1, vec![text("column3")]),
-                    column(1, vec![text("column4")]),
+                    column(1, 1, vec![text("column2")]),
+                    column(1, 1, vec![text("column3")]),
+                    column(1, 1, vec![text("column4")]),
                 ]),
                 ParsedMarkdownTableRow::with_columns(vec![
                     // First column still covered by row span
-                    column(3, vec![text("spans 3 cols")]),
+                    column(3, 1, vec![text("spans 3 cols")]),
                 ])
             ])
         );
@@ -1058,6 +1062,7 @@ mod tests {
             vec![7],
             vec![ParsedMarkdownTableRow::with_columns(vec![column(
                 1,
+                1,
                 vec![text("column1")],
             )])],
         );
@@ -1065,8 +1070,8 @@ mod tests {
         test(
             vec![7, 7],
             vec![ParsedMarkdownTableRow::with_columns(vec![
-                column(1, vec![text("column1")]),
-                column(1, vec![text("column2")]),
+                column(1, 1, vec![text("column1")]),
+                column(1, 1, vec![text("column2")]),
             ])],
         );
 
@@ -1074,6 +1079,7 @@ mod tests {
             vec![3, 3],
             vec![ParsedMarkdownTableRow::with_columns(vec![column(
                 2,
+                1,
                 vec![text("column1")],
             )])],
         );
@@ -1081,8 +1087,8 @@ mod tests {
         test(
             vec![7, 3, 3],
             vec![ParsedMarkdownTableRow::with_columns(vec![
-                column(1, vec![text("column1")]),
-                column(2, vec![text("column2")]),
+                column(1, 1, vec![text("column1")]),
+                column(2, 1, vec![text("column2")]),
             ])],
         );
 
@@ -1090,10 +1096,10 @@ mod tests {
             vec![7, 7],
             vec![
                 ParsedMarkdownTableRow::with_columns(vec![
-                    column(1, vec![text("column1")]),
-                    column(1, vec![text("column2")]),
+                    column(1, 1, vec![text("column1")]),
+                    column(1, 1, vec![text("column2")]),
                 ]),
-                ParsedMarkdownTableRow::with_columns(vec![column(1, vec![text("column1")])]),
+                ParsedMarkdownTableRow::with_columns(vec![column(1, 1, vec![text("column1")])]),
             ],
         );
 
@@ -1101,10 +1107,10 @@ mod tests {
             vec![7, 7, 2],
             vec![
                 ParsedMarkdownTableRow::with_columns(vec![
-                    column(1, vec![text("column1")]),
-                    column(1, vec![text("column2")]),
+                    column(1, 1, vec![text("column1")]),
+                    column(1, 1, vec![text("column2")]),
                 ]),
-                ParsedMarkdownTableRow::with_columns(vec![column(3, vec![text("column1")])]),
+                ParsedMarkdownTableRow::with_columns(vec![column(3, 3, vec![text("column1")])]),
             ],
         );
     }
