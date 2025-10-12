@@ -976,6 +976,8 @@ impl LanguageRegistry {
 
                                 state.add(language.clone());
                                 state.mark_language_loaded(id);
+                                // Increment version so pending injections can be resolved
+                                state.version += 1;
                                 if let Some(mut txs) = state.loading_languages.remove(&id) {
                                     for tx in txs.drain(..) {
                                         let _ = tx.send(Ok(language.clone()));

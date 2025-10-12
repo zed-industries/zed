@@ -21,6 +21,8 @@ mod toolchain;
 
 #[cfg(test)]
 pub mod buffer_tests;
+#[cfg(test)]
+mod language_registry_tests;
 
 use crate::language_settings::SoftWrap;
 pub use crate::language_settings::{EditPredictionsMode, IndentGuideSettings};

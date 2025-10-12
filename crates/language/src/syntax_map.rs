@@ -426,6 +426,8 @@ impl SyntaxSnapshot {
                 let SyntaxLayerContent::Pending { language_name } = &layer.content else {
                     unreachable!()
                 };
+
+                // Check if the language is now available
                 if registry
                     .language_for_name_or_extension(language_name)
                     .now_or_never()
@@ -436,6 +438,9 @@ impl SyntaxSnapshot {
                     log::trace!("reparse range {range:?} for language {language_name:?}");
                     resolved_injection_ranges.push(range);
                 }
+                // Note: If language is not immediately available, it will remain pending.
+                // The loading task is triggered in get_injections(), and when it completes,
+                // the registry version will be incremented, causing this code to run again.
 
                 cursor.next();
             }
