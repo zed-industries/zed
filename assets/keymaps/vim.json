@@ -1000,5 +1000,26 @@
       // and Windows.
       "alt-l": "editor::AcceptEditPrediction"
     }
+  },
+  {
+    "context": "FileFinder",
+    "bindings": {
+      "ctrl-v": "pane::SplitRight",
+      "ctrl-x": "pane::SplitDown"
+    }
+  },
+  {
+    "context": "FileFinder > Picker > Editor",
+    "bindings": {
+      "ctrl-v": "pane::SplitRight",
+      "ctrl-x": "pane::SplitDown"
+    }
+  },
+  {
+    "context": "FileFinder > Picker > menu",
+    "bindings": {
+      "ctrl-v": "pane::SplitRight",
+      "ctrl-x": "pane::SplitDown"
+    }
   }
 ]
