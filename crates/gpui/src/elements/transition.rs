@@ -61,6 +61,28 @@ impl<T: TransitionGoal + Clone + PartialEq + 'static> Transition<T> {
 
         was_updated
     }
+
+    // Evaluates the value for the transition based on the previous and current goal.
+    fn evaluate(&self, cx: &mut App) -> (bool, T) {
+        let mut state_entity = self.state.as_mut(cx);
+        let state: &mut TransitionState<T> = state_entity.borrow_mut();
+
+        let elapsed_secs = state.goal_last_updated_at.elapsed().as_secs_f32();
+        let delta =
+            (self.easing)((state.start_delta + (elapsed_secs / self.duration_secs)).min(1.));
+
+        debug_assert!(
+            (0.0..=1.0).contains(&delta),
+            "delta should always be between 0 and 1"
+        );
+
+        let evaluated_value = state.last_goal.apply_delta(&state.current_goal, delta);
+
+        state.last_delta = delta;
+        drop(state_entity);
+
+        (delta != 1., evaluated_value)
+    }
 }
 
 /// State for a transition.
@@ -122,19 +144,20 @@ impl<T: TransitionGoal + Clone + 'static> Transition<T> {
 
 /// An extension trait for adding the transition wrapper to both Elements and Components
 pub trait TransitionExt {
-    /// Render this component or element with a transition
-    fn with_transition<T: TransitionGoal + Clone>(
+    /// Render this component or element with transitions
+    fn with_transitions<'a, T: TransitionValues<'a>>(
         self,
-        transition: Transition<T>,
-        animator: impl Fn(&mut App, Self, T) -> Self + 'static,
-    ) -> TransitionElement<Self, T>
+        transitions: T,
+        animator: impl Fn(&mut App, Self, T::Values) -> Self + 'static,
+    ) -> TransitionElement<'a, Self, T>
     where
+        T: TransitionValues<'a>,
         Self: Sized,
     {
         TransitionElement {
             element: Some(self),
             animator: Box::new(animator),
-            transition,
+            transitions,
         }
     }
 }
@@ -142,33 +165,33 @@ pub trait TransitionExt {
 impl<E: IntoElement + 'static> TransitionExt for E {}
 
 /// A GPUI element that applies a transition to another element
-pub struct TransitionElement<E, T: TransitionGoal + Clone> {
+pub struct TransitionElement<'a, E, T: TransitionValues<'a>> {
     element: Option<E>,
-    transition: Transition<T>,
-    animator: Box<dyn Fn(&mut App, E, T) -> E + 'static>,
+    transitions: T,
+    animator: Box<dyn Fn(&mut App, E, T::Values) -> E + 'a>,
 }
 
-impl<E, T: TransitionGoal + Clone> TransitionElement<E, T> {
+impl<'a, E, T: TransitionValues<'a>> TransitionElement<'a, E, T> {
     /// Returns a new [`TransitionElement<E, T>`] after applying the given function
     /// to the element being animated.
-    pub fn map_element(mut self, f: impl FnOnce(E) -> E) -> TransitionElement<E, T> {
+    pub fn map_element(mut self, f: impl FnOnce(E) -> E) -> TransitionElement<'a, E, T> {
         self.element = self.element.map(f);
         self
     }
 }
 
-impl<E: IntoElement + 'static, T: TransitionGoal + Clone + 'static> IntoElement
-    for TransitionElement<E, T>
+impl<E: IntoElement + 'static, T: TransitionValues<'static> + Clone + 'static> IntoElement
+    for TransitionElement<'static, E, T>
 {
-    type Element = TransitionElement<E, T>;
+    type Element = TransitionElement<'static, E, T>;
 
     fn into_element(self) -> Self::Element {
         self
     }
 }
 
-impl<E: IntoElement + 'static, T: TransitionGoal + Clone + 'static> AnimatableExt
-    for TransitionElement<E, T>
+impl<E: IntoElement + 'static, T: TransitionValues<'static> + Clone + 'static> AnimatableExt
+    for TransitionElement<'static, E, T>
 {
     fn request_layout(
         &mut self,
@@ -177,28 +200,12 @@ impl<E: IntoElement + 'static, T: TransitionGoal + Clone + 'static> AnimatableEx
         _window: &mut Window,
         cx: &mut App,
     ) -> (bool, AnyElement) {
-        let mut state_entity = self.transition.state.as_mut(cx);
-        let state: &mut TransitionState<T> = state_entity.borrow_mut();
-
-        let elapsed_secs = state.goal_last_updated_at.elapsed().as_secs_f32();
-        let duration_secs = self.transition.duration_secs;
-        let delta =
-            (self.transition.easing)((state.start_delta + (elapsed_secs / duration_secs)).min(1.));
-
-        debug_assert!(
-            (0.0..=1.0).contains(&delta),
-            "delta should always be between 0 and 1"
-        );
-
-        let transition_value = state.last_goal.apply_delta(&state.current_goal, delta);
-
-        state.last_delta = delta;
-        drop(state_entity);
+        let (request_frame, evaluated_values) = self.transitions.evaluate(cx);
 
         let element = self.element.take().expect("should only be called once");
-        let mut element = (self.animator)(cx, element, transition_value).into_any_element();
+        let mut element = (self.animator)(cx, element, evaluated_values).into_any_element();
 
-        (delta != 1., element)
+        (request_frame, element)
     }
 }
 
@@ -302,4 +309,68 @@ where
     T: Copy + Add<Output = T> + Sub<Output = T> + Mul<Output = T>,
 {
     a + (b - a) * t
+}
+
+/// A group of values that can be transitioned.
+pub trait TransitionValues<'a> {
+    /// The underlying type of the values.
+    type Values;
+
+    /// Evaluates the values for the transitions based on the previous and current goal.
+    fn evaluate(&self, cx: &mut App) -> (bool, Self::Values);
+}
+
+// Workaround for variadic generics as Rust doesn't support them.
+// The main downside to this is that each tuple length needs its own implementation.
+macro_rules! impl_with_transitions {
+    ($first:ident $(, $rest:ident)*) => {
+        impl_with_transitions!(@recurse () $first $(, $rest)*);
+    };
+
+    // Nothing left.
+    (@recurse ($($prefix:ident),*) ) => {};
+
+    // Generates an impl for the current prefix + head,
+    // then recurse to include the next identifier in the prefix.
+    (@recurse ($($prefix:ident),*) $head:ident $(,$tail:ident)*) => {
+        impl_with_transitions!(@gen ($($prefix,)* $head));
+        impl_with_transitions!(@recurse ($($prefix,)* $head) $($tail),*);
+    };
+
+    (@gen ($($names:ident),+)) => {
+        #[allow(non_snake_case, unused_parens)]
+        impl<'a, $($names),+> TransitionValues<'a> for ( $( Transition<$names> ),+, )
+        where
+            $( $names: TransitionGoal + Clone + PartialEq + 'static ),+
+        {
+            type Values = ( $( $names ),+);
+
+            fn evaluate(&self, cx: &mut App) -> (bool, Self::Values)
+            {
+                let ( $( $names ),+ ,) = self;
+                let mut request_frame = false;
+
+                let evaluated_values = ($({
+                    let (this_request_frame, transioned_value) = $names.evaluate(cx);
+                    request_frame = this_request_frame || request_frame;
+                    transioned_value
+                }),+);
+
+                (request_frame, evaluated_values)
+            }
+        }
+    };
+}
+
+impl_with_transitions!(A, B, C, D, E, F);
+
+impl<'a, A> TransitionValues<'a> for Transition<A>
+where
+    A: TransitionGoal + Clone + PartialEq + 'static,
+{
+    type Values = A;
+
+    fn evaluate(&self, cx: &mut App) -> (bool, Self::Values) {
+        self.evaluate(cx)
+    }
 }
