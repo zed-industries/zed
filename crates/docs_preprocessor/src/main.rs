@@ -365,8 +365,7 @@ fn template_and_validate_json_snippets(book: &mut Book, errors: &mut HashSet<Pre
                 }
                 settings::parse_json_with_comments::<settings::SettingsContent>(
                     &snippet_json_fixed,
-                )
-                .context("Failed to parse settings JSON")?;
+                )?;
             }
             "keymap" => {
                 if !snippet_json_fixed.starts_with('[') || !snippet_json_fixed.ends_with(']') {
@@ -402,8 +401,7 @@ fn template_and_validate_json_snippets(book: &mut Book, errors: &mut HashSet<Pre
                     snippet_json_fixed.push_str("\n]");
                 }
 
-                settings::parse_json_with_comments::<task::DebugTaskFile>(&snippet_json_fixed)
-                    .context("Failed to parse debug task file")?;
+                settings::parse_json_with_comments::<task::DebugTaskFile>(&snippet_json_fixed)?;
             }
             "tasks" => {
                 if !snippet_json_fixed.starts_with('[') || !snippet_json_fixed.ends_with(']') {
@@ -411,12 +409,20 @@ fn template_and_validate_json_snippets(book: &mut Book, errors: &mut HashSet<Pre
                     snippet_json_fixed.push_str("\n]");
                 }
 
-                settings::parse_json_with_comments::<task::TaskTemplates>(&snippet_json_fixed)
-                    .context("Failed to parse task file")?;
+                settings::parse_json_with_comments::<task::TaskTemplates>(&snippet_json_fixed)?;
+            }
+            "icon-theme" => {
+                if !snippet_json_fixed.starts_with('{') || !snippet_json_fixed.ends_with('}') {
+                    snippet_json_fixed.insert(0, '{');
+                    snippet_json_fixed.push_str("\n}");
+                }
+
+                settings::parse_json_with_comments::<theme::IconThemeFamilyContent>(
+                    &snippet_json_fixed,
+                )?;
             }
             label => {
-                // todo! re-enable
-                // anyhow::bail!("Unexpected JSON code block tag: {}", label)
+                anyhow::bail!("Unexpected JSON code block tag: {}", label)
             }
         };
         Ok(())

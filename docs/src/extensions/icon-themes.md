@@ -34,8 +34,8 @@ Here is an example of the structure of an icon theme:
         "stylesheets": {
           "collapsed": "./icons/folder-stylesheets.svg",
           "expanded": "./icons/folder-stylesheets-open.svg"
-        },
-      }
+        }
+      },
       "chevron_icons": {
         "collapsed": "./icons/chevron-right.svg",
         "expanded": "./icons/chevron-down.svg"
