@@ -406,15 +406,14 @@ impl LocalLspStore {
                         adapter.clone(),
                     );
 
-                    let did_change_configuration_params =
-                        Arc::new(lsp::DidChangeConfigurationParams {
-                            settings: workspace_config,
-                        });
+                    let did_change_configuration_params = lsp::DidChangeConfigurationParams {
+                        settings: workspace_config,
+                    };
                     let language_server = cx
                         .update(|cx| {
                             language_server.initialize(
                                 initialization_params,
-                                did_change_configuration_params.clone(),
+                                Arc::new(did_change_configuration_params.clone()),
                                 cx,
                             )
                         })?
@@ -430,11 +429,9 @@ impl LocalLspStore {
                             }
                         })?;
 
-                    language_server
-                        .notify::<lsp::notification::DidChangeConfiguration>(
-                            &did_change_configuration_params,
-                        )
-                        .ok();
+                    language_server.notify::<lsp::notification::DidChangeConfiguration>(
+                        did_change_configuration_params,
+                    )?;
 
                     anyhow::Ok(language_server)
                 }
@@ -1338,32 +1335,6 @@ impl LocalLspStore {
             })?;
         }
 
-        // Formatter for `code_actions_on_format` that runs before
-        // the rest of the formatters
-        let mut code_actions_on_format_formatters = None;
-        let should_run_code_actions_on_format = !matches!(
-            (trigger, &settings.format_on_save),
-            (FormatTrigger::Save, &FormatOnSave::Off)
-        );
-        if should_run_code_actions_on_format {
-            let have_code_actions_to_run_on_format = settings
-                .code_actions_on_format
-                .values()
-                .any(|enabled| *enabled);
-            if have_code_actions_to_run_on_format {
-                zlog::trace!(logger => "going to run code actions on format");
-                code_actions_on_format_formatters = Some(
-                    settings
-                        .code_actions_on_format
-                        .iter()
-                        .filter_map(|(action, enabled)| enabled.then_some(action))
-                        .cloned()
-                        .map(Formatter::CodeAction)
-                        .collect::<Vec<_>>(),
-                );
-            }
-        }
-
         let formatters = match (trigger, &settings.format_on_save) {
             (FormatTrigger::Save, FormatOnSave::Off) => &[],
             (FormatTrigger::Manual, _) | (FormatTrigger::Save, FormatOnSave::On) => {
@@ -1381,11 +1352,6 @@ impl LocalLspStore {
                 }
             }
         };
-
-        let formatters = code_actions_on_format_formatters
-            .iter()
-            .flatten()
-            .chain(formatters);
 
         for formatter in formatters {
             match formatter {
@@ -7206,7 +7172,7 @@ impl LspStore {
 
             language_server
                 .notify::<lsp::notification::DidChangeTextDocument>(
-                    &lsp::DidChangeTextDocumentParams {
+                    lsp::DidChangeTextDocumentParams {
                         text_document: lsp::VersionedTextDocumentIdentifier::new(
                             uri.clone(),
                             next_version,
@@ -7243,7 +7209,7 @@ impl LspStore {
                 };
                 server
                     .notify::<lsp::notification::DidSaveTextDocument>(
-                        &lsp::DidSaveTextDocumentParams {
+                        lsp::DidSaveTextDocumentParams {
                             text_document: text_document.clone(),
                             text,
                         },
@@ -7314,7 +7280,7 @@ impl LspStore {
                                             .ok()?;
                                         server
                                             .notify::<lsp::notification::DidChangeConfiguration>(
-                                                &lsp::DidChangeConfigurationParams { settings },
+                                                lsp::DidChangeConfigurationParams { settings },
                                             )
                                             .ok()?;
                                         Some(())
@@ -8536,15 +8502,16 @@ impl LspStore {
         cx: AsyncApp,
     ) -> Result<proto::Ack> {
         let server_id = LanguageServerId(envelope.payload.language_server_id as usize);
-        lsp_store.read_with(&cx, |lsp_store, _| {
+        let task = lsp_store.read_with(&cx, |lsp_store, _| {
             if let Some(server) = lsp_store.language_server_for_id(server_id) {
-                server
-                    .notify::<lsp_store::lsp_ext_command::LspExtCancelFlycheck>(&())
-                    .context("handling lsp ext cancel flycheck")
+                Some(server.notify::<lsp_store::lsp_ext_command::LspExtCancelFlycheck>(()))
             } else {
-                anyhow::Ok(())
+                None
             }
-        })??;
+        })?;
+        if let Some(task) = task {
+            task.context("handling lsp ext cancel flycheck")?;
+        }
 
         Ok(proto::Ack {})
     }
@@ -8578,14 +8545,11 @@ impl LspStore {
                 } else {
                     None
                 };
-                server
-                    .notify::<lsp_store::lsp_ext_command::LspExtRunFlycheck>(
-                        &lsp_store::lsp_ext_command::RunFlycheckParams { text_document },
-                    )
-                    .context("handling lsp ext run flycheck")
-            } else {
-                anyhow::Ok(())
+                server.notify::<lsp_store::lsp_ext_command::LspExtRunFlycheck>(
+                    lsp_store::lsp_ext_command::RunFlycheckParams { text_document },
+                )?;
             }
+            anyhow::Ok(())
         })??;
 
         Ok(proto::Ack {})
@@ -8597,15 +8561,15 @@ impl LspStore {
         cx: AsyncApp,
     ) -> Result<proto::Ack> {
         let server_id = LanguageServerId(envelope.payload.language_server_id as usize);
-        lsp_store.read_with(&cx, |lsp_store, _| {
-            if let Some(server) = lsp_store.language_server_for_id(server_id) {
-                server
-                    .notify::<lsp_store::lsp_ext_command::LspExtClearFlycheck>(&())
-                    .context("handling lsp ext clear flycheck")
-            } else {
-                anyhow::Ok(())
-            }
-        })??;
+        lsp_store
+            .read_with(&cx, |lsp_store, _| {
+                if let Some(server) = lsp_store.language_server_for_id(server_id) {
+                    Some(server.notify::<lsp_store::lsp_ext_command::LspExtClearFlycheck>(()))
+                } else {
+                    None
+                }
+            })
+            .context("handling lsp ext clear flycheck")?;
 
         Ok(proto::Ack {})
     }
@@ -8744,7 +8708,7 @@ impl LspStore {
 
                 if filter.should_send_did_rename(&old_uri, is_dir) {
                     language_server
-                        .notify::<DidRenameFiles>(&RenameFilesParams {
+                        .notify::<DidRenameFiles>(RenameFilesParams {
                             files: vec![FileRename {
                                 old_uri: old_uri.clone(),
                                 new_uri: new_uri.clone(),
@@ -8858,7 +8822,7 @@ impl LspStore {
             if !changes.is_empty() {
                 server
                     .notify::<lsp::notification::DidChangeWatchedFiles>(
-                        &lsp::DidChangeWatchedFilesParams { changes },
+                        lsp::DidChangeWatchedFilesParams { changes },
                     )
                     .ok();
             }
@@ -10668,7 +10632,7 @@ impl LspStore {
                     if progress.is_cancellable {
                         server
                             .notify::<lsp::notification::WorkDoneProgressCancel>(
-                                &WorkDoneProgressCancelParams {
+                                WorkDoneProgressCancelParams {
                                     token: lsp::NumberOrString::String(token.clone()),
                                 },
                             )
@@ -10799,7 +10763,7 @@ impl LspStore {
                 };
                 if !params.changes.is_empty() {
                     server
-                        .notify::<lsp::notification::DidChangeWatchedFiles>(&params)
+                        .notify::<lsp::notification::DidChangeWatchedFiles>(params)
                         .ok();
                 }
             }

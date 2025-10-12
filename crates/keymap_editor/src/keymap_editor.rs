@@ -26,9 +26,9 @@ use project::{CompletionDisplayOptions, Project};
 use settings::{BaseKeymap, KeybindSource, KeymapFile, Settings as _, SettingsAssets};
 use ui::{
     ActiveTheme as _, App, Banner, BorrowAppContext, ContextMenu, IconButtonShape, Indicator,
-    Modal, ModalFooter, ModalHeader, ParentElement as _, Render, Section, SharedString,
-    Styled as _, Table, TableColumnWidths, TableInteractionState, TableResizeBehavior, Tooltip,
-    Window, prelude::*, right_click_menu,
+    Modal, ModalFooter, ModalHeader, ParentElement as _, PopoverMenu, Render, Section,
+    SharedString, Styled as _, Table, TableColumnWidths, TableInteractionState,
+    TableResizeBehavior, Tooltip, Window, prelude::*,
 };
 use ui_input::SingleLineInput;
 use util::ResultExt;
@@ -38,7 +38,7 @@ use workspace::{
 };
 
 pub use ui_components::*;
-use zed_actions::OpenKeymapEditor;
+use zed_actions::OpenKeymap;
 
 use crate::{
     persistence::KEYBINDING_EDITORS,
@@ -77,7 +77,7 @@ pub fn init(cx: &mut App) {
     let keymap_event_channel = KeymapEventChannel::new();
     cx.set_global(keymap_event_channel);
 
-    cx.on_action(|_: &OpenKeymapEditor, cx| {
+    cx.on_action(|_: &OpenKeymap, cx| {
         workspace::with_active_or_new_workspace(cx, move |workspace, window, cx| {
             workspace
                 .with_local_workspace(window, cx, |workspace, window, cx| {
@@ -1663,56 +1663,61 @@ impl Render for KeymapEditor {
                                             }),
                                     )
                                     .child(
-                                        div()
-                                            .ml_1()
+                                        h_flex()
+                                            .w_full()
                                             .pl_2()
-                                            .border_l_1()
-                                            .border_color(cx.theme().colors().border_variant)
+                                            .gap_1()
+                                            .justify_end()
                                             .child(
-                                                right_click_menu("open-keymap-menu")
-                                                    .menu(|window, cx| {
-                                                        ContextMenu::build(window, cx, |menu, _, _| {
-                                                            menu.header("Open Keymap JSON")
+                                                PopoverMenu::new("open-keymap-menu")
+                                                    .menu(move |window, cx| {
+                                                        Some(ContextMenu::build(window, cx, |menu, _, _| {
+                                                            menu.header("View Default...")
                                                                 .action(
-                                                                    "User",
-                                                                    zed_actions::OpenKeymap.boxed_clone(),
-                                                                )
-                                                                .action(
-                                                                    "Zed Default",
+                                                                    "Zed Key Bindings",
                                                                     zed_actions::OpenDefaultKeymap
                                                                         .boxed_clone(),
                                                                 )
                                                                 .action(
-                                                                    "Vim Default",
+                                                                    "Vim Bindings",
                                                                     vim::OpenDefaultKeymap.boxed_clone(),
                                                                 )
-                                                        })
+                                                        }))
                                                     })
-                                                    .anchor(gpui::Corner::TopLeft)
-                                                    .trigger(|open, _, _| {
+                                                    .anchor(gpui::Corner::TopRight)
+                                                    .offset(gpui::Point {
+                                                        x: px(0.0),
+                                                        y: px(2.0),
+                                                    })
+                                                    .trigger_with_tooltip(
                                                         IconButton::new(
                                                             "OpenKeymapJsonButton",
-                                                            IconName::Json,
+                                                            IconName::Ellipsis,
                                                         )
-                                                        .icon_size(IconSize::Small)
-                                                        .when(!open, |this| {
-                                                            this.tooltip(move |window, cx| {
-                                                                Tooltip::with_meta(
-                                                                    "Open keymap.json",
-                                                                    Some(&zed_actions::OpenKeymap),
-                                                                    "Right click to view more options",
+                                                        .icon_size(IconSize::Small),
+                                                        {
+                                                            let focus_handle = focus_handle.clone();
+                                                            move |window, cx| {
+                                                                Tooltip::for_action_in(
+                                                                    "View Default...",
+                                                                    &zed_actions::OpenKeymapFile,
+                                                                    &focus_handle,
                                                                     window,
                                                                     cx,
                                                                 )
-                                                            })
-                                                        })
-                                                        .on_click(|_, window, cx| {
-                                                            window.dispatch_action(
-                                                                zed_actions::OpenKeymap.boxed_clone(),
-                                                                cx,
-                                                            );
-                                                        })
-                                                    }),
+                                                            }
+                                                        },
+                                                    ),
+                                            )
+                                            .child(
+                                                Button::new("edit-in-json", "Edit in keymap.json")
+                                                    .style(ButtonStyle::Outlined)
+                                                    .on_click(|_, window, cx| {
+                                                        window.dispatch_action(
+                                                            zed_actions::OpenKeymapFile.boxed_clone(),
+                                                            cx,
+                                                        );
+                                                    })
                                             ),
                                     )
                             ),

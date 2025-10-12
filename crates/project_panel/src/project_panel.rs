@@ -643,9 +643,17 @@ impl ProjectPanel {
                             .as_ref()
                             .is_some_and(|state| state.processing_filename.is_none())
                         {
-                            project_panel.state.edit_state = None;
-                            project_panel.update_visible_entries(None, false, false, window, cx);
-                            cx.notify();
+                            match project_panel.confirm_edit(window, cx) {
+                                Some(task) => {
+                                    task.detach_and_notify_err(window, cx);
+                                }
+                                None => {
+                                    project_panel.state.edit_state = None;
+                                    project_panel
+                                        .update_visible_entries(None, false, false, window, cx);
+                                    cx.notify();
+                                }
+                            }
                         }
                     }
                     _ => {}
@@ -666,6 +674,9 @@ impl ProjectPanel {
                         this.update_visible_entries(None, false, false, window, cx);
                     }
                     if project_panel_settings.hide_root != new_settings.hide_root {
+                        this.update_visible_entries(None, false, false, window, cx);
+                    }
+                    if project_panel_settings.hide_hidden != new_settings.hide_hidden {
                         this.update_visible_entries(None, false, false, window, cx);
                     }
                     if project_panel_settings.sticky_scroll && !new_settings.sticky_scroll {
@@ -3164,6 +3175,7 @@ impl ProjectPanel {
                 mtime: parent_entry.mtime,
                 size: parent_entry.size,
                 is_ignored: parent_entry.is_ignored,
+                is_hidden: parent_entry.is_hidden,
                 is_external: false,
                 is_private: false,
                 is_always_included: parent_entry.is_always_included,
@@ -3204,6 +3216,7 @@ impl ProjectPanel {
             .map(|worktree| worktree.read(cx).snapshot())
             .collect();
         let hide_root = settings.hide_root && visible_worktrees.len() == 1;
+        let hide_hidden = settings.hide_hidden;
         self.update_visible_entries_task = cx.spawn_in(window, async move |this, cx| {
             let new_state = cx
                 .background_spawn(async move {
@@ -3295,7 +3308,9 @@ impl ProjectPanel {
                                 }
                             }
                             auto_folded_ancestors.clear();
-                            if !hide_gitignore || !entry.is_ignored {
+                            if (!hide_gitignore || !entry.is_ignored)
+                                && (!hide_hidden || !entry.is_hidden)
+                            {
                                 visible_worktree_entries.push(entry.to_owned());
                             }
                             let precedes_new_entry = if let Some(new_entry_id) = new_entry_parent_id
@@ -3308,7 +3323,10 @@ impl ProjectPanel {
                             } else {
                                 false
                             };
-                            if precedes_new_entry && (!hide_gitignore || !entry.is_ignored) {
+                            if precedes_new_entry
+                                && (!hide_gitignore || !entry.is_ignored)
+                                && (!hide_hidden || !entry.is_hidden)
+                            {
                                 visible_worktree_entries.push(Self::create_new_git_entry(
                                     entry.entry,
                                     entry.git_summary,
@@ -3418,17 +3436,20 @@ impl ProjectPanel {
                             new_state.max_width_item_index = Some(visited_worktrees_length + index);
                         }
                     }
-                    if let Some((worktree_id, entry_id)) = new_selected_entry {
-                        new_state.selection = Some(SelectedEntry {
-                            worktree_id,
-                            entry_id,
-                        });
-                    }
                     new_state
                 })
                 .await;
             this.update_in(cx, |this, window, cx| {
+                let current_selection = this.state.selection;
                 this.state = new_state;
+                if let Some((worktree_id, entry_id)) = new_selected_entry {
+                    this.state.selection = Some(SelectedEntry {
+                        worktree_id,
+                        entry_id,
+                    });
+                } else {
+                    this.state.selection = current_selection;
+                }
                 let elapsed = now.elapsed();
                 if this.last_reported_update.elapsed() > Duration::from_secs(3600) {
                     telemetry::event!(
@@ -4613,7 +4634,7 @@ impl ProjectPanel {
                         project_panel.marked_entries.clear();
                         if is_sticky
                             && let Some((_, _, index)) = project_panel.index_for_entry(entry_id, worktree_id) {
-                                project_panel.scroll_handle.scroll_to_item_with_offset(index, ScrollStrategy::Top, sticky_index.unwrap_or(0));
+                                project_panel.scroll_handle.scroll_to_item_strict_with_offset(index, ScrollStrategy::Top, sticky_index.unwrap_or(0));
                                 cx.notify();
                                 // move down by 1px so that clicked item
                                 // don't count as sticky anymore

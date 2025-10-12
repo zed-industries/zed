@@ -99,6 +99,10 @@ impl LanguageModelImage {
                     .and_then(image::DynamicImage::from_decoder),
                 ImageFormat::Gif => image::codecs::gif::GifDecoder::new(image_bytes)
                     .and_then(image::DynamicImage::from_decoder),
+                ImageFormat::Bmp => image::codecs::bmp::BmpDecoder::new(image_bytes)
+                    .and_then(image::DynamicImage::from_decoder),
+                ImageFormat::Tiff => image::codecs::tiff::TiffDecoder::new(image_bytes)
+                    .and_then(image::DynamicImage::from_decoder),
                 _ => return None,
             }
             .log_err()?;

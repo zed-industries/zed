@@ -649,7 +649,7 @@ impl AutoUpdater {
         #[cfg(not(target_os = "windows"))]
         anyhow::ensure!(
             which::which("rsync").is_ok(),
-            "Aborting. Could not find rsync which is required for auto-updates."
+            "Could not auto-update because the required rsync utility was not found."
         );
         Ok(())
     }
@@ -658,7 +658,7 @@ impl AutoUpdater {
         let filename = match OS {
             "macos" => anyhow::Ok("Zed.dmg"),
             "linux" => Ok("zed.tar.gz"),
-            "windows" => Ok("zed_editor_installer.exe"),
+            "windows" => Ok("Zed.exe"),
             unsupported_os => anyhow::bail!("not supported: {unsupported_os}"),
         }?;
 

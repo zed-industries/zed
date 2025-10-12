@@ -4,7 +4,7 @@ use crate::{
 };
 use call::ActiveCall;
 use editor::{
-    DocumentColorsRenderMode, Editor, RowInfo, SelectionEffects,
+    DocumentColorsRenderMode, Editor, FETCH_COLORS_DEBOUNCE_TIMEOUT, RowInfo, SelectionEffects,
     actions::{
         ConfirmCodeAction, ConfirmCompletion, ConfirmRename, ContextMenuFirst,
         ExpandMacroRecursively, MoveToEnd, Redo, Rename, SelectAll, ToggleCodeActions, Undo,
@@ -1272,7 +1272,7 @@ async fn test_language_server_statuses(cx_a: &mut TestAppContext, cx_b: &mut Tes
     fake_language_server.start_progress("the-token").await;
 
     executor.advance_clock(SERVER_PROGRESS_THROTTLE_TIMEOUT);
-    fake_language_server.notify::<lsp::notification::Progress>(&lsp::ProgressParams {
+    fake_language_server.notify::<lsp::notification::Progress>(lsp::ProgressParams {
         token: lsp::NumberOrString::String("the-token".to_string()),
         value: lsp::ProgressParamsValue::WorkDone(lsp::WorkDoneProgress::Report(
             lsp::WorkDoneProgressReport {
@@ -1306,7 +1306,7 @@ async fn test_language_server_statuses(cx_a: &mut TestAppContext, cx_b: &mut Tes
     });
 
     executor.advance_clock(SERVER_PROGRESS_THROTTLE_TIMEOUT);
-    fake_language_server.notify::<lsp::notification::Progress>(&lsp::ProgressParams {
+    fake_language_server.notify::<lsp::notification::Progress>(lsp::ProgressParams {
         token: lsp::NumberOrString::String("the-token".to_string()),
         value: lsp::ProgressParamsValue::WorkDone(lsp::WorkDoneProgress::Report(
             lsp::WorkDoneProgressReport {
@@ -2409,6 +2409,7 @@ async fn test_lsp_document_color(cx_a: &mut TestAppContext, cx_b: &mut TestAppCo
         .unwrap();
 
     color_request_handle.next().await.unwrap();
+    executor.advance_clock(FETCH_COLORS_DEBOUNCE_TIMEOUT);
     executor.run_until_parked();
 
     assert_eq!(
@@ -2848,7 +2849,7 @@ async fn test_lsp_pull_diagnostics(
     });
 
     fake_language_server.notify::<lsp::notification::PublishDiagnostics>(
-        &lsp::PublishDiagnosticsParams {
+        lsp::PublishDiagnosticsParams {
             uri: lsp::Uri::from_file_path(path!("/a/main.rs")).unwrap(),
             diagnostics: vec![lsp::Diagnostic {
                 range: lsp::Range {
@@ -2869,7 +2870,7 @@ async fn test_lsp_pull_diagnostics(
         },
     );
     fake_language_server.notify::<lsp::notification::PublishDiagnostics>(
-        &lsp::PublishDiagnosticsParams {
+        lsp::PublishDiagnosticsParams {
             uri: lsp::Uri::from_file_path(path!("/a/lib.rs")).unwrap(),
             diagnostics: vec![lsp::Diagnostic {
                 range: lsp::Range {
@@ -2891,7 +2892,7 @@ async fn test_lsp_pull_diagnostics(
     );
 
     if should_stream_workspace_diagnostic {
-        fake_language_server.notify::<lsp::notification::Progress>(&lsp::ProgressParams {
+        fake_language_server.notify::<lsp::notification::Progress>(lsp::ProgressParams {
             token: expected_workspace_diagnostic_token.clone(),
             value: lsp::ProgressParamsValue::WorkspaceDiagnostic(
                 lsp::WorkspaceDiagnosticReportResult::Report(lsp::WorkspaceDiagnosticReport {
@@ -3073,7 +3074,7 @@ async fn test_lsp_pull_diagnostics(
     });
 
     if should_stream_workspace_diagnostic {
-        fake_language_server.notify::<lsp::notification::Progress>(&lsp::ProgressParams {
+        fake_language_server.notify::<lsp::notification::Progress>(lsp::ProgressParams {
             token: expected_workspace_diagnostic_token.clone(),
             value: lsp::ProgressParamsValue::WorkspaceDiagnostic(
                 lsp::WorkspaceDiagnosticReportResult::Report(lsp::WorkspaceDiagnosticReport {

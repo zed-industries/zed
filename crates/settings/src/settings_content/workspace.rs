@@ -418,7 +418,7 @@ pub enum PaneSplitDirectionVertical {
 }
 
 #[skip_serializing_none]
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Default)]
 #[serde(rename_all = "snake_case")]
 pub struct CenteredLayoutSettings {
     /// The relative width of the left padding of the central pane from the
@@ -530,6 +530,10 @@ pub struct ProjectPanelSettingsContent {
     ///
     /// Default: false
     pub hide_root: Option<bool>,
+    /// Whether to hide the hidden entries in the project panel.
+    ///
+    /// Default: false
+    pub hide_hidden: Option<bool>,
     /// Whether to stick parent directories at top of the project panel.
     ///
     /// Default: true
@@ -564,7 +568,9 @@ pub enum ProjectPanelEntrySpacing {
 }
 
 #[skip_serializing_none]
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
+#[derive(
+    Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq, Default,
+)]
 pub struct ProjectPanelIndentGuidesSettings {
     pub show: Option<ShowIndentGuides>,
 }

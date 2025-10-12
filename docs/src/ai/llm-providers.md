@@ -43,7 +43,7 @@ Ensure your credentials have the following permissions set up:
 
 Your IAM policy should look similar to:
 
-```json
+```json [settings]
 {
   "Version": "2012-10-17",
   "Statement": [
@@ -65,7 +65,7 @@ With that done, choose one of the two authentication methods:
 
 1. Ensure you have the AWS CLI installed and configured with a named profile
 2. Open your `settings.json` (`zed: open settings`) and include the `bedrock` key under `language_models` with the following settings:
-   ```json
+   ```json [settings]
    {
      "language_models": {
        "bedrock": {
@@ -120,7 +120,7 @@ Zed will also use the `ANTHROPIC_API_KEY` environment variable if it's defined.
 
 You can add custom models to the Anthropic provider by adding the following to your Zed `settings.json`:
 
-```json
+```json [settings]
 {
   "language_models": {
     "anthropic": {
@@ -147,14 +147,14 @@ Custom models will be listed in the model dropdown in the Agent Panel.
 
 You can configure a model to use [extended thinking](https://docs.anthropic.com/en/docs/about-claude/models/extended-thinking-models) (if it supports it) by changing the mode in your model's configuration to `thinking`, for example:
 
-```json
+```json [settings]
 {
   "name": "claude-sonnet-4-latest",
   "display_name": "claude-sonnet-4-thinking",
   "max_tokens": 200000,
   "mode": {
     "type": "thinking",
-    "budget_tokens": 4_096
+    "budget_tokens": 4096
   }
 }
 ```
@@ -174,7 +174,7 @@ Zed will also use the `DEEPSEEK_API_KEY` environment variable if it's defined.
 The Zed agent comes pre-configured to use the latest version for common models (DeepSeek Chat, DeepSeek Reasoner).
 If you wish to use alternate models or customize the API endpoint, you can do so by adding the following to your Zed `settings.json`:
 
-```json
+```json [settings]
 {
   "language_models": {
     "deepseek": {
@@ -231,7 +231,7 @@ By default, Zed will use `stable` versions of models, but you can use specific v
 
 Here is an example of a custom Google AI model you could add to your Zed `settings.json`:
 
-```json
+```json [settings]
 {
   "language_models": {
     "google": {
@@ -286,7 +286,7 @@ The Zed agent comes pre-configured with several Mistral models (codestral-latest
 All the default models support tool use.
 If you wish to use alternate models or customize their parameters, you can do so by adding the following to your Zed `settings.json`:
 
-```json
+```json [settings]
 {
   "language_models": {
     "mistral": {
@@ -338,7 +338,7 @@ See [get_max_tokens in ollama.rs](https://github.com/zed-industries/zed/blob/mai
 
 Depending on your hardware or use-case you may wish to limit or increase the context length for a specific model via settings.json:
 
-```json
+```json [settings]
 {
   "language_models": {
     "ollama": {
@@ -406,7 +406,7 @@ Zed will also use the `OPENAI_API_KEY` environment variable if it's defined.
 The Zed agent comes pre-configured to use the latest version for common models (GPT-5, GPT-5 mini, o4-mini, GPT-4.1, and others).
 To use alternate models, perhaps a preview release, or if you wish to control the request parameters, you can do so by adding the following to your Zed `settings.json`:
 
-```json
+```json [settings]
 {
   "language_models": {
     "openai": {
@@ -446,7 +446,7 @@ Then, fill up the input fields available in the modal.
 
 To do it via your `settings.json`, add the following snippet under `language_models`:
 
-```json
+```json [settings]
 {
   "language_models": {
     "openai_compatible": {
@@ -499,7 +499,7 @@ Zed will also use the `OPENROUTER_API_KEY` environment variable if it's defined.
 
 You can add custom models to the OpenRouter provider by adding the following to your Zed `settings.json`:
 
-```json
+```json [settings]
 {
   "language_models": {
     "open_router": {
@@ -555,7 +555,7 @@ Supported fields (all optional):
 
 Example adding routing preferences to a model:
 
-```json
+```json [settings]
 {
   "language_models": {
     "open_router": {
@@ -613,7 +613,7 @@ The xAI API key will be saved in your keychain. Zed will also use the `XAI_API_K
 
 The Zed agent comes pre-configured with common Grok models. If you wish to use alternate models or customize their parameters, you can do so by adding the following to your Zed `settings.json`:
 
-```json
+```json [settings]
 {
   "language_models": {
     "x_ai": {
@@ -643,7 +643,7 @@ The Zed agent comes pre-configured with common Grok models. If you wish to use a
 You can use a custom API endpoint for different providers, as long as it's compatible with the provider's API structure.
 To do so, add the following to your `settings.json`:
 
-```json
+```json [settings]
 {
   "language_models": {
     "some-provider": {

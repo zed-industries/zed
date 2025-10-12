@@ -27,14 +27,10 @@ pub fn run_publish_gpui(args: PublishGpuiArgs) -> Result<()> {
     ensure_cargo_set_version()?;
     check_git_clean()?;
 
-    let current_version = read_gpui_version()?;
-    let new_version = bump_version(&current_version, args.pre_release.as_deref())?;
-    println!(
-        "Updating GPUI version: {} -> {}",
-        current_version, new_version
-    );
-    publish_dependencies(&new_version, args.dry_run)?;
-    publish_gpui(&new_version, args.dry_run)?;
+    let version = read_gpui_version()?;
+    println!("Updating GPUI to version: {}", version);
+    publish_dependencies(&version, args.dry_run)?;
+    publish_gpui(&version, args.dry_run)?;
     println!("GPUI published in {}s", start_time.elapsed().as_secs_f32());
     Ok(())
 }
@@ -54,31 +50,6 @@ fn read_gpui_version() -> Result<String> {
         .context("Failed to find version in crates/gpui/Cargo.toml")?;
 
     Ok(version.to_string())
-}
-
-fn bump_version(current_version: &str, pre_release: Option<&str>) -> Result<String> {
-    // Strip any existing metadata and pre-release
-    let without_metadata = current_version.split('+').next().unwrap();
-    let base_version = without_metadata.split('-').next().unwrap();
-
-    // Parse major.minor.patch
-    let parts: Vec<&str> = base_version.split('.').collect();
-    if parts.len() != 3 {
-        bail!("Invalid version format: {}", current_version);
-    }
-
-    let major: u32 = parts[0].parse().context("Failed to parse major version")?;
-    let minor: u32 = parts[1].parse().context("Failed to parse minor version")?;
-
-    // Always bump minor version
-    let new_version = format!("{}.{}.0", major, minor + 1);
-
-    // Add pre-release if specified
-    if let Some(pre) = pre_release {
-        Ok(format!("{}-{}", new_version, pre))
-    } else {
-        Ok(new_version)
-    }
 }
 
 fn publish_dependencies(new_version: &str, dry_run: bool) -> Result<()> {
@@ -346,41 +317,5 @@ mod tests {
         "#};
 
         assert_eq!(result, output);
-    }
-
-    #[test]
-    fn test_bump_version() {
-        // Test bumping minor version (default behavior)
-        assert_eq!(bump_version("0.1.0", None).unwrap(), "0.2.0");
-        assert_eq!(bump_version("0.1.5", None).unwrap(), "0.2.0");
-        assert_eq!(bump_version("1.42.7", None).unwrap(), "1.43.0");
-
-        // Test stripping pre-release and bumping minor
-        assert_eq!(bump_version("0.1.0-alpha.1", None).unwrap(), "0.2.0");
-        assert_eq!(bump_version("0.1.0-beta", None).unwrap(), "0.2.0");
-
-        // Test stripping existing metadata and bumping
-        assert_eq!(bump_version("0.1.0+old.metadata", None).unwrap(), "0.2.0");
-
-        // Test bumping minor with pre-release
-        assert_eq!(bump_version("0.1.0", Some("alpha")).unwrap(), "0.2.0-alpha");
-
-        // Test bumping minor with complex pre-release identifier
-        assert_eq!(
-            bump_version("0.1.0", Some("test.1")).unwrap(),
-            "0.2.0-test.1"
-        );
-
-        // Test bumping from existing pre-release adds new pre-release
-        assert_eq!(
-            bump_version("0.1.0-alpha", Some("beta")).unwrap(),
-            "0.2.0-beta"
-        );
-
-        // Test bumping and stripping metadata while adding pre-release
-        assert_eq!(
-            bump_version("0.1.0+metadata", Some("alpha")).unwrap(),
-            "0.2.0-alpha"
-        );
     }
 }
