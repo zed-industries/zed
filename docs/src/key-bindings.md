@@ -24,7 +24,7 @@ For more information, see the documentation for [Vim mode](./vim.md) and [Helix 
 ## User keymaps
 
 Zed reads your keymap from `~/.config/zed/keymap.json`, which you can open with the {#action zed::OpenKeymap} action from the command palette.
-You can also edit your keymap through the Zed Keymap Editor, accessible via the {#action zed::OpenKeymapEditor} action or the {#kb zed::OpenKeymapEditor} keybinding.
+You can also edit your keymap through the Zed Keymap Editor, accessible via the {#action zed::OpenKeymap} action or the {#kb zed::OpenKeymap} keybinding.
 
 The `keymap.json` file contains a JSON array of objects with `"bindings"`. If no `"context"` is set, the bindings are always active. If it is set, the binding is only active when the [context matches](#contexts).
 
@@ -34,7 +34,7 @@ If you are using a non-QWERTY, Latin-character keyboard, you may want to set `us
 
 For example:
 
-```json
+```json [keymap]
 [
   {
     "bindings": {
@@ -72,7 +72,7 @@ The keys can be any single Unicode codepoint that your keyboard generates (for e
 
 A few examples:
 
-```json
+```json [settings]
  "bindings": {
    "cmd-k cmd-s": "zed::OpenKeymap", // matches ⌘-k then ⌘-s
    "space e": "editor::Complete", // type space then e
@@ -161,7 +161,7 @@ On keyboards that support extended Latin alphabets (French AZERTY, German QWERTZ
 
 If you are defining shortcuts in your personal keymap, you can opt into the key equivalent mapping by setting `use_key_equivalents` to `true` in your keymap:
 
-```json
+```json [keymap]
 [
   {
     "use_key_equivalents": true,
@@ -187,7 +187,7 @@ If you'd like a given binding to do nothing in a given context, you can use
 want to disable it, or if you want to type the character that would be typed by
 the sequence, or if you want to disable multikey bindings starting with that key.
 
-```json
+```json [keymap]
 [
   {
     "context": "Workspace",
@@ -202,7 +202,7 @@ A `null` binding follows the same precedence rules as normal actions, so it disa
 
 This is useful for preventing Zed from falling back to a default key binding when the action you specified is conditional and propagates. For example, `buffer_search::DeployReplace` only triggers when the search bar is not in view. If the search bar is in view, it would propagate and trigger the default action set for that key binding, such as opening the right dock. To prevent this from happening:
 
-```json
+```json [keymap]
 [
   {
     "context": "Workspace",
@@ -223,7 +223,7 @@ This is useful for preventing Zed from falling back to a default key binding whe
 
 A common request is to be able to map from a single keystroke to a sequence. You can do this with the `workspace::SendKeystrokes` action.
 
-```json
+```json [keymap]
 [
   {
     "bindings": {
@@ -262,7 +262,7 @@ If you're on Linux or Windows, you might find yourself wanting to forward key co
 
 For example, `ctrl-n` creates a new tab in Zed on Linux. If you want to send `ctrl-n` to the built-in terminal when it's focused, add the following to your keymap:
 
-```json
+```json [settings]
 {
   "context": "Terminal",
   "bindings": {

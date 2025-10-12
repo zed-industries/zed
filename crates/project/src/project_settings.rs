@@ -215,6 +215,7 @@ impl From<settings::DiagnosticSeverityContent> for DiagnosticSeverity {
             settings::DiagnosticSeverityContent::Warning => DiagnosticSeverity::Warning,
             settings::DiagnosticSeverityContent::Info => DiagnosticSeverity::Info,
             settings::DiagnosticSeverityContent::Hint => DiagnosticSeverity::Hint,
+            settings::DiagnosticSeverityContent::All => DiagnosticSeverity::Hint,
         }
     }
 }

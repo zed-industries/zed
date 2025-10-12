@@ -38,7 +38,7 @@ use workspace::{
 };
 
 pub use ui_components::*;
-use zed_actions::OpenKeymapEditor;
+use zed_actions::OpenKeymap;
 
 use crate::{
     persistence::KEYBINDING_EDITORS,
@@ -77,7 +77,7 @@ pub fn init(cx: &mut App) {
     let keymap_event_channel = KeymapEventChannel::new();
     cx.set_global(keymap_event_channel);
 
-    cx.on_action(|_: &OpenKeymapEditor, cx| {
+    cx.on_action(|_: &OpenKeymap, cx| {
         workspace::with_active_or_new_workspace(cx, move |workspace, window, cx| {
             workspace
                 .with_local_workspace(window, cx, |workspace, window, cx| {
@@ -1700,7 +1700,7 @@ impl Render for KeymapEditor {
                                                             move |window, cx| {
                                                                 Tooltip::for_action_in(
                                                                     "View Default...",
-                                                                    &zed_actions::OpenKeymap,
+                                                                    &zed_actions::OpenKeymapFile,
                                                                     &focus_handle,
                                                                     window,
                                                                     cx,
@@ -1714,7 +1714,7 @@ impl Render for KeymapEditor {
                                                     .style(ButtonStyle::Outlined)
                                                     .on_click(|_, window, cx| {
                                                         window.dispatch_action(
-                                                            zed_actions::OpenKeymap.boxed_clone(),
+                                                            zed_actions::OpenKeymapFile.boxed_clone(),
                                                             cx,
                                                         );
                                                     })
