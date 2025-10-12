@@ -282,8 +282,15 @@ impl Editor {
         let Some(inlay_hints) = self.inlay_hints.as_mut() else {
             return;
         };
-        // TODO kb can we batch this further?
-        // Chunks can be derived from buffer's all ranges at once, which will fix that `.clear()` call below invalidating bug
+
+        let ignore_previous_fetches = matches!(
+            reason,
+            InlayHintRefreshReason::ModifiersChanged(_)
+                | InlayHintRefreshReason::SettingsChange(_)
+                | InlayHintRefreshReason::Toggle(_)
+        );
+
+        let mut buffer_data_invalidated = HashSet::default();
         for (excerpt_id, (buffer, buffer_version, range)) in visible_excerpts {
             let buffer_id = buffer.read(cx).remote_id();
             let buffer_snapshot = buffer.read(cx).snapshot();
@@ -295,17 +302,13 @@ impl Editor {
             let existing_tasks = inlay_hints.hint_refresh_tasks.entry(buffer_id).or_default();
             let fetched_tasks = inlay_hints.hint_chunk_fetches.entry(buffer_id).or_default();
             if buffer_version.changed_since(&fetched_tasks.0) {
-                existing_tasks.clear();
-                fetched_tasks.1.clear();
-                fetched_tasks.0 = buffer_version.clone();
+                if buffer_data_invalidated.insert(buffer_id) {
+                    existing_tasks.clear();
+                    fetched_tasks.1.clear();
+                    fetched_tasks.0 = buffer_version.clone();
+                }
             }
 
-            let ignore_previous_fetches = matches!(
-                reason,
-                InlayHintRefreshReason::ModifiersChanged(_)
-                    | InlayHintRefreshReason::SettingsChange(_)
-                    | InlayHintRefreshReason::Toggle(_)
-            );
             match existing_tasks.entry(hints_row_range.clone()) {
                 hash_map::Entry::Occupied(mut o) => {
                     if ignore_previous_fetches {
@@ -766,7 +769,7 @@ pub mod tests {
     use std::ops::Range;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
-    use text::{Point, ToPoint as _};
+    use text::{OffsetRangeExt, Point};
     use ui::App;
     use util::path;
 
@@ -1938,14 +1941,7 @@ pub mod tests {
         );
         let (_, (excerpt_buffer, _, excerpt_visible_range)) = ranges.into_iter().next().unwrap();
         excerpt_buffer.read_with(cx, |buffer, _| {
-            let snapshot = buffer.snapshot();
-            let start = buffer
-                .anchor_before(excerpt_visible_range.start)
-                .to_point(&snapshot);
-            let end = buffer
-                .anchor_after(excerpt_visible_range.end)
-                .to_point(&snapshot);
-            start..end
+            excerpt_visible_range.to_point(&buffer.snapshot())
         })
     }
 
@@ -2301,6 +2297,7 @@ pub mod tests {
             })
             .unwrap();
         cx.executor().run_until_parked();
+        // TODO kb fails now, works incorrect with multi buffers, check excerpts' task updates — make ExcerptId as a key?
         editor
             .update(cx, |editor, _window, cx| {
                 assert_eq!(
