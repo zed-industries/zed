@@ -92,7 +92,7 @@ impl PreprocessorError {
     ) -> Self {
         PreprocessorError::InvalidSettingsJson {
             file: chapter.path.clone().expect("chapter has path"),
-            line: chapter.content[..location].lines().count(),
+            line: chapter.content[..location].lines().count() + 1,
             snippet,
             error,
         }
@@ -305,19 +305,24 @@ fn template_and_validate_settings_snippet(
                 continue;
             };
             let snippet_end = snippet_start + snippet_end;
-            let snippet_json = &chapter.content[snippet_start..snippet_end].trim();
-            if !snippet_json.starts_with('{') || !snippet_json.ends_with('}') {
-                errors.insert(PreprocessorError::new_for_invalid_settings_json(
-                    chapter,
-                    loc,
-                    snippet_json.to_string(),
-                    "Settings JSON snippets should be valid JSON objects".to_string(),
-                ));
-                offset = loc + json_code_block.len();
-                continue;
+            let snippet_json = &chapter.content[snippet_start..snippet_end];
+            let mut snippet_json_fixed = snippet_json
+                .to_string()
+                .replace("\n>", "\n")
+                .trim()
+                .to_string();
+            while snippet_json_fixed.starts_with("//") {
+                if let Some(line_end) = snippet_json_fixed.find('\n') {
+                    snippet_json_fixed.replace_range(0..line_end, "");
+                    snippet_json_fixed = snippet_json_fixed.trim().to_string();
+                }
+            }
+            if !snippet_json_fixed.starts_with('{') || !snippet_json_fixed.ends_with('}') {
+                snippet_json_fixed.insert(0, '{');
+                snippet_json_fixed.push_str("\n}");
             }
             let parse_result = settings::parse_json_with_comments::<settings::SettingsContent>(
-                snippet_json.trim(),
+                &snippet_json_fixed,
             );
             if let Err(err) = parse_result {
                 errors.insert(PreprocessorError::new_for_invalid_settings_json(

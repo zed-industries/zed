@@ -22,16 +22,16 @@ If you would like to use distinct themes for light mode/dark mode that can be se
 ```json [settings]
 {
   "theme": {
-    "dark": "One Dark"
+    "dark": "One Dark",
     "light": "One Light",
     // Mode to use (dark, light) or "system" to follow the OS's light/dark mode (default)
-    "mode": "system",
+    "mode": "system"
   },
   "icon_theme": {
-    "dark": "Zed (Default)"
+    "dark": "Zed (Default)",
     "light": "Zed (Default)",
     // Mode to use (dark, light) or "system" to follow the OS's light/dark mode (default)
-    "mode": "system",
+    "mode": "system"
   }
 }
 ```
@@ -128,10 +128,6 @@ To disable this behavior use:
   // Force usage of Zed built in confirmation prompts ("Do you want to save?")
   // instead of OS native prompts (false). On linux this is ignored (always false).
   "use_system_prompts": true,
-
-  // Whether to use the system provided dialogs for Open and Save As (true) or
-  // Zed's built-in keyboard-first pickers (false)
-  "use_system_path_prompts": true,
 
   // Active pane styling settings.
   "active_pane_modifiers": {
@@ -448,7 +444,7 @@ Project panel can be shown/hidden with {#action project_panel::ToggleFocus} ({#k
     },
     // Whether to hide the root entry when only one folder is open in the window.
     "hide_root": false
-  }.
+  }
 ```
 
 ## Agent Panel
@@ -551,11 +547,11 @@ See [Terminal settings](./configuring-zed.md#terminal) for additional non-visual
 {
   // Collaboration Panel
   "collaboration_panel": {
-    "button": true,               // Show/hide status bar icon
-    "dock": "left",               // Where to dock: left, right
-    "default_width": 240          // Default width of the collaboration panel.
+    "button": true, // Show/hide status bar icon
+    "dock": "left", // Where to dock: left, right
+    "default_width": 240 // Default width of the collaboration panel.
   },
-  "show_call_status_icon": true,  // Shown call status in the OS status bar.
+  "show_call_status_icon": true, // Shown call status in the OS status bar.
 
   // Notification Panel
   "notification_panel": {
@@ -566,4 +562,5 @@ See [Terminal settings](./configuring-zed.md#terminal) for additional non-visual
     // Default width of the notification panel.
     "default_width": 380
   }
+}
 ```

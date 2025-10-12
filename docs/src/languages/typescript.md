@@ -174,7 +174,7 @@ If your use-case isn't covered by any of these, you can take full control by add
 
 Given an externally-ran web server (e.g., with `npx serve` or `npx live-server`) one can attach to it and open it with a browser.
 
-```json [settings]
+```json [debug]
 [
   {
     "label": "Launch Chrome (TypeScript)",

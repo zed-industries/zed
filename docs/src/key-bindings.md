@@ -34,7 +34,7 @@ If you are using a non-QWERTY, Latin-character keyboard, you may want to set `us
 
 For example:
 
-```json [settings]
+```json [keymap]
 [
   {
     "bindings": {
@@ -161,7 +161,7 @@ On keyboards that support extended Latin alphabets (French AZERTY, German QWERTZ
 
 If you are defining shortcuts in your personal keymap, you can opt into the key equivalent mapping by setting `use_key_equivalents` to `true` in your keymap:
 
-```json [settings]
+```json [keymap]
 [
   {
     "use_key_equivalents": true,
@@ -187,7 +187,7 @@ If you'd like a given binding to do nothing in a given context, you can use
 want to disable it, or if you want to type the character that would be typed by
 the sequence, or if you want to disable multikey bindings starting with that key.
 
-```json [settings]
+```json [keymap]
 [
   {
     "context": "Workspace",
@@ -202,7 +202,7 @@ A `null` binding follows the same precedence rules as normal actions, so it disa
 
 This is useful for preventing Zed from falling back to a default key binding when the action you specified is conditional and propagates. For example, `buffer_search::DeployReplace` only triggers when the search bar is not in view. If the search bar is in view, it would propagate and trigger the default action set for that key binding, such as opening the right dock. To prevent this from happening:
 
-```json [settings]
+```json [keymap]
 [
   {
     "context": "Workspace",
@@ -223,7 +223,7 @@ This is useful for preventing Zed from falling back to a default key binding whe
 
 A common request is to be able to map from a single keystroke to a sequence. You can do this with the `workspace::SendKeystrokes` action.
 
-```json [settings]
+```json [keymap]
 [
   {
     "bindings": {

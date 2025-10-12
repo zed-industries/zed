@@ -154,7 +154,7 @@ You can configure a model to use [extended thinking](https://docs.anthropic.com/
   "max_tokens": 200000,
   "mode": {
     "type": "thinking",
-    "budget_tokens": 4_096
+    "budget_tokens": 4096
   }
 }
 ```

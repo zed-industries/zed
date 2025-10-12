@@ -294,7 +294,7 @@ To run tests in your Ruby project, you can set up custom tasks in your local `.z
 
 ### Minitest with Rails
 
-```json [settings]
+```json [debug]
 [
   {
     "label": "test $ZED_RELATIVE_FILE -n /$ZED_CUSTOM_RUBY_TEST_NAME/",
@@ -315,7 +315,7 @@ To run tests in your Ruby project, you can set up custom tasks in your local `.z
 
 Plain minitest does not support running tests by line number, only by name, so we need to use `$ZED_CUSTOM_RUBY_TEST_NAME` instead:
 
-```json [settings]
+```json [tasks]
 [
   {
     "label": "-Itest $ZED_RELATIVE_FILE -n /$ZED_CUSTOM_RUBY_TEST_NAME/",
@@ -336,7 +336,7 @@ Plain minitest does not support running tests by line number, only by name, so w
 
 ### RSpec
 
-```json [settings]
+```json [debug]
 [
   {
     "label": "test $ZED_RELATIVE_FILE:$ZED_ROW",
@@ -358,7 +358,7 @@ The Ruby extension provides a debug adapter for debugging Ruby code. Zed's name 
 
 #### Debug a Ruby script
 
-```json [settings]
+```json [debug]
 [
   {
     "label": "Debug current file",
@@ -372,7 +372,7 @@ The Ruby extension provides a debug adapter for debugging Ruby code. Zed's name 
 
 #### Debug Rails server
 
-```json [settings]
+```json [debug]
 [
   {
     "label": "Debug Rails server",
@@ -400,9 +400,9 @@ To format ERB templates, you can use the `erb-formatter` formatter. This formatt
     "formatter": {
       "external": {
         "command": "erb-formatter",
-        "arguments": ["--stdin-filename", "{buffer_path}"],
-      },
-    },
-  },
+        "arguments": ["--stdin-filename", "{buffer_path}"]
+      }
+    }
+  }
 }
 ```

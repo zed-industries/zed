@@ -23,7 +23,7 @@ Toggle between them via the `mode` key:
 
 ```json [settings]
 "edit_predictions": {
-  "mode": "eager" | "subtle"
+  "mode": "eager" // or "subtle"
 },
 ```
 
@@ -102,7 +102,7 @@ To maintain the use of the modifier key for accepting predictions when there is 
 
 The keybinding example below causes `alt-tab` to always be used instead of sometimes using `tab`. You might want this in order to have just one keybinding to use for accepting edit predictions, since the behavior of `tab` varies based on context.
 
-```json [settings]
+```json [keymap]
   {
     "context": "Editor && edit_prediction",
     "bindings": {
@@ -126,7 +126,7 @@ The keybinding example below causes `alt-tab` to always be used instead of somet
 
 If `"vim_mode": true` is set within `settings.json`, then additional bindings are needed after the above to return `tab` to its original behavior:
 
-```json [settings]
+```json [keymap]
   {
     "context": "(VimControl && !menu) || vim_mode == replace || vim_mode == waiting",
     "bindings": {
@@ -145,7 +145,7 @@ If `"vim_mode": true` is set within `settings.json`, then additional bindings ar
 
 While `tab` and `alt-tab` are supported on Linux, `alt-l` is displayed instead. If your window manager does not reserve `alt-tab`, and you would prefer to use `tab` and `alt-tab`, include these bindings in `keymap.json`:
 
-```json [settings]
+```json [keymap]
   {
     "context": "Editor && edit_prediction",
     "bindings": {
@@ -170,7 +170,7 @@ Zed requires at least one keybinding for the {#action editor::AcceptEditPredicti
 
 If you have previously bound the default keybindings to different actions in the global context, you will not be able to preview or accept edit predictions. For example:
 
-```json [settings]
+```json [keymap]
 [
   // Your keymap
   {
@@ -184,7 +184,7 @@ If you have previously bound the default keybindings to different actions in the
 
 To fix this, you can specify your own keybinding for accepting edit predictions:
 
-```json [settings]
+```json [keymap]
 [
   // ...
   {

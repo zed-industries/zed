@@ -130,19 +130,19 @@ Non-negative `float` values
 }
 ```
 
-2. Allow rewrap everywhere:
+2. Allow rewrap in selections only:
 
 ```json [settings]
 {
-  "allow_rewrap": "everywhere"
+  "allow_rewrap": "in_selections"
 }
 ```
 
-3. Never allow rewrap:
+3. Allow rewrap anywhere:
 
 ```json [settings]
 {
-  "allow_rewrap": "never"
+  "allow_rewrap": "anywhere"
 }
 ```
 
@@ -486,7 +486,7 @@ Note: Dirty files (files with unsaved changes) will not be automatically closed 
 
 ```json [settings]
 {
-  "diagnostics_max_severity": null
+  "diagnostics_max_severity": "all"
 }
 ```
 
@@ -510,7 +510,7 @@ Note: Dirty files (files with unsaved changes) will not be automatically closed 
 
 ```json [settings]
 {
-  "diagnostics_max_severity": "information"
+  "diagnostics_max_severity": "info"
 }
 ```
 
@@ -943,7 +943,7 @@ List of `string` values
 
 ```json [settings]
 {
-  "diagnostics": "all"
+  "diagnostics_max_severity": "all"
 }
 ```
 
@@ -951,7 +951,7 @@ List of `string` values
 
 ```json [settings]
 {
-  "diagnostics": "none"
+  "diagnostics_max_severity": "off"
 }
 ```
 
@@ -959,7 +959,7 @@ List of `string` values
 
 ```json [settings]
 {
-  "diagnostics": "error"
+  "diagnostics_max_severity": "error"
 }
 ```
 
@@ -967,7 +967,7 @@ List of `string` values
 
 ```json [settings]
 {
-  "diagnostics": "warning"
+  "diagnostics_max_severity": "warning"
 }
 ```
 
@@ -975,7 +975,7 @@ List of `string` values
 
 ```json [settings]
 {
-  "diagnostics": "information"
+  "diagnostics_max_severity": "info"
 }
 ```
 
@@ -1715,14 +1715,12 @@ WARNING: `{buffer_path}` should not be used to direct your formatter to read fro
 
 ```json [settings]
 {
-  "formatter": {
-    "code_actions": {
-      // Use ESLint's --fix:
-      "source.fixAll.eslint": true,
-      // Organize imports on save:
-      "source.organizeImports": true
-    }
-  }
+  "formatter": [
+    // Use ESLint's --fix:
+    { "code_action": "source.fixAll.eslint" },
+    // Organize imports on save:
+    { "code_action": "source.organizeImports" }
+  ]
 }
 ```
 
@@ -3288,7 +3286,8 @@ Positive integer values
   "whitespace_map": {
     "space": "•",
     "tab": "→"
-  },
+  }
+}
 ```
 
 ## Soft Wrap
@@ -4613,7 +4612,8 @@ For example, to use `Nerd Font` as a fallback, add the following to your setting
   },
   "languages": {
     "C": {
-      "format_on_save": "language_server",
+      "format_on_save": "on",
+      "formatter": "language_server",
       "preferred_line_length": 64,
       "soft_wrap": "preferred_line_length"
     }

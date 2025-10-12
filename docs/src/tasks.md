@@ -2,7 +2,7 @@
 
 Zed supports ways to spawn (and rerun) commands using its integrated terminal to output the results. These commands can read a limited subset of Zed state (such as a path to the file currently being edited or selected text).
 
-```json [settings]
+```json [tasks]
 [
   {
     "label": "Example task",
@@ -172,7 +172,7 @@ By default, tasks capture their variables into a context once, and this "resolve
 
 This can be controlled with the `"reevaluate_context"` argument to the task: setting it to `true` will force the task to be reevaluated before each run.
 
-```json [settings]
+```json [keymap]
 {
   "context": "Workspace",
   "bindings": {
@@ -185,7 +185,7 @@ This can be controlled with the `"reevaluate_context"` argument to the task: set
 
 You can define your own keybindings for your tasks via an additional argument to `task::Spawn`. If you wanted to bind the aforementioned `echo current file's path` task to `alt-g`, you would add the following snippet in your [`keymap.json`](./key-bindings.md) file:
 
-```json [settings]
+```json [keymap]
 {
   "context": "Workspace",
   "bindings": {
@@ -197,7 +197,7 @@ You can define your own keybindings for your tasks via an additional argument to
 Note that these tasks can also have a 'target' specified to control where the spawned task should show up.
 This could be useful for launching a terminal application that you want to use in the center area:
 
-```json [settings]
+```json [tasks]
 // In tasks.json
 {
   "label": "start lazygit",
@@ -205,7 +205,7 @@ This could be useful for launching a terminal application that you want to use i
 }
 ```
 
-```json [settings]
+```json [keymap]
 // In keymap.json
 {
   "context": "Workspace",

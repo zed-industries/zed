@@ -62,7 +62,7 @@ Use
     "gopls": {
         "initialization_options": {
             "hints": {
-                ....
+                // ....
             }
         }
     }
@@ -83,7 +83,7 @@ For more control, you can add debug configurations to `.zed/debug.json`. See bel
 
 To debug a specific package, you can do so by setting the Delve mode to "debug". In this case "program" should be set to the package name.
 
-```json [settings]
+```json [debug]
 [
   {
     "label": "Go (Delve)",
@@ -110,7 +110,7 @@ To debug a specific package, you can do so by setting the Delve mode to "debug".
 To debug the tests for a package, set the Delve mode to "test".
 The "program" is still the package name, and you can use the "buildFlags" to do things like set tags, and the "args" to set args on the test binary. (See `go help testflags` for more information on doing that).
 
-```json [settings]
+```json [debug]
 [
   {
     "label": "Run integration tests",
@@ -130,7 +130,7 @@ The "program" is still the package name, and you can use the "buildFlags" to do 
 If you need to build your application with a specific command, you can use the "exec" mode of Delve. In this case "program" should point to an executable,
 and the "build" command should build that.
 
-```json [settings]
+```json [debug]
 [
   {
     "label": "Debug Prebuilt Unit Tests",
@@ -160,7 +160,7 @@ and the "build" command should build that.
 
 You might find yourself needing to connect to an existing instance of Delve that's not necessarily running on your machine; in such case, you can use `tcp_arguments` to instrument Zed's connection to Delve.
 
-```json [settings]
+```json [debug]
 [
   {
     "adapter": "Delve",

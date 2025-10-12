@@ -93,9 +93,7 @@ the formatter:
   "languages": {
     "JavaScript": {
       "formatter": {
-        "code_actions": {
-          "source.fixAll.eslint": true
-        }
+        "code_action": "source.fixAll.eslint"
       }
     }
   }
@@ -191,7 +189,7 @@ If your use-case isn't covered by any of these, you can take full control by add
 
 ### Debug the current file
 
-```json [settings]
+```json [debug]
 [
   {
     "adapter": "JavaScript",
@@ -208,7 +206,7 @@ This implicitly runs the current file using `node`.
 
 ### Launch a web app in Chrome
 
-```json [settings]
+```json [debug]
 [
   {
     "adapter": "JavaScript",

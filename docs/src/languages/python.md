@@ -277,7 +277,7 @@ For reusable setups, create a `.zed/debug.json` file in your project root. This 
 
 #### Debug Active File
 
-```json [settings]
+```json [debug]
 [
   {
     "label": "Python Active File",
@@ -309,7 +309,7 @@ requirements.txt
 
 …the following configuration can be used:
 
-```json [settings]
+```json [debug]
 [
   {
     "label": "Python: Flask",

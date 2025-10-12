@@ -388,7 +388,7 @@ Zed's key bindings are evaluated only when the `"context"` property matches your
 
 Contexts are nested, so when you're editing a file, the context is the `"Editor"` context, which is inside the `"Pane"` context, which is inside the `"Workspace"` context. That's why any key bindings you add to the `"Workspace"` context will work when you're editing a file. Here's an example:
 
-```json [settings]
+```json [keymap]
 // This key binding will work when you're editing a file. It comes built into Zed by default as the workspace: save command.
 {
   "context": "Workspace",
@@ -419,7 +419,7 @@ Vim mode adds several contexts to the `"Editor"` context:
 
 Here's a template with useful vim mode contexts to help you customize your vim mode key bindings. You can copy it and integrate it into your user keymap.
 
-```json [settings]
+```json [keymap]
 [
   {
     "context": "VimControl && !menu",
@@ -539,7 +539,7 @@ The [vim-exchange](https://github.com/tommcdo/vim-exchange) feature does not hav
 
 If you're using vim mode on Linux or Windows, you may find it overrides keybindings you can't live without: `ctrl+v` to paste, `ctrl+f` to search, etc. You can restore them by copying this data into your keymap:
 
-```json [settings]
+```json [keymap]
 {
   "context": "Editor && !menu",
   "bindings": {

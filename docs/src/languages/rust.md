@@ -300,7 +300,7 @@ For more control, you can add debug configurations to `.zed/debug.json`. See the
 
 ### Build binary then debug
 
-```json [settings]
+```json [debug]
 [
   {
     "label": "Build & Debug native binary",
@@ -321,7 +321,7 @@ For more control, you can add debug configurations to `.zed/debug.json`. See the
 
 When you use `cargo build` or `cargo test` as the build command, Zed can infer the path to the output binary.
 
-```json [settings]
+```json [debug]
 [
   {
     "label": "Build & Debug native binary",

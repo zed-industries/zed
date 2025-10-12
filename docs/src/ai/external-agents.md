@@ -20,7 +20,7 @@ As of [Zed Stable v0.201.5](https://zed.dev/releases/stable/0.201.5) you should 
 
 If you'd like to bind this to a keyboard shortcut, you can do so by editing your `keymap.json` file via the `zed: open keymap` command to include:
 
-```json [settings]
+```json [keymap]
 [
   {
     "bindings": {
@@ -77,7 +77,7 @@ Open the agent panel with {#kb agent::ToggleFocus}, and then use the `+` button 
 
 If you'd like to bind this to a keyboard shortcut, you can do so by editing your `keymap.json` file via the `zed: open keymap` command to include:
 
-```json [settings]
+```json [keymap]
 [
   {
     "bindings": {

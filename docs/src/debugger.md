@@ -37,7 +37,7 @@ You can open the same modal by clicking the "plus" button at the top right of th
 
 For languages that don't provide preconfigured debug tasks (this includes C, C++, and some extension-supported languages), you can define debug configurations in the `.zed/debug.json` file in your project root. This file should be an array of configuration objects:
 
-```json [settings]
+```json [debug]
 [
   {
     "adapter": "CodeLLDB",
@@ -70,7 +70,7 @@ Compared to launching, attaching to an existing process might seem inferior, but
 
 While configuration fields are debug adapter-dependent, most adapters support the following fields:
 
-```json [settings]
+```json [debug]
 [
   {
     // The label for the debug configuration and used to identify the debug session inside the debug panel & new process modal
@@ -95,7 +95,7 @@ All configuration fields support [task variables](./tasks.md#variables).
 
 Zed also allows embedding a Zed task in a `build` field that is run before the debugger starts. This is useful for setting up the environment or running any necessary setup steps before the debugger starts.
 
-```json [settings]
+```json [debug]
 [
   {
     "label": "Build Binary",
@@ -112,7 +112,7 @@ Zed also allows embedding a Zed task in a `build` field that is run before the d
 
 Build tasks can also refer to the existing tasks by unsubstituted label:
 
-```json [settings]
+```json [debug]
 [
   {
     "label": "Build Binary",

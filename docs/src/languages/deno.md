@@ -90,7 +90,7 @@ To get completions for `deno.json` or `package.json` you can add the following t
 
 To debug deno programs, add this to `.zed/debug.json`
 
-```json [settings]
+```json [debug]
 [
   {
     "adapter": "JavaScript",
@@ -110,7 +110,7 @@ To debug deno programs, add this to `.zed/debug.json`
 
 To run deno tasks like tests from the ui, add this to `.zed/tasks.json`
 
-```json [settings]
+```json [tasks]
 [
   {
     "label": "deno test",

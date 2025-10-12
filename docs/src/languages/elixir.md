@@ -88,7 +88,8 @@ If you prefer to format your code with [Mix](https://hexdocs.pm/mix/Mix.html), u
 {
   "languages": {
     "Elixir": {
-      "format_on_save": {
+      "format_on_save": "on",
+      "formatter": {
         "external": {
           "command": "mix",
           "arguments": ["format", "--stdin-filename", "{buffer_path}", "-"]
