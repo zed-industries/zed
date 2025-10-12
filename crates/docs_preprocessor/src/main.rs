@@ -396,6 +396,24 @@ fn template_and_validate_json_snippets(book: &mut Book, errors: &mut HashSet<Pre
                     }
                 }
             }
+            "debug" => {
+                if !snippet_json_fixed.starts_with('[') || !snippet_json_fixed.ends_with(']') {
+                    snippet_json_fixed.insert(0, '[');
+                    snippet_json_fixed.push_str("\n]");
+                }
+
+                settings::parse_json_with_comments::<task::DebugTaskFile>(&snippet_json_fixed)
+                    .context("Failed to parse debug task file")?;
+            }
+            "tasks" => {
+                if !snippet_json_fixed.starts_with('[') || !snippet_json_fixed.ends_with(']') {
+                    snippet_json_fixed.insert(0, '[');
+                    snippet_json_fixed.push_str("\n]");
+                }
+
+                settings::parse_json_with_comments::<task::TaskTemplates>(&snippet_json_fixed)
+                    .context("Failed to parse task file")?;
+            }
             label => {
                 // todo! re-enable
                 // anyhow::bail!("Unexpected JSON code block tag: {}", label)
