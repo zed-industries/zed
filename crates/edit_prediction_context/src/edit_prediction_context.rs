@@ -160,7 +160,15 @@ impl EditPredictionContext {
             &options.similar_snippets,
         );
 
-        dbg!(&similar_snippets);
+        // buffer.debug(&excerpt.range, "excerpt");
+
+        // buffer.debug(
+        //     &similar_snippets
+        //         .iter()
+        //         .map(|s| s.range.clone())
+        //         .collect::<Vec<_>>(),
+        //     "similar_snippets",
+        // );
 
         Some(Self {
             excerpt,

@@ -1,7 +1,5 @@
-use std::{borrow::Cow, ops::Range, sync::Arc};
-
 use language::BufferSnapshot;
-use ordered_float::OrderedFloat;
+use std::{borrow::Cow, ops::Range, sync::Arc};
 use util::RangeExt as _;
 
 use crate::{OccurrenceSource, Occurrences, SlidingWindow};
@@ -49,8 +47,8 @@ impl SimilarSnippetOptions {
     pub const DEFAULT: Self = Self {
         min_bytes: 128,
         max_bytes: 256,
-        min_similarity: 0.1,
-        similarity_metric: SimilarityMetric::Jaccard,
+        min_similarity: 0.01,
+        similarity_metric: SimilarityMetric::OverlapCoefficient,
         max_result_count: 5,
     };
 }
@@ -77,20 +75,20 @@ pub fn similar_snippets<S: OccurrenceSource>(
     let mut bytes = 0;
     let mut start_offset = forward_range.start;
     while let Some(line) = lines.next() {
-        bytes += line.len();
-        if line.len() > options.max_bytes {
+        let len_with_newline = line.len() + 1;
+        bytes += len_with_newline;
+        if len_with_newline > options.max_bytes {
             window.clear();
             bytes = 0;
             continue;
         }
-        window.push_back(line.len(), S::occurrences_in_str(line));
+        window.push_back(len_with_newline, S::occurrences_in_str(line));
         while bytes > options.max_bytes {
             let popped_bytes = window.pop_front();
             start_offset += popped_bytes;
             bytes -= popped_bytes;
         }
         if bytes >= options.min_bytes {
-            // TODO: handle overlaps
             let similarity = match options.similarity_metric {
                 SimilarityMetric::Jaccard => window.weighted_jaccard_similarity(),
                 SimilarityMetric::OverlapCoefficient => window.weighted_overlap_coefficient(),
@@ -133,53 +131,47 @@ fn insert_into_top_windows(
 ) {
     if top_windows.len() >= options.max_result_count
         && let Some(min_top_window) = top_windows.last()
+        && similarity <= min_top_window.similarity
     {
-        if similarity > min_top_window.similarity {
-            top_windows.pop();
-        } else {
-            return;
-        }
+        return;
     }
 
     let mut ix = 0;
-    let mut found = false;
-
+    let mut inserted = false;
     while ix < top_windows.len() {
-        if !found && top_windows[ix].similarity < similarity {
+        if top_windows[ix].similarity < similarity {
+            let new_top_window = TopWindow {
+                similarity,
+                range: range.clone(),
+            };
             if top_windows[ix].range.overlaps(&range) {
-                top_windows[ix] = TopWindow {
-                    similarity,
-                    range: range.clone(),
-                };
+                top_windows[ix] = new_top_window;
+                return;
             } else {
-                top_windows.insert(
-                    ix,
-                    TopWindow {
-                        similarity,
-                        range: range.clone(),
-                    },
-                );
+                top_windows.insert(ix, new_top_window);
+                ix += 1;
+                inserted = true;
+                break;
             }
-            found = true;
-        }
-
-        if top_windows[ix].range.overlaps(&range) {
-            if found {
-                top_windows.remove(ix);
-                // should be at most one
-                break;
-            } else {
-                // don't insert if there's a higher scoring overlap
-                break;
+        } else {
+            if top_windows[ix].range.overlaps(&range) {
+                return;
             }
         }
         ix += 1;
     }
 
-    let insert_ix = top_windows
-        .binary_search_by_key(&OrderedFloat(similarity), |top_window| {
-            OrderedFloat(top_window.similarity)
-        })
-        .map_or_else(|ix| ix, |ix| ix);
-    top_windows.insert(insert_ix, TopWindow { similarity, range });
+    if inserted {
+        for ix in ix..top_windows.len() {
+            if top_windows[ix].range.overlaps(&range) {
+                top_windows.remove(ix);
+                return;
+            }
+        }
+        if top_windows.len() > options.max_result_count {
+            top_windows.pop();
+        }
+    } else if top_windows.len() < options.max_result_count {
+        top_windows.push(TopWindow { similarity, range });
+    }
 }
