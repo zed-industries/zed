@@ -5,13 +5,13 @@ use cloud_llm_client::predict_edits_v3::{self, PromptFormat, Signature};
 use cloud_llm_client::{
     EXPIRED_LLM_TOKEN_HEADER_NAME, MINIMUM_REQUIRED_VERSION_HEADER_NAME, ZED_VERSION_HEADER_NAME,
 };
-use cloud_zeta2_prompt::DEFAULT_MAX_PROMPT_BYTES;
+use cloud_zeta2_prompt::{DEFAULT_MAX_PROMPT_BYTES, PlannedPrompt};
 use edit_prediction_context::{
     DeclarationId, DeclarationStyle, EditPredictionContext, EditPredictionContextOptions,
     EditPredictionExcerptOptions, EditPredictionScoreOptions, SyntaxIndex, SyntaxIndexState,
 };
 use futures::AsyncReadExt as _;
-use futures::channel::mpsc;
+use futures::channel::{mpsc, oneshot};
 use gpui::http_client::Method;
 use gpui::{
     App, Entity, EntityId, Global, SemanticVersion, SharedString, Subscription, Task, WeakEntity,
@@ -76,7 +76,7 @@ pub struct Zeta {
     projects: HashMap<EntityId, ZetaProject>,
     options: ZetaOptions,
     update_required: bool,
-    debug_tx: Option<mpsc::UnboundedSender<Result<PredictionDebugInfo, String>>>,
+    debug_tx: Option<mpsc::UnboundedSender<PredictionDebugInfo>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -91,9 +91,10 @@ pub struct ZetaOptions {
 pub struct PredictionDebugInfo {
     pub context: EditPredictionContext,
     pub retrieval_time: TimeDelta,
-    pub request: RequestDebugInfo,
     pub buffer: WeakEntity<Buffer>,
     pub position: language::Anchor,
+    pub local_prompt: Result<String, String>,
+    pub response_rx: oneshot::Receiver<Result<RequestDebugInfo, String>>,
 }
 
 pub type RequestDebugInfo = predict_edits_v3::DebugInfo;
@@ -204,7 +205,7 @@ impl Zeta {
         }
     }
 
-    pub fn debug_info(&mut self) -> mpsc::UnboundedReceiver<Result<PredictionDebugInfo, String>> {
+    pub fn debug_info(&mut self) -> mpsc::UnboundedReceiver<PredictionDebugInfo> {
         let (debug_watch_tx, debug_watch_rx) = mpsc::unbounded();
         self.debug_tx = Some(debug_watch_tx);
         debug_watch_rx
@@ -537,11 +538,7 @@ impl Zeta {
                     return Ok(None);
                 };
 
-                let debug_context = if let Some(debug_tx) = debug_tx {
-                    Some((debug_tx, context.clone()))
-                } else {
-                    None
-                };
+                let retrieval_time = chrono::Utc::now() - before_retrieval;
 
                 let (diagnostic_groups, diagnostic_groups_truncated) =
                     Self::gather_nearby_diagnostics(
@@ -550,6 +547,8 @@ impl Zeta {
                         &snapshot,
                         options.max_diagnostic_bytes,
                     );
+
+                let debug_context = debug_tx.map(|tx| (tx, context.clone()));
 
                 let request = make_cloud_request(
                     excerpt_path,
@@ -567,25 +566,45 @@ impl Zeta {
                     options.prompt_format,
                 );
 
-                let retrieval_time = chrono::Utc::now() - before_retrieval;
+                let debug_response_tx = if let Some((debug_tx, context)) = debug_context {
+                    let (response_tx, response_rx) = oneshot::channel();
+
+                    let local_prompt = PlannedPrompt::populate(&request)
+                        .and_then(|p| p.to_prompt_string().map(|p| p.0))
+                        .map_err(|err| err.to_string());
+
+                    debug_tx
+                        .unbounded_send(PredictionDebugInfo {
+                            context,
+                            retrieval_time,
+                            buffer: buffer.downgrade(),
+                            local_prompt,
+                            position,
+                            response_rx,
+                        })
+                        .ok();
+                    Some(response_tx)
+                } else {
+                    None
+                };
+
+                if cfg!(debug_assertions) && std::env::var("ZED_ZETA2_SKIP_REQUEST").is_ok() {
+                    if let Some(debug_response_tx) = debug_response_tx {
+                        debug_response_tx
+                            .send(Err("Request skipped".to_string()))
+                            .ok();
+                    }
+                    anyhow::bail!("Skipping request because ZED_ZETA2_SKIP_REQUEST is set")
+                }
+
                 let response = Self::perform_request(client, llm_token, app_version, request).await;
 
-                if let Some((debug_tx, context)) = debug_context {
-                    debug_tx
-                        .unbounded_send(response.as_ref().map_err(|err| err.to_string()).and_then(
-                            |response| {
-                                let Some(request) =
-                                    some_or_debug_panic(response.0.debug_info.clone())
-                                else {
-                                    return Err("Missing debug info".to_string());
-                                };
-                                Ok(PredictionDebugInfo {
-                                    context,
-                                    request,
-                                    retrieval_time,
-                                    buffer: buffer.downgrade(),
-                                    position,
-                                })
+                if let Some(debug_response_tx) = debug_response_tx {
+                    debug_response_tx
+                        .send(response.as_ref().map_err(|err| err.to_string()).and_then(
+                            |response| match some_or_debug_panic(response.0.debug_info.clone()) {
+                                Some(debug_info) => Ok(debug_info),
+                                None => Err("Missing debug info".to_string()),
                             },
                         ))
                         .ok();
@@ -1368,7 +1387,7 @@ mod tests {
 
                                 let (res_tx, res_rx) = oneshot::channel();
                                 req_tx.unbounded_send((req, res_tx)).unwrap();
-                                serde_json::to_string(&res_rx.await.unwrap()).unwrap()
+                                serde_json::to_string(&res_rx.await?).unwrap()
                             }
                             _ => {
                                 panic!("Unexpected path: {}", uri)

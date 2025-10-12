@@ -10,7 +10,7 @@ Use may install zed extensions providing [Themes](./themes.md) and [Icon Themes]
 
 You can preview/choose amongst your installed themes and icon themes with {#action theme_selector::Toggle} ({#kb theme_selector::Toggle}) and ({#action icon_theme_selector::Toggle}) which will modify the following settings:
 
-```json
+```json [settings]
 {
   "theme": "One Dark",
   "icon_theme": "Zed (Default)"
@@ -19,26 +19,26 @@ You can preview/choose amongst your installed themes and icon themes with {#acti
 
 If you would like to use distinct themes for light mode/dark mode that can be set with:
 
-```json
+```json [settings]
 {
   "theme": {
-    "dark": "One Dark"
+    "dark": "One Dark",
     "light": "One Light",
     // Mode to use (dark, light) or "system" to follow the OS's light/dark mode (default)
-    "mode": "system",
+    "mode": "system"
   },
   "icon_theme": {
-    "dark": "Zed (Default)"
+    "dark": "Zed (Default)",
     "light": "Zed (Default)",
     // Mode to use (dark, light) or "system" to follow the OS's light/dark mode (default)
-    "mode": "system",
+    "mode": "system"
   }
 }
 ```
 
 ## Fonts
 
-```json
+```json [settings]
   // UI Font. Use ".SystemUIFont" to use the default system font (SF Pro on macOS),
   // or ".ZedSans" for the bundled default (currently IBM Plex)
   "ui_font_family": ".SystemUIFont",
@@ -73,7 +73,7 @@ For example `=>` will be displayed as `→` and `!=` will be `≠`. This is pure
 
 To disable this behavior use:
 
-```json
+```json [settings]
 {
   "buffer_font_features": {
     "calt": false // Disable ligatures
@@ -83,7 +83,7 @@ To disable this behavior use:
 
 ### Status Bar
 
-```json
+```json [settings]
 {
   // Whether to show full labels in line indicator or short ones
   //   - `short`: "2 s, 15 l, 32 c"
@@ -105,7 +105,7 @@ To disable this behavior use:
 
 ### Titlebar
 
-```json
+```json [settings]
   // Control which items are shown/hidden in the title bar
   "title_bar": {
     "show_branch_icon": false,      // Show/hide branch icon beside branch switcher
@@ -120,7 +120,7 @@ To disable this behavior use:
 
 ## Workspace
 
-```json
+```json [settings]
 {
   // Force usage of Zed build in path prompts (file and directory pickers)
   // instead of OS native pickers (false).
@@ -128,10 +128,6 @@ To disable this behavior use:
   // Force usage of Zed built in confirmation prompts ("Do you want to save?")
   // instead of OS native prompts (false). On linux this is ignored (always false).
   "use_system_prompts": true,
-
-  // Whether to use the system provided dialogs for Open and Save As (true) or
-  // Zed's built-in keyboard-first pickers (false)
-  "use_system_path_prompts": true,
 
   // Active pane styling settings.
   "active_pane_modifiers": {
@@ -152,7 +148,7 @@ To disable this behavior use:
 
 <!--
 TBD: Centered layout related settings
-```json
+```json [settings]
     "centered_layout": {
     // The relative width of the left padding of the central pane from the
     // workspace when the centered layout is used.
@@ -166,7 +162,7 @@ TBD: Centered layout related settings
 
 ## Editor
 
-```json
+```json [settings]
   // Whether the cursor blinks in the editor.
   "cursor_blink": true,
 
@@ -222,7 +218,7 @@ TBD: Centered layout related settings
 
 ### Git Blame {#editor-blame}
 
-```json
+```json [settings]
   "git": {
     "inline_blame": {
       "enabled": true,             // Show/hide inline blame
@@ -237,7 +233,7 @@ TBD: Centered layout related settings
 
 ### Editor Toolbar
 
-```json
+```json [settings]
   // Editor toolbar related settings
   "toolbar": {
     "breadcrumbs": true, // Whether to show breadcrumbs.
@@ -250,7 +246,7 @@ TBD: Centered layout related settings
 
 ### Editor Scrollbar and Minimap {#editor-scrollbar}
 
-```json
+```json [settings]
   // Scrollbar related settings
   "scrollbar": {
     // When to show the scrollbar in the editor (auto, system, always, never)
@@ -291,7 +287,7 @@ TBD: Centered layout related settings
 
 ### Editor Tabs
 
-```json
+```json [settings]
   // Maximum number of tabs per pane. Unset for unlimited.
   "max_tabs": null,
 
@@ -313,7 +309,7 @@ TBD: Centered layout related settings
 
 ### Status Bar
 
-```json
+```json [settings]
   "status_bar": {
     // Show/hide a button that displays the active buffer's language.
     // Clicking the button brings up the language selector.
@@ -334,7 +330,7 @@ TBD: Centered layout related settings
 
 ### Multibuffer
 
-```json
+```json [settings]
 {
   // The default number of lines to expand excerpts in the multibuffer by.
   "expand_excerpt_lines": 5,
@@ -345,7 +341,7 @@ TBD: Centered layout related settings
 
 ### Editor Completions, Snippets, Actions, Diagnostics {#editor-lsp}
 
-```json
+```json [settings]
   "snippet_sort_order": "inline",        // Snippets completions: top, inline, bottom, none
   "show_completions_on_input": true,     // Show completions while typing
   "show_completion_documentation": true, // Show documentation in completions
@@ -367,7 +363,7 @@ TBD: Centered layout related settings
 
 ### Edit Predictions {#editor-ai}
 
-```json
+```json [settings]
   "edit_predictions": {
     "mode": "eager",                // Automatically show (eager) or hold-alt (subtle)
     "enabled_in_text_threads": true // Show/hide predictions in agent text threads
@@ -377,7 +373,7 @@ TBD: Centered layout related settings
 
 ### Editor Inlay Hints
 
-```json
+```json [settings]
 {
   "inlay_hints": {
     "enabled": false,
@@ -408,7 +404,7 @@ TBD: Centered layout related settings
 
 ## File Finder
 
-```json
+```json [settings]
   // File Finder Settings
   "file_finder": {
     "file_icons": true,         // Show/hide file icons
@@ -422,7 +418,7 @@ TBD: Centered layout related settings
 
 Project panel can be shown/hidden with {#action project_panel::ToggleFocus} ({#kb project_panel::ToggleFocus}) or with {#action pane::RevealInProjectPanel} ({#kb pane::RevealInProjectPanel}).
 
-```json
+```json [settings]
   // Project Panel Settings
   "project_panel": {
     "button": true,                 // Show/hide button in the status bar
@@ -447,13 +443,15 @@ Project panel can be shown/hidden with {#action project_panel::ToggleFocus} ({#k
       "show": "always"
     },
     // Whether to hide the root entry when only one folder is open in the window.
-    "hide_root": false
-  }.
+    "hide_root": false,
+    // Whether to hide the hidden entries in the project panel.
+    "hide_hidden": false
+  }
 ```
 
 ## Agent Panel
 
-```json
+```json [settings]
   "agent": {
     "version": "2",
     "enabled": true,        // Enable/disable the agent
@@ -469,7 +467,7 @@ See [Zed AI Documentation](./ai/overview.md) for additional non-visual AI settin
 
 ## Terminal Panel
 
-```json
+```json [settings]
   // Terminal Panel Settings
   "terminal": {
     "dock": "bottom",                   // Where to dock: left, right, bottom
@@ -506,7 +504,7 @@ See [Terminal settings](./configuring-zed.md#terminal) for additional non-visual
 
 ### Other Panels
 
-```json
+```json [settings]
   // Git Panel
   "git_panel": {
     "button": true,               // Show/hide status bar icon
@@ -547,15 +545,15 @@ See [Terminal settings](./configuring-zed.md#terminal) for additional non-visual
 
 ## Collaboration Panels
 
-```json
+```json [settings]
 {
   // Collaboration Panel
   "collaboration_panel": {
-    "button": true,               // Show/hide status bar icon
-    "dock": "left",               // Where to dock: left, right
-    "default_width": 240          // Default width of the collaboration panel.
+    "button": true, // Show/hide status bar icon
+    "dock": "left", // Where to dock: left, right
+    "default_width": 240 // Default width of the collaboration panel.
   },
-  "show_call_status_icon": true,  // Shown call status in the OS status bar.
+  "show_call_status_icon": true, // Shown call status in the OS status bar.
 
   // Notification Panel
   "notification_panel": {
@@ -566,4 +564,5 @@ See [Terminal settings](./configuring-zed.md#terminal) for additional non-visual
     // Default width of the notification panel.
     "default_width": 380
   }
+}
 ```

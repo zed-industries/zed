@@ -56,7 +56,8 @@ impl ShellBuilder {
                 | ShellKind::Fish
                 | ShellKind::Csh
                 | ShellKind::Tcsh
-                | ShellKind::Rc => {
+                | ShellKind::Rc
+                | ShellKind::Xonsh => {
                     let interactivity = self.interactive.then_some("-i ").unwrap_or_default();
                     format!(
                         "{PROGRAM} {interactivity}-c '{command_to_use_in_label}'",
@@ -86,12 +87,16 @@ impl ShellBuilder {
             });
             if self.redirect_stdin {
                 match self.kind {
+                    ShellKind::Fish => {
+                        combined_command.insert_str(0, "begin; ");
+                        combined_command.push_str("; end </dev/null");
+                    }
                     ShellKind::Posix
                     | ShellKind::Nushell
-                    | ShellKind::Fish
                     | ShellKind::Csh
                     | ShellKind::Tcsh
-                    | ShellKind::Rc => {
+                    | ShellKind::Rc
+                    | ShellKind::Xonsh => {
                         combined_command.insert(0, '(');
                         combined_command.push_str(") </dev/null");
                     }
@@ -156,5 +161,18 @@ mod test {
 
         assert_eq!(program, "nu");
         assert_eq!(args, vec!["-i", "-c", "(echo nothing) </dev/null"]);
+    }
+
+    #[test]
+    fn redirect_stdin_to_dev_null_fish() {
+        let shell = Shell::Program("fish".to_owned());
+        let shell_builder = ShellBuilder::new(&shell);
+
+        let (program, args) = shell_builder
+            .redirect_stdin_to_dev_null()
+            .build(Some("echo".into()), &["test".to_string()]);
+
+        assert_eq!(program, "fish");
+        assert_eq!(args, vec!["-i", "-c", "begin; echo test; end </dev/null"]);
     }
 }

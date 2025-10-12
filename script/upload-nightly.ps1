@@ -46,7 +46,7 @@ $sha | Out-File -FilePath "target/latest-sha" -NoNewline
 
 switch ($target) {
     "windows" {
-        UploadToBlobStore -BucketName $bucketName -FileToUpload $env:SETUP_PATH -BlobStoreKey "nightly/zed_editor_installer_x86_64.exe"
+        UploadToBlobStore -BucketName $bucketName -FileToUpload $env:SETUP_PATH -BlobStoreKey "nightly/Zed-x86_64.exe"
         UploadToBlobStore -BucketName $bucketName -FileToUpload "target/latest-sha" -BlobStoreKey "nightly/latest-sha-windows"
 
         Remove-Item -Path $env:SETUP_PATH -ErrorAction SilentlyContinue

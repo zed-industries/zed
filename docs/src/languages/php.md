@@ -31,7 +31,7 @@ which php
 
 To switch to `intelephense`, add the following to your `settings.json`:
 
-```json
+```json [settings]
 {
   "languages": {
     "PHP": {
@@ -43,7 +43,7 @@ To switch to `intelephense`, add the following to your `settings.json`:
 
 To use the premium features, you can place your [licence.txt file](https://intelephense.com/faq.html) at `~/intelephense/licence.txt` inside your home directory. Alternatively, you can pass the licence key or a path to a file containing the licence key as an initialization option for the `intelephense` language server. To do this, add the following to your `settings.json`:
 
-```json
+```json [settings]
 {
   "lsp": {
     "intelephense": {

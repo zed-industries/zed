@@ -1084,6 +1084,7 @@ impl Project {
                     toolchain_store.read(cx).as_language_toolchain_store(),
                     worktree_store.clone(),
                     breakpoint_store.clone(),
+                    false,
                     cx,
                 )
             });
@@ -1154,7 +1155,13 @@ impl Project {
             });
 
             let agent_server_store = cx.new(|cx| {
-                AgentServerStore::local(node.clone(), fs.clone(), environment.clone(), cx)
+                AgentServerStore::local(
+                    node.clone(),
+                    fs.clone(),
+                    environment.clone(),
+                    client.http_client(),
+                    cx,
+                )
             });
 
             cx.subscribe(&lsp_store, Self::on_lsp_store_event).detach();
@@ -1306,6 +1313,9 @@ impl Project {
                     remote.clone(),
                     breakpoint_store.clone(),
                     worktree_store.clone(),
+                    node.clone(),
+                    client.http_client(),
+                    fs.clone(),
                     cx,
                 )
             });
@@ -1321,7 +1331,7 @@ impl Project {
             });
 
             let agent_server_store =
-                cx.new(|cx| AgentServerStore::remote(REMOTE_SERVER_PROJECT_ID, remote.clone(), cx));
+                cx.new(|_| AgentServerStore::remote(REMOTE_SERVER_PROJECT_ID, remote.clone()));
 
             cx.subscribe(&remote, Self::on_remote_client_event).detach();
 
@@ -1503,6 +1513,7 @@ impl Project {
                 client.clone().into(),
                 breakpoint_store.clone(),
                 worktree_store.clone(),
+                fs.clone(),
                 cx,
             )
         })?;

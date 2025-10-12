@@ -15,7 +15,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                 SettingsPageItem::SectionHeader("General Settings"),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Confirm Quit",
-                    description: "Whether to confirm before quitting Zed",
+                    description: "Confirm before quitting Zed",
                     field: Box::new(SettingField {
                         pick: |settings_content| &settings_content.workspace.confirm_quit,
                         pick_mut: |settings_content| &mut settings_content.workspace.confirm_quit,
@@ -25,35 +25,11 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Restore On Startup",
-                    description: "Whether to restore previous session when opening Zed",
+                    description: "Restore previous session when opening Zed",
                     field: Box::new(SettingField {
                         pick: |settings_content| &settings_content.workspace.restore_on_startup,
                         pick_mut: |settings_content| {
                             &mut settings_content.workspace.restore_on_startup
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Restore File State",
-                    description: "Whether to restore previous file state when reopening",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| &settings_content.workspace.restore_on_file_reopen,
-                        pick_mut: |settings_content| {
-                            &mut settings_content.workspace.restore_on_file_reopen
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Close on File Delete",
-                    description: "Whether to automatically close files that have been deleted",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| &settings_content.workspace.close_on_file_delete,
-                        pick_mut: |settings_content| {
-                            &mut settings_content.workspace.close_on_file_delete
                         },
                     }),
                     metadata: None,
@@ -87,7 +63,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Use System Path Prompts",
-                    description: "Whether to use native OS dialogs for 'Open' and 'Save As'",
+                    description: "Use native OS dialogs for 'Open' and 'Save As'",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             &settings_content.workspace.use_system_path_prompts
@@ -101,11 +77,23 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Use System Prompts",
-                    description: "Whether to use native OS dialogs for confirmations",
+                    description: "Use native OS dialogs for confirmations",
                     field: Box::new(SettingField {
                         pick: |settings_content| &settings_content.workspace.use_system_prompts,
                         pick_mut: |settings_content| {
                             &mut settings_content.workspace.use_system_prompts
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Redact Private Values",
+                    description: "Hide the values of variables in private files",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| &settings_content.editor.redact_private_values,
+                        pick_mut: |settings_content| {
+                            &mut settings_content.editor.redact_private_values
                         },
                     }),
                     metadata: None,
@@ -338,7 +326,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                 // behavior to have them both enabled at the same time
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Vim Mode",
-                    description: "Whether to enable vim modes and key bindings",
+                    description: "Enable vim modes and key bindings",
                     field: Box::new(SettingField {
                         pick: |settings_content| &settings_content.vim_mode,
                         pick_mut: |settings_content| &mut settings_content.vim_mode,
@@ -348,7 +336,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Helix Mode",
-                    description: "Whether to enable helix modes and key bindings",
+                    description: "Enable helix modes and key bindings",
                     field: Box::new(SettingField {
                         pick: |settings_content| &settings_content.helix_mode,
                         pick_mut: |settings_content| &mut settings_content.helix_mode,
@@ -426,7 +414,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Selection Highlight",
-                    description: "Whether to highlight all occurrences of selected text",
+                    description: "Highlight all occurrences of selected text",
                     field: Box::new(SettingField {
                         pick: |settings_content| &settings_content.editor.selection_highlight,
                         pick_mut: |settings_content| {
@@ -446,10 +434,24 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                     metadata: None,
                     files: USER,
                 }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Minimum Contrast For Highlights",
+                    description: "The minimum APCA perceptual contrast to maintain when rendering text over highlight backgrounds",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            &settings_content.editor.minimum_contrast_for_highlights
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content.editor.minimum_contrast_for_highlights
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
                 SettingsPageItem::SectionHeader("Guides"),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Show Wrap Guides",
-                    description: "Whether to show wrap guides (vertical rulers)",
+                    description: "Show wrap guides (vertical rulers)",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             &settings_content
@@ -484,29 +486,6 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                         }
                         .unimplemented(),
                     ),
-                    metadata: None,
-                    files: USER | LOCAL,
-                }),
-                SettingsPageItem::SectionHeader("Whitespace"),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Show Whitespace",
-                    description: "Whether to show tabs and spaces",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            &settings_content
-                                .project
-                                .all_languages
-                                .defaults
-                                .show_whitespaces
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .project
-                                .all_languages
-                                .defaults
-                                .show_whitespaces
-                        },
-                    }),
                     metadata: None,
                     files: USER | LOCAL,
                 }),
@@ -573,22 +552,10 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Zoomed Padding",
-                    description: "Whether to show padding for zoomed panels",
+                    description: "Show padding for zoomed panels",
                     field: Box::new(SettingField {
                         pick: |settings_content| &settings_content.workspace.zoomed_padding,
                         pick_mut: |settings_content| &mut settings_content.workspace.zoomed_padding,
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Use System Window Tabs",
-                    description: "(macOS-only) Whether to allow windows to merge based on the user's tabbing preference",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| &settings_content.workspace.use_system_window_tabs,
-                        pick_mut: |settings_content| {
-                            &mut settings_content.workspace.use_system_window_tabs
-                        },
                     }),
                     metadata: None,
                     files: USER,
@@ -613,68 +580,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
             title: "Editor",
             items: {
                 let mut items = vec![
-                    SettingsPageItem::SectionHeader("Search"),
-                    SettingsPageItem::SettingItem(SettingItem {
-                        title: "Search Wrap",
-                        description: "Whether the editor search results will loop",
-                        field: Box::new(SettingField {
-                            pick: |settings_content| &settings_content.editor.search_wrap,
-                            pick_mut: |settings_content| &mut settings_content.editor.search_wrap,
-                        }),
-                        metadata: None,
-                        files: USER,
-                    }),
-                    SettingsPageItem::SettingItem(SettingItem {
-                        title: "Seed Search Query From Cursor",
-                        description: "When to populate a new search's query based on the text under the cursor",
-                        field: Box::new(SettingField {
-                            pick: |settings_content| {
-                                &settings_content.editor.seed_search_query_from_cursor
-                            },
-                            pick_mut: |settings_content| {
-                                &mut settings_content.editor.seed_search_query_from_cursor
-                            },
-                        }),
-                        metadata: None,
-                        files: USER,
-                    }),
-                    SettingsPageItem::SettingItem(SettingItem {
-                        title: "Use Smartcase Search",
-                        description: "Whether to use smartcase (i.e., case-sensitive) search",
-                        field: Box::new(SettingField {
-                            pick: |settings_content| &settings_content.editor.use_smartcase_search,
-                            pick_mut: |settings_content| {
-                                &mut settings_content.editor.use_smartcase_search
-                            },
-                        }),
-                        metadata: None,
-                        files: USER,
-                    }),
-                    SettingsPageItem::SectionHeader("Editor Behavior"),
-                    SettingsPageItem::SettingItem(SettingItem {
-                        title: "Redact Private Values",
-                        description: "Hide the values of variables in private files",
-                        field: Box::new(SettingField {
-                            pick: |settings_content| &settings_content.editor.redact_private_values,
-                            pick_mut: |settings_content| {
-                                &mut settings_content.editor.redact_private_values
-                            },
-                        }),
-                        metadata: None,
-                        files: USER,
-                    }),
-                    SettingsPageItem::SettingItem(SettingItem {
-                        title: "Middle Click Paste",
-                        description: "Whether to enable middle-click paste on Linux",
-                        field: Box::new(SettingField {
-                            pick: |settings_content| &settings_content.editor.middle_click_paste,
-                            pick_mut: |settings_content| {
-                                &mut settings_content.editor.middle_click_paste
-                            },
-                        }),
-                        metadata: None,
-                        files: USER,
-                    }),
+                    SettingsPageItem::SectionHeader("Multibuffer"),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Double Click In Multibuffer",
                         description: "What to do when multibuffer is double-clicked in some of its excerpts",
@@ -684,20 +590,6 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                             },
                             pick_mut: |settings_content| {
                                 &mut settings_content.editor.double_click_in_multibuffer
-                            },
-                        }),
-                        metadata: None,
-                        files: USER,
-                    }),
-                    SettingsPageItem::SettingItem(SettingItem {
-                        title: "Go To Definition Fallback",
-                        description: "Whether to follow-up empty go to definition responses from the language server",
-                        field: Box::new(SettingField {
-                            pick: |settings_content| {
-                                &settings_content.editor.go_to_definition_fallback
-                            },
-                            pick_mut: |settings_content| {
-                                &mut settings_content.editor.go_to_definition_fallback
                             },
                         }),
                         metadata: None,
@@ -722,20 +614,6 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                             pick: |settings_content| &settings_content.editor.excerpt_context_lines,
                             pick_mut: |settings_content| {
                                 &mut settings_content.editor.excerpt_context_lines
-                            },
-                        }),
-                        metadata: None,
-                        files: USER,
-                    }),
-                    SettingsPageItem::SettingItem(SettingItem {
-                        title: "Minimum Contrast For Highlights",
-                        description: "The minimum APCA perceptual contrast to maintain when rendering text over highlight backgrounds",
-                        field: Box::new(SettingField {
-                            pick: |settings_content| {
-                                &settings_content.editor.minimum_contrast_for_highlights
-                            },
-                            pick_mut: |settings_content| {
-                                &mut settings_content.editor.minimum_contrast_for_highlights
                             },
                         }),
                         metadata: None,
@@ -825,7 +703,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                     SettingsPageItem::SectionHeader("Signature Help"),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Auto Signature Help",
-                        description: "Whether to automatically show a signature help pop-up or not",
+                        description: "Automatically show a signature help pop-up",
                         field: Box::new(SettingField {
                             pick: |settings_content| &settings_content.editor.auto_signature_help,
                             pick_mut: |settings_content| {
@@ -837,7 +715,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                     }),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Show Signature Help After Edits",
-                        description: "Whether to show the signature help pop-up after completions or bracket pairs inserted",
+                        description: "Show the signature help pop-up after completions or bracket pairs are inserted",
                         field: Box::new(SettingField {
                             pick: |settings_content| {
                                 &settings_content.editor.show_signature_help_after_edits
@@ -864,7 +742,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                     SettingsPageItem::SectionHeader("Hover"),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Hover Popover Enabled",
-                        description: "Whether to show the informational hover box when moving the mouse over symbols in the editor",
+                        description: "Show the informational hover box when moving the mouse over symbols in the editor",
                         field: Box::new(SettingField {
                             pick: |settings_content| &settings_content.editor.hover_popover_enabled,
                             pick_mut: |settings_content| {
@@ -887,10 +765,10 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                         metadata: None,
                         files: USER,
                     }),
-                    SettingsPageItem::SectionHeader("Code Actions"),
+                    SettingsPageItem::SectionHeader("Code Actions & Selection"),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Inline Code Actions",
-                        description: "Whether to show code action button at start of buffer line",
+                        description: "Show code action button at start of buffer line",
                         field: Box::new(SettingField {
                             pick: |settings_content| &settings_content.editor.inline_code_actions,
                             pick_mut: |settings_content| {
@@ -900,10 +778,9 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                         metadata: None,
                         files: USER,
                     }),
-                    SettingsPageItem::SectionHeader("Selection"),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Drag And Drop Selection",
-                        description: "Whether to enable drag and drop selection",
+                        description: "Enable drag and drop selection",
                         field: Box::new(SettingField {
                             pick: |settings_content| {
                                 if let Some(drag_and_drop) =
@@ -952,7 +829,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                     SettingsPageItem::SectionHeader("Gutter"),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Show Line Numbers",
-                        description: "Whether to show line numbers in the gutter",
+                        description: "Show line numbers in the gutter",
                         field: Box::new(SettingField {
                             pick: |settings_content| {
                                 if let Some(gutter) = &settings_content.editor.gutter {
@@ -974,7 +851,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                     }),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Relative Line Numbers",
-                        description: "Whether the line numbers on editors gutter are relative or not",
+                        description: "Whether the line numbers in the editor's gutter are relative or not",
                         field: Box::new(SettingField {
                             pick: |settings_content| &settings_content.editor.relative_line_numbers,
                             pick_mut: |settings_content| {
@@ -986,7 +863,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                     }),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Show Runnables",
-                        description: "Whether to show runnable buttons in the gutter",
+                        description: "Show runnable buttons in the gutter",
                         field: Box::new(SettingField {
                             pick: |settings_content| {
                                 if let Some(gutter) = &settings_content.editor.gutter {
@@ -1008,7 +885,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                     }),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Show Breakpoints",
-                        description: "Whether to show breakpoints in the gutter",
+                        description: "Show breakpoints in the gutter",
                         field: Box::new(SettingField {
                             pick: |settings_content| {
                                 if let Some(gutter) = &settings_content.editor.gutter {
@@ -1030,7 +907,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                     }),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Show Folds",
-                        description: "Whether to show code folding controls in the gutter",
+                        description: "Show code folding controls in the gutter",
                         field: Box::new(SettingField {
                             pick: |settings_content| {
                                 if let Some(gutter) = &settings_content.editor.gutter {
@@ -1093,7 +970,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                     }),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Cursors",
-                        description: "Whether to show cursor positions in the scrollbar",
+                        description: "Show cursor positions in the scrollbar",
                         field: Box::new(SettingField {
                             pick: |settings_content| {
                                 if let Some(scrollbar) = &settings_content.editor.scrollbar {
@@ -1115,7 +992,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                     }),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Git Diff",
-                        description: "Whether to show git diff indicators in the scrollbar",
+                        description: "Show git diff indicators in the scrollbar",
                         field: Box::new(SettingField {
                             pick: |settings_content| {
                                 if let Some(scrollbar) = &settings_content.editor.scrollbar {
@@ -1137,7 +1014,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                     }),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Search Results",
-                        description: "Whether to show buffer search result indicators in the scrollbar",
+                        description: "Show buffer search result indicators in the scrollbar",
                         field: Box::new(SettingField {
                             pick: |settings_content| {
                                 if let Some(scrollbar) = &settings_content.editor.scrollbar {
@@ -1159,7 +1036,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                     }),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Selected Text",
-                        description: "Whether to show selected text occurrences in the scrollbar",
+                        description: "Show selected text occurrences in the scrollbar",
                         field: Box::new(SettingField {
                             pick: |settings_content| {
                                 if let Some(scrollbar) = &settings_content.editor.scrollbar {
@@ -1181,7 +1058,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                     }),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Selected Symbol",
-                        description: "Whether to show selected symbol occurrences in the scrollbar",
+                        description: "Show selected symbol occurrences in the scrollbar",
                         field: Box::new(SettingField {
                             pick: |settings_content| {
                                 if let Some(scrollbar) = &settings_content.editor.scrollbar {
@@ -1410,100 +1287,10 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                         metadata: None,
                         files: USER,
                     }),
-                    SettingsPageItem::SectionHeader("Tabs"),
-                    SettingsPageItem::SettingItem(SettingItem {
-                        title: "Show Tab Bar",
-                        description: "Whether or not to show the tab bar in the editor",
-                        field: Box::new(SettingField {
-                            pick: |settings_content| {
-                                if let Some(tab_bar) = &settings_content.tab_bar {
-                                    &tab_bar.show
-                                } else {
-                                    &None
-                                }
-                            },
-                            pick_mut: |settings_content| {
-                                &mut settings_content.tab_bar.get_or_insert_default().show
-                            },
-                        }),
-                        metadata: None,
-                        files: USER,
-                    }),
-                    SettingsPageItem::SettingItem(SettingItem {
-                        title: "Show Git Status In Tabs",
-                        description: "Whether to show the Git file status on a tab item",
-                        field: Box::new(SettingField {
-                            pick: |settings_content| {
-                                if let Some(tabs) = &settings_content.tabs {
-                                    &tabs.git_status
-                                } else {
-                                    &None
-                                }
-                            },
-                            pick_mut: |settings_content| {
-                                &mut settings_content.tabs.get_or_insert_default().git_status
-                            },
-                        }),
-                        metadata: None,
-                        files: USER,
-                    }),
-                    SettingsPageItem::SettingItem(SettingItem {
-                        title: "Show File Icons In Tabs",
-                        description: "Whether to show the file icon for a tab",
-                        field: Box::new(SettingField {
-                            pick: |settings_content| {
-                                if let Some(tabs) = &settings_content.tabs {
-                                    &tabs.file_icons
-                                } else {
-                                    &None
-                                }
-                            },
-                            pick_mut: |settings_content| {
-                                &mut settings_content.tabs.get_or_insert_default().file_icons
-                            },
-                        }),
-                        metadata: None,
-                        files: USER,
-                    }),
-                    SettingsPageItem::SettingItem(SettingItem {
-                        title: "Tab Close Position",
-                        description: "Position of the close button in a tab",
-                        field: Box::new(SettingField {
-                            pick: |settings_content| {
-                                if let Some(tabs) = &settings_content.tabs {
-                                    &tabs.close_position
-                                } else {
-                                    &None
-                                }
-                            },
-                            pick_mut: |settings_content| {
-                                &mut settings_content.tabs.get_or_insert_default().close_position
-                            },
-                        }),
-                        metadata: None,
-                        files: USER,
-                    }),
-                    SettingsPageItem::SettingItem(SettingItem {
-                        files: USER,
-                        title: "Maximum Tabs",
-                        description: "Maximum open tabs in a pane. Will not close an unsaved tab",
-                        // todo(settings_ui): The default for this value is null and it's use in code
-                        // is complex, so I'm going to come back to this later
-                        field: Box::new(
-                            SettingField {
-                                pick: |settings_content| &settings_content.workspace.max_tabs,
-                                pick_mut: |settings_content| {
-                                    &mut settings_content.workspace.max_tabs
-                                },
-                            }
-                            .unimplemented(),
-                        ),
-                        metadata: None,
-                    }),
                     SettingsPageItem::SectionHeader("Toolbar"),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Breadcrumbs",
-                        description: "Whether to show breadcrumbs",
+                        description: "Show breadcrumbs",
                         field: Box::new(SettingField {
                             pick: |settings_content| {
                                 if let Some(toolbar) = &settings_content.editor.toolbar {
@@ -1525,7 +1312,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                     }),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Quick Actions",
-                        description: "Whether to show quick action buttons (e.g., search, selection, editor controls, etc.)",
+                        description: "Show quick action buttons (e.g., search, selection, editor controls, etc.)",
                         field: Box::new(SettingField {
                             pick: |settings_content| {
                                 if let Some(toolbar) = &settings_content.editor.toolbar {
@@ -1547,7 +1334,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                     }),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Selections Menu",
-                        description: "Whether to show the selections menu in the editor toolbar",
+                        description: "Show the selections menu in the editor toolbar",
                         field: Box::new(SettingField {
                             pick: |settings_content| {
                                 if let Some(toolbar) = &settings_content.editor.toolbar {
@@ -1569,7 +1356,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                     }),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Agent Review",
-                        description: "Whether to show agent review buttons in the editor toolbar",
+                        description: "Show agent review buttons in the editor toolbar",
                         field: Box::new(SettingField {
                             pick: |settings_content| {
                                 if let Some(toolbar) = &settings_content.editor.toolbar {
@@ -1591,7 +1378,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                     }),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Code Actions",
-                        description: "Whether to show code action buttons in the editor toolbar",
+                        description: "Show code action buttons in the editor toolbar",
                         field: Box::new(SettingField {
                             pick: |settings_content| {
                                 if let Some(toolbar) = &settings_content.editor.toolbar {
@@ -1688,12 +1475,273 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
             ],
         },
         SettingsPage {
+            title: "Search & Files",
+            items: vec![
+                SettingsPageItem::SectionHeader("Search"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Whole Word",
+                    description: "Search for whole words by default",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(search) = &settings_content.editor.search {
+                                &search.whole_word
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .editor
+                                .search
+                                .get_or_insert_default()
+                                .whole_word
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Case Sensitive",
+                    description: "Search case-sensitively by default",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(search) = &settings_content.editor.search {
+                                &search.case_sensitive
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .editor
+                                .search
+                                .get_or_insert_default()
+                                .case_sensitive
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Include Ignored",
+                    description: "Include ignored files in search results by default",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(search) = &settings_content.editor.search {
+                                &search.include_ignored
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .editor
+                                .search
+                                .get_or_insert_default()
+                                .include_ignored
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Regex",
+                    description: "Use regex search by default",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(search) = &settings_content.editor.search {
+                                &search.regex
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content.editor.search.get_or_insert_default().regex
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                // todo: null by default
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Include Ignored in Search",
+                    description: "Use gitignored files when searching",
+                    field: Box::new(
+                        SettingField {
+                            pick: |settings_content| {
+                                if let Some(file_finder) = &settings_content.file_finder {
+                                    &file_finder.include_ignored
+                                } else {
+                                    &None
+                                }
+                            },
+                            pick_mut: |settings_content| {
+                                &mut settings_content
+                                    .file_finder
+                                    .get_or_insert_default()
+                                    .include_ignored
+                            },
+                        }
+                        .unimplemented(),
+                    ),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Search Wrap",
+                    description: "Whether the editor search results will loop",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| &settings_content.editor.search_wrap,
+                        pick_mut: |settings_content| &mut settings_content.editor.search_wrap,
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Seed Search Query From Cursor",
+                    description: "When to populate a new search's query based on the text under the cursor",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            &settings_content.editor.seed_search_query_from_cursor
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content.editor.seed_search_query_from_cursor
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Use Smartcase Search",
+                    description: "Use smartcase (i.e., case-sensitive) search",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| &settings_content.editor.use_smartcase_search,
+                        pick_mut: |settings_content| {
+                            &mut settings_content.editor.use_smartcase_search
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SectionHeader("File Management"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "File Icons",
+                    description: "Show file icons in the file finder",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(file_finder) = &settings_content.file_finder {
+                                &file_finder.file_icons
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .file_finder
+                                .get_or_insert_default()
+                                .file_icons
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Modal Max Width",
+                    description: "Determines how much space the file finder can take up in relation to the available window width",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(file_finder) = &settings_content.file_finder {
+                                &file_finder.modal_max_width
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .file_finder
+                                .get_or_insert_default()
+                                .modal_max_width
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Restore File State",
+                    description: "Restore previous file state when reopening",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| &settings_content.workspace.restore_on_file_reopen,
+                        pick_mut: |settings_content| {
+                            &mut settings_content.workspace.restore_on_file_reopen
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Close on File Delete",
+                    description: "Automatically close files that have been deleted",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| &settings_content.workspace.close_on_file_delete,
+                        pick_mut: |settings_content| {
+                            &mut settings_content.workspace.close_on_file_delete
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Skip Focus For Active In Search",
+                    description: "Whether the file finder should skip focus for the active file in search results",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(file_finder) = &settings_content.file_finder {
+                                &file_finder.skip_focus_for_active_in_search
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .file_finder
+                                .get_or_insert_default()
+                                .skip_focus_for_active_in_search
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Git Status",
+                    description: "Show the git status in the file finder",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(file_finder) = &settings_content.file_finder {
+                                &file_finder.git_status
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .file_finder
+                                .get_or_insert_default()
+                                .git_status
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SectionHeader("File Scan"),
+            ],
+        },
+        SettingsPage {
             title: "Workbench & Window",
             items: vec![
                 SettingsPageItem::SectionHeader("Status Bar"),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Project Panel Button",
-                    description: "Whether to show the project panel button in the status bar",
+                    description: "Show the project panel button in the status bar",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             if let Some(project_panel) = &settings_content.project_panel {
@@ -1714,7 +1762,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Active Language Button",
-                    description: "Whether to show the active language button in the status bar",
+                    description: "Show the active language button in the status bar",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             if let Some(status_bar) = &settings_content.status_bar {
@@ -1735,7 +1783,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Cursor Position Button",
-                    description: "Whether to show the cursor position button in the status bar",
+                    description: "Show the cursor position button in the status bar",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             if let Some(status_bar) = &settings_content.status_bar {
@@ -1756,7 +1804,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Terminal Button",
-                    description: "Whether to show the terminal button in the status bar",
+                    description: "Show the terminal button in the status bar",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             if let Some(terminal) = &settings_content.terminal {
@@ -1774,7 +1822,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Diagnostics Button",
-                    description: "Whether to show the project diagnostics button in the status bar",
+                    description: "Show the project diagnostics button in the status bar",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             if let Some(diagnostics) = &settings_content.diagnostics {
@@ -1792,7 +1840,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Project Search Button",
-                    description: "Whether to show the project search button in the status bar",
+                    description: "Show the project search button in the status bar",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             if let Some(search) = &settings_content.editor.search {
@@ -1814,7 +1862,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Debugger Button",
-                    description: "Whether to show the debugger button in the status bar",
+                    description: "Show the debugger button in the status bar",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             if let Some(debugger) = &settings_content.debugger {
@@ -1830,50 +1878,10 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                     metadata: None,
                     files: USER,
                 }),
-                SettingsPageItem::SectionHeader("Tab Bar"),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Editor Tabs",
-                    description: "Whether or not to show the tab bar in the editor",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(tab_bar) = &settings_content.tab_bar {
-                                &tab_bar.show
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content.tab_bar.get_or_insert_default().show
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Show Navigation History Buttons",
-                    description: "Whether or not to show the navigation history buttons in the tab bar",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(tab_bar) = &settings_content.tab_bar {
-                                &tab_bar.show_nav_history_buttons
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .tab_bar
-                                .get_or_insert_default()
-                                .show_nav_history_buttons
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
                 SettingsPageItem::SectionHeader("Title Bar"),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Show Branch Icon",
-                    description: "Whether to show the branch icon beside branch switcher in the titlebar",
+                    description: "Show the branch icon beside branch switcher in the titlebar",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             if let Some(title_bar) = &settings_content.title_bar {
@@ -1894,7 +1902,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Show Branch Name",
-                    description: "Whether to show the branch name button in the titlebar",
+                    description: "Show the branch name button in the titlebar",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             if let Some(title_bar) = &settings_content.title_bar {
@@ -1915,7 +1923,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Show Project Items",
-                    description: "Whether to show the project host and name in the titlebar",
+                    description: "Show the project host and name in the titlebar",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             if let Some(title_bar) = &settings_content.title_bar {
@@ -1936,7 +1944,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Show Onboarding Banner",
-                    description: "Whether to show banners announcing new features in the titlebar",
+                    description: "Show banners announcing new features in the titlebar",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             if let Some(title_bar) = &settings_content.title_bar {
@@ -1957,7 +1965,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Show User Picture",
-                    description: "Whether to show user picture in the titlebar",
+                    description: "Show user picture in the titlebar",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             if let Some(title_bar) = &settings_content.title_bar {
@@ -1978,7 +1986,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Show Sign In",
-                    description: "Whether to show the sign in button in the titlebar",
+                    description: "Show the sign in button in the titlebar",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             if let Some(title_bar) = &settings_content.title_bar {
@@ -1999,7 +2007,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Show Menus",
-                    description: "Whether to show the menus in the titlebar",
+                    description: "Show the menus in the titlebar",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             if let Some(title_bar) = &settings_content.title_bar {
@@ -2013,6 +2021,133 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                                 .title_bar
                                 .get_or_insert_default()
                                 .show_menus
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SectionHeader("Tab Bar"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Show Tab Bar",
+                    description: "Show the tab bar in the editor",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(tab_bar) = &settings_content.tab_bar {
+                                &tab_bar.show
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content.tab_bar.get_or_insert_default().show
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Editor Tabs",
+                    description: "Show the tab bar in the editor",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(tab_bar) = &settings_content.tab_bar {
+                                &tab_bar.show
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content.tab_bar.get_or_insert_default().show
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Show Git Status In Tabs",
+                    description: "Show the Git file status on a tab item",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(tabs) = &settings_content.tabs {
+                                &tabs.git_status
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content.tabs.get_or_insert_default().git_status
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Show File Icons In Tabs",
+                    description: "Show the file icon for a tab",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(tabs) = &settings_content.tabs {
+                                &tabs.file_icons
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content.tabs.get_or_insert_default().file_icons
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Tab Close Position",
+                    description: "Position of the close button in a tab",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(tabs) = &settings_content.tabs {
+                                &tabs.close_position
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content.tabs.get_or_insert_default().close_position
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    files: USER,
+                    title: "Maximum Tabs",
+                    description: "Maximum open tabs in a pane. Will not close an unsaved tab",
+                    // todo(settings_ui): The default for this value is null and it's use in code
+                    // is complex, so I'm going to come back to this later
+                    field: Box::new(
+                        SettingField {
+                            pick: |settings_content| &settings_content.workspace.max_tabs,
+                            pick_mut: |settings_content| &mut settings_content.workspace.max_tabs,
+                        }
+                        .unimplemented(),
+                    ),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Show Navigation History Buttons",
+                    description: "Show the navigation history buttons in the tab bar",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(tab_bar) = &settings_content.tab_bar {
+                                &tab_bar.show_nav_history_buttons
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .tab_bar
+                                .get_or_insert_default()
+                                .show_nav_history_buttons
                         },
                     }),
                     metadata: None,
@@ -2085,7 +2220,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                 SettingsPageItem::SectionHeader("Preview Tabs"),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Preview Tabs Enabled",
-                    description: "Whether to show opened editors as preview tabs",
+                    description: "Show opened editors as preview tabs",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             if let Some(preview_tabs) = &settings_content.preview_tabs {
@@ -2143,201 +2278,6 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                                 .enable_preview_from_code_navigation
                         },
                     }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SectionHeader("Search Settings"),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Whole Word",
-                    description: "Whether to search for whole words by default",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(search) = &settings_content.editor.search {
-                                &search.whole_word
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .editor
-                                .search
-                                .get_or_insert_default()
-                                .whole_word
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Case Sensitive",
-                    description: "Whether to search case-sensitively by default",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(search) = &settings_content.editor.search {
-                                &search.case_sensitive
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .editor
-                                .search
-                                .get_or_insert_default()
-                                .case_sensitive
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Include Ignored",
-                    description: "Whether to include ignored files in search results by default",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(search) = &settings_content.editor.search {
-                                &search.include_ignored
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .editor
-                                .search
-                                .get_or_insert_default()
-                                .include_ignored
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Regex",
-                    description: "Whether to use regex search by default",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(search) = &settings_content.editor.search {
-                                &search.regex
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content.editor.search.get_or_insert_default().regex
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SectionHeader("File Finder"),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "File Icons",
-                    description: "Whether to show file icons in the file finder",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(file_finder) = &settings_content.file_finder {
-                                &file_finder.file_icons
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .file_finder
-                                .get_or_insert_default()
-                                .file_icons
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Modal Max Width",
-                    description: "Determines how much space the file finder can take up in relation to the available window width",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(file_finder) = &settings_content.file_finder {
-                                &file_finder.modal_max_width
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .file_finder
-                                .get_or_insert_default()
-                                .modal_max_width
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Skip Focus For Active In Search",
-                    description: "Whether the file finder should skip focus for the active file in search results",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(file_finder) = &settings_content.file_finder {
-                                &file_finder.skip_focus_for_active_in_search
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .file_finder
-                                .get_or_insert_default()
-                                .skip_focus_for_active_in_search
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Git Status",
-                    description: "Whether to show the git status in the file finder",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(file_finder) = &settings_content.file_finder {
-                                &file_finder.git_status
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .file_finder
-                                .get_or_insert_default()
-                                .git_status
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                // todo: null by default
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Include Ignored",
-                    description: "Whether to use gitignored files when searching",
-                    field: Box::new(
-                        SettingField {
-                            pick: |settings_content| {
-                                if let Some(file_finder) = &settings_content.file_finder {
-                                    &file_finder.include_ignored
-                                } else {
-                                    &None
-                                }
-                            },
-                            pick_mut: |settings_content| {
-                                &mut settings_content
-                                    .file_finder
-                                    .get_or_insert_default()
-                                    .include_ignored
-                            },
-                        }
-                        .unimplemented(),
-                    ),
                     metadata: None,
                     files: USER,
                 }),
@@ -2430,7 +2370,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "File Icons",
-                    description: "Whether to show folder icons or chevrons for directories in the project panel",
+                    description: "Show file icons in the project panel",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             if let Some(project_panel) = &settings_content.project_panel {
@@ -2472,7 +2412,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Git Status",
-                    description: "Whether to show the git status in the project panel",
+                    description: "Show the git status in the project panel",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             if let Some(project_panel) = &settings_content.project_panel {
@@ -2514,7 +2454,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Auto Reveal Entries",
-                    description: "Whether to reveal it in the project panel automatically when a corresponding project entry becomes active",
+                    description: "Whether to reveal entries in the project panel automatically when a corresponding project entry becomes active",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             if let Some(project_panel) = &settings_content.project_panel {
@@ -2577,7 +2517,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Scrollbar Show",
-                    description: "When to show the scrollbar in the project panel",
+                    description: "Show the scrollbar in the project panel",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             if let Some(project_panel) = &settings_content.project_panel
@@ -2648,7 +2588,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                 SettingsPageItem::SettingItem(SettingItem {
                     files: USER,
                     title: "Indent Guides Show",
-                    description: "When to show indent guides in the project panel",
+                    description: "Show indent guides in the project panel",
                     field: Box::new(
                         SettingField {
                             pick: |settings_content| {
@@ -2717,6 +2657,27 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                     metadata: None,
                     files: USER,
                 }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Hide Hidden",
+                    description: "Whether to hide the hidden entries in the project panel",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(project_panel) = &settings_content.project_panel {
+                                &project_panel.hide_hidden
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .project_panel
+                                .get_or_insert_default()
+                                .hide_hidden
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
                 SettingsPageItem::SectionHeader("Terminal Panel"),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Terminal Dock",
@@ -2739,7 +2700,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                 SettingsPageItem::SectionHeader("Outline Panel"),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Outline Panel Button",
-                    description: "Whether to show the outline panel button in the status bar",
+                    description: "Show the outline panel button in the status bar",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             if let Some(outline_panel) = &settings_content.outline_panel {
@@ -2799,7 +2760,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "File Icons",
-                    description: "Whether to show file icons in the outline panel",
+                    description: "Show file icons in the outline panel",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             if let Some(outline_panel) = &settings_content.outline_panel {
@@ -2841,7 +2802,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Git Status",
-                    description: "Whether to show the git status in the outline panel",
+                    description: "Show the git status in the outline panel",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             if let Some(outline_panel) = &settings_content.outline_panel {
@@ -2904,7 +2865,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Auto Fold Directories",
-                    description: "Whether to fold directories automatically when a directory has only one directory inside",
+                    description: "Whether to fold directories automatically when a directory contains only one subdirectory",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             if let Some(outline_panel) = &settings_content.outline_panel {
@@ -2956,7 +2917,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                 SettingsPageItem::SectionHeader("Git Panel"),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Git Panel Button",
-                    description: "Whether to show the Git panel button in the status bar",
+                    description: "Show the Git panel button in the status bar",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             if let Some(git_panel) = &settings_content.git_panel {
@@ -3033,7 +2994,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                 SettingsPageItem::SectionHeader("Notification Panel"),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Notification Panel Button",
-                    description: "Whether to show the notification panel button in the status bar",
+                    description: "Show the notification panel button in the status bar",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             if let Some(notification_panel) = &settings_content.notification_panel {
@@ -3097,7 +3058,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                 SettingsPageItem::SectionHeader("Collaboration Panel"),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Collaboration Panel Button",
-                    description: "Whether to show the collaboration panel button in the status bar",
+                    description: "Show the collaboration panel button in the status bar",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             if let Some(collaboration_panel) = &settings_content.collaboration_panel
@@ -3156,6 +3117,627 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                                 .collaboration_panel
                                 .get_or_insert_default()
                                 .default_width
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+            ],
+        },
+        SettingsPage {
+            title: "Debugger",
+            items: vec![
+                SettingsPageItem::SectionHeader("General"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Stepping Granularity",
+                    description: "Determines the stepping granularity for debug operations",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(debugger) = &settings_content.debugger {
+                                &debugger.stepping_granularity
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .debugger
+                                .get_or_insert_default()
+                                .stepping_granularity
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Save Breakpoints",
+                    description: "Whether breakpoints should be reused across Zed sessions",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(debugger) = &settings_content.debugger {
+                                &debugger.save_breakpoints
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .debugger
+                                .get_or_insert_default()
+                                .save_breakpoints
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Timeout",
+                    description: "Time in milliseconds until timeout error when connecting to a TCP debug adapter",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(debugger) = &settings_content.debugger {
+                                &debugger.timeout
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content.debugger.get_or_insert_default().timeout
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Log DAP Communications",
+                    description: "Whether to log messages between active debug adapters and Zed",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(debugger) = &settings_content.debugger {
+                                &debugger.log_dap_communications
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .debugger
+                                .get_or_insert_default()
+                                .log_dap_communications
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Format DAP Log Messages",
+                    description: "Whether to format DAP messages when adding them to debug adapter logger",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(debugger) = &settings_content.debugger {
+                                &debugger.format_dap_log_messages
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .debugger
+                                .get_or_insert_default()
+                                .format_dap_log_messages
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+            ],
+        },
+        SettingsPage {
+            title: "Terminal",
+            items: vec![
+                SettingsPageItem::SectionHeader("Environment"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Shell",
+                    description: "What shell to use when opening a terminal",
+                    field: Box::new(
+                        SettingField {
+                            pick: |settings_content| {
+                                if let Some(terminal) = &settings_content.terminal {
+                                    &terminal.project.shell
+                                } else {
+                                    &None
+                                }
+                            },
+                            pick_mut: |settings_content| {
+                                &mut settings_content
+                                    .terminal
+                                    .get_or_insert_default()
+                                    .project
+                                    .shell
+                            },
+                        }
+                        .unimplemented(),
+                    ),
+                    metadata: None,
+                    files: USER | LOCAL,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Working Directory",
+                    description: "What working directory to use when launching the terminal",
+                    field: Box::new(
+                        SettingField {
+                            pick: |settings_content| {
+                                if let Some(terminal) = &settings_content.terminal {
+                                    &terminal.project.working_directory
+                                } else {
+                                    &None
+                                }
+                            },
+                            pick_mut: |settings_content| {
+                                &mut settings_content
+                                    .terminal
+                                    .get_or_insert_default()
+                                    .project
+                                    .working_directory
+                            },
+                        }
+                        .unimplemented(),
+                    ),
+                    metadata: None,
+                    files: USER | LOCAL,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Environment Variables",
+                    description: "Key-value pairs to add to the terminal's environment",
+                    field: Box::new(
+                        SettingField {
+                            pick: |settings_content| {
+                                if let Some(terminal) = &settings_content.terminal {
+                                    &terminal.project.env
+                                } else {
+                                    &None
+                                }
+                            },
+                            pick_mut: |settings_content| {
+                                &mut settings_content
+                                    .terminal
+                                    .get_or_insert_default()
+                                    .project
+                                    .env
+                            },
+                        }
+                        .unimplemented(),
+                    ),
+                    metadata: None,
+                    files: USER | LOCAL,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Detect Virtual Environment",
+                    description: "Activates the python virtual environment, if one is found, in the terminal's working directory",
+                    field: Box::new(
+                        SettingField {
+                            pick: |settings_content| {
+                                if let Some(terminal) = &settings_content.terminal {
+                                    &terminal.project.detect_venv
+                                } else {
+                                    &None
+                                }
+                            },
+                            pick_mut: |settings_content| {
+                                &mut settings_content
+                                    .terminal
+                                    .get_or_insert_default()
+                                    .project
+                                    .detect_venv
+                            },
+                        }
+                        .unimplemented(),
+                    ),
+                    metadata: None,
+                    files: USER | LOCAL,
+                }),
+                SettingsPageItem::SectionHeader("Font"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Font Size",
+                    description: "Font size for terminal text. If not set, defaults to buffer font size",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(terminal) = &settings_content.terminal {
+                                &terminal.font_size
+                            } else if settings_content.theme.buffer_font_size.is_some() {
+                                &settings_content.theme.buffer_font_size
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content.terminal.get_or_insert_default().font_size
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Font Family",
+                    description: "Font family for terminal text. If not set, defaults to buffer font family",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(terminal) = &settings_content.terminal
+                                && terminal.font_family.is_some()
+                            {
+                                &terminal.font_family
+                            } else if settings_content.theme.buffer_font_family.is_some() {
+                                &settings_content.theme.buffer_font_family
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .terminal
+                                .get_or_insert_default()
+                                .font_family
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Font Fallbacks",
+                    description: "Font fallbacks for terminal text. If not set, defaults to buffer font fallbacks",
+                    field: Box::new(
+                        SettingField {
+                            pick: |settings_content| {
+                                if let Some(terminal) = &settings_content.terminal {
+                                    &terminal.font_fallbacks
+                                } else {
+                                    &None
+                                }
+                            },
+                            pick_mut: |settings_content| {
+                                &mut settings_content
+                                    .terminal
+                                    .get_or_insert_default()
+                                    .font_fallbacks
+                            },
+                        }
+                        .unimplemented(),
+                    ),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Font Weight",
+                    description: "Font weight for terminal text in CSS weight units (100-900)",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(terminal) = &settings_content.terminal {
+                                &terminal.font_weight
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .terminal
+                                .get_or_insert_default()
+                                .font_weight
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Font Features",
+                    description: "Font features for terminal text",
+                    field: Box::new(
+                        SettingField {
+                            pick: |settings_content| {
+                                if let Some(terminal) = &settings_content.terminal {
+                                    &terminal.font_features
+                                } else {
+                                    &None
+                                }
+                            },
+                            pick_mut: |settings_content| {
+                                &mut settings_content
+                                    .terminal
+                                    .get_or_insert_default()
+                                    .font_features
+                            },
+                        }
+                        .unimplemented(),
+                    ),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SectionHeader("Display Settings"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Line Height",
+                    description: "Line height for terminal text",
+                    field: Box::new(
+                        SettingField {
+                            pick: |settings_content| {
+                                if let Some(terminal) = &settings_content.terminal {
+                                    &terminal.line_height
+                                } else {
+                                    &None
+                                }
+                            },
+                            pick_mut: |settings_content| {
+                                &mut settings_content
+                                    .terminal
+                                    .get_or_insert_default()
+                                    .line_height
+                            },
+                        }
+                        .unimplemented(),
+                    ),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Cursor Shape",
+                    description: "Default cursor shape for the terminal (bar, block, underline, or hollow)",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(terminal) = &settings_content.terminal {
+                                &terminal.cursor_shape
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .terminal
+                                .get_or_insert_default()
+                                .cursor_shape
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Cursor Blinking",
+                    description: "Sets the cursor blinking behavior in the terminal",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(terminal) = &settings_content.terminal {
+                                &terminal.blinking
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content.terminal.get_or_insert_default().blinking
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Alternate Scroll",
+                    description: "Whether Alternate Scroll mode is active by default (converts mouse scroll to arrow keys in apps like vim)",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(terminal) = &settings_content.terminal {
+                                &terminal.alternate_scroll
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .terminal
+                                .get_or_insert_default()
+                                .alternate_scroll
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Minimum Contrast",
+                    description: "The minimum APCA perceptual contrast between foreground and background colors (0-106)",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(terminal) = &settings_content.terminal {
+                                &terminal.minimum_contrast
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .terminal
+                                .get_or_insert_default()
+                                .minimum_contrast
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SectionHeader("Behavior Settings"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Option As Meta",
+                    description: "Whether the option key behaves as the meta key",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(terminal) = &settings_content.terminal {
+                                &terminal.option_as_meta
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .terminal
+                                .get_or_insert_default()
+                                .option_as_meta
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Copy On Select",
+                    description: "Whether selecting text in the terminal automatically copies to the system clipboard",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(terminal) = &settings_content.terminal {
+                                &terminal.copy_on_select
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .terminal
+                                .get_or_insert_default()
+                                .copy_on_select
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Keep Selection On Copy",
+                    description: "Whether to keep the text selection after copying it to the clipboard",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(terminal) = &settings_content.terminal {
+                                &terminal.keep_selection_on_copy
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .terminal
+                                .get_or_insert_default()
+                                .keep_selection_on_copy
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SectionHeader("Layout Settings"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Default Width",
+                    description: "Default width when the terminal is docked to the left or right (in pixels)",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(terminal) = &settings_content.terminal {
+                                &terminal.default_width
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .terminal
+                                .get_or_insert_default()
+                                .default_width
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Default Height",
+                    description: "Default height when the terminal is docked to the bottom (in pixels)",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(terminal) = &settings_content.terminal {
+                                &terminal.default_height
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .terminal
+                                .get_or_insert_default()
+                                .default_height
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SectionHeader("Advanced Settings"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Max Scroll History Lines",
+                    description: "Maximum number of lines to keep in scrollback history (max: 100,000; 0 disables scrolling)",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(terminal) = &settings_content.terminal {
+                                &terminal.max_scroll_history_lines
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .terminal
+                                .get_or_insert_default()
+                                .max_scroll_history_lines
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SectionHeader("Toolbar"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Breadcrumbs",
+                    description: "Display the terminal title in breadcrumbs inside the terminal pane",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(terminal) = &settings_content.terminal {
+                                if let Some(toolbar) = &terminal.toolbar {
+                                    &toolbar.breadcrumbs
+                                } else {
+                                    &None
+                                }
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .terminal
+                                .get_or_insert_default()
+                                .toolbar
+                                .get_or_insert_default()
+                                .breadcrumbs
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SectionHeader("Scrollbar"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Show Scrollbar",
+                    description: "When to show the scrollbar in the terminal",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(terminal) = &settings_content.terminal
+                                && let Some(scrollbar) = &terminal.scrollbar
+                                && scrollbar.show.is_some()
+                            {
+                                &scrollbar.show
+                            } else if let Some(scrollbar) = &settings_content.editor.scrollbar {
+                                &scrollbar.show
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .terminal
+                                .get_or_insert_default()
+                                .scrollbar
+                                .get_or_insert_default()
+                                .show
                         },
                     }),
                     metadata: None,
@@ -3314,7 +3896,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Show Commit Summary",
-                    description: "Whether to show commit summary as part of the inline blame",
+                    description: "Show commit summary as part of the inline blame",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             if let Some(git) = &settings_content.git {
@@ -3341,7 +3923,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Show Avatar",
-                    description: "Whether to show the avatar of the author of the commit",
+                    description: "Show the avatar of the author of the commit",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             if let Some(git) = &settings_content.git {
@@ -3368,7 +3950,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Show Author Name In Branch Picker",
-                    description: "Whether to show author name as part of the commit information in branch picker",
+                    description: "Show author name as part of the commit information in branch picker",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             if let Some(git) = &settings_content.git {
@@ -3407,51 +3989,6 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                         pick_mut: |settings_content| {
                             &mut settings_content.git.get_or_insert_default().hunk_style
                         },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-            ],
-        },
-        SettingsPage {
-            title: "System & Network",
-            items: vec![
-                SettingsPageItem::SectionHeader("Network"),
-                // todo(settings_ui): Proxy needs a default
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Proxy",
-                    description: "The proxy to use for network requests",
-                    field: Box::new(
-                        SettingField {
-                            pick: |settings_content| &settings_content.proxy,
-                            pick_mut: |settings_content| &mut settings_content.proxy,
-                        }
-                        .unimplemented(),
-                    ),
-                    metadata: Some(Box::new(SettingsFieldMetadata {
-                        placeholder: Some("socks5h://localhost:10808"),
-                    })),
-                    files: USER,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Server URL",
-                    description: "The URL of the Zed server to connect to",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| &settings_content.server_url,
-                        pick_mut: |settings_content| &mut settings_content.server_url,
-                    }),
-                    metadata: Some(Box::new(SettingsFieldMetadata {
-                        placeholder: Some("https://zed.dev"),
-                    })),
-                    files: USER,
-                }),
-                SettingsPageItem::SectionHeader("System"),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Auto Update",
-                    description: "Whether or not to automatically check for updates",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| &settings_content.auto_update,
-                        pick_mut: |settings_content| &mut settings_content.auto_update,
                     }),
                     metadata: None,
                     files: USER,
@@ -3663,114 +4200,6 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
             ],
         },
         SettingsPage {
-            title: "Debugger",
-            items: vec![
-                SettingsPageItem::SectionHeader("General"),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Stepping Granularity",
-                    description: "Determines the stepping granularity for debug operations",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(debugger) = &settings_content.debugger {
-                                &debugger.stepping_granularity
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .debugger
-                                .get_or_insert_default()
-                                .stepping_granularity
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Save Breakpoints",
-                    description: "Whether breakpoints should be reused across Zed sessions",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(debugger) = &settings_content.debugger {
-                                &debugger.save_breakpoints
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .debugger
-                                .get_or_insert_default()
-                                .save_breakpoints
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Timeout",
-                    description: "Time in milliseconds until timeout error when connecting to a TCP debug adapter",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(debugger) = &settings_content.debugger {
-                                &debugger.timeout
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content.debugger.get_or_insert_default().timeout
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Log DAP Communications",
-                    description: "Whether to log messages between active debug adapters and Zed",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(debugger) = &settings_content.debugger {
-                                &debugger.log_dap_communications
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .debugger
-                                .get_or_insert_default()
-                                .log_dap_communications
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Format DAP Log Messages",
-                    description: "Whether to format DAP messages when adding them to debug adapter logger",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(debugger) = &settings_content.debugger {
-                                &debugger.format_dap_log_messages
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .debugger
-                                .get_or_insert_default()
-                                .format_dap_log_messages
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-            ],
-        },
-        SettingsPage {
             title: "Collaboration",
             items: vec![
                 SettingsPageItem::SectionHeader("Calls"),
@@ -3928,6 +4357,51 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                 }),
             ],
         },
+        SettingsPage {
+            title: "System & Network",
+            items: vec![
+                SettingsPageItem::SectionHeader("Network"),
+                // todo(settings_ui): Proxy needs a default
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Proxy",
+                    description: "The proxy to use for network requests",
+                    field: Box::new(
+                        SettingField {
+                            pick: |settings_content| &settings_content.proxy,
+                            pick_mut: |settings_content| &mut settings_content.proxy,
+                        }
+                        .unimplemented(),
+                    ),
+                    metadata: Some(Box::new(SettingsFieldMetadata {
+                        placeholder: Some("socks5h://localhost:10808"),
+                    })),
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Server URL",
+                    description: "The URL of the Zed server to connect to",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| &settings_content.server_url,
+                        pick_mut: |settings_content| &mut settings_content.server_url,
+                    }),
+                    metadata: Some(Box::new(SettingsFieldMetadata {
+                        placeholder: Some("https://zed.dev"),
+                    })),
+                    files: USER,
+                }),
+                SettingsPageItem::SectionHeader("System"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Auto Update",
+                    description: "Whether or not to automatically check for updates",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| &settings_content.auto_update,
+                        pick_mut: |settings_content| &mut settings_content.auto_update,
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+            ],
+        },
     ]
 }
 
@@ -4060,7 +4534,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Show Wrap Guides",
-            description: "Whether to show wrap guides in the editor",
+            description: "Show wrap guides in the editor",
             field: Box::new(SettingField {
                 pick: |settings_content| {
                     language_settings_field(settings_content, |language| &language.show_wrap_guides)
@@ -4130,7 +4604,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
         SettingsPageItem::SectionHeader("Indent Guides"),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Enabled",
-            description: "Whether to display indent guides in the editor",
+            description: "Display indent guides in the editor",
             field: Box::new(SettingField {
                 pick: |settings_content| {
                     language_settings_field(settings_content, |language| {
@@ -4336,27 +4810,6 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                     })
                 },
             }),
-            metadata: None,
-            files: USER | LOCAL,
-        }),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Code Actions On Format",
-            description: "Which code actions to run on save after the formatter. These are not run if formatting is off",
-            field: Box::new(
-                SettingField {
-                    pick: |settings_content| {
-                        language_settings_field(settings_content, |language| {
-                            &language.code_actions_on_format
-                        })
-                    },
-                    pick_mut: |settings_content| {
-                        language_settings_field_mut(settings_content, |language| {
-                            &mut language.code_actions_on_format
-                        })
-                    },
-                }
-                .unimplemented(),
-            ),
             metadata: None,
             files: USER | LOCAL,
         }),
@@ -4585,6 +5038,16 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             }),
             metadata: None,
             files: USER | LOCAL,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Go To Definition Fallback",
+            description: "Whether to follow-up empty go to definition responses from the language server",
+            field: Box::new(SettingField {
+                pick: |settings_content| &settings_content.editor.go_to_definition_fallback,
+                pick_mut: |settings_content| &mut settings_content.editor.go_to_definition_fallback,
+            }),
+            metadata: None,
+            files: USER,
         }),
         SettingsPageItem::SectionHeader("Edit Predictions"),
         SettingsPageItem::SettingItem(SettingItem {
@@ -4968,7 +5431,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Show Background",
-            description: "Whether to show a background for inlay hints",
+            description: "Show a background for inlay hints",
             field: Box::new(SettingField {
                 pick: |settings_content| {
                     language_settings_field(settings_content, |language| {
@@ -5155,6 +5618,16 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             ),
             metadata: None,
             files: USER | LOCAL,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Middle Click Paste",
+            description: "Enable middle-click paste on Linux",
+            field: Box::new(SettingField {
+                pick: |settings_content| &settings_content.editor.middle_click_paste,
+                pick_mut: |settings_content| &mut settings_content.editor.middle_click_paste,
+            }),
+            metadata: None,
+            files: USER,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Extend Comment On Newline",

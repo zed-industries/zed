@@ -65,7 +65,7 @@ pub struct TerminalSettingsContent {
     /// Default cursor shape for the terminal.
     /// Can be "bar", "block", "underline", or "hollow".
     ///
-    /// Default: None
+    /// Default: "block"
     pub cursor_shape: Option<CursorShapeContent>,
     /// Sets the cursor blinking behavior in the terminal.
     ///
@@ -89,7 +89,7 @@ pub struct TerminalSettingsContent {
     pub copy_on_select: Option<bool>,
     /// Whether to keep the text selection after copying it to the clipboard.
     ///
-    /// Default: false
+    /// Default: true
     pub keep_selection_on_copy: Option<bool>,
     /// Whether to show the terminal button in the status bar.
     ///
@@ -236,7 +236,18 @@ pub enum ShowScrollbar {
 }
 
 #[derive(
-    Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom,
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
 )]
 #[serde(rename_all = "snake_case")]
 // todo() -> combine with CursorShape
@@ -252,7 +263,19 @@ pub enum CursorShapeContent {
     Hollow,
 }
 
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom)]
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum TerminalBlink {
     /// Never blink the cursor, ignoring the terminal mode.
@@ -264,7 +287,19 @@ pub enum TerminalBlink {
     On,
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum AlternateScroll {
     On,

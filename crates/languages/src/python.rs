@@ -1189,6 +1189,7 @@ impl ToolchainLister for PythonToolchainProvider {
                         ShellKind::Nushell => "activate.nu",
                         ShellKind::PowerShell => "activate.ps1",
                         ShellKind::Cmd => "activate.bat",
+                        ShellKind::Xonsh => "activate.xsh",
                     };
                     let path = prefix.join(BINARY_DIR).join(activate_script_name);
 
@@ -1215,6 +1216,7 @@ impl ToolchainLister for PythonToolchainProvider {
                     ShellKind::Tcsh => None,
                     ShellKind::Cmd => None,
                     ShellKind::Rc => None,
+                    ShellKind::Xonsh => None,
                 })
             }
             _ => {}

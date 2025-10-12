@@ -149,11 +149,38 @@ pub enum ButtonStyle {
     Transparent,
 }
 
+/// Rounding for a button that may have straight edges.
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
-pub(crate) enum ButtonLikeRounding {
-    All,
-    Left,
-    Right,
+pub(crate) struct ButtonLikeRounding {
+    /// Top-left corner rounding
+    pub top_left: bool,
+    /// Top-right corner rounding
+    pub top_right: bool,
+    /// Bottom-right corner rounding
+    pub bottom_right: bool,
+    /// Bottom-left corner rounding
+    pub bottom_left: bool,
+}
+
+impl ButtonLikeRounding {
+    pub const ALL: Self = Self {
+        top_left: true,
+        top_right: true,
+        bottom_right: true,
+        bottom_left: true,
+    };
+    pub const LEFT: Self = Self {
+        top_left: true,
+        top_right: false,
+        bottom_right: false,
+        bottom_left: true,
+    };
+    pub const RIGHT: Self = Self {
+        top_left: false,
+        top_right: true,
+        bottom_right: true,
+        bottom_left: false,
+    };
 }
 
 #[derive(Debug, Clone)]
@@ -250,7 +277,7 @@ impl ButtonStyle {
                 icon_color: Color::Default.color(cx),
             },
             ButtonStyle::OutlinedGhost => ButtonLikeStyles {
-                background: transparent_black(),
+                background: cx.theme().colors().ghost_element_hover,
                 border_color: cx.theme().colors().border,
                 label_color: Color::Default.color(cx),
                 icon_color: Color::Default.color(cx),
@@ -455,7 +482,7 @@ impl ButtonLike {
             width: None,
             height: None,
             size: ButtonSize::Default,
-            rounding: Some(ButtonLikeRounding::All),
+            rounding: Some(ButtonLikeRounding::ALL),
             tooltip: None,
             hoverable_tooltip: None,
             children: SmallVec::new(),
@@ -469,15 +496,15 @@ impl ButtonLike {
     }
 
     pub fn new_rounded_left(id: impl Into<ElementId>) -> Self {
-        Self::new(id).rounding(ButtonLikeRounding::Left)
+        Self::new(id).rounding(ButtonLikeRounding::LEFT)
     }
 
     pub fn new_rounded_right(id: impl Into<ElementId>) -> Self {
-        Self::new(id).rounding(ButtonLikeRounding::Right)
+        Self::new(id).rounding(ButtonLikeRounding::RIGHT)
     }
 
     pub fn new_rounded_all(id: impl Into<ElementId>) -> Self {
-        Self::new(id).rounding(ButtonLikeRounding::All)
+        Self::new(id).rounding(ButtonLikeRounding::ALL)
     }
 
     pub fn opacity(mut self, opacity: f32) -> Self {
@@ -634,14 +661,15 @@ impl RenderOnce for ButtonLike {
                 ),
                 |this| this.border_1(),
             )
-            .when_some(self.rounding, |this, rounding| match rounding {
-                ButtonLikeRounding::All => this.rounded_sm(),
-                ButtonLikeRounding::Left => this.rounded_l_sm(),
-                ButtonLikeRounding::Right => this.rounded_r_sm(),
+            .when_some(self.rounding, |this, rounding| {
+                this.when(rounding.top_left, |this| this.rounded_tl_sm())
+                    .when(rounding.top_right, |this| this.rounded_tr_sm())
+                    .when(rounding.bottom_right, |this| this.rounded_br_sm())
+                    .when(rounding.bottom_left, |this| this.rounded_bl_sm())
             })
             .gap(DynamicSpacing::Base04.rems(cx))
             .map(|this| match self.size {
-                ButtonSize::Large | ButtonSize::Medium => this.px(DynamicSpacing::Base06.rems(cx)),
+                ButtonSize::Large | ButtonSize::Medium => this.px(DynamicSpacing::Base08.rems(cx)),
                 ButtonSize::Default | ButtonSize::Compact => {
                     this.px(DynamicSpacing::Base04.rems(cx))
                 }

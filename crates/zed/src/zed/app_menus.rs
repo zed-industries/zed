@@ -63,13 +63,13 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
                 MenuItem::submenu(Menu {
                     name: "Settings".into(),
                     items: vec![
-                        MenuItem::action("Open Settings", zed_actions::OpenSettingsEditor),
-                        MenuItem::action("Open Settings JSON", super::OpenSettings),
+                        MenuItem::action("Open Settings", zed_actions::OpenSettings),
+                        MenuItem::action("Open Settings File", super::OpenSettingsFile),
                         MenuItem::action("Open Project Settings", super::OpenProjectSettings),
                         MenuItem::action("Open Default Settings", super::OpenDefaultSettings),
                         MenuItem::separator(),
-                        MenuItem::action("Open Keymap Editor", zed_actions::OpenKeymapEditor),
-                        MenuItem::action("Open Keymap JSON", zed_actions::OpenKeymap),
+                        MenuItem::action("Open Keymap", zed_actions::OpenKeymap),
+                        MenuItem::action("Open Keymap File", zed_actions::OpenKeymapFile),
                         MenuItem::action(
                             "Open Default Key Bindings",
                             zed_actions::OpenDefaultKeymap,
@@ -280,7 +280,10 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
                 MenuItem::action("View Telemetry", zed_actions::OpenTelemetryLog),
                 MenuItem::action("View Dependency Licenses", zed_actions::OpenLicenses),
                 MenuItem::action("Show Welcome", onboarding::ShowWelcome),
-                MenuItem::action("Give Feedback...", zed_actions::feedback::GiveFeedback),
+                MenuItem::separator(),
+                MenuItem::action("File Bug Report...", zed_actions::feedback::FileBugReport),
+                MenuItem::action("Request Feature...", zed_actions::feedback::RequestFeature),
+                MenuItem::action("Email Us...", zed_actions::feedback::EmailZed),
                 MenuItem::separator(),
                 MenuItem::action(
                     "Documentation",
@@ -288,6 +291,7 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
                         url: "https://zed.dev/docs".into(),
                     },
                 ),
+                MenuItem::action("Zed Repository", feedback::OpenZedRepo),
                 MenuItem::action(
                     "Zed Twitter",
                     super::OpenBrowser {

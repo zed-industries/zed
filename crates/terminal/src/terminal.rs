@@ -495,6 +495,8 @@ impl TerminalBuilder {
                 .unwrap_or(params.program.clone())
         });
 
+        let shell_kind = shell.shell_kind();
+
         let pty_options = {
             let alac_shell = shell_params.as_ref().map(|params| {
                 alacritty_terminal::tty::Shell::new(
@@ -511,7 +513,7 @@ impl TerminalBuilder {
                 // We do not want to escape arguments if we are using CMD as our shell.
                 // If we do we end up with too many quotes/escaped quotes for CMD to handle.
                 #[cfg(windows)]
-                escape_args: shell.shell_kind() != util::shell::ShellKind::Cmd,
+                escape_args: shell_kind != util::shell::ShellKind::Cmd,
             }
         };
 
@@ -581,7 +583,7 @@ impl TerminalBuilder {
 
         let no_task = task.is_none();
 
-        let mut terminal = Terminal {
+        let terminal = Terminal {
             task,
             terminal_type: TerminalType::Pty {
                 pty_tx: Notifier(pty_tx),
@@ -621,14 +623,23 @@ impl TerminalBuilder {
 
         if !activation_script.is_empty() && no_task {
             for activation_script in activation_script {
-                terminal.input(activation_script.into_bytes());
-                terminal.write_to_pty(if cfg!(windows) {
-                    b"\r\n" as &[_]
-                } else {
-                    b"\n"
-                });
+                terminal.write_to_pty(activation_script.into_bytes());
+                // Simulate enter key press
+                // NOTE(PowerShell): using `\r\n` will put PowerShell in a continuation mode (infamous >> character)
+                // and generally mess up the rendering.
+                terminal.write_to_pty(b"\x0d");
             }
-            terminal.clear();
+            // In order to clear the screen at this point, we have two options:
+            // 1. We can send a shell-specific command such as "clear" or "cls"
+            // 2. We can "echo" a marker message that we will then catch when handling a Wakeup event
+            //    and clear the screen using `terminal.clear()` method
+            // We cannot issue a `terminal.clear()` command at this point as alacritty is evented
+            // and while we have sent the activation script to the pty, it will be executed asynchronously.
+            // Therefore, we somehow need to wait for the activation script to finish executing before we
+            // can proceed with clearing the screen.
+            terminal.write_to_pty(shell_kind.clear_screen_command().as_bytes());
+            // Simulate enter key press
+            terminal.write_to_pty(b"\x0d");
         }
 
         Ok(TerminalBuilder {

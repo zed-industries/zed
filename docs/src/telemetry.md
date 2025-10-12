@@ -9,7 +9,7 @@ To enable or disable some or all telemetry types, open your `settings.json` file
 
 Insert and tweak the following:
 
-```json
+```json [settings]
 "telemetry": {
     "diagnostics": false,
     "metrics": false

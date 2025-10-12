@@ -142,8 +142,6 @@ pub struct LanguageSettings {
     pub auto_indent_on_paste: bool,
     /// Controls how the editor handles the autoclosed characters.
     pub always_treat_brackets_as_autoclosed: bool,
-    /// Which code actions to run on save
-    pub code_actions_on_format: HashMap<String, bool>,
     /// Whether to perform linked edits
     pub linked_edits: bool,
     /// Task configuration for this language.
@@ -578,7 +576,6 @@ impl settings::Settings for AllLanguageSettings {
                 always_treat_brackets_as_autoclosed: settings
                     .always_treat_brackets_as_autoclosed
                     .unwrap(),
-                code_actions_on_format: settings.code_actions_on_format.unwrap(),
                 linked_edits: settings.linked_edits.unwrap(),
                 tasks: LanguageTaskSettings {
                     variables: tasks.variables.unwrap_or_default(),

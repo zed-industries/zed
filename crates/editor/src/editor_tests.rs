@@ -16518,7 +16518,7 @@ async fn test_following_with_multiple_excerpts(cx: &mut TestAppContext) {
     leader.update(cx, |leader, cx| {
         leader.buffer.update(cx, |multibuffer, cx| {
             multibuffer.set_excerpts_for_path(
-                PathKey::namespaced(1, rel_path("b.txt").into_arc()),
+                PathKey::with_sort_prefix(1, rel_path("b.txt").into_arc()),
                 buffer_1.clone(),
                 vec![
                     Point::row_range(0..3),
@@ -16529,7 +16529,7 @@ async fn test_following_with_multiple_excerpts(cx: &mut TestAppContext) {
                 cx,
             );
             multibuffer.set_excerpts_for_path(
-                PathKey::namespaced(1, rel_path("a.txt").into_arc()),
+                PathKey::with_sort_prefix(1, rel_path("a.txt").into_arc()),
                 buffer_2.clone(),
                 vec![Point::row_range(0..6), Point::row_range(8..12)],
                 0,
@@ -21032,7 +21032,7 @@ async fn test_display_diff_hunks(cx: &mut TestAppContext) {
         for buffer in &buffers {
             let snapshot = buffer.read(cx).snapshot();
             multibuffer.set_excerpts_for_path(
-                PathKey::namespaced(0, buffer.read(cx).file().unwrap().path().clone()),
+                PathKey::with_sort_prefix(0, buffer.read(cx).file().unwrap().path().clone()),
                 buffer.clone(),
                 vec![text::Anchor::MIN.to_point(&snapshot)..text::Anchor::MAX.to_point(&snapshot)],
                 2,
@@ -25706,7 +25706,7 @@ async fn test_document_colors(cx: &mut TestAppContext) {
         .set_request_handler::<lsp::request::DocumentColor, _, _>(move |_, _| async move {
             panic!("Should not be called");
         });
-    cx.executor().advance_clock(Duration::from_millis(100));
+    cx.executor().advance_clock(FETCH_COLORS_DEBOUNCE_TIMEOUT);
     color_request_handle.next().await.unwrap();
     cx.run_until_parked();
     assert_eq!(
@@ -25790,9 +25790,9 @@ async fn test_document_colors(cx: &mut TestAppContext) {
     color_request_handle.next().await.unwrap();
     cx.run_until_parked();
     assert_eq!(
-        3,
+        2,
         requests_made.load(atomic::Ordering::Acquire),
-        "Should query for colors once per save and once per formatting after save"
+        "Should query for colors once per save (deduplicated) and once per formatting after save"
     );
 
     drop(editor);
@@ -25813,7 +25813,7 @@ async fn test_document_colors(cx: &mut TestAppContext) {
         .unwrap();
     close.await.unwrap();
     assert_eq!(
-        3,
+        2,
         requests_made.load(atomic::Ordering::Acquire),
         "After saving and closing all editors, no extra requests should be made"
     );
@@ -25833,7 +25833,7 @@ async fn test_document_colors(cx: &mut TestAppContext) {
             })
         })
         .unwrap();
-    cx.executor().advance_clock(Duration::from_millis(100));
+    cx.executor().advance_clock(FETCH_COLORS_DEBOUNCE_TIMEOUT);
     cx.run_until_parked();
     let editor = workspace
         .update(cx, |workspace, _, cx| {
@@ -25844,9 +25844,9 @@ async fn test_document_colors(cx: &mut TestAppContext) {
                 .expect("Should be an editor")
         })
         .unwrap();
-    color_request_handle.next().await.unwrap();
+
     assert_eq!(
-        3,
+        2,
         requests_made.load(atomic::Ordering::Acquire),
         "Cache should be reused on buffer close and reopen"
     );
@@ -25887,10 +25887,11 @@ async fn test_document_colors(cx: &mut TestAppContext) {
     });
     save.await.unwrap();
 
+    cx.executor().advance_clock(FETCH_COLORS_DEBOUNCE_TIMEOUT);
     empty_color_request_handle.next().await.unwrap();
     cx.run_until_parked();
     assert_eq!(
-        4,
+        3,
         requests_made.load(atomic::Ordering::Acquire),
         "Should query for colors once per save only, as formatting was not requested"
     );
@@ -26477,4 +26478,65 @@ fn extract_color_inlays(editor: &Editor, cx: &App) -> Vec<Rgba> {
         .filter_map(|inlay| inlay.get_color())
         .map(Rgba::from)
         .collect()
+}
+
+#[gpui::test]
+fn test_duplicate_line_up_on_last_line_without_newline(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let editor = cx.add_window(|window, cx| {
+        let buffer = MultiBuffer::build_simple("line1\nline2", cx);
+        build_editor(buffer, window, cx)
+    });
+
+    editor
+        .update(cx, |editor, window, cx| {
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+                s.select_display_ranges([
+                    DisplayPoint::new(DisplayRow(1), 0)..DisplayPoint::new(DisplayRow(1), 0)
+                ])
+            });
+
+            editor.duplicate_line_up(&DuplicateLineUp, window, cx);
+
+            assert_eq!(
+                editor.display_text(cx),
+                "line1\nline2\nline2",
+                "Duplicating last line upward should create duplicate above, not on same line"
+            );
+
+            assert_eq!(
+                editor.selections.display_ranges(cx),
+                vec![DisplayPoint::new(DisplayRow(1), 0)..DisplayPoint::new(DisplayRow(1), 0)],
+                "Selection should remain on the original line"
+            );
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+async fn test_copy_line_without_trailing_newline(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state("line1\nline2ˇ");
+
+    cx.update_editor(|e, window, cx| e.copy(&Copy, window, cx));
+
+    let clipboard_text = cx
+        .read_from_clipboard()
+        .and_then(|item| item.text().as_deref().map(str::to_string));
+
+    assert_eq!(
+        clipboard_text,
+        Some("line2\n".to_string()),
+        "Copying a line without trailing newline should include a newline"
+    );
+
+    cx.set_state("line1\nˇ");
+
+    cx.update_editor(|e, window, cx| e.paste(&Paste, window, cx));
+
+    cx.assert_editor_state("line1\nline2\nˇ");
 }

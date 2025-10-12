@@ -124,6 +124,7 @@ impl HeadlessProject {
                 toolchain_store.read(cx).as_language_toolchain_store(),
                 worktree_store.clone(),
                 breakpoint_store.clone(),
+                true,
                 cx,
             );
             dap_store.shared(REMOTE_SERVER_PROJECT_ID, session.clone(), cx);
@@ -196,8 +197,13 @@ impl HeadlessProject {
         });
 
         let agent_server_store = cx.new(|cx| {
-            let mut agent_server_store =
-                AgentServerStore::local(node_runtime.clone(), fs.clone(), environment.clone(), cx);
+            let mut agent_server_store = AgentServerStore::local(
+                node_runtime.clone(),
+                fs.clone(),
+                environment.clone(),
+                http_client.clone(),
+                cx,
+            );
             agent_server_store.shared(REMOTE_SERVER_PROJECT_ID, session.clone(), cx);
             agent_server_store
         });
