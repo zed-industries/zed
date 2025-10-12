@@ -4,7 +4,7 @@ use language::BufferSnapshot;
 use ordered_float::OrderedFloat;
 use util::RangeExt as _;
 
-use crate::{IdentifierParts, NGram, Occurrences, SlidingWindow};
+use crate::{OccurrenceSource, Occurrences, SlidingWindow};
 
 // TODO:
 //
@@ -61,8 +61,8 @@ impl Default for SimilarSnippetOptions {
     }
 }
 
-pub fn similar_snippets(
-    excerpt_trigram_occurrences: &Occurrences<NGram<3, IdentifierParts>>,
+pub fn similar_snippets<S: OccurrenceSource>(
+    excerpt_trigram_occurrences: &Occurrences<S>,
     // todo!
     // backward_range: Option<Range<usize>>,
     forward_range: Range<usize>,
@@ -83,10 +83,7 @@ pub fn similar_snippets(
             bytes = 0;
             continue;
         }
-        window.push_back(
-            line.len(),
-            NGram::iterator(IdentifierParts::within_str(line)),
-        );
+        window.push_back(line.len(), S::occurrences_in_str(line));
         while bytes > options.max_bytes {
             let popped_bytes = window.pop_front();
             start_offset += popped_bytes;

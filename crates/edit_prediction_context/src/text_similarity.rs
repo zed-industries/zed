@@ -1,10 +1,10 @@
 mod occurrences;
 mod sliding_window;
-mod tokens;
+mod source;
 
 pub use occurrences::*;
 pub use sliding_window::*;
-pub use tokens::*;
+pub use source::*;
 
 // Variants to consider trying:
 //

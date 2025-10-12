@@ -10,6 +10,7 @@ use text::OffsetRangeExt as _;
 use util::RangeExt;
 use util::paths::PathStyle;
 
+use crate::OccurrenceSource;
 use crate::{Identifier, IdentifierParts, Occurrences};
 
 // TODO: Write documentation for extension authors. The @import capture must match before or in the
@@ -158,7 +159,7 @@ impl Namespace {
         Occurrences::new(
             self.0
                 .iter()
-                .flat_map(|identifier| IdentifierParts::within_str(&identifier)),
+                .flat_map(|identifier| IdentifierParts::occurrences_in_str(&identifier)),
         )
     }
 }

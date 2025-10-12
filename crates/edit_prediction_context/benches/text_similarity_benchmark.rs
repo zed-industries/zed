@@ -17,7 +17,7 @@ fn text_similarity_benchmark(c: &mut Criterion) {
         group.throughput(Throughput::Bytes(*size as u64));
         group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, &size| {
             let text = generate_random_text(rng.clone(), *size);
-            b.iter(|| IdentifierParts::within_str(text.as_str()).collect::<Vec<_>>());
+            b.iter(|| IdentifierParts::occurrences_in_str(text.as_str()).collect::<Vec<_>>());
         });
     }
     group.finish();

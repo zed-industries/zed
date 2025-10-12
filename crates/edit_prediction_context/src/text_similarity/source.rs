@@ -1,9 +1,46 @@
 use crate::text_similarity::occurrences::HashFrom;
-use std::{borrow::Cow, iter::Peekable, path::Path};
+use arraydeque::ArrayDeque;
+use std::{borrow::Cow, iter::Peekable, marker::PhantomData, path::Path};
 use util::rel_path::RelPath;
 
-/// This occurrences source is useful for finding code that may be relevant since it matches parts
-/// of identifiers.
+pub trait OccurrenceSource {
+    fn occurrences_in_utf8_bytes(
+        str_bytes: impl IntoIterator<Item = u8>,
+    ) -> impl Iterator<Item = HashFrom<Self>>;
+
+    fn occurrences_in_str(str: &str) -> impl Iterator<Item = HashFrom<Self>> {
+        Self::occurrences_in_utf8_bytes(str.bytes())
+    }
+
+    /// Includes worktree name and omits file extension.
+    fn occurrences_in_worktree_path(
+        worktree_name: Option<Cow<'_, str>>,
+        rel_path: &RelPath,
+    ) -> impl Iterator<Item = HashFrom<Self>> {
+        if let Some(worktree_name) = worktree_name {
+            itertools::Either::Left(
+                Self::occurrences_in_utf8_bytes(cow_str_into_bytes(worktree_name))
+                    .chain(Self::occurrences_in_path(rel_path.as_std_path())),
+            )
+        } else {
+            itertools::Either::Right(Self::occurrences_in_path(rel_path.as_std_path()))
+        }
+    }
+
+    /// Occurrences from a path, the omitting file extension. Note that this does not split on
+    /// components (they are omitted by `IdentifierParts` but not `CodeParts`).
+    fn occurrences_in_path(path: &Path) -> impl Iterator<Item = HashFrom<Self>> {
+        let path_bytes = path.as_os_str().as_encoded_bytes();
+        let bytes = if let Some(extension) = path.extension() {
+            &path_bytes[0..path_bytes.len() - extension.as_encoded_bytes().len()]
+        } else {
+            path_bytes
+        };
+        Self::occurrences_in_utf8_bytes(bytes.iter().cloned())
+    }
+}
+
+/// Occurrences source for finding relevant code by matching parts of identifiers.
 ///
 /// * Splits the input into runs of ascii alphanumeric or unicode characters
 /// * Splits these on ascii case transitions, handling camelCase and PascalCase
@@ -11,8 +48,8 @@ use util::rel_path::RelPath;
 #[derive(Debug)]
 pub struct IdentifierParts;
 
-/// This occurrences source is useful for finding similar code, by capturing full identifiers and
-/// sequences of symbols. Intended to be used with `NGrams`.
+/// Occurrences source for finding similar code, by including full identifiers and sequences of
+/// symbols.
 ///
 /// * Splits the input on ascii whitespace
 /// * Splits these into runs of ascii punctuation or alphanumeric/unicode characters
@@ -21,51 +58,42 @@ pub struct IdentifierParts;
 /// with not splitting on case transitions.
 pub struct CodeParts;
 
-impl IdentifierParts {
-    pub fn within_bytes(
+/// Source type for occurrences that come from n-grams, aka w-shingling. Each N length interval of
+/// the input will be treated as one occurrence.
+///
+/// Note that this hashes the hashes it's provided for every output - may be more efficient to use a
+/// proper rolling hash. Unfortunately, I didn't find a rust rolling hash implementation that
+/// operated on updates larger than u8.
+#[derive(Debug)]
+pub struct NGram<const N: usize, S> {
+    _source: PhantomData<S>,
+}
+
+impl OccurrenceSource for IdentifierParts {
+    fn occurrences_in_utf8_bytes(
         str_bytes: impl IntoIterator<Item = u8>,
     ) -> impl Iterator<Item = HashFrom<Self>> {
         HashedIdentifierParts::new(str_bytes.into_iter())
     }
-
-    pub fn within_str(text: &str) -> impl Iterator<Item = HashFrom<Self>> {
-        Self::within_bytes(text.bytes())
-    }
-
-    pub fn from_worktree_path(
-        worktree_name: Option<Cow<'_, str>>,
-        rel_path: &RelPath,
-    ) -> impl Iterator<Item = HashFrom<Self>> {
-        if let Some(worktree_name) = worktree_name {
-            itertools::Either::Left(
-                Self::within_bytes(cow_str_into_bytes(worktree_name))
-                    .chain(Self::from_path_without_extension(rel_path.as_std_path())),
-            )
-        } else {
-            itertools::Either::Right(Self::from_path_without_extension(rel_path.as_std_path()))
-        }
-    }
-
-    pub fn from_path_without_extension(path: &Path) -> impl Iterator<Item = HashFrom<Self>> {
-        let path_bytes = path.as_os_str().as_encoded_bytes();
-        let bytes = if let Some(extension) = path.extension() {
-            &path_bytes[0..path_bytes.len() - extension.as_encoded_bytes().len()]
-        } else {
-            path_bytes
-        };
-        Self::within_bytes(bytes.iter().cloned())
-    }
 }
 
-impl CodeParts {
-    pub fn within_bytes(
+impl OccurrenceSource for CodeParts {
+    fn occurrences_in_utf8_bytes(
         str_bytes: impl IntoIterator<Item = u8>,
     ) -> impl Iterator<Item = HashFrom<Self>> {
         HashedCodeParts::new(str_bytes.into_iter())
     }
+}
 
-    pub fn within_str(text: &str) -> impl Iterator<Item = HashFrom<Self>> {
-        Self::within_bytes(text.bytes())
+impl<const N: usize, S: OccurrenceSource> OccurrenceSource for NGram<N, S> {
+    fn occurrences_in_utf8_bytes(
+        str_bytes: impl IntoIterator<Item = u8>,
+    ) -> impl Iterator<Item = HashFrom<NGram<N, S>>> {
+        NGramIterator {
+            hashes: S::occurrences_in_utf8_bytes(str_bytes),
+            window: ArrayDeque::new(),
+            _source: PhantomData,
+        }
     }
 }
 
@@ -197,6 +225,32 @@ impl<I: Iterator<Item = u8>> Iterator for HashedCodeParts<I> {
     }
 }
 
+struct NGramIterator<const N: usize, S, I> {
+    hashes: I,
+    window: ArrayDeque<u32, N, arraydeque::Wrapping>,
+    _source: PhantomData<S>,
+}
+
+impl<const N: usize, S, I> Iterator for NGramIterator<N, S, I>
+where
+    I: Iterator<Item = HashFrom<S>>,
+{
+    type Item = HashFrom<NGram<N, S>>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        while let Some(hash) = self.hashes.next() {
+            if self.window.push_back(hash.into()).is_some() {
+                let mut hasher = FxHasher32::default();
+                for hash in &self.window {
+                    hasher.write_u32(*hash);
+                }
+                return Some(hasher.finish().into());
+            }
+        }
+        return None;
+    }
+}
+
 /// 32-bit variant of FXHasher
 struct FxHasher32(u32);
 
@@ -208,8 +262,13 @@ impl Default for FxHasher32 {
 
 impl FxHasher32 {
     #[inline]
-    pub fn write_u8(&mut self, byte: u8) {
-        self.0 = self.0.wrapping_add(byte as u32).wrapping_mul(0x93d765dd);
+    pub fn write_u8(&mut self, value: u8) {
+        self.write_u32(value as u32);
+    }
+
+    #[inline]
+    pub fn write_u32(&mut self, value: u32) {
+        self.0 = self.0.wrapping_add(value).wrapping_mul(0x93d765dd);
     }
 
     pub fn finish(self) -> u32 {
@@ -239,7 +298,7 @@ mod test {
         #[track_caller]
         fn check(text: &str, expected: &[&str]) {
             assert_eq!(
-                IdentifierParts::within_str(text).collect::<Vec<_>>(),
+                IdentifierParts::occurrences_in_str(text).collect::<Vec<_>>(),
                 expected
                     .iter()
                     .map(|part| string_fxhash32(part).into())
@@ -276,7 +335,7 @@ mod test {
         #[track_caller]
         fn check(text: &str, expected: &[&str]) {
             assert_eq!(
-                CodeParts::within_str(text).collect::<Vec<_>>(),
+                CodeParts::occurrences_in_str(text).collect::<Vec<_>>(),
                 expected
                     .iter()
                     .map(|part| string_fxhash32(part).into())
@@ -312,15 +371,16 @@ mod test {
     fn test_similarity_functions() {
         // 10 identifier parts, 8 unique
         // Repeats: 2 "outline", 2 "items"
-        let multiset_a = Occurrences::new(IdentifierParts::within_str(
+        let multiset_a = Occurrences::new(IdentifierParts::occurrences_in_str(
             "let mut outline_items = query_outline_items(&language, &tree, &source);",
         ));
-        let set_a = SmallOccurrences::<8, IdentifierParts>::new(IdentifierParts::within_str(
-            "let mut outline_items = query_outline_items(&language, &tree, &source);",
-        ));
+        let set_a =
+            SmallOccurrences::<8, IdentifierParts>::new(IdentifierParts::occurrences_in_str(
+                "let mut outline_items = query_outline_items(&language, &tree, &source);",
+            ));
         // 14 identifier parts, 11 unique
         // Repeats: 2 "outline", 2 "language", 2 "tree"
-        let set_b = Occurrences::new(IdentifierParts::within_str(
+        let set_b = Occurrences::new(IdentifierParts::occurrences_in_str(
             "pub fn query_outline_items(language: &Language, tree: &Tree, source: &str) -> Vec<OutlineItem> {",
         ));
 

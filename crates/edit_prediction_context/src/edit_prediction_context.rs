@@ -8,11 +8,10 @@ mod similar_snippets;
 mod syntax_index;
 pub mod text_similarity;
 
-use std::{path::Path, sync::Arc};
-
 use collections::HashMap;
 use gpui::{App, AppContext as _, Entity, Task};
 use language::BufferSnapshot;
+use std::{path::Path, sync::Arc};
 use text::{Point, ToOffset as _};
 
 pub use declaration::*;
@@ -118,14 +117,14 @@ impl EditPredictionContext {
             index_state,
         )?;
         let excerpt_text = excerpt.text(buffer);
-        let excerpt_occurrences = Occurrences::new(IdentifierParts::within_str(&excerpt_text.body));
-        let excerpt_trigram_occurrences: Occurrences<NGram<3, IdentifierParts>> = Occurrences::new(
-            NGram::iterator(IdentifierParts::within_str(&excerpt_text.body)),
-        );
+        let excerpt_occurrences =
+            Occurrences::new(IdentifierParts::occurrences_in_str(&excerpt_text.body));
+        let excerpt_trigram_occurrences: Occurrences<NGram<3, CodeParts>> =
+            Occurrences::new(NGram::occurrences_in_str(&excerpt_text.body));
 
         let adjacent_start = Point::new(cursor_point.row.saturating_sub(2), 0);
         let adjacent_end = Point::new(cursor_point.row + 1, 0);
-        let adjacent_occurrences = Occurrences::new(IdentifierParts::within_str(
+        let adjacent_occurrences = Occurrences::new(IdentifierParts::occurrences_in_str(
             &buffer
                 .text_for_range(adjacent_start..adjacent_end)
                 .collect::<String>(),

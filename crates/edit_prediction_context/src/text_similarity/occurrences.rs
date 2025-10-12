@@ -1,14 +1,7 @@
-use arraydeque::ArrayDeque;
-use collections::FxHasher;
 use hashbrown::HashTable;
 use itertools::Itertools;
 use smallvec::SmallVec;
-use std::{
-    cmp::Ordering,
-    fmt::Debug,
-    hash::{Hash, Hasher},
-    marker::PhantomData,
-};
+use std::{cmp::Ordering, fmt::Debug, marker::PhantomData};
 use util::debug_panic;
 
 /// Similarity metrics that use a set of occurrences.
@@ -51,19 +44,8 @@ pub struct SmallOccurrences<const N: usize, S> {
 /// The rationale for this is that these similarity metrics are being used as heuristics and
 /// precision is not needed. The probability of a hash collision is 50% with 77k hashes. The
 /// probability that a hash collision will actually cause different behavior is far lower.
-pub struct HashFrom<S> {
+pub struct HashFrom<S: ?Sized> {
     value: u32,
-    _source: PhantomData<S>,
-}
-
-/// Source type for occurrences that come from n-grams, aka w-shingling. Each N length interval of
-/// the input will be treated as one occurrence.
-///
-/// Note that this hashes the hashes it's provided for every output - may be more efficient to use a
-/// proper rolling hash. Unfortunately, I didn't find a rust rolling hash implementation that
-/// operated on updates larger than u8.
-#[derive(Debug)]
-pub struct NGram<const N: usize, S> {
     _source: PhantomData<S>,
 }
 
@@ -342,6 +324,12 @@ impl<S> From<u32> for HashFrom<S> {
     }
 }
 
+impl<S> From<HashFrom<S>> for u32 {
+    fn from(hash: HashFrom<S>) -> Self {
+        hash.value
+    }
+}
+
 impl<S> Debug for HashFrom<S> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         self.value.fmt(f)
@@ -377,44 +365,6 @@ impl<S> Clone for HashFrom<S> {
 
 impl<S> Eq for HashFrom<S> {}
 impl<S> Copy for HashFrom<S> {}
-
-struct NGramIterator<const N: usize, S, I> {
-    hashes: I,
-    window: ArrayDeque<u32, N, arraydeque::Wrapping>,
-    _source: PhantomData<S>,
-}
-
-impl<const N: usize, S> NGram<N, S> {
-    pub fn iterator<I: IntoIterator<Item = HashFrom<S>>>(
-        hashes: I,
-    ) -> impl Iterator<Item = HashFrom<NGram<N, S>>> {
-        NGramIterator {
-            hashes: hashes.into_iter(),
-            window: ArrayDeque::new(),
-            _source: PhantomData,
-        }
-    }
-}
-
-impl<const N: usize, S, I> Iterator for NGramIterator<N, S, I>
-where
-    I: Iterator<Item = HashFrom<S>>,
-{
-    type Item = HashFrom<NGram<N, S>>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        while let Some(hash) = self.hashes.next() {
-            if self.window.push_back(hash.value).is_some() {
-                let mut hasher = FxHasher::default();
-                let (window_prefix, window_suffix) = self.window.as_slices();
-                window_prefix.hash(&mut hasher);
-                window_suffix.hash(&mut hasher);
-                return Some((hasher.finish() as u32).into());
-            }
-        }
-        return None;
-    }
-}
 
 impl<S> AsRef<Occurrences<S>> for Occurrences<S> {
     fn as_ref(&self) -> &Occurrences<S> {

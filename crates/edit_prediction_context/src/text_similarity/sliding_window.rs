@@ -133,11 +133,11 @@ impl<D, T: AsRef<Occurrences<S>>, S> SlidingWindow<D, T, S> {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::{IdentifierParts, Occurrences, WeightedSimilarity};
+    use crate::{IdentifierParts, OccurrenceSource, Occurrences, WeightedSimilarity};
 
     #[test]
     fn test_sliding_window() {
-        let target = Occurrences::new(IdentifierParts::within_str("a b c d"));
+        let target = Occurrences::new(IdentifierParts::occurrences_in_str("a b c d"));
         let mut checked_window = CheckedSlidingWindow::new(target);
 
         checked_window.push_back("a");
@@ -177,7 +177,7 @@ mod test {
         #[track_caller]
         fn push_back(&mut self, line: &str) {
             self.inner
-                .push_back(self.last_line, IdentifierParts::within_str(line));
+                .push_back(self.last_line, IdentifierParts::occurrences_in_str(line));
             self.text.push_str(line);
             self.text.push('\n');
             self.last_line += 1;
@@ -196,13 +196,13 @@ mod test {
         fn check_after_mutation(&self) {
             assert_eq!(
                 self.inner.weighted_overlap_coefficient(),
-                Occurrences::new(IdentifierParts::within_str(&self.text))
+                Occurrences::new(IdentifierParts::occurrences_in_str(&self.text))
                     .weighted_overlap_coefficient(&self.inner.target),
                 "weighted_overlap_coefficient"
             );
             assert_eq!(
                 self.inner.weighted_jaccard_similarity(),
-                Occurrences::new(IdentifierParts::within_str(&self.text))
+                Occurrences::new(IdentifierParts::occurrences_in_str(&self.text))
                     .weighted_jaccard_similarity(&self.inner.target),
                 "weighted_jaccard_similarity"
             );

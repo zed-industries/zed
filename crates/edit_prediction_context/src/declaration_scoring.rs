@@ -10,11 +10,14 @@ use text::{Point, ToPoint};
 use util::RangeExt as _;
 
 use crate::{
-    CachedDeclarationPath, Declaration, EditPredictionExcerpt, Identifier, Occurrences,
+    declaration::{CachedDeclarationPath, Declaration, Identifier},
+    excerpt::EditPredictionExcerpt,
     imports::{Import, Imports, Module},
     reference::{Reference, ReferenceRegion},
     syntax_index::SyntaxIndexState,
-    text_similarity::{IdentifierParts, Similarity as _, WeightedSimilarity as _},
+    text_similarity::{
+        IdentifierParts, OccurrenceSource, Occurrences, Similarity as _, WeightedSimilarity as _,
+    },
 };
 
 const MAX_IDENTIFIER_DECLARATION_COUNT: usize = 16;
@@ -133,7 +136,7 @@ pub fn scored_declarations(
             }
             Module::SourceExact(path) => wildcard_import_paths.push(path),
             Module::SourceFuzzy(path) => wildcard_import_occurrences.push(Occurrences::new(
-                IdentifierParts::from_path_without_extension(&path),
+                IdentifierParts::occurrences_in_path(&path),
             )),
         }
     }
@@ -168,7 +171,7 @@ pub fn scored_declarations(
                     }
                     Module::SourceExact(path) => import_paths.push(path),
                     Module::SourceFuzzy(path) => import_occurrences.push(Occurrences::new(
-                        IdentifierParts::from_path_without_extension(&path),
+                        IdentifierParts::occurrences_in_path(&path),
                     )),
                 }
                 found_external_identifier = Some(&external_identifier);
@@ -181,7 +184,7 @@ pub fn scored_declarations(
                             }
                             Module::SourceExact(path) => import_paths.push(path),
                             Module::SourceFuzzy(path) => import_occurrences.push(Occurrences::new(
-                                IdentifierParts::from_path_without_extension(&path),
+                                IdentifierParts::occurrences_in_path(&path),
                             )),
                         },
                         Import::Alias { .. } => {}
@@ -411,10 +414,12 @@ fn score_declaration(
     let is_same_file = same_file_line_distance.is_some();
     let declaration_line_distance = same_file_line_distance.unwrap_or(u32::MAX);
 
-    let item_source_occurrences =
-        Occurrences::new(IdentifierParts::within_str(&declaration.item_text().0));
-    let item_signature_occurrences =
-        Occurrences::new(IdentifierParts::within_str(&declaration.signature_text().0));
+    let item_source_occurrences = Occurrences::new(IdentifierParts::occurrences_in_str(
+        &declaration.item_text().0,
+    ));
+    let item_signature_occurrences = Occurrences::new(IdentifierParts::occurrences_in_str(
+        &declaration.signature_text().0,
+    ));
     let excerpt_vs_item_jaccard = excerpt_occurrences.jaccard_similarity(&item_source_occurrences);
     let excerpt_vs_signature_jaccard =
         excerpt_occurrences.jaccard_similarity(&item_signature_occurrences);
@@ -436,7 +441,7 @@ fn score_declaration(
     let mut wildcard_import_similarity = 0f32;
     if !import_occurrences.is_empty() || !wildcard_import_occurrences.is_empty() {
         let cached_path = declaration.cached_path();
-        let path_occurrences = Occurrences::new(IdentifierParts::from_worktree_path(
+        let path_occurrences = Occurrences::new(IdentifierParts::occurrences_in_worktree_path(
             cached_path
                 .worktree_abs_path
                 .file_name()
