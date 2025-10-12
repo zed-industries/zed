@@ -3,12 +3,10 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::{
-    AnyElement, App, ElementId, GlobalElementId, InspectorElementId, IntoElement, Window
-};
+use crate::{AnyElement, App, ElementId, GlobalElementId, InspectorElementId, IntoElement, Window};
 
-pub use easing::*;
 pub use animatable::*;
+pub use easing::*;
 use smallvec::SmallVec;
 
 /// An animation that can be applied to an element.
@@ -173,7 +171,8 @@ impl<E: IntoElement + 'static> animatable::AnimatableExt for AnimationElement<E>
 
 mod animatable {
     use crate::{
-        AnyElement, App, Element, ElementId, GlobalElementId, InspectorElementId, IntoElement, Window,
+        AnyElement, App, Element, ElementId, GlobalElementId, InspectorElementId, IntoElement,
+        Window,
     };
 
     /// An extension trait that reduces the boilerplate required to make an element animated.

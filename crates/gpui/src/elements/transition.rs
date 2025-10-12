@@ -1,9 +1,15 @@
 use std::{
-    fmt::Debug, ops::{Add, Mul, Sub}, rc::Rc, time::{Duration, Instant}, borrow::BorrowMut
+    borrow::BorrowMut,
+    fmt::Debug,
+    ops::{Add, Mul, Sub},
+    rc::Rc,
+    time::{Duration, Instant},
 };
 
 use crate::{
-    AnimatableExt, AnyElement, App, Bounds, Corners, DevicePixels, Edges, ElementId, Entity, GlobalElementId, Hsla, InspectorElementId, IntoElement, Percentage, Pixels, Point, Radians, Rems, Rgba, ScaledPixels, Size, Window, colors::Colors, linear
+    AnimatableExt, AnyElement, App, Bounds, Corners, DevicePixels, Edges, ElementId, Entity,
+    GlobalElementId, Hsla, InspectorElementId, IntoElement, Percentage, Pixels, Point, Radians,
+    Rems, Rgba, ScaledPixels, Size, Window, colors::Colors, linear,
 };
 
 /// A transition that can be applied to an element.
@@ -16,7 +22,7 @@ pub struct Transition<T: TransitionGoal + Clone> {
     /// between 0 and 1 based on the given easing function.
     easing: Rc<dyn Fn(f32) -> f32>,
 
-    state: Entity<TransitionState<T>>
+    state: Entity<TransitionState<T>>,
 }
 
 impl<T: TransitionGoal + Clone + PartialEq + 'static> Transition<T> {
@@ -24,13 +30,15 @@ impl<T: TransitionGoal + Clone + PartialEq + 'static> Transition<T> {
     pub fn read_goal<'a>(&self, cx: &'a App) -> &'a T {
         &self.state.read(cx).current_goal
     }
-    
+
     /// Updates the goal for the transition without notifying gpui of any changes.
     pub fn update_goal_silently(&self, new_goal: T, cx: &mut App) -> bool {
         let mut was_updated = false;
 
         self.state.update(cx, |state, _cx| {
-            if state.current_goal == new_goal { return };
+            if state.current_goal == new_goal {
+                return;
+            };
 
             state.goal_last_updated_at = Instant::now();
             state.last_goal = std::mem::replace(&mut state.current_goal, new_goal);
@@ -79,11 +87,18 @@ impl<T: TransitionGoal + Clone> TransitionState<T> {
 
 impl<T: TransitionGoal + Clone + 'static> Transition<T> {
     /// Create a new transition with the given duration and goal.
-    pub fn new(id: impl Into<ElementId>, duration: Duration, initial_goal: T, window: &mut Window, cx: &mut App) -> Self {
+    pub fn new(
+        id: impl Into<ElementId>,
+        duration: Duration,
+        initial_goal: T,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Self {
         Self {
             duration_secs: duration.as_secs_f32(),
             easing: Rc::new(linear),
-            state: window.use_keyed_state(id, cx, |_window, _cx| TransitionState::new(initial_goal))
+            state: window
+                .use_keyed_state(id, cx, |_window, _cx| TransitionState::new(initial_goal)),
         }
     }
 
@@ -92,7 +107,7 @@ impl<T: TransitionGoal + Clone + 'static> Transition<T> {
         Self {
             duration_secs: duration.as_secs_f32(),
             easing: Rc::new(linear),
-            state
+            state,
         }
     }
 
@@ -142,7 +157,9 @@ impl<E, T: TransitionGoal + Clone> TransitionElement<E, T> {
     }
 }
 
-impl<E: IntoElement + 'static, T: TransitionGoal + Clone + 'static> IntoElement for TransitionElement<E, T> {
+impl<E: IntoElement + 'static, T: TransitionGoal + Clone + 'static> IntoElement
+    for TransitionElement<E, T>
+{
     type Element = TransitionElement<E, T>;
 
     fn into_element(self) -> Self::Element {
@@ -150,7 +167,9 @@ impl<E: IntoElement + 'static, T: TransitionGoal + Clone + 'static> IntoElement 
     }
 }
 
-impl<E: IntoElement + 'static, T: TransitionGoal + Clone + 'static> AnimatableExt for TransitionElement<E, T> {
+impl<E: IntoElement + 'static, T: TransitionGoal + Clone + 'static> AnimatableExt
+    for TransitionElement<E, T>
+{
     fn request_layout(
         &mut self,
         _global_id: Option<&GlobalElementId>,
@@ -163,7 +182,8 @@ impl<E: IntoElement + 'static, T: TransitionGoal + Clone + 'static> AnimatableEx
 
         let elapsed_secs = state.goal_last_updated_at.elapsed().as_secs_f32();
         let duration_secs = self.transition.duration_secs;
-        let delta = (self.transition.easing)((state.start_delta + (elapsed_secs / duration_secs)).min(1.));
+        let delta =
+            (self.transition.easing)((state.start_delta + (elapsed_secs / duration_secs)).min(1.));
 
         debug_assert!(
             (0.0..=1.0).contains(&delta),
@@ -215,8 +235,18 @@ macro_rules! int_transition_goals {
 }
 
 int_transition_goals!(
-    usize as f32, u8 as f32, u16 as f32, u32 as f32, u64 as f64, u128 as f64,
-    isize as f32, i8 as f32, i16 as f32, i32 as f32, i64 as f64, i128 as f64
+    usize as f32,
+    u8 as f32,
+    u16 as f32,
+    u32 as f32,
+    u64 as f64,
+    u128 as f64,
+    isize as f32,
+    i8 as f32,
+    i16 as f32,
+    i32 as f32,
+    i64 as f64,
+    i128 as f64
 );
 
 macro_rules! struct_transition_goals {
