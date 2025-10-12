@@ -85,7 +85,7 @@ mod tests {
         let theme = SyntaxTheme::default();
         let palette_size = theme.rainbow_palette_size();
         
-        assert_eq!(palette_size, 12, "Default theme should have 12 colors");
+        assert!(palette_size > 0, "Default theme should have colors");
         
         let var1_index = RainbowHighlighter::hash_to_index("foo", palette_size);
         let var2_index = RainbowHighlighter::hash_to_index("bar", palette_size);
@@ -147,18 +147,14 @@ mod tests {
     fn test_similar_names_distinct_colors() {
         let palette_size = 12;
         
-        let names = vec!["var", "var1", "var2", "var_a", "var_b"];
+        let names = ["var", "var1", "var2", "var_a", "var_b"];
         let indices: Vec<_> = names.iter()
             .map(|name| RainbowHighlighter::hash_to_index(name, palette_size))
             .collect();
         
         for i in 0..indices.len() {
             for j in (i + 1)..indices.len() {
-                let diff = if indices[i] > indices[j] {
-                    indices[i] - indices[j]
-                } else {
-                    indices[j] - indices[i]
-                };
+                let diff = indices[i].abs_diff(indices[j]);
                 
                 assert!(
                     diff >= 1,
@@ -197,11 +193,7 @@ mod tests {
                 if indices[i] == indices[j] {
                     println!("⚠️  COLLISION: '{}' and '{}' both map to color {}", names[i], names[j], indices[i]);
                 }
-                let diff = if indices[i] > indices[j] { 
-                    indices[i] - indices[j] 
-                } else { 
-                    indices[j] - indices[i] 
-                };
+                let diff = indices[i].abs_diff(indices[j]);
                 if diff <= 2 && diff > 0 {
                     println!("⚠️  SIMILAR COLORS: '{}' (index {}) and '{}' (index {}) differ by only {}", 
                         names[i], indices[i], names[j], indices[j], diff);

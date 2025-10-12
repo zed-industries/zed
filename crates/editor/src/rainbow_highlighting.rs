@@ -8,6 +8,7 @@ use crate::rainbow_highlighter::RainbowHighlighter;
 /// Shared rainbow highlighting for tree-sitter and LSP semantic tokens.
 /// Provides both uncached and cached variants for different use cases.
 #[inline]
+#[allow(dead_code)]
 pub fn try_rainbow_highlight(
     identifier: &str,
     is_variable_like: bool,

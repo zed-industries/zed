@@ -888,9 +888,7 @@ impl DisplaySnapshot {
 
                     let is_variable_like = capture_name
                         .as_ref()
-                        .map(|name| {
-                            name.starts_with("variable") && !name.contains("special")
-                        })
+                        .map(|name| { name.starts_with("variable") && !name.contains("special") })
                         .unwrap_or(false);
 
                     let rainbow_style = if is_variable_like {

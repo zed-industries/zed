@@ -1,17 +1,11 @@
-use collections::{BTreeMap, HashMap};
+use collections::{ BTreeMap, HashMap };
 use gpui::HighlightStyle;
 use language::Chunk;
-use multi_buffer::{MultiBufferChunks, MultiBufferSnapshot, ToOffset as _};
-use std::{
-    cmp,
-    iter::{self, Peekable},
-    ops::Range,
-    sync::Arc,
-    vec,
-};
+use multi_buffer::{ MultiBufferChunks, MultiBufferSnapshot, ToOffset as _ };
+use std::{ cmp, iter::{ self, Peekable }, ops::Range, sync::Arc, vec };
 use text::BufferId;
 
-use crate::display_map::{HighlightKey, SemanticTokenView, TextHighlights};
+use crate::display_map::{ HighlightKey, SemanticTokenView, TextHighlights };
 
 pub struct CustomHighlightsChunks<'a> {
     buffer_chunks: MultiBufferChunks<'a>,
@@ -38,7 +32,7 @@ impl<'a> CustomHighlightsChunks<'a> {
         language_aware: bool,
         text_highlights: Option<&'a TextHighlights>,
         semantic_tokens: Option<&'a HashMap<BufferId, Arc<SemanticTokenView>>>,
-        multibuffer_snapshot: &'a MultiBufferSnapshot,
+        multibuffer_snapshot: &'a MultiBufferSnapshot
     ) -> Self {
         Self {
             buffer_chunks: multibuffer_snapshot.chunks(range.clone(), language_aware),
@@ -50,7 +44,7 @@ impl<'a> CustomHighlightsChunks<'a> {
                 &range,
                 text_highlights,
                 semantic_tokens,
-                multibuffer_snapshot,
+                multibuffer_snapshot
             ),
             active_highlights: Default::default(),
             multibuffer_snapshot,
@@ -63,7 +57,7 @@ impl<'a> CustomHighlightsChunks<'a> {
             &new_range,
             self.text_highlights,
             self.semantic_tokens,
-            self.multibuffer_snapshot,
+            self.multibuffer_snapshot
         );
         self.offset = new_range.start;
         self.buffer_chunks.seek(new_range);
@@ -76,7 +70,7 @@ fn create_highlight_endpoints(
     range: &Range<usize>,
     text_highlights: Option<&TextHighlights>,
     semantic_tokens: Option<&HashMap<BufferId, Arc<SemanticTokenView>>>,
-    buffer: &MultiBufferSnapshot,
+    buffer: &MultiBufferSnapshot
 ) -> iter::Peekable<vec::IntoIter<HighlightEndpoint>> {
     let mut highlight_endpoints = Vec::new();
     if let Some(text_highlights) = text_highlights {
@@ -86,14 +80,16 @@ fn create_highlight_endpoints(
             let style = text_highlights.0;
             let ranges = &text_highlights.1;
 
-            let start_ix = match ranges.binary_search_by(|probe| {
-                let cmp = probe.end.cmp(&start, buffer);
-                if cmp.is_gt() {
-                    cmp::Ordering::Greater
-                } else {
-                    cmp::Ordering::Less
-                }
-            }) {
+            let start_ix = match
+                ranges.binary_search_by(|probe| {
+                    let cmp = probe.end.cmp(&start, buffer);
+                    if cmp.is_gt() {
+                        cmp::Ordering::Greater
+                    } else {
+                        cmp::Ordering::Less
+                    }
+                })
+            {
                 Ok(i) | Err(i) => i,
             };
 
@@ -130,9 +126,7 @@ fn create_highlight_endpoints(
                 .buffer()
                 .range_to_version(excerpt.map_range_to_buffer(range.clone()), &tokens.version);
             for token in tokens.tokens_in_range(buffer_range) {
-                let token_range = excerpt
-                    .buffer()
-                    .range_from_version(token.range.clone(), &tokens.version);
+                let token_range = excerpt.buffer().range_from_version(token.range.clone(), &tokens.version);
                 if !excerpt.contains_partial_buffer_range(token_range.clone()) {
                     continue;
                 }
@@ -178,9 +172,7 @@ impl<'a> Iterator for CustomHighlightsChunks<'a> {
             }
         }
 
-        let chunk = self
-            .buffer_chunk
-            .get_or_insert_with(|| self.buffer_chunks.next().unwrap_or_default());
+        let chunk = self.buffer_chunk.get_or_insert_with(|| self.buffer_chunks.next().unwrap_or_default());
         if chunk.text.is_empty() {
             *chunk = self.buffer_chunks.next()?;
         }
@@ -210,8 +202,7 @@ impl<'a> Iterator for CustomHighlightsChunks<'a> {
             ..chunk.clone()
         };
         if !self.active_highlights.is_empty() {
-            prefix.highlight_style = self
-                .active_highlights
+            prefix.highlight_style = self.active_highlights
                 .values()
                 .copied()
                 .reduce(|acc, active_highlight| acc.highlight(active_highlight));
@@ -228,15 +219,13 @@ impl PartialOrd for HighlightEndpoint {
 
 impl Ord for HighlightEndpoint {
     fn cmp(&self, other: &Self) -> cmp::Ordering {
-        self.offset
-            .cmp(&other.offset)
-            .then_with(|| self.style.is_some().cmp(&other.style.is_some()))
+        self.offset.cmp(&other.offset).then_with(|| self.style.is_some().cmp(&other.style.is_some()))
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::{any::TypeId, sync::Arc};
+    use std::{ any::TypeId, sync::Arc };
 
     use super::*;
     use crate::MultiBuffer;
@@ -305,13 +294,7 @@ mod tests {
         }
 
         // Get all chunks and verify their bitmaps
-        let chunks = CustomHighlightsChunks::new(
-            0..buffer_snapshot.len(),
-            false,
-            None,
-            None,
-            &buffer_snapshot,
-        );
+        let chunks = CustomHighlightsChunks::new(0..buffer_snapshot.len(), false, None, None, &buffer_snapshot);
 
         for chunk in chunks {
             let chunk_text = chunk.text;
@@ -320,20 +303,13 @@ mod tests {
 
             // Check empty chunks have empty bitmaps
             if chunk_text.is_empty() {
-                assert_eq!(
-                    chars_bitmap, 0,
-                    "Empty chunk should have empty chars bitmap"
-                );
+                assert_eq!(chars_bitmap, 0, "Empty chunk should have empty chars bitmap");
                 assert_eq!(tabs_bitmap, 0, "Empty chunk should have empty tabs bitmap");
                 continue;
             }
 
             // Verify that chunk text doesn't exceed 128 bytes
-            assert!(
-                chunk_text.len() <= 128,
-                "Chunk text length {} exceeds 128 bytes",
-                chunk_text.len()
-            );
+            assert!(chunk_text.len() <= 128, "Chunk text length {} exceeds 128 bytes", chunk_text.len());
 
             // Verify chars bitmap
             let char_indices = chunk_text
@@ -343,16 +319,20 @@ mod tests {
 
             for byte_idx in 0..chunk_text.len() {
                 let should_have_bit = char_indices.contains(&byte_idx);
-                let has_bit = chars_bitmap & (1 << byte_idx) != 0;
+                let has_bit = (chars_bitmap & (1 << byte_idx)) != 0;
 
                 if has_bit != should_have_bit {
                     eprintln!("Chunk text bytes: {:?}", chunk_text.as_bytes());
                     eprintln!("Char indices: {:?}", char_indices);
                     eprintln!("Chars bitmap: {:#b}", chars_bitmap);
                     assert_eq!(
-                        has_bit, should_have_bit,
+                        has_bit,
+                        should_have_bit,
                         "Chars bitmap mismatch at byte index {} in chunk {:?}. Expected bit: {}, Got bit: {}",
-                        byte_idx, chunk_text, should_have_bit, has_bit
+                        byte_idx,
+                        chunk_text,
+                        should_have_bit,
+                        has_bit
                     );
                 }
             }
@@ -360,15 +340,20 @@ mod tests {
             // Verify tabs bitmap
             for (byte_idx, byte) in chunk_text.bytes().enumerate() {
                 let is_tab = byte == b'\t';
-                let has_bit = tabs_bitmap & (1 << byte_idx) != 0;
+                let has_bit = (tabs_bitmap & (1 << byte_idx)) != 0;
 
                 if has_bit != is_tab {
                     eprintln!("Chunk text bytes: {:?}", chunk_text.as_bytes());
                     eprintln!("Tabs bitmap: {:#b}", tabs_bitmap);
                     assert_eq!(
-                        has_bit, is_tab,
+                        has_bit,
+                        is_tab,
                         "Tabs bitmap mismatch at byte index {} in chunk {:?}. Byte: {:?}, Expected bit: {}, Got bit: {}",
-                        byte_idx, chunk_text, byte as char, is_tab, has_bit
+                        byte_idx,
+                        chunk_text,
+                        byte as char,
+                        is_tab,
+                        has_bit
                     );
                 }
             }

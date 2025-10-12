@@ -50,6 +50,10 @@ mod code_completion_tests;
 mod edit_prediction_tests;
 #[cfg(test)]
 mod editor_tests;
+#[cfg(test)]
+mod rainbow_highlighting_tests;
+#[cfg(test)]
+mod rainbow_integration_tests;
 mod signature_help;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
@@ -19016,6 +19020,8 @@ impl Editor {
             ),
             cx
         );
+
+        crate::rainbow_cache::clear_rainbow_cache();
 
         let old_cursor_shape = self.cursor_shape;
         let old_show_breadcrumbs = self.show_breadcrumbs;
