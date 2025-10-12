@@ -1,4 +1,4 @@
-use std::{cmp, ops::Range, time::Duration};
+use std::{cmp, ops::Range};
 
 use collections::HashMap;
 use futures::future::join_all;
@@ -13,8 +13,8 @@ use ui::{App, Context, Window};
 use util::post_inc;
 
 use crate::{
-    DisplayPoint, Editor, EditorSettings, EditorSnapshot, InlayId, InlaySplice, RangeToAnchorExt,
-    display_map::Inlay, editor_settings::DocumentColorsRenderMode,
+    DisplayPoint, Editor, EditorSettings, EditorSnapshot, FETCH_COLORS_DEBOUNCE_TIMEOUT, InlayId,
+    InlaySplice, RangeToAnchorExt, display_map::Inlay, editor_settings::DocumentColorsRenderMode,
 };
 
 #[derive(Debug)]
@@ -196,7 +196,7 @@ impl Editor {
 
         self.refresh_colors_task = cx.spawn(async move |editor, cx| {
             cx.background_executor()
-                .timer(Duration::from_millis(150))
+                .timer(FETCH_COLORS_DEBOUNCE_TIMEOUT)
                 .await;
 
             let all_colors = join_all(all_colors_task).await;
