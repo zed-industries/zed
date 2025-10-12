@@ -427,62 +427,6 @@ fn template_and_validate_json_snippets(book: &mut Book, errors: &mut HashSet<Pre
         };
         Ok(())
     });
-    // for_each_chapter_mut(book, |chapter| {
-    //     let mut offset = 0;
-    //     const SETTINGS_SNIPPET_TAG: &'static str = "```json [settings]";
-    //     let (json_code_block, settings_block) = SETTINGS_SNIPPET_TAG.split_once(' ').unwrap();
-    //     while let Some(loc) = chapter.content[offset..].find(SETTINGS_SNIPPET_TAG) {
-    //         let loc = loc + offset;
-    //         let settings_block_range =
-    //             loc + json_code_block.len()..loc + SETTINGS_SNIPPET_TAG.len();
-    //         assert_eq!(
-    //             &chapter.content[settings_block_range.clone()][1..],
-    //             settings_block
-    //         );
-    //         chapter.content.replace_range(settings_block_range, "");
-    //         let snippet_start = loc + json_code_block.len();
-    //         let Some(snippet_end) = chapter.content[snippet_start..].find("```") else {
-    //             errors.insert(PreprocessorError::new_for_invalid_settings_json(
-    //                 chapter,
-    //                 loc,
-    //                 chapter.content[loc..loc + json_code_block.len()].to_string(),
-    //                 "Missing closing code block".to_string(),
-    //             ));
-    //             offset = loc + json_code_block.len();
-    //             continue;
-    //         };
-    //         let snippet_end = snippet_start + snippet_end;
-    //         let snippet_json = &chapter.content[snippet_start..snippet_end];
-    //         let mut snippet_json_fixed = snippet_json
-    //             .to_string()
-    //             .replace("\n>", "\n")
-    //             .trim()
-    //             .to_string();
-    //         while snippet_json_fixed.starts_with("//") {
-    //             if let Some(line_end) = snippet_json_fixed.find('\n') {
-    //                 snippet_json_fixed.replace_range(0..line_end, "");
-    //                 snippet_json_fixed = snippet_json_fixed.trim().to_string();
-    //             }
-    //         }
-    //         if !snippet_json_fixed.starts_with('{') || !snippet_json_fixed.ends_with('}') {
-    //             snippet_json_fixed.insert(0, '{');
-    //             snippet_json_fixed.push_str("\n}");
-    //         }
-    //         let parse_result = settings::parse_json_with_comments::<settings::SettingsContent>(
-    //             &snippet_json_fixed,
-    //         );
-    //         if let Err(err) = parse_result {
-    //             errors.insert(PreprocessorError::new_for_invalid_settings_json(
-    //                 chapter,
-    //                 loc,
-    //                 snippet_json.to_string(),
-    //                 err.to_string(),
-    //             ));
-    //         }
-
-    //         offset = snippet_end + 3;
-    //     }
-    // })
 }
 
 /// Removes any configurable options from the stringified action if existing,
