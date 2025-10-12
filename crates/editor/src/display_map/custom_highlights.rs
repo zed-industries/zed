@@ -1,4 +1,4 @@
-use collections::BTreeMap;
+use collections::{BTreeMap, HashMap};
 use gpui::HighlightStyle;
 use language::Chunk;
 use multi_buffer::{MultiBufferChunks, MultiBufferSnapshot, ToOffset as _};
@@ -6,10 +6,12 @@ use std::{
     cmp,
     iter::{self, Peekable},
     ops::Range,
+    sync::Arc,
     vec,
 };
+use text::BufferId;
 
-use crate::display_map::{HighlightKey, TextHighlights};
+use crate::display_map::{HighlightKey, SemanticTokenView, TextHighlights};
 
 pub struct CustomHighlightsChunks<'a> {
     buffer_chunks: MultiBufferChunks<'a>,
@@ -20,6 +22,7 @@ pub struct CustomHighlightsChunks<'a> {
     highlight_endpoints: Peekable<vec::IntoIter<HighlightEndpoint>>,
     active_highlights: BTreeMap<HighlightKey, HighlightStyle>,
     text_highlights: Option<&'a TextHighlights>,
+    semantic_tokens: Option<&'a HashMap<BufferId, Arc<SemanticTokenView>>>,
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -34,6 +37,7 @@ impl<'a> CustomHighlightsChunks<'a> {
         range: Range<usize>,
         language_aware: bool,
         text_highlights: Option<&'a TextHighlights>,
+        semantic_tokens: Option<&'a HashMap<BufferId, Arc<SemanticTokenView>>>,
         multibuffer_snapshot: &'a MultiBufferSnapshot,
     ) -> Self {
         Self {
@@ -45,16 +49,22 @@ impl<'a> CustomHighlightsChunks<'a> {
             highlight_endpoints: create_highlight_endpoints(
                 &range,
                 text_highlights,
+                semantic_tokens,
                 multibuffer_snapshot,
             ),
             active_highlights: Default::default(),
             multibuffer_snapshot,
+            semantic_tokens,
         }
     }
 
     pub fn seek(&mut self, new_range: Range<usize>) {
-        self.highlight_endpoints =
-            create_highlight_endpoints(&new_range, self.text_highlights, self.multibuffer_snapshot);
+        self.highlight_endpoints = create_highlight_endpoints(
+            &new_range,
+            self.text_highlights,
+            self.semantic_tokens,
+            self.multibuffer_snapshot,
+        );
         self.offset = new_range.start;
         self.buffer_chunks.seek(new_range);
         self.buffer_chunk.take();
@@ -65,6 +75,7 @@ impl<'a> CustomHighlightsChunks<'a> {
 fn create_highlight_endpoints(
     range: &Range<usize>,
     text_highlights: Option<&TextHighlights>,
+    semantic_tokens: Option<&HashMap<BufferId, Arc<SemanticTokenView>>>,
     buffer: &MultiBufferSnapshot,
 ) -> iter::Peekable<vec::IntoIter<HighlightEndpoint>> {
     let mut highlight_endpoints = Vec::new();
@@ -108,8 +119,43 @@ fn create_highlight_endpoints(
                 });
             }
         }
-        highlight_endpoints.sort();
     }
+    if let Some(tokens) = semantic_tokens {
+        for mut excerpt in buffer.excerpts_for_range(range.clone()) {
+            let Some(tokens) = tokens.get(&excerpt.buffer_id()) else {
+                continue;
+            };
+
+            let buffer_range = excerpt
+                .buffer()
+                .range_to_version(excerpt.map_range_to_buffer(range.clone()), &tokens.version);
+            for token in tokens.tokens_in_range(buffer_range) {
+                let token_range = excerpt
+                    .buffer()
+                    .range_from_version(token.range.clone(), &tokens.version);
+                if !excerpt.contains_partial_buffer_range(token_range.clone()) {
+                    continue;
+                }
+                let token_range = excerpt.map_range_from_buffer(token_range);
+
+                if token_range.end <= range.start || token_range.start >= range.end {
+                    continue;
+                }
+
+                highlight_endpoints.push(HighlightEndpoint {
+                    offset: token_range.start,
+                    tag: HighlightKey::Type(std::any::TypeId::of::<()>()),
+                    style: Some(token.style),
+                });
+                highlight_endpoints.push(HighlightEndpoint {
+                    offset: token_range.end,
+                    tag: HighlightKey::Type(std::any::TypeId::of::<()>()),
+                    style: None,
+                });
+            }
+        }
+    }
+    highlight_endpoints.sort();
     highlight_endpoints.into_iter().peekable()
 }
 
@@ -259,8 +305,13 @@ mod tests {
         }
 
         // Get all chunks and verify their bitmaps
-        let chunks =
-            CustomHighlightsChunks::new(0..buffer_snapshot.len(), false, None, &buffer_snapshot);
+        let chunks = CustomHighlightsChunks::new(
+            0..buffer_snapshot.len(),
+            false,
+            None,
+            None,
+            &buffer_snapshot,
+        );
 
         for chunk in chunks {
             let chunk_text = chunk.text;
