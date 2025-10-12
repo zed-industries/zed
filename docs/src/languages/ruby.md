@@ -294,7 +294,7 @@ To run tests in your Ruby project, you can set up custom tasks in your local `.z
 
 ### Minitest with Rails
 
-```json [debug]
+```json [tasks]
 [
   {
     "label": "test $ZED_RELATIVE_FILE -n /$ZED_CUSTOM_RUBY_TEST_NAME/",
@@ -336,7 +336,7 @@ Plain minitest does not support running tests by line number, only by name, so w
 
 ### RSpec
 
-```json [debug]
+```json [tasks]
 [
   {
     "label": "test $ZED_RELATIVE_FILE:$ZED_ROW",

@@ -172,7 +172,7 @@ You might find yourself needing to connect to an existing instance of Delve that
     "request": "launch",
     "mode": "exec",
     "stopOnEntry": false,
-    "tcp_connection": { "host": "123.456.789.012", "port": 53412 }
+    "tcp_connection": { "host": "127.0.0.1", "port": 53412 }
   }
 ]
 ```
