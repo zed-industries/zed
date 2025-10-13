@@ -6,7 +6,6 @@ mod tool_picker;
 
 use std::{ops::Range, sync::Arc};
 
-use agent_settings::AgentSettings;
 use anyhow::Result;
 use assistant_tool::{ToolSource, ToolWorkingSet};
 use cloud_llm_client::{Plan, PlanV1, PlanV2};
@@ -29,10 +28,10 @@ use project::{
     agent_server_store::{AgentServerStore, CLAUDE_CODE_NAME, CODEX_NAME, GEMINI_NAME},
     context_server_store::{ContextServerConfiguration, ContextServerStatus, ContextServerStore},
 };
-use settings::{Settings, SettingsStore, update_settings_file};
+use settings::{SettingsStore, update_settings_file};
 use ui::{
     Chip, CommonAnimationExt, ContextMenu, Disclosure, Divider, DividerColor, ElevationIndex,
-    Indicator, PopoverMenu, Switch, SwitchColor, SwitchField, Tooltip, WithScrollbar, prelude::*,
+    Indicator, PopoverMenu, Switch, SwitchColor, Tooltip, WithScrollbar, prelude::*,
 };
 use util::ResultExt as _;
 use workspace::{Workspace, create_and_open_local_file};
@@ -400,101 +399,6 @@ impl AgentConfiguration {
                         }),
                     ),
             )
-    }
-
-    fn render_command_permission(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
-        let always_allow_tool_actions = AgentSettings::get_global(cx).always_allow_tool_actions;
-        let fs = self.fs.clone();
-
-        SwitchField::new(
-            "always-allow-tool-actions-switch",
-            Some("Allow running commands without asking for confirmation"),
-            Some(
-                "The agent can perform potentially destructive actions without asking for your confirmation.".into(),
-            ),
-            always_allow_tool_actions,
-            move |state, _window, cx| {
-                let allow = state == &ToggleState::Selected;
-                update_settings_file(fs.clone(), cx, move |settings, _| {
-                    settings.agent.get_or_insert_default().set_always_allow_tool_actions(allow);
-                });
-            },
-        )
-    }
-
-    fn render_single_file_review(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
-        let single_file_review = AgentSettings::get_global(cx).single_file_review;
-        let fs = self.fs.clone();
-
-        SwitchField::new(
-            "single-file-review",
-            Some("Enable single-file agent reviews"),
-            Some("Agent edits are also displayed in single-file editors for review.".into()),
-            single_file_review,
-            move |state, _window, cx| {
-                let allow = state == &ToggleState::Selected;
-                update_settings_file(fs.clone(), cx, move |settings, _| {
-                    settings
-                        .agent
-                        .get_or_insert_default()
-                        .set_single_file_review(allow);
-                });
-            },
-        )
-    }
-
-    fn render_sound_notification(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
-        let play_sound_when_agent_done = AgentSettings::get_global(cx).play_sound_when_agent_done;
-        let fs = self.fs.clone();
-
-        SwitchField::new(
-            "sound-notification",
-            Some("Play sound when finished generating"),
-            Some(
-                "Hear a notification sound when the agent is done generating changes or needs your input.".into(),
-            ),
-            play_sound_when_agent_done,
-            move |state, _window, cx| {
-                let allow = state == &ToggleState::Selected;
-                update_settings_file(fs.clone(), cx, move |settings, _| {
-                    settings.agent.get_or_insert_default().set_play_sound_when_agent_done(allow);
-                });
-            },
-        )
-    }
-
-    fn render_modifier_to_send(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
-        let use_modifier_to_send = AgentSettings::get_global(cx).use_modifier_to_send;
-        let fs = self.fs.clone();
-
-        SwitchField::new(
-            "modifier-send",
-            Some("Use modifier to submit a message"),
-            Some(
-                "Make a modifier (cmd-enter on macOS, ctrl-enter on Linux or Windows) required to send messages.".into(),
-            ),
-            use_modifier_to_send,
-            move |state, _window, cx| {
-                let allow = state == &ToggleState::Selected;
-                update_settings_file(fs.clone(), cx, move |settings, _| {
-                    settings.agent.get_or_insert_default().set_use_modifier_to_send(allow);
-                });
-            },
-        )
-    }
-
-    fn render_general_settings_section(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
-        v_flex()
-            .p(DynamicSpacing::Base16.rems(cx))
-            .pr(DynamicSpacing::Base20.rems(cx))
-            .gap_2p5()
-            .border_b_1()
-            .border_color(cx.theme().colors().border)
-            .child(Headline::new("General Settings"))
-            .child(self.render_command_permission(cx))
-            .child(self.render_single_file_review(cx))
-            .child(self.render_sound_notification(cx))
-            .child(self.render_modifier_to_send(cx))
     }
 
     fn render_zed_plan_info(&self, plan: Option<Plan>, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1141,7 +1045,6 @@ impl Render for AgentConfiguration {
                             .track_scroll(&self.scroll_handle)
                             .size_full()
                             .overflow_y_scroll()
-                            .child(self.render_general_settings_section(cx))
                             .child(self.render_agent_servers_section(cx))
                             .child(self.render_context_servers_section(window, cx))
                             .child(self.render_provider_configuration_section(cx)),
