@@ -1,4 +1,4 @@
-use anyhow::{Context as _, Result, bail};
+use anyhow::{Context as _, Result, anyhow, bail};
 use collections::{BTreeMap, HashMap};
 use fs::Fs;
 use language::LanguageName;
@@ -226,8 +226,9 @@ impl ExtensionManifest {
                 .load(&extension_manifest_path)
                 .await
                 .with_context(|| format!("failed to load {extension_name} extension.toml"))?;
-            toml::from_str(&manifest_content)
-                .with_context(|| format!("invalid extension.toml for extension {extension_name}"))
+            toml::from_str(&manifest_content).map_err(|err| {
+                anyhow!("Invalid extension.toml for extension {extension_name}:\n{err}")
+            })
         }
     }
 }
