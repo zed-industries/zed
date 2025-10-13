@@ -3280,7 +3280,9 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     description: "Font size for terminal text. If not set, defaults to buffer font size",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
-                            if let Some(terminal) = &settings_content.terminal {
+                            if let Some(terminal) = &settings_content.terminal
+                                && terminal.font_size.is_some()
+                            {
                                 &terminal.font_size
                             } else if settings_content.theme.buffer_font_size.is_some() {
                                 &settings_content.theme.buffer_font_size
