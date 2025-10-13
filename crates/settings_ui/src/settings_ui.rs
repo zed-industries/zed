@@ -376,7 +376,8 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::DisplayIn>(render_dropdown)
         .add_basic_renderer::<settings::MinimapThumb>(render_dropdown)
         .add_basic_renderer::<settings::MinimapThumbBorder>(render_dropdown)
-        .add_basic_renderer::<settings::SteppingGranularity>(render_dropdown);
+        .add_basic_renderer::<settings::SteppingGranularity>(render_dropdown)
+        .add_basic_renderer::<settings::NotifyWhenAgentWaiting>(render_dropdown);
     // .add_renderer::<ThemeSelection>(|settings_field, file, _, window, cx| {
     //     render_dropdown(*settings_field, file, window, cx)
     // });
