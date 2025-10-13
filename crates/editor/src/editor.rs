@@ -10463,29 +10463,33 @@ impl Editor {
 
             let buffer = display_map.buffer_snapshot();
             let mut edit_start = ToOffset::to_offset(&Point::new(rows.start.0, 0), buffer);
-            let edit_end = if buffer.max_point().row >= rows.end.0 {
+            let (edit_end, target_row) = if buffer.max_point().row >= rows.end.0 {
                 // If there's a line after the range, delete the \n from the end of the row range
-                ToOffset::to_offset(&Point::new(rows.end.0, 0), buffer)
+                (
+                    ToOffset::to_offset(&Point::new(rows.end.0, 0), buffer),
+                    rows.end,
+                )
             } else {
                 // If there isn't a line after the range, delete the \n from the line before the
                 // start of the row range
                 edit_start = edit_start.saturating_sub(1);
-                buffer.len()
+                (buffer.len(), rows.start.previous_row())
             };
 
-            let (cursor, goal) = movement::down_by_rows(
-                &display_map,
+            let text_layout_details = self.text_layout_details(window);
+            let x = display_map.x_for_display_point(
                 selection.head().to_display_point(&display_map),
-                rows.len() as u32,
-                selection.goal,
-                false,
-                &self.text_layout_details(window),
+                &text_layout_details,
             );
+            let row = Point::new(target_row.0, 0)
+                .to_display_point(&display_map)
+                .row();
+            let column = display_map.display_column_for_x(row, x, &text_layout_details);
 
             new_cursors.push((
                 selection.id,
-                buffer.anchor_after(cursor.to_point(&display_map)),
-                goal,
+                buffer.anchor_after(DisplayPoint::new(row, column).to_point(&display_map)),
+                SelectionGoal::None,
             ));
             edit_ranges.push(edit_start..edit_end);
         }
