@@ -3,7 +3,7 @@ pub mod mappings;
 pub use alacritty_terminal;
 
 mod pty_info;
-pub mod terminal_hyperlinks;
+mod terminal_hyperlinks;
 pub mod terminal_settings;
 
 use alacritty_terminal::{
@@ -2824,5 +2824,28 @@ mod tests {
             "Bare CR should allow overwriting: got '{}'",
             text
         );
+    }
+}
+
+pub mod bench {
+    use crate::terminal_hyperlinks::{RegexSearches, find_from_grid_point};
+    use alacritty_terminal::{
+        event::VoidListener,
+        index::Point as AlacPoint,
+        term::{Term, search::Match},
+    };
+    use std::cell::RefCell;
+
+    pub fn find_from_grid_point_bench(
+        term: &Term<VoidListener>,
+        point: AlacPoint,
+    ) -> Option<(String, bool, Match)> {
+        thread_local! {
+            static TEST_REGEX_SEARCHES: RefCell<RegexSearches> = RefCell::new(RegexSearches::new());
+        }
+
+        TEST_REGEX_SEARCHES.with(|regex_searches| {
+            find_from_grid_point(&term, point, &mut regex_searches.borrow_mut())
+        })
     }
 }

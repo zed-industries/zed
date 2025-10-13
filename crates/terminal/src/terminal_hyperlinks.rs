@@ -1,8 +1,7 @@
 use alacritty_terminal::{
     Term,
     event::EventListener,
-    grid::Dimensions,
-    index::{Boundary, Column, Direction as AlacDirection, Line, Point as AlacPoint},
+    index::{Boundary, Direction as AlacDirection, Point as AlacPoint},
     term::search::{Match, RegexIter, RegexSearch},
 };
 use regex::Regex;
@@ -29,7 +28,7 @@ fn python_extract_path_and_line(input: &str) -> Option<(&str, u32)> {
     None
 }
 
-pub struct RegexSearches {
+pub(super) struct RegexSearches {
     url_regex: RegexSearch,
     word_regex: RegexSearch,
     python_file_line_regex: RegexSearch,
@@ -45,7 +44,7 @@ impl RegexSearches {
     }
 }
 
-pub fn find_from_grid_point<T: EventListener>(
+pub(super) fn find_from_grid_point<T: EventListener>(
     term: &Term<T>,
     point: AlacPoint,
     regex_searches: &mut RegexSearches,
@@ -230,38 +229,18 @@ fn is_path_surrounded_by_common_symbols(path: &str) -> bool {
             || path.starts_with('(') && path.ends_with(')'))
 }
 
-/// Based on alacritty/src/display/hint.rs > regex_match_at
-/// Retrieve the match, if the specified point is inside the content matching the regex.
 fn regex_match_at<T>(term: &Term<T>, point: AlacPoint, regex: &mut RegexSearch) -> Option<Match> {
-    visible_regex_match_iter(term, regex).find(|rm| rm.contains(&point))
-}
-
-/// Copied from alacritty/src/display/hint.rs:
-/// Iterate over all visible regex matches.
-fn visible_regex_match_iter<'a, T>(
-    term: &'a Term<T>,
-    regex: &'a mut RegexSearch,
-) -> impl Iterator<Item = Match> + 'a {
-    const MAX_SEARCH_LINES: usize = 100;
-
-    let viewport_start = Line(-(term.grid().display_offset() as i32));
-    let viewport_end = viewport_start + term.bottommost_line();
-    let mut start = term.line_search_left(AlacPoint::new(viewport_start, Column(0)));
-    let mut end = term.line_search_right(AlacPoint::new(viewport_end, Column(0)));
-    start.line = start.line.max(viewport_start - MAX_SEARCH_LINES);
-    end.line = end.line.min(viewport_end + MAX_SEARCH_LINES);
-
-    RegexIter::new(start, end, AlacDirection::Right, term, regex)
-        .skip_while(move |rm| rm.end().line < viewport_start)
-        .take_while(move |rm| rm.start().line <= viewport_end)
+    let (start, end) = (term.line_search_left(point), term.line_search_right(point));
+    RegexIter::new(start, end, AlacDirection::Right, term, regex).find(|rm| rm.contains(&point))
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use alacritty_terminal::{
         event::VoidListener,
-        index::{Boundary, Point as AlacPoint},
+        grid::Dimensions,
+        index::{Boundary, Column, Line, Point as AlacPoint},
         term::{Config, cell::Flags, test::TermSize},
         vte::ansi::Handler,
     };
