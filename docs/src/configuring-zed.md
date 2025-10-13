@@ -287,9 +287,9 @@ Controls the relative size of the drop target in the editor that will open dropp
 
 ## Edit Predictions
 
-- Description: Settings for edit predictions.
-- Setting: `edit_predictions`
-- Default:
+Specific settings for edit predictions.
+
+Default JSON:
 
 ```json [settings]
   "edit_predictions": {
@@ -309,8 +309,7 @@ Controls the relative size of the drop target in the editor that will open dropp
 
 ### Disabled Globs
 
-- Description: A list of globs for which edit predictions should be disabled for. This list adds to a pre-existing, sensible default set of globs. Any additional ones you add are combined with them.
-- Setting: `disabled_globs`
+- Description: A list of globs where edit predictions should be disabled. This list adds to a pre-existing, sensible default set of globs. Any additional ones you add are combined with them.
 - Default: `["**/.env*", "**/*.pem", "**/*.key", "**/*.cert", "**/*.crt", "**/.dev.vars", "**/secrets.yml"]`
 
 **Options**
@@ -319,8 +318,7 @@ List of `string` values.
 
 ## Edit Predictions Disabled in
 
-- Description: A list of language scopes in which edit predictions should be disabled.
-- Setting: `edit_predictions_disabled_in`
+A list of language scopes in which edit predictions should be disabled.
 - Default: `[]`
 
 **Options**
@@ -353,95 +351,50 @@ List of `string` values
 
 ## Current Line Highlight
 
-- Description: How to highlight the current line in the editor.
-- Setting: `current_line_highlight`
-- Default: `all`
+Determines how to highlight the current line in the editor. By default, the full line is highlighted.
 
 **Options**
 
-1. Don't highlight the current line:
-
-```json [settings]
-"current_line_highlight": "none"
-```
-
-2. Highlight the gutter area:
-
-```json [settings]
-"current_line_highlight": "gutter"
-```
-
-3. Highlight the editor area:
-
-```json [settings]
-"current_line_highlight": "line"
-```
-
-4. Highlight the full line:
-
-```json [settings]
-"current_line_highlight": "all"
-```
+1. None: Don't highlight the current line
+2. Gutter: Highlight the gutter area
+3. Line: Highlight the editor area
+4. All: Highlight the full line (Default)
 
 ## Selection Highlight
 
-- Description: Whether to highlight all occurrences of the selected text in an editor.
-- Setting: `selection_highlight`
-- Default: `true`
+Determines Whether to highlight all occurrences of the selected text in an editor. By default, it's enabled.
 
 ## Rounded Selection
 
-- Description: Whether the text selection should have rounded corners.
-- Setting: `rounded_selection`
-- Default: `true`
+Controls whether the text selection should have rounded corners. By default, it's enabled.
 
 ## Cursor Blink
 
-- Description: Whether or not the cursor blinks.
-- Setting: `cursor_blink`
-- Default: `true`
-
-**Options**
-
-`boolean` values
+Controls whether or not the cursor blinks. By default, it's enabled.
 
 ## Cursor Shape
 
-- Description: Cursor shape for the default editor.
-- Setting: `cursor_shape`
-- Default: `bar`
+Controls the cursor shape for the default editor. By default, it's shown as a bar.
 
 **Options**
-
-1. A vertical bar:
-
-```json [settings]
-"cursor_shape": "bar"
-```
-
-2. A block that surrounds the following character:
-
-```json [settings]
-"cursor_shape": "block"
-```
-
-3. An underline / underscore that runs along the following character:
-
-```json [settings]
-"cursor_shape": "underline"
-```
-
-4. An box drawn around the following character:
-
-```json [settings]
-"cursor_shape": "hollow"
-```
+1. Bar: A vertical bar
+2. Block: A block that surrounds the following character:
+3. Underline: An underline / underscore that runs along the following character:
+4. Hollow: A box drawn around the following character
 
 ## Gutter
 
-- Description: Settings for the editor gutter
-- Setting: `gutter`
-- Default:
+Control the settings for the editor gutter, including its breakpoints, folds, and line numbers.
+
+**Options**
+
+- `line_numbers`: Whether to show line numbers in the gutter
+- `runnables`: Whether to show runnable buttons in the gutter
+- `breakpoints`: Whether to show breakpoints in the gutter
+- `folds`: Whether to show fold buttons in the gutter
+- `min_line_number_digits`: Minimum number of characters to reserve space for in the gutter
+
+**Sample JSON**
 
 ```json [settings]
 {
@@ -455,77 +408,43 @@ List of `string` values
 }
 ```
 
-**Options**
-
-- `line_numbers`: Whether to show line numbers in the gutter
-- `runnables`: Whether to show runnable buttons in the gutter
-- `breakpoints`: Whether to show breakpoints in the gutter
-- `folds`: Whether to show fold buttons in the gutter
-- `min_line_number_digits`: Minimum number of characters to reserve space for in the gutter
-
 ## Hide Mouse
 
-- Description: Determines when the mouse cursor should be hidden in an editor or input box.
-- Setting: `hide_mouse`
-- Default: `on_typing_and_movement`
+Determines when the mouse cursor should be hidden in an editor or input box. By default, it hides when typing or during cursor movement.
 
 **Options**
 
-1. Never hide the mouse cursor:
-
-```json [settings]
-"hide_mouse": "never"
-```
-
-2. Hide only when typing:
-
-```json [settings]
-"hide_mouse": "on_typing"
-```
-
-3. Hide on both typing and cursor movement:
-
-```json [settings]
-"hide_mouse": "on_typing_and_movement"
-```
+1. Never hide the mouse cursor
+2. Hide only when typing
+3. Hide on both typing and cursor movement (default)
 
 ## Snippet Sort Order
 
-- Description: Determines how snippets are sorted relative to other completion items.
-- Setting: `snippet_sort_order`
-- Default: `inline`
+Determines how snippets are sorted relative to other completion items. By default, they are sorted inline.
 
 **Options**
 
-1. Place snippets at the top of the completion list:
-
-```json [settings]
-"snippet_sort_order": "top"
-```
-
-2. Place snippets normally without any preference:
-
-```json [settings]
-"snippet_sort_order": "inline"
-```
-
-3. Place snippets at the bottom of the completion list:
-
-```json [settings]
-"snippet_sort_order": "bottom"
-```
-
-4. Do not show snippets in the completion list at all:
-
-```json [settings]
-"snippet_sort_order": "none"
-```
+1. Top: Place snippets at the top of the completion list
+2. Inline: Place snippets normally without any preference (default)
+3. Bottom: Place snippets at the bottom of the completion list
+4. None: Do not show snippets in the completion list at all:
 
 ## Editor Scrollbar
 
-- Description: Whether or not to show the editor scrollbar and various elements in it.
-- Setting: `scrollbar`
-- Default:
+Determines whether or not to show the editor scrollbar and various elements in it. The scrollbar shows automatically by default, though this can be configured.
+
+By default, the scrollbar will show:
+- Cursor position
+- Git diff indicators
+- Buffer search results
+- Selected text
+- Selected symbols
+- Diagnostics
+- Horizontal and vertical axes
+
+All these options are configurable.
+
+**Sample JSON**
 
 ```json [settings]
 "scrollbar": {
@@ -545,183 +464,36 @@ List of `string` values
 
 ### Show Mode
 
-- Description: When to show the editor scrollbar.
-- Setting: `show`
-- Default: `auto`
+When to show the editor scrollbar.
 
 **Options**
-
-1. Show the scrollbar if there's important information or follow the system's configured behavior:
-
-```json [settings]
-"scrollbar": {
-  "show": "auto"
-}
-```
-
-2. Match the system's configured behavior:
-
-```json [settings]
-"scrollbar": {
-  "show": "system"
-}
-```
-
-3. Always show the scrollbar:
-
-```json [settings]
-"scrollbar": {
-  "show": "always"
-}
-```
-
-4. Never show the scrollbar:
-
-```json [settings]
-"scrollbar": {
-  "show": "never"
-}
-```
-
-### Cursor Indicators
-
-- Description: Whether to show cursor positions in the scrollbar.
-- Setting: `cursors`
-- Default: `true`
-
-**Options**
-
-`boolean` values
-
-### Git Diff Indicators
-
-- Description: Whether to show git diff indicators in the scrollbar.
-- Setting: `git_diff`
-- Default: `true`
-
-**Options**
-
-`boolean` values
-
-### Search Results Indicators
-
-- Description: Whether to show buffer search results in the scrollbar.
-- Setting: `search_results`
-- Default: `true`
-
-**Options**
-
-`boolean` values
-
-### Selected Text Indicators
-
-- Description: Whether to show selected text occurrences in the scrollbar.
-- Setting: `selected_text`
-- Default: `true`
-
-**Options**
-
-`boolean` values
-
-### Selected Symbols Indicators
-
-- Description: Whether to show selected symbol occurrences in the scrollbar.
-- Setting: `selected_symbol`
-- Default: `true`
-
-**Options**
-
-`boolean` values
+1. Auto: Show the scrollbar if there's important information or follow the system's configured behavior
+2. System: Match the system's configured behavior
+3. Always: Always show the scrollbar
+4. Never: Never show the scrollbar
 
 ### Diagnostics
 
-- Description: Which diagnostic indicators to show in the scrollbar.
-- Setting: `diagnostics`
-- Default: `all`
+Which diagnostic indicators to show in the scrollbar.
 
 **Options**
 
-1. Show all diagnostics:
-
-```json [settings]
-{
-  "show_diagnostics": "all"
-}
-```
-
-2. Do not show any diagnostics:
-
-```json [settings]
-{
-  "show_diagnostics": "off"
-}
-```
-
-3. Show only errors:
-
-```json [settings]
-{
-  "show_diagnostics": "error"
-}
-```
-
-4. Show only errors and warnings:
-
-```json [settings]
-{
-  "show_diagnostics": "warning"
-}
-```
-
-5. Show only errors, warnings, and information:
-
-```json [settings]
-{
-  "show_diagnostics": "info"
-}
-```
-
-### Axes
-
-- Description: Forcefully enable or disable the scrollbar for each axis
-- Setting: `axes`
-- Default:
-
-```json [settings]
-"scrollbar": {
-  "axes": {
-    "horizontal": true,
-    "vertical": true,
-  },
-}
-```
-
-#### Horizontal
-
-- Description: When false, forcefully disables the horizontal scrollbar. Otherwise, obey other settings.
-- Setting: `horizontal`
-- Default: `true`
-
-**Options**
-
-`boolean` values
-
-#### Vertical
-
-- Description: When false, forcefully disables the vertical scrollbar. Otherwise, obey other settings.
-- Setting: `vertical`
-- Default: `true`
-
-**Options**
-
-`boolean` values
+1. All: Show all diagnostics
+2. Off: Do not show any diagnostics
+3. Error: Show only errors
+4. Warning: Show only errors and warnings
+5. Info: Show only errors, warnings, and information
 
 ## Minimap
 
-- Description: Settings related to the editor's minimap, which provides an overview of your document.
-- Setting: `minimap`
-- Default:
+Configure how the minimap, which provides an overview of your document, shows in your editor. By default, the minimap does not show. 
 
+When it does show:
+- The thumb always shows
+- A border shows on all sides except the left
+- Minimap inherits the editor's current line highlight setting
+
+**Sample JSON**
 ```json [settings]
 {
   "minimap": {
@@ -733,167 +505,15 @@ List of `string` values
 }
 ```
 
-### Show Mode
+### Show Mode Details
 
-- Description: When to show the minimap in the editor.
-- Setting: `show`
-- Default: `never`
+When to show the minimap in the editor.
 
 **Options**
 
-1. Always show the minimap:
-
-```json [settings]
-{
-  "show": "always"
-}
-```
-
-2. Show the minimap if the editor's scrollbars are visible:
-
-```json [settings]
-{
-  "show": "auto"
-}
-```
-
-3. Never show the minimap:
-
-```json [settings]
-{
-  "show": "never"
-}
-```
-
-### Thumb Display
-
-- Description: When to show the minimap thumb (the visible editor area) in the minimap.
-- Setting: `thumb`
-- Default: `always`
-
-**Options**
-
-1. Show the minimap thumb when hovering over the minimap:
-
-```json [settings]
-{
-  "thumb": "hover"
-}
-```
-
-2. Always show the minimap thumb:
-
-```json [settings]
-{
-  "thumb": "always"
-}
-```
-
-### Thumb Border
-
-- Description: How the minimap thumb border should look.
-- Setting: `thumb_border`
-- Default: `left_open`
-
-**Options**
-
-1. Display a border on all sides of the thumb:
-
-```json [settings]
-{
-  "thumb_border": "full"
-}
-```
-
-2. Display a border on all sides except the left side:
-
-```json [settings]
-{
-  "thumb_border": "left_open"
-}
-```
-
-3. Display a border on all sides except the right side:
-
-```json [settings]
-{
-  "thumb_border": "right_open"
-}
-```
-
-4. Display a border only on the left side:
-
-```json [settings]
-{
-  "thumb_border": "left_only"
-}
-```
-
-5. Display the thumb without any border:
-
-```json [settings]
-{
-  "thumb_border": "none"
-}
-```
-
-### Current Line Highlight
-
-- Description: How to highlight the current line in the minimap.
-- Setting: `current_line_highlight`
-- Default: `null`
-
-**Options**
-
-1. Inherit the editor's current line highlight setting:
-
-```json [settings]
-{
-  "minimap": {
-    "current_line_highlight": null
-  }
-}
-```
-
-2. Highlight the current line in the minimap:
-
-```json [settings]
-{
-  "minimap": {
-    "current_line_highlight": "line"
-  }
-}
-```
-
-or
-
-```json [settings]
-{
-  "minimap": {
-    "current_line_highlight": "all"
-  }
-}
-```
-
-3. Do not highlight the current line in the minimap:
-
-```json [settings]
-{
-  "minimap": {
-    "current_line_highlight": "gutter"
-  }
-}
-```
-
-or
-
-```json [settings]
-{
-  "minimap": {
-    "current_line_highlight": "none"
-  }
-}
-```
+1. Always: Always show the minimap
+2. Auto: Show the minimap if the editor's scrollbars are visible
+3. Never: Never show the minimap
 
 ## Editor Tab Bar
 
