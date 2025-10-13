@@ -62,7 +62,7 @@ impl<T: TransitionGoal + Clone + PartialEq + 'static> Transition<T> {
         was_updated
     }
 
-    // Evaluates the value for the transition based on the previous and current goal.
+    // Evaluates the value for the transition based on the last and current goal.
     fn evaluate(&self, cx: &mut App) -> (bool, T) {
         let mut state_entity = self.state.as_mut(cx);
         let state: &mut TransitionState<T> = state_entity.borrow_mut();
@@ -211,7 +211,7 @@ impl<E: IntoElement + 'static, T: TransitionValues<'static> + Clone + 'static> A
 
 /// A type which can be used as a transition goal.
 pub trait TransitionGoal {
-    /// Defines how a delta is applied to a value.
+    /// Defines how a value is calculated from the last and current goal.
     fn apply_delta(&self, to: &Self, delta: f32) -> Self;
 }
 
@@ -316,7 +316,7 @@ pub trait TransitionValues<'a> {
     /// The underlying type of the values.
     type Values;
 
-    /// Evaluates the values for the transitions based on the previous and current goal.
+    /// Evaluates the values for the transitions based on the last and current goal.
     fn evaluate(&self, cx: &mut App) -> (bool, Self::Values);
 }
 
