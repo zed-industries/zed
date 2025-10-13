@@ -121,26 +121,20 @@ pub fn hash_to_color_index(identifier: &str, palette_size: usize) -> usize {
 // Golden Ratio HSL Color Generation
 // ============================================================================
 
-const GOLDEN_RATIO_CONJUGATE: f32 = 0.618033988749895;
+const GOLDEN_RATIO_MULTIPLIER_F64: u64 = 11400714819323198485u64;
 
-/// Generates a color using golden ratio for optimal color distribution.
-///
-/// Based on Martin Ankerl's algorithm: https://martin.ankerl.com/2009/12/09/how-to-create-random-colors-programmatically/
-///
-/// The golden ratio ensures each new color is maximally different from all previous colors,
-/// providing better visual distinction than palette-based approaches.
 #[inline]
-fn hash_to_hue_golden_ratio(hash: u64) -> f32 {
-    let normalized = ((hash as f64) / (u64::MAX as f64)) as f32;
-    (normalized * GOLDEN_RATIO_CONJUGATE) % 1.0
+fn hash_to_hue(hash: u64) -> f32 {
+    let distributed = hash.wrapping_mul(GOLDEN_RATIO_MULTIPLIER_F64);
+    (distributed as f32) / (u64::MAX as f32)
 }
 
-/// Generates a dynamic rainbow color using golden ratio distribution.
+/// Generates a dynamic rainbow color with full spectrum distribution.
 #[inline]
 fn generate_dynamic_rainbow_color(hash: u64) -> HighlightStyle {
-    let hue = hash_to_hue_golden_ratio(hash);
-    let saturation = 0.65;
-    let lightness = 0.7;
+    let hue = hash_to_hue(hash);
+    let saturation = 0.70;
+    let lightness = 0.65;
 
     let hsla = Hsla {
         h: hue,
@@ -304,9 +298,53 @@ mod tests {
             counts[index] += 1;
         }
 
-        // Ensure reasonable distribution
         for count in &counts {
             assert!(*count > 0, "Poor distribution detected");
         }
+    }
+
+    #[test]
+    fn test_hue_full_spectrum_coverage() {
+        let mut min_hue: f32 = 1.0;
+        let mut max_hue: f32 = 0.0;
+        
+        for i in 0..1000 {
+            let name = format!("variable_{}", i);
+            let hash = hash_identifier(&name);
+            let hue = hash_to_hue(hash);
+            
+            assert!(hue >= 0.0 && hue <= 1.0, "Hue {} out of range", hue);
+            min_hue = min_hue.min(hue);
+            max_hue = max_hue.max(hue);
+        }
+        
+        let coverage = max_hue - min_hue;
+        assert!(coverage > 0.9, "Hue coverage {:.2} should span most of spectrum", coverage);
+    }
+
+    #[test]
+    fn test_similar_names_distribute_across_spectrum() {
+        let names = ["var_1", "var_2", "var_3", "var_a", "var_b", "foo", "bar", "baz"];
+        let mut hues = Vec::new();
+        
+        for name in &names {
+            let hash = hash_identifier(name);
+            let hue = hash_to_hue(hash);
+            hues.push(hue);
+        }
+        
+        let mut all_identical = true;
+        for i in 1..hues.len() {
+            if (hues[i] - hues[0]).abs() > 0.01 {
+                all_identical = false;
+                break;
+            }
+        }
+        
+        assert!(!all_identical, "All similar variable names should not get identical hues");
+        
+        let min = hues.iter().copied().fold(f32::INFINITY, f32::min);
+        let max = hues.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+        assert!(max - min > 0.3, "Hues should span at least 30% of spectrum, got {:.2}", max - min);
     }
 }
