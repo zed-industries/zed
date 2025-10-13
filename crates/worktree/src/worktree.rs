@@ -226,7 +226,7 @@ impl Default for WorkDirectory {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct LocalSnapshot {
     snapshot: Snapshot,
     global_gitignore: Option<Arc<Gitignore>>,
@@ -239,6 +239,7 @@ pub struct LocalSnapshot {
     /// The file handle of the worktree root. `None` if the worktree is a directory.
     /// (so we can find it after it's been moved)
     root_file_handle: Option<Arc<dyn fs::FileHandle>>,
+    executor: BackgroundExecutor,
 }
 
 struct BackgroundScannerState {
@@ -321,7 +322,6 @@ impl DerefMut for LocalSnapshot {
     }
 }
 
-#[derive(Debug)]
 enum ScanState {
     Started,
     Updated {
@@ -402,6 +402,7 @@ impl Worktree {
                     PathStyle::local(),
                 ),
                 root_file_handle,
+                executor: cx.background_executor().clone(),
             };
 
             let worktree_id = snapshot.id();
@@ -2442,7 +2443,7 @@ impl LocalSnapshot {
         log::trace!("insert entry {:?}", entry.path);
         if entry.is_file() && entry.path.file_name() == Some(&GITIGNORE) {
             let abs_path = self.absolutize(&entry.path);
-            match smol::block_on(build_gitignore(&abs_path, fs)) {
+            match self.executor.block(build_gitignore(&abs_path, fs)) {
                 Ok(ignore) => {
                     self.ignores_by_parent_abs_path
                         .insert(abs_path.parent().unwrap().into(), (Arc::new(ignore), true));
@@ -2504,7 +2505,10 @@ impl LocalSnapshot {
                     new_ignores.push((ancestor, None));
                 }
             }
-            let metadata = smol::block_on(fs.metadata(&ancestor.join(DOT_GIT)))
+
+            let metadata = self
+                .executor
+                .block(fs.metadata(&ancestor.join(DOT_GIT)))
                 .ok()
                 .flatten();
             if metadata.is_some() {
@@ -2899,7 +2903,7 @@ impl BackgroundScannerState {
         let work_directory_abs_path = self.snapshot.work_directory_abs_path(&work_directory);
 
         let (repository_dir_abs_path, common_dir_abs_path) =
-            discover_git_paths(&dot_git_abs_path, fs);
+            discover_git_paths(&dot_git_abs_path, fs, &self.snapshot.executor);
         watcher
             .add(&common_dir_abs_path)
             .context("failed to add common directory to watcher")
@@ -3819,7 +3823,7 @@ impl BackgroundScanner {
                 let mut is_git_related = false;
 
                 let dot_git_paths = abs_path.as_path().ancestors().find_map(|ancestor| {
-                    if smol::block_on(is_git_dir(ancestor, self.fs.as_ref())) {
+                    if snapshot.executor.block(is_git_dir(ancestor, self.fs.as_ref())) {
                         let path_in_git_dir = abs_path
                             .as_path()
                             .strip_prefix(ancestor)
@@ -4606,7 +4610,9 @@ impl BackgroundScanner {
             return;
         };
 
-        if let Ok(Some(metadata)) = smol::block_on(self.fs.metadata(&job.abs_path.join(DOT_GIT)))
+        if let Ok(Some(metadata)) = self
+            .executor
+            .block(self.fs.metadata(&job.abs_path.join(DOT_GIT)))
             && metadata.is_dir
         {
             ignore_stack.repo_root = Some(job.abs_path.clone());
@@ -4739,7 +4745,8 @@ impl BackgroundScanner {
 
             if exists_in_snapshot
                 || matches!(
-                    smol::block_on(self.fs.metadata(&entry.common_dir_abs_path)),
+                    self.executor
+                        .block(self.fs.metadata(&entry.common_dir_abs_path)),
                     Ok(Some(_))
                 )
             {
@@ -5498,11 +5505,16 @@ fn parse_gitfile(content: &str) -> anyhow::Result<&Path> {
     Ok(Path::new(path.trim()))
 }
 
-fn discover_git_paths(dot_git_abs_path: &Arc<Path>, fs: &dyn Fs) -> (Arc<Path>, Arc<Path>) {
+fn discover_git_paths(
+    dot_git_abs_path: &Arc<Path>,
+    fs: &dyn Fs,
+    executor: &BackgroundExecutor,
+) -> (Arc<Path>, Arc<Path>) {
     let mut repository_dir_abs_path = dot_git_abs_path.clone();
     let mut common_dir_abs_path = dot_git_abs_path.clone();
 
-    if let Some(path) = smol::block_on(fs.load(dot_git_abs_path))
+    if let Some(path) = executor
+        .block(fs.load(dot_git_abs_path))
         .ok()
         .as_ref()
         .and_then(|contents| parse_gitfile(contents).log_err())
@@ -5511,7 +5523,7 @@ fn discover_git_paths(dot_git_abs_path: &Arc<Path>, fs: &dyn Fs) -> (Arc<Path>, 
             .parent()
             .unwrap_or(Path::new(""))
             .join(path);
-        if let Some(path) = smol::block_on(fs.canonicalize(&path)).log_err() {
+        if let Some(path) = executor.block(fs.canonicalize(&path)).log_err() {
             repository_dir_abs_path = Path::new(&path).into();
             common_dir_abs_path = repository_dir_abs_path.clone();
             if let Some(commondir_contents) = smol::block_on(fs.load(&path.join("commondir"))).ok()
@@ -5522,6 +5534,5 @@ fn discover_git_paths(dot_git_abs_path: &Arc<Path>, fs: &dyn Fs) -> (Arc<Path>, 
             }
         }
     };
-
     (repository_dir_abs_path, common_dir_abs_path)
 }

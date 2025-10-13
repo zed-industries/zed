@@ -11,6 +11,7 @@ use gpui::App;
 use gpui::BackgroundExecutor;
 use gpui::Global;
 use gpui::ReadGlobal as _;
+use gpui::Task;
 use std::borrow::Cow;
 use util::command::new_smol_command;
 
@@ -562,12 +563,11 @@ impl Fs for RealFs {
 
     async fn load(&self, path: &Path) -> Result<String> {
         let path = path.to_path_buf();
-        let text = self
-            .executor
-            .spawn(async move { std::fs::read_to_string(path) })
-            .await?;
-        Ok(text)
+        self.executor
+            .spawn(async move { Ok(std::fs::read_to_string(path)?) })
+            .await
     }
+
     async fn load_bytes(&self, path: &Path) -> Result<Vec<u8>> {
         let path = path.to_path_buf();
         let bytes = smol::unblock(|| std::fs::read(path)).await?;
