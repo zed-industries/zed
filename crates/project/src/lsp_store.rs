@@ -6466,7 +6466,7 @@ impl LspStore {
         &mut self,
         invalidate: InvalidationStrategy,
         buffer: Entity<Buffer>,
-        range: Range<text::Anchor>,
+        ranges: Vec<Range<text::Anchor>>,
         known_chunks: Option<(clock::Global, HashSet<Range<BufferRow>>)>,
         cx: &mut Context<Self>,
     ) -> HashMap<Range<BufferRow>, Task<Result<CacheInlayHints>>> {
@@ -6489,7 +6489,7 @@ impl LspStore {
         let mut cached_inlay_hints = HashMap::default();
         let mut ranges_to_query = Vec::new();
         let applicable_chunks = existing_inlay_hints
-            .applicable_chunks(&range)
+            .applicable_chunks(ranges.as_slice())
             .filter(|chunk| !known_chunks.contains(&(chunk.start..chunk.end)))
             .collect::<Vec<_>>();
         if applicable_chunks.is_empty() {
@@ -12034,7 +12034,7 @@ impl LspStore {
                 .or_insert_with(|| BufferLspData::new(&buffer, cx));
             let chunks_queried_for = lsp_data
                 .inlay_hints
-                .applicable_chunks(&range)
+                .applicable_chunks(&[range])
                 .collect::<Vec<_>>();
             match chunks_queried_for.as_slice() {
                 &[chunk] => {

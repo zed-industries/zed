@@ -1,5 +1,4 @@
 use std::{
-    collections::hash_map,
     ops::{ControlFlow, Range},
     rc::Rc,
     time::Duration,
@@ -19,7 +18,7 @@ use project::{
     HoverBlock, HoverBlockKind, InlayHintLabel, InlayHintLabelPartTooltip, InlayHintTooltip,
     InvalidationStrategy, ResolveState, lsp_store::ResolvedHint,
 };
-use text::{Bias, BufferId, OffsetRangeExt as _};
+use text::{Bias, BufferId};
 use ui::{Context, Window};
 use util::debug_panic;
 
@@ -50,8 +49,8 @@ pub struct LspInlayHintData {
     allowed_hint_kinds: HashSet<Option<InlayHintKind>>,
     invalidate_debounce: Option<Duration>,
     append_debounce: Option<Duration>,
-    hint_refresh_tasks: HashMap<BufferId, HashMap<Range<BufferRow>, Task<()>>>,
-    hint_chunk_fetches: HashMap<BufferId, (Global, HashSet<Range<BufferRow>>)>,
+    hint_refresh_tasks: HashMap<BufferId, Vec<Task<()>>>,
+    hint_chunk_fetched: HashMap<BufferId, (Global, HashSet<Range<BufferRow>>)>,
     pub added_hints: HashMap<InlayId, Option<InlayHintKind>>,
 }
 
@@ -63,7 +62,7 @@ impl LspInlayHintData {
             enabled_in_settings: settings.enabled,
             hint_refresh_tasks: HashMap::default(),
             added_hints: HashMap::default(),
-            hint_chunk_fetches: HashMap::default(),
+            hint_chunk_fetched: HashMap::default(),
             invalidate_debounce: debounce_value(settings.edit_debounce_ms),
             append_debounce: debounce_value(settings.scroll_debounce_ms),
             allowed_hint_kinds: settings.enabled_inlay_hint_kinds(),
@@ -98,7 +97,7 @@ impl LspInlayHintData {
 
     pub fn clear(&mut self) {
         self.hint_refresh_tasks.clear();
-        self.hint_chunk_fetches.clear();
+        self.hint_chunk_fetched.clear();
         self.added_hints.clear();
     }
 
@@ -290,56 +289,53 @@ impl Editor {
                 | InlayHintRefreshReason::Toggle(_)
         );
 
-        let mut buffer_data_invalidated = HashSet::default();
-        for (excerpt_id, (buffer, buffer_version, range)) in visible_excerpts {
+        let mut buffers_to_query = HashMap::default();
+        for (excerpt_id, (buffer, buffer_version, visible_range)) in &visible_excerpts {
             let buffer_id = buffer.read(cx).remote_id();
             let buffer_snapshot = buffer.read(cx).snapshot();
-            let buffer_anchor_range =
-                buffer_snapshot.anchor_before(range.start)..buffer_snapshot.anchor_after(range.end);
-            let buffer_point_range = buffer_anchor_range.to_point(&buffer_snapshot);
-            let hints_row_range = buffer_point_range.start.row..buffer_point_range.end.row;
+            let buffer_anchor_range = buffer_snapshot.anchor_before(visible_range.start)
+                ..buffer_snapshot.anchor_after(visible_range.end);
 
-            let existing_tasks = inlay_hints.hint_refresh_tasks.entry(buffer_id).or_default();
-            let fetched_tasks = inlay_hints.hint_chunk_fetches.entry(buffer_id).or_default();
-            if buffer_version.changed_since(&fetched_tasks.0) {
-                if buffer_data_invalidated.insert(buffer_id) {
-                    existing_tasks.clear();
-                    fetched_tasks.1.clear();
-                    fetched_tasks.0 = buffer_version.clone();
-                }
+            let visible_excerpts =
+                buffers_to_query
+                    .entry(buffer_id)
+                    .or_insert_with(|| VisibleExcerpts {
+                        excerpts: Vec::new(),
+                        ranges: Vec::new(),
+                        buffer_version: buffer_version.clone(),
+                        buffer: buffer.clone(),
+                    });
+            visible_excerpts.buffer_version = buffer_version.clone();
+            visible_excerpts.excerpts.push(*excerpt_id);
+            visible_excerpts.ranges.push(buffer_anchor_range.clone());
+        }
+
+        if invalidate_cache.should_invalidate() {
+            inlay_hints.clear();
+        }
+        for (buffer_id, visible_excerpts) in buffers_to_query {
+            let fetched_tasks = inlay_hints.hint_chunk_fetched.entry(buffer_id).or_default();
+            if visible_excerpts
+                .buffer_version
+                .changed_since(&fetched_tasks.0)
+            {
+                fetched_tasks.1.clear();
+                fetched_tasks.0 = visible_excerpts.buffer_version.clone();
+                inlay_hints.hint_refresh_tasks.remove(&buffer_id);
             }
 
-            match existing_tasks.entry(hints_row_range.clone()) {
-                hash_map::Entry::Occupied(mut o) => {
-                    if ignore_previous_fetches {
-                        let previous_task = o.insert(spawn_editor_hints_refresh(
-                            semantics_provider.clone(),
-                            invalidate_cache,
-                            ignore_previous_fetches,
-                            debounce,
-                            excerpt_id,
-                            buffer,
-                            buffer_version,
-                            buffer_anchor_range,
-                            cx,
-                        ));
-                        drop(previous_task);
-                    }
-                }
-                hash_map::Entry::Vacant(v) => {
-                    v.insert(spawn_editor_hints_refresh(
-                        semantics_provider.clone(),
-                        invalidate_cache,
-                        ignore_previous_fetches,
-                        debounce,
-                        excerpt_id,
-                        buffer,
-                        buffer_version,
-                        buffer_anchor_range,
-                        cx,
-                    ));
-                }
-            }
+            inlay_hints
+                .hint_refresh_tasks
+                .entry(buffer_id)
+                .or_default()
+                .push(spawn_editor_hints_refresh(
+                    semantics_provider.clone(),
+                    invalidate_cache,
+                    ignore_previous_fetches,
+                    debounce,
+                    visible_excerpts,
+                    cx,
+                ));
         }
     }
 
@@ -636,19 +632,23 @@ impl Editor {
     }
 }
 
+#[derive(Debug)]
+struct VisibleExcerpts {
+    excerpts: Vec<ExcerptId>,
+    ranges: Vec<Range<text::Anchor>>,
+    buffer_version: Global,
+    buffer: Entity<language::Buffer>,
+}
+
 fn spawn_editor_hints_refresh(
     semantics_provider: Rc<dyn SemanticsProvider>,
     invalidate_cache: InvalidationStrategy,
     ignore_previous_fetches: bool,
     debounce: Option<Duration>,
-    excerpt_id: ExcerptId,
-    buffer: Entity<language::Buffer>,
-    buffer_version: Global,
-    buffer_anchor_range: Range<text::Anchor>,
+    buffer_excerpts: VisibleExcerpts,
     cx: &mut Context<'_, Editor>,
 ) -> Task<()> {
-    let buffer_id = buffer.read(cx).remote_id();
-
+    let buffer_id = buffer_excerpts.buffer.read(cx).remote_id();
     cx.spawn(async move |editor, cx| {
         if let Some(debounce) = debounce {
             cx.background_executor().timer(debounce).await;
@@ -664,10 +664,10 @@ fn spawn_editor_hints_refresh(
                 let new_hint_tasks = semantics_provider
                     .inlay_hints(
                         invalidate_cache,
-                        buffer.clone(),
-                        buffer_anchor_range.clone(),
+                        buffer_excerpts.buffer,
+                        buffer_excerpts.ranges,
                         inlay_hints
-                            .hint_chunk_fetches
+                            .hint_chunk_fetched
                             .get(&buffer_id)
                             .filter(|_| {
                                 !ignore_previous_fetches && !invalidate_cache.should_invalidate()
@@ -678,10 +678,10 @@ fn spawn_editor_hints_refresh(
                     .unwrap_or_default();
 
                 let (known_version, known_chunks) =
-                    inlay_hints.hint_chunk_fetches.entry(buffer_id).or_default();
-                if buffer_version.changed_since(known_version) {
+                    inlay_hints.hint_chunk_fetched.entry(buffer_id).or_default();
+                if buffer_excerpts.buffer_version.changed_since(known_version) {
                     known_chunks.clear();
-                    *known_version = buffer_version.clone();
+                    *known_version = buffer_excerpts.buffer_version.clone();
                 }
                 for (row_range, new_hints_task) in new_hint_tasks {
                     if known_chunks.insert(row_range.clone()) || ignore_previous_fetches {
@@ -731,14 +731,17 @@ fn spawn_editor_hints_refresh(
                         if inlay_hints.allowed_hint_kinds.contains(&lsp_hint.kind)
                             && !inlay_hints.added_hints.contains_key(&hint_id)
                         {
-                            let position = multi_buffer_snapshot
-                                .anchor_in_excerpt(excerpt_id, lsp_hint.position)?;
+                            let position =
+                                buffer_excerpts.excerpts.iter().find_map(|excerpt_id| {
+                                    multi_buffer_snapshot
+                                        .anchor_in_excerpt(*excerpt_id, lsp_hint.position)
+                                })?;
                             inlay_hints.added_hints.insert(hint_id, lsp_hint.kind);
                             return Some(Inlay::hint(hint_id, position, &lsp_hint));
                         }
                         None
                     })
-                    .collect();
+                    .collect::<Vec<_>>();
                 // TODO kb hints to remove and to insert may be [almost] the same, causing unnecessary flickering
                 editor.splice_inlays(&hints_to_remove, hints_to_insert, cx);
             })
@@ -2147,33 +2150,24 @@ pub mod tests {
         cx.executor().run_until_parked();
         editor
             .update(cx, |editor, _window, cx| {
+                let expected_hints = vec![
+                    "main hint #0".to_string(),
+                    "main hint #1".to_string(),
+                    "main hint #2".to_string(),
+                    "main hint #3".to_string(),
+                    "main hint #4".to_string(),
+                    "main hint #5".to_string(),
+                    "other hint #0".to_string(),
+                    "other hint #1".to_string(),
+                    "other hint #2".to_string(),
+                    "other hint #3".to_string(),
+                ];
                 assert_eq!(
-                    vec![
-                        "main hint #0".to_string(),
-                        "main hint #1".to_string(),
-                        "main hint #2".to_string(),
-                        "main hint #3".to_string(),
-                        "main hint #4".to_string(),
-                        "main hint #5".to_string(),
-                        "other hint #0".to_string(),
-                        "other hint #1".to_string(),
-                        "other hint #2".to_string(),
-                        "other hint #3".to_string(),
-                    ], sorted_cached_hint_labels(editor, cx),
+                    expected_hints,
+                    sorted_cached_hint_labels(editor, cx),
                     "With more scrolls of the multibuffer, more hints should be added into the cache and nothing invalidated without edits");
                 assert_eq!(
-                    vec![
-                        "main hint #0".to_string(),
-                        "main hint #1".to_string(),
-                        "main hint #2".to_string(),
-                        "main hint #3".to_string(),
-                        "main hint #4".to_string(),
-                        "main hint #5".to_string(),
-                        "other hint #0".to_string(),
-                        "other hint #1".to_string(),
-                        "other hint #2".to_string(),
-                        "other hint #3".to_string(),
-                    ],
+                    expected_hints,
                     visible_hint_labels(editor, cx),
                     "Editor should show only visible hints",
                 );
@@ -2193,39 +2187,27 @@ pub mod tests {
         cx.executor().run_until_parked();
         editor
             .update(cx, |editor, _window, cx| {
+                let expected_hints = vec![
+                    "main hint #0".to_string(),
+                    "main hint #1".to_string(),
+                    "main hint #2".to_string(),
+                    "main hint #3".to_string(),
+                    "main hint #4".to_string(),
+                    "main hint #5".to_string(),
+                    "other hint #0".to_string(),
+                    "other hint #1".to_string(),
+                    "other hint #2".to_string(),
+                    "other hint #3".to_string(),
+                    "other hint #4".to_string(),
+                    "other hint #5".to_string(),
+                ];
                 assert_eq!(
-                    vec![
-                        "main hint #0".to_string(),
-                        "main hint #1".to_string(),
-                        "main hint #2".to_string(),
-                        "main hint #3".to_string(),
-                        "main hint #4".to_string(),
-                        "main hint #5".to_string(),
-                        "other hint #0".to_string(),
-                        "other hint #1".to_string(),
-                        "other hint #2".to_string(),
-                        "other hint #3".to_string(),
-                        "other hint #4".to_string(),
-                        "other hint #5".to_string(),
-                    ],
+                    expected_hints,
                     sorted_cached_hint_labels(editor, cx),
                     "After multibuffer was scrolled to the end, all hints for all excerpts should be fetched"
                 );
                 assert_eq!(
-                    vec![
-                        "main hint #0".to_string(),
-                        "main hint #1".to_string(),
-                        "main hint #2".to_string(),
-                        "main hint #3".to_string(),
-                        "main hint #4".to_string(),
-                        "main hint #5".to_string(),
-                        "other hint #0".to_string(),
-                        "other hint #1".to_string(),
-                        "other hint #2".to_string(),
-                        "other hint #3".to_string(),
-                        "other hint #4".to_string(),
-                        "other hint #5".to_string(),
-                    ],
+                    expected_hints,
                     visible_hint_labels(editor, cx),
                     "Editor shows only hints for excerpts that were visible when scrolling"
                 );
@@ -2245,45 +2227,33 @@ pub mod tests {
         cx.executor().run_until_parked();
         editor
             .update(cx, |editor, _window, cx| {
+                let expected_hints = vec![
+                    "main hint #0".to_string(),
+                    "main hint #1".to_string(),
+                    "main hint #2".to_string(),
+                    "main hint #3".to_string(),
+                    "main hint #4".to_string(),
+                    "main hint #5".to_string(),
+                    "other hint #0".to_string(),
+                    "other hint #1".to_string(),
+                    "other hint #2".to_string(),
+                    "other hint #3".to_string(),
+                    "other hint #4".to_string(),
+                    "other hint #5".to_string(),
+                ];
                 assert_eq!(
-                    vec![
-                        "main hint #0".to_string(),
-                        "main hint #1".to_string(),
-                        "main hint #2".to_string(),
-                        "main hint #3".to_string(),
-                        "main hint #4".to_string(),
-                        "main hint #5".to_string(),
-                        "other hint #0".to_string(),
-                        "other hint #1".to_string(),
-                        "other hint #2".to_string(),
-                        "other hint #3".to_string(),
-                        "other hint #4".to_string(),
-                        "other hint #5".to_string(),
-                    ],
+                    expected_hints,
                     sorted_cached_hint_labels(editor, cx),
                     "After multibuffer was scrolled to the end, further scrolls up should not bring more hints"
                 );
                 assert_eq!(
-                    vec![
-                        "main hint #0".to_string(),
-                        "main hint #1".to_string(),
-                        "main hint #2".to_string(),
-                        "main hint #3".to_string(),
-                        "main hint #4".to_string(),
-                        "main hint #5".to_string(),
-                        "other hint #0".to_string(),
-                        "other hint #1".to_string(),
-                        "other hint #2".to_string(),
-                        "other hint #3".to_string(),
-                        "other hint #4".to_string(),
-                        "other hint #5".to_string(),
-                    ],
+                    expected_hints,
                     visible_hint_labels(editor, cx),
                 );
             })
             .unwrap();
 
-        editor_edited.store(true, Ordering::Release);
+        // We prepare to change the scrolling on edit, but do not scroll yet
         editor
             .update(cx, |editor, window, cx| {
                 editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
@@ -2291,41 +2261,37 @@ pub mod tests {
                 });
             })
             .unwrap();
+        cx.executor().run_until_parked();
+        // Edit triggers the scrolling too
+        editor_edited.store(true, Ordering::Release);
         editor
             .update(cx, |editor, window, cx| {
                 editor.handle_input("++++more text++++", window, cx);
             })
             .unwrap();
         cx.executor().run_until_parked();
-        // TODO kb fails now, works incorrect with multi buffers, check excerpts' task updates — make ExcerptId as a key?
         editor
             .update(cx, |editor, _window, cx| {
+                let expected_hints = vec![
+                    "main hint(edited) #0".to_string(),
+                    "main hint(edited) #1".to_string(),
+                    "main hint(edited) #2".to_string(),
+                    "main hint(edited) #3".to_string(),
+                    "main hint(edited) #4".to_string(),
+                    "main hint(edited) #5".to_string(),
+                    "other hint(edited) #0".to_string(),
+                    "other hint(edited) #1".to_string(),
+                    "other hint(edited) #2".to_string(),
+                    "other hint(edited) #3".to_string(),
+                ];
                 assert_eq!(
-                    vec![
-                        "main hint(edited) #0".to_string(),
-                        "main hint(edited) #1".to_string(),
-                        "main hint(edited) #2".to_string(),
-                        "main hint(edited) #3".to_string(),
-                        "main hint(edited) #4".to_string(),
-                        "main hint(edited) #5".to_string(),
-                        "other hint(edited) #0".to_string(),
-                        "other hint(edited) #1".to_string(),
-                        "other hint(edited) #2".to_string(),
-                        "other hint(edited) #3".to_string(),
-                    ],
+                    expected_hints,
                     sorted_cached_hint_labels(editor, cx),
                     "After multibuffer edit, editor gets scrolled back to the last selection; \
                 all hints should be invalidated and required for all of its visible excerpts"
                 );
                 assert_eq!(
-                    vec![
-                        "main hint(edited) #4".to_string(),
-                        "main hint(edited) #5".to_string(),
-                        "other hint(edited) #0".to_string(),
-                        "other hint(edited) #1".to_string(),
-                        "other hint(edited) #2".to_string(),
-                        "other hint(edited) #3".to_string(),
-                    ],
+                    expected_hints,
                     visible_hint_labels(editor, cx),
                     "Only the visible hints should be shown after editing + in multi buffers, only where the selections are, the hints are shown"
                 );
@@ -2492,10 +2458,10 @@ pub mod tests {
                     sorted_cached_hint_labels(editor, cx),
                     "Cache should update for both excerpts despite hints display was disabled; cache should not include hints out of ranges (request one and row chunk one)"
                 );
-                let visible_hints = visible_hint_labels(editor, cx);
-                assert!(
-                    visible_hints.is_empty(),
-                    "All hints are disabled and should not be shown despite being present in the cache, but got: {visible_hints:?}"
+                assert_eq!(
+                    Vec::<String>::new(),
+                    visible_hint_labels(editor, cx),
+                    "All hints are disabled and should not be shown despite being present in the cache"
                 );
             })
             .unwrap();

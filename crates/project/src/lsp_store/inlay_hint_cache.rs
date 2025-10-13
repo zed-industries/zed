@@ -118,19 +118,24 @@ impl BufferInlayHints {
 
     pub fn applicable_chunks(
         &self,
-        range: &Range<text::Anchor>,
+        ranges: &[Range<text::Anchor>],
     ) -> impl Iterator<Item = BufferChunk> {
-        let point_range = range.to_point(&self.snapshot);
-        let row_range = point_range.start.row..=point_range.end.row;
+        let row_ranges = ranges
+            .iter()
+            .map(|range| range.to_point(&self.snapshot))
+            .map(|point_range| point_range.start.row..=point_range.end.row)
+            .collect::<Vec<_>>();
         self.buffer_chunks
             .iter()
-            .filter(move |chunk| {
+            .filter(move |chunk| -> bool {
                 let chunk_range = chunk.start..=chunk.end;
-                // TODO kb is this right?
-                chunk_range.contains(&row_range.start())
-                    || chunk_range.contains(&row_range.end())
-                    || row_range.contains(&chunk_range.start())
-                    || row_range.contains(&chunk_range.end())
+                row_ranges.iter().any(|row_range| {
+                    // TODO kb is this right?
+                    chunk_range.contains(&row_range.start())
+                        || chunk_range.contains(&row_range.end())
+                        || row_range.contains(&chunk_range.start())
+                        || row_range.contains(&chunk_range.end())
+                })
             })
             .copied()
     }

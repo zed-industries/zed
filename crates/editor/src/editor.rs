@@ -22495,7 +22495,7 @@ pub trait SemanticsProvider {
         &self,
         _invalidate: InvalidationStrategy,
         _buffer: Entity<Buffer>,
-        _range: Range<text::Anchor>,
+        _ranges: Vec<Range<text::Anchor>>,
         _known_chunks: Option<(clock::Global, HashSet<Range<BufferRow>>)>,
         _cx: &mut App,
     ) -> Option<HashMap<Range<BufferRow>, Task<Result<CacheInlayHints>>>> {
@@ -23001,12 +23001,12 @@ impl SemanticsProvider for Entity<Project> {
         &self,
         invalidate: InvalidationStrategy,
         buffer: Entity<Buffer>,
-        range: Range<text::Anchor>,
+        ranges: Vec<Range<text::Anchor>>,
         known_chunks: Option<(clock::Global, HashSet<Range<BufferRow>>)>,
         cx: &mut App,
     ) -> Option<HashMap<Range<BufferRow>, Task<Result<CacheInlayHints>>>> {
         Some(self.read(cx).lsp_store().update(cx, |lsp_store, cx| {
-            lsp_store.inlay_hints(invalidate, buffer, range, known_chunks, cx)
+            lsp_store.inlay_hints(invalidate, buffer, ranges, known_chunks, cx)
         }))
     }
 
