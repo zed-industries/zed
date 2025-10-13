@@ -668,10 +668,14 @@ impl SettingsPageItem {
                 .gap_2()
                 .justify_between()
                 .pt_4()
-                .when(!is_last, |this| {
-                    this.pb_4()
-                        .border_b_1()
-                        .border_color(cx.theme().colors().border_variant)
+                .map(|this| {
+                    if is_last {
+                        this.pb_10()
+                    } else {
+                        this.pb_4()
+                            .border_b_1()
+                            .border_color(cx.theme().colors().border_variant)
+                    }
                 })
                 .child(
                     v_flex()
