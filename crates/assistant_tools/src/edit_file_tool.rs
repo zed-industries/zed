@@ -1538,7 +1538,7 @@ mod tests {
                 store.update_user_settings(cx, |settings| {
                     settings.project.all_languages.defaults.format_on_save = Some(FormatOnSave::On);
                     settings.project.all_languages.defaults.formatter =
-                        Some(language::language_settings::SelectedFormatter::Auto);
+                        Some(language::language_settings::FormatterList::default());
                 });
             });
         });
