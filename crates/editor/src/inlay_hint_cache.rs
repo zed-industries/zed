@@ -1013,7 +1013,7 @@ fn fetch_and_update_hints(
                 .cloned()
         })?;
 
-        let visible_hints = editor.update(cx, |editor, cx| editor.visible_inlay_hints(cx))?;
+        let visible_hints = editor.update(cx, |editor, cx| editor.visible_inlay_hints(cx).cloned().collect::<Vec<_>>())?;
         let new_hints = match inlay_hints_fetch_task {
             Some(fetch_task) => {
                 log::debug!(
@@ -3570,7 +3570,6 @@ pub mod tests {
     pub fn visible_hint_labels(editor: &Editor, cx: &Context<Editor>) -> Vec<String> {
         editor
             .visible_inlay_hints(cx)
-            .into_iter()
             .map(|hint| hint.text().to_string())
             .collect()
     }
