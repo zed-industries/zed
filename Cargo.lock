@@ -20120,6 +20120,7 @@ dependencies = [
  "go_to_line",
  "gpui",
  "gpui_tokio",
+ "image",
  "image_viewer",
  "inspector_ui",
  "install_cli",
