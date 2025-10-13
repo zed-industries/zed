@@ -562,7 +562,10 @@ impl Fs for RealFs {
 
     async fn load(&self, path: &Path) -> Result<String> {
         let path = path.to_path_buf();
-        let text = smol::unblock(|| std::fs::read_to_string(path)).await?;
+        let text = self
+            .executor
+            .spawn(async move { std::fs::read_to_string(path) })
+            .await?;
         Ok(text)
     }
     async fn load_bytes(&self, path: &Path) -> Result<Vec<u8>> {
