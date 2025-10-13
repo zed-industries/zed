@@ -10,9 +10,9 @@ These are your personal settings that will apply to any Zed instance you open, a
 
 You can access user settings via:
 - Command Palette {#kb zed::OpenSettings}
-- Shortcut `cmd+,`
+- Shortcut `cmd-,`
 
-You can also edit settings directly in the JSON via {#kb zed::OpenSettingsFile} or with `opt+cmd+,`.
+You can also edit settings directly in the JSON via {#kb zed::OpenSettingsFile} or with `opt+cmd-,`.
 
 
 <!--
@@ -38,7 +38,7 @@ This setting applies stying to the active pane in your editor.
 
 **How to change:**
 
-Settings Editor (`cmd+,`) > Appearance & Behavior > Window.
+Settings Editor (`cmd-,`) > Appearance & Behavior > Window.
 
 **Sample JSON**
 ```json [settings]
@@ -57,7 +57,7 @@ By default, the bottom dock is contained, giving the full height of the window t
 
 **How to change:**
 
-Settings Editor (`cmd+,`) > Appearance & Behavior > Layout.
+Settings Editor (`cmd-,`) > Appearance & Behavior > Layout.
 
 **Sample JSON**
 
