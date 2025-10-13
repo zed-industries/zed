@@ -96,9 +96,9 @@ impl PythonDebugAdapter {
     async fn fetch_wheel(&self, delegate: &Arc<dyn DapDelegate>) -> Result<Arc<Path>> {
         let download_dir = debug_adapters_dir().join(Self::ADAPTER_NAME).join("wheels");
         std::fs::create_dir_all(&download_dir)?;
-        let system_python = self.base_venv_path(delegate).await?;
+        let venv_python = self.base_venv_path(delegate).await?;
 
-        let installation_succeeded = util::command::new_smol_command(system_python.as_ref())
+        let installation_succeeded = util::command::new_smol_command(venv_python.as_ref())
             .args([
                 "-m",
                 "pip",
@@ -109,7 +109,8 @@ impl PythonDebugAdapter {
                 download_dir.to_string_lossy().as_ref(),
             ])
             .output()
-            .await?
+            .await
+            .context("spawn system python")?
             .status
             .success();
         if !installation_succeeded {
@@ -237,17 +238,16 @@ impl PythonDebugAdapter {
                     return Err("Failed to create base virtual environment".into());
                 }
 
-                const DIR: &str = if cfg!(target_os = "windows") {
-                    "Scripts"
+                const PYTHON_PATH: &str = if cfg!(target_os = "windows") {
+                    "Scripts/python.exe"
                 } else {
-                    "bin"
+                    "bin/python3"
                 };
                 Ok(Arc::from(
                     paths::debug_adapters_dir()
                         .join(Self::DEBUG_ADAPTER_NAME.as_ref())
                         .join("zed_base_venv")
-                        .join(DIR)
-                        .join("python3")
+                        .join(PYTHON_PATH)
                         .as_ref(),
                 ))
             })
