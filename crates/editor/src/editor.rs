@@ -1090,8 +1090,8 @@ pub struct Editor {
     next_completion_id: CompletionId,
     available_code_actions: Option<(Location, Rc<[AvailableCodeAction]>)>,
     code_actions_task: Option<Task<Result<()>>>,
-    quick_selection_highlight_task: Option<(Range<Anchor>, Task<()>)>,
-    debounced_selection_highlight_task: Option<(Range<Anchor>, Task<()>)>,
+    quick_selection_highlight_task: Option<(Range<usize>, Task<()>)>,
+    debounced_selection_highlight_task: Option<(Range<usize>, Task<()>)>,
     document_highlights_task: Option<Task<()>>,
     linked_editing_range_task: Option<Task<Option<()>>>,
     linked_edit_ranges: linked_editing_ranges::LinkedEditingRanges,
@@ -7128,11 +7128,12 @@ impl Editor {
             return;
         };
         let multi_buffer_snapshot = self.buffer().read(cx).snapshot(cx);
+        let query_offset = query_range.to_offset(&multi_buffer_snapshot);
         if on_buffer_edit
             || self
                 .quick_selection_highlight_task
                 .as_ref()
-                .is_none_or(|(prev_anchor_range, _)| prev_anchor_range != &query_range)
+                .is_none_or(|(prev_query_offset, _)| prev_query_offset != &query_offset)
         {
             let multi_buffer_visible_start = self
                 .scroll_manager
@@ -7146,7 +7147,7 @@ impl Editor {
             );
             let multi_buffer_visible_range = multi_buffer_visible_start..multi_buffer_visible_end;
             self.quick_selection_highlight_task = Some((
-                query_range.clone(),
+                query_offset.clone(),
                 self.update_selection_occurrence_highlights(
                     query_text.clone(),
                     query_range.clone(),
@@ -7161,7 +7162,7 @@ impl Editor {
             || self
                 .debounced_selection_highlight_task
                 .as_ref()
-                .is_none_or(|(prev_anchor_range, _)| prev_anchor_range != &query_range)
+                .is_none_or(|(prev_query_offset, _)| prev_query_offset != &query_offset)
         {
             let multi_buffer_start = multi_buffer_snapshot
                 .anchor_before(0)
@@ -7171,7 +7172,7 @@ impl Editor {
                 .to_point(&multi_buffer_snapshot);
             let multi_buffer_full_range = multi_buffer_start..multi_buffer_end;
             self.debounced_selection_highlight_task = Some((
-                query_range.clone(),
+                query_offset,
                 self.update_selection_occurrence_highlights(
                     query_text,
                     query_range,
