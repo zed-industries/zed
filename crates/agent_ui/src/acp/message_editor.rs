@@ -141,7 +141,9 @@ impl MessageEditor {
 
         subscriptions.push(cx.subscribe_in(&editor, window, {
             move |this, editor, event, window, cx| {
-                if let EditorEvent::Edited { .. } = event {
+                if let EditorEvent::Edited { .. } = event
+                    && !editor.read(cx).read_only(cx)
+                {
                     let snapshot = editor.update(cx, |editor, cx| {
                         let new_hints = this
                             .command_hint(editor.buffer(), cx)
@@ -823,11 +825,18 @@ impl MessageEditor {
         });
     }
 
-    fn send(&mut self, _: &Chat, _: &mut Window, cx: &mut Context<Self>) {
+    pub fn send(&mut self, cx: &mut Context<Self>) {
         if self.is_empty(cx) {
             return;
         }
+        self.editor.update(cx, |editor, cx| {
+            editor.clear_inlay_hints(cx);
+        });
         cx.emit(MessageEditorEvent::Send)
+    }
+
+    fn chat(&mut self, _: &Chat, _: &mut Window, cx: &mut Context<Self>) {
+        self.send(cx);
     }
 
     fn cancel(&mut self, _: &editor::actions::Cancel, _: &mut Window, cx: &mut Context<Self>) {
@@ -1288,7 +1297,7 @@ impl Render for MessageEditor {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .key_context("MessageEditor")
-            .on_action(cx.listener(Self::send))
+            .on_action(cx.listener(Self::chat))
             .on_action(cx.listener(Self::cancel))
             .capture_action(cx.listener(Self::paste))
             .flex_1()

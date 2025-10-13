@@ -307,7 +307,6 @@ pub fn update_inlay_link_and_hover_points(
             buffer_snapshot.anchor_after(point_for_position.next_valid.to_point(snapshot));
         if let Some(hovered_hint) = editor
             .visible_inlay_hints(cx)
-            .into_iter()
             .skip_while(|hint| {
                 hint.position
                     .cmp(&previous_valid_anchor, &buffer_snapshot)

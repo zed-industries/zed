@@ -27,7 +27,7 @@ use util::rel_path::RelPath;
 use workspace::Workspace;
 
 use crate::AgentPanel;
-use crate::acp::message_editor::{MessageEditor, MessageEditorEvent};
+use crate::acp::message_editor::MessageEditor;
 use crate::context_picker::file_context_picker::{FileMatch, search_files};
 use crate::context_picker::rules_context_picker::{RulesContextEntry, search_rules};
 use crate::context_picker::symbol_context_picker::SymbolMatch;
@@ -759,13 +759,13 @@ impl CompletionProvider for ContextPickerCompletionProvider {
                                                 let editor = editor.clone();
                                                 move |cx| {
                                                     editor
-                                                        .update(cx, |_editor, cx| {
+                                                        .update(cx, |editor, cx| {
                                                             match intent {
                                                                 CompletionIntent::Complete
                                                                 | CompletionIntent::CompleteWithInsert
                                                                 | CompletionIntent::CompleteWithReplace => {
                                                                     if !is_missing_argument {
-                                                                        cx.emit(MessageEditorEvent::Send);
+                                                                        editor.send(cx);
                                                                     }
                                                                 }
                                                                 CompletionIntent::Compose => {}
