@@ -255,7 +255,7 @@ pub async fn retrieval_stats(
     let files_len = files.len().min(file_limit.unwrap_or(usize::MAX));
     let done_count = Arc::new(AtomicUsize::new(0));
 
-    let (output_tx, output_rx) = mpsc::unbounded::<RetrievalStatsResult>();
+    let (output_tx, output_rx) = mpsc::unbounded::<ReferenceRetrievalResult>();
 
     let tasks = files
         .into_iter()
@@ -315,10 +315,10 @@ pub async fn retrieval_stats(
                     )
                     .await?;
 
-                    let result = RetrievalStatsResult {
-                        path: path.clone(),
+                    let result = ReferenceRetrievalResult {
+                        cursor_path: path.clone(),
                         identifier: reference.identifier,
-                        point: query_point,
+                        cursor_point: query_point,
                         lsp_definitions,
                         retrieved_definitions: retrieve_result.definitions,
                         excerpt_range: retrieve_result.excerpt_range,
@@ -375,7 +375,7 @@ pub async fn retrieval_stats(
 }
 
 async fn build_dataframe(
-    mut output_rx: mpsc::UnboundedReceiver<RetrievalStatsResult>,
+    mut output_rx: mpsc::UnboundedReceiver<ReferenceRetrievalResult>,
 ) -> Result<DataFrame> {
     use soa_rs::{Soa, Soars};
 
@@ -429,9 +429,9 @@ async fn build_dataframe(
     while let Some(result) = output_rx.next().await {
         let mut gold_is_external = false;
         let mut gold_in_excerpt = false;
-        let cursor_path = result.path.as_unix_str();
-        let cursor_row = result.point.row + 1;
-        let cursor_column = result.point.column + 1;
+        let cursor_path = result.cursor_path.as_unix_str();
+        let cursor_row = result.cursor_point.row + 1;
+        let cursor_column = result.cursor_point.column + 1;
         let cursor_identifier = result.identifier.name.to_string();
         let ref_id = next_ref_id;
         next_ref_id += 1;
@@ -926,10 +926,10 @@ impl std::fmt::Display for SummaryStats {
 }
 
 #[derive(Debug)]
-struct RetrievalStatsResult {
-    path: Arc<RelPath>,
+struct ReferenceRetrievalResult {
+    cursor_path: Arc<RelPath>,
+    cursor_point: Point,
     identifier: Identifier,
-    point: Point,
     excerpt_range: Option<Range<usize>>,
     lsp_definitions: Vec<SourceRange>,
     retrieved_definitions: Vec<RetrievedDefinition>,
