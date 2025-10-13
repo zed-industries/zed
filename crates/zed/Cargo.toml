@@ -78,6 +78,7 @@ gpui_tokio.workspace = true
 
 edit_prediction_button.workspace = true
 http_client.workspace = true
+image.workspace = true
 image_viewer.workspace = true
 inspector_ui.workspace = true
 install_cli.workspace = true
@@ -192,6 +193,9 @@ terminal_view = { workspace = true, features = ["test-support"] }
 tree-sitter-md.workspace = true
 tree-sitter-rust.workspace = true
 workspace = { workspace = true, features = ["test-support"] }
+
+[build-dependencies]
+image.workspace = true
 
 [package.metadata.bundle-dev]
 icon = ["resources/app-icon-dev@2x.png", "resources/app-icon-dev.png"]
