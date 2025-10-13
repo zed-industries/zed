@@ -754,6 +754,10 @@ impl UserStore {
     }
 
     pub fn model_request_usage(&self) -> Option<ModelRequestUsage> {
+        if self.current_user().is_none() {
+            return None;
+        }
+
         if self.plan().is_some_and(|plan| plan.is_v2()) {
             return None;
         }
@@ -767,6 +771,10 @@ impl UserStore {
     }
 
     pub fn edit_prediction_usage(&self) -> Option<EditPredictionUsage> {
+        if self.current_user().is_none() {
+            return None;
+        }
+
         self.edit_prediction_usage
     }
 
