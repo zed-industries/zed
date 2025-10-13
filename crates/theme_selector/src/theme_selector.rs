@@ -232,11 +232,7 @@ impl PickerDelegate for ThemeSelectorDelegate {
         self.selection_completed = true;
 
         let appearance = Appearance::from(window.appearance());
-        let theme_name = ThemeSettings::get_global(cx)
-            .theme
-            .name(appearance)
-            .0
-            .clone();
+        let theme_name = ThemeSettings::get_global(cx).theme.name(appearance).0;
 
         telemetry::event!("Settings Changed", setting = "theme", value = theme_name);
 
