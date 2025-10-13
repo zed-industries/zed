@@ -16,7 +16,10 @@ doctest = false
 gpui.workspace = true
 util.workspace = true
 log.workspace = true
+nucleo.workspace = true
 workspace-hack.workspace = true
 
 [dev-dependencies]
 util = {workspace = true, features = ["test-support"]}
+gpui = { workspace = true, "features" = ["test-support"] }
+util_macros.workspace = true
