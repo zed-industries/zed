@@ -3,28 +3,29 @@ use std::sync::Arc;
 use ui::{IntoElement, SharedString};
 
 use crate::{
-    SettingField, SettingItem, SettingsFieldMetadata, SettingsPage, SettingsPageItem, SubPageLink,
-    sub_page_stack,
+    LOCAL, SettingField, SettingItem, SettingsFieldMetadata, SettingsPage, SettingsPageItem,
+    SubPageLink, USER, sub_page_stack,
 };
 
-pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
+pub(crate) fn settings_data() -> Vec<SettingsPage> {
     vec![
         SettingsPage {
-            title: "General Page",
+            title: "General",
             items: vec![
-                SettingsPageItem::SectionHeader("General"),
+                SettingsPageItem::SectionHeader("General Settings"),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Confirm Quit",
-                    description: "Whether to confirm before quitting Zed",
+                    description: "Confirm before quitting Zed",
                     field: Box::new(SettingField {
                         pick: |settings_content| &settings_content.workspace.confirm_quit,
                         pick_mut: |settings_content| &mut settings_content.workspace.confirm_quit,
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Restore On Startup",
-                    description: "Whether to restore previous session when opening Zed",
+                    description: "Restore previous session when opening Zed",
                     field: Box::new(SettingField {
                         pick: |settings_content| &settings_content.workspace.restore_on_startup,
                         pick_mut: |settings_content| {
@@ -32,32 +33,11 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Restore File State",
-                    description: "Whether to restore previous file state when reopening",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| &settings_content.workspace.restore_on_file_reopen,
-                        pick_mut: |settings_content| {
-                            &mut settings_content.workspace.restore_on_file_reopen
-                        },
-                    }),
-                    metadata: None,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Close on File Delete",
-                    description: "Whether to automatically close files that have been deleted",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| &settings_content.workspace.close_on_file_delete,
-                        pick_mut: |settings_content| {
-                            &mut settings_content.workspace.close_on_file_delete
-                        },
-                    }),
-                    metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "When Closing With No Tabs",
-                    description: "What to do when using 'close active item' with no tabs",
+                    description: "What to do when using the 'close active item' action with no tabs",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             &settings_content.workspace.when_closing_with_no_tabs
@@ -67,6 +47,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "On Last Window Closed",
@@ -78,10 +59,11 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Use System Path Prompts",
-                    description: "Whether to use system dialogs for Open and Save As",
+                    description: "Use native OS dialogs for 'Open' and 'Save As'",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             &settings_content.workspace.use_system_path_prompts
@@ -91,10 +73,11 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Use System Prompts",
-                    description: "Whether to use system prompts for confirmations",
+                    description: "Use native OS dialogs for confirmations",
                     field: Box::new(SettingField {
                         pick: |settings_content| &settings_content.workspace.use_system_prompts,
                         pick_mut: |settings_content| {
@@ -102,35 +85,56 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Redact Private Values",
+                    description: "Hide the values of variables in private files",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| &settings_content.editor.redact_private_values,
+                        pick_mut: |settings_content| {
+                            &mut settings_content.editor.redact_private_values
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SectionHeader("Scoped Settings"),
-                // todo(settings_ui): Implement another setting item type that just shows an edit in settings.json
-                // SettingsPageItem::SettingItem(SettingItem {
-                //     title: "Preview Channel",
-                //     description: "Which settings should be activated only in Preview build of Zed",
-                //     field: Box::new(SettingField {
-                //         pick: |settings_content| &settings_content.workspace.use_system_prompts,
-                //         pick_mut: |settings_content| {
-                //             &mut settings_content.workspace.use_system_prompts
-                //         },
-                //     }),
-                //     metadata: None,
-                // }),
-                // SettingsPageItem::SettingItem(SettingItem {
-                //     title: "Settings Profiles",
-                //     description: "Any number of settings profiles that are temporarily applied on top of your existing user settings.",
-                //     field: Box::new(SettingField {
-                //         pick: |settings_content| &settings_content.workspace.use_system_prompts,
-                //         pick_mut: |settings_content| {
-                //             &mut settings_content.workspace.use_system_prompts
-                //         },
-                //     }),
-                //     metadata: None,
-                // }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    // todo(settings_ui): Implement another setting item type that just shows an edit in settings.json
+                    files: USER,
+                    title: "Preview Channel",
+                    description: "Which settings should be activated only in Preview build of Zed",
+                    field: Box::new(
+                        SettingField {
+                            pick: |settings_content| &settings_content.workspace.use_system_prompts,
+                            pick_mut: |settings_content| {
+                                &mut settings_content.workspace.use_system_prompts
+                            },
+                        }
+                        .unimplemented(),
+                    ),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    files: USER,
+                    title: "Settings Profiles",
+                    description: "Any number of settings profiles that are temporarily applied on top of your existing user settings",
+                    field: Box::new(
+                        SettingField {
+                            pick: |settings_content| &settings_content.workspace.use_system_prompts,
+                            pick_mut: |settings_content| {
+                                &mut settings_content.workspace.use_system_prompts
+                            },
+                        }
+                        .unimplemented(),
+                    ),
+                    metadata: None,
+                }),
                 SettingsPageItem::SectionHeader("Privacy"),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Telemetry Diagnostics",
-                    description: "Send debug info like crash reports.",
+                    description: "Send debug information like crash reports",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             if let Some(telemetry) = &settings_content.telemetry {
@@ -147,10 +151,11 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Telemetry Metrics",
-                    description: "Send anonymized usage data like what languages you're using Zed with.",
+                    description: "Send anonymized usage data like what languages you're using Zed with",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             if let Some(telemetry) = &settings_content.telemetry {
@@ -164,6 +169,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
             ],
         },
@@ -172,56 +178,32 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
             items: vec![
                 SettingsPageItem::SectionHeader("Theme"),
                 // todo(settings_ui): Figure out how we want to add these
-                // SettingsPageItem::SettingItem(SettingItem {
-                //     title: "Theme Mode",
-                //     description: "How to select the theme",
-                //     field: Box::new(SettingField {
-                //         pick: |settings_content| &settings_content.theme.theme,
-                //         pick_mut: |settings_content| &mut settings_content.theme.theme,
-                //     }),
-                //     metadata: None,
-                // }),
-                // SettingsPageItem::SettingItem(SettingItem {
-                //     title: "Icon Theme",
-                //     // todo(settings_ui)
-                //     // This description is misleading because the icon theme is used in more places than the file explorer)
-                //     description: "Choose the icon theme for file explorer",
-                //     field: Box::new(SettingField {
-                //         pick: |settings_content| &settings_content.theme.icon_theme,
-                //         pick_mut: |settings_content| &mut settings_content.theme.icon_theme,
-                //     }),
-                //     metadata: None,
-                // }),
-                SettingsPageItem::SectionHeader("Layout"),
                 SettingsPageItem::SettingItem(SettingItem {
-                    title: "Bottom Dock Layout",
-                    description: "Layout mode for the bottom dock",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| &settings_content.workspace.bottom_dock_layout,
-                        pick_mut: |settings_content| {
-                            &mut settings_content.workspace.bottom_dock_layout
-                        },
-                    }),
+                    files: USER,
+                    title: "Theme Mode",
+                    description: "How to select the theme",
+                    field: Box::new(
+                        SettingField {
+                            pick: |settings_content| &settings_content.theme.theme,
+                            pick_mut: |settings_content| &mut settings_content.theme.theme,
+                        }
+                        .unimplemented(),
+                    ),
                     metadata: None,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
-                    title: "Zoomed Padding",
-                    description: "Whether to show padding for zoomed panels",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| &settings_content.workspace.zoomed_padding,
-                        pick_mut: |settings_content| &mut settings_content.workspace.zoomed_padding,
-                    }),
-                    metadata: None,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Use System Window Tabs",
-                    description: "Whether to allow windows to tab together based on the user's tabbing preference (macOS only)",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| &settings_content.workspace.use_system_window_tabs,
-                        pick_mut: |settings_content| {
-                            &mut settings_content.workspace.use_system_window_tabs
-                        },
-                    }),
+                    files: USER,
+                    title: "Icon Theme",
+                    // todo(settings_ui)
+                    // This description is misleading because the icon theme is used in more places than the file explorer)
+                    description: "Choose the icon theme for file explorer",
+                    field: Box::new(
+                        SettingField {
+                            pick: |settings_content| &settings_content.theme.icon_theme,
+                            pick_mut: |settings_content| &mut settings_content.theme.icon_theme,
+                        }
+                        .unimplemented(),
+                    ),
                     metadata: None,
                 }),
                 SettingsPageItem::SectionHeader("Fonts"),
@@ -233,6 +215,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         pick_mut: |settings_content| &mut settings_content.theme.buffer_font_family,
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Buffer Font Size",
@@ -242,6 +225,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         pick_mut: |settings_content| &mut settings_content.theme.buffer_font_size,
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Buffer Font Weight",
@@ -251,17 +235,24 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         pick_mut: |settings_content| &mut settings_content.theme.buffer_font_weight,
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 // todo(settings_ui): This needs custom ui
-                // SettingsPageItem::SettingItem(SettingItem {
-                //     title: "Buffer Line Height",
-                //     description: "Line height for editor text",
-                //     field: Box::new(SettingField {
-                //         pick: |settings_content| &settings_content.theme.buffer_line_height,
-                //         pick_mut: |settings_content| &mut settings_content.theme.buffer_line_height,
-                //     }),
-                //     metadata: None,
-                // }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    files: USER,
+                    title: "Buffer Line Height",
+                    description: "Line height for editor text",
+                    field: Box::new(
+                        SettingField {
+                            pick: |settings_content| &settings_content.theme.buffer_line_height,
+                            pick_mut: |settings_content| {
+                                &mut settings_content.theme.buffer_line_height
+                            },
+                        }
+                        .unimplemented(),
+                    ),
+                    metadata: None,
+                }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "UI Font Family",
                     description: "Font family for UI elements",
@@ -270,6 +261,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         pick_mut: |settings_content| &mut settings_content.theme.ui_font_family,
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "UI Font Size",
@@ -279,6 +271,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         pick_mut: |settings_content| &mut settings_content.theme.ui_font_size,
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "UI Font Weight",
@@ -288,6 +281,35 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         pick_mut: |settings_content| &mut settings_content.theme.ui_font_weight,
                     }),
                     metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Agent Panel UI Font Size",
+                    description: "Font size for agent response text in the agent panel. Falls back to the regular UI font size.",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if settings_content.theme.agent_ui_font_size.is_some() {
+                                &settings_content.theme.agent_ui_font_size
+                            } else {
+                                &settings_content.theme.ui_font_size
+                            }
+                        },
+                        pick_mut: |settings_content| &mut settings_content.theme.agent_ui_font_size,
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Agent Panel Buffer Font Size",
+                    description: "Font size for user messages text in the agent panel",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| &settings_content.theme.agent_buffer_font_size,
+                        pick_mut: |settings_content| {
+                            &mut settings_content.theme.agent_buffer_font_size
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SectionHeader("Keymap"),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -298,26 +320,29 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         pick_mut: |settings_content| &mut settings_content.base_keymap,
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 // todo(settings_ui): Vim/Helix Mode should be apart of one type because it's undefined
                 // behavior to have them both enabled at the same time
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Vim Mode",
-                    description: "Whether to enable vim modes and key bindings",
+                    description: "Enable vim modes and key bindings",
                     field: Box::new(SettingField {
                         pick: |settings_content| &settings_content.vim_mode,
                         pick_mut: |settings_content| &mut settings_content.vim_mode,
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Helix Mode",
-                    description: "Whether to enable helix modes and key bindings",
+                    description: "Enable helix modes and key bindings",
                     field: Box::new(SettingField {
                         pick: |settings_content| &settings_content.helix_mode,
                         pick_mut: |settings_content| &mut settings_content.helix_mode,
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Multi Cursor Modifier",
@@ -329,6 +354,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SectionHeader("Cursor"),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -339,6 +365,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         pick_mut: |settings_content| &mut settings_content.editor.cursor_blink,
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Cursor Shape",
@@ -348,6 +375,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         pick_mut: |settings_content| &mut settings_content.editor.cursor_shape,
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Hide Mouse",
@@ -357,6 +385,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         pick_mut: |settings_content| &mut settings_content.editor.hide_mouse,
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SectionHeader("Highlighting"),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -369,6 +398,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Current Line Highlight",
@@ -380,10 +410,11 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Selection Highlight",
-                    description: "Whether to highlight all occurrences of selected text",
+                    description: "Highlight all occurrences of selected text",
                     field: Box::new(SettingField {
                         pick: |settings_content| &settings_content.editor.selection_highlight,
                         pick_mut: |settings_content| {
@@ -391,6 +422,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Rounded Selection",
@@ -400,11 +432,26 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         pick_mut: |settings_content| &mut settings_content.editor.rounded_selection,
                     }),
                     metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Minimum Contrast For Highlights",
+                    description: "The minimum APCA perceptual contrast to maintain when rendering text over highlight backgrounds",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            &settings_content.editor.minimum_contrast_for_highlights
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content.editor.minimum_contrast_for_highlights
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SectionHeader("Guides"),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Show Wrap Guides",
-                    description: "Whether to show wrap guides (vertical rulers)",
+                    description: "Show wrap guides (vertical rulers)",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             &settings_content
@@ -422,116 +469,30 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER | LOCAL,
                 }),
                 // todo(settings_ui): This needs a custom component
-                // SettingsPageItem::SettingItem(SettingItem {
-                //     title: "Wrap Guides",
-                //     description: "Character counts at which to show wrap guides",
-                //     field: Box::new(SettingField {
-                //         pick: |settings_content| {
-                //             &settings_content
-                //                 .project
-                //                 .all_languages
-                //                 .defaults
-                //                 .wrap_guides
-                //         },
-                //         pick_mut: |settings_content| {
-                //             &mut settings_content
-                //                 .project
-                //                 .all_languages
-                //                 .defaults
-                //                 .wrap_guides
-                //         },
-                //     }),
-                //     metadata: None,
-                // }),
-                SettingsPageItem::SectionHeader("Whitespace"),
                 SettingsPageItem::SettingItem(SettingItem {
-                    title: "Show Whitespace",
-                    description: "Whether to show tabs and spaces",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            &settings_content
-                                .project
-                                .all_languages
-                                .defaults
-                                .show_whitespaces
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .project
-                                .all_languages
-                                .defaults
-                                .show_whitespaces
-                        },
-                    }),
+                    title: "Wrap Guides",
+                    description: "Character counts at which to show wrap guides",
+                    field: Box::new(
+                        SettingField {
+                            pick: |settings_content| {
+                                &settings_content.project.all_languages.defaults.wrap_guides
+                            },
+                            pick_mut: |settings_content| {
+                                &mut settings_content.project.all_languages.defaults.wrap_guides
+                            },
+                        }
+                        .unimplemented(),
+                    ),
                     metadata: None,
-                }),
-                SettingsPageItem::SectionHeader("Window"),
-                // todo(settings_ui): Should we filter by platform?
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Use System Window Tabs",
-                    description: "Whether to allow windows to tab together (macOS only)",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| &settings_content.workspace.use_system_window_tabs,
-                        pick_mut: |settings_content| {
-                            &mut settings_content.workspace.use_system_window_tabs
-                        },
-                    }),
-                    metadata: None,
+                    files: USER | LOCAL,
                 }),
                 SettingsPageItem::SectionHeader("Layout"),
                 SettingsPageItem::SettingItem(SettingItem {
-                    title: "Zoomed Padding",
-                    description: "Whether to show padding for zoomed panels",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| &settings_content.workspace.zoomed_padding,
-                        pick_mut: |settings_content| &mut settings_content.workspace.zoomed_padding,
-                    }),
-                    metadata: None,
-                }),
-                // todo(settings_ui): Needs numeric stepper   option within an option
-                // SettingsPageItem::SettingItem(SettingItem {
-                //     title: "Centered Layout Left Padding",
-                //     description: "Left padding for centered layout",
-                //     field: Box::new(SettingField {
-                //         pick: |settings_content| {
-                //             &settings_content.workspace.centered_layout.left_padding
-                //         },
-                //         pick_mut: |settings_content| {
-                //             &mut settings_content.workspace.centered_layout.left_padding
-                //         },
-                //     }),
-                //     metadata: None,
-                // }),
-                // SettingsPageItem::SettingItem(SettingItem {
-                //     title: "Centered Layout Right Padding",
-                //     description: "Right padding for centered layout",
-                //     field: Box::new(SettingField {
-                //         pick: |settings_content| {
-                //             if let Some(centered_layout) =
-                //                 &settings_content.workspace.centered_layout
-                //             {
-                //                 &centered_layout.right_padding
-                //             } else {
-                //                 &None
-                //             }
-                //         },
-                //         pick_mut: |settings_content| {
-                //             if let Some(mut centered_layout) =
-                //                 settings_content.workspace.centered_layout
-                //             {
-                //                 &mut centered_layout.right_padding
-                //             } else {
-                //                 &mut None
-                //             }
-                //         },
-                //     }),
-                //     metadata: None,
-                // }),
-                SettingsPageItem::SettingItem(SettingItem {
                     title: "Bottom Dock Layout",
-                    description: "Layout mode of the bottom dock",
+                    description: "Layout mode for the bottom dock",
                     field: Box::new(SettingField {
                         pick: |settings_content| &settings_content.workspace.bottom_dock_layout,
                         pick_mut: |settings_content| {
@@ -539,1144 +500,987 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    files: USER,
+                    title: "Centered Layout Left Padding",
+                    description: "Left padding for centered layout",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(centered_layout) =
+                                &settings_content.workspace.centered_layout
+                            {
+                                &centered_layout.left_padding
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .workspace
+                                .centered_layout
+                                .get_or_insert_default()
+                                .left_padding
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    files: USER,
+                    title: "Centered Layout Right Padding",
+                    description: "Right padding for centered layout",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(centered_layout) =
+                                &settings_content.workspace.centered_layout
+                            {
+                                &centered_layout.right_padding
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .workspace
+                                .centered_layout
+                                .get_or_insert_default()
+                                .right_padding
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Zoomed Padding",
+                    description: "Show padding for zoomed panels",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| &settings_content.workspace.zoomed_padding,
+                        pick_mut: |settings_content| &mut settings_content.workspace.zoomed_padding,
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SectionHeader("Window"),
+                // todo(settings_ui): Should we filter by platform?
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Use System Window Tabs",
+                    description: "(macOS only) Whether to allow windows to tab together",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| &settings_content.workspace.use_system_window_tabs,
+                        pick_mut: |settings_content| {
+                            &mut settings_content.workspace.use_system_window_tabs
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
                 }),
             ],
         },
         SettingsPage {
             title: "Editor",
-            items: vec![
-                SettingsPageItem::SectionHeader("Indentation"),
-                // todo(settings_ui): Needs numeric stepper
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Tab Size",
-                    description: "How many columns a tab should occupy",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            &settings_content.project.all_languages.defaults.tab_size
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content.project.all_languages.defaults.tab_size
-                        },
-                    }),
-                    metadata: None,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Hard Tabs",
-                    description: "Whether to indent lines using tab characters, as opposed to multiple spaces",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            &settings_content.project.all_languages.defaults.hard_tabs
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content.project.all_languages.defaults.hard_tabs
-                        },
-                    }),
-                    metadata: None,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Auto Indent",
-                    description: "Whether indentation should be adjusted based on the context whilst typing",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            &settings_content.project.all_languages.defaults.auto_indent
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content.project.all_languages.defaults.auto_indent
-                        },
-                    }),
-                    metadata: None,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Auto Indent On Paste",
-                    description: "Whether indentation of pasted content should be adjusted based on the context",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            &settings_content
-                                .project
-                                .all_languages
-                                .defaults
-                                .auto_indent_on_paste
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .project
-                                .all_languages
-                                .defaults
-                                .auto_indent_on_paste
-                        },
-                    }),
-                    metadata: None,
-                }),
-                SettingsPageItem::SectionHeader("Wrapping"),
-                // todo(settings_ui): Needs numeric stepper
-                // SettingsPageItem::SettingItem(SettingItem {
-                //     title: "Preferred Line Length",
-                //     description: "The column at which to soft-wrap lines, for buffers where soft-wrap is enabled",
-                //     field: Box::new(SettingField {
-                //         pick: |settings_content| &settings_content.project.all_languages.defaults.preferred_line_length,
-                //         pick_mut: |settings_content| &mut settings_content.project.all_languages.defaults.preferred_line_length,
-                //     }),
-                //     metadata: None,
-                // }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Soft Wrap",
-                    description: "How to soft-wrap long lines of text",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            &settings_content.project.all_languages.defaults.soft_wrap
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content.project.all_languages.defaults.soft_wrap
-                        },
-                    }),
-                    metadata: None,
-                }),
-                SettingsPageItem::SectionHeader("Search"),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Search Wrap",
-                    description: "Whether the editor search results will loop",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| &settings_content.editor.search_wrap,
-                        pick_mut: |settings_content| &mut settings_content.editor.search_wrap,
-                    }),
-                    metadata: None,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Seed Search Query From Cursor",
-                    description: "When to populate a new search's query based on the text under the cursor",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            &settings_content.editor.seed_search_query_from_cursor
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content.editor.seed_search_query_from_cursor
-                        },
-                    }),
-                    metadata: None,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Use Smartcase Search",
-                    description: "Whether to use smartcase search",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| &settings_content.editor.use_smartcase_search,
-                        pick_mut: |settings_content| {
-                            &mut settings_content.editor.use_smartcase_search
-                        },
-                    }),
-                    metadata: None,
-                }),
-                SettingsPageItem::SectionHeader("Editor Behavior"),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Redact Private Values",
-                    description: "Hide the values of variables in private files",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| &settings_content.editor.redact_private_values,
-                        pick_mut: |settings_content| {
-                            &mut settings_content.editor.redact_private_values
-                        },
-                    }),
-                    metadata: None,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Middle Click Paste",
-                    description: "Whether to enable middle-click paste on Linux",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| &settings_content.editor.middle_click_paste,
-                        pick_mut: |settings_content| {
-                            &mut settings_content.editor.middle_click_paste
-                        },
-                    }),
-                    metadata: None,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Double Click In Multibuffer",
-                    description: "What to do when multibuffer is double clicked in some of its excerpts",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            &settings_content.editor.double_click_in_multibuffer
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content.editor.double_click_in_multibuffer
-                        },
-                    }),
-                    metadata: None,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Go To Definition Fallback",
-                    description: "Whether to follow-up empty go to definition responses from the language server",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| &settings_content.editor.go_to_definition_fallback,
-                        pick_mut: |settings_content| {
-                            &mut settings_content.editor.go_to_definition_fallback
-                        },
-                    }),
-                    metadata: None,
-                }),
-                SettingsPageItem::SectionHeader("Scrolling"),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Scroll Beyond Last Line",
-                    description: "Whether the editor will scroll beyond the last line",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| &settings_content.editor.scroll_beyond_last_line,
-                        pick_mut: |settings_content| {
-                            &mut settings_content.editor.scroll_beyond_last_line
-                        },
-                    }),
-                    metadata: None,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Vertical Scroll Margin",
-                    description: "The number of lines to keep above/below the cursor when auto-scrolling",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| &settings_content.editor.vertical_scroll_margin,
-                        pick_mut: |settings_content| {
-                            &mut settings_content.editor.vertical_scroll_margin
-                        },
-                    }),
-                    metadata: None,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Horizontal Scroll Margin",
-                    description: "The number of characters to keep on either side when scrolling with the mouse",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| &settings_content.editor.horizontal_scroll_margin,
-                        pick_mut: |settings_content| {
-                            &mut settings_content.editor.horizontal_scroll_margin
-                        },
-                    }),
-                    metadata: None,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Scroll Sensitivity",
-                    description: "Scroll sensitivity multiplier for both horizontal and vertical scrolling",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| &settings_content.editor.scroll_sensitivity,
-                        pick_mut: |settings_content| {
-                            &mut settings_content.editor.scroll_sensitivity
-                        },
-                    }),
-                    metadata: None,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Fast Scroll Sensitivity",
-                    description: "Fast Scroll sensitivity multiplier for both horizontal and vertical scrolling",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| &settings_content.editor.fast_scroll_sensitivity,
-                        pick_mut: |settings_content| {
-                            &mut settings_content.editor.fast_scroll_sensitivity
-                        },
-                    }),
-                    metadata: None,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Autoscroll On Clicks",
-                    description: "Whether to scroll when clicking near the edge of the visible text area",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| &settings_content.editor.autoscroll_on_clicks,
-                        pick_mut: |settings_content| {
-                            &mut settings_content.editor.autoscroll_on_clicks
-                        },
-                    }),
-                    metadata: None,
-                }),
-                SettingsPageItem::SectionHeader("Auto Actions"),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Use Autoclose",
-                    description: "Whether to automatically type closing characters for you",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            &settings_content
-                                .project
-                                .all_languages
-                                .defaults
-                                .use_autoclose
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .project
-                                .all_languages
-                                .defaults
-                                .use_autoclose
-                        },
-                    }),
-                    metadata: None,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Use Auto Surround",
-                    description: "Whether to automatically surround text with characters for you",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            &settings_content
-                                .project
-                                .all_languages
-                                .defaults
-                                .use_auto_surround
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .project
-                                .all_languages
-                                .defaults
-                                .use_auto_surround
-                        },
-                    }),
-                    metadata: None,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Use On Type Format",
-                    description: "Whether to use additional LSP queries to format the code after every trigger symbol input",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            &settings_content
-                                .project
-                                .all_languages
-                                .defaults
-                                .use_on_type_format
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .project
-                                .all_languages
-                                .defaults
-                                .use_on_type_format
-                        },
-                    }),
-                    metadata: None,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Always Treat Brackets As Autoclosed",
-                    description: "Controls how the editor handles the autoclosed characters",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            &settings_content
-                                .project
-                                .all_languages
-                                .defaults
-                                .always_treat_brackets_as_autoclosed
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .project
-                                .all_languages
-                                .defaults
-                                .always_treat_brackets_as_autoclosed
-                        },
-                    }),
-                    metadata: None,
-                }),
-                SettingsPageItem::SectionHeader("Formatting"),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Remove Trailing Whitespace On Save",
-                    description: "Whether or not to remove any trailing whitespace from lines of a buffer before saving it",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            &settings_content
-                                .project
-                                .all_languages
-                                .defaults
-                                .remove_trailing_whitespace_on_save
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .project
-                                .all_languages
-                                .defaults
-                                .remove_trailing_whitespace_on_save
-                        },
-                    }),
-                    metadata: None,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Ensure Final Newline On Save",
-                    description: "Whether or not to ensure there's a single newline at the end of a buffer when saving it",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            &settings_content
-                                .project
-                                .all_languages
-                                .defaults
-                                .ensure_final_newline_on_save
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .project
-                                .all_languages
-                                .defaults
-                                .ensure_final_newline_on_save
-                        },
-                    }),
-                    metadata: None,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Extend Comment On Newline",
-                    description: "Whether to start a new line with a comment when a previous line is a comment as well",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            &settings_content
-                                .project
-                                .all_languages
-                                .defaults
-                                .extend_comment_on_newline
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .project
-                                .all_languages
-                                .defaults
-                                .extend_comment_on_newline
-                        },
-                    }),
-                    metadata: None,
-                }),
-                SettingsPageItem::SectionHeader("Completions"),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Show Completions On Input",
-                    description: "Whether to pop the completions menu while typing in an editor without explicitly requesting it",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            &settings_content
-                                .project
-                                .all_languages
-                                .defaults
-                                .show_completions_on_input
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .project
-                                .all_languages
-                                .defaults
-                                .show_completions_on_input
-                        },
-                    }),
-                    metadata: None,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Show Completion Documentation",
-                    description: "Whether to display inline and alongside documentation for items in the completions menu",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            &settings_content
-                                .project
-                                .all_languages
-                                .defaults
-                                .show_completion_documentation
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .project
-                                .all_languages
-                                .defaults
-                                .show_completion_documentation
-                        },
-                    }),
-                    metadata: None,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Auto Signature Help",
-                    description: "Whether to automatically show a signature help pop-up or not",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| &settings_content.editor.auto_signature_help,
-                        pick_mut: |settings_content| {
-                            &mut settings_content.editor.auto_signature_help
-                        },
-                    }),
-                    metadata: None,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Show Signature Help After Edits",
-                    description: "Whether to show the signature help pop-up after completions or bracket pairs inserted",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            &settings_content.editor.show_signature_help_after_edits
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content.editor.show_signature_help_after_edits
-                        },
-                    }),
-                    metadata: None,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Snippet Sort Order",
-                    description: "Determines how snippets are sorted relative to other completion items",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| &settings_content.editor.snippet_sort_order,
-                        pick_mut: |settings_content| {
-                            &mut settings_content.editor.snippet_sort_order
-                        },
-                    }),
-                    metadata: None,
-                }),
-                SettingsPageItem::SectionHeader("Hover"),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Hover Popover Enabled",
-                    description: "Whether to show the informational hover box when moving the mouse over symbols in the editor",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| &settings_content.editor.hover_popover_enabled,
-                        pick_mut: |settings_content| {
-                            &mut settings_content.editor.hover_popover_enabled
-                        },
-                    }),
-                    metadata: None,
-                }),
-                // todo(settings ui): add units to this numeric stepper
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Hover Popover Delay",
-                    description: "Time to wait in milliseconds before showing the informational hover box",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| &settings_content.editor.hover_popover_delay,
-                        pick_mut: |settings_content| {
-                            &mut settings_content.editor.hover_popover_delay
-                        },
-                    }),
-                    metadata: None,
-                }),
-                SettingsPageItem::SectionHeader("Code Actions"),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Inline Code Actions",
-                    description: "Whether to show code action button at start of buffer line",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| &settings_content.editor.inline_code_actions,
-                        pick_mut: |settings_content| {
-                            &mut settings_content.editor.inline_code_actions
-                        },
-                    }),
-                    metadata: None,
-                }),
-                SettingsPageItem::SectionHeader("Selection"),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Drag And Drop Selection",
-                    description: "Whether to enable drag and drop selection",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(drag_and_drop) =
-                                &settings_content.editor.drag_and_drop_selection
-                            {
-                                &drag_and_drop.enabled
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .editor
-                                .drag_and_drop_selection
-                                .get_or_insert_default()
-                                .enabled
-                        },
-                    }),
-                    metadata: None,
-                }),
-                // todo(settings_ui): Needs numeric stepper
-                // SettingsPageItem::SettingItem(SettingItem {
-                //     title: "Drag And Drop Selection Delay",
-                //     description: "Delay in milliseconds before drag and drop selection starts",
-                //     field: Box::new(SettingField {
-                //         pick: |settings_content| {
-                //             if let Some(drag_and_drop) = &settings_content.editor.drag_and_drop_selection {
-                //                 &drag_and_drop.delay
-                //             } else {
-                //                 &None
-                //             }
-                //         },
-                //         pick_mut: |settings_content| {
-                //             &mut settings_content.editor.drag_and_drop_selection.get_or_insert_default().delay
-                //         },
-                //     }),
-                //     metadata: None,
-                // }),
-                SettingsPageItem::SectionHeader("Line Numbers"),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Relative Line Numbers",
-                    description: "Whether the line numbers on editors gutter are relative or not",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| &settings_content.editor.relative_line_numbers,
-                        pick_mut: |settings_content| {
-                            &mut settings_content.editor.relative_line_numbers
-                        },
-                    }),
-                    metadata: None,
-                }),
-                SettingsPageItem::SectionHeader("Gutter"),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Show Line Numbers",
-                    description: "Whether to show line numbers in the gutter",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(gutter) = &settings_content.editor.gutter {
-                                &gutter.line_numbers
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .editor
-                                .gutter
-                                .get_or_insert_default()
-                                .line_numbers
-                        },
-                    }),
-                    metadata: None,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Show Runnables",
-                    description: "Whether to show runnable buttons in the gutter",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(gutter) = &settings_content.editor.gutter {
-                                &gutter.runnables
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .editor
-                                .gutter
-                                .get_or_insert_default()
-                                .runnables
-                        },
-                    }),
-                    metadata: None,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Show Breakpoints",
-                    description: "Whether to show breakpoints in the gutter",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(gutter) = &settings_content.editor.gutter {
-                                &gutter.breakpoints
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .editor
-                                .gutter
-                                .get_or_insert_default()
-                                .breakpoints
-                        },
-                    }),
-                    metadata: None,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Show Folds",
-                    description: "Whether to show code folding controls in the gutter",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(gutter) = &settings_content.editor.gutter {
-                                &gutter.folds
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content.editor.gutter.get_or_insert_default().folds
-                        },
-                    }),
-                    metadata: None,
-                }),
-                SettingsPageItem::SectionHeader("Tabs"),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Show Tab Bar",
-                    description: "Whether or not to show the tab bar in the editor",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(tab_bar) = &settings_content.tab_bar {
-                                &tab_bar.show
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content.tab_bar.get_or_insert_default().show
-                        },
-                    }),
-                    metadata: None,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Show Git Status In Tabs",
-                    description: "Whether to show the Git file status on a tab item",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(tabs) = &settings_content.tabs {
-                                &tabs.git_status
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content.tabs.get_or_insert_default().git_status
-                        },
-                    }),
-                    metadata: None,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Show File Icons In Tabs",
-                    description: "Whether to show the file icon for a tab",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(tabs) = &settings_content.tabs {
-                                &tabs.file_icons
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content.tabs.get_or_insert_default().file_icons
-                        },
-                    }),
-                    metadata: None,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Tab Close Position",
-                    description: "Position of the close button in a tab",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(tabs) = &settings_content.tabs {
-                                &tabs.close_position
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content.tabs.get_or_insert_default().close_position
-                        },
-                    }),
-                    metadata: None,
-                }),
-                // todo(settings_ui): Needs numeric stepper
-                // SettingsPageItem::SettingItem(SettingItem {
-                //     title: "Maximum Tabs",
-                //     description: "Maximum open tabs in a pane. Will not close an unsaved tab",
-                //     field: Box::new(SettingField {
-                //         pick: |settings_content| &settings_content.workspace.max_tabs,
-                //         pick_mut: |settings_content| &mut settings_content.workspace.max_tabs,
-                //     }),
-                //     metadata: None,
-                // }),
-                SettingsPageItem::SectionHeader("Toolbar"),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Breadcrumbs",
-                    description: "Whether to show breadcrumbs",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(toolbar) = &settings_content.editor.toolbar {
-                                &toolbar.breadcrumbs
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .editor
-                                .toolbar
-                                .get_or_insert_default()
-                                .breadcrumbs
-                        },
-                    }),
-                    metadata: None,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Quick Actions",
-                    description: "Whether to show quick action buttons",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(toolbar) = &settings_content.editor.toolbar {
-                                &toolbar.quick_actions
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .editor
-                                .toolbar
-                                .get_or_insert_default()
-                                .quick_actions
-                        },
-                    }),
-                    metadata: None,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Selections Menu",
-                    description: "Whether to show the selections menu in the editor toolbar",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(toolbar) = &settings_content.editor.toolbar {
-                                &toolbar.selections_menu
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .editor
-                                .toolbar
-                                .get_or_insert_default()
-                                .selections_menu
-                        },
-                    }),
-                    metadata: None,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Agent Review",
-                    description: "Whether to show agent review buttons in the editor toolbar",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(toolbar) = &settings_content.editor.toolbar {
-                                &toolbar.agent_review
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .editor
-                                .toolbar
-                                .get_or_insert_default()
-                                .agent_review
-                        },
-                    }),
-                    metadata: None,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Code Actions",
-                    description: "Whether to show code action buttons in the editor toolbar",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(toolbar) = &settings_content.editor.toolbar {
-                                &toolbar.code_actions
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .editor
-                                .toolbar
-                                .get_or_insert_default()
-                                .code_actions
-                        },
-                    }),
-                    metadata: None,
-                }),
-            ],
-        },
-        SettingsPage {
-            title: "Languages & Frameworks",
             items: {
                 let mut items = vec![
-                    SettingsPageItem::SectionHeader(LANGUAGES_SECTION_HEADER),
-                    SettingsPageItem::SubPageLink(SubPageLink {
-                        title: "JSON",
-                        render: Arc::new(|this, window, cx| {
-                            this.render_page_items(language_settings_data().iter(), window, cx)
-                                .into_any_element()
+                    SettingsPageItem::SectionHeader("Multibuffer"),
+                    SettingsPageItem::SettingItem(SettingItem {
+                        title: "Double Click In Multibuffer",
+                        description: "What to do when multibuffer is double-clicked in some of its excerpts",
+                        field: Box::new(SettingField {
+                            pick: |settings_content| {
+                                &settings_content.editor.double_click_in_multibuffer
+                            },
+                            pick_mut: |settings_content| {
+                                &mut settings_content.editor.double_click_in_multibuffer
+                            },
                         }),
+                        metadata: None,
+                        files: USER,
                     }),
-                    SettingsPageItem::SubPageLink(SubPageLink {
-                        title: "JSONC",
-                        render: Arc::new(|this, window, cx| {
-                            this.render_page_items(language_settings_data().iter(), window, cx)
-                                .into_any_element()
+                    SettingsPageItem::SettingItem(SettingItem {
+                        title: "Expand Excerpt Lines",
+                        description: "How many lines to expand the multibuffer excerpts by default",
+                        field: Box::new(SettingField {
+                            pick: |settings_content| &settings_content.editor.expand_excerpt_lines,
+                            pick_mut: |settings_content| {
+                                &mut settings_content.editor.expand_excerpt_lines
+                            },
                         }),
+                        metadata: None,
+                        files: USER,
                     }),
-                    SettingsPageItem::SubPageLink(SubPageLink {
-                        title: "Rust",
-                        render: Arc::new(|this, window, cx| {
-                            this.render_page_items(language_settings_data().iter(), window, cx)
-                                .into_any_element()
+                    SettingsPageItem::SettingItem(SettingItem {
+                        title: "Excerpt Context Lines",
+                        description: "How many lines of context to provide in multibuffer excerpts by default",
+                        field: Box::new(SettingField {
+                            pick: |settings_content| &settings_content.editor.excerpt_context_lines,
+                            pick_mut: |settings_content| {
+                                &mut settings_content.editor.excerpt_context_lines
+                            },
                         }),
+                        metadata: None,
+                        files: USER,
                     }),
-                    SettingsPageItem::SubPageLink(SubPageLink {
-                        title: "Python",
-                        render: Arc::new(|this, window, cx| {
-                            this.render_page_items(language_settings_data().iter(), window, cx)
-                                .into_any_element()
+                    SettingsPageItem::SectionHeader("Scrolling"),
+                    SettingsPageItem::SettingItem(SettingItem {
+                        title: "Scroll Beyond Last Line",
+                        description: "Whether the editor will scroll beyond the last line",
+                        field: Box::new(SettingField {
+                            pick: |settings_content| {
+                                &settings_content.editor.scroll_beyond_last_line
+                            },
+                            pick_mut: |settings_content| {
+                                &mut settings_content.editor.scroll_beyond_last_line
+                            },
                         }),
+                        metadata: None,
+                        files: USER,
                     }),
-                    SettingsPageItem::SubPageLink(SubPageLink {
-                        title: "TSX",
-                        render: Arc::new(|this, window, cx| {
-                            this.render_page_items(language_settings_data().iter(), window, cx)
-                                .into_any_element()
+                    SettingsPageItem::SettingItem(SettingItem {
+                        title: "Vertical Scroll Margin",
+                        description: "The number of lines to keep above/below the cursor when auto-scrolling",
+                        field: Box::new(SettingField {
+                            pick: |settings_content| {
+                                &settings_content.editor.vertical_scroll_margin
+                            },
+                            pick_mut: |settings_content| {
+                                &mut settings_content.editor.vertical_scroll_margin
+                            },
                         }),
+                        metadata: None,
+                        files: USER,
+                    }),
+                    SettingsPageItem::SettingItem(SettingItem {
+                        title: "Horizontal Scroll Margin",
+                        description: "The number of characters to keep on either side when scrolling with the mouse",
+                        field: Box::new(SettingField {
+                            pick: |settings_content| {
+                                &settings_content.editor.horizontal_scroll_margin
+                            },
+                            pick_mut: |settings_content| {
+                                &mut settings_content.editor.horizontal_scroll_margin
+                            },
+                        }),
+                        metadata: None,
+                        files: USER,
+                    }),
+                    SettingsPageItem::SettingItem(SettingItem {
+                        title: "Scroll Sensitivity",
+                        description: "Scroll sensitivity multiplier for both horizontal and vertical scrolling",
+                        field: Box::new(SettingField {
+                            pick: |settings_content| &settings_content.editor.scroll_sensitivity,
+                            pick_mut: |settings_content| {
+                                &mut settings_content.editor.scroll_sensitivity
+                            },
+                        }),
+                        metadata: None,
+                        files: USER,
+                    }),
+                    SettingsPageItem::SettingItem(SettingItem {
+                        title: "Fast Scroll Sensitivity",
+                        description: "Fast Scroll sensitivity multiplier for both horizontal and vertical scrolling",
+                        field: Box::new(SettingField {
+                            pick: |settings_content| {
+                                &settings_content.editor.fast_scroll_sensitivity
+                            },
+                            pick_mut: |settings_content| {
+                                &mut settings_content.editor.fast_scroll_sensitivity
+                            },
+                        }),
+                        metadata: None,
+                        files: USER,
+                    }),
+                    SettingsPageItem::SettingItem(SettingItem {
+                        title: "Autoscroll On Clicks",
+                        description: "Whether to scroll when clicking near the edge of the visible text area",
+                        field: Box::new(SettingField {
+                            pick: |settings_content| &settings_content.editor.autoscroll_on_clicks,
+                            pick_mut: |settings_content| {
+                                &mut settings_content.editor.autoscroll_on_clicks
+                            },
+                        }),
+                        metadata: None,
+                        files: USER,
+                    }),
+                    SettingsPageItem::SectionHeader("Signature Help"),
+                    SettingsPageItem::SettingItem(SettingItem {
+                        title: "Auto Signature Help",
+                        description: "Automatically show a signature help pop-up",
+                        field: Box::new(SettingField {
+                            pick: |settings_content| &settings_content.editor.auto_signature_help,
+                            pick_mut: |settings_content| {
+                                &mut settings_content.editor.auto_signature_help
+                            },
+                        }),
+                        metadata: None,
+                        files: USER,
+                    }),
+                    SettingsPageItem::SettingItem(SettingItem {
+                        title: "Show Signature Help After Edits",
+                        description: "Show the signature help pop-up after completions or bracket pairs are inserted",
+                        field: Box::new(SettingField {
+                            pick: |settings_content| {
+                                &settings_content.editor.show_signature_help_after_edits
+                            },
+                            pick_mut: |settings_content| {
+                                &mut settings_content.editor.show_signature_help_after_edits
+                            },
+                        }),
+                        metadata: None,
+                        files: USER,
+                    }),
+                    SettingsPageItem::SettingItem(SettingItem {
+                        title: "Snippet Sort Order",
+                        description: "Determines how snippets are sorted relative to other completion items",
+                        field: Box::new(SettingField {
+                            pick: |settings_content| &settings_content.editor.snippet_sort_order,
+                            pick_mut: |settings_content| {
+                                &mut settings_content.editor.snippet_sort_order
+                            },
+                        }),
+                        metadata: None,
+                        files: USER,
+                    }),
+                    SettingsPageItem::SectionHeader("Hover"),
+                    SettingsPageItem::SettingItem(SettingItem {
+                        title: "Hover Popover Enabled",
+                        description: "Show the informational hover box when moving the mouse over symbols in the editor",
+                        field: Box::new(SettingField {
+                            pick: |settings_content| &settings_content.editor.hover_popover_enabled,
+                            pick_mut: |settings_content| {
+                                &mut settings_content.editor.hover_popover_enabled
+                            },
+                        }),
+                        metadata: None,
+                        files: USER,
+                    }),
+                    // todo(settings ui): add units to this number input
+                    SettingsPageItem::SettingItem(SettingItem {
+                        title: "Hover Popover Delay",
+                        description: "Time to wait in milliseconds before showing the informational hover box",
+                        field: Box::new(SettingField {
+                            pick: |settings_content| &settings_content.editor.hover_popover_delay,
+                            pick_mut: |settings_content| {
+                                &mut settings_content.editor.hover_popover_delay
+                            },
+                        }),
+                        metadata: None,
+                        files: USER,
+                    }),
+                    SettingsPageItem::SectionHeader("Code Actions & Selection"),
+                    SettingsPageItem::SettingItem(SettingItem {
+                        title: "Inline Code Actions",
+                        description: "Show code action button at start of buffer line",
+                        field: Box::new(SettingField {
+                            pick: |settings_content| &settings_content.editor.inline_code_actions,
+                            pick_mut: |settings_content| {
+                                &mut settings_content.editor.inline_code_actions
+                            },
+                        }),
+                        metadata: None,
+                        files: USER,
+                    }),
+                    SettingsPageItem::SettingItem(SettingItem {
+                        title: "Drag And Drop Selection",
+                        description: "Enable drag and drop selection",
+                        field: Box::new(SettingField {
+                            pick: |settings_content| {
+                                if let Some(drag_and_drop) =
+                                    &settings_content.editor.drag_and_drop_selection
+                                {
+                                    &drag_and_drop.enabled
+                                } else {
+                                    &None
+                                }
+                            },
+                            pick_mut: |settings_content| {
+                                &mut settings_content
+                                    .editor
+                                    .drag_and_drop_selection
+                                    .get_or_insert_default()
+                                    .enabled
+                            },
+                        }),
+                        metadata: None,
+                        files: USER,
+                    }),
+                    SettingsPageItem::SettingItem(SettingItem {
+                        title: "Drag And Drop Selection Delay",
+                        description: "Delay in milliseconds before drag and drop selection starts",
+                        field: Box::new(SettingField {
+                            pick: |settings_content| {
+                                if let Some(drag_and_drop) =
+                                    &settings_content.editor.drag_and_drop_selection
+                                {
+                                    &drag_and_drop.delay
+                                } else {
+                                    &None
+                                }
+                            },
+                            pick_mut: |settings_content| {
+                                &mut settings_content
+                                    .editor
+                                    .drag_and_drop_selection
+                                    .get_or_insert_default()
+                                    .delay
+                            },
+                        }),
+                        metadata: None,
+                        files: USER,
+                    }),
+                    SettingsPageItem::SectionHeader("Gutter"),
+                    SettingsPageItem::SettingItem(SettingItem {
+                        title: "Show Line Numbers",
+                        description: "Show line numbers in the gutter",
+                        field: Box::new(SettingField {
+                            pick: |settings_content| {
+                                if let Some(gutter) = &settings_content.editor.gutter {
+                                    &gutter.line_numbers
+                                } else {
+                                    &None
+                                }
+                            },
+                            pick_mut: |settings_content| {
+                                &mut settings_content
+                                    .editor
+                                    .gutter
+                                    .get_or_insert_default()
+                                    .line_numbers
+                            },
+                        }),
+                        metadata: None,
+                        files: USER,
+                    }),
+                    SettingsPageItem::SettingItem(SettingItem {
+                        title: "Relative Line Numbers",
+                        description: "Whether the line numbers in the editor's gutter are relative or not",
+                        field: Box::new(SettingField {
+                            pick: |settings_content| &settings_content.editor.relative_line_numbers,
+                            pick_mut: |settings_content| {
+                                &mut settings_content.editor.relative_line_numbers
+                            },
+                        }),
+                        metadata: None,
+                        files: USER,
+                    }),
+                    SettingsPageItem::SettingItem(SettingItem {
+                        title: "Show Runnables",
+                        description: "Show runnable buttons in the gutter",
+                        field: Box::new(SettingField {
+                            pick: |settings_content| {
+                                if let Some(gutter) = &settings_content.editor.gutter {
+                                    &gutter.runnables
+                                } else {
+                                    &None
+                                }
+                            },
+                            pick_mut: |settings_content| {
+                                &mut settings_content
+                                    .editor
+                                    .gutter
+                                    .get_or_insert_default()
+                                    .runnables
+                            },
+                        }),
+                        metadata: None,
+                        files: USER,
+                    }),
+                    SettingsPageItem::SettingItem(SettingItem {
+                        title: "Show Breakpoints",
+                        description: "Show breakpoints in the gutter",
+                        field: Box::new(SettingField {
+                            pick: |settings_content| {
+                                if let Some(gutter) = &settings_content.editor.gutter {
+                                    &gutter.breakpoints
+                                } else {
+                                    &None
+                                }
+                            },
+                            pick_mut: |settings_content| {
+                                &mut settings_content
+                                    .editor
+                                    .gutter
+                                    .get_or_insert_default()
+                                    .breakpoints
+                            },
+                        }),
+                        metadata: None,
+                        files: USER,
+                    }),
+                    SettingsPageItem::SettingItem(SettingItem {
+                        title: "Show Folds",
+                        description: "Show code folding controls in the gutter",
+                        field: Box::new(SettingField {
+                            pick: |settings_content| {
+                                if let Some(gutter) = &settings_content.editor.gutter {
+                                    &gutter.folds
+                                } else {
+                                    &None
+                                }
+                            },
+                            pick_mut: |settings_content| {
+                                &mut settings_content.editor.gutter.get_or_insert_default().folds
+                            },
+                        }),
+                        metadata: None,
+                        files: USER,
+                    }),
+                    SettingsPageItem::SettingItem(SettingItem {
+                        title: "Min Line Number Digits",
+                        description: "Minimum number of characters to reserve space for in the gutter",
+                        field: Box::new(SettingField {
+                            pick: |settings_content| {
+                                if let Some(gutter) = &settings_content.editor.gutter {
+                                    &gutter.min_line_number_digits
+                                } else {
+                                    &None
+                                }
+                            },
+                            pick_mut: |settings_content| {
+                                &mut settings_content
+                                    .editor
+                                    .gutter
+                                    .get_or_insert_default()
+                                    .min_line_number_digits
+                            },
+                        }),
+                        metadata: None,
+                        files: USER,
+                    }),
+                    SettingsPageItem::SectionHeader("Scrollbar"),
+                    SettingsPageItem::SettingItem(SettingItem {
+                        title: "Show",
+                        description: "When to show the scrollbar in the editor",
+                        field: Box::new(SettingField {
+                            pick: |settings_content| {
+                                if let Some(scrollbar) = &settings_content.editor.scrollbar {
+                                    &scrollbar.show
+                                } else {
+                                    &None
+                                }
+                            },
+                            pick_mut: |settings_content| {
+                                &mut settings_content
+                                    .editor
+                                    .scrollbar
+                                    .get_or_insert_default()
+                                    .show
+                            },
+                        }),
+                        metadata: None,
+                        files: USER,
+                    }),
+                    SettingsPageItem::SettingItem(SettingItem {
+                        title: "Cursors",
+                        description: "Show cursor positions in the scrollbar",
+                        field: Box::new(SettingField {
+                            pick: |settings_content| {
+                                if let Some(scrollbar) = &settings_content.editor.scrollbar {
+                                    &scrollbar.cursors
+                                } else {
+                                    &None
+                                }
+                            },
+                            pick_mut: |settings_content| {
+                                &mut settings_content
+                                    .editor
+                                    .scrollbar
+                                    .get_or_insert_default()
+                                    .cursors
+                            },
+                        }),
+                        metadata: None,
+                        files: USER,
+                    }),
+                    SettingsPageItem::SettingItem(SettingItem {
+                        title: "Git Diff",
+                        description: "Show git diff indicators in the scrollbar",
+                        field: Box::new(SettingField {
+                            pick: |settings_content| {
+                                if let Some(scrollbar) = &settings_content.editor.scrollbar {
+                                    &scrollbar.git_diff
+                                } else {
+                                    &None
+                                }
+                            },
+                            pick_mut: |settings_content| {
+                                &mut settings_content
+                                    .editor
+                                    .scrollbar
+                                    .get_or_insert_default()
+                                    .git_diff
+                            },
+                        }),
+                        metadata: None,
+                        files: USER,
+                    }),
+                    SettingsPageItem::SettingItem(SettingItem {
+                        title: "Search Results",
+                        description: "Show buffer search result indicators in the scrollbar",
+                        field: Box::new(SettingField {
+                            pick: |settings_content| {
+                                if let Some(scrollbar) = &settings_content.editor.scrollbar {
+                                    &scrollbar.search_results
+                                } else {
+                                    &None
+                                }
+                            },
+                            pick_mut: |settings_content| {
+                                &mut settings_content
+                                    .editor
+                                    .scrollbar
+                                    .get_or_insert_default()
+                                    .search_results
+                            },
+                        }),
+                        metadata: None,
+                        files: USER,
+                    }),
+                    SettingsPageItem::SettingItem(SettingItem {
+                        title: "Selected Text",
+                        description: "Show selected text occurrences in the scrollbar",
+                        field: Box::new(SettingField {
+                            pick: |settings_content| {
+                                if let Some(scrollbar) = &settings_content.editor.scrollbar {
+                                    &scrollbar.selected_text
+                                } else {
+                                    &None
+                                }
+                            },
+                            pick_mut: |settings_content| {
+                                &mut settings_content
+                                    .editor
+                                    .scrollbar
+                                    .get_or_insert_default()
+                                    .selected_text
+                            },
+                        }),
+                        metadata: None,
+                        files: USER,
+                    }),
+                    SettingsPageItem::SettingItem(SettingItem {
+                        title: "Selected Symbol",
+                        description: "Show selected symbol occurrences in the scrollbar",
+                        field: Box::new(SettingField {
+                            pick: |settings_content| {
+                                if let Some(scrollbar) = &settings_content.editor.scrollbar {
+                                    &scrollbar.selected_symbol
+                                } else {
+                                    &None
+                                }
+                            },
+                            pick_mut: |settings_content| {
+                                &mut settings_content
+                                    .editor
+                                    .scrollbar
+                                    .get_or_insert_default()
+                                    .selected_symbol
+                            },
+                        }),
+                        metadata: None,
+                        files: USER,
+                    }),
+                    SettingsPageItem::SettingItem(SettingItem {
+                        title: "Diagnostics",
+                        description: "Which diagnostic indicators to show in the scrollbar",
+                        field: Box::new(SettingField {
+                            pick: |settings_content| {
+                                if let Some(scrollbar) = &settings_content.editor.scrollbar {
+                                    &scrollbar.diagnostics
+                                } else {
+                                    &None
+                                }
+                            },
+                            pick_mut: |settings_content| {
+                                &mut settings_content
+                                    .editor
+                                    .scrollbar
+                                    .get_or_insert_default()
+                                    .diagnostics
+                            },
+                        }),
+                        metadata: None,
+                        files: USER,
+                    }),
+                    SettingsPageItem::SettingItem(SettingItem {
+                        title: "Horizontal Scrollbar",
+                        description: "When false, forcefully disables the horizontal scrollbar",
+                        field: Box::new(SettingField {
+                            pick: |settings_content| {
+                                if let Some(scrollbar) = &settings_content.editor.scrollbar {
+                                    if let Some(axes) = &scrollbar.axes {
+                                        &axes.horizontal
+                                    } else {
+                                        &None
+                                    }
+                                } else {
+                                    &None
+                                }
+                            },
+                            pick_mut: |settings_content| {
+                                &mut settings_content
+                                    .editor
+                                    .scrollbar
+                                    .get_or_insert_default()
+                                    .axes
+                                    .get_or_insert_default()
+                                    .horizontal
+                            },
+                        }),
+                        metadata: None,
+                        files: USER,
+                    }),
+                    SettingsPageItem::SettingItem(SettingItem {
+                        title: "Vertical Scrollbar",
+                        description: "When false, forcefully disables the vertical scrollbar",
+                        field: Box::new(SettingField {
+                            pick: |settings_content| {
+                                if let Some(scrollbar) = &settings_content.editor.scrollbar {
+                                    if let Some(axes) = &scrollbar.axes {
+                                        &axes.vertical
+                                    } else {
+                                        &None
+                                    }
+                                } else {
+                                    &None
+                                }
+                            },
+                            pick_mut: |settings_content| {
+                                &mut settings_content
+                                    .editor
+                                    .scrollbar
+                                    .get_or_insert_default()
+                                    .axes
+                                    .get_or_insert_default()
+                                    .vertical
+                            },
+                        }),
+                        metadata: None,
+                        files: USER,
+                    }),
+                    SettingsPageItem::SectionHeader("Minimap"),
+                    SettingsPageItem::SettingItem(SettingItem {
+                        title: "Show",
+                        description: "When to show the minimap in the editor",
+                        field: Box::new(SettingField {
+                            pick: |settings_content| {
+                                if let Some(minimap) = &settings_content.editor.minimap {
+                                    &minimap.show
+                                } else {
+                                    &None
+                                }
+                            },
+                            pick_mut: |settings_content| {
+                                &mut settings_content.editor.minimap.get_or_insert_default().show
+                            },
+                        }),
+                        metadata: None,
+                        files: USER,
+                    }),
+                    SettingsPageItem::SettingItem(SettingItem {
+                        title: "Display In",
+                        description: "Where to show the minimap in the editor",
+                        field: Box::new(SettingField {
+                            pick: |settings_content| {
+                                if let Some(minimap) = &settings_content.editor.minimap {
+                                    &minimap.display_in
+                                } else {
+                                    &None
+                                }
+                            },
+                            pick_mut: |settings_content| {
+                                &mut settings_content
+                                    .editor
+                                    .minimap
+                                    .get_or_insert_default()
+                                    .display_in
+                            },
+                        }),
+                        metadata: None,
+                        files: USER,
+                    }),
+                    SettingsPageItem::SettingItem(SettingItem {
+                        title: "Thumb",
+                        description: "When to show the minimap thumb",
+                        field: Box::new(SettingField {
+                            pick: |settings_content| {
+                                if let Some(minimap) = &settings_content.editor.minimap {
+                                    &minimap.thumb
+                                } else {
+                                    &None
+                                }
+                            },
+                            pick_mut: |settings_content| {
+                                &mut settings_content
+                                    .editor
+                                    .minimap
+                                    .get_or_insert_default()
+                                    .thumb
+                            },
+                        }),
+                        metadata: None,
+                        files: USER,
+                    }),
+                    SettingsPageItem::SettingItem(SettingItem {
+                        title: "Thumb Border",
+                        description: "Border style for the minimap's scrollbar thumb",
+                        field: Box::new(SettingField {
+                            pick: |settings_content| {
+                                if let Some(minimap) = &settings_content.editor.minimap {
+                                    &minimap.thumb_border
+                                } else {
+                                    &None
+                                }
+                            },
+                            pick_mut: |settings_content| {
+                                &mut settings_content
+                                    .editor
+                                    .minimap
+                                    .get_or_insert_default()
+                                    .thumb_border
+                            },
+                        }),
+                        metadata: None,
+                        files: USER,
+                    }),
+                    SettingsPageItem::SettingItem(SettingItem {
+                        title: "Current Line Highlight",
+                        description: "How to highlight the current line in the minimap",
+                        field: Box::new(SettingField {
+                            pick: |settings_content| {
+                                if let Some(minimap) = &settings_content.editor.minimap
+                                    && minimap.current_line_highlight.is_some()
+                                {
+                                    &minimap.current_line_highlight
+                                } else {
+                                    &settings_content.editor.current_line_highlight
+                                }
+                            },
+                            pick_mut: |settings_content| {
+                                &mut settings_content
+                                    .editor
+                                    .minimap
+                                    .get_or_insert_default()
+                                    .current_line_highlight
+                            },
+                        }),
+                        metadata: None,
+                        files: USER,
+                    }),
+                    SettingsPageItem::SettingItem(SettingItem {
+                        title: "Max Width Columns",
+                        description: "Maximum number of columns to display in the minimap",
+                        field: Box::new(SettingField {
+                            pick: |settings_content| {
+                                if let Some(minimap) = &settings_content.editor.minimap {
+                                    &minimap.max_width_columns
+                                } else {
+                                    &None
+                                }
+                            },
+                            pick_mut: |settings_content| {
+                                &mut settings_content
+                                    .editor
+                                    .minimap
+                                    .get_or_insert_default()
+                                    .max_width_columns
+                            },
+                        }),
+                        metadata: None,
+                        files: USER,
+                    }),
+                    SettingsPageItem::SectionHeader("Toolbar"),
+                    SettingsPageItem::SettingItem(SettingItem {
+                        title: "Breadcrumbs",
+                        description: "Show breadcrumbs",
+                        field: Box::new(SettingField {
+                            pick: |settings_content| {
+                                if let Some(toolbar) = &settings_content.editor.toolbar {
+                                    &toolbar.breadcrumbs
+                                } else {
+                                    &None
+                                }
+                            },
+                            pick_mut: |settings_content| {
+                                &mut settings_content
+                                    .editor
+                                    .toolbar
+                                    .get_or_insert_default()
+                                    .breadcrumbs
+                            },
+                        }),
+                        metadata: None,
+                        files: USER,
+                    }),
+                    SettingsPageItem::SettingItem(SettingItem {
+                        title: "Quick Actions",
+                        description: "Show quick action buttons (e.g., search, selection, editor controls, etc.)",
+                        field: Box::new(SettingField {
+                            pick: |settings_content| {
+                                if let Some(toolbar) = &settings_content.editor.toolbar {
+                                    &toolbar.quick_actions
+                                } else {
+                                    &None
+                                }
+                            },
+                            pick_mut: |settings_content| {
+                                &mut settings_content
+                                    .editor
+                                    .toolbar
+                                    .get_or_insert_default()
+                                    .quick_actions
+                            },
+                        }),
+                        metadata: None,
+                        files: USER,
+                    }),
+                    SettingsPageItem::SettingItem(SettingItem {
+                        title: "Selections Menu",
+                        description: "Show the selections menu in the editor toolbar",
+                        field: Box::new(SettingField {
+                            pick: |settings_content| {
+                                if let Some(toolbar) = &settings_content.editor.toolbar {
+                                    &toolbar.selections_menu
+                                } else {
+                                    &None
+                                }
+                            },
+                            pick_mut: |settings_content| {
+                                &mut settings_content
+                                    .editor
+                                    .toolbar
+                                    .get_or_insert_default()
+                                    .selections_menu
+                            },
+                        }),
+                        metadata: None,
+                        files: USER,
+                    }),
+                    SettingsPageItem::SettingItem(SettingItem {
+                        title: "Agent Review",
+                        description: "Show agent review buttons in the editor toolbar",
+                        field: Box::new(SettingField {
+                            pick: |settings_content| {
+                                if let Some(toolbar) = &settings_content.editor.toolbar {
+                                    &toolbar.agent_review
+                                } else {
+                                    &None
+                                }
+                            },
+                            pick_mut: |settings_content| {
+                                &mut settings_content
+                                    .editor
+                                    .toolbar
+                                    .get_or_insert_default()
+                                    .agent_review
+                            },
+                        }),
+                        metadata: None,
+                        files: USER,
+                    }),
+                    SettingsPageItem::SettingItem(SettingItem {
+                        title: "Code Actions",
+                        description: "Show code action buttons in the editor toolbar",
+                        field: Box::new(SettingField {
+                            pick: |settings_content| {
+                                if let Some(toolbar) = &settings_content.editor.toolbar {
+                                    &toolbar.code_actions
+                                } else {
+                                    &None
+                                }
+                            },
+                            pick_mut: |settings_content| {
+                                &mut settings_content
+                                    .editor
+                                    .toolbar
+                                    .get_or_insert_default()
+                                    .code_actions
+                            },
+                        }),
+                        metadata: None,
+                        files: USER,
                     }),
                 ];
-
-                items.push(SettingsPageItem::SectionHeader("Default Language Settings"));
                 items.extend(language_settings_data());
-
                 items
             },
         },
         SettingsPage {
-            title: "Workbench & Window",
+            title: "Languages",
             items: vec![
-                SettingsPageItem::SectionHeader("Workbench"),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Editor Tabs",
-                    description: "Whether or not to show the tab bar in the editor",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(tab_bar) = &settings_content.tab_bar {
-                                &tab_bar.show
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content.tab_bar.get_or_insert_default().show
-                        },
+                SettingsPageItem::SectionHeader(LANGUAGES_SECTION_HEADER),
+                SettingsPageItem::SubPageLink(SubPageLink {
+                    title: "JSON",
+                    files: USER | LOCAL,
+                    render: Arc::new(|this, window, cx| {
+                        this.render_page_items(
+                            language_settings_data().iter().enumerate(),
+                            None,
+                            window,
+                            cx,
+                        )
+                        .into_any_element()
                     }),
-                    metadata: None,
                 }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Active Language Button",
-                    description: "Whether to show the active language button in the status bar",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(status_bar) = &settings_content.status_bar {
-                                &status_bar.active_language_button
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .status_bar
-                                .get_or_insert_default()
-                                .active_language_button
-                        },
+                SettingsPageItem::SubPageLink(SubPageLink {
+                    title: "JSONC",
+                    files: USER | LOCAL,
+                    render: Arc::new(|this, window, cx| {
+                        this.render_page_items(
+                            language_settings_data().iter().enumerate(),
+                            None,
+                            window,
+                            cx,
+                        )
+                        .into_any_element()
                     }),
-                    metadata: None,
                 }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Cursor Position Button",
-                    description: "Whether to show the cursor position button in the status bar",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(status_bar) = &settings_content.status_bar {
-                                &status_bar.cursor_position_button
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .status_bar
-                                .get_or_insert_default()
-                                .cursor_position_button
-                        },
+                SettingsPageItem::SubPageLink(SubPageLink {
+                    title: "Rust",
+                    files: USER | LOCAL,
+                    render: Arc::new(|this, window, cx| {
+                        this.render_page_items(
+                            language_settings_data().iter().enumerate(),
+                            None,
+                            window,
+                            cx,
+                        )
+                        .into_any_element()
                     }),
-                    metadata: None,
                 }),
-                SettingsPageItem::SectionHeader("Terminal"),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Terminal Button",
-                    description: "Whether to show the terminal button in the status bar",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(terminal) = &settings_content.terminal {
-                                &terminal.button
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content.terminal.get_or_insert_default().button
-                        },
+                SettingsPageItem::SubPageLink(SubPageLink {
+                    title: "Python",
+                    files: USER | LOCAL,
+                    render: Arc::new(|this, window, cx| {
+                        this.render_page_items(
+                            language_settings_data().iter().enumerate(),
+                            None,
+                            window,
+                            cx,
+                        )
+                        .into_any_element()
                     }),
-                    metadata: None,
                 }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Show Navigation History Buttons",
-                    description: "Whether or not to show the navigation history buttons in the tab bar",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(tab_bar) = &settings_content.tab_bar {
-                                &tab_bar.show_nav_history_buttons
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .tab_bar
-                                .get_or_insert_default()
-                                .show_nav_history_buttons
-                        },
+                SettingsPageItem::SubPageLink(SubPageLink {
+                    title: "TSX",
+                    files: USER | LOCAL,
+                    render: Arc::new(|this, window, cx| {
+                        this.render_page_items(
+                            language_settings_data().iter().enumerate(),
+                            None,
+                            window,
+                            cx,
+                        )
+                        .into_any_element()
                     }),
-                    metadata: None,
                 }),
-                SettingsPageItem::SectionHeader("Title Bar"),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Show Branch Icon",
-                    description: "Whether to show the branch icon beside branch switcher in the titlebar",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(title_bar) = &settings_content.title_bar {
-                                &title_bar.show_branch_icon
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .title_bar
-                                .get_or_insert_default()
-                                .show_branch_icon
-                        },
-                    }),
-                    metadata: None,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Show Branch Name",
-                    description: "Whether to show the branch name button in the titlebar",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(title_bar) = &settings_content.title_bar {
-                                &title_bar.show_branch_name
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .title_bar
-                                .get_or_insert_default()
-                                .show_branch_name
-                        },
-                    }),
-                    metadata: None,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Show Project Items",
-                    description: "Whether to show the project host and name in the titlebar",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(title_bar) = &settings_content.title_bar {
-                                &title_bar.show_project_items
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .title_bar
-                                .get_or_insert_default()
-                                .show_project_items
-                        },
-                    }),
-                    metadata: None,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Show Onboarding Banner",
-                    description: "Whether to show onboarding banners in the titlebar",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(title_bar) = &settings_content.title_bar {
-                                &title_bar.show_onboarding_banner
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .title_bar
-                                .get_or_insert_default()
-                                .show_onboarding_banner
-                        },
-                    }),
-                    metadata: None,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Show User Picture",
-                    description: "Whether to show user picture in the titlebar",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(title_bar) = &settings_content.title_bar {
-                                &title_bar.show_user_picture
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .title_bar
-                                .get_or_insert_default()
-                                .show_user_picture
-                        },
-                    }),
-                    metadata: None,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Show Sign In",
-                    description: "Whether to show the sign in button in the titlebar",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(title_bar) = &settings_content.title_bar {
-                                &title_bar.show_sign_in
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .title_bar
-                                .get_or_insert_default()
-                                .show_sign_in
-                        },
-                    }),
-                    metadata: None,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Show Menus",
-                    description: "Whether to show the menus in the titlebar",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(title_bar) = &settings_content.title_bar {
-                                &title_bar.show_menus
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .title_bar
-                                .get_or_insert_default()
-                                .show_menus
-                        },
-                    }),
-                    metadata: None,
-                }),
-                SettingsPageItem::SectionHeader("Search Settings"),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Search Button",
-                    description: "Whether to show the project search button in the status bar",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(search) = &settings_content.editor.search {
-                                &search.button
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .editor
-                                .search
-                                .get_or_insert_default()
-                                .button
-                        },
-                    }),
-                    metadata: None,
-                }),
+            ],
+        },
+        SettingsPage {
+            title: "Search & Files",
+            items: vec![
+                SettingsPageItem::SectionHeader("Search"),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Whole Word",
-                    description: "Whether to search for whole words by default",
+                    description: "Search for whole words by default",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             if let Some(search) = &settings_content.editor.search {
@@ -1694,10 +1498,11 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Case Sensitive",
-                    description: "Whether to search case-sensitively by default",
+                    description: "Search case-sensitively by default",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             if let Some(search) = &settings_content.editor.search {
@@ -1715,10 +1520,11 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Include Ignored",
-                    description: "Whether to include ignored files in search results by default",
+                    description: "Include ignored files in search results by default",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             if let Some(search) = &settings_content.editor.search {
@@ -1736,10 +1542,11 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Regex",
-                    description: "Whether to use regex search by default",
+                    description: "Use regex search by default",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             if let Some(search) = &settings_content.editor.search {
@@ -1753,11 +1560,73 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
-                SettingsPageItem::SectionHeader("File Finder"),
+                // todo: null by default
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Include Ignored in Search",
+                    description: "Use gitignored files when searching",
+                    field: Box::new(
+                        SettingField {
+                            pick: |settings_content| {
+                                if let Some(file_finder) = &settings_content.file_finder {
+                                    &file_finder.include_ignored
+                                } else {
+                                    &None
+                                }
+                            },
+                            pick_mut: |settings_content| {
+                                &mut settings_content
+                                    .file_finder
+                                    .get_or_insert_default()
+                                    .include_ignored
+                            },
+                        }
+                        .unimplemented(),
+                    ),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Search Wrap",
+                    description: "Whether the editor search results will loop",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| &settings_content.editor.search_wrap,
+                        pick_mut: |settings_content| &mut settings_content.editor.search_wrap,
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Seed Search Query From Cursor",
+                    description: "When to populate a new search's query based on the text under the cursor",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            &settings_content.editor.seed_search_query_from_cursor
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content.editor.seed_search_query_from_cursor
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Use Smartcase Search",
+                    description: "Use smartcase (i.e., case-sensitive) search",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| &settings_content.editor.use_smartcase_search,
+                        pick_mut: |settings_content| {
+                            &mut settings_content.editor.use_smartcase_search
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SectionHeader("File Management"),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "File Icons",
-                    description: "Whether to show file icons in the file finder",
+                    description: "Show file icons in the file finder",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             if let Some(file_finder) = &settings_content.file_finder {
@@ -1774,6 +1643,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Modal Max Width",
@@ -1794,6 +1664,31 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Restore File State",
+                    description: "Restore previous file state when reopening",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| &settings_content.workspace.restore_on_file_reopen,
+                        pick_mut: |settings_content| {
+                            &mut settings_content.workspace.restore_on_file_reopen
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Close on File Delete",
+                    description: "Automatically close files that have been deleted",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| &settings_content.workspace.close_on_file_delete,
+                        pick_mut: |settings_content| {
+                            &mut settings_content.workspace.close_on_file_delete
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Skip Focus For Active In Search",
@@ -1814,10 +1709,11 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Git Status",
-                    description: "Whether to show the git status in the file finder",
+                    description: "Show the git status in the file finder",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             if let Some(file_finder) = &settings_content.file_finder {
@@ -1834,37 +1730,18 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
-                // todo: null by default
-                // SettingsPageItem::SettingItem(SettingItem {
-                //     title: "Include Ignored",
-                //     description: "Whether to use gitignored files when searching",
-                //     field: Box::new(SettingField {
-                //         pick: |settings_content| {
-                //             if let Some(file_finder) = &settings_content.file_finder {
-                //                 &file_finder.include_ignored
-                //             } else {
-                //                 &None
-                //             }
-                //         },
-                //         pick_mut: |settings_content| {
-                //             &mut settings_content
-                //                 .file_finder
-                //                 .get_or_insert_default()
-                //                 .include_ignored
-                //         },
-                //     }),
-                //     metadata: None,
-                // }),
+                SettingsPageItem::SectionHeader("File Scan"),
             ],
         },
         SettingsPage {
-            title: "Panels & Tools",
+            title: "Workbench & Window",
             items: vec![
-                SettingsPageItem::SectionHeader("Project Panel"),
+                SettingsPageItem::SectionHeader("Status Bar"),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Project Panel Button",
-                    description: "Whether to show the project panel button in the status bar",
+                    description: "Show the project panel button in the status bar",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             if let Some(project_panel) = &settings_content.project_panel {
@@ -1881,700 +1758,400 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
-                    title: "Project Panel Dock",
-                    description: "Where to dock the project panel",
+                    title: "Active Language Button",
+                    description: "Show the active language button in the status bar",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
-                            if let Some(project_panel) = &settings_content.project_panel {
-                                &project_panel.dock
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content.project_panel.get_or_insert_default().dock
-                        },
-                    }),
-                    metadata: None,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Project Panel Default Width",
-                    description: "Default width of the project panel in pixels",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(project_panel) = &settings_content.project_panel {
-                                &project_panel.default_width
+                            if let Some(status_bar) = &settings_content.status_bar {
+                                &status_bar.active_language_button
                             } else {
                                 &None
                             }
                         },
                         pick_mut: |settings_content| {
                             &mut settings_content
-                                .project_panel
+                                .status_bar
                                 .get_or_insert_default()
-                                .default_width
+                                .active_language_button
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
-                    title: "Hide .gitignore",
-                    description: "Whether to hide the gitignore entries in the project panel",
+                    title: "Cursor Position Button",
+                    description: "Show the cursor position button in the status bar",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
-                            if let Some(project_panel) = &settings_content.project_panel {
-                                &project_panel.hide_gitignore
+                            if let Some(status_bar) = &settings_content.status_bar {
+                                &status_bar.cursor_position_button
                             } else {
                                 &None
                             }
                         },
                         pick_mut: |settings_content| {
                             &mut settings_content
-                                .project_panel
+                                .status_bar
                                 .get_or_insert_default()
-                                .hide_gitignore
+                                .cursor_position_button
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
-                    title: "Entry Spacing",
-                    description: "Spacing between worktree entries in the project panel",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(project_panel) = &settings_content.project_panel {
-                                &project_panel.entry_spacing
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .project_panel
-                                .get_or_insert_default()
-                                .entry_spacing
-                        },
-                    }),
-                    metadata: None,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "File Icons",
-                    description: "Whether to show folder icons or chevrons for directories in the project panel",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(project_panel) = &settings_content.project_panel {
-                                &project_panel.file_icons
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .project_panel
-                                .get_or_insert_default()
-                                .file_icons
-                        },
-                    }),
-                    metadata: None,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Folder Icons",
-                    description: "Whether to show folder icons or chevrons for directories in the project panel",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(project_panel) = &settings_content.project_panel {
-                                &project_panel.folder_icons
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .project_panel
-                                .get_or_insert_default()
-                                .folder_icons
-                        },
-                    }),
-                    metadata: None,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Git Status",
-                    description: "Whether to show the git status in the project panel",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(project_panel) = &settings_content.project_panel {
-                                &project_panel.git_status
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .project_panel
-                                .get_or_insert_default()
-                                .git_status
-                        },
-                    }),
-                    metadata: None,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Indent Size",
-                    description: "Amount of indentation for nested items",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(project_panel) = &settings_content.project_panel {
-                                &project_panel.indent_size
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .project_panel
-                                .get_or_insert_default()
-                                .indent_size
-                        },
-                    }),
-                    metadata: None,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Auto Reveal Entries",
-                    description: "Whether to reveal it in the project panel automatically when a corresponding project entry becomes active",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(project_panel) = &settings_content.project_panel {
-                                &project_panel.auto_reveal_entries
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .project_panel
-                                .get_or_insert_default()
-                                .auto_reveal_entries
-                        },
-                    }),
-                    metadata: None,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Starts Open",
-                    description: "Whether the project panel should open on startup",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(project_panel) = &settings_content.project_panel {
-                                &project_panel.starts_open
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .project_panel
-                                .get_or_insert_default()
-                                .starts_open
-                        },
-                    }),
-                    metadata: None,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Auto Fold Directories",
-                    description: "Whether to fold directories automatically and show compact folders when a directory has only one subdirectory inside",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(project_panel) = &settings_content.project_panel {
-                                &project_panel.auto_fold_dirs
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .project_panel
-                                .get_or_insert_default()
-                                .auto_fold_dirs
-                        },
-                    }),
-                    metadata: None,
-                }),
-                // SettingsPageItem::SettingItem(SettingItem {
-                //     title: "Scrollbar Show",
-                //     description: "When to show the scrollbar in the project panel",
-                //     field: Box::new(SettingField {
-                //         pick: |settings_content| {
-                //             if let Some(project_panel) = &settings_content.project_panel {
-                //                 if let Some(scrollbar) = &project_panel.scrollbar {
-                //                     &scrollbar.show
-                //                 } else {
-                //                     &None
-                //                 }
-                //             } else {
-                //                 &None
-                //             }
-                //         },
-                //         pick_mut: |settings_content| {
-                //             &mut settings_content
-                //                 .project_panel
-                //                 .get_or_insert_default()
-                //                 .scrollbar
-                //         },
-                //     }),
-                //     metadata: None,
-                // }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Show Diagnostics",
-                    description: "Which files containing diagnostic errors/warnings to mark in the project panel",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(project_panel) = &settings_content.project_panel {
-                                &project_panel.show_diagnostics
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .project_panel
-                                .get_or_insert_default()
-                                .show_diagnostics
-                        },
-                    }),
-                    metadata: None,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Sticky Scroll",
-                    description: "Whether to stick parent directories at top of the project panel",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(project_panel) = &settings_content.project_panel {
-                                &project_panel.sticky_scroll
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .project_panel
-                                .get_or_insert_default()
-                                .sticky_scroll
-                        },
-                    }),
-                    metadata: None,
-                }),
-                // SettingsPageItem::SettingItem(SettingItem {
-                //     title: "Indent Guides Show",
-                //     description: "When to show indent guides in the project panel",
-                //     field: Box::new(SettingField {
-                //         pick: |settings_content| {
-                //             if let Some(project_panel) = &settings_content.project_panel {
-                //                 if let Some(indent_guides) = &project_panel.indent_guides {
-                //                     &indent_guides.show
-                //                 } else {
-                //                     &None
-                //                 }
-                //             } else {
-                //                 &None
-                //             }
-                //         },
-                //         pick_mut: |settings_content| {
-                //             &mut settings_content
-                //                 .project_panel
-                //                 .get_or_insert_default()
-                //                 .indent_guides
-                //                 .get_or_insert_default()
-                //                 .show
-                //         },
-                //     }),
-                //     metadata: None,
-                // }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Drag and Drop",
-                    description: "Whether to enable drag-and-drop operations in the project panel",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(project_panel) = &settings_content.project_panel {
-                                &project_panel.drag_and_drop
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .project_panel
-                                .get_or_insert_default()
-                                .drag_and_drop
-                        },
-                    }),
-                    metadata: None,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Hide Root",
-                    description: "Whether to hide the root entry when only one folder is open in the window",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(project_panel) = &settings_content.project_panel {
-                                &project_panel.hide_root
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .project_panel
-                                .get_or_insert_default()
-                                .hide_root
-                        },
-                    }),
-                    metadata: None,
-                }),
-                SettingsPageItem::SectionHeader("Terminal Panel"),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Terminal Dock",
-                    description: "Where to dock the terminal panel",
+                    title: "Terminal Button",
+                    description: "Show the terminal button in the status bar",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             if let Some(terminal) = &settings_content.terminal {
-                                &terminal.dock
+                                &terminal.button
                             } else {
                                 &None
                             }
                         },
                         pick_mut: |settings_content| {
-                            &mut settings_content.terminal.get_or_insert_default().dock
+                            &mut settings_content.terminal.get_or_insert_default().button
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
-                SettingsPageItem::SectionHeader("Outline Panel"),
                 SettingsPageItem::SettingItem(SettingItem {
-                    title: "Outline Panel Button",
-                    description: "Whether to show the outline panel button in the status bar",
+                    title: "Diagnostics Button",
+                    description: "Show the project diagnostics button in the status bar",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
-                            if let Some(outline_panel) = &settings_content.outline_panel {
-                                &outline_panel.button
+                            if let Some(diagnostics) = &settings_content.diagnostics {
+                                &diagnostics.button
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content.diagnostics.get_or_insert_default().button
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Project Search Button",
+                    description: "Show the project search button in the status bar",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(search) = &settings_content.editor.search {
+                                &search.button
                             } else {
                                 &None
                             }
                         },
                         pick_mut: |settings_content| {
                             &mut settings_content
-                                .outline_panel
+                                .editor
+                                .search
                                 .get_or_insert_default()
                                 .button
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
-                    title: "Outline Panel Dock",
-                    description: "Where to dock the outline panel",
+                    title: "Debugger Button",
+                    description: "Show the debugger button in the status bar",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
-                            if let Some(outline_panel) = &settings_content.outline_panel {
-                                &outline_panel.dock
+                            if let Some(debugger) = &settings_content.debugger {
+                                &debugger.button
                             } else {
                                 &None
                             }
                         },
                         pick_mut: |settings_content| {
-                            &mut settings_content.outline_panel.get_or_insert_default().dock
+                            &mut settings_content.debugger.get_or_insert_default().button
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
+                SettingsPageItem::SectionHeader("Title Bar"),
                 SettingsPageItem::SettingItem(SettingItem {
-                    title: "Outline Panel Default Width",
-                    description: "Default width of the outline panel in pixels",
+                    title: "Show Branch Icon",
+                    description: "Show the branch icon beside branch switcher in the titlebar",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
-                            if let Some(outline_panel) = &settings_content.outline_panel {
-                                &outline_panel.default_width
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .outline_panel
-                                .get_or_insert_default()
-                                .default_width
-                        },
-                    }),
-                    metadata: None,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "File Icons",
-                    description: "Whether to show file icons in the outline panel",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(outline_panel) = &settings_content.outline_panel {
-                                &outline_panel.file_icons
+                            if let Some(title_bar) = &settings_content.title_bar {
+                                &title_bar.show_branch_icon
                             } else {
                                 &None
                             }
                         },
                         pick_mut: |settings_content| {
                             &mut settings_content
-                                .outline_panel
+                                .title_bar
                                 .get_or_insert_default()
-                                .file_icons
+                                .show_branch_icon
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
-                    title: "Folder Icons",
-                    description: "Whether to show folder icons or chevrons for directories in the outline panel",
+                    title: "Show Branch Name",
+                    description: "Show the branch name button in the titlebar",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
-                            if let Some(outline_panel) = &settings_content.outline_panel {
-                                &outline_panel.folder_icons
+                            if let Some(title_bar) = &settings_content.title_bar {
+                                &title_bar.show_branch_name
                             } else {
                                 &None
                             }
                         },
                         pick_mut: |settings_content| {
                             &mut settings_content
-                                .outline_panel
+                                .title_bar
                                 .get_or_insert_default()
-                                .folder_icons
+                                .show_branch_name
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
-                    title: "Git Status",
-                    description: "Whether to show the git status in the outline panel",
+                    title: "Show Project Items",
+                    description: "Show the project host and name in the titlebar",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
-                            if let Some(outline_panel) = &settings_content.outline_panel {
-                                &outline_panel.git_status
+                            if let Some(title_bar) = &settings_content.title_bar {
+                                &title_bar.show_project_items
                             } else {
                                 &None
                             }
                         },
                         pick_mut: |settings_content| {
                             &mut settings_content
-                                .outline_panel
+                                .title_bar
                                 .get_or_insert_default()
-                                .git_status
+                                .show_project_items
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
-                    title: "Indent Size",
-                    description: "Amount of indentation for nested items",
+                    title: "Show Onboarding Banner",
+                    description: "Show banners announcing new features in the titlebar",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
-                            if let Some(outline_panel) = &settings_content.outline_panel {
-                                &outline_panel.indent_size
+                            if let Some(title_bar) = &settings_content.title_bar {
+                                &title_bar.show_onboarding_banner
                             } else {
                                 &None
                             }
                         },
                         pick_mut: |settings_content| {
                             &mut settings_content
-                                .outline_panel
+                                .title_bar
                                 .get_or_insert_default()
-                                .indent_size
+                                .show_onboarding_banner
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
-                    title: "Auto Reveal Entries",
-                    description: "Whether to reveal when a corresponding outline entry becomes active",
+                    title: "Show User Picture",
+                    description: "Show user picture in the titlebar",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
-                            if let Some(outline_panel) = &settings_content.outline_panel {
-                                &outline_panel.auto_reveal_entries
+                            if let Some(title_bar) = &settings_content.title_bar {
+                                &title_bar.show_user_picture
                             } else {
                                 &None
                             }
                         },
                         pick_mut: |settings_content| {
                             &mut settings_content
-                                .outline_panel
+                                .title_bar
                                 .get_or_insert_default()
-                                .auto_reveal_entries
+                                .show_user_picture
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
-                    title: "Auto Fold Directories",
-                    description: "Whether to fold directories automatically when a directory has only one directory inside",
+                    title: "Show Sign In",
+                    description: "Show the sign in button in the titlebar",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
-                            if let Some(outline_panel) = &settings_content.outline_panel {
-                                &outline_panel.auto_fold_dirs
+                            if let Some(title_bar) = &settings_content.title_bar {
+                                &title_bar.show_sign_in
                             } else {
                                 &None
                             }
                         },
                         pick_mut: |settings_content| {
                             &mut settings_content
-                                .outline_panel
+                                .title_bar
                                 .get_or_insert_default()
-                                .auto_fold_dirs
+                                .show_sign_in
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
-                // SettingsPageItem::SettingItem(SettingItem {
-                //     title: "Indent Guides Show",
-                //     description: "When to show indent guides in the outline panel",
-                //     field: Box::new(SettingField {
-                //         pick: |settings_content| {
-                //             if let Some(outline_panel) = &settings_content.outline_panel {
-                //                 if let Some(indent_guides) = &outline_panel.indent_guides {
-                //                     &indent_guides.show
-                //                 } else {
-                //                     &None
-                //                 }
-                //             } else {
-                //                 &None
-                //             }
-                //         },
-                //         pick_mut: |settings_content| {
-                //             &mut settings_content
-                //                 .outline_panel
-                //                 .get_or_insert_default()
-                //                 .indent_guides
-                //                 .get_or_insert_default()
-                //                 .show
-                //         },
-                //     }),
-                //     metadata: None,
-                // }),
-                SettingsPageItem::SectionHeader("Notification Panel"),
                 SettingsPageItem::SettingItem(SettingItem {
-                    title: "Notification Panel Button",
-                    description: "Whether to show the notification panel button in the status bar",
+                    title: "Show Menus",
+                    description: "Show the menus in the titlebar",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
-                            if let Some(notification_panel) = &settings_content.notification_panel {
-                                &notification_panel.button
+                            if let Some(title_bar) = &settings_content.title_bar {
+                                &title_bar.show_menus
                             } else {
                                 &None
                             }
                         },
                         pick_mut: |settings_content| {
                             &mut settings_content
-                                .notification_panel
+                                .title_bar
                                 .get_or_insert_default()
-                                .button
+                                .show_menus
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
+                SettingsPageItem::SectionHeader("Tab Bar"),
                 SettingsPageItem::SettingItem(SettingItem {
-                    title: "Notification Panel Dock",
-                    description: "Where to dock the notification panel",
+                    title: "Show Tab Bar",
+                    description: "Show the tab bar in the editor",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
-                            if let Some(notification_panel) = &settings_content.notification_panel {
-                                &notification_panel.dock
+                            if let Some(tab_bar) = &settings_content.tab_bar {
+                                &tab_bar.show
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content.tab_bar.get_or_insert_default().show
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Editor Tabs",
+                    description: "Show the tab bar in the editor",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(tab_bar) = &settings_content.tab_bar {
+                                &tab_bar.show
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content.tab_bar.get_or_insert_default().show
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Show Git Status In Tabs",
+                    description: "Show the Git file status on a tab item",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(tabs) = &settings_content.tabs {
+                                &tabs.git_status
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content.tabs.get_or_insert_default().git_status
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Show File Icons In Tabs",
+                    description: "Show the file icon for a tab",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(tabs) = &settings_content.tabs {
+                                &tabs.file_icons
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content.tabs.get_or_insert_default().file_icons
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Tab Close Position",
+                    description: "Position of the close button in a tab",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(tabs) = &settings_content.tabs {
+                                &tabs.close_position
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content.tabs.get_or_insert_default().close_position
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    files: USER,
+                    title: "Maximum Tabs",
+                    description: "Maximum open tabs in a pane. Will not close an unsaved tab",
+                    // todo(settings_ui): The default for this value is null and it's use in code
+                    // is complex, so I'm going to come back to this later
+                    field: Box::new(
+                        SettingField {
+                            pick: |settings_content| &settings_content.workspace.max_tabs,
+                            pick_mut: |settings_content| &mut settings_content.workspace.max_tabs,
+                        }
+                        .unimplemented(),
+                    ),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Show Navigation History Buttons",
+                    description: "Show the navigation history buttons in the tab bar",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(tab_bar) = &settings_content.tab_bar {
+                                &tab_bar.show_nav_history_buttons
                             } else {
                                 &None
                             }
                         },
                         pick_mut: |settings_content| {
                             &mut settings_content
-                                .notification_panel
+                                .tab_bar
                                 .get_or_insert_default()
-                                .dock
+                                .show_nav_history_buttons
                         },
                     }),
                     metadata: None,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Notification Panel Default Width",
-                    description: "Default width of the notification panel in pixels",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(notification_panel) = &settings_content.notification_panel {
-                                &notification_panel.default_width
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .notification_panel
-                                .get_or_insert_default()
-                                .default_width
-                        },
-                    }),
-                    metadata: None,
-                }),
-                SettingsPageItem::SectionHeader("Collaboration Panel"),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Collaboration Panel Button",
-                    description: "Whether to show the collaboration panel button in the status bar",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(collaboration_panel) = &settings_content.collaboration_panel
-                            {
-                                &collaboration_panel.button
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .collaboration_panel
-                                .get_or_insert_default()
-                                .button
-                        },
-                    }),
-                    metadata: None,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Collaboration Panel Dock",
-                    description: "Where to dock the collaboration panel",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(collaboration_panel) = &settings_content.collaboration_panel
-                            {
-                                &collaboration_panel.dock
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .collaboration_panel
-                                .get_or_insert_default()
-                                .dock
-                        },
-                    }),
-                    metadata: None,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Collaboration Panel Default Width",
-                    description: "Default width of the collaboration panel in pixels",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(collaboration_panel) = &settings_content.collaboration_panel
-                            {
-                                &collaboration_panel.default_width
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .collaboration_panel
-                                .get_or_insert_default()
-                                .default_width
-                        },
-                    }),
-                    metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SectionHeader("Tab Settings"),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -2596,6 +2173,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Tab Show Diagnostics",
@@ -2616,6 +2194,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Show Close Button",
@@ -2636,11 +2215,12 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SectionHeader("Preview Tabs"),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Preview Tabs Enabled",
-                    description: "Whether to show opened editors as preview tabs",
+                    description: "Show opened editors as preview tabs",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             if let Some(preview_tabs) = &settings_content.preview_tabs {
@@ -2657,6 +2237,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Enable Preview From File Finder",
@@ -2677,6 +2258,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Enable Preview From Code Navigation",
@@ -2697,6 +2279,1471 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
+                }),
+            ],
+        },
+        SettingsPage {
+            title: "Panels",
+            items: vec![
+                SettingsPageItem::SectionHeader("Project Panel"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Project Panel Dock",
+                    description: "Where to dock the project panel",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(project_panel) = &settings_content.project_panel {
+                                &project_panel.dock
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content.project_panel.get_or_insert_default().dock
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Project Panel Default Width",
+                    description: "Default width of the project panel in pixels",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(project_panel) = &settings_content.project_panel {
+                                &project_panel.default_width
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .project_panel
+                                .get_or_insert_default()
+                                .default_width
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Hide .gitignore",
+                    description: "Whether to hide the gitignore entries in the project panel",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(project_panel) = &settings_content.project_panel {
+                                &project_panel.hide_gitignore
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .project_panel
+                                .get_or_insert_default()
+                                .hide_gitignore
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Entry Spacing",
+                    description: "Spacing between worktree entries in the project panel",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(project_panel) = &settings_content.project_panel {
+                                &project_panel.entry_spacing
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .project_panel
+                                .get_or_insert_default()
+                                .entry_spacing
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "File Icons",
+                    description: "Show file icons in the project panel",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(project_panel) = &settings_content.project_panel {
+                                &project_panel.file_icons
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .project_panel
+                                .get_or_insert_default()
+                                .file_icons
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Folder Icons",
+                    description: "Whether to show folder icons or chevrons for directories in the project panel",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(project_panel) = &settings_content.project_panel {
+                                &project_panel.folder_icons
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .project_panel
+                                .get_or_insert_default()
+                                .folder_icons
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Git Status",
+                    description: "Show the git status in the project panel",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(project_panel) = &settings_content.project_panel {
+                                &project_panel.git_status
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .project_panel
+                                .get_or_insert_default()
+                                .git_status
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Indent Size",
+                    description: "Amount of indentation for nested items",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(project_panel) = &settings_content.project_panel {
+                                &project_panel.indent_size
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .project_panel
+                                .get_or_insert_default()
+                                .indent_size
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Auto Reveal Entries",
+                    description: "Whether to reveal entries in the project panel automatically when a corresponding project entry becomes active",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(project_panel) = &settings_content.project_panel {
+                                &project_panel.auto_reveal_entries
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .project_panel
+                                .get_or_insert_default()
+                                .auto_reveal_entries
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Starts Open",
+                    description: "Whether the project panel should open on startup",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(project_panel) = &settings_content.project_panel {
+                                &project_panel.starts_open
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .project_panel
+                                .get_or_insert_default()
+                                .starts_open
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Auto Fold Directories",
+                    description: "Whether to fold directories automatically and show compact folders when a directory has only one subdirectory inside",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(project_panel) = &settings_content.project_panel {
+                                &project_panel.auto_fold_dirs
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .project_panel
+                                .get_or_insert_default()
+                                .auto_fold_dirs
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Scrollbar Show",
+                    description: "Show the scrollbar in the project panel",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(project_panel) = &settings_content.project_panel
+                                && let Some(scrollbar) = &project_panel.scrollbar
+                                && scrollbar.show.is_some()
+                            {
+                                &scrollbar.show
+                            } else if let Some(scrollbar) = &settings_content.editor.scrollbar {
+                                &scrollbar.show
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .project_panel
+                                .get_or_insert_default()
+                                .scrollbar
+                                .get_or_insert_default()
+                                .show
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Show Diagnostics",
+                    description: "Which files containing diagnostic errors/warnings to mark in the project panel",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(project_panel) = &settings_content.project_panel {
+                                &project_panel.show_diagnostics
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .project_panel
+                                .get_or_insert_default()
+                                .show_diagnostics
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Sticky Scroll",
+                    description: "Whether to stick parent directories at top of the project panel",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(project_panel) = &settings_content.project_panel {
+                                &project_panel.sticky_scroll
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .project_panel
+                                .get_or_insert_default()
+                                .sticky_scroll
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    files: USER,
+                    title: "Indent Guides Show",
+                    description: "Show indent guides in the project panel",
+                    field: Box::new(
+                        SettingField {
+                            pick: |settings_content| {
+                                if let Some(project_panel) = &settings_content.project_panel {
+                                    if let Some(indent_guides) = &project_panel.indent_guides {
+                                        &indent_guides.show
+                                    } else {
+                                        &None
+                                    }
+                                } else {
+                                    &None
+                                }
+                            },
+                            pick_mut: |settings_content| {
+                                &mut settings_content
+                                    .project_panel
+                                    .get_or_insert_default()
+                                    .indent_guides
+                                    .get_or_insert_default()
+                                    .show
+                            },
+                        }
+                        .unimplemented(),
+                    ),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Drag and Drop",
+                    description: "Whether to enable drag-and-drop operations in the project panel",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(project_panel) = &settings_content.project_panel {
+                                &project_panel.drag_and_drop
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .project_panel
+                                .get_or_insert_default()
+                                .drag_and_drop
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Hide Root",
+                    description: "Whether to hide the root entry when only one folder is open in the window",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(project_panel) = &settings_content.project_panel {
+                                &project_panel.hide_root
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .project_panel
+                                .get_or_insert_default()
+                                .hide_root
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Hide Hidden",
+                    description: "Whether to hide the hidden entries in the project panel",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(project_panel) = &settings_content.project_panel {
+                                &project_panel.hide_hidden
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .project_panel
+                                .get_or_insert_default()
+                                .hide_hidden
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SectionHeader("Terminal Panel"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Terminal Dock",
+                    description: "Where to dock the terminal panel",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(terminal) = &settings_content.terminal {
+                                &terminal.dock
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content.terminal.get_or_insert_default().dock
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SectionHeader("Outline Panel"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Outline Panel Button",
+                    description: "Show the outline panel button in the status bar",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(outline_panel) = &settings_content.outline_panel {
+                                &outline_panel.button
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .outline_panel
+                                .get_or_insert_default()
+                                .button
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Outline Panel Dock",
+                    description: "Where to dock the outline panel",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(outline_panel) = &settings_content.outline_panel {
+                                &outline_panel.dock
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content.outline_panel.get_or_insert_default().dock
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Outline Panel Default Width",
+                    description: "Default width of the outline panel in pixels",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(outline_panel) = &settings_content.outline_panel {
+                                &outline_panel.default_width
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .outline_panel
+                                .get_or_insert_default()
+                                .default_width
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "File Icons",
+                    description: "Show file icons in the outline panel",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(outline_panel) = &settings_content.outline_panel {
+                                &outline_panel.file_icons
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .outline_panel
+                                .get_or_insert_default()
+                                .file_icons
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Folder Icons",
+                    description: "Whether to show folder icons or chevrons for directories in the outline panel",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(outline_panel) = &settings_content.outline_panel {
+                                &outline_panel.folder_icons
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .outline_panel
+                                .get_or_insert_default()
+                                .folder_icons
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Git Status",
+                    description: "Show the git status in the outline panel",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(outline_panel) = &settings_content.outline_panel {
+                                &outline_panel.git_status
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .outline_panel
+                                .get_or_insert_default()
+                                .git_status
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Indent Size",
+                    description: "Amount of indentation for nested items",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(outline_panel) = &settings_content.outline_panel {
+                                &outline_panel.indent_size
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .outline_panel
+                                .get_or_insert_default()
+                                .indent_size
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Auto Reveal Entries",
+                    description: "Whether to reveal when a corresponding outline entry becomes active",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(outline_panel) = &settings_content.outline_panel {
+                                &outline_panel.auto_reveal_entries
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .outline_panel
+                                .get_or_insert_default()
+                                .auto_reveal_entries
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Auto Fold Directories",
+                    description: "Whether to fold directories automatically when a directory contains only one subdirectory",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(outline_panel) = &settings_content.outline_panel {
+                                &outline_panel.auto_fold_dirs
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .outline_panel
+                                .get_or_insert_default()
+                                .auto_fold_dirs
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    files: USER,
+                    title: "Indent Guides Show",
+                    description: "When to show indent guides in the outline panel",
+                    field: Box::new(
+                        SettingField {
+                            pick: |settings_content| {
+                                if let Some(outline_panel) = &settings_content.outline_panel {
+                                    if let Some(indent_guides) = &outline_panel.indent_guides {
+                                        &indent_guides.show
+                                    } else {
+                                        &None
+                                    }
+                                } else {
+                                    &None
+                                }
+                            },
+                            pick_mut: |settings_content| {
+                                &mut settings_content
+                                    .outline_panel
+                                    .get_or_insert_default()
+                                    .indent_guides
+                                    .get_or_insert_default()
+                                    .show
+                            },
+                        }
+                        .unimplemented(),
+                    ),
+                    metadata: None,
+                }),
+                SettingsPageItem::SectionHeader("Git Panel"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Git Panel Button",
+                    description: "Show the Git panel button in the status bar",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(git_panel) = &settings_content.git_panel {
+                                &git_panel.button
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content.git_panel.get_or_insert_default().button
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Git Panel Dock",
+                    description: "Where to dock the Git panel",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(git_panel) = &settings_content.git_panel {
+                                &git_panel.dock
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content.git_panel.get_or_insert_default().dock
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Git Panel Default Width",
+                    description: "Default width of the Git panel in pixels",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(git_panel) = &settings_content.git_panel {
+                                &git_panel.default_width
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .git_panel
+                                .get_or_insert_default()
+                                .default_width
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SectionHeader("Debugger Panel"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Debugger Panel Dock",
+                    description: "The dock position of the debug panel",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(debugger) = &settings_content.debugger {
+                                &debugger.dock
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content.debugger.get_or_insert_default().dock
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SectionHeader("Notification Panel"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Notification Panel Button",
+                    description: "Show the notification panel button in the status bar",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(notification_panel) = &settings_content.notification_panel {
+                                &notification_panel.button
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .notification_panel
+                                .get_or_insert_default()
+                                .button
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Notification Panel Dock",
+                    description: "Where to dock the notification panel",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(notification_panel) = &settings_content.notification_panel {
+                                &notification_panel.dock
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .notification_panel
+                                .get_or_insert_default()
+                                .dock
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Notification Panel Default Width",
+                    description: "Default width of the notification panel in pixels",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(notification_panel) = &settings_content.notification_panel {
+                                &notification_panel.default_width
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .notification_panel
+                                .get_or_insert_default()
+                                .default_width
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SectionHeader("Collaboration Panel"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Collaboration Panel Button",
+                    description: "Show the collaboration panel button in the status bar",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(collaboration_panel) = &settings_content.collaboration_panel
+                            {
+                                &collaboration_panel.button
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .collaboration_panel
+                                .get_or_insert_default()
+                                .button
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Collaboration Panel Dock",
+                    description: "Where to dock the collaboration panel",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(collaboration_panel) = &settings_content.collaboration_panel
+                            {
+                                &collaboration_panel.dock
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .collaboration_panel
+                                .get_or_insert_default()
+                                .dock
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Collaboration Panel Default Width",
+                    description: "Default width of the collaboration panel in pixels",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(collaboration_panel) = &settings_content.collaboration_panel
+                            {
+                                &collaboration_panel.default_width
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .collaboration_panel
+                                .get_or_insert_default()
+                                .default_width
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+            ],
+        },
+        SettingsPage {
+            title: "Debugger",
+            items: vec![
+                SettingsPageItem::SectionHeader("General"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Stepping Granularity",
+                    description: "Determines the stepping granularity for debug operations",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(debugger) = &settings_content.debugger {
+                                &debugger.stepping_granularity
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .debugger
+                                .get_or_insert_default()
+                                .stepping_granularity
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Save Breakpoints",
+                    description: "Whether breakpoints should be reused across Zed sessions",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(debugger) = &settings_content.debugger {
+                                &debugger.save_breakpoints
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .debugger
+                                .get_or_insert_default()
+                                .save_breakpoints
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Timeout",
+                    description: "Time in milliseconds until timeout error when connecting to a TCP debug adapter",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(debugger) = &settings_content.debugger {
+                                &debugger.timeout
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content.debugger.get_or_insert_default().timeout
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Log DAP Communications",
+                    description: "Whether to log messages between active debug adapters and Zed",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(debugger) = &settings_content.debugger {
+                                &debugger.log_dap_communications
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .debugger
+                                .get_or_insert_default()
+                                .log_dap_communications
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Format DAP Log Messages",
+                    description: "Whether to format DAP messages when adding them to debug adapter logger",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(debugger) = &settings_content.debugger {
+                                &debugger.format_dap_log_messages
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .debugger
+                                .get_or_insert_default()
+                                .format_dap_log_messages
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+            ],
+        },
+        SettingsPage {
+            title: "Terminal",
+            items: vec![
+                SettingsPageItem::SectionHeader("Environment"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Shell",
+                    description: "What shell to use when opening a terminal",
+                    field: Box::new(
+                        SettingField {
+                            pick: |settings_content| {
+                                if let Some(terminal) = &settings_content.terminal {
+                                    &terminal.project.shell
+                                } else {
+                                    &None
+                                }
+                            },
+                            pick_mut: |settings_content| {
+                                &mut settings_content
+                                    .terminal
+                                    .get_or_insert_default()
+                                    .project
+                                    .shell
+                            },
+                        }
+                        .unimplemented(),
+                    ),
+                    metadata: None,
+                    files: USER | LOCAL,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Working Directory",
+                    description: "What working directory to use when launching the terminal",
+                    field: Box::new(
+                        SettingField {
+                            pick: |settings_content| {
+                                if let Some(terminal) = &settings_content.terminal {
+                                    &terminal.project.working_directory
+                                } else {
+                                    &None
+                                }
+                            },
+                            pick_mut: |settings_content| {
+                                &mut settings_content
+                                    .terminal
+                                    .get_or_insert_default()
+                                    .project
+                                    .working_directory
+                            },
+                        }
+                        .unimplemented(),
+                    ),
+                    metadata: None,
+                    files: USER | LOCAL,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Environment Variables",
+                    description: "Key-value pairs to add to the terminal's environment",
+                    field: Box::new(
+                        SettingField {
+                            pick: |settings_content| {
+                                if let Some(terminal) = &settings_content.terminal {
+                                    &terminal.project.env
+                                } else {
+                                    &None
+                                }
+                            },
+                            pick_mut: |settings_content| {
+                                &mut settings_content
+                                    .terminal
+                                    .get_or_insert_default()
+                                    .project
+                                    .env
+                            },
+                        }
+                        .unimplemented(),
+                    ),
+                    metadata: None,
+                    files: USER | LOCAL,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Detect Virtual Environment",
+                    description: "Activates the python virtual environment, if one is found, in the terminal's working directory",
+                    field: Box::new(
+                        SettingField {
+                            pick: |settings_content| {
+                                if let Some(terminal) = &settings_content.terminal {
+                                    &terminal.project.detect_venv
+                                } else {
+                                    &None
+                                }
+                            },
+                            pick_mut: |settings_content| {
+                                &mut settings_content
+                                    .terminal
+                                    .get_or_insert_default()
+                                    .project
+                                    .detect_venv
+                            },
+                        }
+                        .unimplemented(),
+                    ),
+                    metadata: None,
+                    files: USER | LOCAL,
+                }),
+                SettingsPageItem::SectionHeader("Font"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Font Size",
+                    description: "Font size for terminal text. If not set, defaults to buffer font size",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(terminal) = &settings_content.terminal
+                                && terminal.font_size.is_some()
+                            {
+                                &terminal.font_size
+                            } else if settings_content.theme.buffer_font_size.is_some() {
+                                &settings_content.theme.buffer_font_size
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content.terminal.get_or_insert_default().font_size
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Font Family",
+                    description: "Font family for terminal text. If not set, defaults to buffer font family",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(terminal) = &settings_content.terminal
+                                && terminal.font_family.is_some()
+                            {
+                                &terminal.font_family
+                            } else if settings_content.theme.buffer_font_family.is_some() {
+                                &settings_content.theme.buffer_font_family
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .terminal
+                                .get_or_insert_default()
+                                .font_family
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Font Fallbacks",
+                    description: "Font fallbacks for terminal text. If not set, defaults to buffer font fallbacks",
+                    field: Box::new(
+                        SettingField {
+                            pick: |settings_content| {
+                                if let Some(terminal) = &settings_content.terminal {
+                                    &terminal.font_fallbacks
+                                } else {
+                                    &None
+                                }
+                            },
+                            pick_mut: |settings_content| {
+                                &mut settings_content
+                                    .terminal
+                                    .get_or_insert_default()
+                                    .font_fallbacks
+                            },
+                        }
+                        .unimplemented(),
+                    ),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Font Weight",
+                    description: "Font weight for terminal text in CSS weight units (100-900)",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(terminal) = &settings_content.terminal {
+                                &terminal.font_weight
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .terminal
+                                .get_or_insert_default()
+                                .font_weight
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Font Features",
+                    description: "Font features for terminal text",
+                    field: Box::new(
+                        SettingField {
+                            pick: |settings_content| {
+                                if let Some(terminal) = &settings_content.terminal {
+                                    &terminal.font_features
+                                } else {
+                                    &None
+                                }
+                            },
+                            pick_mut: |settings_content| {
+                                &mut settings_content
+                                    .terminal
+                                    .get_or_insert_default()
+                                    .font_features
+                            },
+                        }
+                        .unimplemented(),
+                    ),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SectionHeader("Display Settings"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Line Height",
+                    description: "Line height for terminal text",
+                    field: Box::new(
+                        SettingField {
+                            pick: |settings_content| {
+                                if let Some(terminal) = &settings_content.terminal {
+                                    &terminal.line_height
+                                } else {
+                                    &None
+                                }
+                            },
+                            pick_mut: |settings_content| {
+                                &mut settings_content
+                                    .terminal
+                                    .get_or_insert_default()
+                                    .line_height
+                            },
+                        }
+                        .unimplemented(),
+                    ),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Cursor Shape",
+                    description: "Default cursor shape for the terminal (bar, block, underline, or hollow)",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(terminal) = &settings_content.terminal {
+                                &terminal.cursor_shape
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .terminal
+                                .get_or_insert_default()
+                                .cursor_shape
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Cursor Blinking",
+                    description: "Sets the cursor blinking behavior in the terminal",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(terminal) = &settings_content.terminal {
+                                &terminal.blinking
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content.terminal.get_or_insert_default().blinking
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Alternate Scroll",
+                    description: "Whether Alternate Scroll mode is active by default (converts mouse scroll to arrow keys in apps like vim)",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(terminal) = &settings_content.terminal {
+                                &terminal.alternate_scroll
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .terminal
+                                .get_or_insert_default()
+                                .alternate_scroll
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Minimum Contrast",
+                    description: "The minimum APCA perceptual contrast between foreground and background colors (0-106)",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(terminal) = &settings_content.terminal {
+                                &terminal.minimum_contrast
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .terminal
+                                .get_or_insert_default()
+                                .minimum_contrast
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SectionHeader("Behavior Settings"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Option As Meta",
+                    description: "Whether the option key behaves as the meta key",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(terminal) = &settings_content.terminal {
+                                &terminal.option_as_meta
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .terminal
+                                .get_or_insert_default()
+                                .option_as_meta
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Copy On Select",
+                    description: "Whether selecting text in the terminal automatically copies to the system clipboard",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(terminal) = &settings_content.terminal {
+                                &terminal.copy_on_select
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .terminal
+                                .get_or_insert_default()
+                                .copy_on_select
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Keep Selection On Copy",
+                    description: "Whether to keep the text selection after copying it to the clipboard",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(terminal) = &settings_content.terminal {
+                                &terminal.keep_selection_on_copy
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .terminal
+                                .get_or_insert_default()
+                                .keep_selection_on_copy
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SectionHeader("Layout Settings"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Default Width",
+                    description: "Default width when the terminal is docked to the left or right (in pixels)",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(terminal) = &settings_content.terminal {
+                                &terminal.default_width
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .terminal
+                                .get_or_insert_default()
+                                .default_width
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Default Height",
+                    description: "Default height when the terminal is docked to the bottom (in pixels)",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(terminal) = &settings_content.terminal {
+                                &terminal.default_height
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .terminal
+                                .get_or_insert_default()
+                                .default_height
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SectionHeader("Advanced Settings"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Max Scroll History Lines",
+                    description: "Maximum number of lines to keep in scrollback history (max: 100,000; 0 disables scrolling)",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(terminal) = &settings_content.terminal {
+                                &terminal.max_scroll_history_lines
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .terminal
+                                .get_or_insert_default()
+                                .max_scroll_history_lines
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SectionHeader("Toolbar"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Breadcrumbs",
+                    description: "Display the terminal title in breadcrumbs inside the terminal pane",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(terminal) = &settings_content.terminal {
+                                if let Some(toolbar) = &terminal.toolbar {
+                                    &toolbar.breadcrumbs
+                                } else {
+                                    &None
+                                }
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .terminal
+                                .get_or_insert_default()
+                                .toolbar
+                                .get_or_insert_default()
+                                .breadcrumbs
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SectionHeader("Scrollbar"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Show Scrollbar",
+                    description: "When to show the scrollbar in the terminal",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(terminal) = &settings_content.terminal
+                                && let Some(scrollbar) = &terminal.scrollbar
+                                && scrollbar.show.is_some()
+                            {
+                                &scrollbar.show
+                            } else if let Some(scrollbar) = &settings_content.editor.scrollbar {
+                                &scrollbar.show
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .terminal
+                                .get_or_insert_default()
+                                .scrollbar
+                                .get_or_insert_default()
+                                .show
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
                 }),
             ],
         },
@@ -2706,7 +3753,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                 SettingsPageItem::SectionHeader("Git"),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Git Gutter",
-                    description: "Control whether the git gutter is shown",
+                    description: "Control whether git status is shown in the editor's gutter",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             if let Some(git) = &settings_content.git {
@@ -2720,27 +3767,29 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 // todo(settings_ui): Figure out the right default for this value in default.json
-                // SettingsPageItem::SettingItem(SettingItem {
-                //     title: "Gutter Debounce",
-                //     description: "Debounce threshold in milliseconds after which changes are reflected in the git gutter",
-                //     field: Box::new(SettingField {
-                //         pick: |settings_content| {
-                //             if let Some(git) = &settings_content.git {
-                //                 &git.gutter_debounce
-                //             } else {
-                //                 &None
-                //             }
-                //         },
-                //         pick_mut: |settings_content| {
-                //             &mut settings_content.git.get_or_insert_default().gutter_debounce
-                //         },
-                //     }),
-                //     metadata: None,
-                // }),
                 SettingsPageItem::SettingItem(SettingItem {
-                    title: "Inline Blame Enabled",
+                    title: "Gutter Debounce",
+                    description: "Debounce threshold in milliseconds after which changes are reflected in the git gutter",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(git) = &settings_content.git {
+                                &git.gutter_debounce
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content.git.get_or_insert_default().gutter_debounce
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Inline Git Blame",
                     description: "Whether or not to show git blame data inline in the currently focused line",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
@@ -2764,9 +3813,10 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
-                    title: "Inline Blame Delay",
+                    title: "Inline Git Blame Delay",
                     description: "The delay after which the inline blame information is shown",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
@@ -2790,9 +3840,10 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
-                    title: "Inline Blame Padding",
+                    title: "Inline Git Blame Padding",
                     description: "Padding between the end of the source line and the start of the inline blame in columns",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
@@ -2816,9 +3867,10 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
-                    title: "Inline Blame Min Column",
+                    title: "Inline Git Blame Min Column",
                     description: "The minimum column number to show the inline blame information at",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
@@ -2842,10 +3894,11 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Show Commit Summary",
-                    description: "Whether to show commit summary as part of the inline blame",
+                    description: "Show commit summary as part of the inline blame",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             if let Some(git) = &settings_content.git {
@@ -2868,10 +3921,11 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Show Avatar",
-                    description: "Whether to show the avatar of the author of the commit",
+                    description: "Show the avatar of the author of the commit",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             if let Some(git) = &settings_content.git {
@@ -2894,10 +3948,11 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Show Author Name In Branch Picker",
-                    description: "Whether to show author name as part of the commit information in branch picker",
+                    description: "Show author name as part of the commit information in branch picker",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             if let Some(git) = &settings_content.git {
@@ -2920,6 +3975,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Hunk Style",
@@ -2937,69 +3993,13 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
-                }),
-            ],
-        },
-        SettingsPage {
-            title: "System & Network",
-            items: vec![
-                SettingsPageItem::SectionHeader("Network"),
-                // todo(settings_ui): Proxy needs a default
-                // SettingsPageItem::SettingItem(SettingItem {
-                //     title: "Proxy",
-                //     description: "The proxy to use for network requests",
-                //     field: Box::new(SettingField {
-                //         pick: |settings_content| &settings_content.proxy,
-                //         pick_mut: |settings_content| &mut settings_content.proxy,
-                //     }),
-                //     metadata: Some(Box::new(SettingsFieldMetadata {
-                //         placeholder: Some("socks5h://localhost:10808"),
-                //     })),
-                // }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Server URL",
-                    description: "The URL of the Zed server to connect to",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| &settings_content.server_url,
-                        pick_mut: |settings_content| &mut settings_content.server_url,
-                    }),
-                    metadata: Some(Box::new(SettingsFieldMetadata {
-                        placeholder: Some("https://zed.dev"),
-                    })),
-                }),
-                SettingsPageItem::SectionHeader("System"),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Auto Update",
-                    description: "Whether or not to automatically check for updates",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| &settings_content.auto_update,
-                        pick_mut: |settings_content| &mut settings_content.auto_update,
-                    }),
-                    metadata: None,
+                    files: USER,
                 }),
             ],
         },
         SettingsPage {
             title: "Diagnostics & Errors",
             items: vec![
-                SettingsPageItem::SectionHeader("Display"),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Diagnostics Button",
-                    description: "Whether to show the project diagnostics button in the status bar",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(diagnostics) = &settings_content.diagnostics {
-                                &diagnostics.button
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content.diagnostics.get_or_insert_default().button
-                        },
-                    }),
-                    metadata: None,
-                }),
                 SettingsPageItem::SectionHeader("Filtering"),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Max Severity",
@@ -3011,6 +4011,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Include Warnings",
@@ -3031,6 +4032,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SectionHeader("Inline"),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -3058,8 +4060,8 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
-                // todo(settings_ui): Needs numeric stepper
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Inline Update Debounce",
                     description: "The delay in milliseconds to show inline diagnostics after the last diagnostic update",
@@ -3085,8 +4087,8 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
-                // todo(settings_ui): Needs numeric stepper
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Inline Padding",
                     description: "The amount of padding between the end of the source line and the start of the inline diagnostic",
@@ -3112,8 +4114,8 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
-                // todo(settings_ui): Needs numeric stepper
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Inline Min Column",
                     description: "The minimum column to display inline diagnostics",
@@ -3139,11 +4141,12 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SectionHeader("Performance"),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "LSP Pull Diagnostics Enabled",
-                    description: "Whether to pull for diagnostics or not",
+                    description: "Whether to pull for language server-powered diagnostics or not",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             if let Some(diagnostics) = &settings_content.diagnostics {
@@ -3166,6 +4169,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 // todo(settings_ui): Needs unit
                 SettingsPageItem::SettingItem(SettingItem {
@@ -3193,6 +4197,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
             ],
         },
@@ -3216,6 +4221,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Share On Join",
@@ -3233,6 +4239,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SectionHeader("Experimental"),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -3251,6 +4258,88 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Auto Microphone Volume",
+                    description: "Automatically adjust microphone volume (requires Rodio Audio)",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(audio) = &settings_content.audio {
+                                &audio.auto_microphone_volume
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .audio
+                                .get_or_insert_default()
+                                .auto_microphone_volume
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Auto Speaker Volume",
+                    description: "Automatically adjust volume of other call members (requires Rodio Audio)",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(audio) = &settings_content.audio {
+                                &audio.auto_speaker_volume
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .audio
+                                .get_or_insert_default()
+                                .auto_speaker_volume
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Denoise",
+                    description: "Remove background noises (requires Rodio Audio)",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(audio) = &settings_content.audio {
+                                &audio.denoise
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content.audio.get_or_insert_default().denoise
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Legacy Audio Compatible",
+                    description: "Use audio parameters compatible with previous versions (requires Rodio Audio)",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(audio) = &settings_content.audio {
+                                &audio.legacy_audio_compatible
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .audio
+                                .get_or_insert_default()
+                                .legacy_audio_compatible
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
                 }),
             ],
         },
@@ -3266,380 +4355,52 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         pick_mut: |settings_content| &mut settings_content.disable_ai,
                     }),
                     metadata: None,
+                    files: USER,
                 }),
             ],
         },
-    ]
-}
-
-pub(crate) fn project_settings_data() -> Vec<SettingsPage> {
-    vec![
         SettingsPage {
-            title: "Project",
+            title: "System & Network",
             items: vec![
-                SettingsPageItem::SectionHeader("Worktree Settings Content"),
+                SettingsPageItem::SectionHeader("Network"),
+                // todo(settings_ui): Proxy needs a default
                 SettingsPageItem::SettingItem(SettingItem {
-                    title: "Project Name",
-                    description: "The displayed name of this project. If not set, the root directory name",
+                    title: "Proxy",
+                    description: "The proxy to use for network requests",
+                    field: Box::new(
+                        SettingField {
+                            pick: |settings_content| &settings_content.proxy,
+                            pick_mut: |settings_content| &mut settings_content.proxy,
+                        }
+                        .unimplemented(),
+                    ),
+                    metadata: Some(Box::new(SettingsFieldMetadata {
+                        placeholder: Some("socks5h://localhost:10808"),
+                    })),
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Server URL",
+                    description: "The URL of the Zed server to connect to",
                     field: Box::new(SettingField {
-                        pick: |settings_content| &settings_content.project.worktree.project_name,
-                        pick_mut: |settings_content| {
-                            &mut settings_content.project.worktree.project_name
-                        },
+                        pick: |settings_content| &settings_content.server_url,
+                        pick_mut: |settings_content| &mut settings_content.server_url,
                     }),
                     metadata: Some(Box::new(SettingsFieldMetadata {
-                        placeholder: Some("A new name"),
+                        placeholder: Some("https://zed.dev"),
                     })),
+                    files: USER,
                 }),
-            ],
-        },
-        SettingsPage {
-            title: "Appearance & Behavior",
-            items: vec![
-                SettingsPageItem::SectionHeader("Guides"),
+                SettingsPageItem::SectionHeader("System"),
                 SettingsPageItem::SettingItem(SettingItem {
-                    title: "Show Wrap Guides",
-                    description: "Whether to show wrap guides (vertical rulers)",
+                    title: "Auto Update",
+                    description: "Whether or not to automatically check for updates",
                     field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            &settings_content
-                                .project
-                                .all_languages
-                                .defaults
-                                .show_wrap_guides
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .project
-                                .all_languages
-                                .defaults
-                                .show_wrap_guides
-                        },
+                        pick: |settings_content| &settings_content.auto_update,
+                        pick_mut: |settings_content| &mut settings_content.auto_update,
                     }),
                     metadata: None,
-                }),
-                // todo(settings_ui): This needs a custom component
-                // SettingsPageItem::SettingItem(SettingItem {
-                //     title: "Wrap Guides",
-                //     description: "Character counts at which to show wrap guides",
-                //     field: Box::new(SettingField {
-                //         pick: |settings_content| {
-                //             &settings_content
-                //                 .project
-                //                 .all_languages
-                //                 .defaults
-                //                 .wrap_guides
-                //         },
-                //         pick_mut: |settings_content| {
-                //             &mut settings_content
-                //                 .project
-                //                 .all_languages
-                //                 .defaults
-                //                 .wrap_guides
-                //         },
-                //     }),
-                //     metadata: None,
-                // }),
-                SettingsPageItem::SectionHeader("Whitespace"),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Show Whitespace",
-                    description: "Whether to show tabs and spaces",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            &settings_content
-                                .project
-                                .all_languages
-                                .defaults
-                                .show_whitespaces
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .project
-                                .all_languages
-                                .defaults
-                                .show_whitespaces
-                        },
-                    }),
-                    metadata: None,
-                }),
-            ],
-        },
-        SettingsPage {
-            title: "Editing",
-            items: vec![
-                SettingsPageItem::SectionHeader("Indentation"),
-                // todo(settings_ui): Needs numeric stepper
-                // SettingsPageItem::SettingItem(SettingItem {
-                //     title: "Tab Size",
-                //     description: "How many columns a tab should occupy",
-                //     field: Box::new(SettingField {
-                //         pick: |settings_content| &settings_content.project.all_languages.defaults.tab_size,
-                //         pick_mut: |settings_content| &mut settings_content.project.all_languages.defaults.tab_size,
-                //     }),
-                //     metadata: None,
-                // }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Hard Tabs",
-                    description: "Whether to indent lines using tab characters, as opposed to multiple spaces",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            &settings_content.project.all_languages.defaults.hard_tabs
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content.project.all_languages.defaults.hard_tabs
-                        },
-                    }),
-                    metadata: None,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Auto Indent",
-                    description: "Whether indentation should be adjusted based on the context whilst typing",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            &settings_content.project.all_languages.defaults.auto_indent
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content.project.all_languages.defaults.auto_indent
-                        },
-                    }),
-                    metadata: None,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Auto Indent On Paste",
-                    description: "Whether indentation of pasted content should be adjusted based on the context",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            &settings_content
-                                .project
-                                .all_languages
-                                .defaults
-                                .auto_indent_on_paste
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .project
-                                .all_languages
-                                .defaults
-                                .auto_indent_on_paste
-                        },
-                    }),
-                    metadata: None,
-                }),
-                SettingsPageItem::SectionHeader("Wrapping"),
-                // todo(settings_ui): Needs numeric stepper
-                // SettingsPageItem::SettingItem(SettingItem {
-                //     title: "Preferred Line Length",
-                //     description: "The column at which to soft-wrap lines, for buffers where soft-wrap is enabled",
-                //     field: Box::new(SettingField {
-                //         pick: |settings_content| &settings_content.project.all_languages.defaults.preferred_line_length,
-                //         pick_mut: |settings_content| &mut settings_content.project.all_languages.defaults.preferred_line_length,
-                //     }),
-                //     metadata: None,
-                // }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Soft Wrap",
-                    description: "How to soft-wrap long lines of text",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            &settings_content.project.all_languages.defaults.soft_wrap
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content.project.all_languages.defaults.soft_wrap
-                        },
-                    }),
-                    metadata: None,
-                }),
-                SettingsPageItem::SectionHeader("Auto Actions"),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Use Autoclose",
-                    description: "Whether to automatically type closing characters for you",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            &settings_content
-                                .project
-                                .all_languages
-                                .defaults
-                                .use_autoclose
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .project
-                                .all_languages
-                                .defaults
-                                .use_autoclose
-                        },
-                    }),
-                    metadata: None,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Use Auto Surround",
-                    description: "Whether to automatically surround text with characters for you",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            &settings_content
-                                .project
-                                .all_languages
-                                .defaults
-                                .use_auto_surround
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .project
-                                .all_languages
-                                .defaults
-                                .use_auto_surround
-                        },
-                    }),
-                    metadata: None,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Use On Type Format",
-                    description: "Whether to use additional LSP queries to format the code after every trigger symbol input",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            &settings_content
-                                .project
-                                .all_languages
-                                .defaults
-                                .use_on_type_format
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .project
-                                .all_languages
-                                .defaults
-                                .use_on_type_format
-                        },
-                    }),
-                    metadata: None,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Always Treat Brackets As Autoclosed",
-                    description: "Controls how the editor handles the autoclosed characters",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            &settings_content
-                                .project
-                                .all_languages
-                                .defaults
-                                .always_treat_brackets_as_autoclosed
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .project
-                                .all_languages
-                                .defaults
-                                .always_treat_brackets_as_autoclosed
-                        },
-                    }),
-                    metadata: None,
-                }),
-                SettingsPageItem::SectionHeader("Formatting"),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Remove Trailing Whitespace On Save",
-                    description: "Whether or not to remove any trailing whitespace from lines of a buffer before saving it",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            &settings_content
-                                .project
-                                .all_languages
-                                .defaults
-                                .remove_trailing_whitespace_on_save
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .project
-                                .all_languages
-                                .defaults
-                                .remove_trailing_whitespace_on_save
-                        },
-                    }),
-                    metadata: None,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Ensure Final Newline On Save",
-                    description: "Whether or not to ensure there's a single newline at the end of a buffer when saving it",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            &settings_content
-                                .project
-                                .all_languages
-                                .defaults
-                                .ensure_final_newline_on_save
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .project
-                                .all_languages
-                                .defaults
-                                .ensure_final_newline_on_save
-                        },
-                    }),
-                    metadata: None,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Extend Comment On Newline",
-                    description: "Whether to start a new line with a comment when a previous line is a comment as well",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            &settings_content
-                                .project
-                                .all_languages
-                                .defaults
-                                .extend_comment_on_newline
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .project
-                                .all_languages
-                                .defaults
-                                .extend_comment_on_newline
-                        },
-                    }),
-                    metadata: None,
-                }),
-                SettingsPageItem::SectionHeader("Completions"),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Show Completions On Input",
-                    description: "Whether to pop the completions menu while typing in an editor without explicitly requesting it",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            &settings_content
-                                .project
-                                .all_languages
-                                .defaults
-                                .show_completions_on_input
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .project
-                                .all_languages
-                                .defaults
-                                .show_completions_on_input
-                        },
-                    }),
-                    metadata: None,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Show Completion Documentation",
-                    description: "Whether to display inline and alongside documentation for items in the completions menu",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            &settings_content
-                                .project
-                                .all_languages
-                                .defaults
-                                .show_completion_documentation
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .project
-                                .all_languages
-                                .defaults
-                                .show_completion_documentation
-                        },
-                    }),
-                    metadata: None,
+                    files: USER,
                 }),
             ],
         },
@@ -3661,14 +4422,16 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
         get: fn(&LanguageSettingsContent) -> &Option<T>,
     ) -> &Option<T> {
         let all_languages = &settings_content.project.all_languages;
-        let mut language_content = None;
-        if let Some(current_language) = current_language() {
-            language_content = all_languages.languages.0.get(&current_language);
+        if let Some(current_language_name) = current_language() {
+            if let Some(current_language) = all_languages.languages.0.get(&current_language_name) {
+                let value = get(current_language);
+                if value.is_some() {
+                    return value;
+                }
+            }
         }
-        let value = language_content
-            .map(get)
-            .unwrap_or_else(|| get(&all_languages.defaults));
-        return value;
+        let default_value = get(&all_languages.defaults);
+        return default_value;
     }
 
     fn language_settings_field_mut<T>(
@@ -3702,6 +4465,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Hard Tabs",
@@ -3717,6 +4481,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Auto Indent",
@@ -3732,6 +4497,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Auto Indent On Paste",
@@ -3749,6 +4515,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SectionHeader("Wrapping"),
         SettingsPageItem::SettingItem(SettingItem {
@@ -3765,10 +4532,11 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Show Wrap Guides",
-            description: "Whether to show wrap guides in the editor. Setting this to true will show a guide at the 'preferred_line_length' value if softwrap is set to 'preferred_line_length', and will show any additional guides as specified by the 'wrap_guides' setting",
+            description: "Show wrap guides in the editor",
             field: Box::new(SettingField {
                 pick: |settings_content| {
                     language_settings_field(settings_content, |language| &language.show_wrap_guides)
@@ -3780,6 +4548,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Preferred Line Length",
@@ -3797,6 +4566,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Wrap Guides",
@@ -3815,6 +4585,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 .unimplemented(),
             ),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Allow Rewrap",
@@ -3830,11 +4601,12 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SectionHeader("Indent Guides"),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Enabled",
-            description: "Whether to display indent guides in the editor",
+            description: "Display indent guides in the editor",
             field: Box::new(SettingField {
                 pick: |settings_content| {
                     language_settings_field(settings_content, |language| {
@@ -3852,6 +4624,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Line Width",
@@ -3873,6 +4646,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Active Line Width",
@@ -3897,6 +4671,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Coloring",
@@ -3918,6 +4693,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Background Coloring",
@@ -3942,6 +4718,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SectionHeader("Formatting"),
         SettingsPageItem::SettingItem(SettingItem {
@@ -3963,6 +4740,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             ),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Remove Trailing Whitespace On Save",
@@ -3980,6 +4758,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Ensure Final Newline On Save",
@@ -3997,6 +4776,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Formatter",
@@ -4015,6 +4795,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 .unimplemented(),
             ),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Use On Type Format",
@@ -4032,26 +4813,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
-        }),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Code Actions On Format",
-            description: "Which code actions to run on save after the formatter. These are not run if formatting is off",
-            field: Box::new(
-                SettingField {
-                    pick: |settings_content| {
-                        language_settings_field(settings_content, |language| {
-                            &language.code_actions_on_format
-                        })
-                    },
-                    pick_mut: |settings_content| {
-                        language_settings_field_mut(settings_content, |language| {
-                            &mut language.code_actions_on_format
-                        })
-                    },
-                }
-                .unimplemented(),
-            ),
-            metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SectionHeader("Prettier"),
         SettingsPageItem::SettingItem(SettingItem {
@@ -4074,6 +4836,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Parser",
@@ -4095,6 +4858,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Plugins",
@@ -4119,6 +4883,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 .unimplemented(),
             ),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Options",
@@ -4143,6 +4908,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 .unimplemented(),
             ),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SectionHeader("Autoclose"),
         SettingsPageItem::SettingItem(SettingItem {
@@ -4159,6 +4925,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Use Auto Surround",
@@ -4176,10 +4943,11 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Always Treat Brackets As Autoclosed",
-            description: "Controls how the editor handles the autoclosed characters. When set to `false`(default), skipping over and auto-removing of the closing characters happen only for auto-inserted characters. Otherwise(when `true`), the closing characters are always skipped over and auto-removed no matter how they were inserted",
+            description: "Controls whether the closing characters are always skipped over and auto-removed no matter how they were inserted",
             field: Box::new(SettingField {
                 pick: |settings_content| {
                     language_settings_field(settings_content, |language| {
@@ -4193,6 +4961,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Jsx Tag Auto Close",
@@ -4214,6 +4983,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SectionHeader("LSP"),
         SettingsPageItem::SettingItem(SettingItem {
@@ -4232,6 +5002,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Language Servers",
@@ -4252,10 +5023,11 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 .unimplemented(),
             ),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Linked Edits",
-            description: "Whether to perform linked edits of associated ranges, if the language server supports it. For example, when editing opening <html> tag, the contents of the closing </html> tag will be edited as well",
+            description: "Whether to perform linked edits of associated ranges, if the LS supports it. For example, when editing opening <html> tag, the contents of the closing </html> tag will be edited as well",
             field: Box::new(SettingField {
                 pick: |settings_content| {
                     language_settings_field(settings_content, |language| &language.linked_edits)
@@ -4267,6 +5039,17 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
+            files: USER | LOCAL,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Go To Definition Fallback",
+            description: "Whether to follow-up empty go to definition responses from the language server",
+            field: Box::new(SettingField {
+                pick: |settings_content| &settings_content.editor.go_to_definition_fallback,
+                pick_mut: |settings_content| &mut settings_content.editor.go_to_definition_fallback,
+            }),
+            metadata: None,
+            files: USER,
         }),
         SettingsPageItem::SectionHeader("Edit Predictions"),
         SettingsPageItem::SettingItem(SettingItem {
@@ -4285,6 +5068,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Edit Predictions Disabled In",
@@ -4305,6 +5089,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 .unimplemented(),
             ),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SectionHeader("Whitespace"),
         SettingsPageItem::SettingItem(SettingItem {
@@ -4321,6 +5106,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Space Whitespace Indicator",
@@ -4345,6 +5131,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 .unimplemented(),
             ),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Tab Whitespace Indicator",
@@ -4369,6 +5156,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 .unimplemented(),
             ),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SectionHeader("Completions"),
         SettingsPageItem::SettingItem(SettingItem {
@@ -4387,6 +5175,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Show Completion Documentation",
@@ -4404,6 +5193,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Words",
@@ -4425,6 +5215,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Words Min Length",
@@ -4449,6 +5240,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Lsp",
@@ -4470,6 +5262,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Lsp Fetch Timeout Ms",
@@ -4494,6 +5287,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Lsp Insert Mode",
@@ -4515,6 +5309,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SectionHeader("Inlay Hints"),
         SettingsPageItem::SettingItem(SettingItem {
@@ -4537,6 +5332,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Show Value Hints",
@@ -4561,6 +5357,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Show Type Hints",
@@ -4582,6 +5379,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Show Parameter Hints",
@@ -4606,6 +5404,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Show Other Hints",
@@ -4630,10 +5429,11 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Show Background",
-            description: "Whether to show a background for inlay hints",
+            description: "Show a background for inlay hints",
             field: Box::new(SettingField {
                 pick: |settings_content| {
                     language_settings_field(settings_content, |language| {
@@ -4651,6 +5451,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Edit Debounce Ms",
@@ -4675,6 +5476,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Scroll Debounce Ms",
@@ -4699,6 +5501,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Toggle On Modifiers Press",
@@ -4726,6 +5529,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 .unimplemented(),
             ),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SectionHeader("Tasks"),
         SettingsPageItem::SettingItem(SettingItem {
@@ -4748,6 +5552,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Variables",
@@ -4772,6 +5577,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 .unimplemented(),
             ),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Prefer Lsp",
@@ -4793,6 +5599,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SectionHeader("Miscellaneous"),
         SettingsPageItem::SettingItem(SettingItem {
@@ -4812,6 +5619,17 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 .unimplemented(),
             ),
             metadata: None,
+            files: USER | LOCAL,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Middle Click Paste",
+            description: "Enable middle-click paste on Linux",
+            field: Box::new(SettingField {
+                pick: |settings_content| &settings_content.editor.middle_click_paste,
+                pick_mut: |settings_content| &mut settings_content.editor.middle_click_paste,
+            }),
+            metadata: None,
+            files: USER,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Extend Comment On Newline",
@@ -4829,6 +5647,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
+            files: USER | LOCAL,
         }),
     ]
 }

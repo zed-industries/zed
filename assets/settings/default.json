@@ -1,4 +1,5 @@
 {
+  "$schema": "zed://schemas/settings",
   /// The displayed name of this project. If not set or empty, the root directory name
   /// will be displayed.
   "project_name": "",
@@ -76,7 +77,7 @@
   "ui_font_size": 16,
   // The default font size for agent responses in the agent panel. Falls back to the UI font size if unset.
   "agent_ui_font_size": null,
-  // The default font size for user messages in the agent panel. Falls back to the buffer font size if unset.
+  // The default font size for user messages in the agent panel.
   "agent_buffer_font_size": 12,
   // How much to fade out unused code.
   "unnecessary_code_fade": 0.3,
@@ -721,7 +722,9 @@
     // Whether to enable drag-and-drop operations in the project panel.
     "drag_and_drop": true,
     // Whether to hide the root entry when only one folder is open in the window.
-    "hide_root": false
+    "hide_root": false,
+    // Whether to hide the hidden entries in the project panel.
+    "hide_hidden": false
   },
   "outline_panel": {
     // Whether to show the outline panel button in the status bar
@@ -1101,7 +1104,7 @@
   // Removes any lines containing only whitespace at the end of the file and
   // ensures just one newline at the end.
   "ensure_final_newline_on_save": true,
-  // Whether or not to perform a buffer format before saving: [on, off, prettier, language_server]
+  // Whether or not to perform a buffer format before saving: [on, off]
   // Keep in mind, if the autosave with delay is enabled, format_on_save will be ignored
   "format_on_save": "on",
   // How to perform a buffer format. This setting can take 4 values:
@@ -1233,8 +1236,8 @@
     "git_gutter": "tracked_files",
     /// Sets the debounce threshold (in milliseconds) after which changes are reflected in the git gutter.
     ///
-    /// Default: null
-    "gutter_debounce": null,
+    /// Default: 0
+    "gutter_debounce": 0,
     // Control whether the git blame information is shown inline,
     // in the currently focused line.
     "inline_blame": {
@@ -1311,15 +1314,18 @@
     //   "proxy": "",
     //   "proxy_no_verify": false
     // },
-    // Whether edit predictions are enabled when editing text threads.
-    // This setting has no effect if globally disabled.
-    "enabled_in_text_threads": true,
-
     "copilot": {
       "enterprise_uri": null,
       "proxy": null,
       "proxy_no_verify": null
-    }
+    },
+    "codestral": {
+      "model": null,
+      "max_tokens": null
+    },
+    // Whether edit predictions are enabled when editing text threads.
+    // This setting has no effect if globally disabled.
+    "enabled_in_text_threads": true
   },
   // Settings specific to journaling
   "journal": {
@@ -1401,8 +1407,8 @@
     //  4. A box drawn around the following character
     //     "hollow"
     //
-    // Default: not set, defaults to "block"
-    "cursor_shape": null,
+    // Default: "block"
+    "cursor_shape": "block",
     // Set whether Alternate Scroll mode (code: ?1007) is active by default.
     // Alternate Scroll mode converts mouse scroll events into up / down key
     // presses when in the alternate screen (e.g. when running applications
@@ -1424,8 +1430,8 @@
     // Whether or not selecting text in the terminal will automatically
     // copy to the system clipboard.
     "copy_on_select": false,
-    // Whether to keep the text selection after copying it to the clipboard
-    "keep_selection_on_copy": false,
+    // Whether to keep the text selection after copying it to the clipboard.
+    "keep_selection_on_copy": true,
     // Whether to show the terminal button in the status bar
     "button": true,
     // Any key-value pairs added to this list will be added to the terminal's
@@ -1515,7 +1521,6 @@
     // A value of 45 preserves colorful themes while ensuring legibility.
     "minimum_contrast": 45
   },
-  "code_actions_on_format": {},
   // Settings related to running tasks.
   "tasks": {
     "variables": {},
@@ -1685,9 +1690,7 @@
       "preferred_line_length": 72
     },
     "Go": {
-      "code_actions_on_format": {
-        "source.organizeImports": true
-      },
+      "formatter": [{ "code_action": "source.organizeImports" }, { "language_server": {} }],
       "debuggers": ["Delve"]
     },
     "GraphQL": {
@@ -2051,7 +2054,7 @@
   //     }
   //   }
   // }
-  "profiles": [],
+  "profiles": {},
 
   // A map of log scopes to the desired log level.
   // Useful for filtering out noisy logs or enabling more verbose logging.

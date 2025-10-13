@@ -57,7 +57,7 @@ pub struct ThemeSettingsContent {
     /// The font size for agent responses in the agent panel. Falls back to the UI font size if unset.
     #[serde(default)]
     pub agent_ui_font_size: Option<f32>,
-    /// The font size for user messages in the agent panel. Falls back to the buffer font size if unset.
+    /// The font size for user messages in the agent panel.
     #[serde(default)]
     pub agent_buffer_font_size: Option<f32>,
     /// The name of the Zed theme to use.

@@ -2493,7 +2493,7 @@ mod tests {
 
         let workspace_6 = SerializedWorkspace {
             id: WorkspaceId(6),
-            paths: PathList::new(&["/tmp6a", "/tmp6b", "/tmp6c"]),
+            paths: PathList::new(&["/tmp6c", "/tmp6b", "/tmp6a"]),
             location: SerializedWorkspaceLocation::Local,
             center_group: Default::default(),
             window_bounds: Default::default(),
@@ -2534,7 +2534,7 @@ mod tests {
         assert_eq!(locations.len(), 1);
         assert_eq!(
             locations[0].0,
-            PathList::new(&["/tmp6a", "/tmp6b", "/tmp6c"]),
+            PathList::new(&["/tmp6c", "/tmp6b", "/tmp6a"]),
         );
         assert_eq!(locations[0].1, Some(60));
     }

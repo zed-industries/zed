@@ -3,37 +3,52 @@
 Zed’s plans offer hosted versions of major LLMs, generally with higher rate limits than using your API keys.
 We’re working hard to expand the models supported by Zed’s subscription offerings, so please check back often.
 
-| Model             | Provider  | Token Type          | Provider Price per 1M tokens | Zed Price per 1M tokens |
-| ----------------- | --------- | ------------------- | ---------------------------- | ----------------------- |
-| Claude Opus 4.1   | Anthropic | Input               | $15.00                       | $16.50                  |
-|                   | Anthropic | Output              | $75.00                       | $82.50                  |
-|                   | Anthropic | Input - Cache Write | $18.75                       | $20.625                 |
-|                   | Anthropic | Input - Cache Read  | $1.50                        | $1.65                   |
-| Claude Sonnet 4.5 | Anthropic | Input               | $3.00                        | $3.30                   |
-|                   | Anthropic | Output              | $15.00                       | $16.50                  |
-|                   | Anthropic | Input - Cache Write | $3.75                        | $4.125                  |
-|                   | Anthropic | Input - Cache Read  | $0.30                        | $0.33                   |
-| Claude Sonnet 4   | Anthropic | Input               | $3.00                        | $3.30                   |
-|                   | Anthropic | Output              | $15.00                       | $16.50                  |
-|                   | Anthropic | Input - Cache Write | $3.75                        | $4.125                  |
-|                   | Anthropic | Input - Cache Read  | $0.30                        | $0.33                   |
-| Claude Sonnet 3.7 | Anthropic | Input               | $3.00                        | $3.30                   |
-|                   | Anthropic | Output              | $15.00                       | $16.50                  |
-|                   | Anthropic | Input - Cache Write | $3.75                        | $4.125                  |
-|                   | Anthropic | Input - Cache Read  | $0.30                        | $0.33                   |
-| GPT-5             | OpenAI    | Input               | $1.25                        | $1.375                  |
-|                   | OpenAI    | Output              | $10.00                       | $11.00                  |
-|                   | OpenAI    | Cached Input        | $0.125                       | $0.1375                 |
-| GPT-5 mini        | OpenAI    | Input               | $0.25                        | $0.275                  |
-|                   | OpenAI    | Output              | $2.00                        | $2.20                   |
-|                   | OpenAI    | Cached Input        | $0.025                       | $0.0275                 |
-| GPT-5 nano        | OpenAI    | Input               | $0.05                        | $0.055                  |
-|                   | OpenAI    | Output              | $0.40                        | $0.44                   |
-|                   | OpenAI    | Cached Input        | $0.005                       | $0.0055                 |
-| Gemini 2.5 Pro    | Google    | Input               | $1.25                        | $1.375                  |
-|                   | Google    | Output              | $10.00                       | $11.00                  |
-| Gemini 2.5 Flash  | Google    | Input               | $0.30                        | $0.33                   |
-|                   | Google    | Output              | $2.50                        | $2.75                   |
+| Model                  | Provider  | Token Type          | Provider Price per 1M tokens | Zed Price per 1M tokens |
+| ---------------------- | --------- | ------------------- | ---------------------------- | ----------------------- |
+| Claude Opus 4.1        | Anthropic | Input               | $15.00                       | $16.50                  |
+|                        | Anthropic | Output              | $75.00                       | $82.50                  |
+|                        | Anthropic | Input - Cache Write | $18.75                       | $20.625                 |
+|                        | Anthropic | Input - Cache Read  | $1.50                        | $1.65                   |
+| Claude Sonnet 4.5      | Anthropic | Input               | $3.00                        | $3.30                   |
+|                        | Anthropic | Output              | $15.00                       | $16.50                  |
+|                        | Anthropic | Input - Cache Write | $3.75                        | $4.125                  |
+|                        | Anthropic | Input - Cache Read  | $0.30                        | $0.33                   |
+| Claude Sonnet 4        | Anthropic | Input               | $3.00                        | $3.30                   |
+|                        | Anthropic | Output              | $15.00                       | $16.50                  |
+|                        | Anthropic | Input - Cache Write | $3.75                        | $4.125                  |
+|                        | Anthropic | Input - Cache Read  | $0.30                        | $0.33                   |
+| Claude Sonnet 3.7      | Anthropic | Input               | $3.00                        | $3.30                   |
+|                        | Anthropic | Output              | $15.00                       | $16.50                  |
+|                        | Anthropic | Input - Cache Write | $3.75                        | $4.125                  |
+|                        | Anthropic | Input - Cache Read  | $0.30                        | $0.33                   |
+| GPT-5                  | OpenAI    | Input               | $1.25                        | $1.375                  |
+|                        | OpenAI    | Output              | $10.00                       | $11.00                  |
+|                        | OpenAI    | Cached Input        | $0.125                       | $0.1375                 |
+| GPT-5 mini             | OpenAI    | Input               | $0.25                        | $0.275                  |
+|                        | OpenAI    | Output              | $2.00                        | $2.20                   |
+|                        | OpenAI    | Cached Input        | $0.025                       | $0.0275                 |
+| GPT-5 nano             | OpenAI    | Input               | $0.05                        | $0.055                  |
+|                        | OpenAI    | Output              | $0.40                        | $0.44                   |
+|                        | OpenAI    | Cached Input        | $0.005                       | $0.0055                 |
+| Gemini 2.5 Pro         | Google    | Input               | $1.25                        | $1.375                  |
+|                        | Google    | Output              | $10.00                       | $11.00                  |
+| Gemini 2.5 Flash       | Google    | Input               | $0.30                        | $0.33                   |
+|                        | Google    | Output              | $2.50                        | $2.75                   |
+| Grok 4                 | X.ai      | Input               | $3.00                        | $3.30                   |
+|                        | X.ai      | Output              | $15.00                       | $16.5                   |
+|                        | X.ai      | Cached Input        | $0.75                        | $0.825                  |
+| Grok 4 Fast            | X.ai      | Input               | $0.20                        | $0.22                   |
+|                        | X.ai      | Output              | $0.50                        | $0.55                   |
+|                        | X.ai      | Cached Input        | $0.05                        | $0.055                  |
+| Grok 4 Fast            | X.ai      | Input               | $0.20                        | $0.22                   |
+|                        | X.ai      | Output              | $0.50                        | $0.55                   |
+|                        | X.ai      | Cached Input        | $0.05                        | $0.055                  |
+| Grok 4 (Non-Reasoning) | X.ai      | Input               | $0.20                        | $0.22                   |
+|                        | X.ai      | Output              | $0.50                        | $0.55                   |
+|                        | X.ai      | Cached Input        | $0.05                        | $0.055                  |
+| Grok Code Fast 1       | X.ai      | Input               | $0.20                        | $0.22                   |
+|                        | X.ai      | Output              | $1.50                        | $1.65                   |
+|                        | X.ai      | Cached Input        | $0.02                        | $0.022                  |
 
 ## Usage {#usage}
 

@@ -267,7 +267,7 @@ impl Settings for EditorSettings {
                 delay: drag_and_drop_selection.delay.unwrap(),
             },
             lsp_document_colors: editor.lsp_document_colors.unwrap(),
-            minimum_contrast_for_highlights: editor.minimum_contrast_for_highlights.unwrap(),
+            minimum_contrast_for_highlights: editor.minimum_contrast_for_highlights.unwrap().0,
         }
     }
 
