@@ -636,93 +636,6 @@ pub enum FormatOnSave {
     Off,
 }
 
-// todo! remove
-// impl JsonSchema for SelectedFormatter {
-//     fn schema_name() -> Cow<'static, str> {
-//         "Formatter".into()
-//     }
-
-//     fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
-//         let formatter_schema = Formatter::json_schema(generator);
-
-//         json_schema!({
-//             "oneOf": [
-//                 {
-//                     "type": "array",
-//                     "items": formatter_schema
-//                 },
-//                 {
-//                     "type": "string",
-//                     "enum": ["auto", "language_server"]
-//                 },
-//                 formatter_schema
-//             ]
-//         })
-//     }
-// }
-//
-// impl Serialize for SelectedFormatter {
-//     fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
-//     where
-//         S: serde::Serializer,
-//     {
-//         match self {
-//             SelectedFormatter::Auto => serializer.serialize_str("auto"),
-//             SelectedFormatter::List(list) => list.serialize(serializer),
-//         }
-//     }
-// }
-//
-// impl<'de> Deserialize<'de> for SelectedFormatter {
-//     fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
-//     where
-//         D: Deserializer<'de>,
-//     {
-//         struct FormatDeserializer;
-
-//         impl<'d> Visitor<'d> for FormatDeserializer {
-//             type Value = SelectedFormatter;
-
-//             fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-//                 formatter.write_str("a valid formatter kind")
-//             }
-//             fn visit_str<E>(self, v: &str) -> std::result::Result<Self::Value, E>
-//             where
-//                 E: serde::de::Error,
-//             {
-//                 if v == "auto" {
-//                     Ok(Self::Value::Auto)
-//                 } else if v == "language_server" {
-//                     Ok(Self::Value::List(FormatterList::Single(
-//                         Formatter::LanguageServer { name: None },
-//                     )))
-//                 } else {
-//                     let ret: Result<FormatterList, _> =
-//                         Deserialize::deserialize(v.into_deserializer());
-//                     ret.map(SelectedFormatter::List)
-//                 }
-//             }
-//             fn visit_map<A>(self, map: A) -> Result<Self::Value, A::Error>
-//             where
-//                 A: MapAccess<'d>,
-//             {
-//                 let ret: Result<FormatterList, _> =
-//                     Deserialize::deserialize(de::value::MapAccessDeserializer::new(map));
-//                 ret.map(SelectedFormatter::List)
-//             }
-//             fn visit_seq<A>(self, map: A) -> Result<Self::Value, A::Error>
-//             where
-//                 A: SeqAccess<'d>,
-//             {
-//                 let ret: Result<FormatterList, _> =
-//                     Deserialize::deserialize(de::value::SeqAccessDeserializer::new(map));
-//                 ret.map(SelectedFormatter::List)
-//             }
-//         }
-//         deserializer.deserialize_any(FormatDeserializer)
-//     }
-// }
-
 /// Controls which formatters should be used when formatting code.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom)]
 #[serde(untagged)]
@@ -767,7 +680,7 @@ pub enum Formatter {
     CodeAction(String),
     /// Format code using a language server.
     #[serde(untagged)]
-    LanguageServer(LanguageServerSpecifier),
+    LanguageServer(LanguageServerFormatterSpecifier),
 }
 
 #[derive(Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom)]
@@ -777,7 +690,7 @@ pub enum Formatter {
     from = "LanguageServerVariantContent",
     into = "LanguageServerVariantContent"
 )]
-pub enum LanguageServerSpecifier {
+pub enum LanguageServerFormatterSpecifier {
     Specific {
         name: String,
     },
@@ -785,7 +698,7 @@ pub enum LanguageServerSpecifier {
     Current,
 }
 
-impl From<LanguageServerVariantContent> for LanguageServerSpecifier {
+impl From<LanguageServerVariantContent> for LanguageServerFormatterSpecifier {
     fn from(value: LanguageServerVariantContent) -> Self {
         match value {
             LanguageServerVariantContent::Specific {
@@ -796,13 +709,13 @@ impl From<LanguageServerVariantContent> for LanguageServerSpecifier {
     }
 }
 
-impl From<LanguageServerSpecifier> for LanguageServerVariantContent {
-    fn from(value: LanguageServerSpecifier) -> Self {
+impl From<LanguageServerFormatterSpecifier> for LanguageServerVariantContent {
+    fn from(value: LanguageServerFormatterSpecifier) -> Self {
         match value {
-            LanguageServerSpecifier::Specific { name } => Self::Specific {
+            LanguageServerFormatterSpecifier::Specific { name } => Self::Specific {
                 language_server: LanguageServerSpecifierContent { name: Some(name) },
             },
-            LanguageServerSpecifier::Current => {
+            LanguageServerFormatterSpecifier::Current => {
                 Self::Current(CurrentLanguageServerContent::LanguageServer)
             }
         }
@@ -949,7 +862,7 @@ mod test {
         assert_eq!(
             settings.formatter,
             Some(FormatterList::Single(Formatter::LanguageServer(
-                LanguageServerSpecifier::Current
+                LanguageServerFormatterSpecifier::Current
             )))
         );
 
@@ -958,7 +871,7 @@ mod test {
         assert_eq!(
             settings.formatter,
             Some(FormatterList::Vec(vec![Formatter::LanguageServer(
-                LanguageServerSpecifier::Current
+                LanguageServerFormatterSpecifier::Current
             )]))
         );
         let raw = "{\"formatter\": [{\"language_server\": {\"name\": null}}, \"language_server\", \"prettier\"]}";
@@ -966,8 +879,8 @@ mod test {
         assert_eq!(
             settings.formatter,
             Some(FormatterList::Vec(vec![
-                Formatter::LanguageServer(LanguageServerSpecifier::Current),
-                Formatter::LanguageServer(LanguageServerSpecifier::Current),
+                Formatter::LanguageServer(LanguageServerFormatterSpecifier::Current),
+                Formatter::LanguageServer(LanguageServerFormatterSpecifier::Current),
                 Formatter::Prettier
             ]))
         );
@@ -977,7 +890,7 @@ mod test {
         assert_eq!(
             settings.formatter,
             Some(FormatterList::Vec(vec![
-                Formatter::LanguageServer(LanguageServerSpecifier::Specific {
+                Formatter::LanguageServer(LanguageServerFormatterSpecifier::Specific {
                     name: "ruff".to_string()
                 }),
                 Formatter::Prettier
@@ -985,7 +898,7 @@ mod test {
         );
 
         assert_eq!(
-            serde_json::to_string(&LanguageServerSpecifier::Current).unwrap(),
+            serde_json::to_string(&LanguageServerFormatterSpecifier::Current).unwrap(),
             "\"language_server\"",
         );
     }

@@ -11890,7 +11890,7 @@ async fn test_range_format_respects_language_tab_size_override(cx: &mut TestAppC
 async fn test_document_format_manual_trigger(cx: &mut TestAppContext) {
     init_test(cx, |settings| {
         settings.defaults.formatter = Some(FormatterList::Single(Formatter::LanguageServer(
-            settings::LanguageServerSpecifier::Current,
+            settings::LanguageServerFormatterSpecifier::Current,
         )))
     });
 
@@ -12016,7 +12016,7 @@ async fn test_multiple_formatters(cx: &mut TestAppContext) {
     init_test(cx, |settings| {
         settings.defaults.remove_trailing_whitespace_on_save = Some(true);
         settings.defaults.formatter = Some(FormatterList::Vec(vec![
-            Formatter::LanguageServer(settings::LanguageServerSpecifier::Current),
+            Formatter::LanguageServer(settings::LanguageServerFormatterSpecifier::Current),
             Formatter::CodeAction("code-action-1".into()),
             Formatter::CodeAction("code-action-2".into()),
         ]))
@@ -12275,7 +12275,7 @@ async fn test_multiple_formatters(cx: &mut TestAppContext) {
 async fn test_organize_imports_manual_trigger(cx: &mut TestAppContext) {
     init_test(cx, |settings| {
         settings.defaults.formatter = Some(FormatterList::Vec(vec![Formatter::LanguageServer(
-            settings::LanguageServerSpecifier::Current,
+            settings::LanguageServerFormatterSpecifier::Current,
         )]))
     });
 

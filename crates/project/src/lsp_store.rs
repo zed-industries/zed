@@ -1347,7 +1347,7 @@ impl LocalLspStore {
                     &Formatter::Prettier
                 } else {
                     zlog::trace!(logger => "Formatter set to auto: defaulting to primary language server");
-                    &Formatter::LanguageServer(settings::LanguageServerSpecifier::Current)
+                    &Formatter::LanguageServer(settings::LanguageServerFormatterSpecifier::Current)
                 }
             } else {
                 formatter
@@ -1419,7 +1419,7 @@ impl LocalLspStore {
                     };
 
                     let language_server = match specifier {
-                        settings::LanguageServerSpecifier::Specific { name } => {
+                        settings::LanguageServerFormatterSpecifier::Specific { name } => {
                             adapters_and_servers.iter().find_map(|(adapter, server)| {
                                 if adapter.name.0.as_ref() == name {
                                     Some(server.clone())
@@ -1428,7 +1428,7 @@ impl LocalLspStore {
                                 }
                             })
                         }
-                        settings::LanguageServerSpecifier::Current => {
+                        settings::LanguageServerFormatterSpecifier::Current => {
                             adapters_and_servers.first().map(|e| e.1.clone())
                         }
                     };
