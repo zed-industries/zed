@@ -316,7 +316,7 @@ pub trait TransitionValues<'a> {
     /// The underlying type of the values.
     type Values;
 
-    /// Evaluates the values for the transitions based on the last and current goal.
+    /// Evaluates the values for the transitions based on the last and current goals.
     fn evaluate(&self, cx: &mut App) -> (bool, Self::Values);
 }
 
