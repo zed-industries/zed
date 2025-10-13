@@ -9,17 +9,18 @@ use std::{
 use agent_client_protocol as acp;
 use collections::HashMap;
 use gpui::{
-    App, Empty, Entity, EventEmitter, FocusHandle, Focusable, Global, ListAlignment, ListState,
-    StyleRefinement, Subscription, Task, TextStyleRefinement, Window, actions, list, prelude::*,
+    App, ClipboardItem, Empty, Entity, EventEmitter, FocusHandle, Focusable, Global, ListAlignment,
+    ListState, StyleRefinement, Subscription, Task, TextStyleRefinement, Window, actions, list,
+    prelude::*,
 };
 use language::LanguageRegistry;
 use markdown::{CodeBlockRenderer, Markdown, MarkdownElement, MarkdownStyle};
 use project::Project;
 use settings::Settings;
 use theme::ThemeSettings;
-use ui::prelude::*;
+use ui::{prelude::*, Tooltip};
 use util::ResultExt as _;
-use workspace::{Item, Workspace};
+use workspace::{Item, ItemHandle, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace};
 
 actions!(dev, [OpenAcpLogs]);
 
@@ -225,6 +226,37 @@ impl AcpTools {
         connection.messages.push(message);
         connection.list_state.splice(index..index, 1);
         cx.notify();
+    }
+
+    fn copy_thread(&self, _cx: &App) -> String {
+        let Some(connection) = self.watched_connection.as_ref() else {
+            return String::new();
+        };
+
+        let messages: Vec<serde_json::Value> = connection
+            .messages
+            .iter()
+            .filter_map(|message| {
+                let params = match &message.params {
+                    Ok(Some(params)) => params.clone(),
+                    Ok(None) => serde_json::Value::Null,
+                    Err(err) => serde_json::to_value(err).ok()?,
+                };
+
+                Some(serde_json::json!({
+                    "direction": match message.direction {
+                        acp::StreamMessageDirection::Incoming => "incoming",
+                        acp::StreamMessageDirection::Outgoing => "outgoing",
+                    },
+                    "type": message.message_type.to_string().to_lowercase(),
+                    "method": message.name.to_string(),
+                    "request_id": message.request_id,
+                    "params": params,
+                }))
+            })
+            .collect();
+
+        serde_json::to_string_pretty(&messages).unwrap_or_default()
     }
 
     fn render_message(
@@ -490,5 +522,62 @@ impl Render for AcpTools {
                     .child("No active connection")
                     .into_any(),
             })
+    }
+}
+
+pub struct AcpToolsToolbarItemView {
+    acp_tools: Option<Entity<AcpTools>>,
+}
+
+impl AcpToolsToolbarItemView {
+    pub fn new() -> Self {
+        Self { acp_tools: None }
+    }
+}
+
+impl Render for AcpToolsToolbarItemView {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let Some(acp_tools) = self.acp_tools.as_ref() else {
+            return div().into_any();
+        };
+
+        let acp_tools = acp_tools.clone();
+
+        h_flex()
+            .gap_2()
+            .child(
+                IconButton::new("copy_thread", IconName::Copy)
+                    .icon_size(IconSize::Small)
+                    .tooltip(Tooltip::text("Copy Thread"))
+                    .on_click(cx.listener(move |_this, _, _window, cx| {
+                        let content = acp_tools.read(cx).copy_thread(cx);
+                        if !content.is_empty() {
+                            cx.write_to_clipboard(ClipboardItem::new_string(content));
+                        }
+                    })),
+            )
+            .into_any()
+    }
+}
+
+impl EventEmitter<ToolbarItemEvent> for AcpToolsToolbarItemView {}
+
+impl ToolbarItemView for AcpToolsToolbarItemView {
+    fn set_active_pane_item(
+        &mut self,
+        active_pane_item: Option<&dyn ItemHandle>,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> ToolbarItemLocation {
+        if let Some(item) = active_pane_item {
+            if let Some(acp_tools) = item.downcast::<AcpTools>() {
+                self.acp_tools = Some(acp_tools);
+                cx.notify();
+                return ToolbarItemLocation::PrimaryRight;
+            }
+        }
+        self.acp_tools = None;
+        cx.notify();
+        ToolbarItemLocation::Hidden
     }
 }
