@@ -868,13 +868,14 @@ impl DisplaySnapshot {
         let display_row_start = display_rows.start;
         let start_point = self.display_point_to_point(DisplayPoint::new(display_row_start, 0), Bias::Left);
         let start_buffer_offset = self.buffer_snapshot.point_to_offset(start_point);
-        let current_buffer_offset = start_buffer_offset;
+        let state = (start_buffer_offset, None::<(Range<usize>, String)>);
 
         self.chunks(display_rows, language_aware, HighlightStyles {
             inlay_hint: Some(editor_style.inlay_hints_style),
             edit_prediction: Some(editor_style.edit_prediction_styles),
         })
-            .scan(current_buffer_offset, move |offset, chunk| {
+            .scan(state, move |state, chunk| {
+                let (offset, cached_node) = state;
                 let chunk_start = *offset;
                 let chunk_end = chunk_start + chunk.text.len();
                 *offset = chunk_end;
@@ -892,19 +893,50 @@ impl DisplaySnapshot {
                     })
                     .unwrap_or(false);
 
-                // Extract identifier for rainbow highlighting
-                // Note: We can't use node_range directly on MultiBufferSnapshot because
-                // node ranges are in single-buffer coordinates. Instead, we rely on
-                // tree-sitter to provide complete variable chunks or use the accumulator pattern.
-                let rainbow_style = if is_variable_like && chunk.text.len() >= 2 {
+                // Extract full identifier for rainbow highlighting using tree-sitter node range
+                // chunk.capture_node_range provides the full tree-sitter node bounds
+                // which avoids the performance cost of walking the buffer
+                let rainbow_style = if is_variable_like {
+                    let identifier_text = if let Some(ref node_range) = chunk.capture_node_range {
+                        // Validate node range is within buffer bounds (can be stale after edits)
+                        let buffer_len = self.buffer_snapshot.len();
+                        if node_range.end <= buffer_len {
+                            // Check if we already have this node cached
+                            if let Some((cached_range, cached_text)) = cached_node.as_ref() {
+                                if cached_range == node_range {
+                                    // Reuse cached text for consecutive chunks of the same identifier
+                                    cached_text.clone()
+                                } else {
+                                    // Extract and cache new node text
+                                    let full_text: String = self.buffer_snapshot.text_for_range(node_range.clone()).collect();
+                                    if !full_text.is_empty() && full_text.len() >= 2 {
+                                        *cached_node = Some((node_range.clone(), full_text.clone()));
+                                        full_text
+                                    } else {
+                                        chunk.text.to_string()
+                                    }
+                                }
+                            } else {
+                                // First time seeing a node - extract and cache
+                                let full_text: String = self.buffer_snapshot.text_for_range(node_range.clone()).collect();
+                                if !full_text.is_empty() && full_text.len() >= 2 {
+                                    *cached_node = Some((node_range.clone(), full_text.clone()));
+                                    full_text
+                                } else {
+                                    chunk.text.to_string()
+                                }
+                            }
+                        } else {
+                            // Node range is out of bounds - fallback to chunk text
+                            chunk.text.to_string()
+                        }
+                    } else {
+                        // Fallback to chunk text if no node range available
+                        chunk.text.to_string()
+                    };
+                    
                     crate::rainbow::with_rainbow_cache(|cache| {
-                        crate::rainbow::apply_rainbow_highlighting(
-                            chunk.text,
-                            true,
-                            rainbow_config,
-                            theme,
-                            cache
-                        )
+                        crate::rainbow::apply_rainbow_highlighting(&identifier_text, true, rainbow_config, theme, cache)
                     })
                 } else {
                     None
@@ -1419,8 +1451,7 @@ impl SemanticTokenView {
         let stylizer = SemanticTokenStylizer::new(legend);
         let rainbow_config = EditorSettings::get_global(cx).rainbow_highlighting;
 
-        log::debug!("Variable color highlighting: enabled={}, mode={:?}", 
-            rainbow_config.enabled, rainbow_config.mode);
+        log::debug!("Variable color highlighting: enabled={}, mode={:?}", rainbow_config.enabled, rainbow_config.mode);
 
         let mut tokens = lsp
             .tokens()

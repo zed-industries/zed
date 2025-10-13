@@ -12,10 +12,7 @@
 //
 // This module provides the shared logic for both systems including caching.
 
-use gpui::{ HighlightStyle, Hsla, Rgba };
-use language::rainbow_config;
-use multi_buffer::MultiBufferSnapshot;
-use std::ops::Range;
+use gpui::{ HighlightStyle, Hsla };
 use std::cell::RefCell;
 use theme::SyntaxTheme;
 
@@ -112,9 +109,9 @@ fn fibonacci_hash(hash: u64, palette_size: usize) -> usize {
     (distributed as usize) % palette_size
 }
 
-/// Maps an identifier name to a color palette index.
+/// Maps an identifier name to a color palette index (test helper).
 #[inline]
-#[allow(dead_code)]
+#[cfg(test)]
 pub fn hash_to_color_index(identifier: &str, palette_size: usize) -> usize {
     let hash = hash_identifier(identifier);
     fibonacci_hash(hash, palette_size)
@@ -136,36 +133,6 @@ const GOLDEN_RATIO_CONJUGATE: f32 = 0.618033988749895;
 fn hash_to_hue_golden_ratio(hash: u64) -> f32 {
     let normalized = ((hash as f64) / (u64::MAX as f64)) as f32;
     (normalized * GOLDEN_RATIO_CONJUGATE) % 1.0
-}
-
-/// Converts HSL to RGB color.
-///
-/// # Arguments
-/// * `h` - Hue (0.0 to 1.0)
-/// * `s` - Saturation (0.0 to 1.0)
-/// * `l` - Lightness (0.0 to 1.0)
-#[inline]
-#[allow(dead_code)]
-fn hsl_to_rgb(h: f32, s: f32, l: f32) -> Rgba {
-    let c = (1.0 - (2.0 * l - 1.0).abs()) * s;
-    let x = c * (1.0 - (((h * 6.0) % 2.0) - 1.0).abs());
-    let m = l - c / 2.0;
-
-    let (r, g, b) = match (h * 6.0) as u32 {
-        0 => (c, x, 0.0),
-        1 => (x, c, 0.0),
-        2 => (0.0, c, x),
-        3 => (0.0, x, c),
-        4 => (x, 0.0, c),
-        _ => (c, 0.0, x),
-    };
-
-    Rgba {
-        r: r + m,
-        g: g + m,
-        b: b + m,
-        a: 1.0,
-    }
 }
 
 /// Generates a dynamic rainbow color using golden ratio distribution.
@@ -190,83 +157,6 @@ fn generate_dynamic_rainbow_color(hash: u64) -> HighlightStyle {
         color: Some(hsla),
         ..Default::default()
     }
-}
-
-// ============================================================================
-// Identifier Extraction
-// ============================================================================
-
-/// Extracts a complete identifier by walking backwards/forwards from the chunk.
-///
-/// Tree-sitter may split identifiers across multiple chunks (e.g., "base_profile" → "b" + "ase_profile").
-/// We need to walk the buffer to find the full identifier boundaries.
-///
-/// # Performance
-/// - O(n) where n is identifier length (typically small)
-/// - Validates the final extracted string is a valid identifier
-#[allow(dead_code)]
-pub fn extract_complete_identifier(
-    buffer: &MultiBufferSnapshot,
-    chunk_range: Range<usize>
-) -> Option<(Range<usize>, String)> {
-    let total_len = buffer.len();
-    if chunk_range.start >= total_len || chunk_range.is_empty() {
-        return None;
-    }
-
-    // Walk backward from chunk start to find identifier start
-    let mut start = chunk_range.start;
-    if start > 0 {
-        for ch in buffer.reversed_chars_at(start) {
-            if ch.is_alphanumeric() || ch == '_' {
-                start = start.saturating_sub(ch.len_utf8());
-                if start == 0 {
-                    break;
-                }
-            } else {
-                break;
-            }
-        }
-    }
-
-    // Walk forward from chunk end to find identifier end
-    let mut end = chunk_range.end.min(total_len);
-    for ch in buffer.chars_at(end) {
-        if ch.is_alphanumeric() || ch == '_' {
-            end += ch.len_utf8();
-            if end >= total_len {
-                break;
-            }
-        } else {
-            break;
-        }
-    }
-
-    // Extract the full identifier
-    if start >= end {
-        return None;
-    }
-
-    let identifier: String = buffer.text_for_range(start..end).collect();
-
-    // CRITICAL: Validate the extracted string is a valid identifier
-    // This prevents extracting things like "iter()" or "&base_profile"
-    if identifier.is_empty() || identifier.len() < 2 {
-        return None;
-    }
-
-    // Must start with letter or underscore
-    let first_char = identifier.chars().next()?;
-    if !first_char.is_alphabetic() && first_char != '_' {
-        return None;
-    }
-
-    // ALL characters must be alphanumeric or underscore (no parentheses, operators, whitespace)
-    if !identifier.chars().all(|c| c.is_alphanumeric() || c == '_') {
-        return None;
-    }
-
-    Some((start..end, identifier))
 }
 
 // ============================================================================
@@ -297,7 +187,9 @@ pub fn apply_rainbow_highlighting(
         return None;
     }
 
-    if !rainbow_config::is_valid_identifier(identifier) {
+    // Reject invalid identifiers (empty or single character)
+    // Single-char identifiers are not colored because they lack semantic value
+    if identifier.is_empty() || identifier.len() < 2 {
         return None;
     }
 
@@ -332,99 +224,6 @@ pub fn apply_rainbow_highlighting(
 #[cfg(test)]
 pub fn is_variable_like_token(token_type: &str) -> bool {
     matches!(token_type, "variable" | "parameter")
-}
-
-/// Helper to determine if a tree-sitter capture should receive rainbow highlighting.
-#[inline]
-#[allow(dead_code)]
-pub fn is_variable_like_capture(capture_name: &str) -> bool {
-    capture_name.starts_with("variable") &&
-        !capture_name.contains("special") &&
-        !capture_name.contains("builtin") &&
-        !capture_name.contains("member")
-}
-
-// ============================================================================
-// Tree-sitter Rendering Integration
-// ============================================================================
-
-/// Cached identifier state for rendering performance.
-/// Caches by range since tree-sitter may split identifiers across chunks.
-#[derive(Debug, Clone)]
-#[allow(dead_code)]
-pub struct CachedIdentifier {
-    pub range: Range<usize>,
-    pub style: Option<HighlightStyle>,
-}
-
-/// Applies rainbow highlighting to a tree-sitter chunk during rendering.
-///
-/// This is the main entry point for `display_map.rs`.
-///
-/// # Performance
-/// - Uses caching to avoid re-computing colors for the same identifier
-/// - Only extracts identifiers when necessary
-/// - Validates ranges before processing
-///
-/// # Arguments
-/// * `chunk_range` - The byte range of the chunk in the buffer
-/// * `capture_name` - The tree-sitter capture name (e.g., "variable")
-/// * `cached_identifier` - Mutable cache state
-/// * `buffer_snapshot` - The buffer to read from
-/// * `rainbow_config` - Rainbow highlighting settings
-/// * `theme` - The syntax theme
-///
-/// # Returns
-/// An optional `HighlightStyle` if rainbow highlighting should be applied.
-#[allow(dead_code)]
-pub fn apply_to_chunk(
-    chunk_range: Range<usize>,
-    capture_name: Option<&str>,
-    cached_identifier: &mut Option<CachedIdentifier>,
-    buffer_snapshot: &MultiBufferSnapshot,
-    rainbow_config: &RainbowConfig,
-    theme: &SyntaxTheme
-) -> Option<HighlightStyle> {
-    // Check if we should apply rainbow
-    let capture_name = capture_name?;
-    if !is_variable_like_capture(capture_name) {
-        return None;
-    }
-
-    // Check cache FIRST - if this chunk is part of a cached identifier, return cached color
-    if let Some(cached) = cached_identifier {
-        if chunk_range.start >= cached.range.start && chunk_range.end <= cached.range.end {
-            return cached.style;
-        }
-    }
-
-    // Extract full identifier by walking backwards/forwards
-    let (extracted_range, identifier) = match extract_complete_identifier(buffer_snapshot, chunk_range) {
-        Some(result) => result,
-        None => {
-            return None;
-        }
-    };
-
-    // Compute rainbow color
-    let style = with_rainbow_cache(|cache| {
-        let result = apply_rainbow_highlighting(
-            &identifier,
-            true, // We already know it's variable-like
-            rainbow_config,
-            theme,
-            cache
-        );
-        result
-    });
-
-    // Update cache with the FULL identifier range
-    *cached_identifier = Some(CachedIdentifier {
-        range: extracted_range,
-        style,
-    });
-
-    style
 }
 
 // ============================================================================
@@ -502,16 +301,6 @@ mod tests {
         assert!(is_variable_like_token("parameter"));
         assert!(!is_variable_like_token("property"));
         assert!(!is_variable_like_token("function"));
-    }
-
-    #[test]
-    fn test_is_variable_like_capture() {
-        assert!(is_variable_like_capture("variable"));
-        assert!(is_variable_like_capture("variable.local"));
-        assert!(!is_variable_like_capture("variable.special"));
-        assert!(!is_variable_like_capture("variable.builtin"));
-        assert!(!is_variable_like_capture("variable.member"));
-        assert!(!is_variable_like_capture("function"));
     }
 
     #[test]
