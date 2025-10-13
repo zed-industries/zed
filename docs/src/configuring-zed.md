@@ -165,78 +165,21 @@ Determines whether or not to automatically check for updates. By default, it's e
 
 ## Base Keymap
 
-- Description: Base key bindings scheme. Base keymaps can be overridden with user keymaps.
-- Setting: `base_keymap`
-- Default: `VSCode`
+Base key bindings scheme. Base keymaps can be overridden with user keymaps. The default is VS Code.
 
 **Options**
-
-1. VS Code
-
-```json [settings]
-{
-  "base_keymap": "VSCode"
-}
-```
-
-2. Atom
-
-```json [settings]
-{
-  "base_keymap": "Atom"
-}
-```
-
-3. JetBrains
-
-```json [settings]
-{
-  "base_keymap": "JetBrains"
-}
-```
-
-4. None
-
-```json [settings]
-{
-  "base_keymap": "None"
-}
-```
-
-5. Sublime Text
-
-```json [settings]
-{
-  "base_keymap": "SublimeText"
-}
-```
-
-6. TextMate
-
-```json [settings]
-{
-  "base_keymap": "TextMate"
-}
-```
+- VS Code
+- Atom
+- JetBrains
+- SublimeText
+- TextMate
+- None
 
 ## Buffer Font Family
 
-- Description: The name of a font to use for rendering text in the editor.
-- Setting: `buffer_font_family`
-- Default: `.ZedMono`. This currently aliases to [Lilex](https://lilex.myrt.co).
-
-**Options**
-
-The name of any font family installed on the user's system, or `".ZedMono"`.
+The name of a font to use for rendering text in the editor. The default is ZedMono, but it can be updated to any font family installed on the user's system.
 
 ## Buffer Font Features
-
-- Description: The OpenType features to enable for text in the editor.
-- Setting: `buffer_font_features`
-- Default: `null`
-- Platform: macOS and Windows.
-
-**Options**
 
 Zed supports all OpenType features that can be enabled or disabled for a given buffer or terminal font, as well as setting values for font features.
 
@@ -262,14 +205,9 @@ You can also set other OpenType features, like setting `cv01` to `7`:
 
 ## Buffer Font Fallbacks
 
-- Description: Set the buffer text's font fallbacks, this will be merged with the platform's default fallbacks.
-- Setting: `buffer_font_fallbacks`
-- Default: `null`
-- Platform: macOS and Windows.
+Set the buffer text's font fallbacks, which will be merged with the platform's default fallbacks. This is not set by default.
 
-**Options**
-
-For example, to use `Nerd Font` as a fallback, add the following to your settings:
+**Sample JSON**
 
 ```json [settings]
 {
@@ -279,61 +217,23 @@ For example, to use `Nerd Font` as a fallback, add the following to your setting
 
 ## Buffer Font Size
 
-- Description: The default font size for text in the editor.
-- Setting: `buffer_font_size`
-- Default: `15`
-
-**Options**
-
-A font size from `6` to `100` pixels (inclusive)
+The default font size for text in the editor. A font size can range from `6` to `100` pixels (inclusive), and the default size is 15.
 
 ## Buffer Font Weight
 
-- Description: The default font weight for text in the editor.
-- Setting: `buffer_font_weight`
-- Default: `400`
-
-**Options**
-
-`integer` values between `100` and `900`
+The default font weight for text in the editor. The weight can range between `100` adn `900`, and the default is `400`.
 
 ## Buffer Line Height
 
-- Description: The default line height for text in the editor.
-- Setting: `buffer_line_height`
-- Default: `"comfortable"`
-
-**Options**
-
-`"standard"`, `"comfortable"` or `{ "custom": float }` (`1` is compact, `2` is loose)
+The default line height for text in the editor. The default is Comfortable, though it can be updated to standard, or a custom value.
 
 ## Centered Layout
 
-- Description: Configuration for the centered layout mode.
-- Setting: `centered_layout`
-- Default:
-
-```json [settings]
-"centered_layout": {
-  "left_padding": 0.2,
-  "right_padding": 0.2,
-}
-```
-
-**Options**
-
-The `left_padding` and `right_padding` options define the relative width of the
-left and right padding of the central pane from the workspace when the centered layout mode is activated. Valid values range is from `0` to `0.4`.
+Congiuure the padding for when the editor is in  centered layout mode.
 
 ## Close on File Delete
 
-- Description: Whether to automatically close editor tabs when their corresponding files are deleted from disk.
-- Setting: `close_on_file_delete`
-- Default: `false`
-
-**Options**
-
-`boolean` values
+Determines whether to automatically close editor tabs when their corresponding files are deleted from disk. By default, it's disabled.
 
 When enabled, this setting will automatically close tabs for files that have been deleted from the file system. This is particularly useful for workflows involving temporary or scratch files that are frequently created and deleted. When disabled (default), deleted files remain open with a strikethrough through their tab title.
 
@@ -341,79 +241,28 @@ Note: Dirty files (files with unsaved changes) will not be automatically closed 
 
 ## Confirm Quit
 
-- Description: Whether or not to prompt the user to confirm before closing the application.
-- Setting: `confirm_quit`
-- Default: `false`
-
-**Options**
-
-`boolean` values
+Whether or not to prompt the user to confirm before closing the application. By default, it's disabled.
 
 ## Diagnostics Max Severity
 
-- Description: Which level to use to filter out diagnostics displayed in the editor
-- Setting: `diagnostics_max_severity`
-- Default: `null`
+Controls which level to use to filter out diagnostics displayed in the editor.
 
 **Options**
-
-1. Allow all diagnostics (default):
-
-```json [settings]
-{
-  "diagnostics_max_severity": "all"
-}
-```
-
-2. Show only errors:
-
-```json [settings]
-{
-  "diagnostics_max_severity": "error"
-}
-```
-
-3. Show errors and warnings:
-
-```json [settings]
-{
-  "diagnostics_max_severity": "warning"
-}
-```
-
-4. Show errors, warnings, and information:
-
-```json [settings]
-{
-  "diagnostics_max_severity": "info"
-}
-```
-
-5. Show all including hints:
-
-```json [settings]
-{
-  "diagnostics_max_severity": "hint"
-}
-```
+1. Allow all diagnostics (default)
+2. Show only errors
+3. Show errors and warnings
+4. Show errors, warnings, and information
+5. Show all, including hints
 
 ## Disable AI
 
-- Description: Whether to disable all AI features in Zed
-- Setting: `disable_ai`
-- Default: `false`
-
-**Options**
-
-`boolean` values
+Controls whether to disable all AI features in Zed. By default, it's disabled.
 
 ## Direnv Integration
 
-- Description: Settings for [direnv](https://direnv.net/) integration. Requires `direnv` to be installed.
+Settings for [direnv](https://direnv.net/) integration. Requires `direnv` to be installed. By default, it uses loads `"direct"`.
   `direnv` integration make it possible to use the environment variables set by a `direnv` configuration to detect some language servers in `$PATH` instead of installing them.
   It also allows for those environment variables to be used in tasks.
-- Setting: `load_direnv`
-- Default: `"direct"`
 
 **Options**
 
@@ -424,39 +273,17 @@ There are two options to choose from:
 
 ## Double Click In Multibuffer
 
-- Description: What to do when multibuffer is double clicked in some of its excerpts (parts of singleton buffers)
-- Setting: `double_click_in_multibuffer`
-- Default: `"select"`
+What to do when multibuffer is double clicked in some of its excerpts (parts of singleton buffers). By default, it behaves as a regular buffer and selects the whole word.
 
 **Options**
-
 1. Behave as a regular buffer and select the whole word (default):
-
-```json [settings]
-{
-  "double_click_in_multibuffer": "select"
-}
-```
-
 2. Open the excerpt clicked as a new buffer in the new tab:
-
-```json [settings]
-{
-  "double_click_in_multibuffer": "open"
-}
-```
 
 For the case of "open", regular selection behavior can be achieved by holding `alt` when double clicking.
 
 ## Drop Target Size
 
-- Description: Relative size of the drop target in the editor that will open dropped file as a split pane (0-0.5). For example, 0.25 means if you drop onto the top/bottom quarter of the pane a new vertical split will be used, if you drop onto the left/right quarter of the pane a new horizontal split will be used.
-- Setting: `drop_target_size`
-- Default: `0.2`
-
-**Options**
-
-`float` values between `0` and `0.5`
+Controls the relative size of the drop target in the editor that will open dropped files as a split pane (0-0.5). For example, 0.25 means if you drop onto the top/bottom quarter of the pane a new vertical split will be used, if you drop onto the left/right quarter of the pane a new horizontal split will be used. By default, the size is `0.2`, but can be customized between `0` and `0.5`.
 
 ## Edit Predictions
 
