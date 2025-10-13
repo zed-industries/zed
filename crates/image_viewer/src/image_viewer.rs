@@ -297,7 +297,7 @@ impl Render for ImageView {
                                     _,
                                     window: &mut Window,
                                     _cx: &mut App| {
-            let square_size = 32.0;
+            let square_size: f32 = 32.0;
 
             let start_y = bounds.origin.y.into();
             let height: f32 = bounds.size.height.into();
@@ -308,12 +308,16 @@ impl Render for ImageView {
             let mut x = start_x;
             let mut color_swapper = true;
             // draw checkerboard pattern
-            while y <= start_y + height {
+            while y < start_y + height {
                 // Keeping track of the grid in order to be resilient to resizing
                 let start_swap = color_swapper;
-                while x <= start_x + width {
+                while x < start_x + width {
+                    // Clamp square dimensions to not exceed bounds
+                    let square_width = square_size.min(start_x + width - x);
+                    let square_height = square_size.min(start_y + height - y);
+
                     let rect =
-                        Bounds::new(point(px(x), px(y)), size(px(square_size), px(square_size)));
+                        Bounds::new(point(px(x), px(y)), size(px(square_width), px(square_height)));
 
                     let color = if color_swapper {
                         opaque_grey(0.6, 0.4)
@@ -331,18 +335,9 @@ impl Render for ImageView {
             }
         };
 
-        let checkered_background = canvas(|_, _, _| (), checkered_background)
-            .border_2()
-            .border_color(cx.theme().styles.colors.border)
-            .size_full()
-            .absolute()
-            .top_0()
-            .left_0();
-
         div()
             .track_focus(&self.focus_handle(cx))
             .size_full()
-            .child(checkered_background)
             .child(
                 div()
                     .flex()
@@ -352,11 +347,26 @@ impl Render for ImageView {
                     // TODO: In browser based Tailwind & Flex this would be h-screen and we'd use w-full
                     .h_full()
                     .child(
-                        img(image)
-                            .object_fit(ObjectFit::ScaleDown)
+                        div()
+                            .relative()
                             .max_w_full()
                             .max_h_full()
-                            .id("img"),
+                            .child(
+                                canvas(|_, _, _| (), checkered_background)
+                                    .border_2()
+                                    .border_color(cx.theme().styles.colors.border)
+                                    .size_full()
+                                    .absolute()
+                                    .top_0()
+                                    .left_0(),
+                            )
+                            .child(
+                                img(image)
+                                    .object_fit(ObjectFit::ScaleDown)
+                                    .max_w_full()
+                                    .max_h_full()
+                                    .id("img"),
+                            ),
                     ),
             )
     }
