@@ -29,19 +29,18 @@ Although most projects will only need one settings file at the root, you can add
 # Settings
 
 ## Active Pane Modifiers
-
-**What it does**
-Apply stying to the active pane in your editor.
+This setting applies stying to the active pane in your editor.
 
 - Border size: Size of the border surrounding the active pane. When set to 0, the active pane doesn't have any border. The border is drawn inset.
   - Default: 0.0
 - Inactive opacity: Opacity of inactive panels. When set to 1.0, the inactive panes have the same opacity as the active one. If set to 0, the inactive panes content will not be visible at all. Values are clamped to the [0.0, 1.0] range.
   - Default: 1.0
 
-**How to change**
+**How to change:**
+
 Settings Editor (`cmd+,`) > Appearance & Behavior > Window.
 
-**View the JSON**
+**Sample JSON**
 ```json [settings]
 {
   "active_pane_modifiers": {
@@ -53,16 +52,14 @@ Settings Editor (`cmd+,`) > Appearance & Behavior > Window.
 
 ## Bottom Dock Layout
 
-**What it does**
- Control the layout of the bottom dock, relative to the left and right docks.
+Controls the layout of the bottom dock, relative to the left and right docks. The dock can be contained, full, left aligned, or right aligned.
+By default, the bottom dock is contained, giving the full height of the window to the left and right docks.
 
-- Default: `"contained"`
+**How to change:**
 
-**How to change**
+Settings Editor (`cmd+,`) > Appearance & Behavior > Layout.
 
-**Options**
-
-1. Contain the bottom dock, giving the full height of the window to the left and right docks.
+**Sample JSON**
 
 ```json [settings]
 {
@@ -70,49 +67,17 @@ Settings Editor (`cmd+,`) > Appearance & Behavior > Window.
 }
 ```
 
-2. Give the bottom dock the full width of the window, truncating the left and right docks.
-
-```json [settings]
-{
-  "bottom_dock_layout": "full"
-}
-```
-
-3. Left align the bottom dock, truncating the left dock and giving the right dock the full height of the window.
-
-```json [settings]
-{
-  "bottom_dock_layout": "left_aligned"
-}
-```
-
-4. Right align the bottom dock, giving the left dock the full height of the window and truncating the right dock.
-
-```json [settings]
-{
-  "bottom_dock_layout": "right_aligned"
-}
-```
-
 ## Agent Font Size
 
-- Description: The font size for text in the agent panel. Inherits the UI font size if unset.
-- Setting: `agent_font_size`
-- Default: `null`
-
-**Options**
-
-`integer` values from `6` to `100` pixels (inclusive)
+Controls the font size for text in the agent panel. By default, it inherits the UI font size.
 
 ## Allow Rewrap
 
-- Description: Controls where the {#action editor::Rewrap} action is allowed in the current language scope
-- Setting: `allow_rewrap`
-- Default: `"in_comments"`
+Controls where the {#action editor::Rewrap} action is allowed in the current language scope. It can be allowed in comments, selections, or anywhere. By default, it is allowed in comments only.
 
-**Options**
+Note: This setting has no effect in Vim mode, as rewrap is already allowed everywhere.
 
-1. Allow rewrap in comments only:
+**Sample JSON**
 
 ```json [settings]
 {
@@ -120,49 +85,17 @@ Settings Editor (`cmd+,`) > Appearance & Behavior > Window.
 }
 ```
 
-2. Allow rewrap in selections only:
-
-```json [settings]
-{
-  "allow_rewrap": "in_selections"
-}
-```
-
-3. Allow rewrap anywhere:
-
-```json [settings]
-{
-  "allow_rewrap": "anywhere"
-}
-```
-
-Note: This setting has no effect in Vim mode, as rewrap is already allowed everywhere.
-
 ## Auto Indent
 
-- Description: Whether indentation should be adjusted based on the context whilst typing. This can be specified on a per-language basis.
-- Setting: `auto_indent`
-- Default: `true`
-
-**Options**
-
-`boolean` values
+Manages whether indentation should be adjusted based on the context whilst typing. This can be specified on a per-language basis. By default, it's enabled.
 
 ## Auto Indent On Paste
 
-- Description: Whether indentation of pasted content should be adjusted based on the context
-- Setting: `auto_indent_on_paste`
-- Default: `true`
-
-**Options**
-
-`boolean` values
+Manages whether indentation of pasted content should be adjusted based on the context. By default, it's enabled.
 
 ## Auto Install extensions
 
-- Description: Define extensions to be autoinstalled or never be installed.
-- Setting: `auto_install_extension`
-- Default: `{ "html": true }`
+Define extensions to be autoinstalled or never be installed. By default, HTML is auto-installed.
 
 **Options**
 
@@ -194,37 +127,15 @@ Define extensions which should be installed (`true`) or never installed (`false`
 
 ## Autosave
 
-- Description: When to automatically save edited buffers.
-- Setting: `autosave`
-- Default: `off`
+Determines when to automatically save edited buffers. Autosave is off by default.
 
 **Options**
+- Off
+- On focus change
+- On window change
+- After a period of inactivity (Note that a save will be triggered when an unsaved tab is closed, even if this is earlier than the configured inactivity period.)
 
-1. To disable autosave, set it to `off`:
-
-```json [settings]
-{
-  "autosave": "off"
-}
-```
-
-2. To autosave when focus changes, use `on_focus_change`:
-
-```json [settings]
-{
-  "autosave": "on_focus_change"
-}
-```
-
-3. To autosave when the active window changes, use `on_window_change`:
-
-```json [settings]
-{
-  "autosave": "on_window_change"
-}
-```
-
-4. To autosave after an inactivity period, use `after_delay`:
+**Sample JSON**
 
 ```json [settings]
 {
@@ -236,47 +147,21 @@ Define extensions which should be installed (`true`) or never installed (`false`
 }
 ```
 
-Note that a save will be triggered when an unsaved tab is closed, even if this is earlier than the configured inactivity period.
-
 ## Autoscroll on Clicks
 
-- Description: Whether to scroll when clicking near the edge of the visible text area.
-- Setting: `autoscroll_on_clicks`
-- Default: `false`
-
-**Options**
-
-`boolean` values
+Whether to scroll when clicking near the edge of the visible text area. By default, it's disabled.
 
 ## Auto Signature Help
 
-- Description: Show method signatures in the editor, when inside parentheses
-- Setting: `auto_signature_help`
-- Default: `false`
-
-**Options**
-
-`boolean` values
+Shows method signatures in the editor, when inside parentheses. By default, it's disabled.
 
 ### Show Signature Help After Edits
 
-- Description: Whether to show the signature help after completion or a bracket pair inserted. If `auto_signature_help` is enabled, this setting will be treated as enabled also.
-- Setting: `show_signature_help_after_edits`
-- Default: `false`
-
-**Options**
-
-`boolean` values
+Determines whether to show the signature help after completion or a bracket pair inserted. If `auto_signature_help` is enabled, this setting will be treated as enabled also. By default, this setting is disabled.
 
 ## Auto Update
 
-- Description: Whether or not to automatically check for updates.
-- Setting: `auto_update`
-- Default: `true`
-
-**Options**
-
-`boolean` values
+Determines whether or not to automatically check for updates. By default, it's enabled.
 
 ## Base Keymap
 
