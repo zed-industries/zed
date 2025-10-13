@@ -757,8 +757,6 @@ pub enum Formatter {
     /// or falling back to formatting via language server.
     #[default]
     Auto,
-    /// Format code using the current language server.
-    LanguageServer { name: Option<String> },
     /// Format code using Zed's Prettier integration.
     Prettier,
     /// Format code using an external command.
@@ -770,7 +768,87 @@ pub enum Formatter {
     },
     /// Files should be formatted using a code action executed by language servers.
     CodeAction(String),
+    /// Format code using the current language server.
+    #[serde(untagged)]
+    LanguageServer(LanguageServerVariant),
 }
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom)]
+#[serde(rename_all = "snake_case", untagged)]
+pub enum LanguageServerVariant {
+    Specific {
+        language_server: LanguageServerSpecifier,
+    },
+    Current(CurrentLanguageServer),
+}
+
+#[derive(Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom)]
+#[serde(rename_all = "snake_case")]
+pub enum CurrentLanguageServer {
+    #[default]
+    LanguageServer,
+}
+
+#[derive(Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom)]
+#[serde(rename_all = "snake_case")]
+pub struct LanguageServerSpecifier {
+    pub name: Option<String>,
+}
+// pub struct LanguageServerVariant {
+//     name: Option<String>,
+// }
+
+// impl std::str::FromStr for LanguageServerVariant {
+//     type Err = &'static str;
+
+//     fn from_str(s: &str) -> Result<Self, Self::Err> {
+//         if s == "language_server" {
+//             Ok(LanguageServerVariant { name: None })
+//         } else {
+//             Err("Invalid language server string")
+//         }
+//     }
+// }
+
+// fn string_or_struct<'de, T, D>(deserializer: D) -> Result<T, D::Error>
+// where
+//     T: Deserialize<'de> + std::str::FromStr,
+//     <T as std::str::FromStr>::Err: std::fmt::Display,
+//     D: Deserializer<'de>,
+// {
+//     use serde::de::{self, MapAccess, Visitor};
+//     use std::marker::PhantomData;
+
+//     struct StringOrStruct<T>(PhantomData<fn() -> T>);
+
+//     impl<'de, T> Visitor<'de> for StringOrStruct<T>
+//     where
+//         T: Deserialize<'de> + std::str::FromStr,
+//         <T as std::str::FromStr>::Err: std::fmt::Display,
+//     {
+//         type Value = T;
+
+//         fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+//             formatter.write_str("string or map")
+//         }
+
+//         fn visit_str<E>(self, value: &str) -> Result<T, E>
+//         where
+//             E: de::Error,
+//         {
+//             std::str::FromStr::from_str(value).map_err(de::Error::custom)
+//         }
+
+//         fn visit_map<M>(self, map: M) -> Result<T, M::Error>
+//         where
+//             M: MapAccess<'de>,
+//         {
+//             Deserialize::deserialize(de::value::MapAccessDeserializer::new(map))
+//         }
+//     }
+
+//     deserializer.deserialize_any(StringOrStruct(PhantomData))
+// }
 
 /// The settings for indent guides.
 #[skip_serializing_none]
@@ -876,6 +954,9 @@ mod test {
 
     #[test]
     fn test_formatter_deserialization() {
+        dbg!(serde_json::to_string_pretty(&FormatterList::Single(
+            Formatter::LanguageServer(LanguageServerVariant::Current(Default::default()))
+        )));
         let raw_auto = "{\"formatter\": \"auto\"}";
         let settings: LanguageSettingsContent = serde_json::from_str(raw_auto).unwrap();
         assert_eq!(
@@ -886,24 +967,24 @@ mod test {
         let settings: LanguageSettingsContent = serde_json::from_str(raw).unwrap();
         assert_eq!(
             settings.formatter,
-            Some(FormatterList::Single(Formatter::LanguageServer {
-                name: None
-            }))
+            Some(FormatterList::Single(Formatter::LanguageServer(
+                LanguageServerVariant::Current(Default::default())
+            )))
         );
         let raw = "{\"formatter\": [{\"language_server\": {\"name\": null}}]}";
         let settings: LanguageSettingsContent = serde_json::from_str(raw).unwrap();
         assert_eq!(
             settings.formatter,
-            Some(FormatterList::Vec(vec![Formatter::LanguageServer {
-                name: None
-            }]))
+            Some(FormatterList::Vec(vec![Formatter::LanguageServer(
+                LanguageServerVariant::Current(Default::default())
+            )]))
         );
         let raw = "{\"formatter\": [{\"language_server\": {\"name\": null}}, \"prettier\"]}";
         let settings: LanguageSettingsContent = serde_json::from_str(raw).unwrap();
         assert_eq!(
             settings.formatter,
             Some(FormatterList::Vec(vec![
-                Formatter::LanguageServer { name: None },
+                Formatter::LanguageServer(LanguageServerVariant::Current(Default::default())),
                 Formatter::Prettier
             ]))
         );
