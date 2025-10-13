@@ -14,7 +14,6 @@ use crate::{
     Window, point, px, size,
 };
 use collections::VecDeque;
-use itertools::Itertools;
 use refineable::Refineable as _;
 use std::{cell::RefCell, ops::Range, rc::Rc};
 use sum_tree::{Bias, Dimensions, SumTree};

@@ -886,7 +886,7 @@ impl SettingsWindow {
 
         // high overdraw value so the list scrollbar len doesn't change too much
         let list_state = gpui::ListState::new(0, gpui::ListAlignment::Top, px(100.0));
-        list_state.set_scroll_handler(|event, window, cx| {});
+        list_state.set_scroll_handler(|_, _, _| {});
 
         let mut this = Self {
             title_bar,
@@ -1074,6 +1074,7 @@ impl SettingsWindow {
             }
             self.has_query = false;
             self.filter_matches_to_file();
+            self.reset_list_state();
             cx.notify();
             return;
         }
@@ -1103,6 +1104,7 @@ impl SettingsWindow {
             this.has_query = true;
             this.filter_matches_to_file();
             this.open_first_nav_page();
+            this.reset_list_state();
             cx.notify();
         }
 
@@ -1278,6 +1280,22 @@ impl SettingsWindow {
             .collect::<Vec<_>>();
     }
 
+    fn reset_list_state(&mut self) {
+        // plus one for the title
+        self.visible_items = self
+            .visible_page_items()
+            .into_iter()
+            .map(|(index, _)| index)
+            .collect();
+
+        if self.visible_items.is_empty() {
+            self.list_state.reset(0);
+        } else {
+            // show page title if page is non empty
+            self.list_state.reset(self.visible_items.len() + 1);
+        }
+    }
+
     fn build_ui(&mut self, window: &mut Window, cx: &mut Context<SettingsWindow>) {
         if self.pages.is_empty() {
             self.pages = page_data::settings_data();
@@ -1287,6 +1305,7 @@ impl SettingsWindow {
         sub_page_stack_mut().clear();
         // PERF: doesn't have to be rebuilt, can just be filled with true. pages is constant once it is built
         self.build_filter_table();
+        self.reset_list_state();
         self.update_matches(cx);
 
         cx.notify();
@@ -1358,12 +1377,7 @@ impl SettingsWindow {
         // We only need to reset visible items when updating matches
         // and selecting a new page
         if is_new_page {
-            self.visible_items = self
-                .visible_page_items()
-                .into_iter()
-                .map(|(index, _)| index)
-                .collect();
-            self.list_state.reset(self.visible_items.len());
+            self.reset_list_state();
         }
 
         sub_page_stack_mut().clear();
@@ -1802,8 +1816,6 @@ impl SettingsWindow {
         cx: &mut Context<SettingsWindow>,
     ) -> impl IntoElement {
         let mut page_content = v_flex().id("settings-ui-page").size_full();
-        // .overflow_y_scroll()
-        // .track_scroll(&self.page_scroll_handle);
 
         let has_active_search = !self.search_bar.read(cx).is_empty(cx);
         let has_no_results = self.visible_items.len() == 0 && has_active_search && false;
@@ -1845,6 +1857,19 @@ impl SettingsWindow {
             let list_content = list(
                 self.list_state.clone(),
                 cx.processor(move |this, index, window, cx| {
+                    if index == 0 {
+                        return div()
+                            .when(sub_page_stack().is_empty(), |this| {
+                                this.when_some(root_nav_label, |this, title| {
+                                    this.child(
+                                        Label::new(title).size(LabelSize::Large).mt_2().mb_3(),
+                                    )
+                                })
+                            })
+                            .into_any_element();
+                    }
+
+                    let index = index - 1;
                     let actual_item_index = this.visible_items[index];
                     let item: &SettingsPageItem = &this.current_page().items[actual_item_index];
 
@@ -1879,13 +1904,7 @@ impl SettingsWindow {
                 }),
             );
 
-            page_content = page_content
-                .when(sub_page_stack().is_empty(), |this| {
-                    this.when_some(root_nav_label, |this, title| {
-                        this.child(Label::new(title).size(LabelSize::Large).mt_2().mb_3())
-                    })
-                })
-                .child(list_content.size_full())
+            page_content = page_content.child(list_content.size_full())
         }
         page_content
     }
