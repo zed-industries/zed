@@ -864,7 +864,7 @@ impl DisplaySnapshot {
     ) -> impl Iterator<Item = HighlightedChunk<'a>> {
         let rainbow_config = &editor_style.rainbow_highlighting;
         let theme = &editor_style.syntax;
-        let _buffer_snapshot = &self.buffer_snapshot;
+        let buffer_snapshot = &self.buffer_snapshot;
 
         let display_row_start = display_rows.start;
         let start_point = self.display_point_to_point(DisplayPoint::new(display_row_start, 0), Bias::Left);
@@ -876,8 +876,8 @@ impl DisplaySnapshot {
             edit_prediction: Some(editor_style.edit_prediction_styles),
         })
             .scan(
-                (current_buffer_offset, String::new(), None::<gpui::HighlightStyle>),
-                move |(offset, accumulated_identifier, accumulated_style), chunk| {
+                current_buffer_offset,
+                move |offset, chunk| {
                     let chunk_start = *offset;
                     let chunk_end = chunk_start + chunk.text.len();
                     *offset = chunk_end;
@@ -895,28 +895,21 @@ impl DisplaySnapshot {
                         })
                         .unwrap_or(false);
 
-                    // Accumulator pattern: build identifier from consecutive variable chunks
-                    let rainbow_style = if is_variable_like {
-                        let is_new_identifier = accumulated_identifier.is_empty();
-                        accumulated_identifier.push_str(chunk.text);
-
-                        if is_new_identifier || accumulated_style.is_none() {
-                            let style = crate::rainbow::with_rainbow_cache(|cache| {
-                                crate::rainbow::apply_rainbow_highlighting(
-                                    accumulated_identifier,
-                                    true,
-                                    rainbow_config.enabled,
-                                    theme,
-                                    cache
-                                )
-                            });
-                            *accumulated_style = style;
-                        }
-
-                        *accumulated_style
+                    // Node range pattern: extract complete identifier from tree-sitter range
+                    let rainbow_style = if is_variable_like && chunk.capture_node_range.is_some() {
+                        let node_range = chunk.capture_node_range.as_ref().unwrap();
+                        let identifier: String = buffer_snapshot.text_for_range(node_range.clone()).collect();
+                        
+                        crate::rainbow::with_rainbow_cache(|cache| {
+                            crate::rainbow::apply_rainbow_highlighting(
+                                &identifier,
+                                true,
+                                rainbow_config.enabled,
+                                theme,
+                                cache
+                            )
+                        })
                     } else {
-                        accumulated_identifier.clear();
-                        *accumulated_style = None;
                         None
                     };
 
