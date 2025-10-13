@@ -73,6 +73,7 @@ impl TextSystem {
             fallback_font_stack: smallvec![
                 // TODO: Remove this when Linux have implemented setting fallbacks.
                 font(".ZedMono"),
+                font(".ZedSans"),
                 font("Helvetica"),
                 font("Segoe UI"),  // Windows
                 font("Cantarell"), // Gnome
