@@ -2494,7 +2494,12 @@ impl LocalSnapshot {
         inodes
     }
 
-    fn ignore_stack_for_abs_path(&self, abs_path: &Path, is_dir: bool, fs: &dyn Fs) -> IgnoreStack {
+    async fn ignore_stack_for_abs_path(
+        &self,
+        abs_path: &Path,
+        is_dir: bool,
+        fs: &dyn Fs,
+    ) -> IgnoreStack {
         let mut new_ignores = Vec::new();
         let mut repo_root = None;
         for (index, ancestor) in abs_path.ancestors().enumerate() {
@@ -2506,11 +2511,7 @@ impl LocalSnapshot {
                 }
             }
 
-            let metadata = self
-                .executor
-                .block(fs.metadata(&ancestor.join(DOT_GIT)))
-                .ok()
-                .flatten();
+            let metadata = fs.metadata(&ancestor.join(DOT_GIT)).await.ok().flatten();
             if metadata.is_some() {
                 repo_root = Some(Arc::from(ancestor));
                 break;
@@ -2656,7 +2657,7 @@ impl BackgroundScannerState {
                 .any(|p| entry.path.starts_with(p))
     }
 
-    fn enqueue_scan_dir(
+    async fn enqueue_scan_dir(
         &self,
         abs_path: Arc<Path>,
         entry: &Entry,
@@ -2664,7 +2665,10 @@ impl BackgroundScannerState {
         fs: &dyn Fs,
     ) {
         let path = entry.path.clone();
-        let ignore_stack = self.snapshot.ignore_stack_for_abs_path(&abs_path, true, fs);
+        let ignore_stack = self
+            .snapshot
+            .ignore_stack_for_abs_path(&abs_path, true, fs)
+            .await;
         let mut ancestor_inodes = self.snapshot.ancestor_inodes_for_path(&path);
 
         if !ancestor_inodes.contains(&entry.inode) {
@@ -2702,11 +2706,17 @@ impl BackgroundScannerState {
         }
     }
 
-    fn insert_entry(&mut self, mut entry: Entry, fs: &dyn Fs, watcher: &dyn Watcher) -> Entry {
+    async fn insert_entry(
+        &mut self,
+        mut entry: Entry,
+        fs: &dyn Fs,
+        watcher: &dyn Watcher,
+    ) -> Entry {
         self.reuse_entry_id(&mut entry);
         let entry = self.snapshot.insert_entry(entry, fs);
         if entry.path.file_name() == Some(&DOT_GIT) {
-            self.insert_git_repository(entry.path.clone(), fs, watcher);
+            self.insert_git_repository(entry.path.clone(), fs, watcher)
+                .await;
         }
 
         #[cfg(test)]
@@ -2837,7 +2847,7 @@ impl BackgroundScannerState {
         self.snapshot.check_invariants(false);
     }
 
-    fn insert_git_repository(
+    async fn insert_git_repository(
         &mut self,
         dot_git_path: Arc<RelPath>,
         fs: &dyn Fs,
@@ -2878,10 +2888,11 @@ impl BackgroundScannerState {
             fs,
             watcher,
         )
+        .await
         .log_err();
     }
 
-    fn insert_git_repository_for_path(
+    async fn insert_git_repository_for_path(
         &mut self,
         work_directory: WorkDirectory,
         dot_git_abs_path: Arc<Path>,
@@ -2903,7 +2914,7 @@ impl BackgroundScannerState {
         let work_directory_abs_path = self.snapshot.work_directory_abs_path(&work_directory);
 
         let (repository_dir_abs_path, common_dir_abs_path) =
-            discover_git_paths(&dot_git_abs_path, fs, &self.snapshot.executor);
+            discover_git_paths(&dot_git_abs_path, fs).await;
         watcher
             .add(&common_dir_abs_path)
             .context("failed to add common directory to watcher")
@@ -3592,6 +3603,7 @@ impl BackgroundScanner {
                         self.fs.as_ref(),
                         self.watcher.as_ref(),
                     )
+                    .await
                     .log_err()?;
                 Some(ancestor_dot_git)
             })
@@ -3627,22 +3639,25 @@ impl BackgroundScanner {
             let mut state = self.state.lock().await;
             state.snapshot.scan_id += 1;
             if let Some(mut root_entry) = state.snapshot.root_entry().cloned() {
-                let ignore_stack = state.snapshot.ignore_stack_for_abs_path(
-                    root_abs_path.as_path(),
-                    true,
-                    self.fs.as_ref(),
-                );
+                let ignore_stack = state
+                    .snapshot
+                    .ignore_stack_for_abs_path(root_abs_path.as_path(), true, self.fs.as_ref())
+                    .await;
                 if ignore_stack.is_abs_path_ignored(root_abs_path.as_path(), true) {
                     root_entry.is_ignored = true;
-                    state.insert_entry(root_entry.clone(), self.fs.as_ref(), self.watcher.as_ref());
+                    state
+                        .insert_entry(root_entry.clone(), self.fs.as_ref(), self.watcher.as_ref())
+                        .await;
                 }
                 if root_entry.is_dir() {
-                    state.enqueue_scan_dir(
-                        root_abs_path.as_path().into(),
-                        &root_entry,
-                        &scan_job_tx,
-                        self.fs.as_ref(),
-                    );
+                    state
+                        .enqueue_scan_dir(
+                            root_abs_path.as_path().into(),
+                            &root_entry,
+                            &scan_job_tx,
+                            self.fs.as_ref(),
+                        )
+                        .await;
                 }
             }
         };
@@ -3832,17 +3847,22 @@ impl BackgroundScanner {
             {
                 let mut is_git_related = false;
 
-                let dot_git_paths = abs_path.as_path().ancestors().find_map(|ancestor| {
-                    if snapshot.executor.block(is_git_dir(ancestor, self.fs.as_ref())) {
+                let dot_git_paths = self.executor.block(maybe!(async  {
+                    let mut path = None;
+                    for ancestor in abs_path.as_path().ancestors() {
+
+                    if is_git_dir(ancestor, self.fs.as_ref()).await {
                         let path_in_git_dir = abs_path
                             .as_path()
                             .strip_prefix(ancestor)
                             .expect("stripping off the ancestor");
-                        Some((ancestor.to_owned(), path_in_git_dir.to_owned()))
-                    } else {
-                        None
+                       path = Some((ancestor.to_owned(), path_in_git_dir.to_owned()));
+                       break;
                     }
-                });
+                    }
+                    path
+
+                }));
 
                 if let Some((dot_git_abs_path, path_in_git_dir)) = dot_git_paths {
                     if skipped_files_in_dot_git
@@ -3968,17 +3988,17 @@ impl BackgroundScanner {
             let mut state = self.state.lock().await;
             state.snapshot.global_gitignore = ignore;
             let abs_path = state.snapshot.abs_path().clone();
-            let ignore_stack =
-                state
-                    .snapshot
-                    .ignore_stack_for_abs_path(&abs_path, true, self.fs.as_ref());
+            let ignore_stack = state
+                .snapshot
+                .ignore_stack_for_abs_path(&abs_path, true, self.fs.as_ref())
+                .await;
             (state.snapshot.clone(), ignore_stack, abs_path)
         };
         let (scan_job_tx, scan_job_rx) = channel::unbounded();
         self.update_ignore_statuses_for_paths(
             scan_job_tx,
             prev_snapshot,
-            vec![(abs_path, ignore_stack)].into_iter(),
+            vec![(abs_path, ignore_stack)],
         )
         .await;
         self.scan_dirs(false, scan_job_rx).await;
@@ -3996,12 +4016,14 @@ impl BackgroundScanner {
                         && entry.kind == EntryKind::UnloadedDir
                     {
                         let abs_path = root_path.join(ancestor.as_std_path());
-                        state.enqueue_scan_dir(
-                            abs_path.into(),
-                            entry,
-                            &scan_job_tx,
-                            self.fs.as_ref(),
-                        );
+                        state
+                            .enqueue_scan_dir(
+                                abs_path.into(),
+                                entry,
+                                &scan_job_tx,
+                                self.fs.as_ref(),
+                            )
+                            .await;
                         state.paths_to_scan.insert(path.clone());
                         break;
                     }
@@ -4174,11 +4196,13 @@ impl BackgroundScanner {
 
             if child_name == DOT_GIT {
                 let mut state = self.state.lock().await;
-                state.insert_git_repository(
-                    child_path.clone(),
-                    self.fs.as_ref(),
-                    self.watcher.as_ref(),
-                );
+                state
+                    .insert_git_repository(
+                        child_path.clone(),
+                        self.fs.as_ref(),
+                        self.watcher.as_ref(),
+                    )
+                    .await;
             } else if child_name == GITIGNORE {
                 match build_gitignore(&child_abs_path, self.fs.as_ref()).await {
                     Ok(ignore) => {
@@ -4396,11 +4420,10 @@ impl BackgroundScanner {
             let abs_path: Arc<Path> = root_abs_path.join(path.as_std_path()).into();
             match metadata {
                 Ok(Some((metadata, canonical_path))) => {
-                    let ignore_stack = state.snapshot.ignore_stack_for_abs_path(
-                        &abs_path,
-                        metadata.is_dir,
-                        self.fs.as_ref(),
-                    );
+                    let ignore_stack = state
+                        .snapshot
+                        .ignore_stack_for_abs_path(&abs_path, metadata.is_dir, self.fs.as_ref())
+                        .await;
                     let is_external = !canonical_path.starts_with(&root_canonical_path);
                     let mut fs_entry = Entry::new(
                         path.clone(),
@@ -4432,18 +4455,22 @@ impl BackgroundScanner {
                             || (fs_entry.path.is_empty()
                                 && abs_path.file_name() == Some(OsStr::new(DOT_GIT)))
                         {
-                            state.enqueue_scan_dir(
-                                abs_path,
-                                &fs_entry,
-                                scan_queue_tx,
-                                self.fs.as_ref(),
-                            );
+                            state
+                                .enqueue_scan_dir(
+                                    abs_path,
+                                    &fs_entry,
+                                    scan_queue_tx,
+                                    self.fs.as_ref(),
+                                )
+                                .await;
                         } else {
                             fs_entry.kind = EntryKind::UnloadedDir;
                         }
                     }
 
-                    state.insert_entry(fs_entry.clone(), self.fs.as_ref(), self.watcher.as_ref());
+                    state
+                        .insert_entry(fs_entry.clone(), self.fs.as_ref(), self.watcher.as_ref())
+                        .await;
 
                     if path.is_empty()
                         && let Some((ignores, repo)) = new_ancestor_repo.take()
@@ -4458,6 +4485,7 @@ impl BackgroundScanner {
                                     self.fs.as_ref(),
                                     self.watcher.as_ref(),
                                 )
+                                .await
                                 .log_err();
                         }
                     }
@@ -4496,11 +4524,11 @@ impl BackgroundScanner {
         &self,
         scan_job_tx: Sender<ScanJob>,
         prev_snapshot: LocalSnapshot,
-        mut ignores_to_update: impl Iterator<Item = (Arc<Path>, IgnoreStack)>,
+        ignores_to_update: Vec<(Arc<Path>, IgnoreStack)>,
     ) {
         let (ignore_queue_tx, ignore_queue_rx) = channel::unbounded();
         {
-            while let Some((parent_abs_path, ignore_stack)) = ignores_to_update.next() {
+            for (parent_abs_path, ignore_stack) in ignores_to_update {
                 ignore_queue_tx
                     .send_blocking(UpdateIgnoreStatusJob {
                         abs_path: parent_abs_path,
@@ -4573,26 +4601,27 @@ impl BackgroundScanner {
         ignores_to_update
     }
 
-    async fn order_ignores(
-        &self,
-        mut ignores: Vec<Arc<Path>>,
-    ) -> impl use<> + Iterator<Item = (Arc<Path>, IgnoreStack)> {
+    async fn order_ignores(&self, mut ignores: Vec<Arc<Path>>) -> Vec<(Arc<Path>, IgnoreStack)> {
         let fs = self.fs.clone();
         let snapshot = self.state.lock().await.snapshot.clone();
         ignores.sort_unstable();
         let mut ignores_to_update = ignores.into_iter().peekable();
-        std::iter::from_fn(move || {
-            let parent_abs_path = ignores_to_update.next()?;
+
+        let mut result = vec![];
+        while let Some(parent_abs_path) = ignores_to_update.next() {
             while ignores_to_update
                 .peek()
                 .map_or(false, |p| p.starts_with(&parent_abs_path))
             {
                 ignores_to_update.next().unwrap();
             }
-            let ignore_stack =
-                snapshot.ignore_stack_for_abs_path(&parent_abs_path, true, fs.as_ref());
-            Some((parent_abs_path, ignore_stack))
-        })
+            let ignore_stack = snapshot
+                .ignore_stack_for_abs_path(&parent_abs_path, true, fs.as_ref())
+                .await;
+            result.push((parent_abs_path, ignore_stack));
+        }
+
+        result
     }
 
     async fn update_ignore_status(&self, job: UpdateIgnoreStatusJob, snapshot: &LocalSnapshot) {
@@ -4624,9 +4653,7 @@ impl BackgroundScanner {
             return;
         };
 
-        if let Ok(Some(metadata)) = self
-            .executor
-            .block(self.fs.metadata(&job.abs_path.join(DOT_GIT)))
+        if let Ok(Some(metadata)) = self.fs.metadata(&job.abs_path.join(DOT_GIT)).await
             && metadata.is_dir
         {
             ignore_stack.repo_root = Some(job.abs_path.clone());
@@ -4648,12 +4675,14 @@ impl BackgroundScanner {
                 if was_ignored && !entry.is_ignored && entry.kind.is_unloaded() {
                     let state = self.state.lock().await;
                     if state.should_scan_directory(&entry) {
-                        state.enqueue_scan_dir(
-                            abs_path.clone(),
-                            &entry,
-                            &job.scan_queue,
-                            self.fs.as_ref(),
-                        );
+                        state
+                            .enqueue_scan_dir(
+                                abs_path.clone(),
+                                &entry,
+                                &job.scan_queue,
+                                self.fs.as_ref(),
+                            )
+                            .await;
                     }
                 }
 
@@ -4725,13 +4754,15 @@ impl BackgroundScanner {
                         return Vec::new();
                     };
                     affected_repo_roots.push(dot_git_dir.parent().unwrap().into());
-                    state.insert_git_repository(
-                        RelPath::new(relative, PathStyle::local())
-                            .unwrap()
-                            .into_arc(),
-                        self.fs.as_ref(),
-                        self.watcher.as_ref(),
-                    );
+                    state
+                        .insert_git_repository(
+                            RelPath::new(relative, PathStyle::local())
+                                .unwrap()
+                                .into_arc(),
+                            self.fs.as_ref(),
+                            self.watcher.as_ref(),
+                        )
+                        .await;
                 }
                 Some(local_repository) => {
                     state.snapshot.git_repositories.update(
@@ -4759,8 +4790,7 @@ impl BackgroundScanner {
 
             if exists_in_snapshot
                 || matches!(
-                    self.executor
-                        .block(self.fs.metadata(&entry.common_dir_abs_path)),
+                    self.fs.metadata(&entry.common_dir_abs_path).await,
                     Ok(Some(_))
                 )
             {
@@ -5519,16 +5549,13 @@ fn parse_gitfile(content: &str) -> anyhow::Result<&Path> {
     Ok(Path::new(path.trim()))
 }
 
-fn discover_git_paths(
-    dot_git_abs_path: &Arc<Path>,
-    fs: &dyn Fs,
-    executor: &BackgroundExecutor,
-) -> (Arc<Path>, Arc<Path>) {
+async fn discover_git_paths(dot_git_abs_path: &Arc<Path>, fs: &dyn Fs) -> (Arc<Path>, Arc<Path>) {
     let mut repository_dir_abs_path = dot_git_abs_path.clone();
     let mut common_dir_abs_path = dot_git_abs_path.clone();
 
-    if let Some(path) = executor
-        .block(fs.load(dot_git_abs_path))
+    if let Some(path) = fs
+        .load(dot_git_abs_path)
+        .await
         .ok()
         .as_ref()
         .and_then(|contents| parse_gitfile(contents).log_err())
@@ -5537,13 +5564,14 @@ fn discover_git_paths(
             .parent()
             .unwrap_or(Path::new(""))
             .join(path);
-        if let Some(path) = executor.block(fs.canonicalize(&path)).log_err() {
+        if let Some(path) = fs.canonicalize(&path).await.log_err() {
             repository_dir_abs_path = Path::new(&path).into();
             common_dir_abs_path = repository_dir_abs_path.clone();
 
-            if let Some(commondir_contents) = executor.block(fs.load(&path.join("commondir"))).ok()
-                && let Some(commondir_path) = executor
-                    .block(fs.canonicalize(&path.join(commondir_contents.trim())))
+            if let Some(commondir_contents) = fs.load(&path.join("commondir")).await.ok()
+                && let Some(commondir_path) = fs
+                    .canonicalize(&path.join(commondir_contents.trim()))
+                    .await
                     .log_err()
             {
                 common_dir_abs_path = commondir_path.as_path().into();
