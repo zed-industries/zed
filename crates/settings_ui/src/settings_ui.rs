@@ -25,7 +25,7 @@ use std::{
     cell::RefCell,
     collections::HashMap,
     num::{NonZero, NonZeroU32},
-    ops::{Deref, Range},
+    ops::Range,
     rc::Rc,
     sync::{Arc, LazyLock, RwLock},
 };
@@ -505,7 +505,6 @@ struct SettingsPage {
 #[derive(PartialEq)]
 enum SettingsPageItem {
     SectionHeader(&'static str),
-    LanguagesTable(LanguagesTable),
     SettingItem(SettingItem),
     SubPageLink(SubPageLink),
 }
@@ -519,9 +518,6 @@ impl std::fmt::Debug for SettingsPageItem {
             }
             SettingsPageItem::SubPageLink(sub_page_link) => {
                 write!(f, "SubPageLink({})", sub_page_link.title)
-            }
-            SettingsPageItem::LanguagesTable(_) => {
-                write!(f, "LanguagesTable")
             }
         }
     }
@@ -642,25 +638,6 @@ impl SettingsPageItem {
                         })
                     }),
                 )
-                .into_any_element(),
-            SettingsPageItem::LanguagesTable(LanguagesTable { render, files }) => v_flex()
-                .w_full()
-                .id("languages-table")
-                .tab_group()
-                .children(all_language_names(cx).into_iter().map(|name| {
-                    SettingsPageItem::SubPageLink(SubPageLink {
-                        title: name,
-                        files: *files,
-                        render: render.clone(),
-                    })
-                    .render(
-                        settings_window,
-                        section_header,
-                        false,
-                        window,
-                        cx,
-                    )
-                }))
                 .into_any_element(),
         }
     }
@@ -798,23 +775,6 @@ struct SubPageLink {
 impl PartialEq for SubPageLink {
     fn eq(&self, other: &Self) -> bool {
         self.title == other.title
-    }
-}
-
-pub struct LanguagesTable {
-    files: FileMask,
-    render: Arc<
-        dyn Fn(&mut SettingsWindow, &mut Window, &mut Context<SettingsWindow>) -> AnyElement
-            + 'static
-            + Send
-            + Sync,
-    >,
-}
-
-impl PartialEq for LanguagesTable {
-    fn eq(&self, _: &Self) -> bool {
-        // todo! don't leave like this if generalizing
-        true
     }
 }
 
@@ -961,7 +921,7 @@ impl SettingsWindow {
 
         this.fetch_files(window, cx);
         this.build_ui(window, cx);
-        this.build_search_index(cx);
+        this.build_search_index();
 
         this.search_bar.update(cx, |editor, cx| {
             editor.focus_handle(cx).focus(window);
@@ -1075,8 +1035,7 @@ impl SettingsWindow {
                         any_found_since_last_header = false;
                     }
                     SettingsPageItem::SettingItem(SettingItem { files, .. })
-                    | SettingsPageItem::SubPageLink(SubPageLink { files, .. })
-                    | SettingsPageItem::LanguagesTable(LanguagesTable { files, .. }) => {
+                    | SettingsPageItem::SubPageLink(SubPageLink { files, .. }) => {
                         if !files.contains(current_file) {
                             page_filter[index] = false;
                         } else {
@@ -1221,7 +1180,7 @@ impl SettingsWindow {
             .collect::<Vec<_>>();
     }
 
-    fn build_search_index(&mut self, cx: &App) {
+    fn build_search_index(&mut self) {
         let mut key_lut: Vec<SearchItemKey> = vec![];
         let mut documents = Vec::default();
         let mut fuzzy_match_candidates = Vec::default();
@@ -1275,20 +1234,6 @@ impl SettingsWindow {
                             sub_page_link.title.as_ref(),
                         );
                     }
-                    SettingsPageItem::LanguagesTable(_) => {
-                        for language_name in all_language_names(cx) {
-                            documents.push(bm25::Document {
-                                id: key_index,
-                                contents: [page.title, header_str, language_name.as_ref()]
-                                    .join("\n"),
-                            });
-                            push_candidates(
-                                &mut fuzzy_match_candidates,
-                                key_index,
-                                language_name.as_ref(),
-                            );
-                        }
-                    }
                 }
                 push_candidates(&mut fuzzy_match_candidates, key_index, page.title);
                 push_candidates(&mut fuzzy_match_candidates, key_index, header_str);
@@ -1323,7 +1268,7 @@ impl SettingsWindow {
 
     fn build_ui(&mut self, window: &mut Window, cx: &mut Context<SettingsWindow>) {
         if self.pages.is_empty() {
-            self.pages = page_data::settings_data();
+            self.pages = page_data::settings_data(cx);
             self.build_navbar(cx);
             self.build_content_handles(window, cx);
         }

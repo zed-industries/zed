@@ -1,13 +1,14 @@
+use gpui::App;
 use settings::{LanguageSettingsContent, SettingsContent};
 use std::sync::Arc;
 use ui::{IntoElement, SharedString};
 
 use crate::{
-    LOCAL, LanguagesTable, SettingField, SettingItem, SettingsFieldMetadata, SettingsPage,
-    SettingsPageItem, SubPageLink, USER, sub_page_stack,
+    LOCAL, SettingField, SettingItem, SettingsFieldMetadata, SettingsPage, SettingsPageItem,
+    SubPageLink, USER, all_language_names, sub_page_stack,
 };
 
-pub(crate) fn settings_data() -> Vec<SettingsPage> {
+pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
     vec![
         SettingsPage {
             title: "General",
@@ -1405,21 +1406,27 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
         },
         SettingsPage {
             title: "Languages",
-            items: vec![
-                SettingsPageItem::SectionHeader(LANGUAGES_SECTION_HEADER),
-                SettingsPageItem::LanguagesTable(LanguagesTable {
-                    files: USER | LOCAL,
-                    render: Arc::new(|this, window, cx| {
-                        this.render_page_items(
-                            language_settings_data().iter().enumerate(),
-                            None,
-                            window,
-                            cx,
-                        )
-                        .into_any_element()
-                    }),
-                }),
-            ],
+            items: {
+                let mut items = vec![SettingsPageItem::SectionHeader(LANGUAGES_SECTION_HEADER)];
+                // todo(settings_ui): Refresh on extension (un)/installed
+                // Note that `crates/json_schema_store` solves the same problem, there is probably a way to unify the two
+                items.extend(all_language_names(cx).into_iter().map(|language_name| {
+                    SettingsPageItem::SubPageLink(SubPageLink {
+                        title: language_name,
+                        files: USER | LOCAL,
+                        render: Arc::new(|this, window, cx| {
+                            this.render_page_items(
+                                language_settings_data().iter().enumerate(),
+                                None,
+                                window,
+                                cx,
+                            )
+                            .into_any_element()
+                        }),
+                    })
+                }));
+                items
+            },
         },
         SettingsPage {
             title: "Search & Files",
