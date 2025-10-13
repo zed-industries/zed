@@ -4387,8 +4387,8 @@ fn test_delete_line(cx: &mut TestAppContext) {
         assert_eq!(
             editor.selections.display_ranges(cx),
             vec![
+                DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 0),
                 DisplayPoint::new(DisplayRow(0), 1)..DisplayPoint::new(DisplayRow(0), 1),
-                DisplayPoint::new(DisplayRow(0), 3)..DisplayPoint::new(DisplayRow(0), 3),
             ]
         );
     });
@@ -4408,6 +4408,24 @@ fn test_delete_line(cx: &mut TestAppContext) {
         assert_eq!(
             editor.selections.display_ranges(cx),
             vec![DisplayPoint::new(DisplayRow(0), 1)..DisplayPoint::new(DisplayRow(0), 1)]
+        );
+    });
+
+    let editor = cx.add_window(|window, cx| {
+        let buffer = MultiBuffer::build_simple("abc\ndef\nghi\n\njkl\nmno", cx);
+        build_editor(buffer, window, cx)
+    });
+    _ = editor.update(cx, |editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_display_ranges([
+                DisplayPoint::new(DisplayRow(0), 1)..DisplayPoint::new(DisplayRow(2), 1)
+            ])
+        });
+        editor.delete_line(&DeleteLine, window, cx);
+        assert_eq!(editor.display_text(cx), "\njkl\nmno");
+        assert_eq!(
+            editor.selections.display_ranges(cx),
+            vec![DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 0)]
         );
     });
 }
