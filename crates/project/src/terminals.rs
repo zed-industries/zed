@@ -101,6 +101,8 @@ impl Project {
             None => settings.shell.program(),
         };
 
+        let is_windows = self.path_style(cx).is_windows();
+
         let project_path_contexts = self
             .active_entry()
             .and_then(|entry_id| self.path_for_entry(entry_id, cx))
@@ -120,7 +122,7 @@ impl Project {
         let lang_registry = self.languages.clone();
         let fs = self.fs.clone();
         cx.spawn(async move |project, cx| {
-            let shell_kind = ShellKind::new(&shell);
+            let shell_kind = ShellKind::new(&shell, is_windows);
             let activation_script = maybe!(async {
                 for toolchain in toolchains {
                     let Some(toolchain) = toolchain.await else {
@@ -329,13 +331,15 @@ impl Project {
             .map(|p| self.active_toolchain(p, LanguageName::new("Python"), cx))
             .collect::<Vec<_>>();
         let remote_client = self.remote_client.clone();
-        let shell_kind = ShellKind::new(&match &remote_client {
+        let shell = match &remote_client {
             Some(remote_client) => remote_client
                 .read(cx)
                 .shell()
                 .unwrap_or_else(get_default_system_shell),
             None => settings.shell.program(),
-        });
+        };
+
+        let shell_kind = ShellKind::new(&shell, self.path_style(cx).is_windows());
 
         let lang_registry = self.languages.clone();
         let fs = self.fs.clone();
@@ -476,7 +480,8 @@ impl Project {
             .and_then(|remote_client| remote_client.read(cx).shell())
             .map(Shell::Program)
             .unwrap_or_else(|| settings.shell.clone());
-        let builder = ShellBuilder::new(&shell).non_interactive();
+        let is_windows = self.path_style(cx).is_windows();
+        let builder = ShellBuilder::new(&shell, is_windows).non_interactive();
         let (command, args) = builder.build(Some(command), &Vec::new());
 
         let mut env = self

@@ -526,23 +526,18 @@ impl TerminalPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<WeakEntity<Terminal>>> {
-        let remote_client = self
-            .workspace
-            .update(cx, |workspace, cx| {
-                let project = workspace.project().read(cx);
-                if project.is_via_collab() {
-                    Err(anyhow!("cannot spawn tasks as a guest"))
-                } else {
-                    Ok(project.remote_client())
-                }
-            })
-            .flatten();
-
-        let remote_client = match remote_client {
-            Ok(remote_client) => remote_client,
-            Err(e) => return Task::ready(Err(e)),
+        let Some(workspace) = self.workspace.upgrade() else {
+            return Task::ready(Err(anyhow!("failed to read workspace")));
         };
 
+        let project = workspace.read(cx).project().read(cx);
+
+        if project.is_via_collab() {
+            return Task::ready(Err(anyhow!("cannot spawn tasks as a guest")));
+        }
+
+        let remote_client = project.remote_client();
+        let is_windows = project.path_style(cx).is_windows();
         let remote_shell = remote_client
             .as_ref()
             .and_then(|remote_client| remote_client.read(cx).shell());
@@ -555,7 +550,7 @@ impl TerminalPanel {
             task.shell.clone()
         };
 
-        let builder = ShellBuilder::new(&shell);
+        let builder = ShellBuilder::new(&shell, is_windows);
         let command_label = builder.command_label(task.command.as_deref().unwrap_or(""));
         let (command, args) = builder.build(task.command.clone(), &task.args);
 
