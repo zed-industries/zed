@@ -1347,7 +1347,32 @@ impl WorkspaceDb {
                 continue;
             }
 
-            if paths.paths().iter().all(|path| path.exists())
+            let has_wsl_path = {
+                #[cfg(target_os = "windows")]
+                {
+                    fn is_wsl_path(path: &PathBuf) -> bool {
+                        if let Some(path) = path.to_str() {
+                            path.starts_with(r"\\?\UNC\wsl.localhost\")
+                                || path.starts_with(r"\\?\UNC\wsl$\")
+                        } else {
+                            false
+                        }
+                    }
+
+                    paths.paths().iter().any(|path| is_wsl_path(path))
+                }
+                #[cfg(not(target_os = "windows"))]
+                {
+                    false
+                }
+            };
+
+            // Delete the workspace if any of the paths are WSL paths.
+            // If a local workspace points to WSL, this check will cause us to wait for the
+            // WSL VM and file server to boot up. This can block for many seconds.
+            // Supported scenarios use remote workspaces.
+            if !has_wsl_path
+                && paths.paths().iter().all(|path| path.exists())
                 && paths.paths().iter().any(|path| path.is_dir())
             {
                 result.push((id, SerializedWorkspaceLocation::Local, paths));
