@@ -136,16 +136,19 @@ fn create_highlight_endpoints(
                     continue;
                 }
 
-                highlight_endpoints.push(HighlightEndpoint {
-                    offset: token_range.start,
-                    tag: HighlightKey::Type(std::any::TypeId::of::<()>()),
-                    style: Some(token.style),
-                });
-                highlight_endpoints.push(HighlightEndpoint {
-                    offset: token_range.end,
-                    tag: HighlightKey::Type(std::any::TypeId::of::<()>()),
-                    style: None,
-                });
+                // Only add LSP tokens with colors to avoid overriding tree-sitter with empty styles
+                if token.style.color.is_some() {
+                    highlight_endpoints.push(HighlightEndpoint {
+                        offset: token_range.start,
+                        tag: HighlightKey::Type(std::any::TypeId::of::<()>()),
+                        style: Some(token.style),
+                    });
+                    highlight_endpoints.push(HighlightEndpoint {
+                        offset: token_range.end,
+                        tag: HighlightKey::Type(std::any::TypeId::of::<()>()),
+                        style: None,
+                    });
+                }
             }
         }
     }

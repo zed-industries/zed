@@ -5,6 +5,7 @@ use std::ops::Range;
 /// This function walks backward and forward from the chunk boundaries to find
 /// the complete identifier, using efficient O(n) rope iteration.
 #[inline]
+#[allow(dead_code)]
 pub fn extract_complete_identifier(
     buffer: &MultiBufferSnapshot,
     chunk_range: Range<usize>,

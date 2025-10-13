@@ -886,9 +886,15 @@ impl DisplaySnapshot {
                     let chunk_end = chunk_start + chunk.text.len();
                     *offset = chunk_end;
 
+                    // Tree-sitter rainbow highlighting as fallback when LSP doesn't provide color
                     let is_variable_like = capture_name
                         .as_ref()
-                        .map(|name| { name.starts_with("variable") && !name.contains("special") })
+                        .map(|name| {
+                            name.starts_with("variable") 
+                            && !name.contains("special")
+                            && !name.contains("builtin")
+                            && !name.contains("member")
+                        })
                         .unwrap_or(false);
 
                     let rainbow_style = if is_variable_like {
@@ -922,15 +928,13 @@ impl DisplaySnapshot {
                             )
                         {
                             let style = crate::rainbow_cache::with_rainbow_cache(|cache| {
-                                let result = crate::rainbow_highlighting::try_rainbow_highlight_cached(
+                                crate::rainbow_highlighting::try_rainbow_highlight_cached(
                                     &identifier,
                                     true,
                                     rainbow_config.enabled,
                                     theme,
                                     cache
-                                );
-                                // Debug logging removed: Was causing excessive log output on every render
-                                result
+                                )
                             });
                             *cached_identifier = Some((range.start, range.end, style));
                             style
@@ -941,11 +945,7 @@ impl DisplaySnapshot {
                         None
                     };
 
-                    let final_highlight_style = highlight_style.or(rainbow_style);
-
                     let chunk_highlight = chunk.highlight_style.map(|chunk_highlight| {
-                        // LSP takes precedence over Tree-sitter rainbow for semantic accuracy.
-                        // LSP correctly identifies module paths, imports, and other non-variable contexts.
                         let color = chunk_highlight.color.map(|color| {
                             if chunk.is_inlay && !color.is_opaque() {
                                 editor_style.background.blend(color)
@@ -983,7 +983,9 @@ impl DisplaySnapshot {
                             ..Default::default()
                         });
 
-                    let style = [final_highlight_style, chunk_highlight, diagnostic_highlight]
+                    // Precedence: tree-sitter base < tree-sitter rainbow < LSP semantic < diagnostics
+                    // LSP semantic tokens (chunk_highlight) override tree-sitter rainbow
+                    let style = [highlight_style, rainbow_style, chunk_highlight, diagnostic_highlight]
                         .into_iter()
                         .flatten()
                         .reduce(|acc, highlight| acc.highlight(highlight));
@@ -1473,11 +1475,11 @@ impl SemanticTokenView {
                     &buffer
                 );
 
-                // Extract variable name for rainbow highlighting
-                let variable_name = if rainbow_enabled {
+                // Always extract variable names - needed for both rainbow highlighting and theme fallback
+                let variable_name = {
                     let token_type_name = stylizer.token_type(token.token_type);
 
-                    if matches!(token_type_name, Some("variable" | "parameter" | "property")) {
+                    if matches!(token_type_name, Some("variable" | "parameter")) {
                         let token_len = end_offset.saturating_sub(start_offset);
 
                         // Reasonable bounds: skip very short (<2) or extremely long (>120) identifiers
@@ -1496,8 +1498,6 @@ impl SemanticTokenView {
                     } else {
                         None
                     }
-                } else {
-                    None
                 };
 
                 Some(MultibufferSemanticToken {
@@ -1507,11 +1507,7 @@ impl SemanticTokenView {
                         token.token_type,
                         token.token_modifiers,
                         variable_name.as_deref(),
-                        if rainbow_enabled {
-                            Some(&rainbow_config)
-                        } else {
-                            None
-                        }
+                        Some(&rainbow_config) // Always pass rainbow config - it checks enabled flag internally
                     )?,
                     lsp_type: token.token_type,
                     lsp_modifiers: token.token_modifiers,
