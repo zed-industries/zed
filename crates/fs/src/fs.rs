@@ -11,7 +11,6 @@ use gpui::App;
 use gpui::BackgroundExecutor;
 use gpui::Global;
 use gpui::ReadGlobal as _;
-use gpui::Task;
 use std::borrow::Cow;
 use util::command::new_smol_command;
 
