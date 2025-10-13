@@ -54,27 +54,28 @@ fn read_gpui_version() -> Result<String> {
 
 fn publish_dependencies(new_version: &str, dry_run: bool) -> Result<()> {
     let gpui_dependencies = vec![
-        ("zed-collections", "collections"),
-        ("zed-perf", "perf"),
-        ("zed-util-macros", "util_macros"),
-        ("zed-util", "util"),
-        ("gpui-macros", "gpui_macros"),
-        ("zed-http-client", "http_client"),
-        ("zed-derive-refineable", "derive_refineable"),
-        ("zed-refineable", "refineable"),
-        ("zed-semantic-version", "semantic_version"),
-        ("zed-sum-tree", "sum_tree"),
-        ("zed-media", "media"),
+        ("collections", "gpui_collections"),
+        ("perf", "gpui_perf"),
+        ("util_macros", "gpui_util_macros"),
+        ("util", "gpui_util"),
+        ("gpui_macros", "gpui_macros"),
+        ("http_client", "gpui_http-client"),
+        ("derive_refineable", "gpui_derive_refineable"),
+        ("refineable", "gpui_refineable"),
+        ("semantic_version", "gpui_semantic_version"),
+        ("sum_tree", "gpui_sum_tree"),
+        ("media", "gpui_media"),
     ];
 
-    for (crate_name, package_name) in gpui_dependencies {
+    for (package_name, crate_name) in gpui_dependencies {
         println!(
             "Publishing dependency: {} (package: {})",
             crate_name, package_name
         );
 
-        update_crate_version(crate_name, new_version)?;
-        update_workspace_dependency_version(package_name, new_version)?;
+        update_crate_cargo_toml(package_name, crate_name, new_version)?;
+        update_workspace_dependency_version(package_name, crate_name, new_version)?;
+
         publish_crate(crate_name, dry_run)?;
 
         // println!("Waiting 60s for the rate limit...");
@@ -85,27 +86,45 @@ fn publish_dependencies(new_version: &str, dry_run: bool) -> Result<()> {
 }
 
 fn publish_gpui(new_version: &str, dry_run: bool) -> Result<()> {
-    update_crate_version("gpui", new_version)?;
+    update_crate_cargo_toml("gpui", "gpui", new_version)?;
 
     publish_crate("gpui", dry_run)?;
 
     Ok(())
 }
 
-fn update_crate_version(package_name: &str, new_version: &str) -> Result<()> {
-    let output = run_command(
-        Command::new("cargo")
-            .arg("set-version")
-            .arg("--package")
-            .arg(package_name)
-            .arg(new_version),
-    )?;
+fn update_crate_cargo_toml(package_name: &str, crate_name: &str, new_version: &str) -> Result<()> {
+    let cargo_toml_path = format!("crates/{}/Cargo.toml", package_name);
+    let contents = std::fs::read_to_string(&cargo_toml_path)
+        .context(format!("Failed to read {}", cargo_toml_path))?;
 
-    if !output.status.success() {
-        bail!("Failed to set version for package {}", package_name);
-    }
+    let updated = update_crate_package_fields(&contents, crate_name, new_version)?;
+
+    std::fs::write(&cargo_toml_path, updated)
+        .context(format!("Failed to write {}", cargo_toml_path))?;
 
     Ok(())
+}
+
+fn update_crate_package_fields(
+    toml_contents: &str,
+    crate_name: &str,
+    new_version: &str,
+) -> Result<String> {
+    let mut doc = toml_contents
+        .parse::<toml_edit::DocumentMut>()
+        .context("Failed to parse TOML")?;
+
+    let package = doc
+        .get_mut("package")
+        .and_then(|p| p.as_table_like_mut())
+        .context("Failed to find [package] section")?;
+
+    package.insert("name", toml_edit::value(crate_name));
+    package.insert("version", toml_edit::value(new_version));
+    package.insert("publish", toml_edit::value(true));
+
+    Ok(doc.to_string())
 }
 
 fn publish_crate(crate_name: &str, dry_run: bool) -> Result<()> {
@@ -142,29 +161,34 @@ fn publish_crate(crate_name: &str, dry_run: bool) -> Result<()> {
     Ok(())
 }
 
-fn update_workspace_dependency_version(package_name: &str, new_version: &str) -> Result<()> {
+fn update_workspace_dependency_version(
+    package_name: &str,
+    crate_name: &str,
+    new_version: &str,
+) -> Result<()> {
     let workspace_cargo_toml_path = "Cargo.toml";
     let contents = std::fs::read_to_string(workspace_cargo_toml_path)
         .context("Failed to read workspace Cargo.toml")?;
 
-    let updated = update_dependency_version_in_toml(&contents, package_name, new_version)?;
+    let mut doc = contents
+        .parse::<toml_edit::DocumentMut>()
+        .context("Failed to parse TOML")?;
 
-    std::fs::write(workspace_cargo_toml_path, updated)
+    update_dependency_version_in_doc(&mut doc, package_name, crate_name, new_version)?;
+    update_profile_override_in_doc(&mut doc, package_name, crate_name)?;
+
+    std::fs::write(workspace_cargo_toml_path, doc.to_string())
         .context("Failed to write workspace Cargo.toml")?;
 
     Ok(())
 }
 
-fn update_dependency_version_in_toml(
-    toml_contents: &str,
+fn update_dependency_version_in_doc(
+    doc: &mut toml_edit::DocumentMut,
     package_name: &str,
+    crate_name: &str,
     new_version: &str,
-) -> Result<String> {
-    let mut doc = toml_contents
-        .parse::<toml_edit::DocumentMut>()
-        .context("Failed to parse TOML")?;
-
-    // Navigate to workspace.dependencies.<package_name>
+) -> Result<()> {
     let dependency = doc
         .get_mut("workspace")
         .and_then(|w| w.get_mut("dependencies"))
@@ -174,21 +198,35 @@ fn update_dependency_version_in_toml(
             package_name
         ))?;
 
-    // Update the version field if it exists
     if let Some(dep_table) = dependency.as_table_like_mut() {
-        if dep_table.contains_key("version") {
-            dep_table.insert("version", toml_edit::value(new_version));
-        } else {
-            bail!(
-                "No version field found for {} in workspace dependencies",
-                package_name
-            );
-        }
+        dep_table.insert("version", toml_edit::value(new_version));
+        dep_table.insert("package", toml_edit::value(crate_name));
     } else {
         bail!("{} is not a table in workspace dependencies", package_name);
     }
 
-    Ok(doc.to_string())
+    Ok(())
+}
+
+fn update_profile_override_in_doc(
+    doc: &mut toml_edit::DocumentMut,
+    package_name: &str,
+    crate_name: &str,
+) -> Result<()> {
+    if let Some(profile_dev_package) = doc
+        .get_mut("profile")
+        .and_then(|p| p.get_mut("dev"))
+        .and_then(|d| d.get_mut("package"))
+        .and_then(|p| p.as_table_like_mut())
+    {
+        if let Some(old_entry) = profile_dev_package.get(package_name) {
+            let old_entry_clone = old_entry.clone();
+            profile_dev_package.remove(package_name);
+            profile_dev_package.insert(crate_name, old_entry_clone);
+        }
+    }
+
+    Ok(())
 }
 
 fn check_workspace_root() -> Result<()> {
@@ -298,12 +336,17 @@ mod tests {
 
             [workspace.dependencies]
             # here's a comment
-            collections = { path = "crates/collections", package = "zed-collections", version = "0.1.0" }
+            collections = { path = "crates/collections" }
 
             util = { path = "crates/util", package = "zed-util", version = "0.1.0" }
         "#};
 
-        let result = update_dependency_version_in_toml(input, "collections", "0.2.0").unwrap();
+        let mut doc = input.parse::<toml_edit::DocumentMut>().unwrap();
+
+        update_dependency_version_in_doc(&mut doc, "collections", "gpui_collections", "0.2.0")
+            .unwrap();
+
+        let result = doc.to_string();
 
         let output = indoc! {r#"
             [workspace]
@@ -311,9 +354,75 @@ mod tests {
 
             [workspace.dependencies]
             # here's a comment
-            collections = { path = "crates/collections", package = "zed-collections", version = "0.2.0" }
+            collections = { path = "crates/collections" , version = "0.2.0", package = "gpui_collections" }
 
             util = { path = "crates/util", package = "zed-util", version = "0.1.0" }
+        "#};
+
+        assert_eq!(result, output);
+    }
+
+    #[test]
+    fn test_update_crate_package_fields() {
+        let input = indoc! {r#"
+            [package]
+            name = "collections"
+            version = "0.1.0"
+            edition = "2021"
+            publish = false
+            # some comment about the license
+            license = "GPL-3.0-or-later"
+
+            [dependencies]
+            serde = "1.0"
+        "#};
+
+        let result = update_crate_package_fields(input, "gpui_collections", "0.2.0").unwrap();
+
+        let output = indoc! {r#"
+            [package]
+            name = "gpui_collections"
+            version = "0.2.0"
+            edition = "2021"
+            publish = true
+            # some comment about the license
+            license = "GPL-3.0-or-later"
+
+            [dependencies]
+            serde = "1.0"
+        "#};
+
+        assert_eq!(result, output);
+    }
+
+    #[test]
+    fn test_update_profile_override_in_toml() {
+        let input = indoc! {r#"
+            [profile.dev]
+            split-debuginfo = "unpacked"
+
+            [profile.dev.package]
+            taffy = { opt-level = 3 }
+            collections = { codegen-units = 256 }
+            refineable = { codegen-units = 256 }
+            util = { codegen-units = 256 }
+        "#};
+
+        let mut doc = input.parse::<toml_edit::DocumentMut>().unwrap();
+
+        update_profile_override_in_doc(&mut doc, "collections", "gpui_collections").unwrap();
+
+        let result = doc.to_string();
+
+        let output = indoc! {r#"
+            [profile.dev]
+            split-debuginfo = "unpacked"
+
+            [profile.dev.package]
+            taffy = { opt-level = 3 }
+            refineable = { codegen-units = 256 }
+            util = { codegen-units = 256 }
+            gpui_collections = { codegen-units = 256 }
         "#};
 
         assert_eq!(result, output);
