@@ -64,7 +64,7 @@ use std::{
 use sum_tree::{Bias, Dimensions, Edit, KeyedItem, SeekTarget, SumTree, Summary, TreeMap, TreeSet};
 use text::{LineEnding, Rope};
 use util::{
-    ResultExt, debug_panic,
+    ResultExt, debug_panic, maybe,
     paths::{PathMatcher, PathStyle, SanitizedPath, home_dir},
     rel_path::RelPath,
 };
@@ -1070,7 +1070,7 @@ impl LocalWorktree {
                     scan_requests_rx,
                     path_prefixes_to_scan_rx,
                     next_entry_id,
-                    state: Mutex::new(BackgroundScannerState {
+                    state: async_lock::Mutex::new(BackgroundScannerState {
                         prev_snapshot: snapshot.snapshot.clone(),
                         snapshot,
                         scanned_dirs: Default::default(),
@@ -3546,7 +3546,7 @@ impl<'a> sum_tree::Dimension<'a, EntrySummary> for PathKey {
 }
 
 struct BackgroundScanner {
-    state: Mutex<BackgroundScannerState>,
+    state: async_lock::Mutex<BackgroundScannerState>,
     fs: Arc<dyn Fs>,
     fs_case_sensitive: bool,
     status_updates_tx: UnboundedSender<ScanState>,
@@ -3572,31 +3572,38 @@ impl BackgroundScanner {
         // If the worktree root does not contain a git repository, then find
         // the git repository in an ancestor directory. Find any gitignore files
         // in ancestor directories.
-        let root_abs_path = self.state.lock().snapshot.abs_path.clone();
+        let root_abs_path = self.state.lock().await.snapshot.abs_path.clone();
         let (ignores, repo) = discover_ancestor_git_repo(self.fs.clone(), &root_abs_path).await;
         self.state
             .lock()
+            .await
             .snapshot
             .ignores_by_parent_abs_path
             .extend(ignores);
-        let containing_git_repository = repo.and_then(|(ancestor_dot_git, work_directory)| {
-            self.state
-                .lock()
-                .insert_git_repository_for_path(
-                    work_directory,
-                    ancestor_dot_git.clone().into(),
-                    self.fs.as_ref(),
-                    self.watcher.as_ref(),
-                )
-                .log_err()?;
-            Some(ancestor_dot_git)
-        });
+        let containing_git_repository = if let Some((ancestor_dot_git, work_directory)) = repo {
+            maybe!(async {
+                self.state
+                    .lock()
+                    .await
+                    .insert_git_repository_for_path(
+                        work_directory,
+                        ancestor_dot_git.clone().into(),
+                        self.fs.as_ref(),
+                        self.watcher.as_ref(),
+                    )
+                    .log_err()?;
+                Some(ancestor_dot_git)
+            })
+            .await
+        } else {
+            None
+        };
 
         log::trace!("containing git repository: {containing_git_repository:?}");
 
         let mut global_gitignore_events =
             if let Some(global_gitignore_path) = &paths::global_gitignore_path() {
-                self.state.lock().snapshot.global_gitignore =
+                self.state.lock().await.snapshot.global_gitignore =
                     if self.fs.is_file(&global_gitignore_path).await {
                         build_gitignore(global_gitignore_path, self.fs.as_ref())
                             .await
@@ -3610,13 +3617,13 @@ impl BackgroundScanner {
                     .await
                     .0
             } else {
-                self.state.lock().snapshot.global_gitignore = None;
+                self.state.lock().await.snapshot.global_gitignore = None;
                 Box::pin(futures::stream::empty())
             };
 
         let (scan_job_tx, scan_job_rx) = channel::unbounded();
         {
-            let mut state = self.state.lock();
+            let mut state = self.state.lock().await;
             state.snapshot.scan_id += 1;
             if let Some(mut root_entry) = state.snapshot.root_entry().cloned() {
                 let ignore_stack = state.snapshot.ignore_stack_for_abs_path(
@@ -3643,11 +3650,11 @@ impl BackgroundScanner {
         drop(scan_job_tx);
         self.scan_dirs(true, scan_job_rx).await;
         {
-            let mut state = self.state.lock();
+            let mut state = self.state.lock().await;
             state.snapshot.completed_scan_id = state.snapshot.scan_id;
         }
 
-        self.send_status_update(false, SmallVec::new());
+        self.send_status_update(false, SmallVec::new()).await;
 
         // Process any any FS events that occurred while performing the initial scan.
         // For these events, update events cannot be as precise, because we didn't
@@ -3692,7 +3699,7 @@ impl BackgroundScanner {
                     if did_scan {
                         let abs_path =
                         {
-                            let mut state = self.state.lock();
+                            let mut state = self.state.lock().await;
                             state.path_prefixes_to_scan.insert(request.path.clone());
                             state.snapshot.absolutize(&request.path)
                         };
@@ -3701,7 +3708,7 @@ impl BackgroundScanner {
                             self.process_events(vec![abs_path]).await;
                         }
                     }
-                    self.send_status_update(false, request.done);
+                    self.send_status_update(false, request.done).await;
                 }
 
                 paths = fs_events_rx.next().fuse() => {
@@ -3730,7 +3737,7 @@ impl BackgroundScanner {
         request.relative_paths.sort_unstable();
         self.forcibly_load_paths(&request.relative_paths).await;
 
-        let root_path = self.state.lock().snapshot.abs_path.clone();
+        let root_path = self.state.lock().await.snapshot.abs_path.clone();
         let root_canonical_path = self.fs.canonicalize(root_path.as_path()).await;
         let root_canonical_path = match &root_canonical_path {
             Ok(path) => SanitizedPath::new(path),
@@ -3752,7 +3759,7 @@ impl BackgroundScanner {
             .collect::<Vec<_>>();
 
         {
-            let mut state = self.state.lock();
+            let mut state = self.state.lock().await;
             let is_idle = state.snapshot.completed_scan_id == state.snapshot.scan_id;
             state.snapshot.scan_id += 1;
             if is_idle {
@@ -3769,11 +3776,11 @@ impl BackgroundScanner {
         )
         .await;
 
-        self.send_status_update(scanning, request.done)
+        self.send_status_update(scanning, request.done).await
     }
 
     async fn process_events(&self, mut abs_paths: Vec<PathBuf>) {
-        let root_path = self.state.lock().snapshot.abs_path.clone();
+        let root_path = self.state.lock().await.snapshot.abs_path.clone();
         let root_canonical_path = self.fs.canonicalize(root_path.as_path()).await;
         let root_canonical_path = match &root_canonical_path {
             Ok(path) => SanitizedPath::new(path),
@@ -3781,6 +3788,7 @@ impl BackgroundScanner {
                 let new_path = self
                     .state
                     .lock()
+                    .await
                     .snapshot
                     .root_file_handle
                     .clone()
@@ -3813,10 +3821,12 @@ impl BackgroundScanner {
         let mut dot_git_abs_paths = Vec::new();
         abs_paths.sort_unstable();
         abs_paths.dedup_by(|a, b| a.starts_with(b));
-        abs_paths.retain(|abs_path| {
+        {
+            let snapshot = &self.state.lock().await.snapshot;
+            abs_paths.retain(|abs_path| {
             let abs_path = &SanitizedPath::new(abs_path);
 
-            let snapshot = &self.state.lock().snapshot;
+
             {
                 let mut is_git_related = false;
 
@@ -3903,12 +3913,12 @@ impl BackgroundScanner {
                 true
             }
         });
-
+        }
         if relative_paths.is_empty() && dot_git_abs_paths.is_empty() {
             return;
         }
 
-        self.state.lock().snapshot.scan_id += 1;
+        self.state.lock().await.snapshot.scan_id += 1;
 
         let (scan_job_tx, scan_job_rx) = channel::unbounded();
         log::debug!("received fs events {:?}", relative_paths);
@@ -3922,29 +3932,29 @@ impl BackgroundScanner {
         .await;
 
         let affected_repo_roots = if !dot_git_abs_paths.is_empty() {
-            self.update_git_repositories(dot_git_abs_paths)
+            self.update_git_repositories(dot_git_abs_paths).await
         } else {
             Vec::new()
         };
 
         {
-            let mut ignores_to_update = self.ignores_needing_update();
+            let mut ignores_to_update = self.ignores_needing_update().await;
             ignores_to_update.extend(affected_repo_roots);
-            let ignores_to_update = self.order_ignores(ignores_to_update);
-            let snapshot = self.state.lock().snapshot.clone();
+            let ignores_to_update = self.order_ignores(ignores_to_update).await;
+            let snapshot = self.state.lock().await.snapshot.clone();
             self.update_ignore_statuses_for_paths(scan_job_tx, snapshot, ignores_to_update)
                 .await;
             self.scan_dirs(false, scan_job_rx).await;
         }
 
         {
-            let mut state = self.state.lock();
+            let mut state = self.state.lock().await;
             state.snapshot.completed_scan_id = state.snapshot.scan_id;
             for (_, entry) in mem::take(&mut state.removed_entries) {
                 state.scanned_dirs.remove(&entry.id);
             }
         }
-        self.send_status_update(false, SmallVec::new());
+        self.send_status_update(false, SmallVec::new()).await;
     }
 
     async fn update_global_gitignore(&self, abs_path: &Path) {
@@ -3953,7 +3963,7 @@ impl BackgroundScanner {
             .log_err()
             .map(Arc::new);
         let (prev_snapshot, ignore_stack, abs_path) = {
-            let mut state = self.state.lock();
+            let mut state = self.state.lock().await;
             state.snapshot.global_gitignore = ignore;
             let abs_path = state.snapshot.abs_path().clone();
             let ignore_stack =
@@ -3970,13 +3980,13 @@ impl BackgroundScanner {
         )
         .await;
         self.scan_dirs(false, scan_job_rx).await;
-        self.send_status_update(false, SmallVec::new());
+        self.send_status_update(false, SmallVec::new()).await;
     }
 
     async fn forcibly_load_paths(&self, paths: &[Arc<RelPath>]) -> bool {
         let (scan_job_tx, scan_job_rx) = channel::unbounded();
         {
-            let mut state = self.state.lock();
+            let mut state = self.state.lock().await;
             let root_path = state.snapshot.abs_path.clone();
             for path in paths {
                 for ancestor in path.ancestors() {
@@ -4001,7 +4011,7 @@ impl BackgroundScanner {
             self.scan_dir(&job).await.log_err();
         }
 
-        !mem::take(&mut self.state.lock().paths_to_scan).is_empty()
+        !mem::take(&mut self.state.lock().await.paths_to_scan).is_empty()
     }
 
     async fn scan_dirs(
@@ -4049,7 +4059,7 @@ impl BackgroundScanner {
                                     ) {
                                         Ok(_) => {
                                             last_progress_update_count += 1;
-                                            self.send_status_update(true, SmallVec::new());
+                                            self.send_status_update(true, SmallVec::new()).await;
                                         }
                                         Err(count) => {
                                             last_progress_update_count = count;
@@ -4074,8 +4084,12 @@ impl BackgroundScanner {
             .await;
     }
 
-    fn send_status_update(&self, scanning: bool, barrier: SmallVec<[barrier::Sender; 1]>) -> bool {
-        let mut state = self.state.lock();
+    async fn send_status_update(
+        &self,
+        scanning: bool,
+        barrier: SmallVec<[barrier::Sender; 1]>,
+    ) -> bool {
+        let mut state = self.state.lock().await;
         if state.changed_paths.is_empty() && scanning {
             return true;
         }
@@ -4104,7 +4118,7 @@ impl BackgroundScanner {
         let root_abs_path;
         let root_char_bag;
         {
-            let snapshot = &self.state.lock().snapshot;
+            let snapshot = &self.state.lock().await.snapshot;
             if self.settings.is_path_excluded(&job.path) {
                 log::error!("skipping excluded directory {:?}", job.path);
                 return Ok(());
@@ -4157,7 +4171,7 @@ impl BackgroundScanner {
             };
 
             if child_name == DOT_GIT {
-                let mut state = self.state.lock();
+                let mut state = self.state.lock().await;
                 state.insert_git_repository(
                     child_path.clone(),
                     self.fs.as_ref(),
@@ -4182,7 +4196,7 @@ impl BackgroundScanner {
 
             if self.settings.is_path_excluded(&child_path) {
                 log::debug!("skipping excluded child entry {child_path:?}");
-                self.state.lock().remove_path(&child_path);
+                self.state.lock().await.remove_path(&child_path);
                 continue;
             }
 
@@ -4282,7 +4296,7 @@ impl BackgroundScanner {
             new_entries.push(child_entry);
         }
 
-        let mut state = self.state.lock();
+        let mut state = self.state.lock().await;
 
         // Identify any subdirectories that should not be scanned.
         let mut job_ix = 0;
@@ -4364,7 +4378,7 @@ impl BackgroundScanner {
             None
         };
 
-        let mut state = self.state.lock();
+        let mut state = self.state.lock().await;
         let doing_recursive_update = scan_queue_tx.is_some();
 
         // Remove any entries for paths that no longer exist or are being recursively
@@ -4526,11 +4540,11 @@ impl BackgroundScanner {
             .await;
     }
 
-    fn ignores_needing_update(&self) -> Vec<Arc<Path>> {
+    async fn ignores_needing_update(&self) -> Vec<Arc<Path>> {
         let mut ignores_to_update = Vec::new();
 
         {
-            let snapshot = &mut self.state.lock().snapshot;
+            let snapshot = &mut self.state.lock().await.snapshot;
             let abs_path = snapshot.abs_path.clone();
             snapshot
                 .ignores_by_parent_abs_path
@@ -4558,12 +4572,12 @@ impl BackgroundScanner {
         ignores_to_update
     }
 
-    fn order_ignores(
+    async fn order_ignores(
         &self,
         mut ignores: Vec<Arc<Path>>,
     ) -> impl use<> + Iterator<Item = (Arc<Path>, IgnoreStack)> {
         let fs = self.fs.clone();
-        let snapshot = self.state.lock().snapshot.clone();
+        let snapshot = self.state.lock().await.snapshot.clone();
         ignores.sort_unstable();
         let mut ignores_to_update = ignores.into_iter().peekable();
         std::iter::from_fn(move || {
@@ -4631,7 +4645,7 @@ impl BackgroundScanner {
 
                 // Scan any directories that were previously ignored and weren't previously scanned.
                 if was_ignored && !entry.is_ignored && entry.kind.is_unloaded() {
-                    let state = self.state.lock();
+                    let state = self.state.lock().await;
                     if state.should_scan_directory(&entry) {
                         state.enqueue_scan_dir(
                             abs_path.clone(),
@@ -4662,7 +4676,7 @@ impl BackgroundScanner {
             }
         }
 
-        let state = &mut self.state.lock();
+        let state = &mut self.state.lock().await;
         for edit in &entries_by_path_edits {
             if let Edit::Insert(entry) = edit
                 && let Err(ix) = state.changed_paths.binary_search(&entry.path)
@@ -4678,9 +4692,9 @@ impl BackgroundScanner {
         state.snapshot.entries_by_id.edit(entries_by_id_edits, ());
     }
 
-    fn update_git_repositories(&self, dot_git_paths: Vec<PathBuf>) -> Vec<Arc<Path>> {
+    async fn update_git_repositories(&self, dot_git_paths: Vec<PathBuf>) -> Vec<Arc<Path>> {
         log::trace!("reloading repositories: {dot_git_paths:?}");
-        let mut state = self.state.lock();
+        let mut state = self.state.lock().await;
         let scan_id = state.snapshot.scan_id;
         let mut affected_repo_roots = Vec::new();
         for dot_git_dir in dot_git_paths {
@@ -5525,9 +5539,11 @@ fn discover_git_paths(
         if let Some(path) = executor.block(fs.canonicalize(&path)).log_err() {
             repository_dir_abs_path = Path::new(&path).into();
             common_dir_abs_path = repository_dir_abs_path.clone();
-            if let Some(commondir_contents) = smol::block_on(fs.load(&path.join("commondir"))).ok()
-                && let Some(commondir_path) =
-                    smol::block_on(fs.canonicalize(&path.join(commondir_contents.trim()))).log_err()
+
+            if let Some(commondir_contents) = executor.block(fs.load(&path.join("commondir"))).ok()
+                && let Some(commondir_path) = executor
+                    .block(fs.canonicalize(&path.join(commondir_contents.trim())))
+                    .log_err()
             {
                 common_dir_abs_path = commondir_path.as_path().into();
             }
