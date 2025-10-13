@@ -10,7 +10,7 @@ use project::Project;
 use project::agent_server_store::AgentServerCommand;
 use serde::Deserialize;
 use task::Shell;
-use util::ResultExt as _;
+use util::{ResultExt as _, get_default_system_shell_preferring_bash};
 
 use std::path::PathBuf;
 use std::{any::Any, cell::RefCell};
@@ -834,7 +834,7 @@ impl acp::Client for ClientDelegate {
                     .and_then(|r| r.read(cx).default_system_shell())
                     .map(Shell::Program)
             })?
-            .unwrap_or(task::Shell::System);
+            .unwrap_or_else(|| Shell::Program(get_default_system_shell_preferring_bash()));
         let (task_command, task_args) = task::ShellBuilder::new(&shell)
             .redirect_stdin_to_dev_null()
             .build(Some(args.command.clone()), &args.args);
