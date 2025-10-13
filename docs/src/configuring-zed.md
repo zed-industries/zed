@@ -9,11 +9,11 @@ In addition to the settings described here, you may also want to change your [th
 These are your personal settings that will apply to any Zed instance you open, and they'll apply to every instance of Zed you open.
 
 You can access user settings via:
+
 - Command Palette {#kb zed::OpenSettings}
 - Shortcut `cmd-,`
 
 You can also edit settings directly in the JSON via {#kb zed::OpenSettingsFile} or with `opt+cmd-,`.
-
 
 <!--
 TBD: Settings files. Rewrite with "remote settings" in mind (e.g. `local settings` on the remote host).
@@ -21,7 +21,9 @@ Consider renaming `zed: Open Local Settings` to `zed: Open Project Settings`.
 
 TBD: Add settings documentation about how settings are merged as overlays. E.g. project>local>default. Note how settings that are maps are merged, but settings that are arrays are replaced and must include the defaults.
 -->
+
 ## Project Settings
+
 Project settings will override your user settings, and apply specifically to one project. Project settings can be viewed in the Settings Editor next to the user settings.
 
 Although most projects will only need one settings file at the root, you can add more local settings files for subdirectories as needed. Not all settings can be set in local files, just those that impact the behavior of the editor and language tooling. For example you can set `tab_size`, `formatter` etc. but not `theme`, `vim_mode` and similar.
@@ -29,6 +31,7 @@ Although most projects will only need one settings file at the root, you can add
 # Settings
 
 ## Active Pane Modifiers
+
 This setting applies stying to the active pane in your editor.
 
 - Border size: Size of the border surrounding the active pane. When set to 0, the active pane doesn't have any border. The border is drawn inset.
@@ -41,6 +44,7 @@ This setting applies stying to the active pane in your editor.
 Settings Editor (`cmd-,`) > Appearance & Behavior > Window.
 
 **Sample JSON**
+
 ```json [settings]
 {
   "active_pane_modifiers": {
@@ -130,6 +134,7 @@ Define extensions which should be installed (`true`) or never installed (`false`
 Determines when to automatically save edited buffers. Autosave is off by default.
 
 **Options**
+
 - Off
 - On focus change
 - On window change
@@ -168,6 +173,7 @@ Determines whether or not to automatically check for updates. By default, it's e
 Base key bindings scheme. Base keymaps can be overridden with user keymaps. The default is VS Code.
 
 **Options**
+
 - VS Code
 - Atom
 - JetBrains
@@ -229,7 +235,7 @@ The default line height for text in the editor. The default is Comfortable, thou
 
 ## Centered Layout
 
-Congiuure the padding for when the editor is in  centered layout mode.
+Congiuure the padding for when the editor is in centered layout mode.
 
 ## Close on File Delete
 
@@ -248,6 +254,7 @@ Whether or not to prompt the user to confirm before closing the application. By 
 Controls which level to use to filter out diagnostics displayed in the editor.
 
 **Options**
+
 1. Allow all diagnostics (default)
 2. Show only errors
 3. Show errors and warnings
@@ -261,8 +268,8 @@ Controls whether to disable all AI features in Zed. By default, it's disabled.
 ## Direnv Integration
 
 Settings for [direnv](https://direnv.net/) integration. Requires `direnv` to be installed. By default, it uses loads `"direct"`.
-  `direnv` integration make it possible to use the environment variables set by a `direnv` configuration to detect some language servers in `$PATH` instead of installing them.
-  It also allows for those environment variables to be used in tasks.
+`direnv` integration make it possible to use the environment variables set by a `direnv` configuration to detect some language servers in `$PATH` instead of installing them.
+It also allows for those environment variables to be used in tasks.
 
 **Options**
 
@@ -276,6 +283,7 @@ There are two options to choose from:
 What to do when multibuffer is double clicked in some of its excerpts (parts of singleton buffers). By default, it behaves as a regular buffer and selects the whole word.
 
 **Options**
+
 1. Behave as a regular buffer and select the whole word (default):
 2. Open the excerpt clicked as a new buffer in the new tab:
 
@@ -319,6 +327,7 @@ List of `string` values.
 ## Edit Predictions Disabled in
 
 A list of language scopes in which edit predictions should be disabled.
+
 - Default: `[]`
 
 **Options**
@@ -377,6 +386,7 @@ Controls whether or not the cursor blinks. By default, it's enabled.
 Controls the cursor shape for the default editor. By default, it's shown as a bar.
 
 **Options**
+
 1. Bar: A vertical bar
 2. Block: A block that surrounds the following character:
 3. Underline: An underline / underscore that runs along the following character:
@@ -434,6 +444,7 @@ Determines how snippets are sorted relative to other completion items. By defaul
 Determines whether or not to show the editor scrollbar and various elements in it. The scrollbar shows automatically by default, though this can be configured.
 
 By default, the scrollbar will show:
+
 - Cursor position
 - Git diff indicators
 - Buffer search results
@@ -467,6 +478,7 @@ All these options are configurable.
 When to show the editor scrollbar.
 
 **Options**
+
 1. Auto: Show the scrollbar if there's important information or follow the system's configured behavior
 2. System: Match the system's configured behavior
 3. Always: Always show the scrollbar
@@ -486,14 +498,16 @@ Which diagnostic indicators to show in the scrollbar.
 
 ## Minimap
 
-Configure how the minimap, which provides an overview of your document, shows in your editor. By default, the minimap does not show. 
+Configure how the minimap, which provides an overview of your document, shows in your editor. By default, the minimap does not show.
 
 When it does show:
+
 - The thumb always shows
 - A border shows on all sides except the left
 - Minimap inherits the editor's current line highlight setting
 
 **Sample JSON**
+
 ```json [settings]
 {
   "minimap": {
