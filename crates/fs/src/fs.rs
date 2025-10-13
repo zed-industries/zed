@@ -640,30 +640,47 @@ impl Fs for RealFs {
         if let Some(path) = path.parent() {
             self.create_dir(path).await?;
         }
-        smol::fs::write(path, content).await?;
-        Ok(())
+        let path = path.to_owned();
+        let contents = content.to_owned();
+        self.executor
+            .spawn(async move {
+                std::fs::write(path, contents)?;
+                Ok(())
+            })
+            .await
     }
 
     async fn canonicalize(&self, path: &Path) -> Result<PathBuf> {
-        Ok(smol::fs::canonicalize(path)
+        let path = path.to_owned();
+        self.executor
+            .spawn(async move {
+                Ok(std::fs::canonicalize(&path)
+                    .with_context(|| format!("canonicalizing {path:?}"))?)
+            })
             .await
-            .with_context(|| format!("canonicalizing {path:?}"))?)
     }
 
     async fn is_file(&self, path: &Path) -> bool {
-        smol::fs::metadata(path)
+        let path = path.to_owned();
+        self.executor
+            .spawn(async move { std::fs::metadata(path).is_ok_and(|metadata| metadata.is_file()) })
             .await
-            .is_ok_and(|metadata| metadata.is_file())
     }
 
     async fn is_dir(&self, path: &Path) -> bool {
-        smol::fs::metadata(path)
+        let path = path.to_owned();
+        self.executor
+            .spawn(async move { std::fs::metadata(path).is_ok_and(|metadata| metadata.is_dir()) })
             .await
-            .is_ok_and(|metadata| metadata.is_dir())
     }
 
     async fn metadata(&self, path: &Path) -> Result<Option<Metadata>> {
-        let symlink_metadata = match smol::fs::symlink_metadata(path).await {
+        let path_buf = path.to_owned();
+        let symlink_metadata = match self
+            .executor
+            .spawn(async move { std::fs::symlink_metadata(&path_buf) })
+            .await
+        {
             Ok(metadata) => metadata,
             Err(err) => {
                 return match (err.kind(), err.raw_os_error()) {
@@ -675,17 +692,23 @@ impl Fs for RealFs {
         };
 
         let path_buf = path.to_path_buf();
-        let path_exists = smol::unblock(move || {
-            path_buf
-                .try_exists()
-                .with_context(|| format!("checking existence for path {path_buf:?}"))
-        })
-        .await?;
+        let path_exists = self
+            .executor
+            .spawn(async move {
+                path_buf
+                    .try_exists()
+                    .with_context(|| format!("checking existence for path {path_buf:?}"))
+            })
+            .await?;
         let is_symlink = symlink_metadata.file_type().is_symlink();
         let metadata = match (is_symlink, path_exists) {
-            (true, true) => smol::fs::metadata(path)
-                .await
-                .with_context(|| "accessing symlink for path {path}")?,
+            (true, true) => {
+                let path_buf = path.to_path_buf();
+                self.executor
+                    .spawn(async move { std::fs::metadata(path_buf) })
+                    .await
+                    .with_context(|| "accessing symlink for path {path}")?
+            }
             _ => symlink_metadata,
         };
 
