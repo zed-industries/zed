@@ -7,7 +7,7 @@ use gpui::{
     Window, actions,
 };
 use picker::{Picker, PickerDelegate};
-use settings::{SettingsStore, update_settings_file};
+use settings::{Settings, SettingsStore, update_settings_file};
 use std::sync::Arc;
 use theme::{Appearance, Theme, ThemeMeta, ThemeRegistry, ThemeSettings};
 use ui::{ListItem, ListItemSpacing, prelude::*, v_flex};
@@ -231,11 +231,10 @@ impl PickerDelegate for ThemeSelectorDelegate {
     ) {
         self.selection_completed = true;
 
-        let theme_name = cx.theme().name.clone();
+        let appearance = Appearance::from(window.appearance());
+        let theme_name = ThemeSettings::get_global(cx).theme.name(appearance).0;
 
         telemetry::event!("Settings Changed", setting = "theme", value = theme_name);
-
-        let appearance = Appearance::from(window.appearance());
 
         update_settings_file(self.fs.clone(), cx, move |settings, _| {
             theme::set_theme(settings, theme_name.to_string(), appearance);
