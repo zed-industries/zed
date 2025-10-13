@@ -49,7 +49,7 @@ impl<D, T: AsRef<Occurrences<S>>, S> SlidingWindow<D, T, S> {
         self.regions.clear();
         self.numerator = 0;
         self.window_count = 0;
-        self.jaccard_denominator_part = 0;
+        self.jaccard_denominator_part = self.target.as_ref().len();
     }
 
     pub fn push_back(&mut self, data: D, hashes: impl IntoIterator<Item = HashFrom<S>>) {
@@ -126,7 +126,11 @@ impl<D, T: AsRef<Occurrences<S>>, S> SlidingWindow<D, T, S> {
         } else {
             debug_panic!("bug: underflow in sliding window text similarity");
         }
-        self.numerator as f32 / denominator as f32
+        if denominator == 0 {
+            0.0
+        } else {
+            self.numerator as f32 / denominator as f32
+        }
     }
 }
 
@@ -154,6 +158,10 @@ mod test {
         checked_window.push_back("a b c d");
         checked_window.pop_front();
         checked_window.pop_front();
+
+        checked_window.clear();
+        checked_window.push_back("d d d");
+        checked_window.pop_front();
     }
 
     #[derive(Debug)]
@@ -172,6 +180,15 @@ mod test {
                 first_line: 0,
                 last_line: 0,
             }
+        }
+
+        #[track_caller]
+        fn clear(&mut self) {
+            self.inner.clear();
+            self.text.clear();
+            self.first_line = 0;
+            self.last_line = 0;
+            self.check_after_mutation();
         }
 
         #[track_caller]
