@@ -1904,7 +1904,7 @@ impl SettingsWindow {
         let mut page_content = v_flex().id("settings-ui-page").size_full();
 
         let has_active_search = !self.search_bar.read(cx).is_empty(cx);
-        let has_no_results = self.visible_items.len() == 0 && has_active_search && false;
+        let has_no_results = self.visible_items.len() == 0 && has_active_search;
 
         if has_no_results {
             let search_query = self.search_bar.read(cx).text(cx);
