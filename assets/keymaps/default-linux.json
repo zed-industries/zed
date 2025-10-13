@@ -546,7 +546,8 @@
       "ctrl-\\": "pane::SplitRight",
       "ctrl-alt-shift-c": "editor::DisplayCursorNames",
       "alt-.": "editor::GoToHunk",
-      "alt-,": "editor::GoToPreviousHunk"
+      "alt-,": "editor::GoToPreviousHunk",
+      "alt-z": "editor::ToggleSoftWrap"
     }
   },
   {

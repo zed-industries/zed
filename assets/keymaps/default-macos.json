@@ -601,7 +601,8 @@
       "cmd-k r": "editor::RevealInFileManager",
       "cmd-k p": "editor::CopyPath",
       "cmd-\\": "pane::SplitRight",
-      "ctrl-cmd-c": "editor::DisplayCursorNames"
+      "ctrl-cmd-c": "editor::DisplayCursorNames",
+      "alt-z": "editor::ToggleSoftWrap"
     }
   },
   {
