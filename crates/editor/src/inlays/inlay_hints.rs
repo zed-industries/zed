@@ -337,6 +337,18 @@ impl Editor {
         }
     }
 
+    pub fn clear_inlay_hints(&mut self, cx: &mut Context<Self>) {
+        self.splice_inlays(
+            &self
+                .visible_inlay_hints(cx)
+                .into_iter()
+                .map(|inlay| inlay.id)
+                .collect::<Vec<_>>(),
+            Vec::new(),
+            cx,
+        );
+    }
+
     fn refresh_editor_data(
         &mut self,
         reason: &InlayHintRefreshReason,
@@ -354,14 +366,7 @@ impl Editor {
                         if enabled {
                             InvalidationStrategy::None
                         } else {
-                            self.splice_inlays(
-                                &visible_inlay_hints
-                                    .iter()
-                                    .map(|inlay| inlay.id)
-                                    .collect::<Vec<InlayId>>(),
-                                Vec::new(),
-                                cx,
-                            );
+                            self.clear_inlay_hints(cx);
                             return None;
                         }
                     }
@@ -373,14 +378,7 @@ impl Editor {
                     if *enabled {
                         InvalidationStrategy::None
                     } else {
-                        self.splice_inlays(
-                            &visible_inlay_hints
-                                .iter()
-                                .map(|inlay| inlay.id)
-                                .collect::<Vec<InlayId>>(),
-                            Vec::new(),
-                            cx,
-                        );
+                        self.clear_inlay_hints(cx);
                         return None;
                     }
                 } else {
@@ -3314,6 +3312,7 @@ pub mod tests {
     pub fn visible_hint_labels(editor: &Editor, cx: &Context<Editor>) -> Vec<String> {
         editor
             .visible_inlay_hints(cx)
+            .into_iter()
             .map(|hint| hint.text().to_string())
             .collect()
     }
