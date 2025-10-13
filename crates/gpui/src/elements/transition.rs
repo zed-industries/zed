@@ -209,7 +209,7 @@ impl<E: IntoElement + 'static, T: TransitionValues<'static> + Clone + 'static> A
     }
 }
 
-/// A data type which can be used as a transition goal.
+/// A type which can be used as a transition goal.
 pub trait TransitionGoal {
     /// Defines how a delta is applied to a value.
     fn apply_delta(&self, to: &Self, delta: f32) -> Self;
