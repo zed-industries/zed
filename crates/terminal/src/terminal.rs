@@ -495,7 +495,7 @@ impl TerminalBuilder {
                 .unwrap_or(params.program.clone())
         });
 
-        let shell_kind = shell.shell_kind();
+        let shell_kind = shell.shell_kind(cfg!(windows));
 
         let pty_options = {
             let alac_shell = shell_params.as_ref().map(|params| {
