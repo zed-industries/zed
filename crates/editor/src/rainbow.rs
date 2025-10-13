@@ -12,14 +12,14 @@
 //
 // This module provides the shared logic for both systems including caching.
 
-use gpui::HighlightStyle;
+use gpui::{ HighlightStyle, Hsla, Rgba };
 use language::rainbow_config;
 use multi_buffer::MultiBufferSnapshot;
 use std::ops::Range;
 use std::cell::RefCell;
 use theme::SyntaxTheme;
 
-use crate::editor_settings::RainbowConfig;
+use crate::editor_settings::{ RainbowConfig, VariableColorMode };
 
 use collections::HashMap;
 
@@ -50,17 +50,31 @@ impl RainbowCache {
     }
 
     #[inline]
+    #[allow(dead_code)]
     pub fn get(&self, identifier: &str) -> Option<HighlightStyle> {
         let hash = hash_identifier(identifier);
         self.cache.get(&hash).copied()
     }
 
+    #[inline]
+    pub fn get_by_hash(&self, hash: u64) -> Option<HighlightStyle> {
+        self.cache.get(&hash).copied()
+    }
+
+    #[allow(dead_code)]
     pub fn insert(&mut self, identifier: &str, style: HighlightStyle) {
         if self.cache.len() >= self.max_entries {
             self.cache.retain(|hash, _| hash % 2 == 0);
         }
 
         let hash = hash_identifier(identifier);
+        self.cache.insert(hash, style);
+    }
+
+    pub fn insert_by_hash(&mut self, hash: u64, style: HighlightStyle) {
+        if self.cache.len() >= self.max_entries {
+            self.cache.retain(|h, _| h % 2 == 0);
+        }
         self.cache.insert(hash, style);
     }
 
@@ -100,9 +114,82 @@ fn fibonacci_hash(hash: u64, palette_size: usize) -> usize {
 
 /// Maps an identifier name to a color palette index.
 #[inline]
+#[allow(dead_code)]
 pub fn hash_to_color_index(identifier: &str, palette_size: usize) -> usize {
     let hash = hash_identifier(identifier);
     fibonacci_hash(hash, palette_size)
+}
+
+// ============================================================================
+// Golden Ratio HSL Color Generation
+// ============================================================================
+
+const GOLDEN_RATIO_CONJUGATE: f32 = 0.618033988749895;
+
+/// Generates a color using golden ratio for optimal color distribution.
+///
+/// Based on Martin Ankerl's algorithm: https://martin.ankerl.com/2009/12/09/how-to-create-random-colors-programmatically/
+///
+/// The golden ratio ensures each new color is maximally different from all previous colors,
+/// providing better visual distinction than palette-based approaches.
+#[inline]
+fn hash_to_hue_golden_ratio(hash: u64) -> f32 {
+    let normalized = ((hash as f64) / (u64::MAX as f64)) as f32;
+    (normalized * GOLDEN_RATIO_CONJUGATE) % 1.0
+}
+
+/// Converts HSL to RGB color.
+///
+/// # Arguments
+/// * `h` - Hue (0.0 to 1.0)
+/// * `s` - Saturation (0.0 to 1.0)
+/// * `l` - Lightness (0.0 to 1.0)
+#[inline]
+#[allow(dead_code)]
+fn hsl_to_rgb(h: f32, s: f32, l: f32) -> Rgba {
+    let c = (1.0 - (2.0 * l - 1.0).abs()) * s;
+    let x = c * (1.0 - (((h * 6.0) % 2.0) - 1.0).abs());
+    let m = l - c / 2.0;
+
+    let (r, g, b) = match (h * 6.0) as u32 {
+        0 => (c, x, 0.0),
+        1 => (x, c, 0.0),
+        2 => (0.0, c, x),
+        3 => (0.0, x, c),
+        4 => (x, 0.0, c),
+        _ => (c, 0.0, x),
+    };
+
+    Rgba {
+        r: r + m,
+        g: g + m,
+        b: b + m,
+        a: 1.0,
+    }
+}
+
+/// Generates a dynamic rainbow color using golden ratio distribution.
+///
+/// Fixed saturation and lightness values ensure consistent, readable colors
+/// across all themes while the hue varies based on the identifier hash.
+#[inline]
+fn generate_dynamic_rainbow_color(hash: u64) -> HighlightStyle {
+    let hue = hash_to_hue_golden_ratio(hash);
+    // Fixed saturation and lightness for consistency and readability
+    let saturation = 0.65; // Vibrant but not overwhelming
+    let lightness = 0.7; // Bright enough for dark themes, visible on light themes
+
+    let hsla = Hsla {
+        h: hue,
+        s: saturation,
+        l: lightness,
+        a: 1.0,
+    };
+
+    HighlightStyle {
+        color: Some(hsla),
+        ..Default::default()
+    }
 }
 
 // ============================================================================
@@ -161,24 +248,24 @@ pub fn extract_complete_identifier(
     }
 
     let identifier: String = buffer.text_for_range(start..end).collect();
-    
+
     // CRITICAL: Validate the extracted string is a valid identifier
     // This prevents extracting things like "iter()" or "&base_profile"
     if identifier.is_empty() || identifier.len() < 2 {
         return None;
     }
-    
+
     // Must start with letter or underscore
     let first_char = identifier.chars().next()?;
     if !first_char.is_alphabetic() && first_char != '_' {
         return None;
     }
-    
+
     // ALL characters must be alphanumeric or underscore (no parentheses, operators, whitespace)
     if !identifier.chars().all(|c| c.is_alphanumeric() || c == '_') {
         return None;
     }
-    
+
     Some((start..end, identifier))
 }
 
@@ -186,27 +273,27 @@ pub fn extract_complete_identifier(
 // Rainbow Highlighting Application
 // ============================================================================
 
-/// Applies rainbow highlighting to an identifier.
+/// Applies variable color highlighting to an identifier.
 ///
 /// # Arguments
 /// * `identifier` - The variable name to color
 /// * `is_variable_like` - Whether the token is a variable or parameter
-/// * `rainbow_enabled` - Whether rainbow highlighting is enabled in settings
-/// * `theme` - The syntax theme with rainbow palette
+/// * `rainbow_config` - Rainbow highlighting configuration (enabled and mode)
+/// * `theme` - The syntax theme with rainbow palette (used for theme_palette mode)
 /// * `cache` - Cache for computed styles
 ///
 /// # Returns
-/// An optional `HighlightStyle` if rainbow highlighting should be applied.
+/// An optional `HighlightStyle` if variable color highlighting should be applied.
 #[inline]
 pub fn apply_rainbow_highlighting(
     identifier: &str,
     is_variable_like: bool,
-    rainbow_enabled: bool,
+    rainbow_config: &RainbowConfig,
     theme: &SyntaxTheme,
     cache: &mut RainbowCache
 ) -> Option<HighlightStyle> {
     // Fast path: early returns
-    if !rainbow_enabled || !is_variable_like {
+    if !rainbow_config.enabled || !is_variable_like {
         return None;
     }
 
@@ -214,20 +301,30 @@ pub fn apply_rainbow_highlighting(
         return None;
     }
 
-    // Check cache first
-    if let Some(cached_style) = cache.get(identifier) {
+    // Compute hash once
+    let hash = hash_identifier(identifier);
+
+    // Check cache first using pre-computed hash
+    if let Some(cached_style) = cache.get_by_hash(hash) {
         return Some(cached_style);
     }
 
-    // Compute and cache rainbow color
-    let palette_size = theme.rainbow_palette_size();
-    let hash_index = hash_to_color_index(identifier, palette_size);
-    if let Some(style) = theme.rainbow_color(hash_index) {
-        cache.insert(identifier, style);
-        Some(style)
-    } else {
-        None
-    }
+    // Compute color based on mode
+    let style = match rainbow_config.mode {
+        VariableColorMode::DynamicHSL => {
+            // Generate color using golden ratio for optimal distribution
+            generate_dynamic_rainbow_color(hash)
+        }
+        VariableColorMode::ThemePalette => {
+            // Use theme's rainbow palette
+            let palette_size = theme.rainbow_palette_size();
+            let hash_index = fibonacci_hash(hash, palette_size);
+            theme.rainbow_color(hash_index)?
+        }
+    };
+
+    cache.insert_by_hash(hash, style);
+    Some(style)
 }
 
 /// Helper to determine if a token type should receive rainbow highlighting.
@@ -297,32 +394,27 @@ pub fn apply_to_chunk(
     // Check cache FIRST - if this chunk is part of a cached identifier, return cached color
     if let Some(cached) = cached_identifier {
         if chunk_range.start >= cached.range.start && chunk_range.end <= cached.range.end {
-            log::info!("Rainbow: cache hit for chunk {:?} in cached range {:?}", chunk_range, cached.range);
             return cached.style;
         }
     }
-    
+
     // Extract full identifier by walking backwards/forwards
-    let (extracted_range, identifier) = match extract_complete_identifier(buffer_snapshot, chunk_range.clone()) {
+    let (extracted_range, identifier) = match extract_complete_identifier(buffer_snapshot, chunk_range) {
         Some(result) => result,
         None => {
-            log::info!("Rainbow: extraction failed for chunk {:?}", chunk_range);
             return None;
         }
     };
-    
-    log::info!("Rainbow: extracted '{}' from {:?} (chunk was {:?})", identifier, extracted_range, chunk_range);
 
     // Compute rainbow color
     let style = with_rainbow_cache(|cache| {
         let result = apply_rainbow_highlighting(
             &identifier,
             true, // We already know it's variable-like
-            rainbow_config.enabled,
+            rainbow_config,
             theme,
             cache
         );
-        log::info!("Rainbow: '{}' got color: {:?}", identifier, result.is_some());
         result
     });
 

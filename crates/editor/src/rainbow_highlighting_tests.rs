@@ -1,6 +1,12 @@
 use crate::rainbow::{RainbowCache, is_variable_like_token, apply_rainbow_highlighting, hash_to_color_index};
+use crate::editor_settings::{RainbowConfig, VariableColorMode};
 use gpui::HighlightStyle;
 use theme::SyntaxTheme;
+
+// Test helper
+fn enabled_config() -> RainbowConfig {
+    RainbowConfig { enabled: true, mode: VariableColorMode::ThemePalette }
+}
 
 #[gpui::test]
 fn test_variable_like_token_detection() {
@@ -20,8 +26,9 @@ fn test_variable_like_token_detection() {
 #[gpui::test]
 fn test_rainbow_highlight_when_disabled() {
     let theme = SyntaxTheme::default();
+    let config = RainbowConfig { enabled: false, mode: VariableColorMode::ThemePalette };
     
-    let result = apply_rainbow_highlighting("my_variable", true, false, &theme, &mut RainbowCache::new());
+    let result = apply_rainbow_highlighting("my_variable", true, &config, &theme, &mut RainbowCache::new());
     
     assert!(result.is_none(), "Should return None when rainbow highlighting is disabled");
 }
@@ -30,7 +37,7 @@ fn test_rainbow_highlight_when_disabled() {
 fn test_rainbow_highlight_non_variable() {
     let theme = SyntaxTheme::default();
     
-    let result = apply_rainbow_highlighting("function_name", false, true, &theme, &mut RainbowCache::new());
+    let result = apply_rainbow_highlighting("function_name", false, &enabled_config(), &theme, &mut RainbowCache::new());
     
     assert!(result.is_none(), "Should return None for non-variable tokens");
 }
@@ -39,7 +46,7 @@ fn test_rainbow_highlight_non_variable() {
 fn test_rainbow_highlight_invalid_identifier() {
     let theme = SyntaxTheme::default();
     
-    let result = apply_rainbow_highlighting("a", true, true, &theme, &mut RainbowCache::new());
+    let result = apply_rainbow_highlighting("a", true, &enabled_config(), &theme, &mut RainbowCache::new());
     
     assert!(result.is_none(), "Should return None for identifiers that are too short");
 }
@@ -48,7 +55,7 @@ fn test_rainbow_highlight_invalid_identifier() {
 fn test_rainbow_highlight_valid_identifier() {
     let theme = SyntaxTheme::default();
     
-    let result = apply_rainbow_highlighting("my_variable", true, true, &theme, &mut RainbowCache::new());
+    let result = apply_rainbow_highlighting("my_variable", true, &enabled_config(), &theme, &mut RainbowCache::new());
     
     assert!(result.is_some(), "Should return Some for valid variable identifiers");
 }
@@ -57,8 +64,8 @@ fn test_rainbow_highlight_valid_identifier() {
 fn test_rainbow_highlight_determinism() {
     let theme = SyntaxTheme::default();
     
-    let result1 = apply_rainbow_highlighting("foo_bar", true, true, &theme, &mut RainbowCache::new());
-    let result2 = apply_rainbow_highlighting("foo_bar", true, true, &theme, &mut RainbowCache::new());
+    let result1 = apply_rainbow_highlighting("foo_bar", true, &enabled_config(), &theme, &mut RainbowCache::new());
+    let result2 = apply_rainbow_highlighting("foo_bar", true, &enabled_config(), &theme, &mut RainbowCache::new());
     
     assert_eq!(result1, result2, "Same identifier should always produce same color");
 }
@@ -84,8 +91,8 @@ fn test_rainbow_highlight_cached_same_result() {
     let theme = SyntaxTheme::default();
     let mut cache = RainbowCache::new();
     
-    let result1 = apply_rainbow_highlighting("my_var", true, true, &theme, &mut cache);
-    let result2 = apply_rainbow_highlighting("my_var", true, true, &theme, &mut cache);
+    let result1 = apply_rainbow_highlighting("my_var", true, &enabled_config(), &theme, &mut cache);
+    let result2 = apply_rainbow_highlighting("my_var", true, &enabled_config(), &theme, &mut cache);
     
     assert_eq!(result1, result2, "Cached results should be consistent");
 }
@@ -95,7 +102,7 @@ fn test_rainbow_highlight_cache_hit() {
     let theme = SyntaxTheme::default();
     let mut cache = RainbowCache::new();
     
-    let _ = apply_rainbow_highlighting("my_var", true, true, &theme, &mut cache);
+    let _ = apply_rainbow_highlighting("my_var", true, &enabled_config(), &theme, &mut cache);
     
     let cached_result = cache.get("my_var");
     assert!(cached_result.is_some(), "Identifier should be cached after first access");
@@ -158,7 +165,7 @@ fn test_rainbow_highlight_keyword_exclusion() {
     let keywords = vec!["self", "super", "this", "let", "const", "var"];
     
     for keyword in keywords {
-        let result = apply_rainbow_highlighting(keyword, true, true, &theme, &mut RainbowCache::new());
+        let result = apply_rainbow_highlighting(keyword, true, &enabled_config(), &theme, &mut RainbowCache::new());
         assert!(result.is_none() || result.is_some(), "Keywords handling should be consistent");
     }
 }
@@ -179,7 +186,7 @@ fn test_rainbow_highlight_edge_cases() {
     ];
     
     for (identifier, is_variable) in edge_cases {
-        let result = apply_rainbow_highlighting(identifier, is_variable, true, &theme, &mut RainbowCache::new());
+        let result = apply_rainbow_highlighting(identifier, is_variable, &enabled_config(), &theme, &mut RainbowCache::new());
         if identifier.len() >= 2 {
             assert!(result.is_some(), "Valid identifier '{}' should get rainbow color", identifier);
         }
@@ -228,7 +235,7 @@ fn test_unicode_identifier_handling() {
     ];
     
     for id in unicode_ids {
-        let result = apply_rainbow_highlighting(id, true, true, &theme, &mut RainbowCache::new());
+        let result = apply_rainbow_highlighting(id, true, &enabled_config(), &theme, &mut RainbowCache::new());
         if id.chars().count() >= 2 {
             let _ = result;
         }

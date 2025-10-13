@@ -164,13 +164,43 @@ pub struct SearchSettings {
     pub regex: bool,
 }
 
-/// Rainbow highlighting configuration.
+/// Variable color highlighting mode.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
+pub enum VariableColorMode {
+    /// Use theme's rainbow color palette (limited to palette size).
+    #[default]
+    ThemePalette,
+    /// Generate colors dynamically using golden ratio HSL (infinite colors, better distribution).
+    DynamicHSL,
+}
+
+/// Variable color highlighting configuration.
+/// 
+/// This feature assigns consistent, distinct colors to different variables
+/// to improve code readability and help distinguish between identifiers.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct RainbowConfig {
-    /// Whether rainbow highlighting is enabled.
+    /// Whether variable color highlighting is enabled.
     ///
     /// Default: false
     pub enabled: bool,
+    
+    /// Color generation mode.
+    ///
+    /// - `ThemePalette`: Uses colors from your theme's rainbow palette (respects theme design)
+    /// - `DynamicHSL`: Generates colors using golden ratio for optimal distribution
+    ///
+    /// Default: ThemePalette
+    pub mode: VariableColorMode,
+}
+
+impl Default for RainbowConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            mode: VariableColorMode::ThemePalette,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -182,15 +212,18 @@ mod rainbow_tests {
         let config = RainbowConfig::default();
         
         assert!(!config.enabled, "Should be disabled by default");
+        assert_eq!(config.mode, VariableColorMode::ThemePalette, "Should default to theme palette");
     }
     
     #[test]
     fn test_rainbow_config_enabled() {
         let config = RainbowConfig {
             enabled: true,
+            mode: VariableColorMode::DynamicHSL,
         };
         
         assert!(config.enabled);
+        assert_eq!(config.mode, VariableColorMode::DynamicHSL);
     }
 }
 
@@ -299,8 +332,20 @@ impl Settings for EditorSettings {
             },
             lsp_document_colors: editor.lsp_document_colors.unwrap(),
             minimum_contrast_for_highlights: editor.minimum_contrast_for_highlights.unwrap(),
-            rainbow_highlighting: editor.rainbow_highlighting.map(|rh| RainbowConfig {
-                enabled: rh.enabled.unwrap_or(false),
+            rainbow_highlighting: editor.rainbow_highlighting.map(|rh| {
+                let mode = match rh.mode.as_deref() {
+                    Some("dynamic_hsl") => VariableColorMode::DynamicHSL,
+                    Some("theme_palette") | None => VariableColorMode::ThemePalette,
+                    Some(other) => {
+                        log::warn!("Unknown rainbow_highlighting mode '{}', defaulting to theme_palette", other);
+                        VariableColorMode::ThemePalette
+                    }
+                };
+                
+                RainbowConfig {
+                    enabled: rh.enabled.unwrap_or(false),
+                    mode,
+                }
             }).unwrap_or_default(),
         }
     }

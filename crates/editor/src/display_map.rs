@@ -864,7 +864,6 @@ impl DisplaySnapshot {
     ) -> impl Iterator<Item = HighlightedChunk<'a>> {
         let rainbow_config = &editor_style.rainbow_highlighting;
         let theme = &editor_style.syntax;
-        let buffer_snapshot = &self.buffer_snapshot;
 
         let display_row_start = display_rows.start;
         let start_point = self.display_point_to_point(DisplayPoint::new(display_row_start, 0), Bias::Left);
@@ -875,98 +874,88 @@ impl DisplaySnapshot {
             inlay_hint: Some(editor_style.inlay_hints_style),
             edit_prediction: Some(editor_style.edit_prediction_styles),
         })
-            .scan(
-                current_buffer_offset,
-                move |offset, chunk| {
-                    let chunk_start = *offset;
-                    let chunk_end = chunk_start + chunk.text.len();
-                    *offset = chunk_end;
+            .scan(current_buffer_offset, move |offset, chunk| {
+                let chunk_start = *offset;
+                let chunk_end = chunk_start + chunk.text.len();
+                *offset = chunk_end;
 
-                    let (capture_name, highlight_style) = chunk.syntax_highlight_id
-                        .map(|id| (id.name(theme), id.style(theme)))
-                        .unwrap_or((None, None));
+                let (capture_name, highlight_style) = chunk.syntax_highlight_id
+                    .map(|id| (id.name(theme), id.style(theme)))
+                    .unwrap_or((None, None));
 
-                    let is_variable_like = capture_name
-                        .map(|name| {
-                            name.starts_with("variable") &&
-                                !name.contains("special") &&
-                                !name.contains("builtin") &&
-                                !name.contains("member")
-                        })
-                        .unwrap_or(false);
+                let is_variable_like = capture_name
+                    .map(|name| {
+                        name.starts_with("variable") &&
+                            !name.contains("special") &&
+                            !name.contains("builtin") &&
+                            !name.contains("member")
+                    })
+                    .unwrap_or(false);
 
-                    // Node range pattern: extract complete identifier from tree-sitter range
-                    let rainbow_style = if is_variable_like && chunk.capture_node_range.is_some() {
-                        let node_range = chunk.capture_node_range.as_ref().unwrap();
-                        let identifier: String = buffer_snapshot.text_for_range(node_range.clone()).collect();
-                        
-                        crate::rainbow::with_rainbow_cache(|cache| {
-                            crate::rainbow::apply_rainbow_highlighting(
-                                &identifier,
-                                true,
-                                rainbow_config.enabled,
-                                theme,
-                                cache
-                            )
-                        })
-                    } else {
-                        None
-                    };
+                // Extract identifier for rainbow highlighting
+                // Note: We can't use node_range directly on MultiBufferSnapshot because
+                // node ranges are in single-buffer coordinates. Instead, we rely on
+                // tree-sitter to provide complete variable chunks or use the accumulator pattern.
+                let rainbow_style = if is_variable_like && chunk.text.len() >= 2 {
+                    crate::rainbow::with_rainbow_cache(|cache| {
+                        crate::rainbow::apply_rainbow_highlighting(
+                            chunk.text,
+                            true,
+                            rainbow_config,
+                            theme,
+                            cache
+                        )
+                    })
+                } else {
+                    None
+                };
 
-                    let chunk_highlight = chunk.highlight_style.map(|chunk_highlight| {
-                        let color = chunk_highlight.color.map(|color| {
-                            if chunk.is_inlay && !color.is_opaque() {
-                                editor_style.background.blend(color)
-                            } else {
-                                color
-                            }
-                        });
-
-                        HighlightStyle {
-                            color,
-                            ..chunk_highlight
-                        }
+                let chunk_highlight = chunk.highlight_style.map(|chunk_highlight| {
+                    let color = chunk_highlight.color.map(|color| {
+                        if chunk.is_inlay && !color.is_opaque() { editor_style.background.blend(color) } else { color }
                     });
 
-                    let diagnostic_highlight = chunk.diagnostic_severity
-                        .filter(|severity| {
-                            self.diagnostics_max_severity
-                                .into_lsp()
-                                .is_some_and(|max_severity| severity <= &max_severity)
-                        })
-                        .map(|severity| HighlightStyle {
-                            fade_out: chunk.is_unnecessary.then_some(editor_style.unnecessary_code_fade),
-                            underline: (
-                                chunk.underline &&
-                                editor_style.show_underlines &&
-                                !(chunk.is_unnecessary && severity > lsp::DiagnosticSeverity::WARNING)
-                            ).then(|| {
-                                let diagnostic_color = super::diagnostic_style(severity, &editor_style.status);
-                                UnderlineStyle {
-                                    color: Some(diagnostic_color),
-                                    thickness: (1.0).into(),
-                                    wavy: true,
-                                }
-                            }),
-                            ..Default::default()
-                        });
+                    HighlightStyle {
+                        color,
+                        ..chunk_highlight
+                    }
+                });
 
-                    // Precedence: tree-sitter base < tree-sitter rainbow < LSP semantic < diagnostics
-                    // LSP semantic tokens (chunk_highlight) override tree-sitter rainbow
-                    let style = [highlight_style, rainbow_style, chunk_highlight, diagnostic_highlight]
-                        .into_iter()
-                        .flatten()
-                        .reduce(|acc, highlight| acc.highlight(highlight));
-
-                    Some(HighlightedChunk {
-                        text: chunk.text,
-                        style,
-                        is_tab: chunk.is_tab,
-                        is_inlay: chunk.is_inlay,
-                        replacement: chunk.renderer.map(ChunkReplacement::Renderer),
+                let diagnostic_highlight = chunk.diagnostic_severity
+                    .filter(|severity| {
+                        self.diagnostics_max_severity.into_lsp().is_some_and(|max_severity| severity <= &max_severity)
                     })
-                }
-            )
+                    .map(|severity| HighlightStyle {
+                        fade_out: chunk.is_unnecessary.then_some(editor_style.unnecessary_code_fade),
+                        underline: (
+                            chunk.underline &&
+                            editor_style.show_underlines &&
+                            !(chunk.is_unnecessary && severity > lsp::DiagnosticSeverity::WARNING)
+                        ).then(|| {
+                            let diagnostic_color = super::diagnostic_style(severity, &editor_style.status);
+                            UnderlineStyle {
+                                color: Some(diagnostic_color),
+                                thickness: (1.0).into(),
+                                wavy: true,
+                            }
+                        }),
+                        ..Default::default()
+                    });
+
+                // Precedence: tree-sitter base < tree-sitter rainbow < LSP semantic < diagnostics
+                let style = [highlight_style, rainbow_style, chunk_highlight, diagnostic_highlight]
+                    .into_iter()
+                    .flatten()
+                    .reduce(|acc, highlight| acc.highlight(highlight));
+
+                Some(HighlightedChunk {
+                    text: chunk.text,
+                    style,
+                    is_tab: chunk.is_tab,
+                    is_inlay: chunk.is_inlay,
+                    replacement: chunk.renderer.map(ChunkReplacement::Renderer),
+                })
+            })
             .flat_map(|chunk| chunk.highlight_invisibles(editor_style))
     }
 
@@ -1429,9 +1418,9 @@ impl SemanticTokenView {
 
         let stylizer = SemanticTokenStylizer::new(legend);
         let rainbow_config = EditorSettings::get_global(cx).rainbow_highlighting;
-        let rainbow_enabled = rainbow_config.enabled;
 
-        log::debug!("Rainbow highlighting status: enabled={}", rainbow_enabled);
+        log::debug!("Variable color highlighting: enabled={}, mode={:?}", 
+            rainbow_config.enabled, rainbow_config.mode);
 
         let mut tokens = lsp
             .tokens()
@@ -1561,14 +1550,14 @@ impl<'a> SemanticTokenStylizer<'a> {
     ) -> Option<HighlightStyle> {
         let token_type_name = self.token_type(token_type)?;
 
-        // Apply rainbow highlighting to variable-like tokens before falling back to LSP token mapping.
+        // Apply variable color highlighting to variable-like tokens before falling back to LSP token mapping.
         if let (Some(config), Some(name)) = (rainbow_config, variable_name) {
             if
                 let Some(rainbow_style) = crate::rainbow::with_rainbow_cache(|cache| {
                     crate::rainbow::apply_rainbow_highlighting(
                         name,
                         token_type_name == "variable" || token_type_name == "parameter",
-                        config.enabled,
+                        config,
                         theme,
                         cache
                     )

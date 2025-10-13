@@ -194,14 +194,26 @@ pub struct EditorSettingsContent {
     pub rainbow_highlighting: Option<RainbowHighlightingContent>,
 }
 
-/// Rainbow highlighting settings
+/// Variable color highlighting settings.
+///
+/// This feature assigns consistent, distinct colors to different variables
+/// to improve code readability and help distinguish between identifiers.
 #[skip_serializing_none]
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
 pub struct RainbowHighlightingContent {
-    /// Whether rainbow highlighting is enabled.
+    /// Whether variable color highlighting is enabled.
     ///
     /// Default: false
     pub enabled: Option<bool>,
+    
+    /// Color generation mode.
+    ///
+    /// Options:
+    /// - "theme_palette": Use colors from your theme's rainbow palette (respects theme design)
+    /// - "dynamic_hsl": Generate colors dynamically using golden ratio for optimal distribution
+    ///
+    /// Default: "theme_palette"
+    pub mode: Option<String>,
 }
 
 // Toolbar related settings
