@@ -1,6 +1,5 @@
 use std::{
     ops::{ControlFlow, Range},
-    rc::Rc,
     time::Duration,
 };
 
@@ -16,7 +15,8 @@ use lsp::LanguageServerId;
 use multi_buffer::{Anchor, ExcerptId, MultiBufferSnapshot};
 use project::{
     HoverBlock, HoverBlockKind, InlayHintLabel, InlayHintLabelPartTooltip, InlayHintTooltip,
-    InvalidationStrategy, ResolveState, lsp_store::ResolvedHint,
+    InvalidationStrategy, ResolveState,
+    lsp_store::{CacheInlayHints, ResolvedHint},
 };
 use text::{Bias, BufferId};
 use ui::{Context, Window};
@@ -24,8 +24,7 @@ use util::debug_panic;
 
 use super::{Inlay, InlayId};
 use crate::{
-    Editor, EditorSnapshot, PointForPosition, SemanticsProvider, ToggleInlayHints,
-    ToggleInlineValues, debounce_value,
+    Editor, EditorSnapshot, PointForPosition, ToggleInlayHints, ToggleInlineValues, debounce_value,
     hover_links::{InlayHighlight, TriggerPoint, show_link_definition},
     hover_popover::{self, InlayHover},
     inlays::InlaySplice,
@@ -252,12 +251,9 @@ impl Editor {
         reason: InlayHintRefreshReason,
         cx: &mut Context<Self>,
     ) {
-        if !self.mode.is_full() || self.inlay_hints.is_none() {
+        if !self.mode.is_full() || self.inlay_hints.is_none() || self.semantics_provider.is_none() {
             return;
         }
-        let Some(semantics_provider) = self.semantics_provider.clone() else {
-            return;
-        };
         let Some(invalidate_cache) = self.refresh_editor_data(&reason, cx) else {
             return;
         };
@@ -332,7 +328,6 @@ impl Editor {
                 .entry(buffer_id)
                 .or_default()
                 .push(spawn_editor_hints_refresh(
-                    semantics_provider.clone(),
                     invalidate_cache,
                     ignore_previous_fetches,
                     debounce,
@@ -633,6 +628,103 @@ impl Editor {
             hover_popover::hover_at(self, None, window, cx);
         }
     }
+
+    fn inlay_hints_for_buffer(
+        &mut self,
+        invalidate_cache: InvalidationStrategy,
+        ignore_previous_fetches: bool,
+        buffer_excerpts: VisibleExcerpts,
+        cx: &mut Context<Self>,
+    ) -> Option<Vec<Task<(Range<BufferRow>, anyhow::Result<CacheInlayHints>)>>> {
+        let semantics_provider = self.semantics_provider.clone()?;
+        let inlay_hints = self.inlay_hints.as_mut()?;
+        let buffer_id = buffer_excerpts.buffer.read(cx).remote_id();
+
+        let new_hint_tasks = semantics_provider
+            .inlay_hints(
+                invalidate_cache,
+                buffer_excerpts.buffer,
+                buffer_excerpts.ranges,
+                inlay_hints
+                    .hint_chunk_fetched
+                    .get(&buffer_id)
+                    .filter(|_| !ignore_previous_fetches && !invalidate_cache.should_invalidate())
+                    .cloned(),
+                cx,
+            )
+            .unwrap_or_default();
+
+        let (known_version, known_chunks) =
+            inlay_hints.hint_chunk_fetched.entry(buffer_id).or_default();
+        if buffer_excerpts.buffer_version.changed_since(known_version) {
+            known_chunks.clear();
+            *known_version = buffer_excerpts.buffer_version;
+        }
+
+        let mut hint_tasks = Vec::new();
+        for (row_range, new_hints_task) in new_hint_tasks {
+            if known_chunks.insert(row_range.clone()) || ignore_previous_fetches {
+                hint_tasks.push(cx.spawn(async move |_, _| (row_range, new_hints_task.await)));
+            }
+        }
+
+        Some(hint_tasks)
+    }
+
+    fn apply_fetched_hints(
+        &mut self,
+        invalidate_cache: InvalidationStrategy,
+        excerpts_queried: Vec<ExcerptId>,
+        new_hints: Vec<(Range<BufferRow>, anyhow::Result<CacheInlayHints>)>,
+        cx: &mut Context<Self>,
+    ) {
+        let visible_inlay_hint_ids = self
+            .visible_inlay_hints(cx)
+            .iter()
+            .map(|inlay| inlay.id)
+            .collect::<Vec<_>>();
+        let Some(inlay_hints) = &mut self.inlay_hints else {
+            return;
+        };
+
+        let mut hints_to_remove = Vec::new();
+        let multi_buffer_snapshot = self.buffer.read(cx).snapshot(cx);
+
+        if invalidate_cache.should_invalidate() {
+            hints_to_remove.extend(visible_inlay_hint_ids);
+        }
+
+        let hints_to_insert = new_hints
+            .into_iter()
+            .filter_map(|(chunk_range, hints_result)| match hints_result {
+                Ok(new_hints) => Some(new_hints),
+                Err(e) => {
+                    log::error!(
+                        "Failed to query inlays for buffer row range {chunk_range:?}, {e:#}"
+                    );
+                    None
+                }
+            })
+            .flat_map(|hints| hints.into_values())
+            .flatten()
+            .filter_map(|(hint_id, lsp_hint)| {
+                if inlay_hints.allowed_hint_kinds.contains(&lsp_hint.kind)
+                    && inlay_hints
+                        .added_hints
+                        .insert(hint_id, lsp_hint.kind)
+                        .is_none()
+                {
+                    let position = excerpts_queried.iter().find_map(|excerpt_id| {
+                        multi_buffer_snapshot.anchor_in_excerpt(*excerpt_id, lsp_hint.position)
+                    })?;
+                    return Some(Inlay::hint(hint_id, position, &lsp_hint));
+                }
+                None
+            })
+            .collect::<Vec<_>>();
+        // TODO kb hints to remove and to insert may be [almost] the same, causing unnecessary flickering
+        self.splice_inlays(&hints_to_remove, hints_to_insert, cx);
+    }
 }
 
 #[derive(Debug)]
@@ -643,116 +735,40 @@ struct VisibleExcerpts {
     buffer: Entity<language::Buffer>,
 }
 
-// TODO kb refactor this and other hints-related lengthy methods/functions
 fn spawn_editor_hints_refresh(
-    semantics_provider: Rc<dyn SemanticsProvider>,
     invalidate_cache: InvalidationStrategy,
     ignore_previous_fetches: bool,
     debounce: Option<Duration>,
     buffer_excerpts: VisibleExcerpts,
     cx: &mut Context<'_, Editor>,
 ) -> Task<()> {
-    let buffer_id = buffer_excerpts.buffer.read(cx).remote_id();
     cx.spawn(async move |editor, cx| {
         if let Some(debounce) = debounce {
             cx.background_executor().timer(debounce).await;
         }
 
-        let mut hint_tasks = Vec::new();
-        if editor
+        let excerpts_queried = buffer_excerpts.excerpts.clone();
+        let Some(hint_tasks) = editor
             .update(cx, |editor, cx| {
-                let Some(inlay_hints) = &mut editor.inlay_hints else {
-                    return;
-                };
-
-                let new_hint_tasks = semantics_provider
-                    .inlay_hints(
-                        invalidate_cache,
-                        buffer_excerpts.buffer,
-                        buffer_excerpts.ranges,
-                        inlay_hints
-                            .hint_chunk_fetched
-                            .get(&buffer_id)
-                            .filter(|_| {
-                                !ignore_previous_fetches && !invalidate_cache.should_invalidate()
-                            })
-                            .cloned(),
-                        cx,
-                    )
-                    .unwrap_or_default();
-
-                let (known_version, known_chunks) =
-                    inlay_hints.hint_chunk_fetched.entry(buffer_id).or_default();
-                if buffer_excerpts.buffer_version.changed_since(known_version) {
-                    known_chunks.clear();
-                    *known_version = buffer_excerpts.buffer_version.clone();
-                }
-                for (row_range, new_hints_task) in new_hint_tasks {
-                    if known_chunks.insert(row_range.clone()) || ignore_previous_fetches {
-                        hint_tasks.push(async move { (row_range, new_hints_task.await) });
-                    }
-                }
+                editor.inlay_hints_for_buffer(
+                    invalidate_cache,
+                    ignore_previous_fetches,
+                    buffer_excerpts,
+                    cx,
+                )
             })
-            .is_err()
-        {
+            .ok()
+        else {
             return;
-        }
+        };
+        let hint_tasks = hint_tasks.unwrap_or_default();
         if hint_tasks.is_empty() {
             return;
         }
-
         let new_hints = join_all(hint_tasks).await;
         editor
             .update(cx, |editor, cx| {
-                let visible_inlay_hint_ids = editor
-                    .visible_inlay_hints(cx)
-                    .iter()
-                    .map(|inlay| inlay.id)
-                    .collect::<Vec<_>>();
-
-                let Some(inlay_hints) = &mut editor.inlay_hints else {
-                    return;
-                };
-
-                let mut hints_to_remove = Vec::new();
-                let multi_buffer_snapshot = editor.buffer.read(cx).snapshot(cx);
-
-                if invalidate_cache.should_invalidate() {
-                    hints_to_remove.extend(visible_inlay_hint_ids);
-                }
-
-                let hints_to_insert = new_hints
-                    .into_iter()
-                    .filter_map(|(chunk_range, hints_result)| match hints_result {
-                        Ok(new_hints) => Some(new_hints),
-                        Err(e) => {
-                            log::error!(
-                                "Failed to query inlays for buffer row range {chunk_range:?}, {e:#}"
-                            );
-                            None
-                        }
-                    })
-                    .flat_map(|hints| hints.into_values())
-                    .flatten()
-                    .filter_map(|(hint_id, lsp_hint)| {
-                        if inlay_hints.allowed_hint_kinds.contains(&lsp_hint.kind)
-                            && inlay_hints
-                                .added_hints
-                                .insert(hint_id, lsp_hint.kind)
-                                .is_none()
-                        {
-                            let position =
-                                buffer_excerpts.excerpts.iter().find_map(|excerpt_id| {
-                                    multi_buffer_snapshot
-                                        .anchor_in_excerpt(*excerpt_id, lsp_hint.position)
-                                })?;
-                            return Some(Inlay::hint(hint_id, position, &lsp_hint));
-                        }
-                        None
-                    })
-                    .collect::<Vec<_>>();
-                // TODO kb hints to remove and to insert may be [almost] the same, causing unnecessary flickering
-                editor.splice_inlays(&hints_to_remove, hints_to_insert, cx);
+                editor.apply_fetched_hints(invalidate_cache, excerpts_queried, new_hints, cx);
             })
             .ok();
     })

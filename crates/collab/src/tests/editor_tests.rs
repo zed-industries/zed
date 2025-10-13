@@ -1849,10 +1849,40 @@ async fn test_mutual_editor_inlay_hint_cache_update(
         ..lsp::ServerCapabilities::default()
     };
     client_a.language_registry().add(rust_lang());
+
+    // Set up the language server to return an additional inlay hint on each request.
+    let edits_made = Arc::new(AtomicUsize::new(0));
+    let closure_edits_made = Arc::clone(&edits_made);
     let mut fake_language_servers = client_a.language_registry().register_fake_lsp(
         "Rust",
         FakeLspAdapter {
             capabilities: capabilities.clone(),
+            initializer: Some(Box::new(move |fake_language_server| {
+                let closure_edits_made = closure_edits_made.clone();
+                fake_language_server.set_request_handler::<lsp::request::InlayHintRequest, _, _>(
+                    move |params, _| {
+                        let edits_made_2 = Arc::clone(&closure_edits_made);
+                        async move {
+                            assert_eq!(
+                                params.text_document.uri,
+                                lsp::Uri::from_file_path(path!("/a/main.rs")).unwrap(),
+                            );
+                            let edits_made =
+                                AtomicUsize::load(&edits_made_2, atomic::Ordering::Acquire);
+                            Ok(Some(vec![lsp::InlayHint {
+                                position: lsp::Position::new(0, edits_made as u32),
+                                label: lsp::InlayHintLabel::String(edits_made.to_string()),
+                                kind: None,
+                                text_edits: None,
+                                tooltip: None,
+                                padding_left: None,
+                                padding_right: None,
+                                data: None,
+                            }]))
+                        }
+                    },
+                );
+            })),
             ..FakeLspAdapter::default()
         },
     );
@@ -1894,51 +1924,13 @@ async fn test_mutual_editor_inlay_hint_cache_update(
         .unwrap();
 
     let (workspace_a, cx_a) = client_a.build_workspace(&project_a, cx_a);
-    executor.start_waiting();
 
     // The host opens a rust file.
-    let editor_a = workspace_a
-        .update_in(cx_a, |workspace, window, cx| {
-            workspace.open_path((worktree_id, rel_path("main.rs")), None, true, window, cx)
-        })
-        .await
-        .unwrap()
-        .downcast::<Editor>()
-        .unwrap();
+    let file_a = workspace_a.update_in(cx_a, |workspace, window, cx| {
+        workspace.open_path((worktree_id, rel_path("main.rs")), None, true, window, cx)
+    });
     let fake_language_server = fake_language_servers.next().await.unwrap();
-
-    // Set up the language server to return an additional inlay hint on each request.
-    let edits_made = Arc::new(AtomicUsize::new(0));
-    let closure_edits_made = Arc::clone(&edits_made);
-    fake_language_server
-        .set_request_handler::<lsp::request::InlayHintRequest, _, _>(move |params, _| {
-            let edits_made_2 = Arc::clone(&closure_edits_made);
-            async move {
-                assert_eq!(
-                    params.text_document.uri,
-                    lsp::Uri::from_file_path(path!("/a/main.rs")).unwrap(),
-                );
-                let edits_made = AtomicUsize::load(&edits_made_2, atomic::Ordering::Acquire);
-                Ok(Some(vec![lsp::InlayHint {
-                    position: lsp::Position::new(0, edits_made as u32),
-                    label: lsp::InlayHintLabel::String(edits_made.to_string()),
-                    kind: None,
-                    text_edits: None,
-                    tooltip: None,
-                    padding_left: None,
-                    padding_right: None,
-                    data: None,
-                }]))
-            }
-        })
-        .next()
-        .await
-        .unwrap();
-
-    if true {
-        return;
-    }
-
+    let editor_a = file_a.await.unwrap().downcast::<Editor>().unwrap();
     executor.run_until_parked();
 
     let initial_edit = edits_made.load(atomic::Ordering::Acquire);
