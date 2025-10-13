@@ -255,7 +255,7 @@ pub async fn retrieval_stats(
     let files_len = files.len().min(file_limit.unwrap_or(usize::MAX));
     let done_count = Arc::new(AtomicUsize::new(0));
 
-    let (output_tx, mut output_rx) = mpsc::unbounded::<RetrievalStatsResult>();
+    let (output_tx, output_rx) = mpsc::unbounded::<RetrievalStatsResult>();
 
     let tasks = files
         .into_iter()
@@ -340,172 +340,7 @@ pub async fn retrieval_stats(
 
     drop(output_tx);
 
-    let df_task = cx.background_spawn(async move {
-        use soa_rs::{Soa, Soars};
-
-        #[derive(Soars)]
-        struct Row {
-            ref_id: u32,
-            cursor_path: String,
-            cursor_row: u32,
-            cursor_column: u32,
-            cursor_identifier: String,
-            candidate_path: Option<String>,
-            candidate_row: Option<u32>,
-            candidate_column: Option<u32>,
-            candidate_is_gold: Option<bool>,
-            candidate_rank: Option<u32>,
-            candidate_count: u32,
-            gold_in_excerpt: bool,
-            gold_path: String,
-            gold_row: u32,
-            gold_column: u32,
-            gold_is_external: bool,
-        }
-        let mut rows = Soa::<Row>::new();
-        let mut next_ref_id = 0;
-
-        while let Some(result) = output_rx.next().await {
-            let mut gold_is_external = false;
-            let mut gold_in_excerpt = false;
-            let cursor_path = result.path.as_unix_str();
-            let cursor_row = result.point.row + 1;
-            let cursor_column = result.point.column + 1;
-            let cursor_identifier = result.identifier.name.to_string();
-            let ref_id = next_ref_id;
-            next_ref_id += 1;
-
-            for lsp_definition in result.lsp_definitions {
-                let SourceRange {
-                    path: gold_path,
-                    point_range: gold_point_range,
-                    offset_range: gold_offset_range,
-                } = lsp_definition;
-                let lsp_point_range =
-                    SerializablePoint::into_language_point_range(gold_point_range.clone());
-
-                gold_is_external = gold_is_external
-                    || gold_path.is_absolute()
-                    || gold_path
-                        .components()
-                        .any(|component| component.as_os_str() == "node_modules");
-
-                gold_in_excerpt = gold_in_excerpt
-                    || result.excerpt_range.as_ref().is_some_and(|excerpt_range| {
-                        excerpt_range.contains_inclusive(&gold_offset_range)
-                    });
-
-                let gold_row = gold_point_range.start.row;
-                let gold_column = gold_point_range.start.column;
-                let candidate_count = result.retrieved_definitions.len() as u32;
-
-                for (candidate_rank, retrieved_definition) in
-                    result.retrieved_definitions.iter().enumerate()
-                {
-                    let candidate_is_gold = gold_path.as_path()
-                        == retrieved_definition.path.as_std_path()
-                        && retrieved_definition
-                            .range
-                            .contains_inclusive(&lsp_point_range);
-
-                    let candidate_row = retrieved_definition.range.start.row + 1;
-                    let candidate_column = retrieved_definition.range.start.column + 1;
-
-                    rows.push(Row {
-                        ref_id,
-                        cursor_path: cursor_path.to_string(),
-                        cursor_row,
-                        cursor_column,
-                        cursor_identifier: cursor_identifier.clone(),
-                        candidate_path: Some(retrieved_definition.path.as_unix_str().to_string()),
-                        candidate_row: Some(candidate_row),
-                        candidate_column: Some(candidate_column),
-                        candidate_is_gold: Some(candidate_is_gold),
-                        candidate_rank: Some(candidate_rank as u32),
-                        candidate_count,
-                        gold_in_excerpt,
-                        gold_path: gold_path.to_string_lossy().to_string(),
-                        gold_row,
-                        gold_column,
-                        gold_is_external,
-                    });
-                }
-
-                if result.retrieved_definitions.is_empty() {
-                    rows.push(Row {
-                        ref_id,
-                        cursor_path: cursor_path.to_string(),
-                        cursor_row,
-                        cursor_column,
-                        cursor_identifier: cursor_identifier.clone(),
-                        candidate_path: None,
-                        candidate_row: None,
-                        candidate_column: None,
-                        candidate_is_gold: None,
-                        candidate_rank: None,
-                        candidate_count,
-                        gold_in_excerpt,
-                        gold_path: gold_path.to_string_lossy().to_string(),
-                        gold_row,
-                        gold_column,
-                        gold_is_external,
-                    });
-                }
-            }
-        }
-        let slices = rows.slices();
-
-        DataFrame::new(vec![
-            Series::new(PlSmallStr::from_str("ref_id"), slices.ref_id).into(),
-            Series::new(PlSmallStr::from_str("cursor_path"), slices.cursor_path).into(),
-            Series::new(PlSmallStr::from_str("cursor_row"), slices.cursor_row).into(),
-            Series::new(PlSmallStr::from_str("cursor_column"), slices.cursor_column).into(),
-            Series::new(
-                PlSmallStr::from_str("cursor_identifier"),
-                slices.cursor_identifier,
-            )
-            .into(),
-            Series::new(
-                PlSmallStr::from_str("candidate_path"),
-                slices.candidate_path,
-            )
-            .into(),
-            Series::new(PlSmallStr::from_str("candidate_row"), slices.candidate_row).into(),
-            Series::new(
-                PlSmallStr::from_str("candidate_column"),
-                slices.candidate_column,
-            )
-            .into(),
-            Series::new(
-                PlSmallStr::from_str("candidate_is_gold"),
-                slices.candidate_is_gold,
-            )
-            .into(),
-            Series::new(
-                PlSmallStr::from_str("candidate_rank"),
-                slices.candidate_rank,
-            )
-            .into(),
-            Series::new(
-                PlSmallStr::from_str("candidate_count"),
-                slices.candidate_count,
-            )
-            .into(),
-            Series::new(
-                PlSmallStr::from_str("gold_in_excerpt"),
-                slices.gold_in_excerpt,
-            )
-            .into(),
-            Series::new(PlSmallStr::from_str("gold_path"), slices.gold_path).into(),
-            Series::new(PlSmallStr::from_str("gold_row"), slices.gold_row).into(),
-            Series::new(PlSmallStr::from_str("gold_column"), slices.gold_column).into(),
-            Series::new(
-                PlSmallStr::from_str("gold_is_external"),
-                slices.gold_is_external,
-            )
-            .into(),
-        ])
-    });
+    let df_task = cx.background_spawn(build_dataframe(output_rx));
 
     futures::future::try_join_all(tasks).await?;
     let mut df = df_task.await?;
@@ -539,21 +374,415 @@ pub async fn retrieval_stats(
     Ok("".to_string())
 }
 
+async fn build_dataframe(
+    mut output_rx: mpsc::UnboundedReceiver<RetrievalStatsResult>,
+) -> Result<DataFrame> {
+    use soa_rs::{Soa, Soars};
+
+    #[derive(Default, Soars)]
+    struct Row {
+        ref_id: u32,
+        cursor_path: String,
+        cursor_row: u32,
+        cursor_column: u32,
+        cursor_identifier: String,
+        gold_in_excerpt: bool,
+        gold_path: String,
+        gold_row: u32,
+        gold_column: u32,
+        gold_is_external: bool,
+        candidate_count: u32,
+        candidate_path: Option<String>,
+        candidate_row: Option<u32>,
+        candidate_column: Option<u32>,
+        candidate_is_gold: Option<bool>,
+        candidate_rank: Option<u32>,
+        candidate_is_same_file: Option<bool>,
+        candidate_is_referenced_nearby: Option<bool>,
+        candidate_is_referenced_in_breadcrumb: Option<bool>,
+        candidate_reference_count: Option<u32>,
+        candidate_same_file_declaration_count: Option<u32>,
+        candidate_declaration_count: Option<u32>,
+        candidate_reference_line_distance: Option<u32>,
+        candidate_declaration_line_distance: Option<u32>,
+        candidate_excerpt_vs_item_jaccard: Option<f32>,
+        candidate_excerpt_vs_signature_jaccard: Option<f32>,
+        candidate_adjacent_vs_item_jaccard: Option<f32>,
+        candidate_adjacent_vs_signature_jaccard: Option<f32>,
+        candidate_excerpt_vs_item_weighted_overlap: Option<f32>,
+        candidate_excerpt_vs_signature_weighted_overlap: Option<f32>,
+        candidate_adjacent_vs_item_weighted_overlap: Option<f32>,
+        candidate_adjacent_vs_signature_weighted_overlap: Option<f32>,
+        candidate_path_import_match_count: Option<u32>,
+        candidate_wildcard_path_import_match_count: Option<u32>,
+        candidate_import_similarity: Option<f32>,
+        candidate_max_import_similarity: Option<f32>,
+        candidate_normalized_import_similarity: Option<f32>,
+        candidate_wildcard_import_similarity: Option<f32>,
+        candidate_normalized_wildcard_import_similarity: Option<f32>,
+        candidate_included_by_others: Option<u32>,
+        candidate_includes_others: Option<u32>,
+    }
+    let mut rows = Soa::<Row>::new();
+    let mut next_ref_id = 0;
+
+    while let Some(result) = output_rx.next().await {
+        let mut gold_is_external = false;
+        let mut gold_in_excerpt = false;
+        let cursor_path = result.path.as_unix_str();
+        let cursor_row = result.point.row + 1;
+        let cursor_column = result.point.column + 1;
+        let cursor_identifier = result.identifier.name.to_string();
+        let ref_id = next_ref_id;
+        next_ref_id += 1;
+
+        for lsp_definition in result.lsp_definitions {
+            let SourceRange {
+                path: gold_path,
+                point_range: gold_point_range,
+                offset_range: gold_offset_range,
+            } = lsp_definition;
+            let lsp_point_range =
+                SerializablePoint::into_language_point_range(gold_point_range.clone());
+
+            gold_is_external = gold_is_external
+                || gold_path.is_absolute()
+                || gold_path
+                    .components()
+                    .any(|component| component.as_os_str() == "node_modules");
+
+            gold_in_excerpt = gold_in_excerpt
+                || result.excerpt_range.as_ref().is_some_and(|excerpt_range| {
+                    excerpt_range.contains_inclusive(&gold_offset_range)
+                });
+
+            let gold_row = gold_point_range.start.row;
+            let gold_column = gold_point_range.start.column;
+            let candidate_count = result.retrieved_definitions.len() as u32;
+
+            for (candidate_rank, retrieved_definition) in
+                result.retrieved_definitions.iter().enumerate()
+            {
+                let candidate_is_gold = gold_path.as_path()
+                    == retrieved_definition.path.as_std_path()
+                    && retrieved_definition
+                        .range
+                        .contains_inclusive(&lsp_point_range);
+
+                let candidate_row = retrieved_definition.range.start.row + 1;
+                let candidate_column = retrieved_definition.range.start.column + 1;
+
+                let DeclarationScoreComponents {
+                    is_same_file,
+                    is_referenced_nearby,
+                    is_referenced_in_breadcrumb,
+                    reference_count,
+                    same_file_declaration_count,
+                    declaration_count,
+                    reference_line_distance,
+                    declaration_line_distance,
+                    excerpt_vs_item_jaccard,
+                    excerpt_vs_signature_jaccard,
+                    adjacent_vs_item_jaccard,
+                    adjacent_vs_signature_jaccard,
+                    excerpt_vs_item_weighted_overlap,
+                    excerpt_vs_signature_weighted_overlap,
+                    adjacent_vs_item_weighted_overlap,
+                    adjacent_vs_signature_weighted_overlap,
+                    path_import_match_count,
+                    wildcard_path_import_match_count,
+                    import_similarity,
+                    max_import_similarity,
+                    normalized_import_similarity,
+                    wildcard_import_similarity,
+                    normalized_wildcard_import_similarity,
+                    included_by_others,
+                    includes_others,
+                } = retrieved_definition.components;
+
+                rows.push(Row {
+                    ref_id,
+                    cursor_path: cursor_path.to_string(),
+                    cursor_row,
+                    cursor_column,
+                    cursor_identifier: cursor_identifier.clone(),
+                    gold_in_excerpt,
+                    gold_path: gold_path.to_string_lossy().to_string(),
+                    gold_row,
+                    gold_column,
+                    gold_is_external,
+                    candidate_count,
+                    candidate_path: Some(retrieved_definition.path.as_unix_str().to_string()),
+                    candidate_row: Some(candidate_row),
+                    candidate_column: Some(candidate_column),
+                    candidate_is_gold: Some(candidate_is_gold),
+                    candidate_rank: Some(candidate_rank as u32),
+                    candidate_is_same_file: Some(is_same_file),
+                    candidate_is_referenced_nearby: Some(is_referenced_nearby),
+                    candidate_is_referenced_in_breadcrumb: Some(is_referenced_in_breadcrumb),
+                    candidate_reference_count: Some(reference_count as u32),
+                    candidate_same_file_declaration_count: Some(same_file_declaration_count as u32),
+                    candidate_declaration_count: Some(declaration_count as u32),
+                    candidate_reference_line_distance: Some(reference_line_distance),
+                    candidate_declaration_line_distance: Some(declaration_line_distance),
+                    candidate_excerpt_vs_item_jaccard: Some(excerpt_vs_item_jaccard),
+                    candidate_excerpt_vs_signature_jaccard: Some(excerpt_vs_signature_jaccard),
+                    candidate_adjacent_vs_item_jaccard: Some(adjacent_vs_item_jaccard),
+                    candidate_adjacent_vs_signature_jaccard: Some(adjacent_vs_signature_jaccard),
+                    candidate_excerpt_vs_item_weighted_overlap: Some(
+                        excerpt_vs_item_weighted_overlap,
+                    ),
+                    candidate_excerpt_vs_signature_weighted_overlap: Some(
+                        excerpt_vs_signature_weighted_overlap,
+                    ),
+                    candidate_adjacent_vs_item_weighted_overlap: Some(
+                        adjacent_vs_item_weighted_overlap,
+                    ),
+                    candidate_adjacent_vs_signature_weighted_overlap: Some(
+                        adjacent_vs_signature_weighted_overlap,
+                    ),
+                    candidate_path_import_match_count: Some(path_import_match_count as u32),
+                    candidate_wildcard_path_import_match_count: Some(
+                        wildcard_path_import_match_count as u32,
+                    ),
+                    candidate_import_similarity: Some(import_similarity),
+                    candidate_max_import_similarity: Some(max_import_similarity),
+                    candidate_normalized_import_similarity: Some(normalized_import_similarity),
+                    candidate_wildcard_import_similarity: Some(wildcard_import_similarity),
+                    candidate_normalized_wildcard_import_similarity: Some(
+                        normalized_wildcard_import_similarity,
+                    ),
+                    candidate_included_by_others: Some(included_by_others as u32),
+                    candidate_includes_others: Some(includes_others as u32),
+                });
+            }
+
+            if result.retrieved_definitions.is_empty() {
+                rows.push(Row {
+                    ref_id,
+                    cursor_path: cursor_path.to_string(),
+                    cursor_row,
+                    cursor_column,
+                    cursor_identifier: cursor_identifier.clone(),
+                    gold_in_excerpt,
+                    gold_path: gold_path.to_string_lossy().to_string(),
+                    gold_row,
+                    gold_column,
+                    gold_is_external,
+                    candidate_count,
+                    ..Default::default()
+                });
+            }
+        }
+    }
+    let slices = rows.slices();
+
+    let RowSlices {
+        ref_id,
+        cursor_path,
+        cursor_row,
+        cursor_column,
+        cursor_identifier,
+        gold_in_excerpt,
+        gold_path,
+        gold_row,
+        gold_column,
+        gold_is_external,
+        candidate_path,
+        candidate_row,
+        candidate_column,
+        candidate_is_gold,
+        candidate_rank,
+        candidate_count,
+        candidate_is_same_file,
+        candidate_is_referenced_nearby,
+        candidate_is_referenced_in_breadcrumb,
+        candidate_reference_count,
+        candidate_same_file_declaration_count,
+        candidate_declaration_count,
+        candidate_reference_line_distance,
+        candidate_declaration_line_distance,
+        candidate_excerpt_vs_item_jaccard,
+        candidate_excerpt_vs_signature_jaccard,
+        candidate_adjacent_vs_item_jaccard,
+        candidate_adjacent_vs_signature_jaccard,
+        candidate_excerpt_vs_item_weighted_overlap,
+        candidate_excerpt_vs_signature_weighted_overlap,
+        candidate_adjacent_vs_item_weighted_overlap,
+        candidate_adjacent_vs_signature_weighted_overlap,
+        candidate_path_import_match_count,
+        candidate_wildcard_path_import_match_count,
+        candidate_import_similarity,
+        candidate_max_import_similarity,
+        candidate_normalized_import_similarity,
+        candidate_wildcard_import_similarity,
+        candidate_normalized_wildcard_import_similarity,
+        candidate_included_by_others,
+        candidate_includes_others,
+    } = slices;
+
+    let df = DataFrame::new(vec![
+        Series::new(PlSmallStr::from_str("ref_id"), ref_id).into(),
+        Series::new(PlSmallStr::from_str("cursor_path"), cursor_path).into(),
+        Series::new(PlSmallStr::from_str("cursor_row"), cursor_row).into(),
+        Series::new(PlSmallStr::from_str("cursor_column"), cursor_column).into(),
+        Series::new(PlSmallStr::from_str("cursor_identifier"), cursor_identifier).into(),
+        Series::new(PlSmallStr::from_str("gold_in_excerpt"), gold_in_excerpt).into(),
+        Series::new(PlSmallStr::from_str("gold_path"), gold_path).into(),
+        Series::new(PlSmallStr::from_str("gold_row"), gold_row).into(),
+        Series::new(PlSmallStr::from_str("gold_column"), gold_column).into(),
+        Series::new(PlSmallStr::from_str("gold_is_external"), gold_is_external).into(),
+        Series::new(PlSmallStr::from_str("candidate_count"), candidate_count).into(),
+        Series::new(PlSmallStr::from_str("candidate_path"), candidate_path).into(),
+        Series::new(PlSmallStr::from_str("candidate_row"), candidate_row).into(),
+        Series::new(PlSmallStr::from_str("candidate_column"), candidate_column).into(),
+        Series::new(PlSmallStr::from_str("candidate_is_gold"), candidate_is_gold).into(),
+        Series::new(PlSmallStr::from_str("candidate_rank"), candidate_rank).into(),
+        Series::new(
+            PlSmallStr::from_str("candidate_is_same_file"),
+            candidate_is_same_file,
+        )
+        .into(),
+        Series::new(
+            PlSmallStr::from_str("candidate_is_referenced_nearby"),
+            candidate_is_referenced_nearby,
+        )
+        .into(),
+        Series::new(
+            PlSmallStr::from_str("candidate_is_referenced_in_breadcrumb"),
+            candidate_is_referenced_in_breadcrumb,
+        )
+        .into(),
+        Series::new(
+            PlSmallStr::from_str("candidate_reference_count"),
+            candidate_reference_count,
+        )
+        .into(),
+        Series::new(
+            PlSmallStr::from_str("candidate_same_file_declaration_count"),
+            candidate_same_file_declaration_count,
+        )
+        .into(),
+        Series::new(
+            PlSmallStr::from_str("candidate_declaration_count"),
+            candidate_declaration_count,
+        )
+        .into(),
+        Series::new(
+            PlSmallStr::from_str("candidate_reference_line_distance"),
+            candidate_reference_line_distance,
+        )
+        .into(),
+        Series::new(
+            PlSmallStr::from_str("candidate_declaration_line_distance"),
+            candidate_declaration_line_distance,
+        )
+        .into(),
+        Series::new(
+            PlSmallStr::from_str("candidate_excerpt_vs_item_jaccard"),
+            candidate_excerpt_vs_item_jaccard,
+        )
+        .into(),
+        Series::new(
+            PlSmallStr::from_str("candidate_excerpt_vs_signature_jaccard"),
+            candidate_excerpt_vs_signature_jaccard,
+        )
+        .into(),
+        Series::new(
+            PlSmallStr::from_str("candidate_adjacent_vs_item_jaccard"),
+            candidate_adjacent_vs_item_jaccard,
+        )
+        .into(),
+        Series::new(
+            PlSmallStr::from_str("candidate_adjacent_vs_signature_jaccard"),
+            candidate_adjacent_vs_signature_jaccard,
+        )
+        .into(),
+        Series::new(
+            PlSmallStr::from_str("candidate_excerpt_vs_item_weighted_overlap"),
+            candidate_excerpt_vs_item_weighted_overlap,
+        )
+        .into(),
+        Series::new(
+            PlSmallStr::from_str("candidate_excerpt_vs_signature_weighted_overlap"),
+            candidate_excerpt_vs_signature_weighted_overlap,
+        )
+        .into(),
+        Series::new(
+            PlSmallStr::from_str("candidate_adjacent_vs_item_weighted_overlap"),
+            candidate_adjacent_vs_item_weighted_overlap,
+        )
+        .into(),
+        Series::new(
+            PlSmallStr::from_str("candidate_adjacent_vs_signature_weighted_overlap"),
+            candidate_adjacent_vs_signature_weighted_overlap,
+        )
+        .into(),
+        Series::new(
+            PlSmallStr::from_str("candidate_path_import_match_count"),
+            candidate_path_import_match_count,
+        )
+        .into(),
+        Series::new(
+            PlSmallStr::from_str("candidate_wildcard_path_import_match_count"),
+            candidate_wildcard_path_import_match_count,
+        )
+        .into(),
+        Series::new(
+            PlSmallStr::from_str("candidate_import_similarity"),
+            candidate_import_similarity,
+        )
+        .into(),
+        Series::new(
+            PlSmallStr::from_str("candidate_max_import_similarity"),
+            candidate_max_import_similarity,
+        )
+        .into(),
+        Series::new(
+            PlSmallStr::from_str("candidate_normalized_import_similarity"),
+            candidate_normalized_import_similarity,
+        )
+        .into(),
+        Series::new(
+            PlSmallStr::from_str("candidate_wildcard_import_similarity"),
+            candidate_wildcard_import_similarity,
+        )
+        .into(),
+        Series::new(
+            PlSmallStr::from_str("candidate_normalized_wildcard_import_similarity"),
+            candidate_normalized_wildcard_import_similarity,
+        )
+        .into(),
+        Series::new(
+            PlSmallStr::from_str("candidate_included_by_others"),
+            candidate_included_by_others,
+        )
+        .into(),
+        Series::new(
+            PlSmallStr::from_str("candidate_includes_others"),
+            candidate_includes_others,
+        )
+        .into(),
+    ])?;
+
+    Ok(df)
+}
+
 fn relativize_path(path: &Path) -> &Path {
     path.strip_prefix(std::env::current_dir().unwrap())
         .unwrap_or(path)
 }
 
 struct SummaryStats {
-    references_count: usize,
-    retrieved_count: usize,
-    top_match_count: usize,
-    non_top_match_count: usize,
-    ranking_involved_top_match_count: usize,
-    missing_none_retrieved: usize,
-    missing_wrong_retrieval: usize,
-    missing_external: usize,
-    in_excerpt_count: usize,
+    references_count: u32,
+    retrieved_count: u32,
+    top_match_count: u32,
+    non_top_match_count: u32,
+    ranking_involved_top_match_count: u32,
+    missing_none_retrieved: u32,
+    missing_wrong_retrieval: u32,
+    missing_external: u32,
+    in_excerpt_count: u32,
 }
 
 impl SummaryStats {
@@ -561,24 +790,24 @@ impl SummaryStats {
         // TODO: use lazy more
         let unique_refs =
             df.unique::<(), ()>(Some(&["ref_id".into()]), UniqueKeepStrategy::Any, None)?;
-        let references_count = unique_refs.height();
+        let references_count = unique_refs.height() as u32;
 
         let gold_mask = df.column("candidate_is_gold")?.bool()?;
         let gold_df = df.filter(&gold_mask)?;
-        let retrieved_count = gold_df.height();
+        let retrieved_count = gold_df.height() as u32;
 
         let top_match_mask = gold_df.column("candidate_rank")?.u32()?.equal(0);
         let top_match_df = gold_df.filter(&top_match_mask)?;
-        let top_match_count = top_match_df.height();
+        let top_match_count = top_match_df.height() as u32;
 
         let ranking_involved_top_match_count = top_match_df
             .column("candidate_count")?
             .u32()?
             .gt(1)
             .sum()
-            .unwrap_or_default() as usize;
+            .unwrap_or_default();
 
-        let non_top_match_count = (!top_match_mask).sum().unwrap_or(0) as usize;
+        let non_top_match_count = (!top_match_mask).sum().unwrap_or(0);
 
         let not_retrieved_df = df
             .lazy()
@@ -600,23 +829,23 @@ impl SummaryStats {
             .column("gold_in_excerpt_count")?
             .u32()?
             .gt(0);
-        let in_excerpt_count = in_excerpt_mask.sum().unwrap_or(0) as usize;
+        let in_excerpt_count = in_excerpt_mask.sum().unwrap_or(0);
 
         let missing_df = not_retrieved_df.filter(&!in_excerpt_mask)?;
 
         let missing_none_retrieved_mask = missing_df.column("candidate_count")?.u32()?.equal(0);
-        let missing_none_retrieved = missing_none_retrieved_mask.sum().unwrap_or(0) as usize;
+        let missing_none_retrieved = missing_none_retrieved_mask.sum().unwrap_or(0);
         let external_mask = missing_df.column("gold_is_external_count")?.u32()?.gt(0);
         let missing_external = (missing_none_retrieved_mask & external_mask)
             .sum()
-            .unwrap_or(0) as usize;
+            .unwrap_or(0);
 
         let missing_wrong_retrieval = missing_df
             .column("candidate_count")?
             .u32()?
             .gt(0)
             .sum()
-            .unwrap_or(0) as usize;
+            .unwrap_or(0);
 
         Ok(SummaryStats {
             references_count,
@@ -631,7 +860,7 @@ impl SummaryStats {
         })
     }
 
-    fn count_and_percentage(part: usize, total: usize) -> String {
+    fn count_and_percentage(part: u32, total: u32) -> String {
         format!("{} ({:.2}%)", part, (part as f64 / total as f64) * 100.0)
     }
 }
