@@ -1333,7 +1333,13 @@ impl PyLspAdapter {
     async fn ensure_venv(delegate: &dyn LspAdapterDelegate) -> Result<Arc<Path>> {
         let python_path = Self::find_base_python(delegate)
             .await
-            .context("Could not find Python installation for PyLSP")?;
+            .with_context(|| {
+                let mut message = "Could not find Python installation for PyLSP".to_owned();
+                if cfg!(windows){
+                    message.push_str(". Install Python from the Microsoft Store, or manually from https://www.python.org/downloads/windows.")
+                }
+                message
+            })?;
         let work_dir = delegate
             .language_server_download_dir(&Self::SERVER_NAME)
             .await

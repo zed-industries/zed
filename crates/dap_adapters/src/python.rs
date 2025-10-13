@@ -21,7 +21,7 @@ use std::{
     path::{Path, PathBuf},
 };
 use util::command::new_smol_command;
-use util::{ResultExt, maybe, paths::PathStyle, rel_path::RelPath};
+use util::{ResultExt, paths::PathStyle, rel_path::RelPath};
 
 #[derive(Default)]
 pub(crate) struct PythonDebugAdapter {
@@ -217,7 +217,7 @@ impl PythonDebugAdapter {
                 let base_python = Self::system_python_name(delegate).await.ok_or_else(|| {
                     let mut message = "Could not find a Python installation".to_owned();
                     if cfg!(windows){
-                        message.push_str(". Install Python from https://www.python.org/downloads/windows, or use the Microsoft Store.")
+                        message.push_str(". Install Python from the Microsoft Store, or manually from https://www.python.org/downloads/windows.")
                     }
                     message
                 })?;
