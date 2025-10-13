@@ -11449,9 +11449,25 @@ impl LspStore {
                         .map(serde_json::from_value)
                         .transpose()?
                     {
+                        let state = self
+                            .as_local_mut()
+                            .context("Expected LSP Store to be local")?
+                            .language_servers
+                            .get_mut(&server_id)
+                            .context("Could not obtain Language Servers state")?;
                         server.update_capabilities(|capabilities| {
                             capabilities.diagnostic_provider = Some(caps);
                         });
+                        if let LanguageServerState::Running {
+                            workspace_refresh_task,
+                            ..
+                        } = state
+                            && workspace_refresh_task.is_none()
+                        {
+                            *workspace_refresh_task =
+                                lsp_workspace_diagnostics_refresh(server.clone(), cx)
+                        }
+
                         notify_server_capabilities_updated(&server, cx);
                     }
                 }
@@ -11615,6 +11631,19 @@ impl LspStore {
                     server.update_capabilities(|capabilities| {
                         capabilities.diagnostic_provider = None;
                     });
+                    let state = self
+                        .as_local_mut()
+                        .context("Expected LSP Store to be local")?
+                        .language_servers
+                        .get_mut(&server_id)
+                        .context("Could not obtain Language Servers state")?;
+                    if let LanguageServerState::Running {
+                        workspace_refresh_task,
+                        ..
+                    } = state
+                    {
+                        _ = workspace_refresh_task.take();
+                    }
                     notify_server_capabilities_updated(&server, cx);
                 }
                 "textDocument/documentColor" => {
