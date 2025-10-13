@@ -770,28 +770,61 @@ pub enum Formatter {
     CodeAction(String),
     /// Format code using the current language server.
     #[serde(untagged)]
-    LanguageServer(LanguageServerVariant),
+    LanguageServer(LanguageServerSpecifier),
+}
+
+#[derive(Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom)]
+#[serde(
+    rename_all = "snake_case",
+    from = "LanguageServerVariantContent",
+    into = "LanguageServerVariantContent"
+)]
+pub struct LanguageServerSpecifier {
+    pub name: Option<String>,
+}
+
+impl From<LanguageServerVariantContent> for LanguageServerSpecifier {
+    fn from(value: LanguageServerVariantContent) -> Self {
+        match value {
+            LanguageServerVariantContent::Specific {
+                language_server: LanguageServerSpecifierContent { name },
+            } => Self { name },
+            LanguageServerVariantContent::Current(_) => Self { name: None },
+        }
+    }
+}
+
+impl From<LanguageServerSpecifier> for LanguageServerVariantContent {
+    fn from(value: LanguageServerSpecifier) -> Self {
+        if value.name.is_some() {
+            return Self::Specific {
+                language_server: LanguageServerSpecifierContent { name: value.name },
+            };
+        }
+
+        Self::Current(CurrentLanguageServerContent::LanguageServer)
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom)]
 #[serde(rename_all = "snake_case", untagged)]
-pub enum LanguageServerVariant {
+pub enum LanguageServerVariantContent {
     Specific {
-        language_server: LanguageServerSpecifier,
+        language_server: LanguageServerSpecifierContent,
     },
-    Current(CurrentLanguageServer),
+    Current(CurrentLanguageServerContent),
 }
 
 #[derive(Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom)]
 #[serde(rename_all = "snake_case")]
-pub enum CurrentLanguageServer {
+pub enum CurrentLanguageServerContent {
     #[default]
     LanguageServer,
 }
 
 #[derive(Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom)]
 #[serde(rename_all = "snake_case")]
-pub struct LanguageServerSpecifier {
+pub struct LanguageServerSpecifierContent {
     pub name: Option<String>,
 }
 // pub struct LanguageServerVariant {
@@ -955,7 +988,7 @@ mod test {
     #[test]
     fn test_formatter_deserialization() {
         dbg!(serde_json::to_string_pretty(&FormatterList::Single(
-            Formatter::LanguageServer(LanguageServerVariant::Current(Default::default()))
+            Formatter::LanguageServer(LanguageServerSpecifier { name: None })
         )));
         let raw_auto = "{\"formatter\": \"auto\"}";
         let settings: LanguageSettingsContent = serde_json::from_str(raw_auto).unwrap();
@@ -968,7 +1001,7 @@ mod test {
         assert_eq!(
             settings.formatter,
             Some(FormatterList::Single(Formatter::LanguageServer(
-                LanguageServerVariant::Current(Default::default())
+                LanguageServerSpecifier { name: None }
             )))
         );
         let raw = "{\"formatter\": [{\"language_server\": {\"name\": null}}]}";
@@ -976,7 +1009,7 @@ mod test {
         assert_eq!(
             settings.formatter,
             Some(FormatterList::Vec(vec![Formatter::LanguageServer(
-                LanguageServerVariant::Current(Default::default())
+                LanguageServerSpecifier { name: None }
             )]))
         );
         let raw = "{\"formatter\": [{\"language_server\": {\"name\": null}}, \"prettier\"]}";
@@ -984,7 +1017,7 @@ mod test {
         assert_eq!(
             settings.formatter,
             Some(FormatterList::Vec(vec![
-                Formatter::LanguageServer(LanguageServerVariant::Current(Default::default())),
+                Formatter::LanguageServer(LanguageServerSpecifier { name: None }),
                 Formatter::Prettier
             ]))
         );
