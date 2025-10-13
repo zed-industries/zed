@@ -1405,18 +1405,23 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
             },
         },
         SettingsPage {
-            title: "Languages",
+            title: "Languages & Tools",
             items: {
-                let mut items = vec![SettingsPageItem::SectionHeader(LANGUAGES_SECTION_HEADER)];
+                let mut items = vec![];
+                items.extend(non_editor_language_settings_data());
                 // todo(settings_ui): Refresh on extension (un)/installed
                 // Note that `crates/json_schema_store` solves the same problem, there is probably a way to unify the two
+                items.push(SettingsPageItem::SectionHeader(LANGUAGES_SECTION_HEADER));
                 items.extend(all_language_names(cx).into_iter().map(|language_name| {
                     SettingsPageItem::SubPageLink(SubPageLink {
                         title: language_name,
                         files: USER | LOCAL,
                         render: Arc::new(|this, window, cx| {
                             this.render_page_items(
-                                language_settings_data().iter().enumerate(),
+                                language_settings_data()
+                                    .iter()
+                                    .chain(non_editor_language_settings_data().iter())
+                                    .enumerate(),
                                 None,
                                 window,
                                 cx,
@@ -4340,47 +4345,47 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
 
 const LANGUAGES_SECTION_HEADER: &'static str = "Languages";
 
-fn language_settings_data() -> Vec<SettingsPageItem> {
-    fn current_language() -> Option<SharedString> {
-        sub_page_stack().iter().find_map(|page| {
-            (page.section_header == LANGUAGES_SECTION_HEADER).then(|| page.link.title.clone())
-        })
-    }
+fn current_language() -> Option<SharedString> {
+    sub_page_stack().iter().find_map(|page| {
+        (page.section_header == LANGUAGES_SECTION_HEADER).then(|| page.link.title.clone())
+    })
+}
 
-    fn language_settings_field<T>(
-        settings_content: &SettingsContent,
-        get: fn(&LanguageSettingsContent) -> &Option<T>,
-    ) -> &Option<T> {
-        let all_languages = &settings_content.project.all_languages;
-        if let Some(current_language_name) = current_language() {
-            if let Some(current_language) = all_languages.languages.0.get(&current_language_name) {
-                let value = get(current_language);
-                if value.is_some() {
-                    return value;
-                }
+fn language_settings_field<T>(
+    settings_content: &SettingsContent,
+    get: fn(&LanguageSettingsContent) -> &Option<T>,
+) -> &Option<T> {
+    let all_languages = &settings_content.project.all_languages;
+    if let Some(current_language_name) = current_language() {
+        if let Some(current_language) = all_languages.languages.0.get(&current_language_name) {
+            let value = get(current_language);
+            if value.is_some() {
+                return value;
             }
         }
-        let default_value = get(&all_languages.defaults);
-        return default_value;
     }
+    let default_value = get(&all_languages.defaults);
+    return default_value;
+}
 
-    fn language_settings_field_mut<T>(
-        settings_content: &mut SettingsContent,
-        get: fn(&mut LanguageSettingsContent) -> &mut Option<T>,
-    ) -> &mut Option<T> {
-        let all_languages = &mut settings_content.project.all_languages;
-        let language_content = if let Some(current_language) = current_language() {
-            all_languages
-                .languages
-                .0
-                .entry(current_language)
-                .or_default()
-        } else {
-            &mut all_languages.defaults
-        };
-        return get(language_content);
-    }
+fn language_settings_field_mut<T>(
+    settings_content: &mut SettingsContent,
+    get: fn(&mut LanguageSettingsContent) -> &mut Option<T>,
+) -> &mut Option<T> {
+    let all_languages = &mut settings_content.project.all_languages;
+    let language_content = if let Some(current_language) = current_language() {
+        all_languages
+            .languages
+            .0
+            .entry(current_language)
+            .or_default()
+    } else {
+        &mut all_languages.defaults
+    };
+    return get(language_content);
+}
 
+fn language_settings_data() -> Vec<SettingsPageItem> {
     vec![
         SettingsPageItem::SectionHeader("Indentation"),
         SettingsPageItem::SettingItem(SettingItem {
@@ -4745,101 +4750,6 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             metadata: None,
             files: USER | LOCAL,
         }),
-        SettingsPageItem::SectionHeader("Prettier"),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Allowed",
-            description: "Enables or disables formatting with Prettier for a given language",
-            field: Box::new(SettingField {
-                pick: |settings_content| {
-                    language_settings_field(settings_content, |language| {
-                        if let Some(prettier) = &language.prettier {
-                            &prettier.allowed
-                        } else {
-                            &None
-                        }
-                    })
-                },
-                pick_mut: |settings_content| {
-                    language_settings_field_mut(settings_content, |language| {
-                        &mut language.prettier.get_or_insert_default().allowed
-                    })
-                },
-            }),
-            metadata: None,
-            files: USER | LOCAL,
-        }),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Parser",
-            description: "Forces Prettier integration to use a specific parser name when formatting files with the language",
-            field: Box::new(SettingField {
-                pick: |settings_content| {
-                    language_settings_field(settings_content, |language| {
-                        if let Some(prettier) = &language.prettier {
-                            &prettier.parser
-                        } else {
-                            &None
-                        }
-                    })
-                },
-                pick_mut: |settings_content| {
-                    language_settings_field_mut(settings_content, |language| {
-                        &mut language.prettier.get_or_insert_default().parser
-                    })
-                },
-            }),
-            metadata: None,
-            files: USER | LOCAL,
-        }),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Plugins",
-            description: "Forces Prettier integration to use specific plugins when formatting files with the language",
-            field: Box::new(
-                SettingField {
-                    pick: |settings_content| {
-                        language_settings_field(settings_content, |language| {
-                            if let Some(prettier) = &language.prettier {
-                                &prettier.plugins
-                            } else {
-                                &None
-                            }
-                        })
-                    },
-                    pick_mut: |settings_content| {
-                        language_settings_field_mut(settings_content, |language| {
-                            &mut language.prettier.get_or_insert_default().plugins
-                        })
-                    },
-                }
-                .unimplemented(),
-            ),
-            metadata: None,
-            files: USER | LOCAL,
-        }),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Options",
-            description: "Default Prettier options, in the format as in package.json section for Prettier",
-            field: Box::new(
-                SettingField {
-                    pick: |settings_content| {
-                        language_settings_field(settings_content, |language| {
-                            if let Some(prettier) = &language.prettier {
-                                &prettier.options
-                            } else {
-                                &None
-                            }
-                        })
-                    },
-                    pick_mut: |settings_content| {
-                        language_settings_field_mut(settings_content, |language| {
-                            &mut language.prettier.get_or_insert_default().options
-                        })
-                    },
-                }
-                .unimplemented(),
-            ),
-            metadata: None,
-            files: USER | LOCAL,
-        }),
         SettingsPageItem::SectionHeader("Autoclose"),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Use Autoclose",
@@ -4914,72 +4824,6 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             }),
             metadata: None,
             files: USER | LOCAL,
-        }),
-        SettingsPageItem::SectionHeader("LSP"),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Enable Language Server",
-            description: "Whether to use language servers to provide code intelligence",
-            field: Box::new(SettingField {
-                pick: |settings_content| {
-                    language_settings_field(settings_content, |language| {
-                        &language.enable_language_server
-                    })
-                },
-                pick_mut: |settings_content| {
-                    language_settings_field_mut(settings_content, |language| {
-                        &mut language.enable_language_server
-                    })
-                },
-            }),
-            metadata: None,
-            files: USER | LOCAL,
-        }),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Language Servers",
-            description: "The list of language servers to use (or disable) for this language",
-            field: Box::new(
-                SettingField {
-                    pick: |settings_content| {
-                        language_settings_field(settings_content, |language| {
-                            &language.language_servers
-                        })
-                    },
-                    pick_mut: |settings_content| {
-                        language_settings_field_mut(settings_content, |language| {
-                            &mut language.language_servers
-                        })
-                    },
-                }
-                .unimplemented(),
-            ),
-            metadata: None,
-            files: USER | LOCAL,
-        }),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Linked Edits",
-            description: "Whether to perform linked edits of associated ranges, if the LS supports it. For example, when editing opening <html> tag, the contents of the closing </html> tag will be edited as well",
-            field: Box::new(SettingField {
-                pick: |settings_content| {
-                    language_settings_field(settings_content, |language| &language.linked_edits)
-                },
-                pick_mut: |settings_content| {
-                    language_settings_field_mut(settings_content, |language| {
-                        &mut language.linked_edits
-                    })
-                },
-            }),
-            metadata: None,
-            files: USER | LOCAL,
-        }),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Go To Definition Fallback",
-            description: "Whether to follow-up empty go to definition responses from the language server",
-            field: Box::new(SettingField {
-                pick: |settings_content| &settings_content.editor.go_to_definition_fallback,
-                pick_mut: |settings_content| &mut settings_content.editor.go_to_definition_fallback,
-            }),
-            metadata: None,
-            files: USER,
         }),
         SettingsPageItem::SectionHeader("Edit Predictions"),
         SettingsPageItem::SettingItem(SettingItem {
@@ -5166,75 +5010,6 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                             .completions
                             .get_or_insert_default()
                             .words_min_length
-                    })
-                },
-            }),
-            metadata: None,
-            files: USER | LOCAL,
-        }),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Lsp",
-            description: "Whether to fetch LSP completions or not",
-            field: Box::new(SettingField {
-                pick: |settings_content| {
-                    language_settings_field(settings_content, |language| {
-                        if let Some(completions) = &language.completions {
-                            &completions.lsp
-                        } else {
-                            &None
-                        }
-                    })
-                },
-                pick_mut: |settings_content| {
-                    language_settings_field_mut(settings_content, |language| {
-                        &mut language.completions.get_or_insert_default().lsp
-                    })
-                },
-            }),
-            metadata: None,
-            files: USER | LOCAL,
-        }),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Lsp Fetch Timeout Ms",
-            description: "When fetching LSP completions, determines how long to wait for a response of a particular server (set to 0 to wait indefinitely)",
-            field: Box::new(SettingField {
-                pick: |settings_content| {
-                    language_settings_field(settings_content, |language| {
-                        if let Some(completions) = &language.completions {
-                            &completions.lsp_fetch_timeout_ms
-                        } else {
-                            &None
-                        }
-                    })
-                },
-                pick_mut: |settings_content| {
-                    language_settings_field_mut(settings_content, |language| {
-                        &mut language
-                            .completions
-                            .get_or_insert_default()
-                            .lsp_fetch_timeout_ms
-                    })
-                },
-            }),
-            metadata: None,
-            files: USER | LOCAL,
-        }),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Lsp Insert Mode",
-            description: "Controls how LSP completions are inserted",
-            field: Box::new(SettingField {
-                pick: |settings_content| {
-                    language_settings_field(settings_content, |language| {
-                        if let Some(completions) = &language.completions {
-                            &completions.lsp_insert_mode
-                        } else {
-                            &None
-                        }
-                    })
-                },
-                pick_mut: |settings_content| {
-                    language_settings_field_mut(settings_content, |language| {
-                        &mut language.completions.get_or_insert_default().lsp_insert_mode
                     })
                 },
             }),
@@ -5510,8 +5285,8 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             files: USER | LOCAL,
         }),
         SettingsPageItem::SettingItem(SettingItem {
-            title: "Prefer Lsp",
-            description: "Use LSP tasks over Zed language extension ones",
+            title: "Prefer LSP",
+            description: "Use LSP tasks over Zed language extension tasks",
             field: Box::new(SettingField {
                 pick: |settings_content| {
                     language_settings_field(settings_content, |language| {
@@ -5576,6 +5351,264 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                     })
                 },
             }),
+            metadata: None,
+            files: USER | LOCAL,
+        }),
+    ]
+}
+
+/// LanguageSettings items that should be included in the "Languages & Tools" page
+/// not the "Editor" page
+fn non_editor_language_settings_data() -> Vec<SettingsPageItem> {
+    vec![
+        SettingsPageItem::SectionHeader("LSP"),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Enable Language Server",
+            description: "Whether to use language servers to provide code intelligence",
+            field: Box::new(SettingField {
+                pick: |settings_content| {
+                    language_settings_field(settings_content, |language| {
+                        &language.enable_language_server
+                    })
+                },
+                pick_mut: |settings_content| {
+                    language_settings_field_mut(settings_content, |language| {
+                        &mut language.enable_language_server
+                    })
+                },
+            }),
+            metadata: None,
+            files: USER | LOCAL,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Language Servers",
+            description: "The list of language servers to use (or disable) for this language",
+            field: Box::new(
+                SettingField {
+                    pick: |settings_content| {
+                        language_settings_field(settings_content, |language| {
+                            &language.language_servers
+                        })
+                    },
+                    pick_mut: |settings_content| {
+                        language_settings_field_mut(settings_content, |language| {
+                            &mut language.language_servers
+                        })
+                    },
+                }
+                .unimplemented(),
+            ),
+            metadata: None,
+            files: USER | LOCAL,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Linked Edits",
+            description: "Whether to perform linked edits of associated ranges, if the LS supports it. For example, when editing opening <html> tag, the contents of the closing </html> tag will be edited as well",
+            field: Box::new(SettingField {
+                pick: |settings_content| {
+                    language_settings_field(settings_content, |language| &language.linked_edits)
+                },
+                pick_mut: |settings_content| {
+                    language_settings_field_mut(settings_content, |language| {
+                        &mut language.linked_edits
+                    })
+                },
+            }),
+            metadata: None,
+            files: USER | LOCAL,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Go To Definition Fallback",
+            description: "Whether to follow-up empty go to definition responses from the language server",
+            field: Box::new(SettingField {
+                pick: |settings_content| &settings_content.editor.go_to_definition_fallback,
+                pick_mut: |settings_content| &mut settings_content.editor.go_to_definition_fallback,
+            }),
+            metadata: None,
+            files: USER,
+        }),
+        SettingsPageItem::SectionHeader("LSP Completions"),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Enabled",
+            description: "Whether to fetch LSP completions or not",
+            field: Box::new(SettingField {
+                pick: |settings_content| {
+                    language_settings_field(settings_content, |language| {
+                        if let Some(completions) = &language.completions {
+                            &completions.lsp
+                        } else {
+                            &None
+                        }
+                    })
+                },
+                pick_mut: |settings_content| {
+                    language_settings_field_mut(settings_content, |language| {
+                        &mut language.completions.get_or_insert_default().lsp
+                    })
+                },
+            }),
+            metadata: None,
+            files: USER | LOCAL,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Fetch Timeout (milliseconds)",
+            description: "When fetching LSP completions, determines how long to wait for a response of a particular server (set to 0 to wait indefinitely)",
+            field: Box::new(SettingField {
+                pick: |settings_content| {
+                    language_settings_field(settings_content, |language| {
+                        if let Some(completions) = &language.completions {
+                            &completions.lsp_fetch_timeout_ms
+                        } else {
+                            &None
+                        }
+                    })
+                },
+                pick_mut: |settings_content| {
+                    language_settings_field_mut(settings_content, |language| {
+                        &mut language
+                            .completions
+                            .get_or_insert_default()
+                            .lsp_fetch_timeout_ms
+                    })
+                },
+            }),
+            metadata: None,
+            files: USER | LOCAL,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Insert Mode",
+            description: "Controls how LSP completions are inserted",
+            field: Box::new(SettingField {
+                pick: |settings_content| {
+                    language_settings_field(settings_content, |language| {
+                        if let Some(completions) = &language.completions {
+                            &completions.lsp_insert_mode
+                        } else {
+                            &None
+                        }
+                    })
+                },
+                pick_mut: |settings_content| {
+                    language_settings_field_mut(settings_content, |language| {
+                        &mut language.completions.get_or_insert_default().lsp_insert_mode
+                    })
+                },
+            }),
+            metadata: None,
+            files: USER | LOCAL,
+        }),
+        SettingsPageItem::SectionHeader("Debuggers"),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Debuggers",
+            description: "Preferred debuggers for this language",
+            field: Box::new(
+                SettingField {
+                    pick: |settings_content| {
+                        language_settings_field(settings_content, |language| &language.debuggers)
+                    },
+                    pick_mut: |settings_content| {
+                        language_settings_field_mut(settings_content, |language| {
+                            &mut language.debuggers
+                        })
+                    },
+                }
+                .unimplemented(),
+            ),
+            metadata: None,
+            files: USER | LOCAL,
+        }),
+        SettingsPageItem::SectionHeader("Prettier"),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Allowed",
+            description: "Enables or disables formatting with Prettier for a given language",
+            field: Box::new(SettingField {
+                pick: |settings_content| {
+                    language_settings_field(settings_content, |language| {
+                        if let Some(prettier) = &language.prettier {
+                            &prettier.allowed
+                        } else {
+                            &None
+                        }
+                    })
+                },
+                pick_mut: |settings_content| {
+                    language_settings_field_mut(settings_content, |language| {
+                        &mut language.prettier.get_or_insert_default().allowed
+                    })
+                },
+            }),
+            metadata: None,
+            files: USER | LOCAL,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Parser",
+            description: "Forces Prettier integration to use a specific parser name when formatting files with the language",
+            field: Box::new(SettingField {
+                pick: |settings_content| {
+                    language_settings_field(settings_content, |language| {
+                        if let Some(prettier) = &language.prettier {
+                            &prettier.parser
+                        } else {
+                            &None
+                        }
+                    })
+                },
+                pick_mut: |settings_content| {
+                    language_settings_field_mut(settings_content, |language| {
+                        &mut language.prettier.get_or_insert_default().parser
+                    })
+                },
+            }),
+            metadata: None,
+            files: USER | LOCAL,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Plugins",
+            description: "Forces Prettier integration to use specific plugins when formatting files with the language",
+            field: Box::new(
+                SettingField {
+                    pick: |settings_content| {
+                        language_settings_field(settings_content, |language| {
+                            if let Some(prettier) = &language.prettier {
+                                &prettier.plugins
+                            } else {
+                                &None
+                            }
+                        })
+                    },
+                    pick_mut: |settings_content| {
+                        language_settings_field_mut(settings_content, |language| {
+                            &mut language.prettier.get_or_insert_default().plugins
+                        })
+                    },
+                }
+                .unimplemented(),
+            ),
+            metadata: None,
+            files: USER | LOCAL,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Options",
+            description: "Default Prettier options, in the format as in package.json section for Prettier",
+            field: Box::new(
+                SettingField {
+                    pick: |settings_content| {
+                        language_settings_field(settings_content, |language| {
+                            if let Some(prettier) = &language.prettier {
+                                &prettier.options
+                            } else {
+                                &None
+                            }
+                        })
+                    },
+                    pick_mut: |settings_content| {
+                        language_settings_field_mut(settings_content, |language| {
+                            &mut language.prettier.get_or_insert_default().options
+                        })
+                    },
+                }
+                .unimplemented(),
+            ),
             metadata: None,
             files: USER | LOCAL,
         }),
