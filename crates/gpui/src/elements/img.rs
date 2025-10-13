@@ -1,9 +1,9 @@
 use crate::{
-    AbsoluteLength, AnyElement, AnyImageCache, App, Asset, AssetLogger, Bounds, DefiniteLength,
-    Element, ElementId, Entity, GlobalElementId, Hitbox, Image, ImageCache, InspectorElementId,
-    InteractiveElement, Interactivity, IntoElement, LayoutId, Length, ObjectFit, Pixels,
-    RenderImage, Resource, SMOOTH_SVG_SCALE_FACTOR, SharedString, SharedUri, StyleRefinement,
-    Styled, SvgSize, Task, Window, px, swap_rgba_pa_to_bgra,
+    AnyElement, AnyImageCache, App, Asset, AssetLogger, Bounds, DefiniteLength, Element, ElementId,
+    Entity, GlobalElementId, Hitbox, Image, ImageCache, InspectorElementId, InteractiveElement,
+    Interactivity, IntoElement, LayoutId, Length, ObjectFit, Pixels, RenderImage, Resource,
+    SMOOTH_SVG_SCALE_FACTOR, SharedString, SharedUri, StyleRefinement, Styled, SvgSize, Task,
+    Window, px, swap_rgba_pa_to_bgra,
 };
 use anyhow::{Context as _, Result};
 
@@ -337,24 +337,28 @@ impl Element for Img {
 
                             if let Length::Auto = style.size.width {
                                 style.size.width = match style.size.height {
-                                    Length::Definite(DefiniteLength::Absolute(
-                                        AbsoluteLength::Pixels(height),
-                                    )) => Length::Definite(
-                                        px(image_size.width.0 * height.0 / image_size.height.0)
+                                    Length::Definite(DefiniteLength::Absolute(abs_length)) => {
+                                        let height_px = abs_length.to_pixels(window.rem_size());
+                                        Length::Definite(
+                                            px(image_size.width.0 * height_px.0
+                                                / image_size.height.0)
                                             .into(),
-                                    ),
+                                        )
+                                    }
                                     _ => Length::Definite(image_size.width.into()),
                                 };
                             }
 
                             if let Length::Auto = style.size.height {
                                 style.size.height = match style.size.width {
-                                    Length::Definite(DefiniteLength::Absolute(
-                                        AbsoluteLength::Pixels(width),
-                                    )) => Length::Definite(
-                                        px(image_size.height * f32::from(width) / image_size.width)
+                                    Length::Definite(DefiniteLength::Absolute(abs_length)) => {
+                                        let width_px = abs_length.to_pixels(window.rem_size());
+                                        Length::Definite(
+                                            px(image_size.height.0 * width_px.0
+                                                / image_size.width.0)
                                             .into(),
-                                    ),
+                                        )
+                                    }
                                     _ => Length::Definite(image_size.height.into()),
                                 };
                             }
