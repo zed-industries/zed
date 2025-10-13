@@ -878,15 +878,14 @@ impl DisplaySnapshot {
             .scan(
                 (current_buffer_offset, String::new(), None::<gpui::HighlightStyle>),
                 move |(offset, accumulated_identifier, accumulated_style), chunk| {
-                    // Get capture name and tree-sitter style
-                    let capture_name = chunk.syntax_highlight_id.and_then(|id| id.name(theme));
-                    let highlight_style = chunk.syntax_highlight_id.and_then(|id| id.style(theme));
-
                     let chunk_start = *offset;
                     let chunk_end = chunk_start + chunk.text.len();
                     *offset = chunk_end;
 
-                    // Check if this chunk is part of a variable identifier
+                    let (capture_name, highlight_style) = chunk.syntax_highlight_id
+                        .map(|id| (id.name(theme), id.style(theme)))
+                        .unwrap_or((None, None));
+
                     let is_variable_like = capture_name
                         .map(|name| {
                             name.starts_with("variable") &&
@@ -897,37 +896,25 @@ impl DisplaySnapshot {
                         .unwrap_or(false);
 
                     // Accumulator pattern: build identifier from consecutive variable chunks
-                    let rainbow_style = if
-                        is_variable_like &&
-                        chunk.text.chars().all(|c| (c.is_alphanumeric() || c == '_'))
-                    {
-                        // Check if this is the START of a new identifier
+                    let rainbow_style = if is_variable_like {
                         let is_new_identifier = accumulated_identifier.is_empty();
-
-                        // Add this chunk to accumulated identifier
                         accumulated_identifier.push_str(chunk.text);
 
-                        // Compute color ONLY for new identifiers OR if we don't have a cached style yet
                         if is_new_identifier || accumulated_style.is_none() {
-                            if accumulated_identifier.len() >= 2 {
-                                // Compute rainbow color based on accumulated text so far
-                                let style = crate::rainbow::with_rainbow_cache(|cache| {
-                                    crate::rainbow::apply_rainbow_highlighting(
-                                        accumulated_identifier,
-                                        true,
-                                        rainbow_config.enabled,
-                                        theme,
-                                        cache
-                                    )
-                                });
-                                *accumulated_style = style;
-                            }
+                            let style = crate::rainbow::with_rainbow_cache(|cache| {
+                                crate::rainbow::apply_rainbow_highlighting(
+                                    accumulated_identifier,
+                                    true,
+                                    rainbow_config.enabled,
+                                    theme,
+                                    cache
+                                )
+                            });
+                            *accumulated_style = style;
                         }
 
-                        // Return the cached style for this identifier
                         *accumulated_style
                     } else {
-                        // Not a variable chunk - reset accumulator
                         accumulated_identifier.clear();
                         *accumulated_style = None;
                         None
