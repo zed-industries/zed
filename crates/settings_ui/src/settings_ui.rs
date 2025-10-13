@@ -961,7 +961,7 @@ impl SettingsWindow {
 
         this.fetch_files(window, cx);
         this.build_ui(window, cx);
-        this.build_search_index();
+        this.build_search_index(cx);
 
         this.search_bar.update(cx, |editor, cx| {
             editor.focus_handle(cx).focus(window);
@@ -1221,7 +1221,7 @@ impl SettingsWindow {
             .collect::<Vec<_>>();
     }
 
-    fn build_search_index(&mut self) {
+    fn build_search_index(&mut self, cx: &App) {
         let mut key_lut: Vec<SearchItemKey> = vec![];
         let mut documents = Vec::default();
         let mut fuzzy_match_candidates = Vec::default();
@@ -1275,8 +1275,19 @@ impl SettingsWindow {
                             sub_page_link.title.as_ref(),
                         );
                     }
-                    SettingsPageItem::LanguagesTable(languages_table) => {
-                        // todo! for language_name in all_language_names(cx)
+                    SettingsPageItem::LanguagesTable(_) => {
+                        for language_name in all_language_names(cx) {
+                            documents.push(bm25::Document {
+                                id: key_index,
+                                contents: [page.title, header_str, language_name.as_ref()]
+                                    .join("\n"),
+                            });
+                            push_candidates(
+                                &mut fuzzy_match_candidates,
+                                key_index,
+                                language_name.as_ref(),
+                            );
+                        }
                     }
                 }
                 push_candidates(&mut fuzzy_match_candidates, key_index, page.title);
