@@ -1666,6 +1666,9 @@ impl SettingsWindow {
                                                 .on_toggle(cx.listener(
                                                     move |this, _, window, cx| {
                                                         this.toggle_navbar_entry(ix);
+                                                        // Update selection state immediately before cx.notify
+                                                        // to prevent double selection flash
+                                                        this.navbar_entry = ix;
                                                         window.focus(
                                                             &this.navbar_entries[ix].focus_handle,
                                                         );
