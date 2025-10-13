@@ -11,8 +11,10 @@
   {
     "context": "Editor",
     "bindings": {
+      "alt-x": "command_palette::Toggle",
       "ctrl-g": "editor::Cancel",
       "ctrl-x b": "tab_switcher::Toggle", // switch-to-buffer
+      "ctrl-x ctrl-b": "tab_switcher::Toggle", // list-buffers
       "alt-g g": "go_to_line::Toggle", // goto-line
       "alt-g alt-g": "go_to_line::Toggle", // goto-line
       "ctrl-space": "editor::SetMark", // set-mark
@@ -60,6 +62,7 @@
       "alt->": "editor::MoveToEnd", // end-of-buffer
       "ctrl-l": "editor::ScrollCursorCenterTopBottom", // recenter-top-bottom
       "ctrl-s": "buffer_search::Deploy", // isearch-forward
+      "ctrl-r": "buffer_search::Deploy", // isearch-backward
       "alt-^": "editor::JoinLines", // join-line
       "alt-q": "editor::Rewrap" // fill-paragraph
     }
