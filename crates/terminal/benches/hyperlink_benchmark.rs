@@ -9,7 +9,7 @@ use terminal::bench::find_from_grid_point_bench;
 
 pub fn hyperlink_benchmark(c: &mut Criterion) {
     let line =
-        "    Compiling terminal v0.1.0 (/Users/dave/Source/zed-hyperlinks/crates/terminal)\r\n"
+        "    Compiling terminal v0.1.0 (/Hyperlinks/Bench/Source/zed-hyperlinks/crates/terminal)\r\n"
             .repeat(4000);
     let term = mock_term(&line);
     let point = AlacPoint::new(
