@@ -17,7 +17,10 @@ mod non_windows_and_freebsd_deps {
 use non_windows_and_freebsd_deps::*;
 
 use rodio::{
-    Decoder, OutputStream, OutputStreamBuilder, Source, mixer::Mixer, nz, source::Buffered,
+    Decoder, OutputStream, OutputStreamBuilder, Source,
+    mixer::Mixer,
+    nz,
+    source::{AutomaticGainControlSettings, Buffered},
 };
 use settings::Settings;
 use std::{io::Cursor, num::NonZero, path::PathBuf, sync::atomic::Ordering, time::Duration};
@@ -106,6 +109,15 @@ impl Default for Audio {
     }
 }
 
+fn automatic_gain_control_settings() -> AutomaticGainControlSettings {
+    AutomaticGainControlSettings {
+        target_level: 0.9,
+        attack_time: Duration::from_secs_f32(1f32),
+        release_time: Duration::from_secs_f32(0f32),
+        absolute_max_gain: 5.0,
+    }
+}
+
 impl Global for Audio {}
 
 impl Audio {
@@ -171,6 +183,7 @@ impl Audio {
         voip_parts: VoipParts,
         raw_mic_input: impl Source,
     ) -> anyhow::Result<impl Source> {
+
         let stream = raw_mic_input
             .possibly_disconnected_channels_to_mono()
             .constant_samplerate(SAMPLE_RATE)
@@ -196,7 +209,7 @@ impl Audio {
             })
             .denoise()
             .context("Could not set up denoiser")?
-            .automatic_gain_control(0.90, 1.0, 0.0, 5.0)
+            .automatic_gain_control(automatic_gain_control_settings())
             .periodic_access(Duration::from_millis(100), move |agc_source| {
                 agc_source
                     .set_enabled(LIVE_SETTINGS.auto_microphone_volume.load(Ordering::Relaxed));
@@ -244,7 +257,7 @@ impl Audio {
     ) -> anyhow::Result<()> {
         let (replay_source, source) = source
             .constant_params(CHANNEL_COUNT, SAMPLE_RATE)
-            .automatic_gain_control(0.90, 1.0, 0.0, 5.0)
+            .automatic_gain_control(automatic_gain_control_settings())
             .periodic_access(Duration::from_millis(100), move |agc_source| {
                 agc_source.set_enabled(LIVE_SETTINGS.auto_speaker_volume.load(Ordering::Relaxed));
             })
