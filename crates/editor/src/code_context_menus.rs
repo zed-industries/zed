@@ -1518,6 +1518,7 @@ impl CodeActionsMenu {
                                     this.child(
                                         h_flex()
                                             .overflow_hidden()
+                                            .when(is_quick_action_bar, |this| this.text_ui(cx))
                                             .child(task.resolved_label.replace("\n", ""))
                                             .when(selected, |this| {
                                                 this.text_color(colors.text_accent)
@@ -1528,6 +1529,7 @@ impl CodeActionsMenu {
                                     this.child(
                                         h_flex()
                                             .overflow_hidden()
+                                            .when(is_quick_action_bar, |this| this.text_ui(cx))
                                             .child("debug: ")
                                             .child(scenario.label.clone())
                                             .when(selected, |this| {
