@@ -268,12 +268,12 @@ impl DebugPanel {
 
             async move |_, cx| {
                 if let Err(error) = task.await {
-                    log::error!("{error}");
+                    log::error!("{error:#}");
                     session
                         .update(cx, |session, cx| {
                             session
                                 .console_output(cx)
-                                .unbounded_send(format!("error: {}", error))
+                                .unbounded_send(format!("error: {:#}", error))
                                 .ok();
                             session.shutdown(cx)
                         })?

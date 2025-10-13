@@ -23,6 +23,7 @@ use serde_json::{Value, json};
 use smol::lock::OnceCell;
 use std::cmp::Ordering;
 use std::env::consts;
+use util::command::new_smol_command;
 use util::fs::{make_file_executable, remove_matching};
 use util::rel_path::RelPath;
 
@@ -1332,7 +1333,13 @@ impl PyLspAdapter {
     async fn ensure_venv(delegate: &dyn LspAdapterDelegate) -> Result<Arc<Path>> {
         let python_path = Self::find_base_python(delegate)
             .await
-            .context("Could not find Python installation for PyLSP")?;
+            .with_context(|| {
+                let mut message = "Could not find Python installation for PyLSP".to_owned();
+                if cfg!(windows){
+                    message.push_str(". Install Python from the Microsoft Store, or manually from https://www.python.org/downloads/windows.")
+                }
+                message
+            })?;
         let work_dir = delegate
             .language_server_download_dir(&Self::SERVER_NAME)
             .await
@@ -1355,9 +1362,24 @@ impl PyLspAdapter {
     // Find "baseline", user python version from which we'll create our own venv.
     async fn find_base_python(delegate: &dyn LspAdapterDelegate) -> Option<PathBuf> {
         for path in ["python3", "python"] {
-            if let Some(path) = delegate.which(path.as_ref()).await {
-                return Some(path);
+            let Some(path) = delegate.which(path.as_ref()).await else {
+                continue;
+            };
+            // Try to detect situations where `python3` exists but is not a real Python interpreter.
+            // Notably, on fresh Windows installs, `python3` is a shim that opens the Microsoft Store app
+            // when run with no arguments, and just fails otherwise.
+            let Some(output) = new_smol_command(&path)
+                .args(["-c", "print(1 + 2)"])
+                .output()
+                .await
+                .ok()
+            else {
+                continue;
+            };
+            if output.stdout.trim_ascii() != b"3" {
+                continue;
             }
+            return Some(path);
         }
         None
     }
