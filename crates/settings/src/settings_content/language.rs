@@ -779,30 +779,35 @@ pub enum Formatter {
     from = "LanguageServerVariantContent",
     into = "LanguageServerVariantContent"
 )]
-pub struct LanguageServerSpecifier {
-    pub name: Option<String>,
+pub enum LanguageServerSpecifier {
+    Specific {
+        name: String,
+    },
+    #[default]
+    Current,
 }
 
 impl From<LanguageServerVariantContent> for LanguageServerSpecifier {
     fn from(value: LanguageServerVariantContent) -> Self {
         match value {
             LanguageServerVariantContent::Specific {
-                language_server: LanguageServerSpecifierContent { name },
-            } => Self { name },
-            LanguageServerVariantContent::Current(_) => Self { name: None },
+                language_server: LanguageServerSpecifierContent { name: Some(name) },
+            } => Self::Specific { name },
+            _ => Self::Current,
         }
     }
 }
 
 impl From<LanguageServerSpecifier> for LanguageServerVariantContent {
     fn from(value: LanguageServerSpecifier) -> Self {
-        if value.name.is_some() {
-            return Self::Specific {
-                language_server: LanguageServerSpecifierContent { name: value.name },
-            };
+        match value {
+            LanguageServerSpecifier::Specific { name } => Self::Specific {
+                language_server: LanguageServerSpecifierContent { name: Some(name) },
+            },
+            LanguageServerSpecifier::Current => {
+                Self::Current(CurrentLanguageServerContent::LanguageServer)
+            }
         }
-
-        Self::Current(CurrentLanguageServerContent::LanguageServer)
     }
 }
 
@@ -987,9 +992,6 @@ mod test {
 
     #[test]
     fn test_formatter_deserialization() {
-        dbg!(serde_json::to_string_pretty(&FormatterList::Single(
-            Formatter::LanguageServer(LanguageServerSpecifier { name: None })
-        )));
         let raw_auto = "{\"formatter\": \"auto\"}";
         let settings: LanguageSettingsContent = serde_json::from_str(raw_auto).unwrap();
         assert_eq!(
@@ -1001,25 +1003,44 @@ mod test {
         assert_eq!(
             settings.formatter,
             Some(FormatterList::Single(Formatter::LanguageServer(
-                LanguageServerSpecifier { name: None }
+                LanguageServerSpecifier::Current
             )))
         );
+
         let raw = "{\"formatter\": [{\"language_server\": {\"name\": null}}]}";
         let settings: LanguageSettingsContent = serde_json::from_str(raw).unwrap();
         assert_eq!(
             settings.formatter,
             Some(FormatterList::Vec(vec![Formatter::LanguageServer(
-                LanguageServerSpecifier { name: None }
+                LanguageServerSpecifier::Current
             )]))
         );
-        let raw = "{\"formatter\": [{\"language_server\": {\"name\": null}}, \"prettier\"]}";
+        let raw = "{\"formatter\": [{\"language_server\": {\"name\": null}}, \"language_server\", \"prettier\"]}";
         let settings: LanguageSettingsContent = serde_json::from_str(raw).unwrap();
         assert_eq!(
             settings.formatter,
             Some(FormatterList::Vec(vec![
-                Formatter::LanguageServer(LanguageServerSpecifier { name: None }),
+                Formatter::LanguageServer(LanguageServerSpecifier::Current),
+                Formatter::LanguageServer(LanguageServerSpecifier::Current),
                 Formatter::Prettier
             ]))
+        );
+
+        let raw = "{\"formatter\": [{\"language_server\": {\"name\": \"ruff\"}}, \"prettier\"]}";
+        let settings: LanguageSettingsContent = serde_json::from_str(raw).unwrap();
+        assert_eq!(
+            settings.formatter,
+            Some(FormatterList::Vec(vec![
+                Formatter::LanguageServer(LanguageServerSpecifier::Specific {
+                    name: "ruff".to_string()
+                }),
+                Formatter::Prettier
+            ]))
+        );
+
+        assert_eq!(
+            serde_json::to_string(&LanguageServerSpecifier::Current).unwrap(),
+            "\"language_server\"",
         );
     }
 
