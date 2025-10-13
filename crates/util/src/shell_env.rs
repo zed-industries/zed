@@ -36,7 +36,7 @@ async fn capture_unix(
     use std::process::Stdio;
 
     let zed_path = super::get_shell_safe_zed_path()?;
-    let shell_kind = ShellKind::new(shell_path);
+    let shell_kind = ShellKind::new(shell_path, false);
 
     let mut command_string = String::new();
     let mut command = std::process::Command::new(shell_path);
@@ -135,7 +135,7 @@ async fn capture_windows(
     let zed_path =
         std::env::current_exe().context("Failed to determine current zed executable path.")?;
 
-    let shell_kind = ShellKind::new(shell_path);
+    let shell_kind = ShellKind::new(shell_path, true);
     let env_output = match shell_kind {
         ShellKind::Posix
         | ShellKind::Csh

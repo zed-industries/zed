@@ -355,10 +355,10 @@ impl Shell {
         }
     }
 
-    pub fn shell_kind(&self) -> ShellKind {
+    pub fn shell_kind(&self, is_windows: bool) -> ShellKind {
         match self {
-            Shell::Program(program) => ShellKind::new(program),
-            Shell::WithArguments { program, .. } => ShellKind::new(program),
+            Shell::Program(program) => ShellKind::new(program, is_windows),
+            Shell::WithArguments { program, .. } => ShellKind::new(program, is_windows),
             Shell::System => ShellKind::system(),
         }
     }
