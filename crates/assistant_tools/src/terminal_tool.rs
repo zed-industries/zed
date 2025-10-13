@@ -136,6 +136,7 @@ impl Tool for TerminalTool {
             }),
             None => Task::ready(None).shared(),
         };
+        let is_windows = project.read(cx).path_style(cx).is_windows();
         let shell = project
             .update(cx, |project, cx| {
                 project
@@ -155,7 +156,7 @@ impl Tool for TerminalTool {
         let build_cmd = {
             let input_command = input.command.clone();
             move || {
-                ShellBuilder::new(&Shell::Program(shell))
+                ShellBuilder::new(&Shell::Program(shell), is_windows)
                     .redirect_stdin_to_dev_null()
                     .build(Some(input_command), &[])
             }
