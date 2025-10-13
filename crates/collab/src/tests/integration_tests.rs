@@ -39,7 +39,7 @@ use project::{
 use prompt_store::PromptBuilder;
 use rand::prelude::*;
 use serde_json::json;
-use settings::{PrettierSettingsContent, SettingsStore};
+use settings::{LanguageServerSpecifier, PrettierSettingsContent, SettingsStore};
 use std::{
     cell::{Cell, RefCell},
     env, future, mem,
@@ -4718,10 +4718,9 @@ async fn test_prettier_formatting_buffer(
     cx_b.update(|cx| {
         SettingsStore::update_global(cx, |store, cx| {
             store.update_user_settings(cx, |file| {
-                file.project.all_languages.defaults.formatter =
-                    Some(FormatterList::Single(Formatter::LanguageServer {
-                        name: None,
-                    }));
+                file.project.all_languages.defaults.formatter = Some(FormatterList::Single(
+                    Formatter::LanguageServer(LanguageServerSpecifier::Current),
+                ));
                 file.project.all_languages.defaults.prettier = Some(PrettierSettingsContent {
                     allowed: Some(true),
                     ..Default::default()

@@ -1,12 +1,9 @@
-use std::{borrow::Cow, num::NonZeroU32};
+use std::num::NonZeroU32;
 
 use collections::{HashMap, HashSet};
 use gpui::{Modifiers, SharedString};
-use schemars::{JsonSchema, json_schema};
-use serde::{
-    Deserialize, Deserializer, Serialize,
-    de::{self, IntoDeserializer, MapAccess, SeqAccess, Visitor},
-};
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 use settings_macros::MergeFrom;
 use std::sync::Arc;

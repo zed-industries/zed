@@ -1347,7 +1347,7 @@ impl LocalLspStore {
                     &Formatter::Prettier
                 } else {
                     zlog::trace!(logger => "Formatter set to auto: defaulting to primary language server");
-                    &Formatter::LanguageServer { name: None }
+                    &Formatter::LanguageServer(settings::LanguageServerSpecifier::Current)
                 }
             } else {
                 formatter
@@ -1408,7 +1408,7 @@ impl LocalLspStore {
                         },
                     )?;
                 }
-                Formatter::LanguageServer { name } => {
+                Formatter::LanguageServer(specifier) => {
                     let logger = zlog::scoped!(logger => "language-server");
                     zlog::trace!(logger => "formatting");
                     let _timer = zlog::time!(logger => "Formatting buffer using language server");
@@ -1418,16 +1418,19 @@ impl LocalLspStore {
                         continue;
                     };
 
-                    let language_server = if let Some(name) = name.as_deref() {
-                        adapters_and_servers.iter().find_map(|(adapter, server)| {
-                            if adapter.name.0.as_ref() == name {
-                                Some(server.clone())
-                            } else {
-                                None
-                            }
-                        })
-                    } else {
-                        adapters_and_servers.first().map(|e| e.1.clone())
+                    let language_server = match specifier {
+                        settings::LanguageServerSpecifier::Specific { name } => {
+                            adapters_and_servers.iter().find_map(|(adapter, server)| {
+                                if adapter.name.0.as_ref() == name {
+                                    Some(server.clone())
+                                } else {
+                                    None
+                                }
+                            })
+                        }
+                        settings::LanguageServerSpecifier::Current => {
+                            adapters_and_servers.first().map(|e| e.1.clone())
+                        }
                     };
 
                     let Some(language_server) = language_server else {
