@@ -495,6 +495,11 @@ impl TerminalBuilder {
                 .unwrap_or(params.program.clone())
         });
 
+        // Note: when remoting, this shell_kind will scrutinize `ssh` or
+        // `wsl.exe` as a shell and fall back to posix or powershell based on
+        // the compilation target. This is fine right now due to the restricted
+        // way we use the return value, but would become incorrect if we
+        // supported remoting into windows.
         let shell_kind = shell.shell_kind(cfg!(windows));
 
         let pty_options = {
