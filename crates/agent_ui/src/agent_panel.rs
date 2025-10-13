@@ -19,9 +19,10 @@ use zed_actions::agent::{OpenClaudeCodeOnboardingModal, ReauthenticateAgent};
 use crate::acp::{AcpThreadHistory, ThreadHistoryEvent};
 use crate::ui::{AcpOnboardingModal, ClaudeCodeOnboardingModal};
 use crate::{
-    AddContextServer, DeleteRecentlyOpenThread, Follow, InlineAssistant, NewTextThread, NewThread,
-    OpenActiveThreadAsMarkdown, OpenHistory, ResetTrialEndUpsell, ResetTrialUpsell,
-    ToggleNavigationMenu, ToggleNewThreadMenu, ToggleOptionsMenu,
+    AddContextServer, AgentDiffPane, DeleteRecentlyOpenThread, Follow, InlineAssistant,
+    NewTextThread, NewThread, OpenActiveThreadAsMarkdown, OpenAgentDiff, OpenHistory,
+    ResetTrialEndUpsell, ResetTrialUpsell, ToggleNavigationMenu, ToggleNewThreadMenu,
+    ToggleOptionsMenu,
     acp::AcpThreadView,
     agent_configuration::{AgentConfiguration, AssistantConfigurationEvent},
     slash_command::SlashCommandCompletionProvider,
@@ -139,6 +140,16 @@ pub fn init(cx: &mut App) {
                 })
                 .register_action(|workspace, _: &Follow, window, cx| {
                     workspace.follow(CollaboratorId::Agent, window, cx);
+                })
+                .register_action(|workspace, _: &OpenAgentDiff, window, cx| {
+                    let thread = workspace
+                        .panel::<AgentPanel>(cx)
+                        .and_then(|panel| panel.read(cx).active_thread_view().cloned())
+                        .and_then(|thread_view| thread_view.read(cx).thread().cloned());
+
+                    if let Some(thread) = thread {
+                        AgentDiffPane::deploy_in_workspace(thread, workspace, window, cx);
+                    }
                 })
                 .register_action(|workspace, _: &ToggleNavigationMenu, window, cx| {
                     if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
