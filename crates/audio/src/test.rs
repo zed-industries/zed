@@ -160,6 +160,7 @@ fn assert_similar_voice_spectra(
 
     let expected_samplse: Vec<_> = expected.clone().collect();
     let pipeline_samples: Vec<_> = pipeline.clone().collect();
+    let mut i = 0;
     for (input, output) in expected_samplse
         .chunks_exact(hundred_millis)
         .zip(pipeline_samples.chunks_exact(hundred_millis))
@@ -183,6 +184,8 @@ fn assert_similar_voice_spectra(
             voice_less_duration += Duration::from_millis(100);
             continue;
         }
+        dbg!(i);
+        i += 100;
         assert_same_voice_signal(expected, pipeline);
     }
 
