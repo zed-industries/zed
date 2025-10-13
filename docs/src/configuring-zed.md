@@ -4,7 +4,16 @@ Zed is designed to be configured: we want to fit your workflow and preferences e
 
 In addition to the settings described here, you may also want to change your [theme](./themes.md), configure your [key bindings](./key-bindings.md), set up [tasks](./tasks.md) or install [extensions](https://github.com/zed-industries/extensions).
 
-## Accessing Settings
+## User Settings
+
+These are your personal settings that will apply to any Zed instance you open, and they'll apply to every instance of Zed you open.
+
+You can access user settings via:
+- Command Palette {#kb zed::OpenSettings}
+- Shortcut `cmd+,`
+
+You can also edit settings directly in the JSON via {#kb zed::OpenSettingsFile} or with `opt+cmd+,`.
+
 
 <!--
 TBD: Settings files. Rewrite with "remote settings" in mind (e.g. `local settings` on the remote host).
@@ -12,21 +21,27 @@ Consider renaming `zed: Open Local Settings` to `zed: Open Project Settings`.
 
 TBD: Add settings documentation about how settings are merged as overlays. E.g. project>local>default. Note how settings that are maps are merged, but settings that are arrays are replaced and must include the defaults.
 -->
-
-You can open your local and project settings via the command palette {#kb zed::OpenSettings} or with the shortcut `cmd+,`. 
+## Project Settings
+Project settings will override your user settings, and apply specifically to one project. Project settings can be viewed in the Settings Editor next to the user settings.
 
 Although most projects will only need one settings file at the root, you can add more local settings files for subdirectories as needed. Not all settings can be set in local files, just those that impact the behavior of the editor and language tooling. For example you can set `tab_size`, `formatter` etc. but not `theme`, `vim_mode` and similar.
-
-To edit settings directly in the code, you can access the JSON via {#kb zed::OpenSettingsFile} or with `opt+cmd+,`.  
 
 # Settings
 
 ## Active Pane Modifiers
 
-- Description: Styling settings applied to the active pane.
-- Setting: `active_pane_modifiers`
-- Default:
+**What it does**
+Apply stying to the active pane in your editor.
 
+- Border size: Size of the border surrounding the active pane. When set to 0, the active pane doesn't have any border. The border is drawn inset.
+  - Default: 0.0
+- Inactive opacity: Opacity of inactive panels. When set to 1.0, the inactive panes have the same opacity as the active one. If set to 0, the inactive panes content will not be visible at all. Values are clamped to the [0.0, 1.0] range.
+  - Default: 1.0
+
+**How to change**
+Settings Editor (`cmd+,`) > Appearance & Behavior > Window.
+
+**View the JSON**
 ```json [settings]
 {
   "active_pane_modifiers": {
@@ -36,31 +51,14 @@ To edit settings directly in the code, you can access the JSON via {#kb zed::Ope
 }
 ```
 
-### Border size
-
-- Description: Size of the border surrounding the active pane. When set to 0, the active pane doesn't have any border. The border is drawn inset.
-- Setting: `border_size`
-- Default: `0.0`
-
-**Options**
-
-Non-negative `float` values
-
-### Inactive Opacity
-
-- Description: Opacity of inactive panels. When set to 1.0, the inactive panes have the same opacity as the active one. If set to 0, the inactive panes content will not be visible at all. Values are clamped to the [0.0, 1.0] range.
-- Setting: `inactive_opacity`
-- Default: `1.0`
-
-**Options**
-
-`float` values
-
 ## Bottom Dock Layout
 
-- Description: Control the layout of the bottom dock, relative to the left and right docks.
-- Setting: `bottom_dock_layout`
+**What it does**
+ Control the layout of the bottom dock, relative to the left and right docks.
+
 - Default: `"contained"`
+
+**How to change**
 
 **Options**
 
