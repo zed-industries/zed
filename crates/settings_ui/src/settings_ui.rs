@@ -1728,15 +1728,12 @@ impl SettingsWindow {
                 return;
             };
 
-            // todo! fix this
-            cx.on_next_frame(window, move |this, window, cx| {
-                this.list_state.scroll_to_reveal_item(selected_item_index);
-                this.focus_content_element(entry_item_index, window, cx);
-                cx.notify();
+            self.list_state.scroll_to(gpui::ListOffset {
+                item_ix: selected_item_index + 1,
+                offset_in_item: px(0.),
             });
-            // self.page_scroll_handle
-            //     .scroll_to_top_of_item(selected_item_index);
-            // self.focus_content_element(entry_item_index, window, cx);
+            self.focus_content_element(entry_item_index, window, cx);
+            cx.notify();
         }
 
         // Page scroll handle updates the active item index
