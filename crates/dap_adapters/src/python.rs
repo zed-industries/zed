@@ -6,7 +6,7 @@ use futures::{StreamExt, TryStreamExt};
 use gpui::http_client::AsyncBody;
 use gpui::{AsyncApp, SharedString};
 use json_dotpath::DotPaths;
-use language::LanguageName;
+use language::{LanguageName, Toolchain};
 use paths::debug_adapters_dir;
 use serde_json::Value;
 use smol::fs::File;
@@ -93,10 +93,14 @@ impl PythonDebugAdapter {
         })
     }
 
-    async fn fetch_wheel(&self, delegate: &Arc<dyn DapDelegate>) -> Result<Arc<Path>> {
+    async fn fetch_wheel(
+        &self,
+        toolchain: Option<Toolchain>,
+        delegate: &Arc<dyn DapDelegate>,
+    ) -> Result<Arc<Path>> {
         let download_dir = debug_adapters_dir().join(Self::ADAPTER_NAME).join("wheels");
         std::fs::create_dir_all(&download_dir)?;
-        let venv_python = self.base_venv_path(delegate).await?;
+        let venv_python = self.base_venv_path(toolchain, delegate).await?;
 
         let installation_succeeded = util::command::new_smol_command(venv_python.as_ref())
             .args([
@@ -135,7 +139,11 @@ impl PythonDebugAdapter {
         Ok(Arc::from(wheel_path.path()))
     }
 
-    async fn maybe_fetch_new_wheel(&self, delegate: &Arc<dyn DapDelegate>) -> Result<()> {
+    async fn maybe_fetch_new_wheel(
+        &self,
+        toolchain: Option<Toolchain>,
+        delegate: &Arc<dyn DapDelegate>,
+    ) -> Result<()> {
         let latest_release = delegate
             .http_client()
             .get(
@@ -185,18 +193,19 @@ impl PythonDebugAdapter {
                     },
                 )
                 .await?;
-            self.fetch_wheel(delegate).await?;
+            self.fetch_wheel(toolchain, delegate).await?;
         }
         anyhow::Ok(())
     }
 
     async fn fetch_debugpy_whl(
         &self,
+        toolchain: Option<Toolchain>,
         delegate: &Arc<dyn DapDelegate>,
     ) -> Result<Arc<Path>, String> {
         self.debugpy_whl_base_path
             .get_or_init(|| async move {
-                self.maybe_fetch_new_wheel(delegate)
+                self.maybe_fetch_new_wheel(toolchain, delegate)
                     .await
                     .map_err(|e| format!("{e}"))?;
                 Ok(Arc::from(
@@ -211,16 +220,24 @@ impl PythonDebugAdapter {
             .clone()
     }
 
-    async fn base_venv_path(&self, delegate: &Arc<dyn DapDelegate>) -> Result<Arc<Path>> {
+    async fn base_venv_path(
+        &self,
+        toolchain: Option<Toolchain>,
+        delegate: &Arc<dyn DapDelegate>,
+    ) -> Result<Arc<Path>> {
         let result = self.base_venv_path
             .get_or_init(|| async {
-                let base_python = Self::system_python_name(delegate).await.ok_or_else(|| {
-                    let mut message = "Could not find a Python installation".to_owned();
-                    if cfg!(windows){
-                        message.push_str(". Install Python from the Microsoft Store, or manually from https://www.python.org/downloads/windows.")
-                    }
-                    message
-                })?;
+                let base_python = if let Some(toolchain) = toolchain {
+                    toolchain.path.to_string()
+                } else {
+                    Self::system_python_name(delegate).await.ok_or_else(|| {
+                        let mut message = "Could not find a Python installation".to_owned();
+                        if cfg!(windows){
+                            message.push_str(". Install Python from the Microsoft Store, or manually from https://www.python.org/downloads/windows.")
+                        }
+                        message
+                    })?
+                };
 
                 let did_succeed = util::command::new_smol_command(base_python)
                     .args(["-m", "venv", "zed_base_venv"])
@@ -254,7 +271,7 @@ impl PythonDebugAdapter {
             .await
             .clone();
         match result {
-            Ok(path) => Ok(path.clone()),
+            Ok(path) => Ok(path),
             Err(e) => Err(anyhow::anyhow!("{e}")),
         }
     }
@@ -760,15 +777,10 @@ impl DebugAdapter for PythonDebugAdapter {
             )
             .await;
 
-        let debugpy_path = self
-            .fetch_debugpy_whl(delegate)
+        self.fetch_debugpy_whl(toolchain.clone(), delegate)
             .await
             .map_err(|e| anyhow::anyhow!("{e}"))?;
         if let Some(toolchain) = &toolchain {
-            log::debug!(
-                "Found debugpy in toolchain environment: {}",
-                debugpy_path.display()
-            );
             return self
                 .get_installed_binary(
                     delegate,
