@@ -348,7 +348,7 @@ pub async fn retrieval_stats(
     let run_id = format!(
         "{}-{}",
         worktree_path.file_stem().unwrap_or_default().display(),
-        chrono::Local::now().format("%Y%m%d_%H%M%S").to_string()
+        chrono::Local::now().format("%Y%m%d_%H%M%S")
     );
     let run_dir = target_cli_dir.join(run_id);
     fs::create_dir(&run_dir).unwrap();
