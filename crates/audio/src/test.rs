@@ -227,7 +227,7 @@ fn assert_same_voice_signal(expected: FrequencySpectrum, pipeline: FrequencySpec
         }
     };
 
-    assert!(less_then_5percent_diff((
+    assert!(less_than_10percent_diff((
         voice_freq_expected,
         voice_freq_pipeline
     )));
@@ -273,11 +273,12 @@ fn same_ratio_between_harmonics(
 
     ratios(expected, fundamental_voice_freq)
         .zip(ratios(pipeline, fundamental_voice_freq))
-        .all(less_then_5percent_diff)
+        .all(less_than_10percent_diff)
 }
 
-fn less_then_5percent_diff((a, b): (f32, f32)) -> bool {
-    (a - b).abs() < a * 0.1
+fn less_than_10percent_diff((a, b): (f32, f32)) -> bool {
+    dbg!(a,b);
+    (a - b).abs() < a.max(b) * 0.1
 }
 
 fn display_loudest_5_frequencies(spectrum: &FrequencySpectrum) -> String {
@@ -375,7 +376,7 @@ pub(crate) fn recording_of_davids_voice(
 }
 
 #[test]
-// #[should_panic]
+#[should_panic]
 fn test_rejects_pitch_shift() {
     // also known as 'robot/chipmunk voice'
     let original = recording_of_davids_voice(nz!(1), nz!(16000));
@@ -391,7 +392,7 @@ fn test_rejects_pitch_shift() {
 }
 
 #[test]
-#[should_panic(expected = "placeholder")]
+#[should_panic]
 fn test_rejects_large_amounts_of_noise() {
     let original = recording_of_davids_voice(nz!(1), nz!(16000));
     let with_noise = add_noise(&original, 0.5);

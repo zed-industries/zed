@@ -38,10 +38,29 @@ impl<S: Source> FixedResampler<S> {
             resampler,
             input,
         };
-        this.resample_buffer();
+        this.bootstrap();
         this
     }
 
+    fn bootstrap(&mut self) -> Option<()> {
+        for _ in 0..self.resampler.input_frames_next() {
+            for input_channel in &mut self.input_buffer {
+                input_channel.push(self.input.next()?);
+            }
+        }
+
+        let (input_frames, output_frames) = self.resampler
+            .process_into_buffer(&mut self.input_buffer, &mut self.output_buffer, None).expect("Input and output buffer channels are correct as they have been set by the resampler. The buffer for each channel is the same length. The buffer length is what is requested the resampler.");
+
+        debug_assert_eq!(input_frames, self.input_buffer[0].len());
+        debug_assert_eq!(output_frames, self.output_buffer[0].len());
+
+        self.next_frame = self.resampler.output_delay();
+        self.next_channel = 0;
+        Some(())
+    }
+
+    #[cold]
     fn resample_buffer(&mut self) -> Option<()> {
         for input_channel in &mut self.input_buffer {
             input_channel.clear();
@@ -118,7 +137,10 @@ impl<S: Source> Iterator for FixedResampler<S> {
 mod tests {
     use std::time::Duration;
 
-    use crate::{RodioExt, test::recording_of_davids_voice};
+    use crate::{
+        RodioExt,
+        test::{recording_of_davids_voice, sine},
+    };
     use itertools::Itertools;
     use rodio::{Source, nz};
     use spectrum_analyzer::{FrequencyLimit, scaling::divide_by_N_sqrt};
@@ -127,6 +149,23 @@ mod tests {
     struct PeakPitch {
         pub median: f32,
         pub error: f32,
+    }
+
+    fn assert_non_zero_volume_fuzzy(source: impl Source) {
+        let sample_rate = source.sample_rate();
+        let chunk_size = sample_rate.get() / 1000;
+        let ms_volume = source.into_iter().chunks(chunk_size as usize);
+        let ms_volume = ms_volume
+            .into_iter()
+            .map(|chunk| chunk.into_iter().map(|s| s.abs()).sum::<f32>() / chunk_size as f32);
+
+        for (millis, volume) in ms_volume.enumerate() {
+            assert!(
+                volume > 0.01,
+                "Volume about zero around {:?}",
+                Duration::from_millis(millis as u64)
+            )
+        }
     }
 
     fn median_peak_pitch(source: impl Source) -> PeakPitch {
@@ -224,6 +263,15 @@ mod tests {
         }
     }
 
+    #[test]
+    fn resampler_does_not_add_any_latency() {
+        let resampled = sine(nz!(1), nz!(48_000))
+            .clone()
+            .constant_samplerate(nz!(16_000))
+            .into_samples_buffer();
+        assert_non_zero_volume_fuzzy(resampled);
+    }
+
     #[cfg(test)]
     mod constant_samplerate_preserves_pitch {
         use crate::test::sine;
@@ -233,14 +281,16 @@ mod tests {
         #[test]
         fn one_channel() {
             let test_signal = sine(nz!(1), nz!(48_000));
+            rodio::wav_to_file(test_signal.clone(), "test_signal2.wav").unwrap();
             let resampled = test_signal
                 .clone()
                 .constant_samplerate(nz!(16_000))
                 .into_samples_buffer();
+            rodio::wav_to_file(resampled.clone(), "resampled2.wav").unwrap();
 
-            // rodio::wav_to_file(resampled.clone(), "resampled.wav").unwrap();
             let peak_pitch_before = median_peak_pitch(test_signal);
             let peak_pitch_after = median_peak_pitch(resampled);
+
             assert!(
                 (peak_pitch_before.median - peak_pitch_after.median).abs()
                     < peak_pitch_before.error.max(peak_pitch_after.error),
@@ -256,7 +306,6 @@ mod tests {
                 .constant_samplerate(nz!(16_000))
                 .into_samples_buffer();
 
-            rodio::wav_to_file(resampled.clone(), "resampled.wav").unwrap();
             let peak_pitch_before = median_peak_pitch(test_signal);
             let peak_pitch_after = median_peak_pitch(resampled);
             assert!(
