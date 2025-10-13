@@ -60,13 +60,12 @@ impl PathList {
     }
 
     /// Get the paths in the original order.
-    pub fn ordered_paths(&self) -> Vec<&PathBuf> {
+    pub fn ordered_paths(&self) -> impl Iterator<Item = &PathBuf> {
         self.order
             .iter()
             .zip(self.paths.iter())
             .sorted_by_key(|(i, _)| **i)
             .map(|(_, path)| path)
-            .collect()
     }
 
     pub fn is_lexicographically_ordered(&self) -> bool {
@@ -139,13 +138,13 @@ mod tests {
         assert_eq!(list2_deserialized, list2, "list2 deserialization failed");
 
         assert_eq!(
-            list1.ordered_paths(),
-            &[&PathBuf::from("a/d"), &PathBuf::from("a/c")],
+            list1.ordered_paths().collect_array().unwrap(),
+            [&PathBuf::from("a/d"), &PathBuf::from("a/c")],
             "list1 ordered paths incorrect"
         );
         assert_eq!(
-            list2.ordered_paths(),
-            &[&PathBuf::from("a/c"), &PathBuf::from("a/d")],
+            list2.ordered_paths().collect_array().unwrap(),
+            [&PathBuf::from("a/c"), &PathBuf::from("a/d")],
             "list2 ordered paths incorrect"
         );
     }
@@ -165,8 +164,8 @@ mod tests {
         assert_eq!(deserialized, list);
 
         assert_eq!(
-            deserialized.ordered_paths(),
-            &[
+            deserialized.ordered_paths().collect_array().unwrap(),
+            [
                 &PathBuf::from("b"),
                 &PathBuf::from("a"),
                 &PathBuf::from("c")
@@ -186,8 +185,8 @@ mod tests {
         assert_eq!(deserialized, list);
 
         assert_eq!(
-            deserialized.ordered_paths(),
-            &[
+            deserialized.ordered_paths().collect_array().unwrap(),
+            [
                 &PathBuf::from("b"),
                 &PathBuf::from("c"),
                 &PathBuf::from("a"),

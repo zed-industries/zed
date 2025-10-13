@@ -312,7 +312,6 @@ impl PickerDelegate for RecentProjectsDelegate {
             .map(|(id, (_, _, paths))| {
                 let combined_string = paths
                     .ordered_paths()
-                    .iter()
                     .map(|path| path.compact().to_string_lossy().into_owned())
                     .collect::<Vec<_>>()
                     .join("");
@@ -463,7 +462,6 @@ impl PickerDelegate for RecentProjectsDelegate {
 
         let (match_labels, paths): (Vec<_>, Vec<_>) = paths
             .ordered_paths()
-            .iter()
             .map(|p| p.compact())
             .map(|path| {
                 let highlighted_text =
