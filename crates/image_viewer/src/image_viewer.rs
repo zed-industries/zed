@@ -188,6 +188,9 @@ impl Item for ImageView {
     fn has_deleted_file(&self, cx: &App) -> bool {
         self.image_item.read(cx).file.disk_state() == DiskState::Deleted
     }
+    fn buffer_kind(&self, _: &App) -> workspace::item::ItemBufferKind {
+        workspace::item::ItemBufferKind::Singleton
+    }
 }
 
 fn breadcrumbs_text_for_image(project: &Project, image: &ImageItem, cx: &App) -> String {
