@@ -4,7 +4,7 @@ Zed is designed to be configured: we want to fit your workflow and preferences e
 
 In addition to the settings described here, you may also want to change your [theme](./themes.md), configure your [key bindings](./key-bindings.md), set up [tasks](./tasks.md) or install [extensions](https://github.com/zed-industries/extensions).
 
-## Settings files
+## Accessing Settings
 
 <!--
 TBD: Settings files. Rewrite with "remote settings" in mind (e.g. `local settings` on the remote host).
@@ -13,19 +13,11 @@ Consider renaming `zed: Open Local Settings` to `zed: Open Project Settings`.
 TBD: Add settings documentation about how settings are merged as overlays. E.g. project>local>default. Note how settings that are maps are merged, but settings that are arrays are replaced and must include the defaults.
 -->
 
-Your settings file can be opened with {#kb zed::OpenSettings}. By default it is located at `~/.config/zed/settings.json`, though if you have XDG_CONFIG_HOME in your environment on Linux it will be at `$XDG_CONFIG_HOME/zed/settings.json` instead.
-
-This configuration is merged with any local configuration inside your projects. You can open the project settings by running {#action zed::OpenProjectSettings} from the command palette. This will create a `.zed` directory containing`.zed/settings.json`.
+You can open your local and project settings via the command palette {#kb zed::OpenSettings} or with the shortcut `cmd+,`. 
 
 Although most projects will only need one settings file at the root, you can add more local settings files for subdirectories as needed. Not all settings can be set in local files, just those that impact the behavior of the editor and language tooling. For example you can set `tab_size`, `formatter` etc. but not `theme`, `vim_mode` and similar.
 
-The syntax for configuration files is a super-set of JSON that allows `//` comments.
-
-## Default settings
-
-You can find the default settings for your current Zed by running {#action zed::OpenDefaultSettings} from the command palette.
-
-Extensions that provide language servers may also provide default settings for those language servers.
+To edit settings directly in the code, you can access the JSON via {#kb zed::OpenSettingsFile} or with `opt+cmd+,`.  
 
 # Settings
 
