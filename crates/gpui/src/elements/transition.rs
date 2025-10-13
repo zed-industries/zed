@@ -331,7 +331,7 @@ macro_rules! impl_with_transitions {
     (@recurse ($($prefix:ident),*) ) => {};
 
     // Generates an impl for the current prefix + head,
-    // then recurse to include the next identifier in the prefix.
+    // then recurses to include the next identifier in the prefix.
     (@recurse ($($prefix:ident),*) $head:ident $(,$tail:ident)*) => {
         impl_with_transitions!(@gen ($($prefix,)* $head));
         impl_with_transitions!(@recurse ($($prefix,)* $head) $($tail),*);
