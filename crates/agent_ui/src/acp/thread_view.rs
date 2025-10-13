@@ -3283,6 +3283,12 @@ impl AcpThreadView {
                                                 this.style(ButtonStyle::Outlined)
                                             }
                                         })
+                                        .when_some(
+                                            method.description.clone(),
+                                            |this, description| {
+                                                this.tooltip(Tooltip::text(description))
+                                            },
+                                        )
                                         .on_click({
                                             cx.listener(move |this, _, window, cx| {
                                                 telemetry::event!(
