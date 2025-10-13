@@ -16,6 +16,7 @@ use ordered_float::OrderedFloat;
 use polars::prelude::*;
 use project::{Project, ProjectEntryId, ProjectPath, Worktree};
 use serde::{Deserialize, Serialize};
+use std::fs;
 use std::{
     cmp::Reverse,
     collections::{HashMap, HashSet},
@@ -164,16 +165,23 @@ pub async fn retrieval_stats(
     }
     let files_hash = hasher.finish();
     let file_snapshots = Arc::new(file_snapshots);
+    let target_cli_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/zeta_cli");
+    fs::create_dir_all(&target_cli_dir).unwrap();
+    let target_cli_dir = target_cli_dir.canonicalize().unwrap();
 
-    let lsp_definitions_path = std::env::current_dir()?.join(format!(
-        "target/zeta2-lsp-definitions-{:x}.jsonl",
+    let lsp_cache_dir = target_cli_dir.join("cache");
+    fs::create_dir_all(&lsp_cache_dir).unwrap();
+
+    let lsp_definitions_path = lsp_cache_dir.join(format!(
+        "{}-{:x}.jsonl",
+        worktree_path.file_stem().unwrap_or_default().display(),
         files_hash
     ));
 
     let mut lsp_definitions = HashMap::default();
     let mut lsp_files = 0;
 
-    if std::fs::exists(&lsp_definitions_path)? {
+    if fs::exists(&lsp_definitions_path)? {
         log::info!(
             "Using cached LSP definitions from {}",
             lsp_definitions_path.display()
@@ -270,8 +278,6 @@ pub async fn retrieval_stats(
                     ReferenceRegion::Nearby,
                     &snapshot,
                 );
-
-                println!("references: {}", references.len());
 
                 let imports = if options.context.use_imports {
                     Imports::gather(&snapshot, Some(&project_file.parent_abs_path))
@@ -502,17 +508,40 @@ pub async fn retrieval_stats(
     });
 
     futures::future::try_join_all(tasks).await?;
-    println!("Tasks completed");
-    let df = df_task.await?;
-    println!("Results received");
+    let mut df = df_task.await?;
 
-    // Calculate stats using polars
+    let run_id = format!(
+        "{}-{}",
+        worktree_path.file_stem().unwrap_or_default().display(),
+        chrono::Local::now().format("%Y%m%d_%H%M%S").to_string()
+    );
+    let run_dir = target_cli_dir.join(run_id);
+    fs::create_dir(&run_dir).unwrap();
+
+    let parquet_path = run_dir.join("stats.parquet");
+    let mut parquet_file = fs::File::create(&parquet_path)?;
+
+    ParquetWriter::new(&mut parquet_file)
+        .finish(&mut df)
+        .unwrap();
+
     let stats = SummaryStats::from_dataframe(df)?;
 
+    let stats_path = run_dir.join("stats.txt");
+    fs::write(&stats_path, format!("{}", stats))?;
+
     println!("{}", stats);
-    println!("LSP definition cache at {}", lsp_definitions_path.display());
+    println!("\nWrote:");
+    println!("- {}", relativize_path(&parquet_path).display());
+    println!("- {}", relativize_path(&stats_path).display());
+    println!("- {}", relativize_path(&lsp_definitions_path).display());
 
     Ok("".to_string())
+}
+
+fn relativize_path(path: &Path) -> &Path {
+    path.strip_prefix(std::env::current_dir().unwrap())
+        .unwrap_or(path)
 }
 
 struct SummaryStats {
@@ -529,6 +558,7 @@ struct SummaryStats {
 
 impl SummaryStats {
     fn from_dataframe(df: DataFrame) -> Result<Self> {
+        // TODO: use lazy more
         let unique_refs =
             df.unique::<(), ()>(Some(&["ref_id".into()]), UniqueKeepStrategy::Any, None)?;
         let references_count = unique_refs.height();
