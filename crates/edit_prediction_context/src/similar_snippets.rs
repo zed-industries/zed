@@ -38,6 +38,7 @@ pub enum SimilarityMetric {
 pub struct SimilarSnippetOptions {
     pub min_bytes: usize,
     pub max_bytes: usize,
+    pub min_bytes_delta_since_last_window: usize,
     pub min_similarity: f32,
     pub similarity_metric: SimilarityMetric,
     pub max_result_count: usize,
@@ -47,7 +48,8 @@ impl SimilarSnippetOptions {
     pub const DEFAULT: Self = Self {
         min_bytes: 128,
         max_bytes: 256,
-        min_similarity: 0.01,
+        min_bytes_delta_since_last_window: 64,
+        min_similarity: 0.05,
         similarity_metric: SimilarityMetric::OverlapCoefficient,
         max_result_count: 5,
     };
@@ -73,22 +75,30 @@ pub fn similar_snippets<S: OccurrenceSource>(
     let mut top_windows: Vec<TopWindow> = Vec::new();
 
     let mut bytes = 0;
+    let mut bytes_delta_since_last_window = usize::MAX;
     let mut start_offset = forward_range.start;
     while let Some(line) = lines.next() {
         let len_with_newline = line.len() + 1;
         bytes += len_with_newline;
         if len_with_newline > options.max_bytes {
             window.clear();
+            bytes_delta_since_last_window = usize::MAX;
             bytes = 0;
             continue;
         }
+        bytes_delta_since_last_window =
+            bytes_delta_since_last_window.saturating_add(len_with_newline);
         window.push_back(len_with_newline, S::occurrences_in_str(line));
         while bytes > options.max_bytes {
             let popped_bytes = window.pop_front();
-            start_offset += popped_bytes;
             bytes -= popped_bytes;
+            bytes_delta_since_last_window =
+                bytes_delta_since_last_window.saturating_add(popped_bytes);
+            start_offset += popped_bytes;
         }
-        if bytes >= options.min_bytes {
+        if bytes >= options.min_bytes
+            && bytes_delta_since_last_window >= options.min_bytes_delta_since_last_window
+        {
             let similarity = match options.similarity_metric {
                 SimilarityMetric::Jaccard => window.weighted_jaccard_similarity(),
                 SimilarityMetric::OverlapCoefficient => window.weighted_overlap_coefficient(),
@@ -102,6 +112,7 @@ pub fn similar_snippets<S: OccurrenceSource>(
                     options,
                 );
             }
+            bytes_delta_since_last_window = 0;
         }
     }
 
@@ -123,6 +134,8 @@ struct TopWindow {
     range: Range<usize>,
 }
 
+/// Maintains the sort order of `top_windows`. If it overlaps with an existing window that has a
+/// lower similarity score, that window is removed.
 fn insert_into_top_windows(
     top_windows: &mut Vec<TopWindow>,
     similarity: f32,
