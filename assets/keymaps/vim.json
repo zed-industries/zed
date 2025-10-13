@@ -1019,7 +1019,7 @@
     }
   },
   {
-    "context": "(SettingsWindow > NavigationMenu) && not_editing",
+    "context": "SettingsWindow > NavigationMenu && not_editing",
     "bindings": {
       "l": "settings_editor::ExpandNavEntry",
       "h": "settings_editor::CollapseNavEntry",
