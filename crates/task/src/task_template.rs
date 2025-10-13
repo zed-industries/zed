@@ -8,6 +8,7 @@ use util::schemars::DefaultDenyUnknownFields;
 use util::serde::default_true;
 use util::{ResultExt, truncate_and_remove_front};
 
+use crate::ShellBuilder;
 use crate::{
     AttachRequest, ResolvedTask, RevealTarget, Shell, SpawnInTerminal, TaskContext, TaskId,
     VariableName, ZED_VARIABLE_NAME_PREFIX, serde_helpers::non_empty_string_vec,
@@ -65,7 +66,7 @@ pub struct TaskTemplate {
     pub tags: Vec<String>,
     /// Which shell to use when spawning the task.
     #[serde(default)]
-    pub shell: Shell,
+    pub shell: Option<Shell>,
     /// Whether to show the task line in the task output.
     #[serde(default = "default_true")]
     pub show_summary: bool,
@@ -132,7 +133,12 @@ impl TaskTemplate {
     ///
     /// Every [`ResolvedTask`] gets a [`TaskId`], based on the `id_base` (to avoid collision with various task sources),
     /// and hashes of its template and [`TaskContext`], see [`ResolvedTask`] fields' documentation for more details.
-    pub fn resolve_task(&self, id_base: &str, cx: &TaskContext) -> Option<ResolvedTask> {
+    pub fn resolve_task(
+        &self,
+        id_base: &str,
+        remote_shell: &dyn Fn() -> Option<String>,
+        cx: &TaskContext,
+    ) -> Option<ResolvedTask> {
         if self.label.trim().is_empty() || self.command.trim().is_empty() {
             return None;
         }
@@ -241,6 +247,55 @@ impl TaskTemplate {
             env
         };
 
+        let (shell, command, args, command_label) = match &self.shell {
+            // shell is specified, command + args may be a shell script so we force wrap it in another a shell execution
+            Some(shell) => {
+                let shell = if let Shell::System = shell
+                    && let Some(remote_shell) = remote_shell()
+                {
+                    Shell::Program(remote_shell)
+                } else {
+                    shell.clone()
+                };
+
+                let builder = ShellBuilder::new(&shell);
+                let command_label = builder.command_label(&command);
+                let (command, args) = builder.build(Some(command), &args_with_substitutions);
+
+                (shell, command, args, command_label)
+            }
+            // no shell specified but command contains whitespace, might be a shell script so spawn a shell for backwards compat
+            None if command.contains(char::is_whitespace) => {
+                let shell = match remote_shell() {
+                    Some(remote_shell) => Shell::Program(remote_shell),
+                    None => Shell::System,
+                };
+
+                let builder = ShellBuilder::new(&shell);
+                let command_label = builder.command_label(&command);
+                let (command, args) = builder.build(Some(command), &args_with_substitutions);
+
+                (shell, command, args, command_label)
+            }
+            // no shell specified, interpret as direct process spawn
+            None => {
+                let command_label = args_with_substitutions.iter().fold(
+                    command.clone(),
+                    |mut command_label, arg| {
+                        command_label.push(' ');
+                        command_label.push_str(arg);
+                        command_label
+                    },
+                );
+                (
+                    Shell::System,
+                    command,
+                    args_with_substitutions,
+                    command_label,
+                )
+            }
+        };
+
         Some(ResolvedTask {
             id: id.clone(),
             substituted_variables,
@@ -251,23 +306,16 @@ impl TaskTemplate {
                 cwd,
                 full_label,
                 label: human_readable_label,
-                command_label: args_with_substitutions.iter().fold(
-                    command.clone(),
-                    |mut command_label, arg| {
-                        command_label.push(' ');
-                        command_label.push_str(arg);
-                        command_label
-                    },
-                ),
+                command_label,
                 command: Some(command),
-                args: args_with_substitutions,
+                args: args,
                 env,
                 use_new_terminal: self.use_new_terminal,
                 allow_concurrent_runs: self.allow_concurrent_runs,
                 reveal: self.reveal,
                 reveal_target: self.reveal_target,
                 hide: self.hide,
-                shell: self.shell.clone(),
+                shell,
                 show_summary: self.show_summary,
                 show_command: self.show_command,
                 show_rerun: true,
@@ -462,7 +510,11 @@ mod tests {
             },
         ] {
             assert_eq!(
-                task_with_blank_property.resolve_task(TEST_ID_BASE, &TaskContext::default()),
+                task_with_blank_property.resolve_task(
+                    TEST_ID_BASE,
+                    &|| None,
+                    &TaskContext::default()
+                ),
                 None,
                 "should not resolve task with blank label and/or command: {task_with_blank_property:?}"
             );
@@ -480,7 +532,7 @@ mod tests {
 
         let resolved_task = |task_template: &TaskTemplate, task_cx| {
             let resolved_task = task_template
-                .resolve_task(TEST_ID_BASE, task_cx)
+                .resolve_task(TEST_ID_BASE, &|| None, task_cx)
                 .unwrap_or_else(|| panic!("failed to resolve task {task_without_cwd:?}"));
             assert_substituted_variables(&resolved_task, Vec::new());
             resolved_task.resolved
@@ -601,7 +653,7 @@ mod tests {
         for i in 0..15 {
             let resolved_task = task_with_all_variables.resolve_task(
                 TEST_ID_BASE,
-                &TaskContext {
+              &|| None,  &TaskContext {
                     cwd: None,
                     task_variables: TaskVariables::from_iter(all_variables.clone()),
                     project_env: HashMap::default(),
@@ -689,6 +741,7 @@ mod tests {
             let removed_variable = not_all_variables.remove(i);
             let resolved_task_attempt = task_with_all_variables.resolve_task(
                 TEST_ID_BASE,
+                &|| None,
                 &TaskContext {
                     cwd: None,
                     task_variables: TaskVariables::from_iter(not_all_variables),
@@ -711,7 +764,7 @@ mod tests {
             ..TaskTemplate::default()
         };
         let resolved_task = task
-            .resolve_task(TEST_ID_BASE, &TaskContext::default())
+            .resolve_task(TEST_ID_BASE, &|| None, &TaskContext::default())
             .unwrap();
         assert_substituted_variables(&resolved_task, Vec::new());
         let resolved = resolved_task.resolved;
@@ -729,7 +782,7 @@ mod tests {
             ..TaskTemplate::default()
         };
         assert!(
-            task.resolve_task(TEST_ID_BASE, &TaskContext::default())
+            task.resolve_task(TEST_ID_BASE, &|| None, &TaskContext::default())
                 .is_none()
         );
     }
@@ -780,7 +833,7 @@ mod tests {
         .enumerate()
         {
             let resolved = symbol_dependent_task
-                .resolve_task(TEST_ID_BASE, &cx)
+                .resolve_task(TEST_ID_BASE, &|| None, &cx)
                 .unwrap_or_else(|| panic!("Failed to resolve task {symbol_dependent_task:?}"));
             assert_eq!(
                 resolved.substituted_variables,
@@ -822,7 +875,11 @@ mod tests {
         context
             .task_variables
             .insert(VariableName::Symbol, "my-symbol".to_string());
-        assert!(faulty_go_test.resolve_task("base", &context).is_some());
+        assert!(
+            faulty_go_test
+                .resolve_task("base", &|| None, &context)
+                .is_some()
+        );
     }
 
     #[test]
@@ -881,7 +938,7 @@ mod tests {
         };
 
         let resolved = template
-            .resolve_task(TEST_ID_BASE, &context)
+            .resolve_task(TEST_ID_BASE, &|| None, &context)
             .unwrap()
             .resolved;
 
@@ -920,7 +977,7 @@ mod tests {
         };
 
         let resolved = task_with_defaults
-            .resolve_task(TEST_ID_BASE, &context_with_file)
+            .resolve_task(TEST_ID_BASE, &|| None, &context_with_file)
             .expect("Should resolve task with existing variables");
 
         assert_eq!(
@@ -942,7 +999,7 @@ mod tests {
         };
 
         let resolved = task_with_defaults
-            .resolve_task(TEST_ID_BASE, &context_without_file)
+            .resolve_task(TEST_ID_BASE, &|| None, &context_without_file)
             .expect("Should resolve task using default values");
 
         assert_eq!(
@@ -965,7 +1022,7 @@ mod tests {
 
         assert!(
             task_no_default
-                .resolve_task(TEST_ID_BASE, &TaskContext::default())
+                .resolve_task(TEST_ID_BASE, &|| None, &TaskContext::default())
                 .is_none(),
             "Should fail when ZED variable has no default and doesn't exist"
         );

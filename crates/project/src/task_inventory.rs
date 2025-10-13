@@ -424,6 +424,7 @@ impl Inventory {
     pub fn used_and_current_resolved_tasks(
         &self,
         task_contexts: Arc<TaskContexts>,
+        remote_shell: impl 'static + Fn() -> Option<String> + Send,
         cx: &mut Context<Self>,
     ) -> Task<(
         Vec<(TaskSourceKind, ResolvedTask)>,
@@ -518,14 +519,14 @@ impl Inventory {
                                 task_contexts.active_item_context.as_ref().filter(
                                     |(worktree_id, _, _)| Some(id) == worktree_id.as_ref(),
                                 )?;
-                            task.resolve_task(&id_base, item_context)
+                            task.resolve_task(&id_base, &remote_shell, item_context)
                         })
                         .or_else(|| {
                             let (_, worktree_context) = task_contexts
                                 .active_worktree_context
                                 .as_ref()
                                 .filter(|(worktree_id, _)| id == worktree_id)?;
-                            task.resolve_task(&id_base, worktree_context)
+                            task.resolve_task(&id_base, &remote_shell, worktree_context)
                         })
                         .or_else(|| {
                             if let TaskSourceKind::Worktree { id, .. } = &kind {
@@ -534,7 +535,7 @@ impl Inventory {
                                     .iter()
                                     .find(|(worktree_id, _)| worktree_id == id)
                                     .map(|(_, context)| context)?;
-                                task.resolve_task(&id_base, worktree_context)
+                                task.resolve_task(&id_base, &remote_shell, worktree_context)
                             } else {
                                 None
                             }
@@ -543,15 +544,15 @@ impl Inventory {
                         None.or_else(|| {
                             let (_, _, item_context) =
                                 task_contexts.active_item_context.as_ref()?;
-                            task.resolve_task(&id_base, item_context)
+                            task.resolve_task(&id_base, &remote_shell, item_context)
                         })
                         .or_else(|| {
                             let (_, worktree_context) =
                                 task_contexts.active_worktree_context.as_ref()?;
-                            task.resolve_task(&id_base, worktree_context)
+                            task.resolve_task(&id_base, &remote_shell, worktree_context)
                         })
                     }
-                    .or_else(|| task.resolve_task(&id_base, &TaskContext::default()))
+                    .or_else(|| task.resolve_task(&id_base, &remote_shell, &TaskContext::default()))
                     .map(move |resolved_task| (kind.clone(), resolved_task, not_used_score))
                 })
                 .filter(|(_, resolved_task, _)| {
@@ -896,7 +897,7 @@ mod test_inventory {
                 .update(&mut cx, |inventory, _| {
                     inventory.task_scheduled(
                         task_source_kind.clone(),
-                        task.resolve_task(&id_base, &TaskContext::default())
+                        task.resolve_task(&id_base, &|| None, &TaskContext::default())
                             .unwrap_or_else(|| {
                                 panic!("Failed to resolve task with name {task_name}")
                             }),
@@ -929,7 +930,7 @@ mod test_inventory {
                 .update(&mut cx, |inventory, _| {
                     inventory.task_scheduled(
                         task_source_kind.clone(),
-                        task.resolve_task(&id_base, &TaskContext::default())
+                        task.resolve_task(&id_base, &|| None, &TaskContext::default())
                             .unwrap_or_else(|| {
                                 panic!("Failed to resolve task with name {task_name}")
                             }),
@@ -953,7 +954,10 @@ mod test_inventory {
             .into_iter()
             .filter_map(|(source_kind, task)| {
                 let id_base = source_kind.to_id_base();
-                Some((source_kind, task.resolve_task(&id_base, task_context)?))
+                Some((
+                    source_kind,
+                    task.resolve_task(&id_base, &|| None, task_context)?,
+                ))
             })
             .map(|(source_kind, resolved_task)| (source_kind, resolved_task.resolved_label))
             .collect()
@@ -1558,7 +1562,7 @@ mod tests {
             task_contexts.active_worktree_context =
                 worktree.map(|worktree| (worktree, TaskContext::default()));
 
-            inventory.used_and_current_resolved_tasks(Arc::new(task_contexts), cx)
+            inventory.used_and_current_resolved_tasks(Arc::new(task_contexts), || None, cx)
         });
 
         cx.background_spawn(async move {
@@ -1597,7 +1601,7 @@ mod tests {
                 task_contexts.active_worktree_context =
                     worktree.map(|worktree| (worktree, TaskContext::default()));
 
-                inventory.used_and_current_resolved_tasks(Arc::new(task_contexts), cx)
+                inventory.used_and_current_resolved_tasks(Arc::new(task_contexts), || None, cx)
             })
             .await;
         let mut all = used;

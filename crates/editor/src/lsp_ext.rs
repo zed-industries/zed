@@ -21,7 +21,7 @@ use task::ResolvedTask;
 use task::TaskContext;
 use text::BufferId;
 use ui::SharedString;
-use util::ResultExt as _;
+use util::{ResultExt as _, maybe};
 
 pub(crate) fn find_specific_language_server_in_selection<F>(
     editor: &Editor,
@@ -114,7 +114,7 @@ pub fn lsp_tasks(
             server_id.zip(Some(buffers))
         })
         .collect::<Vec<_>>();
-
+    let remote_shell = maybe!({ project.read(cx).remote_client()?.read(cx).shell() });
     cx.spawn(async move |cx| {
         cx.spawn(async move |cx| {
             let mut lsp_tasks = HashMap::default();
@@ -151,8 +151,11 @@ pub fn lsp_tasks(
                     {
                         new_lsp_tasks.extend(new_runnables.runnables.into_iter().filter_map(
                             |(location, runnable)| {
-                                let resolved_task =
-                                    runnable.resolve_task(&id_base, &lsp_buffer_context)?;
+                                let resolved_task = runnable.resolve_task(
+                                    &id_base,
+                                    &|| remote_shell.clone(),
+                                    &lsp_buffer_context,
+                                )?;
                                 Some((location, resolved_task))
                             },
                         ));

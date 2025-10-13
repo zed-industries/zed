@@ -20,7 +20,8 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        match self.project.read(cx).remote_connection_state(cx) {
+        let project = self.project.read(cx);
+        match project.remote_connection_state(cx) {
             None | Some(ConnectionState::Connected) => {}
             Some(
                 ConnectionState::Connecting
@@ -33,9 +34,11 @@ impl Workspace {
             }
         }
 
-        if let Some(spawn_in_terminal) =
-            task_to_resolve.resolve_task(&task_source_kind.to_id_base(), task_cx)
-        {
+        if let Some(spawn_in_terminal) = task_to_resolve.resolve_task(
+            &task_source_kind.to_id_base(),
+            &|| project.remote_client()?.read(cx).shell(),
+            task_cx,
+        ) {
             self.schedule_resolved_task(
                 task_source_kind,
                 spawn_in_terminal,
