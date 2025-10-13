@@ -3570,7 +3570,6 @@ pub mod tests {
     pub fn visible_hint_labels(editor: &Editor, cx: &Context<Editor>) -> Vec<String> {
         editor
             .visible_inlay_hints(cx)
-            .into_iter()
             .map(|hint| hint.text().to_string())
             .collect()
     }
