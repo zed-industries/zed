@@ -61,9 +61,7 @@ use language::{
     LanguageRegistry, LocalFile, LspAdapter, LspAdapterDelegate, LspInstaller, ManifestDelegate,
     ManifestName, Patch, PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16, Toolchain,
     Transaction, Unclipped,
-    language_settings::{
-        FormatOnSave, Formatter, LanguageSettings, SelectedFormatter, language_settings,
-    },
+    language_settings::{FormatOnSave, Formatter, LanguageSettings, language_settings},
     point_to_lsp,
     proto::{
         deserialize_anchor, deserialize_lsp_edit, deserialize_version, serialize_anchor,
@@ -1338,23 +1336,24 @@ impl LocalLspStore {
         let formatters = match (trigger, &settings.format_on_save) {
             (FormatTrigger::Save, FormatOnSave::Off) => &[],
             (FormatTrigger::Manual, _) | (FormatTrigger::Save, FormatOnSave::On) => {
-                match &settings.formatter {
-                    SelectedFormatter::Auto => {
-                        if settings.prettier.allowed {
-                            zlog::trace!(logger => "Formatter set to auto: defaulting to prettier");
-                            std::slice::from_ref(&Formatter::Prettier)
-                        } else {
-                            zlog::trace!(logger => "Formatter set to auto: defaulting to primary language server");
-                            std::slice::from_ref(&Formatter::LanguageServer { name: None })
-                        }
-                    }
-                    SelectedFormatter::List(formatter_list) => formatter_list.as_ref(),
-                }
+                settings.formatter.as_ref()
             }
         };
 
         for formatter in formatters {
+            let formatter = if formatter == &Formatter::Auto {
+                if settings.prettier.allowed {
+                    zlog::trace!(logger => "Formatter set to auto: defaulting to prettier");
+                    &Formatter::Prettier
+                } else {
+                    zlog::trace!(logger => "Formatter set to auto: defaulting to primary language server");
+                    &Formatter::LanguageServer { name: None }
+                }
+            } else {
+                formatter
+            };
             match formatter {
+                Formatter::Auto => unreachable!("Auto resolved above"),
                 Formatter::Prettier => {
                     let logger = zlog::scoped!(logger => "prettier");
                     zlog::trace!(logger => "formatting");
