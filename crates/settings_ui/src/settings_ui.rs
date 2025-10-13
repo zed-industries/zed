@@ -1326,11 +1326,7 @@ impl SettingsWindow {
 
     fn reset_list_state(&mut self) {
         // plus one for the title
-        self.visible_items = self
-            .visible_page_items()
-            .into_iter()
-            .map(|(index, _)| index)
-            .collect();
+        self.visible_items = self.visible_page_items().map(|(index, _)| index).collect();
 
         if self.visible_items.is_empty() {
             self.list_state.reset(0);
