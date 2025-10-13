@@ -25,7 +25,7 @@ use std::{
     cell::RefCell,
     collections::HashMap,
     num::{NonZero, NonZeroU32},
-    ops::Range,
+    ops::{Deref, Range},
     rc::Rc,
     sync::{Arc, LazyLock, RwLock},
 };
@@ -505,6 +505,7 @@ struct SettingsPage {
 #[derive(PartialEq)]
 enum SettingsPageItem {
     SectionHeader(&'static str),
+    LanguagesTable(LanguagesTable),
     SettingItem(SettingItem),
     SubPageLink(SubPageLink),
 }
@@ -518,6 +519,9 @@ impl std::fmt::Debug for SettingsPageItem {
             }
             SettingsPageItem::SubPageLink(sub_page_link) => {
                 write!(f, "SubPageLink({})", sub_page_link.title)
+            }
+            SettingsPageItem::LanguagesTable(_) => {
+                write!(f, "LanguagesTable")
             }
         }
     }
@@ -602,7 +606,7 @@ impl SettingsPageItem {
                     .into_any_element()
             }
             SettingsPageItem::SubPageLink(sub_page_link) => h_flex()
-                .id(sub_page_link.title)
+                .id(sub_page_link.title.clone())
                 .w_full()
                 .min_w_0()
                 .gap_2()
@@ -617,24 +621,46 @@ impl SettingsPageItem {
                     v_flex()
                         .w_full()
                         .max_w_1_2()
-                        .child(Label::new(SharedString::new_static(sub_page_link.title))),
+                        .child(Label::new(sub_page_link.title.clone())),
                 )
                 .child(
-                    Button::new(("sub-page".into(), sub_page_link.title), "Configure")
-                        .icon(IconName::ChevronRight)
-                        .tab_index(0_isize)
-                        .icon_position(IconPosition::End)
-                        .icon_color(Color::Muted)
-                        .icon_size(IconSize::Small)
-                        .style(ButtonStyle::Outlined)
-                        .size(ButtonSize::Medium),
+                    Button::new(
+                        ("sub-page".into(), sub_page_link.title.clone()),
+                        "Configure",
+                    )
+                    .icon(IconName::ChevronRight)
+                    .tab_index(0_isize)
+                    .icon_position(IconPosition::End)
+                    .icon_color(Color::Muted)
+                    .icon_size(IconSize::Small)
+                    .style(ButtonStyle::Outlined)
+                    .size(ButtonSize::Medium)
+                    .on_click({
+                        let sub_page_link = sub_page_link.clone();
+                        cx.listener(move |this, _, _, cx| {
+                            this.push_sub_page(sub_page_link.clone(), section_header, cx)
+                        })
+                    }),
                 )
-                .on_click({
-                    let sub_page_link = sub_page_link.clone();
-                    cx.listener(move |this, _, _, cx| {
-                        this.push_sub_page(sub_page_link.clone(), section_header, cx)
+                .into_any_element(),
+            SettingsPageItem::LanguagesTable(LanguagesTable { render, files }) => v_flex()
+                .w_full()
+                .id("languages-table")
+                .tab_group()
+                .children(all_language_names(cx).into_iter().map(|name| {
+                    SettingsPageItem::SubPageLink(SubPageLink {
+                        title: name,
+                        files: *files,
+                        render: render.clone(),
                     })
-                })
+                    .render(
+                        settings_window,
+                        section_header,
+                        false,
+                        window,
+                        cx,
+                    )
+                }))
                 .into_any_element(),
         }
     }
@@ -759,7 +785,7 @@ impl PartialEq for SettingItem {
 
 #[derive(Clone)]
 struct SubPageLink {
-    title: &'static str,
+    title: SharedString,
     files: FileMask,
     render: Arc<
         dyn Fn(&mut SettingsWindow, &mut Window, &mut Context<SettingsWindow>) -> AnyElement
@@ -773,6 +799,37 @@ impl PartialEq for SubPageLink {
     fn eq(&self, other: &Self) -> bool {
         self.title == other.title
     }
+}
+
+pub struct LanguagesTable {
+    files: FileMask,
+    render: Arc<
+        dyn Fn(&mut SettingsWindow, &mut Window, &mut Context<SettingsWindow>) -> AnyElement
+            + 'static
+            + Send
+            + Sync,
+    >,
+}
+
+impl PartialEq for LanguagesTable {
+    fn eq(&self, _: &Self) -> bool {
+        // todo! don't leave like this if generalizing
+        true
+    }
+}
+
+fn all_language_names(cx: &App) -> Vec<SharedString> {
+    workspace::AppState::global(cx)
+        .upgrade()
+        .map_or(vec![], |state| {
+            state
+                .languages
+                .language_names()
+                .into_iter()
+                .filter(|name| name.as_ref() != "Zed Keybind Context")
+                .map(Into::into)
+                .collect()
+        })
 }
 
 #[allow(unused)]
@@ -1017,15 +1074,10 @@ impl SettingsWindow {
                         header_index = index;
                         any_found_since_last_header = false;
                     }
-                    SettingsPageItem::SettingItem(setting_item) => {
-                        if !setting_item.files.contains(current_file) {
-                            page_filter[index] = false;
-                        } else {
-                            any_found_since_last_header = true;
-                        }
-                    }
-                    SettingsPageItem::SubPageLink(sub_page_link) => {
-                        if !sub_page_link.files.contains(current_file) {
+                    SettingsPageItem::SettingItem(SettingItem { files, .. })
+                    | SettingsPageItem::SubPageLink(SubPageLink { files, .. })
+                    | SettingsPageItem::LanguagesTable(LanguagesTable { files, .. }) => {
+                        if !files.contains(current_file) {
                             page_filter[index] = false;
                         } else {
                             any_found_since_last_header = true;
@@ -1214,13 +1266,17 @@ impl SettingsWindow {
                     SettingsPageItem::SubPageLink(sub_page_link) => {
                         documents.push(bm25::Document {
                             id: key_index,
-                            contents: [page.title, header_str, sub_page_link.title].join("\n"),
+                            contents: [page.title, header_str, sub_page_link.title.as_ref()]
+                                .join("\n"),
                         });
                         push_candidates(
                             &mut fuzzy_match_candidates,
                             key_index,
-                            sub_page_link.title,
+                            sub_page_link.title.as_ref(),
                         );
+                    }
+                    SettingsPageItem::LanguagesTable(languages_table) => {
+                        // todo! for language_name in all_language_names(cx)
                     }
                 }
                 push_candidates(&mut fuzzy_match_candidates, key_index, page.title);
@@ -1730,11 +1786,11 @@ impl SettingsWindow {
 
     fn render_sub_page_breadcrumbs(&self) -> impl IntoElement {
         let mut items = vec![];
-        items.push(self.current_page().title);
+        items.push(self.current_page().title.into());
         items.extend(
             sub_page_stack()
                 .iter()
-                .flat_map(|page| [page.section_header, page.link.title]),
+                .flat_map(|page| [page.section_header.into(), page.link.title.clone()]),
         );
 
         let last = items.pop().unwrap();
@@ -1743,7 +1799,7 @@ impl SettingsWindow {
             .children(
                 items
                     .into_iter()
-                    .flat_map(|item| [item, "/"])
+                    .flat_map(|item| [item, "/".into()])
                     .map(|item| Label::new(item).color(Color::Muted)),
             )
             .child(Label::new(last))

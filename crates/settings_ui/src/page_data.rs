@@ -3,8 +3,8 @@ use std::sync::Arc;
 use ui::{IntoElement, SharedString};
 
 use crate::{
-    LOCAL, SettingField, SettingItem, SettingsFieldMetadata, SettingsPage, SettingsPageItem,
-    SubPageLink, USER, sub_page_stack,
+    LOCAL, LanguagesTable, SettingField, SettingItem, SettingsFieldMetadata, SettingsPage,
+    SettingsPageItem, SubPageLink, USER, sub_page_stack,
 };
 
 pub(crate) fn settings_data() -> Vec<SettingsPage> {
@@ -1407,60 +1407,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
             title: "Languages",
             items: vec![
                 SettingsPageItem::SectionHeader(LANGUAGES_SECTION_HEADER),
-                SettingsPageItem::SubPageLink(SubPageLink {
-                    title: "JSON",
-                    files: USER | LOCAL,
-                    render: Arc::new(|this, window, cx| {
-                        this.render_page_items(
-                            language_settings_data().iter().enumerate(),
-                            None,
-                            window,
-                            cx,
-                        )
-                        .into_any_element()
-                    }),
-                }),
-                SettingsPageItem::SubPageLink(SubPageLink {
-                    title: "JSONC",
-                    files: USER | LOCAL,
-                    render: Arc::new(|this, window, cx| {
-                        this.render_page_items(
-                            language_settings_data().iter().enumerate(),
-                            None,
-                            window,
-                            cx,
-                        )
-                        .into_any_element()
-                    }),
-                }),
-                SettingsPageItem::SubPageLink(SubPageLink {
-                    title: "Rust",
-                    files: USER | LOCAL,
-                    render: Arc::new(|this, window, cx| {
-                        this.render_page_items(
-                            language_settings_data().iter().enumerate(),
-                            None,
-                            window,
-                            cx,
-                        )
-                        .into_any_element()
-                    }),
-                }),
-                SettingsPageItem::SubPageLink(SubPageLink {
-                    title: "Python",
-                    files: USER | LOCAL,
-                    render: Arc::new(|this, window, cx| {
-                        this.render_page_items(
-                            language_settings_data().iter().enumerate(),
-                            None,
-                            window,
-                            cx,
-                        )
-                        .into_any_element()
-                    }),
-                }),
-                SettingsPageItem::SubPageLink(SubPageLink {
-                    title: "TSX",
+                SettingsPageItem::LanguagesTable(LanguagesTable {
                     files: USER | LOCAL,
                     render: Arc::new(|this, window, cx| {
                         this.render_page_items(
@@ -4412,8 +4359,7 @@ const LANGUAGES_SECTION_HEADER: &'static str = "Languages";
 fn language_settings_data() -> Vec<SettingsPageItem> {
     fn current_language() -> Option<SharedString> {
         sub_page_stack().iter().find_map(|page| {
-            (page.section_header == LANGUAGES_SECTION_HEADER)
-                .then(|| SharedString::new_static(page.link.title))
+            (page.section_header == LANGUAGES_SECTION_HEADER).then(|| page.link.title.clone())
         })
     }
 
