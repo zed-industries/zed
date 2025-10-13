@@ -965,10 +965,11 @@ async fn heuristic_syntactic_expand(
         let row_count = node_end.row - node_start.row + 1;
         let mut ancestor_range = None;
         let reached_outline_node = cx.background_executor().scoped({
-                 let node_range = node_range.clone();
-                 let outline_range = outline_range.clone();
-                 let ancestor_range =  &mut ancestor_range;
-                |scope| {scope.spawn(async move {
+            let node_range = node_range.clone();
+            let outline_range = outline_range.clone();
+            let ancestor_range = &mut ancestor_range;
+            |scope| {
+                scope.spawn(async move {
                     // Stop if we've exceeded the row count or reached an outline node. Then, find the interval
                     // of node children which contains the query range. For example, this allows just returning
                     // the header of a declaration rather than the entire declaration.
@@ -980,8 +981,11 @@ async fn heuristic_syntactic_expand(
                         if cursor.goto_first_child() {
                             loop {
                                 let child_node = cursor.node();
-                                let child_range = previous_end..Point::from_ts_point(child_node.end_position());
-                                if included_child_start.is_none() && child_range.contains(&input_range.start) {
+                                let child_range =
+                                    previous_end..Point::from_ts_point(child_node.end_position());
+                                if included_child_start.is_none()
+                                    && child_range.contains(&input_range.start)
+                                {
                                     included_child_start = Some(child_range.start);
                                 }
                                 if child_range.contains(&input_range.end) {
@@ -997,19 +1001,22 @@ async fn heuristic_syntactic_expand(
                         if let Some(start) = included_child_start {
                             let row_count = end.row - start.row;
                             if row_count < max_row_count {
-                                *ancestor_range = Some(Some(RangeInclusive::new(start.row, end.row)));
+                                *ancestor_range =
+                                    Some(Some(RangeInclusive::new(start.row, end.row)));
                                 return;
                             }
                         }
 
                         log::info!(
-                            "Expanding to ancestor started on {} node exceeding row limit of {max_row_count}.",
+                            "Expanding to ancestor started on {} node\
+                            exceeding row limit of {max_row_count}.",
                             node.grammar_name()
                         );
                         *ancestor_range = Some(None);
                     }
                 })
-            }});
+            }
+        });
         reached_outline_node.await;
         if let Some(node) = ancestor_range {
             return node;
