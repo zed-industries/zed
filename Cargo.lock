@@ -13301,12 +13301,14 @@ dependencies = [
 [[package]]
 name = "rodio"
 version = "0.21.1"
-source = "git+https://github.com/RustAudio/rodio#e2074c6c2acf07b57cf717e076bdda7a9ac6e70b"
+source = "git+https://github.com/RustAudio/rodio?rev=836c0133533ad89f6df08b584d1e4c7269744062#836c0133533ad89f6df08b584d1e4c7269744062"
 dependencies = [
  "cpal",
  "dasp_sample",
  "hound",
  "num-rational",
+ "rand 0.9.1",
+ "rand_distr",
  "rtrb",
  "symphonia",
  "thiserror 2.0.12",
