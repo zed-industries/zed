@@ -765,7 +765,7 @@ pub enum Formatter {
     },
     /// Files should be formatted using a code action executed by language servers.
     CodeAction(String),
-    /// Format code using the current language server.
+    /// Format code using a language server.
     #[serde(untagged)]
     LanguageServer(LanguageServerSpecifier),
 }
@@ -773,6 +773,7 @@ pub enum Formatter {
 #[derive(Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom)]
 #[serde(
     rename_all = "snake_case",
+    // allow specifying language servers as "language_server" or {"language_server": {"name": ...}}
     from = "LanguageServerVariantContent",
     into = "LanguageServerVariantContent"
 )]
@@ -810,80 +811,28 @@ impl From<LanguageServerSpecifier> for LanguageServerVariantContent {
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom)]
 #[serde(rename_all = "snake_case", untagged)]
-pub enum LanguageServerVariantContent {
+enum LanguageServerVariantContent {
+    /// Format code using a specific language server.
     Specific {
         language_server: LanguageServerSpecifierContent,
     },
+    /// Format code using the current language server.
     Current(CurrentLanguageServerContent),
 }
 
 #[derive(Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom)]
 #[serde(rename_all = "snake_case")]
-pub enum CurrentLanguageServerContent {
+enum CurrentLanguageServerContent {
     #[default]
     LanguageServer,
 }
 
 #[derive(Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom)]
 #[serde(rename_all = "snake_case")]
-pub struct LanguageServerSpecifierContent {
-    pub name: Option<String>,
+struct LanguageServerSpecifierContent {
+    /// The name of the language server to format with
+    name: Option<String>,
 }
-// pub struct LanguageServerVariant {
-//     name: Option<String>,
-// }
-
-// impl std::str::FromStr for LanguageServerVariant {
-//     type Err = &'static str;
-
-//     fn from_str(s: &str) -> Result<Self, Self::Err> {
-//         if s == "language_server" {
-//             Ok(LanguageServerVariant { name: None })
-//         } else {
-//             Err("Invalid language server string")
-//         }
-//     }
-// }
-
-// fn string_or_struct<'de, T, D>(deserializer: D) -> Result<T, D::Error>
-// where
-//     T: Deserialize<'de> + std::str::FromStr,
-//     <T as std::str::FromStr>::Err: std::fmt::Display,
-//     D: Deserializer<'de>,
-// {
-//     use serde::de::{self, MapAccess, Visitor};
-//     use std::marker::PhantomData;
-
-//     struct StringOrStruct<T>(PhantomData<fn() -> T>);
-
-//     impl<'de, T> Visitor<'de> for StringOrStruct<T>
-//     where
-//         T: Deserialize<'de> + std::str::FromStr,
-//         <T as std::str::FromStr>::Err: std::fmt::Display,
-//     {
-//         type Value = T;
-
-//         fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-//             formatter.write_str("string or map")
-//         }
-
-//         fn visit_str<E>(self, value: &str) -> Result<T, E>
-//         where
-//             E: de::Error,
-//         {
-//             std::str::FromStr::from_str(value).map_err(de::Error::custom)
-//         }
-
-//         fn visit_map<M>(self, map: M) -> Result<T, M::Error>
-//         where
-//             M: MapAccess<'de>,
-//         {
-//             Deserialize::deserialize(de::value::MapAccessDeserializer::new(map))
-//         }
-//     }
-
-//     deserializer.deserialize_any(StringOrStruct(PhantomData))
-// }
 
 /// The settings for indent guides.
 #[skip_serializing_none]
