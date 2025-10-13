@@ -99,9 +99,9 @@ async fn test_rainbow_cache_invalidation_on_lsp_update(cx: &mut TestAppContext) 
 
     cx.set_state("ˇlet foo = 1;");
 
-    crate::rainbow_cache::clear_rainbow_cache();
+    crate::rainbow::clear_rainbow_cache();
 
-    let cache_empty = crate::rainbow_cache::with_rainbow_cache(|cache| {
+    let cache_empty = crate::rainbow::with_rainbow_cache(|cache| {
         cache.get("foo").is_none()
     });
 
@@ -236,15 +236,15 @@ async fn test_rainbow_with_multiple_variables_different_colors(cx: &mut TestAppC
     });
     task.await;
 
-    use crate::rainbow_highlighter::RainbowHighlighter;
+    use crate::rainbow::hash_to_color_index;
     let palette_size = cx.cx.read(|cx| {
         let theme_settings = theme::ThemeSettings::get_global(cx);
         theme_settings.active_theme.syntax().rainbow_palette_size()
     });
 
-    let foo_index = RainbowHighlighter::hash_to_index("foo", palette_size);
-    let bar_index = RainbowHighlighter::hash_to_index("bar", palette_size);
-    let baz_index = RainbowHighlighter::hash_to_index("baz", palette_size);
+    let foo_index = hash_to_color_index("foo", palette_size);
+    let bar_index = hash_to_color_index("bar", palette_size);
+    let baz_index = hash_to_color_index("baz", palette_size);
 
     assert_ne!(foo_index, bar_index);
     assert_ne!(bar_index, baz_index);
@@ -281,11 +281,11 @@ async fn test_rainbow_settings_change_clears_cache(cx: &mut TestAppContext) {
 
     cx.set_state("ˇlet foo = 1;");
 
-    crate::rainbow_cache::with_rainbow_cache(|cache| {
+    crate::rainbow::with_rainbow_cache(|cache| {
         cache.insert("foo", gpui::HighlightStyle::default());
     });
 
-    let cache_has_foo = crate::rainbow_cache::with_rainbow_cache(|cache| {
+    let cache_has_foo = crate::rainbow::with_rainbow_cache(|cache| {
         cache.get("foo").is_some()
     });
     assert!(cache_has_foo, "Cache should contain foo");
@@ -302,7 +302,7 @@ async fn test_rainbow_settings_change_clears_cache(cx: &mut TestAppContext) {
         settings.editor.rainbow_highlighting.get_or_insert_default().enabled = Some(true);
     });
 
-    let cache_cleared = crate::rainbow_cache::with_rainbow_cache(|cache| {
+    let cache_cleared = crate::rainbow::with_rainbow_cache(|cache| {
         cache.get("foo").is_none()
     });
     assert!(cache_cleared, "Cache should be cleared after settings change");

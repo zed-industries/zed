@@ -27132,10 +27132,10 @@ async fn test_rainbow_highlighting_immediate_application(cx: &mut TestAppContext
     assert_eq!(palette_size, 32, "Palette should have 32 colors");
 
     // Verify different variable names hash to different indices
-    use crate::rainbow_highlighter::RainbowHighlighter;
-    let foo_index = RainbowHighlighter::hash_to_index("foo", palette_size);
-    let bar_index = RainbowHighlighter::hash_to_index("bar", palette_size);
-    let baz_index = RainbowHighlighter::hash_to_index("baz", palette_size);
+    use crate::rainbow::hash_to_color_index;
+    let foo_index = hash_to_color_index("foo", palette_size);
+    let bar_index = hash_to_color_index("bar", palette_size);
+    let baz_index = hash_to_color_index("baz", palette_size);
 
     assert_ne!(foo_index, bar_index, "Different variable names should hash differently");
     assert!(foo_index < palette_size, "Hash index should be within palette bounds");

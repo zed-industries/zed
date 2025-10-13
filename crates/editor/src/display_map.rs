@@ -864,7 +864,7 @@ impl DisplaySnapshot {
     ) -> impl Iterator<Item = HighlightedChunk<'a>> {
         let rainbow_config = &editor_style.rainbow_highlighting;
         let theme = &editor_style.syntax;
-        let buffer_snapshot = &self.buffer_snapshot;
+        let _buffer_snapshot = &self.buffer_snapshot;
 
         let display_row_start = display_rows.start;
         let start_point = self.display_point_to_point(DisplayPoint::new(display_row_start, 0), Bias::Left);
@@ -876,72 +876,60 @@ impl DisplaySnapshot {
             edit_prediction: Some(editor_style.edit_prediction_styles),
         })
             .scan(
-                (current_buffer_offset, None::<(usize, usize, Option<HighlightStyle>)>),
-                move |(offset, cached_identifier), chunk| {
-                    let (highlight_style, capture_name) = chunk.syntax_highlight_id
-                        .map(|id| (id.style(theme), id.name(theme)))
-                        .unwrap_or((None, None));
+                (current_buffer_offset, String::new(), None::<gpui::HighlightStyle>),
+                move |(offset, accumulated_identifier, accumulated_style), chunk| {
+                    // Get capture name and tree-sitter style
+                    let capture_name = chunk.syntax_highlight_id.and_then(|id| id.name(theme));
+                    let highlight_style = chunk.syntax_highlight_id.and_then(|id| id.style(theme));
 
                     let chunk_start = *offset;
                     let chunk_end = chunk_start + chunk.text.len();
                     *offset = chunk_end;
 
-                    // Tree-sitter rainbow highlighting as fallback when LSP doesn't provide color
+                    // Check if this chunk is part of a variable identifier
                     let is_variable_like = capture_name
-                        .as_ref()
                         .map(|name| {
-                            name.starts_with("variable") 
-                            && !name.contains("special")
-                            && !name.contains("builtin")
-                            && !name.contains("member")
+                            name.starts_with("variable") &&
+                                !name.contains("special") &&
+                                !name.contains("builtin") &&
+                                !name.contains("member")
                         })
                         .unwrap_or(false);
 
-                    let rainbow_style = if is_variable_like {
-                        if let Some((cached_start, cached_end, cached_style)) = cached_identifier {
-                            if chunk_start >= *cached_start && chunk_end <= *cached_end {
-                                *cached_style
-                            } else if
-                                let Some((range, identifier)) = crate::rainbow_identifier::extract_complete_identifier(
-                                    buffer_snapshot,
-                                    chunk_start..chunk_end
-                                )
-                            {
-                                let style = crate::rainbow_cache::with_rainbow_cache(|cache| {
-                                    crate::rainbow_highlighting::try_rainbow_highlight_cached(
-                                        &identifier,
+                    // Accumulator pattern: build identifier from consecutive variable chunks
+                    let rainbow_style = if
+                        is_variable_like &&
+                        chunk.text.chars().all(|c| (c.is_alphanumeric() || c == '_'))
+                    {
+                        // Check if this is the START of a new identifier
+                        let is_new_identifier = accumulated_identifier.is_empty();
+
+                        // Add this chunk to accumulated identifier
+                        accumulated_identifier.push_str(chunk.text);
+
+                        // Compute color ONLY for new identifiers OR if we don't have a cached style yet
+                        if is_new_identifier || accumulated_style.is_none() {
+                            if accumulated_identifier.len() >= 2 {
+                                // Compute rainbow color based on accumulated text so far
+                                let style = crate::rainbow::with_rainbow_cache(|cache| {
+                                    crate::rainbow::apply_rainbow_highlighting(
+                                        accumulated_identifier,
                                         true,
                                         rainbow_config.enabled,
                                         theme,
                                         cache
                                     )
                                 });
-                                *cached_identifier = Some((range.start, range.end, style));
-                                style
-                            } else {
-                                None
+                                *accumulated_style = style;
                             }
-                        } else if
-                            let Some((range, identifier)) = crate::rainbow_identifier::extract_complete_identifier(
-                                buffer_snapshot,
-                                chunk_start..chunk_end
-                            )
-                        {
-                            let style = crate::rainbow_cache::with_rainbow_cache(|cache| {
-                                crate::rainbow_highlighting::try_rainbow_highlight_cached(
-                                    &identifier,
-                                    true,
-                                    rainbow_config.enabled,
-                                    theme,
-                                    cache
-                                )
-                            });
-                            *cached_identifier = Some((range.start, range.end, style));
-                            style
-                        } else {
-                            None
                         }
+
+                        // Return the cached style for this identifier
+                        *accumulated_style
                     } else {
+                        // Not a variable chunk - reset accumulator
+                        accumulated_identifier.clear();
+                        *accumulated_style = None;
                         None
                     };
 
@@ -1596,10 +1584,10 @@ impl<'a> SemanticTokenStylizer<'a> {
         // Apply rainbow highlighting to variable-like tokens before falling back to LSP token mapping.
         if let (Some(config), Some(name)) = (rainbow_config, variable_name) {
             if
-                let Some(rainbow_style) = crate::rainbow_cache::with_rainbow_cache(|cache| {
-                    crate::rainbow_highlighting::try_rainbow_highlight_cached(
+                let Some(rainbow_style) = crate::rainbow::with_rainbow_cache(|cache| {
+                    crate::rainbow::apply_rainbow_highlighting(
                         name,
-                        crate::rainbow_highlighting::is_variable_like_token(token_type_name),
+                        token_type_name == "variable" || token_type_name == "parameter",
                         config.enabled,
                         theme,
                         cache

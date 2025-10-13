@@ -35,10 +35,7 @@ mod mouse_context_menu;
 pub mod movement;
 mod persistence;
 mod proposed_changes_editor;
-mod rainbow_cache;
-mod rainbow_highlighter;
-mod rainbow_highlighting;
-mod rainbow_identifier;
+mod rainbow;           // Consolidated rainbow highlighting logic (includes caching)
 mod rust_analyzer_ext;
 pub mod scroll;
 mod selections_collection;
@@ -19021,7 +19018,7 @@ impl Editor {
             cx
         );
 
-        crate::rainbow_cache::clear_rainbow_cache();
+        crate::rainbow::clear_rainbow_cache();
 
         let old_cursor_shape = self.cursor_shape;
         let old_show_breadcrumbs = self.show_breadcrumbs;
