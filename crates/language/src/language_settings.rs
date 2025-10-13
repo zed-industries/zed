@@ -13,7 +13,7 @@ use itertools::{Either, Itertools};
 pub use settings::{
     CompletionSettingsContent, EditPredictionProvider, EditPredictionsMode, FormatOnSave,
     Formatter, FormatterList, InlayHintKind, LanguageSettingsContent, LspInsertMode,
-    RewrapBehavior, SelectedFormatter, ShowWhitespaceSetting, SoftWrap, WordsCompletionMode,
+    RewrapBehavior, ShowWhitespaceSetting, SoftWrap, WordsCompletionMode,
 };
 use settings::{ExtendingVec, Settings, SettingsContent, SettingsLocation, SettingsStore};
 use shellexpand;
@@ -96,7 +96,7 @@ pub struct LanguageSettings {
     /// when saving it.
     pub ensure_final_newline_on_save: bool,
     /// How to perform a buffer format.
-    pub formatter: settings::SelectedFormatter,
+    pub formatter: settings::FormatterList,
     /// Zed's Prettier integration settings.
     pub prettier: PrettierSettings,
     /// Whether to automatically close JSX tags.

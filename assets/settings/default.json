@@ -1104,22 +1104,28 @@
   // Whether or not to perform a buffer format before saving: [on, off]
   // Keep in mind, if the autosave with delay is enabled, format_on_save will be ignored
   "format_on_save": "on",
-  // How to perform a buffer format. This setting can take 4 values:
+  // How to perform a buffer format. This setting can take multiple values:
   //
-  // 1. Format code using the current language server:
+  // 1. Default. Format files using Zed's Prettier integration (if applicable),
+  //    or falling back to formatting via language server:
+  //     "formatter": "auto"
+  // 2. Format code using the current language server:
   //     "formatter": "language_server"
-  // 2. Format code using an external command:
+  // 3. Format code using a specific language server:
+  //     "formatter": {"language_server": {"name": "ruff"}}
+  // 4. Format code using an external command:
   //     "formatter": {
   //       "external": {
   //         "command": "prettier",
   //         "arguments": ["--stdin-filepath", "{buffer_path}"]
   //       }
   //     }
-  // 3. Format code using Zed's Prettier integration:
+  // 5. Format code using Zed's Prettier integration:
   //     "formatter": "prettier"
-  // 4. Default. Format files using Zed's Prettier integration (if applicable),
-  //    or falling back to formatting via language server:
-  //     "formatter": "auto"
+  // 6. Format code using a code action
+  //     "formatter": {"code_action": "source.fixAll.eslint"}
+  // 7. An array of any format step specified above to apply in order
+  //     "formatter": [{"code_action": "source.fixAll.eslint"}, "prettier"]
   "formatter": "auto",
   // How to soft-wrap long lines of text.
   // Possible values:
@@ -1684,7 +1690,7 @@
       "preferred_line_length": 72
     },
     "Go": {
-      "formatter": [{ "code_action": "source.organizeImports" }, { "language_server": {} }],
+      "formatter": [{ "code_action": "source.organizeImports" }, "language_server"],
       "debuggers": ["Delve"]
     },
     "GraphQL": {
