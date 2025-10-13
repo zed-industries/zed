@@ -52,3 +52,4 @@ zeta.workspace = true
 zeta2.workspace = true
 zlog.workspace = true
 polars = { version = "0.51", features = ["lazy", "dtype-struct"] }
+soa-rs = "0.8.1"

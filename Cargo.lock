@@ -9176,7 +9176,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc2f4eb4bc735547cfed7c0a4922cbd04a4655978c09b54f1f7b228750664c34"
 dependencies = [
  "cfg-if",
- "windows-targets 0.48.5",
+ "windows-targets 0.52.6",
 ]
 
 [[package]]
@@ -15648,6 +15648,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "soa-rs"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b75ae4668062b095fda87ba54118697bed601f07f6c68bf50289a25ca0c8c935"
+dependencies = [
+ "soa-rs-derive",
+]
+
+[[package]]
+name = "soa-rs-derive"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9c09121507da587d3434e5929ce3321162f36bd3eff403873cb163c06b176913"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.101",
+]
+
+[[package]]
 name = "socket2"
 version = "0.5.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -21774,6 +21794,7 @@ dependencies = [
  "settings",
  "shellexpand 2.1.2",
  "smol",
+ "soa-rs",
  "terminal_view",
  "watch",
  "workspace-hack",
