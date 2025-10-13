@@ -89,11 +89,11 @@ pub struct PtyProcessInfo {
 
 impl PtyProcessInfo {
     pub fn new(pty: &Pty) -> PtyProcessInfo {
-        let process_refresh_kind = ProcessRefreshKind::new()
+        let process_refresh_kind = ProcessRefreshKind::nothing()
             .with_cmd(UpdateKind::Always)
             .with_cwd(UpdateKind::Always)
             .with_exe(UpdateKind::Always);
-        let refresh_kind = RefreshKind::new().with_processes(process_refresh_kind);
+        let refresh_kind = RefreshKind::nothing().with_processes(process_refresh_kind);
         let system = System::new_with_specifics(refresh_kind);
 
         PtyProcessInfo {
@@ -112,6 +112,7 @@ impl PtyProcessInfo {
         let pid = self.pid_getter.pid()?;
         if self.system.refresh_processes_specifics(
             sysinfo::ProcessesToUpdate::Some(&[pid]),
+            true,
             self.refresh_kind,
         ) == 1
         {
