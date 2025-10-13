@@ -1211,6 +1211,10 @@ impl Item for TerminalView {
         None
     }
 
+    fn buffer_kind(&self, _: &App) -> workspace::item::ItemBufferKind {
+        workspace::item::ItemBufferKind::Singleton
+    }
+
     fn clone_on_split(
         &self,
         workspace_id: Option<WorkspaceId>,
