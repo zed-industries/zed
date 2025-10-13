@@ -463,6 +463,7 @@ pub struct SettingsWindow {
     /// [page_index][page_item_index] will be false
     /// when the item is filtered out either by searches
     /// or by the current file
+    navbar_focus_subscriptions: Vec<gpui::Subscription>,
     filter_table: Vec<Vec<bool>>,
     has_query: bool,
     content_handles: Vec<Vec<Entity<NonFocusableHandle>>>,
@@ -893,6 +894,7 @@ impl SettingsWindow {
                 window,
                 cx,
             ),
+            navbar_focus_subscriptions: vec![],
             content_focus_handle: NonFocusableHandle::new(
                 CONTENT_CONTAINER_TAB_INDEX,
                 false,
@@ -938,7 +940,8 @@ impl SettingsWindow {
     }
 
     fn build_navbar(&mut self, cx: &App) {
-        let mut navbar_entries = Vec::with_capacity(self.navbar_entries.len());
+        let mut navbar_entries = Vec::new();
+
         for (page_index, page) in self.pages.iter().enumerate() {
             navbar_entries.push(NavBarEntry {
                 title: page.title,
@@ -965,6 +968,30 @@ impl SettingsWindow {
         }
 
         self.navbar_entries = navbar_entries;
+    }
+
+    fn setup_navbar_focus_subscriptions(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<SettingsWindow>,
+    ) {
+        let mut focus_subscriptions = Vec::new();
+
+        for entry_index in 0..self.navbar_entries.len() {
+            let focus_handle = self.navbar_entries[entry_index].focus_handle.clone();
+
+            let subscription = cx.on_focus(
+                &focus_handle,
+                window,
+                move |this: &mut SettingsWindow,
+                      window: &mut Window,
+                      cx: &mut Context<SettingsWindow>| {
+                    this.open_and_scroll_to_navbar_entry(entry_index, window, cx, false);
+                },
+            );
+            focus_subscriptions.push(subscription);
+        }
+        self.navbar_focus_subscriptions = focus_subscriptions;
     }
 
     fn visible_navbar_entries(&self) -> impl Iterator<Item = (usize, &NavBarEntry)> {
@@ -1262,6 +1289,7 @@ impl SettingsWindow {
         if self.pages.is_empty() {
             self.pages = page_data::settings_data();
             self.build_navbar(cx);
+            self.setup_navbar_focus_subscriptions(window, cx);
             self.build_content_handles(window, cx);
         }
         sub_page_stack_mut().clear();
@@ -2559,6 +2587,7 @@ mod test {
             navbar_entry: selected_idx.expect("Must have a selected navbar entry"),
             navbar_entries: Vec::default(),
             navbar_scroll_handle: UniformListScrollHandle::default(),
+            navbar_focus_subscriptions: vec![],
             filter_table: vec![],
             has_query: false,
             content_handles: vec![],
