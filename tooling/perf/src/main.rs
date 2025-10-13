@@ -50,7 +50,7 @@ use zed_perf::{FailKind, Importance, Output, TestMdata, Timings, consts};
 
 use std::{
     fs::OpenOptions,
-    io::Write,
+    io::{Read, Write},
     num::NonZero,
     path::{Path, PathBuf},
     process::{Command, Stdio},
@@ -264,8 +264,14 @@ fn compare_profiles(args: &[String]) {
                 let prefix = elems.next().unwrap();
                 assert_eq!("json", elems.next().unwrap());
                 assert!(elems.next().is_none());
-                let handle = OpenOptions::new().read(true).open(entry.path()).unwrap();
-                let o_other: Output = serde_json::from_reader(handle).unwrap();
+                let mut buffer = Vec::new();
+                let _ = OpenOptions::new()
+                    .read(true)
+                    .open(entry.path())
+                    .unwrap()
+                    .read_to_end(&mut buffer)
+                    .unwrap();
+                let o_other: Output = serde_json::from_slice(&buffer).unwrap();
                 output.merge(o_other, prefix);
             };
 

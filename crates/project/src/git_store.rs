@@ -62,6 +62,7 @@ use std::{
     time::Instant,
 };
 use sum_tree::{Edit, SumTree, TreeSet};
+use task::Shell;
 use text::{Bias, BufferId};
 use util::{
     ResultExt, debug_panic,
@@ -4599,7 +4600,7 @@ impl Repository {
                 .upgrade()
                 .context("missing project environment")?
                 .update(cx, |project_environment, cx| {
-                    project_environment.get_directory_environment(work_directory_abs_path.clone(), cx)
+                    project_environment.get_local_directory_environment(&Shell::System, work_directory_abs_path.clone(), cx)
                 })?
                 .await
                 .unwrap_or_else(|| {

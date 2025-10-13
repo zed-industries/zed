@@ -49,7 +49,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{Arc, Once},
 };
-use task::{DebugScenario, SpawnInTerminal, TaskContext, TaskTemplate};
+use task::{DebugScenario, Shell, SpawnInTerminal, TaskContext, TaskTemplate};
 use util::{ResultExt as _, rel_path::RelPath};
 use worktree::Worktree;
 
@@ -279,7 +279,11 @@ impl DapStore {
                                 .unwrap()
                                 .environment
                                 .update(cx, |environment, cx| {
-                                    environment.get_directory_environment(cwd, cx)
+                                    environment.get_local_directory_environment(
+                                        &Shell::System,
+                                        cwd,
+                                        cx,
+                                    )
                                 })
                         })?
                         .await;
