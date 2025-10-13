@@ -1628,11 +1628,8 @@ impl AcpThreadView {
 
         window.spawn(cx, async move |cx| {
             let mut task = login.clone();
-            task.shell = task::Shell::WithArguments {
-                program: task.command.take().expect("login command should be set"),
-                args: std::mem::take(&mut task.args),
-                title_override: None
-            };
+            task.command = task.command.clone();
+            task.args = task.args.clone();
             task.full_label = task.label.clone();
             task.id = task::TaskId(format!("external-agent-{}-login", task.label));
             task.command_label = task.label.clone();
@@ -1641,7 +1638,7 @@ impl AcpThreadView {
             task.hide = task::HideStrategy::Always;
 
             let terminal = terminal_panel.update_in(cx, |terminal_panel, window, cx| {
-                terminal_panel.spawn_task(&task, window, cx)
+                terminal_panel.spawn_task(task, window, cx)
             })?;
 
             let terminal = terminal.await?;

@@ -193,8 +193,22 @@ impl NewProcessModal {
 
                             let (used_tasks, current_resolved_tasks) = task_inventory
                                 .update(cx, |task_inventory, cx| {
-                                    task_inventory
-                                        .used_and_current_resolved_tasks(task_contexts.clone(), cx)
+                                    let remote_shell = workspace
+                                        .read_with(cx, |workspace, cx| {
+                                            workspace
+                                                .project()
+                                                .read(cx)
+                                                .remote_client()?
+                                                .read(cx)
+                                                .shell()
+                                        })
+                                        .ok()
+                                        .flatten();
+                                    task_inventory.used_and_current_resolved_tasks(
+                                        task_contexts.clone(),
+                                        move || remote_shell.clone(),
+                                        cx,
+                                    )
                                 })?
                                 .await;
 

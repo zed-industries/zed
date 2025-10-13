@@ -74,7 +74,10 @@ impl TasksModalDelegate {
         }
     }
 
-    fn spawn_oneshot(&mut self) -> Option<(TaskSourceKind, ResolvedTask)> {
+    fn spawn_oneshot(
+        &mut self,
+        cx: &mut Context<Picker<Self>>,
+    ) -> Option<(TaskSourceKind, ResolvedTask)> {
         if self.prompt.trim().is_empty() {
             return None;
         }
@@ -99,7 +102,23 @@ impl TasksModalDelegate {
         }
         Some((
             source_kind,
-            new_oneshot.resolve_task(&id_base, active_context)?,
+            new_oneshot.resolve_task(
+                &id_base,
+                &|| {
+                    self.workspace
+                        .read_with(cx, |workspace, cx| {
+                            workspace
+                                .project()
+                                .read(cx)
+                                .remote_client()?
+                                .read(cx)
+                                .shell()
+                        })
+                        .ok()
+                        .flatten()
+                },
+                active_context,
+            )?,
         ))
     }
 
@@ -274,10 +293,20 @@ impl PickerDelegate for TasksModalDelegate {
             Some(candidates) => Task::ready(string_match_candidates(candidates)),
             None => {
                 if let Some(task_inventory) = self.task_store.read(cx).task_inventory().cloned() {
-                    let task_list = task_inventory.update(cx, |this, cx| {
-                        this.used_and_current_resolved_tasks(self.task_contexts.clone(), cx)
-                    });
                     let workspace = self.workspace.clone();
+                    let task_list = task_inventory.update(cx, |this, cx| {
+                        let remote_shell = workspace
+                            .read_with(cx, |it, cx| {
+                                it.project().read(cx).remote_client()?.read(cx).shell()
+                            })
+                            .ok()
+                            .flatten();
+                        this.used_and_current_resolved_tasks(
+                            self.task_contexts.clone(),
+                            move || remote_shell.clone(),
+                            cx,
+                        )
+                    });
                     let lsp_task_sources = self.task_contexts.lsp_task_sources.clone();
                     let task_position = self.task_contexts.latest_selection;
                     cx.spawn(async move |picker, cx| {
@@ -603,7 +632,7 @@ impl PickerDelegate for TasksModalDelegate {
         window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) {
-        let Some((task_source_kind, mut task)) = self.spawn_oneshot() else {
+        let Some((task_source_kind, mut task)) = self.spawn_oneshot(cx) else {
             return;
         };
 

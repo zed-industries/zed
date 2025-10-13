@@ -810,11 +810,12 @@ struct RunnableTasks {
 impl RunnableTasks {
     fn resolve<'a>(
         &'a self,
+        remote_shell: &'a dyn Fn() -> Option<String>,
         cx: &'a task::TaskContext,
     ) -> impl Iterator<Item = (TaskSourceKind, ResolvedTask)> + 'a {
         self.templates.iter().filter_map(|(kind, template)| {
             template
-                .resolve_task(&kind.to_id_base(), cx)
+                .resolve_task(&kind.to_id_base(), remote_shell, cx)
                 .map(|task| (kind.clone(), task))
         })
     }
@@ -6002,13 +6003,14 @@ impl Editor {
             Some(CodeActionSource::Indicator(_)) => Task::ready(Ok(Default::default())),
             _ => {
                 let mut task_context_task = Task::ready(None);
+                let remote_shell =
+                    maybe!({ project.as_ref()?.read(cx).remote_client()?.read(cx).shell() });
                 if let Some(tasks) = &tasks
                     && let Some(project) = project
                 {
                     task_context_task =
                         Self::build_tasks_context(&project, &buffer, buffer_row, tasks, cx);
                 }
-
                 cx.spawn_in(window, {
                     let buffer = buffer.clone();
                     async move |editor, cx| {
@@ -6018,7 +6020,9 @@ impl Editor {
                             tasks
                                 .zip(task_context.clone())
                                 .map(|(tasks, task_context)| ResolvedTasks {
-                                    templates: tasks.resolve(&task_context).collect(),
+                                    templates: tasks
+                                        .resolve(&|| remote_shell.clone(), &task_context)
+                                        .collect(),
                                     position: snapshot.buffer_snapshot().anchor_before(Point::new(
                                         multibuffer_point.row,
                                         tasks.column,
@@ -8320,9 +8324,11 @@ impl Editor {
 
         let reveal_strategy = action.reveal;
         let task_context = Self::build_tasks_context(&project, &buffer, buffer_row, &tasks, cx);
+        let remote_shell = maybe!({ project.read(cx).remote_client()?.read(cx).shell() });
         cx.spawn_in(window, async move |_, cx| {
             let context = task_context.await?;
-            let (task_source_kind, mut resolved_task) = tasks.resolve(&context).next()?;
+            let (task_source_kind, mut resolved_task) =
+                tasks.resolve(&|| remote_shell.clone(), &context).next()?;
 
             let resolved = &mut resolved_task.resolved;
             resolved.reveal = reveal_strategy;

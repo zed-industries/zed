@@ -9812,9 +9812,14 @@ fn get_all_tasks(
     cx: &mut App,
 ) -> Task<Vec<(TaskSourceKind, ResolvedTask)>> {
     let new_tasks = project.update(cx, |project, cx| {
+        let remote_shell = project.remote_client().and_then(|it| it.read(cx).shell());
         project.task_store.update(cx, |task_store, cx| {
             task_store.task_inventory().unwrap().update(cx, |this, cx| {
-                this.used_and_current_resolved_tasks(task_contexts, cx)
+                this.used_and_current_resolved_tasks(
+                    task_contexts,
+                    move || remote_shell.clone(),
+                    cx,
+                )
             })
         })
     });

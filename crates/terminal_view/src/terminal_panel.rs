@@ -19,7 +19,7 @@ use itertools::Itertools;
 use project::{Fs, Project, ProjectEntryId};
 use search::{BufferSearchBar, buffer_search::DivRegistrar};
 use settings::{Settings, TerminalDockPosition};
-use task::{RevealStrategy, RevealTarget, Shell, ShellBuilder, SpawnInTerminal, TaskId};
+use task::{RevealStrategy, RevealTarget, SpawnInTerminal, TaskId};
 use terminal::{Terminal, terminal_settings::TerminalSettings};
 use ui::{
     ButtonLike, Clickable, ContextMenu, FluentBuilder, PopoverMenu, SplitButton, Toggleable,
@@ -520,45 +520,10 @@ impl TerminalPanel {
 
     pub fn spawn_task(
         &mut self,
-        task: &SpawnInTerminal,
+        task: SpawnInTerminal,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<WeakEntity<Terminal>>> {
-        let Some(workspace) = self.workspace.upgrade() else {
-            return Task::ready(Err(anyhow!("failed to read workspace")));
-        };
-
-        let project = workspace.read(cx).project().read(cx);
-
-        if project.is_via_collab() {
-            return Task::ready(Err(anyhow!("cannot spawn tasks as a guest")));
-        }
-
-        let remote_client = project.remote_client();
-        let is_windows = project.path_style(cx).is_windows();
-        let remote_shell = remote_client
-            .as_ref()
-            .and_then(|remote_client| remote_client.read(cx).shell());
-
-        let shell = if let Some(remote_shell) = remote_shell
-            && task.shell == Shell::System
-        {
-            Shell::Program(remote_shell)
-        } else {
-            task.shell.clone()
-        };
-
-        let builder = ShellBuilder::new(&shell, is_windows);
-        let command_label = builder.command_label(task.command.as_deref().unwrap_or(""));
-        let (command, args) = builder.build(task.command.clone(), &task.args);
-
-        let task = SpawnInTerminal {
-            command_label,
-            command: Some(command),
-            args,
-            ..task.clone()
-        };
-
         if task.allow_concurrent_runs && task.use_new_terminal {
             return self.spawn_in_new_terminal(task, window, cx);
         }
@@ -1708,7 +1673,7 @@ impl workspace::TerminalProvider for TerminalProvider {
         window.spawn(cx, async move |cx| {
             let terminal = terminal_panel
                 .update_in(cx, |terminal_panel, window, cx| {
-                    terminal_panel.spawn_task(&task, window, cx)
+                    terminal_panel.spawn_task(task, window, cx)
                 })
                 .ok()?
                 .await;
@@ -1773,13 +1738,12 @@ mod tests {
         let task = window_handle
             .update(cx, |_, window, cx| {
                 terminal_panel.update(cx, |terminal_panel, cx| {
-                    terminal_panel.spawn_task(&SpawnInTerminal::default(), window, cx)
+                    terminal_panel.spawn_task(SpawnInTerminal::default(), window, cx)
                 })
             })
             .unwrap();
 
         let terminal = task.await.unwrap();
-        let expected_shell = util::get_system_shell();
         terminal
             .update(cx, |terminal, _| {
                 let task_metadata = terminal
@@ -1791,15 +1755,11 @@ mod tests {
                 assert_eq!(task_metadata.cwd, None);
                 assert_eq!(task_metadata.shell, task::Shell::System);
                 assert_eq!(
-                    task_metadata.command,
-                    Some(expected_shell.clone()),
+                    task_metadata.command, None,
                     "Empty tasks should spawn a -i shell"
                 );
                 assert_eq!(task_metadata.args, Vec::<String>::new());
-                assert_eq!(
-                    task_metadata.command_label, expected_shell,
-                    "We show the shell launch for empty commands"
-                );
+                assert_eq!(task_metadata.command_label, "");
             })
             .unwrap();
     }
@@ -1848,6 +1808,8 @@ mod tests {
     #[cfg(unix)]
     #[gpui::test]
     async fn test_spawn_script_like_task(cx: &mut TestAppContext) {
+        use task::{TaskContext, TaskTemplate};
+
         init_test(cx);
 
         let fs = FakeFs::new(cx.executor());
@@ -1862,21 +1824,19 @@ mod tests {
             })
             .unwrap();
 
-        let user_command = r#"REPO_URL=$(git remote get-url origin | sed -e \"s/^git@\\(.*\\):\\(.*\\)\\.git$/https:\\/\\/\\1\\/\\2/\"); COMMIT_SHA=$(git log -1 --format=\"%H\" -- \"${ZED_RELATIVE_FILE}\"); echo \"${REPO_URL}/blob/${COMMIT_SHA}/${ZED_RELATIVE_FILE}#L${ZED_ROW}-$(echo $(($(wc -l <<< \"$ZED_SELECTED_TEXT\") + $ZED_ROW - 1)))\" | xclip -selection clipboard"#.to_string();
-
-        let expected_cwd = PathBuf::from("/some/work");
+        let user_command = r#"REPO_URL=$(git remote get-url origin | sed -e \"s/^git@\\(.*\\):\\(.*\\)\\.git$/https:\\/\\/\\1\\/\\2/\"); COMMIT_SHA=$(git log -1 --format=\"%H\" -- \"ZED_RELATIVE_FILE\"); echo \"REPO_URL/blob/COMMIT_SHA/ZED_RELATIVE_FILE#LZED_ROW-$(echo $(($(wc -l <<< \"ZED_SELECTED_TEXT\") + ZED_ROW - 1)))\" | xclip -selection clipboard"#.to_string();
+        let template = TaskTemplate {
+            command: user_command.clone(),
+            cwd: Some("/some/work".to_owned()),
+            label: "some task".to_owned(),
+            ..TaskTemplate::default()
+        }
+        .resolve_task("id", &|| None, &TaskContext::default())
+        .unwrap();
         let task = window_handle
             .update(cx, |_, window, cx| {
                 terminal_panel.update(cx, |terminal_panel, cx| {
-                    terminal_panel.spawn_task(
-                        &SpawnInTerminal {
-                            command: Some(user_command.clone()),
-                            cwd: Some(expected_cwd.clone()),
-                            ..SpawnInTerminal::default()
-                        },
-                        window,
-                        cx,
-                    )
+                    terminal_panel.spawn_task(template.resolved, window, cx)
                 })
             })
             .unwrap();
@@ -1891,7 +1851,7 @@ mod tests {
                     .spawned_task
                     .clone();
                 assert_eq!(task_metadata.env, HashMap::default());
-                assert_eq!(task_metadata.cwd, Some(expected_cwd));
+                assert_eq!(task_metadata.cwd.as_deref(), Some("/some/work".as_ref()));
                 assert_eq!(task_metadata.shell, task::Shell::System);
                 assert_eq!(task_metadata.command, Some(shell.clone()));
                 assert_eq!(

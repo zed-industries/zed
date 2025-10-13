@@ -23,7 +23,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use task::TaskTemplate;
+use task::{ShellKind, TaskTemplate};
 use text::{BufferId, PointUtf16, ToPointUtf16};
 
 pub enum LspExtExpandMacro {}
@@ -657,7 +657,12 @@ impl LspCommand for GetLspRunnables {
                     );
                     task_template.args.extend(cargo.cargo_args);
                     if !cargo.executable_args.is_empty() {
-                        let shell_kind = task_template.shell.shell_kind(cfg!(windows));
+                        let shell_kind = task_template
+                            .shell
+                            .as_ref()
+                            .map_or_else(ShellKind::system, |shell| {
+                                shell.shell_kind(cfg!(windows))
+                            });
                         task_template.args.push("--".to_string());
                         task_template.args.extend(
                             cargo
