@@ -1,13 +1,14 @@
+use gpui::App;
 use settings::{LanguageSettingsContent, SettingsContent};
 use std::sync::Arc;
 use ui::{IntoElement, SharedString};
 
 use crate::{
     LOCAL, SettingField, SettingItem, SettingsFieldMetadata, SettingsPage, SettingsPageItem,
-    SubPageLink, USER, sub_page_stack,
+    SubPageLink, USER, all_language_names, sub_page_stack,
 };
 
-pub(crate) fn settings_data() -> Vec<SettingsPage> {
+pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
     vec![
         SettingsPage {
             title: "General",
@@ -1405,74 +1406,27 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
         },
         SettingsPage {
             title: "Languages",
-            items: vec![
-                SettingsPageItem::SectionHeader(LANGUAGES_SECTION_HEADER),
-                SettingsPageItem::SubPageLink(SubPageLink {
-                    title: "JSON",
-                    files: USER | LOCAL,
-                    render: Arc::new(|this, window, cx| {
-                        this.render_page_items(
-                            language_settings_data().iter().enumerate(),
-                            None,
-                            window,
-                            cx,
-                        )
-                        .into_any_element()
-                    }),
-                }),
-                SettingsPageItem::SubPageLink(SubPageLink {
-                    title: "JSONC",
-                    files: USER | LOCAL,
-                    render: Arc::new(|this, window, cx| {
-                        this.render_page_items(
-                            language_settings_data().iter().enumerate(),
-                            None,
-                            window,
-                            cx,
-                        )
-                        .into_any_element()
-                    }),
-                }),
-                SettingsPageItem::SubPageLink(SubPageLink {
-                    title: "Rust",
-                    files: USER | LOCAL,
-                    render: Arc::new(|this, window, cx| {
-                        this.render_page_items(
-                            language_settings_data().iter().enumerate(),
-                            None,
-                            window,
-                            cx,
-                        )
-                        .into_any_element()
-                    }),
-                }),
-                SettingsPageItem::SubPageLink(SubPageLink {
-                    title: "Python",
-                    files: USER | LOCAL,
-                    render: Arc::new(|this, window, cx| {
-                        this.render_page_items(
-                            language_settings_data().iter().enumerate(),
-                            None,
-                            window,
-                            cx,
-                        )
-                        .into_any_element()
-                    }),
-                }),
-                SettingsPageItem::SubPageLink(SubPageLink {
-                    title: "TSX",
-                    files: USER | LOCAL,
-                    render: Arc::new(|this, window, cx| {
-                        this.render_page_items(
-                            language_settings_data().iter().enumerate(),
-                            None,
-                            window,
-                            cx,
-                        )
-                        .into_any_element()
-                    }),
-                }),
-            ],
+            items: {
+                let mut items = vec![SettingsPageItem::SectionHeader(LANGUAGES_SECTION_HEADER)];
+                // todo(settings_ui): Refresh on extension (un)/installed
+                // Note that `crates/json_schema_store` solves the same problem, there is probably a way to unify the two
+                items.extend(all_language_names(cx).into_iter().map(|language_name| {
+                    SettingsPageItem::SubPageLink(SubPageLink {
+                        title: language_name,
+                        files: USER | LOCAL,
+                        render: Arc::new(|this, window, cx| {
+                            this.render_page_items(
+                                language_settings_data().iter().enumerate(),
+                                None,
+                                window,
+                                cx,
+                            )
+                            .into_any_element()
+                        }),
+                    })
+                }));
+                items
+            },
         },
         SettingsPage {
             title: "Search & Files",
@@ -4389,8 +4343,7 @@ const LANGUAGES_SECTION_HEADER: &'static str = "Languages";
 fn language_settings_data() -> Vec<SettingsPageItem> {
     fn current_language() -> Option<SharedString> {
         sub_page_stack().iter().find_map(|page| {
-            (page.section_header == LANGUAGES_SECTION_HEADER)
-                .then(|| SharedString::new_static(page.link.title))
+            (page.section_header == LANGUAGES_SECTION_HEADER).then(|| page.link.title.clone())
         })
     }
 
