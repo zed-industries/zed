@@ -257,11 +257,11 @@ impl BlameRenderer for GitBlameRenderer {
                     .child(
                         v_flex()
                             .w(gpui::rems(30.))
-                            .gap_4()
                             .child(
                                 h_flex()
-                                    .pb_1p5()
+                                    .pb_1()
                                     .gap_x_2()
+                                    .items_center()
                                     .overflow_x_hidden()
                                     .flex_wrap()
                                     .children(avatar)
@@ -280,6 +280,7 @@ impl BlameRenderer for GitBlameRenderer {
                                 div()
                                     .id("inline-blame-commit-message")
                                     .child(message)
+                                    .py_1()
                                     .max_h(message_max_height)
                                     .overflow_y_scroll()
                                     .track_scroll(&scroll_handle),
@@ -289,7 +290,7 @@ impl BlameRenderer for GitBlameRenderer {
                                     .text_color(cx.theme().colors().text_muted)
                                     .w_full()
                                     .justify_between()
-                                    .pt_1p5()
+                                    .pt_1()
                                     .border_t_1()
                                     .border_color(cx.theme().colors().border_variant)
                                     .child(absolute_timestamp)
