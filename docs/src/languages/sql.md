@@ -23,7 +23,7 @@ sql-formatter --version
 
 3. Configure Zed to automatically format SQL with `sql-formatter`:
 
-```json
+```json [settings]
   "languages": {
     "SQL": {
       "formatter": {
@@ -44,7 +44,7 @@ You can add this to Zed project settings (`.zed/settings.json`) or via your Zed 
 
 Sql-formatter also allows more precise control by providing [sql-formatter configuration options](https://github.com/sql-formatter-org/sql-formatter#configuration-options). To provide these, create a `.sql-formatter.json` file in your project:
 
-```json
+```json [settings]
 {
   "language": "postgresql",
   "tabWidth": 2,
@@ -55,7 +55,7 @@ Sql-formatter also allows more precise control by providing [sql-formatter confi
 
 When using a `.sql-formatter.json` file you can use a more simplified set of Zed settings since the language need not be specified inline:
 
-```json
+```json [settings]
   "languages": {
     "SQL": {
       "formatter": {

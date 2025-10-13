@@ -270,8 +270,6 @@ impl SshRemoteConnection {
     ) -> Result<Self> {
         use askpass::AskPassResult;
 
-        delegate.set_status(Some("Connecting"), cx);
-
         let url = connection_options.ssh_url();
 
         let temp_dir = tempfile::Builder::new()
@@ -284,6 +282,8 @@ impl SshRemoteConnection {
 
         let mut askpass =
             askpass::AskPassSession::new(cx.background_executor(), askpass_delegate).await?;
+
+        delegate.set_status(Some("Connecting"), cx);
 
         // Start the master SSH process, which does not do anything except for establish
         // the connection and keep it open, allowing other ssh commands to reuse it

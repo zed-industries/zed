@@ -1045,6 +1045,9 @@ impl AcpThreadView {
                 return;
             };
 
+            self.message_editor
+                .update(cx, |editor, cx| editor.clear(window, cx));
+
             let connection = thread.read(cx).connection().clone();
             let can_login = !connection.auth_methods().is_empty() || self.login.is_some();
             // Does the agent have a specific logout command? Prefer that in case they need to reset internal state.
@@ -3283,6 +3286,12 @@ impl AcpThreadView {
                                                 this.style(ButtonStyle::Outlined)
                                             }
                                         })
+                                        .when_some(
+                                            method.description.clone(),
+                                            |this, description| {
+                                                this.tooltip(Tooltip::text(description))
+                                            },
+                                        )
                                         .on_click({
                                             cx.listener(move |this, _, window, cx| {
                                                 telemetry::event!(

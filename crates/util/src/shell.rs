@@ -173,18 +173,16 @@ impl fmt::Display for ShellKind {
 
 impl ShellKind {
     pub fn system() -> Self {
-        Self::new(&get_system_shell())
+        Self::new(&get_system_shell(), cfg!(windows))
     }
 
-    pub fn new(program: impl AsRef<Path>) -> Self {
+    pub fn new(program: impl AsRef<Path>, is_windows: bool) -> Self {
         let program = program.as_ref();
-        let Some(program) = program.file_stem().and_then(|s| s.to_str()) else {
-            return if cfg!(windows) {
-                ShellKind::PowerShell
-            } else {
-                ShellKind::Posix
-            };
-        };
+        let program = program
+            .file_stem()
+            .unwrap_or_else(|| program.as_os_str())
+            .to_string_lossy();
+
         if program == "powershell" || program == "pwsh" {
             ShellKind::PowerShell
         } else if program == "cmd" {
@@ -204,7 +202,7 @@ impl ShellKind {
         } else if program == "sh" || program == "bash" {
             ShellKind::Posix
         } else {
-            if cfg!(windows) {
+            if is_windows {
                 ShellKind::PowerShell
             } else {
                 // Some other shell detected, the user might install and use a

@@ -15,7 +15,7 @@ See [the configuration docs](../configuring-zed.md) for more information.
 
 For example, if you have Prettier installed and on your `PATH`, you can use it to format JavaScript files by adding the following to your `settings.json`:
 
-```json
+```json [settings]
 {
   "languages": {
     "JavaScript": {
@@ -45,12 +45,12 @@ Zed uses [tree-sitter/tree-sitter-jsdoc](https://github.com/tree-sitter/tree-sit
 
 You can configure Zed to format code using `eslint --fix` by running the ESLint code action when formatting:
 
-```json
+```json [settings]
 {
   "languages": {
     "JavaScript": {
-      "code_actions_on_format": {
-        "source.fixAll.eslint": true
+      "formatter": {
+        "code_action": "source.fixAll.eslint"
       }
     }
   }
@@ -59,12 +59,12 @@ You can configure Zed to format code using `eslint --fix` by running the ESLint 
 
 You can also only execute a single ESLint rule when using `fixAll`:
 
-```json
+```json [settings]
 {
   "languages": {
     "JavaScript": {
-      "code_actions_on_format": {
-        "source.fixAll.eslint": true
+      "formatter": {
+        "code_action": "source.fixAll.eslint"
       }
     }
   },
@@ -88,14 +88,12 @@ You can also only execute a single ESLint rule when using `fixAll`:
 If you **only** want to run ESLint on save, you can configure code actions as
 the formatter:
 
-```json
+```json [settings]
 {
   "languages": {
     "JavaScript": {
       "formatter": {
-        "code_actions": {
-          "source.fixAll.eslint": true
-        }
+        "code_action": "source.fixAll.eslint"
       }
     }
   }
@@ -106,7 +104,7 @@ the formatter:
 
 You can configure ESLint's `nodePath` setting:
 
-```json
+```json [settings]
 {
   "lsp": {
     "eslint": {
@@ -124,7 +122,7 @@ You can configure ESLint's `problems` setting.
 
 For example, here's how to set `problems.shortenToSingleLine`:
 
-```json
+```json [settings]
 {
   "lsp": {
     "eslint": {
@@ -142,7 +140,7 @@ For example, here's how to set `problems.shortenToSingleLine`:
 
 You can configure ESLint's `rulesCustomizations` setting:
 
-```json
+```json [settings]
 {
   "lsp": {
     "eslint": {
@@ -161,7 +159,7 @@ You can configure ESLint's `rulesCustomizations` setting:
 
 You can configure ESLint's `workingDirectory` setting:
 
-```json
+```json [settings]
 {
   "lsp": {
     "eslint": {
@@ -181,9 +179,13 @@ Zed supports debugging JavaScript code out of the box.
 The following can be debugged without writing additional configuration:
 
 - Tasks from `package.json`
-- Tests written using several popular frameworks (Jest, Mocha, Vitest, Jasmine)
+- Tests written using several popular frameworks (Jest, Mocha, Vitest, Jasmine, Bun, Node)
 
 Run {#action debugger::Start} ({#kb debugger::Start}) to see a contextual list of these predefined debug tasks.
+
+> **Note:** Bun test is automatically detected when `@types/bun` is present in `package.json`.
+>
+> **Note:** Node test is automatically detected when `@types/node` is present in `package.json` (requires Node.js 20+).
 
 As for all languages, configurations from `.vscode/launch.json` are also available for debugging in Zed.
 
@@ -191,7 +193,7 @@ If your use-case isn't covered by any of these, you can take full control by add
 
 ### Debug the current file
 
-```json
+```json [debug]
 [
   {
     "adapter": "JavaScript",
@@ -208,7 +210,7 @@ This implicitly runs the current file using `node`.
 
 ### Launch a web app in Chrome
 
-```json
+```json [debug]
 [
   {
     "adapter": "JavaScript",

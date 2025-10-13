@@ -21,9 +21,9 @@ Zed's Edit Prediction comes with two different display modes:
 
 Toggle between them via the `mode` key:
 
-```json
+```json [settings]
 "edit_predictions": {
-  "mode": "eager" | "subtle"
+  "mode": "eager" // or "subtle"
 },
 ```
 
@@ -50,7 +50,7 @@ See the [Configuring GitHub Copilot](#github-copilot) and [Configuring Supermave
 
 By default, `tab` is used to accept edit predictions. You can use another keybinding by inserting this in your keymap:
 
-```json
+```json [settings]
 {
   "context": "Editor && edit_prediction",
   "bindings": {
@@ -62,7 +62,7 @@ By default, `tab` is used to accept edit predictions. You can use another keybin
 
 When there's a [conflict with the `tab` key](#edit-predictions-conflict), Zed uses a different context to accept keybindings (`edit_prediction_conflict`). If you want to use a different one, you can insert this in your keymap:
 
-```json
+```json [settings]
 {
   "context": "Editor && edit_prediction_conflict",
   "bindings": {
@@ -75,7 +75,7 @@ If your keybinding contains a modifier (`ctrl` in the example above), it will al
 
 You can also bind this action to keybind without a modifier. In that case, Zed will use the default modifier (`alt`) to preview the edit prediction.
 
-```json
+```json [settings]
 {
   "context": "Editor && edit_prediction_conflict",
   "bindings": {
@@ -88,7 +88,7 @@ You can also bind this action to keybind without a modifier. In that case, Zed w
 
 To maintain the use of the modifier key for accepting predictions when there is a language server completions menu, but allow `tab` to accept predictions regardless of cursor position, you can specify the context further with `showing_completions`:
 
-```json
+```json [settings]
 {
   "context": "Editor && edit_prediction_conflict && !showing_completions",
   "bindings": {
@@ -102,7 +102,7 @@ To maintain the use of the modifier key for accepting predictions when there is 
 
 The keybinding example below causes `alt-tab` to always be used instead of sometimes using `tab`. You might want this in order to have just one keybinding to use for accepting edit predictions, since the behavior of `tab` varies based on context.
 
-```json
+```json [keymap]
   {
     "context": "Editor && edit_prediction",
     "bindings": {
@@ -126,7 +126,7 @@ The keybinding example below causes `alt-tab` to always be used instead of somet
 
 If `"vim_mode": true` is set within `settings.json`, then additional bindings are needed after the above to return `tab` to its original behavior:
 
-```json
+```json [keymap]
   {
     "context": "(VimControl && !menu) || vim_mode == replace || vim_mode == waiting",
     "bindings": {
@@ -145,7 +145,7 @@ If `"vim_mode": true` is set within `settings.json`, then additional bindings ar
 
 While `tab` and `alt-tab` are supported on Linux, `alt-l` is displayed instead. If your window manager does not reserve `alt-tab`, and you would prefer to use `tab` and `alt-tab`, include these bindings in `keymap.json`:
 
-```json
+```json [keymap]
   {
     "context": "Editor && edit_prediction",
     "bindings": {
@@ -170,7 +170,7 @@ Zed requires at least one keybinding for the {#action editor::AcceptEditPredicti
 
 If you have previously bound the default keybindings to different actions in the global context, you will not be able to preview or accept edit predictions. For example:
 
-```json
+```json [keymap]
 [
   // Your keymap
   {
@@ -184,7 +184,7 @@ If you have previously bound the default keybindings to different actions in the
 
 To fix this, you can specify your own keybinding for accepting edit predictions:
 
-```json
+```json [keymap]
 [
   // ...
   {
@@ -208,7 +208,7 @@ Alternatively, if you have Zed set as your provider, consider [using Subtle Mode
 
 To not have predictions appear automatically as you type, set this within `settings.json`:
 
-```json
+```json [settings]
 {
   "show_edit_predictions": false
 }
@@ -221,7 +221,7 @@ Still, you can trigger edit predictions manually by executing {#action editor::S
 
 To not have predictions appear automatically as you type when working with a specific language, set this within `settings.json`:
 
-```json
+```json [settings]
 {
   "language": {
     "python": {
@@ -235,7 +235,7 @@ To not have predictions appear automatically as you type when working with a spe
 
 To disable edit predictions for specific directories or files, set this within `settings.json`:
 
-```json
+```json [settings]
 {
   "edit_predictions": {
     "disabled_globs": ["~/.config/zed/settings.json"]
@@ -247,7 +247,7 @@ To disable edit predictions for specific directories or files, set this within `
 
 To completely turn off edit prediction across all providers, explicitly set the settings to `none`, like so:
 
-```json
+```json [settings]
 "features": {
   "edit_prediction_provider": "none"
 },
@@ -257,7 +257,7 @@ To completely turn off edit prediction across all providers, explicitly set the 
 
 To use GitHub Copilot as your provider, set this within `settings.json`:
 
-```json
+```json [settings]
 {
   "features": {
     "edit_prediction_provider": "copilot"
@@ -271,7 +271,7 @@ You should be able to sign-in to GitHub Copilot by clicking on the Copilot icon 
 
 If your organization uses GitHub Copilot Enterprise, you can configure Zed to use your enterprise instance by specifying the enterprise URI in your `settings.json`:
 
-```json
+```json [settings]
 {
   "edit_predictions": {
     "copilot": {
@@ -294,7 +294,7 @@ Copilot can provide multiple completion alternatives, and these can be navigated
 
 To use Supermaven as your provider, set this within `settings.json`:
 
-```json
+```json [settings]
 {
   "features": {
     "edit_prediction_provider": "supermaven"

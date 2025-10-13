@@ -61,9 +61,7 @@ use language::{
     LanguageRegistry, LocalFile, LspAdapter, LspAdapterDelegate, LspInstaller, ManifestDelegate,
     ManifestName, Patch, PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16, Toolchain,
     Transaction, Unclipped,
-    language_settings::{
-        FormatOnSave, Formatter, LanguageSettings, SelectedFormatter, language_settings,
-    },
+    language_settings::{FormatOnSave, Formatter, LanguageSettings, language_settings},
     point_to_lsp,
     proto::{
         deserialize_anchor, deserialize_lsp_edit, deserialize_version, serialize_anchor,
@@ -1338,23 +1336,24 @@ impl LocalLspStore {
         let formatters = match (trigger, &settings.format_on_save) {
             (FormatTrigger::Save, FormatOnSave::Off) => &[],
             (FormatTrigger::Manual, _) | (FormatTrigger::Save, FormatOnSave::On) => {
-                match &settings.formatter {
-                    SelectedFormatter::Auto => {
-                        if settings.prettier.allowed {
-                            zlog::trace!(logger => "Formatter set to auto: defaulting to prettier");
-                            std::slice::from_ref(&Formatter::Prettier)
-                        } else {
-                            zlog::trace!(logger => "Formatter set to auto: defaulting to primary language server");
-                            std::slice::from_ref(&Formatter::LanguageServer { name: None })
-                        }
-                    }
-                    SelectedFormatter::List(formatter_list) => formatter_list.as_ref(),
-                }
+                settings.formatter.as_ref()
             }
         };
 
         for formatter in formatters {
+            let formatter = if formatter == &Formatter::Auto {
+                if settings.prettier.allowed {
+                    zlog::trace!(logger => "Formatter set to auto: defaulting to prettier");
+                    &Formatter::Prettier
+                } else {
+                    zlog::trace!(logger => "Formatter set to auto: defaulting to primary language server");
+                    &Formatter::LanguageServer(settings::LanguageServerFormatterSpecifier::Current)
+                }
+            } else {
+                formatter
+            };
             match formatter {
+                Formatter::Auto => unreachable!("Auto resolved above"),
                 Formatter::Prettier => {
                     let logger = zlog::scoped!(logger => "prettier");
                     zlog::trace!(logger => "formatting");
@@ -1409,7 +1408,7 @@ impl LocalLspStore {
                         },
                     )?;
                 }
-                Formatter::LanguageServer { name } => {
+                Formatter::LanguageServer(specifier) => {
                     let logger = zlog::scoped!(logger => "language-server");
                     zlog::trace!(logger => "formatting");
                     let _timer = zlog::time!(logger => "Formatting buffer using language server");
@@ -1419,16 +1418,19 @@ impl LocalLspStore {
                         continue;
                     };
 
-                    let language_server = if let Some(name) = name.as_deref() {
-                        adapters_and_servers.iter().find_map(|(adapter, server)| {
-                            if adapter.name.0.as_ref() == name {
-                                Some(server.clone())
-                            } else {
-                                None
-                            }
-                        })
-                    } else {
-                        adapters_and_servers.first().map(|e| e.1.clone())
+                    let language_server = match specifier {
+                        settings::LanguageServerFormatterSpecifier::Specific { name } => {
+                            adapters_and_servers.iter().find_map(|(adapter, server)| {
+                                if adapter.name.0.as_ref() == name {
+                                    Some(server.clone())
+                                } else {
+                                    None
+                                }
+                            })
+                        }
+                        settings::LanguageServerFormatterSpecifier::Current => {
+                            adapters_and_servers.first().map(|e| e.1.clone())
+                        }
                     };
 
                     let Some(language_server) = language_server else {
@@ -11444,9 +11446,25 @@ impl LspStore {
                         .map(serde_json::from_value)
                         .transpose()?
                     {
+                        let state = self
+                            .as_local_mut()
+                            .context("Expected LSP Store to be local")?
+                            .language_servers
+                            .get_mut(&server_id)
+                            .context("Could not obtain Language Servers state")?;
                         server.update_capabilities(|capabilities| {
                             capabilities.diagnostic_provider = Some(caps);
                         });
+                        if let LanguageServerState::Running {
+                            workspace_refresh_task,
+                            ..
+                        } = state
+                            && workspace_refresh_task.is_none()
+                        {
+                            *workspace_refresh_task =
+                                lsp_workspace_diagnostics_refresh(server.clone(), cx)
+                        }
+
                         notify_server_capabilities_updated(&server, cx);
                     }
                 }
@@ -11610,6 +11628,19 @@ impl LspStore {
                     server.update_capabilities(|capabilities| {
                         capabilities.diagnostic_provider = None;
                     });
+                    let state = self
+                        .as_local_mut()
+                        .context("Expected LSP Store to be local")?
+                        .language_servers
+                        .get_mut(&server_id)
+                        .context("Could not obtain Language Servers state")?;
+                    if let LanguageServerState::Running {
+                        workspace_refresh_task,
+                        ..
+                    } = state
+                    {
+                        _ = workspace_refresh_task.take();
+                    }
                     notify_server_capabilities_updated(&server, cx);
                 }
                 "textDocument/documentColor" => {

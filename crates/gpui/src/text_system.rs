@@ -73,6 +73,7 @@ impl TextSystem {
             fallback_font_stack: smallvec![
                 // TODO: Remove this when Linux have implemented setting fallbacks.
                 font(".ZedMono"),
+                font(".ZedSans"),
                 font("Helvetica"),
                 font("Segoe UI"),  // Windows
                 font("Cantarell"), // Gnome
@@ -420,9 +421,10 @@ impl WindowTextSystem {
         let mut wrapped_lines = 0;
 
         let mut process_line = |line_text: SharedString| {
+            font_runs.clear();
             let line_end = line_start + line_text.len();
 
-            let mut last_font: Option<Font> = None;
+            let mut last_font: Option<FontId> = None;
             let mut decoration_runs = SmallVec::<[DecorationRun; 32]>::new();
             let mut run_start = line_start;
             while run_start < line_end {
@@ -432,23 +434,14 @@ impl WindowTextSystem {
 
                 let run_len_within_line = cmp::min(line_end, run_start + run.len) - run_start;
 
-                if last_font == Some(run.font.clone()) {
-                    font_runs.last_mut().unwrap().len += run_len_within_line;
-                } else {
-                    last_font = Some(run.font.clone());
-                    font_runs.push(FontRun {
-                        len: run_len_within_line,
-                        font_id: self.resolve_font(&run.font),
-                    });
-                }
-
-                if decoration_runs.last().is_some_and(|last_run| {
-                    last_run.color == run.color
-                        && last_run.underline == run.underline
-                        && last_run.strikethrough == run.strikethrough
-                        && last_run.background_color == run.background_color
-                }) {
-                    decoration_runs.last_mut().unwrap().len += run_len_within_line as u32;
+                let decoration_changed = if let Some(last_run) = decoration_runs.last_mut()
+                    && last_run.color == run.color
+                    && last_run.underline == run.underline
+                    && last_run.strikethrough == run.strikethrough
+                    && last_run.background_color == run.background_color
+                {
+                    last_run.len += run_len_within_line as u32;
+                    false
                 } else {
                     decoration_runs.push(DecorationRun {
                         len: run_len_within_line as u32,
@@ -456,6 +449,21 @@ impl WindowTextSystem {
                         background_color: run.background_color,
                         underline: run.underline,
                         strikethrough: run.strikethrough,
+                    });
+                    true
+                };
+
+                if let Some(font_run) = font_runs.last_mut()
+                    && Some(font_run.font_id) == last_font
+                    && !decoration_changed
+                {
+                    font_run.len += run_len_within_line;
+                } else {
+                    let font_id = self.resolve_font(&run.font);
+                    last_font = Some(font_id);
+                    font_runs.push(FontRun {
+                        len: run_len_within_line,
+                        font_id,
                     });
                 }
 
@@ -491,8 +499,6 @@ impl WindowTextSystem {
                     runs.next();
                 }
             }
-
-            font_runs.clear();
         };
 
         let mut split_lines = text.split('\n');
@@ -526,37 +532,54 @@ impl WindowTextSystem {
     /// Subsets of the line can be styled independently with the `runs` parameter.
     /// Generally, you should prefer to use [`Self::shape_line`] instead, which
     /// can be painted directly.
-    pub fn layout_line<Text>(
+    pub fn layout_line(
         &self,
-        text: Text,
+        text: &str,
         font_size: Pixels,
         runs: &[TextRun],
         force_width: Option<Pixels>,
-    ) -> Arc<LineLayout>
-    where
-        Text: AsRef<str>,
-        SharedString: From<Text>,
-    {
+    ) -> Arc<LineLayout> {
+        let mut last_run = None::<&TextRun>;
+        let mut last_font: Option<FontId> = None;
         let mut font_runs = self.font_runs_pool.lock().pop().unwrap_or_default();
+        font_runs.clear();
+
         for run in runs.iter() {
-            let font_id = self.resolve_font(&run.font);
-            if let Some(last_run) = font_runs.last_mut()
-                && last_run.font_id == font_id
+            let decoration_changed = if let Some(last_run) = last_run
+                && last_run.color == run.color
+                && last_run.underline == run.underline
+                && last_run.strikethrough == run.strikethrough
+            // we do not consider differing background color relevant, as it does not affect glyphs
+            // && last_run.background_color == run.background_color
             {
-                last_run.len += run.len;
-                continue;
+                false
+            } else {
+                last_run = Some(run);
+                true
+            };
+
+            if let Some(font_run) = font_runs.last_mut()
+                && Some(font_run.font_id) == last_font
+                && !decoration_changed
+            {
+                font_run.len += run.len;
+            } else {
+                let font_id = self.resolve_font(&run.font);
+                last_font = Some(font_id);
+                font_runs.push(FontRun {
+                    len: run.len,
+                    font_id,
+                });
             }
-            font_runs.push(FontRun {
-                len: run.len,
-                font_id,
-            });
         }
 
-        let layout =
-            self.line_layout_cache
-                .layout_line_internal(text, font_size, &font_runs, force_width);
+        let layout = self.line_layout_cache.layout_line(
+            &SharedString::new(text),
+            font_size,
+            &font_runs,
+            force_width,
+        );
 
-        font_runs.clear();
         self.font_runs_pool.lock().push(font_runs);
 
         layout
