@@ -331,7 +331,7 @@ impl RemoteClient {
                 let ssh_connection = cx
                     .update(|cx| {
                         cx.update_default_global(|pool: &mut ConnectionPool, cx| {
-                            pool.connect(connection_options.clone(), &delegate, cx)
+                            pool.connect(connection_options.clone(), delegate.clone(), cx)
                         })
                     })?
                     .await
@@ -561,7 +561,7 @@ impl RemoteClient {
             let (ssh_connection, io_task) = match async {
                 let ssh_connection = cx
                     .update_global(|pool: &mut ConnectionPool, cx| {
-                        pool.connect(connection_options, &delegate, cx)
+                        pool.connect(connection_options, delegate.clone(), cx)
                     })?
                     .await
                     .map_err(|error| error.cloned())?;
@@ -987,7 +987,7 @@ impl ConnectionPool {
     pub fn connect(
         &mut self,
         opts: RemoteConnectionOptions,
-        delegate: &Arc<dyn RemoteClientDelegate>,
+        delegate: Arc<dyn RemoteClientDelegate>,
         cx: &mut App,
     ) -> Shared<Task<Result<Arc<dyn RemoteConnection>, Arc<anyhow::Error>>>> {
         let connection = self.connections.get(&opts);
