@@ -868,7 +868,7 @@ impl DisplaySnapshot {
         let display_row_start = display_rows.start;
         let start_point = self.display_point_to_point(DisplayPoint::new(display_row_start, 0), Bias::Left);
         let start_buffer_offset = self.buffer_snapshot.point_to_offset(start_point);
-        let state = (start_buffer_offset, None::<(Range<usize>, String)>);
+        let state = (start_buffer_offset, None::<(Range<usize>, u64)>);
 
         self.chunks(display_rows, language_aware, HighlightStyles {
             inlay_hint: Some(editor_style.inlay_hints_style),
@@ -893,50 +893,35 @@ impl DisplaySnapshot {
                     })
                     .unwrap_or(false);
 
-                // Extract full identifier for rainbow highlighting using tree-sitter node range
-                // chunk.capture_node_range provides the full tree-sitter node bounds
-                // which avoids the performance cost of walking the buffer
                 let rainbow_style = if is_variable_like {
-                    let identifier_text = if let Some(ref node_range) = chunk.capture_node_range {
-                        // Validate node range is within buffer bounds (can be stale after edits)
+                    let identifier_hash = if let Some(ref node_range) = chunk.capture_node_range {
                         let buffer_len = self.buffer_snapshot.len();
                         if node_range.end <= buffer_len {
-                            // Check if we already have this node cached
-                            if let Some((cached_range, cached_text)) = cached_node.as_ref() {
-                                if cached_range == node_range {
-                                    // Reuse cached text for consecutive chunks of the same identifier
-                                    cached_text.clone()
-                                } else {
-                                    // Extract and cache new node text
-                                    let full_text: String = self.buffer_snapshot.text_for_range(node_range.clone()).collect();
-                                    if !full_text.is_empty() && full_text.len() >= 2 {
-                                        *cached_node = Some((node_range.clone(), full_text.clone()));
-                                        full_text
-                                    } else {
-                                        chunk.text.to_string()
-                                    }
-                                }
-                            } else {
-                                // First time seeing a node - extract and cache
+                            let should_extract = cached_node.as_ref()
+                                .map_or(true, |(cached_range, _)| cached_range != node_range);
+                            
+                            if should_extract {
                                 let full_text: String = self.buffer_snapshot.text_for_range(node_range.clone()).collect();
-                                if !full_text.is_empty() && full_text.len() >= 2 {
-                                    *cached_node = Some((node_range.clone(), full_text.clone()));
-                                    full_text
+                                let hash = if !full_text.is_empty() && full_text.len() >= 2 {
+                                    let h = crate::rainbow::hash_identifier(&full_text);
+                                    *cached_node = Some((node_range.clone(), h));
+                                    h
                                 } else {
-                                    chunk.text.to_string()
-                                }
+                                    crate::rainbow::hash_identifier(chunk.text)
+                                };
+                                hash
+                            } else {
+                                cached_node.as_ref().unwrap().1
                             }
                         } else {
-                            // Node range is out of bounds - fallback to chunk text
-                            chunk.text.to_string()
+                            crate::rainbow::hash_identifier(chunk.text)
                         }
                     } else {
-                        // Fallback to chunk text if no node range available
-                        chunk.text.to_string()
+                        crate::rainbow::hash_identifier(chunk.text)
                     };
                     
                     crate::rainbow::with_rainbow_cache(|cache| {
-                        crate::rainbow::apply_rainbow_highlighting(&identifier_text, true, rainbow_config, theme, cache)
+                        crate::rainbow::apply_rainbow_by_hash(identifier_hash, rainbow_config, theme, cache)
                     })
                 } else {
                     None

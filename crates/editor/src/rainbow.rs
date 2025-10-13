@@ -136,15 +136,11 @@ fn hash_to_hue_golden_ratio(hash: u64) -> f32 {
 }
 
 /// Generates a dynamic rainbow color using golden ratio distribution.
-///
-/// Fixed saturation and lightness values ensure consistent, readable colors
-/// across all themes while the hue varies based on the identifier hash.
 #[inline]
 fn generate_dynamic_rainbow_color(hash: u64) -> HighlightStyle {
     let hue = hash_to_hue_golden_ratio(hash);
-    // Fixed saturation and lightness for consistency and readability
-    let saturation = 0.65; // Vibrant but not overwhelming
-    let lightness = 0.7; // Bright enough for dark themes, visible on light themes
+    let saturation = 0.65;
+    let lightness = 0.7;
 
     let hsla = Hsla {
         h: hue,
@@ -163,52 +159,25 @@ fn generate_dynamic_rainbow_color(hash: u64) -> HighlightStyle {
 // Rainbow Highlighting Application
 // ============================================================================
 
-/// Applies variable color highlighting to an identifier.
-///
-/// # Arguments
-/// * `identifier` - The variable name to color
-/// * `is_variable_like` - Whether the token is a variable or parameter
-/// * `rainbow_config` - Rainbow highlighting configuration (enabled and mode)
-/// * `theme` - The syntax theme with rainbow palette (used for theme_palette mode)
-/// * `cache` - Cache for computed styles
-///
-/// # Returns
-/// An optional `HighlightStyle` if variable color highlighting should be applied.
+/// Applies variable color highlighting using a pre-computed hash.
 #[inline]
-pub fn apply_rainbow_highlighting(
-    identifier: &str,
-    is_variable_like: bool,
+pub fn apply_rainbow_by_hash(
+    hash: u64,
     rainbow_config: &RainbowConfig,
     theme: &SyntaxTheme,
     cache: &mut RainbowCache
 ) -> Option<HighlightStyle> {
-    // Fast path: early returns
-    if !rainbow_config.enabled || !is_variable_like {
+    if !rainbow_config.enabled {
         return None;
     }
 
-    // Reject invalid identifiers (empty or single character)
-    // Single-char identifiers are not colored because they lack semantic value
-    if identifier.is_empty() || identifier.len() < 2 {
-        return None;
-    }
-
-    // Compute hash once
-    let hash = hash_identifier(identifier);
-
-    // Check cache first using pre-computed hash
     if let Some(cached_style) = cache.get_by_hash(hash) {
         return Some(cached_style);
     }
 
-    // Compute color based on mode
     let style = match rainbow_config.mode {
-        VariableColorMode::DynamicHSL => {
-            // Generate color using golden ratio for optimal distribution
-            generate_dynamic_rainbow_color(hash)
-        }
+        VariableColorMode::DynamicHSL => generate_dynamic_rainbow_color(hash),
         VariableColorMode::ThemePalette => {
-            // Use theme's rainbow palette
             let palette_size = theme.rainbow_palette_size();
             let hash_index = fibonacci_hash(hash, palette_size);
             theme.rainbow_color(hash_index)?
@@ -217,6 +186,27 @@ pub fn apply_rainbow_highlighting(
 
     cache.insert_by_hash(hash, style);
     Some(style)
+}
+
+/// Applies variable color highlighting to an identifier.
+#[inline]
+pub fn apply_rainbow_highlighting(
+    identifier: &str,
+    is_variable_like: bool,
+    rainbow_config: &RainbowConfig,
+    theme: &SyntaxTheme,
+    cache: &mut RainbowCache
+) -> Option<HighlightStyle> {
+    if !rainbow_config.enabled || !is_variable_like {
+        return None;
+    }
+
+    if identifier.is_empty() || identifier.len() < 2 {
+        return None;
+    }
+
+    let hash = hash_identifier(identifier);
+    apply_rainbow_by_hash(hash, rainbow_config, theme, cache)
 }
 
 /// Helper to determine if a token type should receive rainbow highlighting.
