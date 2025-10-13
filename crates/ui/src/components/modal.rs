@@ -1,6 +1,6 @@
 use crate::{
-    Clickable, Color, DynamicSpacing, Headline, HeadlineSize, Icon, IconButton, IconButtonShape,
-    IconName, Label, LabelCommon, LabelSize, h_flex, v_flex,
+    Clickable, Color, DynamicSpacing, Headline, HeadlineSize, Icon, IconButton, IconName, Label,
+    LabelCommon, LabelSize, h_flex, v_flex,
 };
 use gpui::{prelude::FluentBuilder, *};
 use smallvec::SmallVec;
@@ -177,13 +177,11 @@ impl RenderOnce for ModalHeader {
             .pb(DynamicSpacing::Base04.rems(cx))
             .gap(DynamicSpacing::Base08.rems(cx))
             .when(self.show_back_button, |this| {
-                this.child(
-                    IconButton::new("back", IconName::ArrowLeft)
-                        .shape(IconButtonShape::Square)
-                        .on_click(|_, window, cx| {
-                            window.dispatch_action(menu::Cancel.boxed_clone(), cx);
-                        }),
-                )
+                this.child(IconButton::new("back", IconName::ArrowLeft).on_click(
+                    |_, window, cx| {
+                        window.dispatch_action(menu::Cancel.boxed_clone(), cx);
+                    },
+                ))
             })
             .child(
                 v_flex()
@@ -200,11 +198,9 @@ impl RenderOnce for ModalHeader {
             )
             .when(self.show_dismiss_button, |this| {
                 this.child(
-                    IconButton::new("dismiss", IconName::Close)
-                        .shape(IconButtonShape::Square)
-                        .on_click(|_, window, cx| {
-                            window.dispatch_action(menu::Cancel.boxed_clone(), cx);
-                        }),
+                    IconButton::new("dismiss", IconName::Close).on_click(|_, window, cx| {
+                        window.dispatch_action(menu::Cancel.boxed_clone(), cx);
+                    }),
                 )
             })
     }

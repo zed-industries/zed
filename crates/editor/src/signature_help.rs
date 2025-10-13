@@ -14,8 +14,8 @@ use text::Rope;
 use theme::ThemeSettings;
 use ui::{
     ActiveTheme, AnyElement, ButtonCommon, ButtonStyle, Clickable, FluentBuilder, IconButton,
-    IconButtonShape, IconName, IconSize, InteractiveElement, IntoElement, Label, LabelCommon,
-    LabelSize, ParentElement, Pixels, SharedString, StatefulInteractiveElement, Styled, StyledExt,
+    IconName, IconSize, InteractiveElement, IntoElement, Label, LabelCommon, LabelSize,
+    ParentElement, Pixels, SharedString, StatefulInteractiveElement, Styled, StyledExt,
     WithScrollbar, div, relative,
 };
 
@@ -393,7 +393,6 @@ impl SignatureHelpPopover {
 
         let controls = if self.signatures.len() > 1 {
             let prev_button = IconButton::new("signature_help_prev", IconName::ChevronUp)
-                .shape(IconButtonShape::Square)
                 .style(ButtonStyle::Subtle)
                 .icon_size(IconSize::Small)
                 .tooltip(move |window, cx| {
@@ -409,7 +408,6 @@ impl SignatureHelpPopover {
                 }));
 
             let next_button = IconButton::new("signature_help_next", IconName::ChevronDown)
-                .shape(IconButtonShape::Square)
                 .style(ButtonStyle::Subtle)
                 .icon_size(IconSize::Small)
                 .tooltip(move |window, cx| {

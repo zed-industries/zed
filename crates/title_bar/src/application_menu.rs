@@ -155,8 +155,7 @@ impl ApplicationMenu {
                             SharedString::from(format!("{}-menu-trigger", menu_name)),
                             ui::IconName::Menu,
                         )
-                        .style(ButtonStyle::Subtle)
-                        .icon_size(IconSize::Small),
+                        .style(ButtonStyle::Subtle),
                         Tooltip::text("Open Application Menu"),
                     )
                     .with_handle(handle),

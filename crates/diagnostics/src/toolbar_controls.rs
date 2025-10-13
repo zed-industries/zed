@@ -3,7 +3,7 @@ use gpui::{Context, EventEmitter, ParentElement, Render, Window};
 use language::DiagnosticEntry;
 use text::{Anchor, BufferId};
 use ui::prelude::*;
-use ui::{IconButton, IconButtonShape, IconName, Tooltip};
+use ui::{IconButton, IconName, Tooltip};
 use workspace::{ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, item::ItemHandle};
 
 pub struct ToolbarControls {
@@ -69,7 +69,6 @@ impl Render for ToolbarControls {
                     div.child(
                         IconButton::new("stop-updating", IconName::Stop)
                             .icon_color(Color::Info)
-                            .shape(IconButtonShape::Square)
                             .tooltip(Tooltip::for_action_title(
                                 "Stop diagnostics update",
                                 &ToggleDiagnosticsRefresh,
@@ -85,7 +84,6 @@ impl Render for ToolbarControls {
                     div.child(
                         IconButton::new("refresh-diagnostics", IconName::ArrowCircle)
                             .icon_color(Color::Info)
-                            .shape(IconButtonShape::Square)
                             .disabled(!has_stale_excerpts)
                             .tooltip(Tooltip::for_action_title(
                                 "Refresh diagnostics",
@@ -104,7 +102,6 @@ impl Render for ToolbarControls {
             .child(
                 IconButton::new("toggle-warnings", IconName::Warning)
                     .icon_color(warning_color)
-                    .shape(IconButtonShape::Square)
                     .tooltip(Tooltip::text(warning_tooltip))
                     .on_click(cx.listener(|this, _, window, cx| {
                         if let Some(editor) = &this.editor {

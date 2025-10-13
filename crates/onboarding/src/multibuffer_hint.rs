@@ -4,8 +4,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{App, EntityId, EventEmitter, Subscription};
-use ui::{IconButtonShape, Tooltip, prelude::*};
-use workspace::item::{ItemBufferKind, ItemEvent, ItemHandle};
+use ui::{Tooltip, prelude::*};
+use workspace::item::{ItemEvent, ItemHandle};
 use workspace::{ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView};
 
 pub struct MultibufferHint {
@@ -169,7 +169,6 @@ impl Render for MultibufferHint {
             )
             .child(
                 IconButton::new("dismiss", IconName::Close)
-                    .shape(IconButtonShape::Square)
                     .icon_size(IconSize::Small)
                     .on_click(cx.listener(|this, _event, _, cx| {
                         this.dismiss(cx);

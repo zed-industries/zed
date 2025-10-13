@@ -1754,7 +1754,6 @@ impl Render for KeymapEditor {
                                                         )
                                                     }
                                                 })
-                                                .shape(IconButtonShape::Square)
                                                 .toggle_state(exact_match)
                                                 .on_click(
                                                     cx.listener(|_, _, window, cx| {
@@ -2029,9 +2028,7 @@ fn row_group_id(row_index: usize) -> SharedString {
 }
 
 fn base_button_style(row_index: usize, icon: IconName) -> IconButton {
-    IconButton::new(("keymap-icon", row_index), icon)
-        .shape(IconButtonShape::Square)
-        .size(ButtonSize::Compact)
+    IconButton::new(("keymap-icon", row_index), icon).size(ButtonSize::Compact)
 }
 
 #[derive(Debug, Clone, IntoElement)]

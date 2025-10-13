@@ -1,6 +1,6 @@
 use crate::{
-    Icon, IconButtonShape, IconName, IconSize, KeyBinding, Label, List, ListItem, ListSeparator,
-    ListSubHeader, h_flex, prelude::*, utils::WithRemSize, v_flex,
+    Icon, IconName, IconSize, KeyBinding, Label, List, ListItem, ListSeparator, ListSubHeader,
+    h_flex, prelude::*, utils::WithRemSize, v_flex,
 };
 use gpui::{
     Action, AnyElement, App, AppContext as _, DismissEvent, Entity, EventEmitter, FocusHandle,
@@ -1011,7 +1011,6 @@ impl ContextMenu {
                         |el, (((icon, action), title), handler)| {
                             el.end_slot({
                                 let icon_button = IconButton::new("end-slot-icon", *icon)
-                                    .shape(IconButtonShape::Square)
                                     .tooltip({
                                         let action_context = self.action_context.clone();
                                         let title = title.clone();

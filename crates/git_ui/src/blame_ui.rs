@@ -17,7 +17,7 @@ use settings::Settings as _;
 use theme::ThemeSettings;
 use time::OffsetDateTime;
 use time_format::format_local_timestamp;
-use ui::{ContextMenu, Divider, IconButtonShape, prelude::*, tooltip_container};
+use ui::{ContextMenu, Divider, prelude::*};
 use workspace::Workspace;
 
 const GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED: usize = 20;
@@ -337,7 +337,6 @@ impl BlameRenderer for GitBlameRenderer {
                                             )
                                             .child(
                                                 IconButton::new("copy-sha-button", IconName::Copy)
-                                                    .shape(IconButtonShape::Square)
                                                     .icon_size(IconSize::Small)
                                                     .icon_color(Color::Muted)
                                                     .on_click(move |_, _, cx| {

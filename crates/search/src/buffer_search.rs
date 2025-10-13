@@ -31,8 +31,7 @@ use std::sync::Arc;
 use zed_actions::{outline::ToggleOutline, workspace::CopyPath, workspace::CopyRelativePath};
 
 use ui::{
-    BASE_REM_SIZE_IN_PX, IconButton, IconButtonShape, IconName, Tooltip, h_flex, prelude::*,
-    utils::SearchInputWidth,
+    BASE_REM_SIZE_IN_PX, IconButton, IconName, Tooltip, h_flex, prelude::*, utils::SearchInputWidth,
 };
 use util::{ResultExt, paths::PathMatcher};
 use workspace::{
@@ -256,7 +255,6 @@ impl Render for BufferSearchBar {
                         IconName::Quote,
                     )
                     .style(ButtonStyle::Subtle)
-                    .shape(IconButtonShape::Square)
                     .when(self.selection_search_enabled.is_some(), |button| {
                         button.style(ButtonStyle::Filled)
                     })

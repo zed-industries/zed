@@ -2,7 +2,7 @@ use gpui::Render;
 use story::{Story, StoryItem, StorySection};
 
 use crate::{IconButton, IconName};
-use crate::{IconButtonShape, Tooltip, prelude::*};
+use crate::{Tooltip, prelude::*};
 
 pub struct IconButtonStory;
 
@@ -116,33 +116,7 @@ impl Render for IconButtonStory {
         Story::container(cx)
             .child(Story::title_for::<IconButton>(cx))
             .child(StorySection::new().children(buttons))
-            .child(
-                StorySection::new().child(StoryItem::new(
-                    "Square",
-                    h_flex()
-                        .gap_2()
-                        .child(
-                            IconButton::new("square-medium", IconName::Close)
-                                .shape(IconButtonShape::Square)
-                                .icon_size(IconSize::Medium),
-                        )
-                        .child(
-                            IconButton::new("square-small", IconName::Close)
-                                .shape(IconButtonShape::Square)
-                                .icon_size(IconSize::Small),
-                        )
-                        .child(
-                            IconButton::new("square-xsmall", IconName::Close)
-                                .shape(IconButtonShape::Square)
-                                .icon_size(IconSize::XSmall),
-                        )
-                        .child(
-                            IconButton::new("square-indicator", IconName::Close)
-                                .shape(IconButtonShape::Square)
-                                .icon_size(IconSize::Indicator),
-                        ),
-                )),
-            )
+            .child(StorySection::new().child(StoryItem::new("Square", h_flex().gap_2())))
             .into_element()
     }
 }
