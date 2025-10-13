@@ -252,7 +252,6 @@ impl Editor {
         reason: InlayHintRefreshReason,
         cx: &mut Context<Self>,
     ) {
-        // TODO kb refactor this and other hints-related lengthy methods/functions
         if !self.mode.is_full() || self.inlay_hints.is_none() {
             return;
         }
@@ -290,8 +289,12 @@ impl Editor {
         );
 
         let mut buffers_to_query = HashMap::default();
-        for (excerpt_id, (buffer, buffer_version, visible_range)) in &visible_excerpts {
+        for (excerpt_id, (buffer, buffer_version, visible_range)) in visible_excerpts {
             let buffer_id = buffer.read(cx).remote_id();
+            if !self.registered_buffers.contains_key(&buffer_id) {
+                continue;
+            }
+
             let buffer_snapshot = buffer.read(cx).snapshot();
             let buffer_anchor_range = buffer_snapshot.anchor_before(visible_range.start)
                 ..buffer_snapshot.anchor_after(visible_range.end);
@@ -305,9 +308,9 @@ impl Editor {
                         buffer_version: buffer_version.clone(),
                         buffer: buffer.clone(),
                     });
-            visible_excerpts.buffer_version = buffer_version.clone();
-            visible_excerpts.excerpts.push(*excerpt_id);
-            visible_excerpts.ranges.push(buffer_anchor_range.clone());
+            visible_excerpts.buffer_version = buffer_version;
+            visible_excerpts.excerpts.push(excerpt_id);
+            visible_excerpts.ranges.push(buffer_anchor_range);
         }
 
         if invalidate_cache.should_invalidate() {
@@ -640,6 +643,7 @@ struct VisibleExcerpts {
     buffer: Entity<language::Buffer>,
 }
 
+// TODO kb refactor this and other hints-related lengthy methods/functions
 fn spawn_editor_hints_refresh(
     semantics_provider: Rc<dyn SemanticsProvider>,
     invalidate_cache: InvalidationStrategy,
@@ -693,6 +697,9 @@ fn spawn_editor_hints_refresh(
         {
             return;
         }
+        if hint_tasks.is_empty() {
+            return;
+        }
 
         let new_hints = join_all(hint_tasks).await;
         editor
@@ -729,14 +736,16 @@ fn spawn_editor_hints_refresh(
                     .flatten()
                     .filter_map(|(hint_id, lsp_hint)| {
                         if inlay_hints.allowed_hint_kinds.contains(&lsp_hint.kind)
-                            && !inlay_hints.added_hints.contains_key(&hint_id)
+                            && inlay_hints
+                                .added_hints
+                                .insert(hint_id, lsp_hint.kind)
+                                .is_none()
                         {
                             let position =
                                 buffer_excerpts.excerpts.iter().find_map(|excerpt_id| {
                                     multi_buffer_snapshot
                                         .anchor_in_excerpt(*excerpt_id, lsp_hint.position)
                                 })?;
-                            inlay_hints.added_hints.insert(hint_id, lsp_hint.kind);
                             return Some(Inlay::hint(hint_id, position, &lsp_hint));
                         }
                         None
@@ -2143,7 +2152,7 @@ pub mod tests {
                     SelectionEffects::scroll(Autoscroll::Next),
                     window,
                     cx,
-                    |s| s.select_ranges([Point::new(50, 0)..Point::new(50, 0)]),
+                    |s| s.select_ranges([Point::new(57, 0)..Point::new(57, 0)]),
                 );
             })
             .unwrap();
@@ -2450,13 +2459,44 @@ pub mod tests {
                         "main hint #1".to_string(),
                         "main hint #2".to_string(),
                         "main hint #3".to_string(),
+                    ],
+                    sorted_cached_hint_labels(editor, cx),
+                    "Cache should update for the buffer where the selection in, other buffer with no selections should have no queries as it was not registered with the langserver"
+                );
+                assert_eq!(
+                    Vec::<String>::new(),
+                    visible_hint_labels(editor, cx),
+                    "All hints are disabled and should not be shown despite being present in the cache"
+                );
+            })
+            .unwrap();
+
+        editor
+            .update(cx, |editor, window, cx| {
+                editor.change_selections(
+                    SelectionEffects::scroll(Autoscroll::Next),
+                    window,
+                    cx,
+                    |s| s.select_ranges([Point::new(4, 0)..Point::new(4, 0)]),
+                );
+            })
+            .unwrap();
+        cx.executor().run_until_parked();
+        editor
+            .update(cx, |editor, _, cx| {
+                assert_eq!(
+                    vec![
+                        "main hint #0".to_string(),
+                        "main hint #1".to_string(),
+                        "main hint #2".to_string(),
+                        "main hint #3".to_string(),
                         "other hint #0".to_string(),
                         "other hint #1".to_string(),
                         "other hint #2".to_string(),
                         "other hint #3".to_string(),
                     ],
                     sorted_cached_hint_labels(editor, cx),
-                    "Cache should update for both excerpts despite hints display was disabled; cache should not include hints out of ranges (request one and row chunk one)"
+                    "Cache should update for both excerpts despite hints display was disabled; after selecting 2nd buffer, it's now registered with the langserever and should get its hints"
                 );
                 assert_eq!(
                     Vec::<String>::new(),
