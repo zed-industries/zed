@@ -166,7 +166,7 @@ mod test {
     #[test]
     fn redirect_stdin_to_dev_null_fish() {
         let shell = Shell::Program("fish".to_owned());
-        let shell_builder = ShellBuilder::new(&shell);
+        let shell_builder = ShellBuilder::new(&shell, false);
 
         let (program, args) = shell_builder
             .redirect_stdin_to_dev_null()
