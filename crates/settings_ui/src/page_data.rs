@@ -3060,6 +3060,82 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     metadata: None,
                     files: USER,
                 }),
+                SettingsPageItem::SectionHeader("Agent Panel"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Agent Panel Button",
+                    description: "Whether to show the agent panel button in the status bar",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(agent) = &settings_content.agent {
+                                &agent.button
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content.agent.get_or_insert_default().button
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Agent Panel Dock",
+                    description: "Where to dock the agent panel.",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(agent) = &settings_content.agent {
+                                &agent.dock
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content.agent.get_or_insert_default().dock
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Agent Panel Default Width",
+                    description: "Default width when the agent panel is docked to the left or right",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(agent) = &settings_content.agent {
+                                &agent.default_width
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content.agent.get_or_insert_default().default_width
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Agent Panel Default Height",
+                    description: "Default height when the agent panel is docked to the bottom",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(agent) = &settings_content.agent {
+                                &agent.default_height
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .agent
+                                .get_or_insert_default()
+                                .default_height
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
             ],
         },
         SettingsPage {
@@ -4291,6 +4367,196 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     field: Box::new(SettingField {
                         pick: |settings_content| &settings_content.disable_ai,
                         pick_mut: |settings_content| &mut settings_content.disable_ai,
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SectionHeader("Agent Configuration"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Always Allow Tool Actions",
+                    description: "When enabled, the agent can run potentially destructive actions without asking for your confirmation. This setting has no effect on external agents.",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(agent) = &settings_content.agent {
+                                &agent.always_allow_tool_actions
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .agent
+                                .get_or_insert_default()
+                                .always_allow_tool_actions
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Single File Review",
+                    description: "When enabled, agent edits will also be displayed in single-file buffers for review",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(agent) = &settings_content.agent {
+                                &agent.single_file_review
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .agent
+                                .get_or_insert_default()
+                                .single_file_review
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Enable Feedback",
+                    description: "Show voting thumbs up/down icon buttons for feedback on agent edits",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(agent) = &settings_content.agent {
+                                &agent.enable_feedback
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .agent
+                                .get_or_insert_default()
+                                .enable_feedback
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Notify When Agent Waiting",
+                    description: "Where to show notifications when the agent has completed its response or needs confirmation before running a tool action",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(agent) = &settings_content.agent {
+                                &agent.notify_when_agent_waiting
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .agent
+                                .get_or_insert_default()
+                                .notify_when_agent_waiting
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Play Sound When Agent Done",
+                    description: "Whether to play a sound when the agent has either completed its response, or needs user input",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(agent) = &settings_content.agent {
+                                &agent.play_sound_when_agent_done
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .agent
+                                .get_or_insert_default()
+                                .play_sound_when_agent_done
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Expand Edit Card",
+                    description: "Whether to have edit cards in the agent panel expanded, showing a preview of the diff",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(agent) = &settings_content.agent {
+                                &agent.expand_edit_card
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .agent
+                                .get_or_insert_default()
+                                .expand_edit_card
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Expand Terminal Card",
+                    description: "Whether to have terminal cards in the agent panel expanded, showing the whole command output",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(agent) = &settings_content.agent {
+                                &agent.expand_terminal_card
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .agent
+                                .get_or_insert_default()
+                                .expand_terminal_card
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Use Modifier To Send",
+                    description: "Whether to always use cmd-enter (or ctrl-enter on Linux or Windows) to send messages",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(agent) = &settings_content.agent {
+                                &agent.use_modifier_to_send
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .agent
+                                .get_or_insert_default()
+                                .use_modifier_to_send
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Message Editor Min Lines",
+                    description: "Minimum number of lines to display in the agent message editor",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(agent) = &settings_content.agent {
+                                &agent.message_editor_min_lines
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .agent
+                                .get_or_insert_default()
+                                .message_editor_min_lines
+                        },
                     }),
                     metadata: None,
                     files: USER,
