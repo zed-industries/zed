@@ -35,8 +35,8 @@ pub struct SelectionsCollection {
     disjoint: Arc<[Selection<Anchor>]>,
     /// A pending selection, such as when the mouse is being dragged
     pending: Option<PendingSelection>,
-    pub select_mode: SelectMode,
-    pub is_extending: bool,
+    select_mode: SelectMode,
+    is_extending: bool,
 }
 
 impl SelectionsCollection {
@@ -438,6 +438,22 @@ impl SelectionsCollection {
 
     pub fn set_line_mode(&mut self, line_mode: bool) {
         self.line_mode = line_mode;
+    }
+
+    pub fn select_mode(&self) -> &SelectMode {
+        &self.select_mode
+    }
+
+    pub fn set_select_mode(&mut self, select_mode: SelectMode) {
+        self.select_mode = select_mode;
+    }
+
+    pub fn is_extending(&self) -> bool {
+        self.is_extending
+    }
+
+    pub fn set_is_extending(&mut self, is_extending: bool) {
+        self.is_extending = is_extending;
     }
 }
 

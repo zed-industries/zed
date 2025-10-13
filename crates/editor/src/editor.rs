@@ -3511,7 +3511,7 @@ impl Editor {
     ) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let tail = self.selections.newest::<usize>(cx).tail();
-        let click_count = click_count.max(match self.selections.select_mode {
+        let click_count = click_count.max(match self.selections.select_mode() {
             SelectMode::Character => 1,
             SelectMode::Word(_) => 2,
             SelectMode::Line(_) => 3,
@@ -3521,7 +3521,7 @@ impl Editor {
 
         let tail_anchor = display_map.buffer_snapshot().anchor_before(tail);
 
-        let current_selection = match &self.selections.select_mode {
+        let current_selection = match self.selections.select_mode() {
             SelectMode::Character | SelectMode::All => tail_anchor..tail_anchor,
             SelectMode::Word(range) | SelectMode::Line(range) => range.clone(),
         };
@@ -3562,7 +3562,7 @@ impl Editor {
 
         self.change_selections(effects, window, cx, |s| {
             s.set_pending(pending_selection.clone(), pending_mode);
-            s.is_extending = true;
+            s.set_is_extending(true);
         });
     }
 
@@ -3836,10 +3836,10 @@ impl Editor {
             self.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                 s.select(selections);
                 s.clear_pending();
-                if s.is_extending {
-                    s.is_extending = false;
+                if s.is_extending() {
+                    s.set_is_extending(false);
                 } else {
-                    s.select_mode = pending_mode;
+                    s.set_select_mode(pending_mode);
                 }
             });
         }
