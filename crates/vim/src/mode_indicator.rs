@@ -97,6 +97,23 @@ impl Render for ModeIndicator {
         let temp_mode = vim_readable.temp_mode;
         let mode = vim_readable.mode.clone();
 
+        // Extract all theme-dependent colors before any mutable borrow of cx
+        let theme = cx.theme();
+        let colors = theme.colors();
+        let system_transparent = gpui::hsla(0.0, 0.0, 0.0, 0.0);
+        let vim_mode_text = colors.vim_mode_text;
+        let text_muted = colors.text_muted;
+        let bg_color = match mode {
+            crate::state::Mode::Normal => colors.vim_normal_background,
+            crate::state::Mode::Insert => colors.vim_insert_background,
+            crate::state::Mode::Replace => colors.vim_replace_background,
+            crate::state::Mode::Visual => colors.vim_visual_background,
+            crate::state::Mode::VisualLine => colors.vim_visual_line_background,
+            crate::state::Mode::VisualBlock => colors.vim_visual_block_background,
+            crate::state::Mode::HelixNormal => colors.vim_helix_normal_background,
+            crate::state::Mode::HelixSelect => colors.vim_helix_select_background,
+        };
+
         let label = if let Some(label) = status_label {
             label
         } else {
@@ -111,24 +128,21 @@ impl Render for ModeIndicator {
                 .pending_keys
                 .as_ref()
                 .unwrap_or(&current_operators_description);
-            format!("{} {} ", pending, mode_str).into()
+            if bg_color != system_transparent {
+                format!("{} {} ", pending, mode_str).into()
+            } else {
+                format!("--{} {} --", pending, mode_str).into()
+            }
         };
 
-        // Map vim mode to a theme color for the background
-        let theme = cx.theme();
-        let bg_color = match mode {
-            crate::state::Mode::Normal => theme.colors().vim_normal_background,
-            crate::state::Mode::Insert => theme.colors().vim_insert_background,
-            crate::state::Mode::Replace => theme.colors().vim_replace_background,
-            crate::state::Mode::Visual => theme.colors().vim_visual_background,
-            crate::state::Mode::VisualLine => theme.colors().vim_visual_line_background,
-            crate::state::Mode::VisualBlock => theme.colors().vim_visual_block_background,
-            crate::state::Mode::HelixNormal => theme.colors().vim_helix_normal_background,
-            crate::state::Mode::HelixSelect => theme.colors().vim_helix_select_background,
-        };
 
-        div()
-            .px_2()
+
+
+        let mut div_elem = div();
+        if bg_color != system_transparent {
+            div_elem = div_elem.px_2();
+        }
+        div_elem
             .py_1()
             .rounded_sm()
             .bg(bg_color)
@@ -137,7 +151,13 @@ impl Render for ModeIndicator {
                     .size(LabelSize::Small)
                     .line_height_style(LineHeightStyle::UiLabel)
                     .weight(FontWeight::MEDIUM)
-                    .color(theme.colors().vim_mode_text.into())
+                    .color(
+                        if bg_color == system_transparent {
+                            text_muted.into()
+                        } else {
+                            vim_mode_text.into()
+                        }
+                    )
             )
             .into_any()
     }
