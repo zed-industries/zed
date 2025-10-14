@@ -906,6 +906,7 @@
           "now": true,
           "find_path": true,
           "read_file": true,
+          "open": true,
           "grep": true,
           "terminal": true,
           "thinking": true,
@@ -917,7 +918,6 @@
         // We don't know which of the context server tools are safe for the "Ask" profile, so we don't enable them by default.
         // "enable_all_context_servers": true,
         "tools": {
-          "contents": true,
           "diagnostics": true,
           "fetch": true,
           "list_directory": true,
