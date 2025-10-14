@@ -10,6 +10,10 @@ pub struct PublishGpuiArgs {
     /// Perform a dry-run and wait for user confirmation before each publish
     #[arg(long)]
     dry_run: bool,
+
+    /// Skip to a specific package (by package name or crate name) and start from there
+    #[arg(long)]
+    skip_to: Option<String>,
 }
 
 pub fn run_publish_gpui(args: PublishGpuiArgs) -> Result<()> {
@@ -20,11 +24,16 @@ pub fn run_publish_gpui(args: PublishGpuiArgs) -> Result<()> {
 
     let start_time = std::time::Instant::now();
     check_workspace_root()?;
-    check_git_clean()?;
+
+    if args.skip_to.is_none() {
+        check_git_clean()?;
+    } else {
+        println!("Skipping git clean check due to --skip-to flag");
+    }
 
     let version = read_gpui_version()?;
     println!("Updating GPUI to version: {}", version);
-    publish_dependencies(&version, args.dry_run)?;
+    publish_dependencies(&version, args.dry_run, args.skip_to.as_deref())?;
     publish_gpui(&version, args.dry_run)?;
     println!("GPUI published in {}s", start_time.elapsed().as_secs_f32());
     Ok(())
@@ -47,7 +56,7 @@ fn read_gpui_version() -> Result<String> {
     Ok(version.to_string())
 }
 
-fn publish_dependencies(new_version: &str, dry_run: bool) -> Result<()> {
+fn publish_dependencies(new_version: &str, dry_run: bool, skip_to: Option<&str>) -> Result<()> {
     let gpui_dependencies = vec![
         ("collections", "gpui_collections", "crates"),
         ("perf", "gpui_perf", "tooling"),
@@ -55,14 +64,31 @@ fn publish_dependencies(new_version: &str, dry_run: bool) -> Result<()> {
         ("util", "gpui_util", "crates"),
         ("gpui_macros", "gpui-macros", "crates"),
         ("http_client", "gpui_http_client", "crates"),
-        ("derive_refineable", "gpui_derive_refineable", "crates"),
+        (
+            "derive_refineable",
+            "gpui_derive_refineable",
+            "crates/refineable",
+        ),
         ("refineable", "gpui_refineable", "crates"),
         ("semantic_version", "gpui_semantic_version", "crates"),
         ("sum_tree", "gpui_sum_tree", "crates"),
         ("media", "gpui_media", "crates"),
     ];
 
+    let mut should_skip = skip_to.is_some();
+    let skip_target = skip_to.unwrap_or("");
+
     for (package_name, crate_name, package_dir) in gpui_dependencies {
+        if should_skip {
+            if package_name == skip_target || crate_name == skip_target {
+                println!("Found skip target: {} ({})", crate_name, package_name);
+                should_skip = false;
+            } else {
+                println!("Skipping: {} ({})", crate_name, package_name);
+                continue;
+            }
+        }
+
         println!(
             "Publishing dependency: {} (package: {})",
             crate_name, package_name
@@ -71,6 +97,13 @@ fn publish_dependencies(new_version: &str, dry_run: bool) -> Result<()> {
         update_crate_cargo_toml(package_name, crate_name, package_dir, new_version)?;
         update_workspace_dependency_version(package_name, crate_name, new_version)?;
         publish_crate(crate_name, dry_run)?;
+    }
+
+    if should_skip {
+        bail!(
+            "Could not find package or crate named '{}' to skip to",
+            skip_target
+        );
     }
 
     Ok(())
