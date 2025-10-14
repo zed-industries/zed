@@ -1844,7 +1844,7 @@ impl SettingsWindow {
                 return;
             };
             self.page_scroll_handle
-                .scroll_to_top_of_item(selected_item_index);
+                .scroll_to_top_of_item(selected_item_index + 1);
 
             if focus_content {
                 self.focus_content_element(entry_item_index, window, cx);
