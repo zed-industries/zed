@@ -506,6 +506,7 @@ pub struct SettingsWindow {
     title_bar: Option<Entity<PlatformTitleBar>>,
     original_window: Option<WindowHandle<Workspace>>,
     files: Vec<(SettingsUiFile, FocusHandle)>,
+    drop_down_file: Option<usize>,
     worktree_root_dirs: HashMap<WorktreeId, String>,
     current_file: SettingsUiFile,
     pages: Vec<SettingsPage>,
@@ -970,6 +971,7 @@ impl SettingsWindow {
             original_window,
             worktree_root_dirs: HashMap::default(),
             files: vec![],
+            drop_down_file: None,
             current_file: current_file,
             pages: vec![],
             navbar_entries: vec![],
@@ -1439,7 +1441,7 @@ impl SettingsWindow {
             .iter()
             .any(|(file, _)| file == &self.current_file);
         if !current_file_still_exists {
-            self.change_file(0, window, cx);
+            self.change_file(0, window, false, cx);
         }
     }
 
@@ -1459,12 +1461,22 @@ impl SettingsWindow {
         self.open_navbar_entry_page(first_navbar_entry_index);
     }
 
-    fn change_file(&mut self, ix: usize, window: &mut Window, cx: &mut Context<SettingsWindow>) {
+    fn change_file(
+        &mut self,
+        ix: usize,
+        window: &mut Window,
+        drop_down_file: bool,
+        cx: &mut Context<SettingsWindow>,
+    ) {
         if ix >= self.files.len() {
             self.current_file = SettingsUiFile::User;
             self.build_ui(window, cx);
             return;
         }
+        if drop_down_file {
+            self.drop_down_file = Some(ix);
+        }
+
         if self.files[ix].0 == self.current_file {
             return;
         }
@@ -1484,9 +1496,30 @@ impl SettingsWindow {
 
     fn render_files_header(
         &self,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<SettingsWindow>,
     ) -> impl IntoElement {
+        const OVERFLOW_LIMIT: usize = 1;
+
+        let file_button =
+            |ix, file: &SettingsUiFile, focus_handle, cx: &mut Context<SettingsWindow>| {
+                Button::new(
+                    ix,
+                    self.display_name(&file)
+                        .expect("Files should always have a name"),
+                )
+                .toggle_state(file == &self.current_file)
+                .selected_style(ButtonStyle::Tinted(ui::TintColor::Accent))
+                .track_focus(focus_handle)
+                .on_click(cx.listener({
+                    let focus_handle = focus_handle.clone();
+                    move |this, _: &gpui::ClickEvent, window, cx| {
+                        this.change_file(ix, window, false, cx);
+                        focus_handle.focus(window);
+                    }
+                }))
+            };
+        let this = cx.entity();
         h_flex()
             .w_full()
             .pb_4()
@@ -1498,31 +1531,63 @@ impl SettingsWindow {
             .child(
                 h_flex()
                     .id("file_buttons_container")
-                    .w_64() // Temporary fix until long-term solution is a fixed set of buttons representing a file location (User, Project, and Remote)
                     .gap_1()
                     .overflow_x_scroll()
                     .children(
-                        self.files
-                            .iter()
-                            .enumerate()
-                            .map(|(ix, (file, focus_handle))| {
-                                Button::new(
-                                    ix,
-                                    self.display_name(&file)
-                                        .expect("Files should always have a name"),
-                                )
-                                .toggle_state(file == &self.current_file)
-                                .selected_style(ButtonStyle::Tinted(ui::TintColor::Accent))
-                                .track_focus(focus_handle)
-                                .on_click(cx.listener({
-                                    let focus_handle = focus_handle.clone();
-                                    move |this, _: &gpui::ClickEvent, window, cx| {
-                                        this.change_file(ix, window, cx);
-                                        focus_handle.focus(window);
+                        self.files.iter().enumerate().take(OVERFLOW_LIMIT).map(
+                            |(ix, (file, focus_handle))| file_button(ix, file, focus_handle, cx),
+                        ),
+                    )
+                    .when(self.files.len() > OVERFLOW_LIMIT, |div| {
+                        div.children(
+                            self.files
+                                .iter()
+                                .enumerate()
+                                .skip(OVERFLOW_LIMIT)
+                                .find(|(_, (file, _))| file == &self.current_file)
+                                .map(|(ix, (file, focus_handle))| {
+                                    file_button(ix, file, focus_handle, cx)
+                                })
+                                .or_else(|| {
+                                    let ix = self.drop_down_file.unwrap_or(OVERFLOW_LIMIT);
+                                    self.files.get(ix).map(|(file, focus_handle)| {
+                                        file_button(ix, file, focus_handle, cx)
+                                    })
+                                }),
+                        )
+                        .child(
+                            DropdownMenu::new(
+                                "more-files",
+                                format!("+{}", self.files.len() - (OVERFLOW_LIMIT + 1)),
+                                ContextMenu::build(window, cx, move |mut menu, _, _| {
+                                    for (ix, (file, focus_handle)) in
+                                        self.files.iter().enumerate().skip(OVERFLOW_LIMIT + 1)
+                                    {
+                                        menu = menu.entry(
+                                            self.display_name(file)
+                                                .expect("Files should always have a name"),
+                                            None,
+                                            {
+                                                let this = this.clone();
+                                                let focus_handle = focus_handle.clone();
+                                                move |window, cx| {
+                                                    this.update(cx, |this, cx| {
+                                                        this.change_file(ix, window, true, cx);
+                                                    });
+                                                    focus_handle.focus(window);
+                                                }
+                                            },
+                                        );
                                     }
-                                }))
-                            }),
-                    ),
+
+                                    menu
+                                }),
+                            )
+                            .style(DropdownStyle::Ghost)
+                            .tab_index(0)
+                            .no_chevron(),
+                        )
+                    }),
             )
             .child(
                 Button::new("edit-in-json", "Edit in settings.json")
@@ -2674,6 +2739,7 @@ mod test {
             worktree_root_dirs: HashMap::default(),
             files: Vec::default(),
             current_file: crate::SettingsUiFile::User,
+            drop_down_file: None,
             pages,
             search_bar: cx.new(|cx| Editor::single_line(window, cx)),
             navbar_entry: selected_idx.expect("Must have a selected navbar entry"),
