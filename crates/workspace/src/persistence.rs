@@ -1347,36 +1347,31 @@ impl WorkspaceDb {
                 continue;
             }
 
-            let has_wsl_path = {
-                #[cfg(windows)]
-                {
-                    fn is_wsl_path(path: &PathBuf) -> bool {
-                        use std::path::{Component, Prefix};
+            let has_wsl_path = if cfg!(windows) {
+                fn is_wsl_path(path: &PathBuf) -> bool {
+                    use std::path::{Component, Prefix};
 
-                        path.components()
-                            .next()
-                            .and_then(|component| match component {
-                                Component::Prefix(prefix) => Some(prefix),
-                                _ => None,
-                            })
-                            .and_then(|prefix| match prefix.kind() {
-                                Prefix::UNC(server, _) => Some(server),
-                                Prefix::VerbatimUNC(server, _) => Some(server),
-                                _ => None,
-                            })
-                            .map(|server| {
-                                let server_str = server.to_string_lossy();
-                                server_str == "wsl.localhost" || server_str == "wsl$"
-                            })
-                            .unwrap_or(false)
-                    }
+                    path.components()
+                        .next()
+                        .and_then(|component| match component {
+                            Component::Prefix(prefix) => Some(prefix),
+                            _ => None,
+                        })
+                        .and_then(|prefix| match prefix.kind() {
+                            Prefix::UNC(server, _) => Some(server),
+                            Prefix::VerbatimUNC(server, _) => Some(server),
+                            _ => None,
+                        })
+                        .map(|server| {
+                            let server_str = server.to_string_lossy();
+                            server_str == "wsl.localhost" || server_str == "wsl$"
+                        })
+                        .unwrap_or(false)
+                }
 
-                    paths.paths().iter().any(|path| is_wsl_path(path))
-                }
-                #[cfg(not(windows))]
-                {
-                    false
-                }
+                paths.paths().iter().any(|path| is_wsl_path(path))
+            } else {
+                false
             };
 
             // Delete the workspace if any of the paths are WSL paths.
