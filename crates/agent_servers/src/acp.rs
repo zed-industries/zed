@@ -168,7 +168,10 @@ impl AcpConnection {
                         meta: None,
                     },
                     terminal: true,
-                    meta: None,
+                    meta: Some(serde_json::json!({
+                        // Experimental: Allow for rendering terminal output from the agents
+                        "terminal_output": true,
+                    })),
                 },
                 meta: None,
             })
