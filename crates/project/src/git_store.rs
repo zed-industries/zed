@@ -4798,6 +4798,24 @@ impl Repository {
 
         cx.spawn(|_: &mut AsyncApp| async move { rx.await? })
     }
+    fn load_blob_content(&mut self, oid: Oid, cx: &App) -> Task<Result<String>> {
+        let rx = self.send_job(None, move |state, _| async move {
+            match state {
+                RepositoryState::Local { backend, .. } => backend.load_blob_content(oid).await,
+                RepositoryState::Remote { project_id, client } => {
+                    todo!();
+                    // let response = client
+                    //     .request(proto::OpenUnstagedDiff {
+                    //         project_id: project_id.to_proto(),
+                    //         buffer_id: buffer_id.to_proto(),
+                    //     })
+                    //     .await?;
+                    // Ok(response.staged_text)
+                }
+            }
+        });
+        cx.spawn(|_: &mut AsyncApp| async move { rx.await? })
+    }
 
     fn paths_changed(
         &mut self,
