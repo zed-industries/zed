@@ -47,25 +47,8 @@ impl RainbowCache {
     }
 
     #[inline]
-    #[allow(dead_code)]
-    pub fn get(&self, identifier: &str) -> Option<HighlightStyle> {
-        let hash = hash_identifier(identifier);
-        self.cache.get(&hash).copied()
-    }
-
-    #[inline]
     pub fn get_by_hash(&self, hash: u64) -> Option<HighlightStyle> {
         self.cache.get(&hash).copied()
-    }
-
-    #[allow(dead_code)]
-    pub fn insert(&mut self, identifier: &str, style: HighlightStyle) {
-        if self.cache.len() >= self.max_entries {
-            self.cache.retain(|hash, _| hash % 2 == 0);
-        }
-
-        let hash = hash_identifier(identifier);
-        self.cache.insert(hash, style);
     }
 
     pub fn insert_by_hash(&mut self, hash: u64, style: HighlightStyle) {
@@ -221,14 +204,16 @@ mod tests {
     #[test]
     fn test_cache_hit_miss() {
         let mut cache = RainbowCache::new();
+        let test_hash = hash_identifier("test_var");
+        let other_hash = hash_identifier("other_var");
 
-        assert!(cache.get("test_var").is_none());
+        assert!(cache.get_by_hash(test_hash).is_none());
 
         let style = HighlightStyle::default();
-        cache.insert("test_var", style);
-        assert!(cache.get("test_var").is_some());
+        cache.insert_by_hash(test_hash, style);
+        assert!(cache.get_by_hash(test_hash).is_some());
 
-        assert!(cache.get("other_var").is_none());
+        assert!(cache.get_by_hash(other_hash).is_none());
     }
 
     #[test]
@@ -241,7 +226,8 @@ mod tests {
         let style = HighlightStyle::default();
 
         for i in 0..15 {
-            cache.insert(&format!("var_{}", i), style);
+            let hash = hash_identifier(&format!("var_{}", i));
+            cache.insert_by_hash(hash, style);
         }
 
         assert!(cache.cache.len() < 15);
@@ -346,5 +332,169 @@ mod tests {
         let min = hues.iter().copied().fold(f32::INFINITY, f32::min);
         let max = hues.iter().copied().fold(f32::NEG_INFINITY, f32::max);
         assert!(max - min > 0.3, "Hues should span at least 30% of spectrum, got {:.2}", max - min);
+    }
+
+    #[test]
+    fn test_apply_rainbow_with_disabled_config() {
+        use crate::editor_settings::{ RainbowConfig, VariableColorMode };
+        
+        let mut cache = RainbowCache::new();
+        let config = RainbowConfig {
+            enabled: false,
+            mode: VariableColorMode::DynamicHSL,
+        };
+        let theme = SyntaxTheme::default();
+        
+        let result = apply_rainbow_highlighting("variable", true, &config, &theme, &mut cache);
+        assert!(result.is_none(), "Disabled config should return None");
+    }
+
+    #[test]
+    fn test_apply_rainbow_with_non_variable() {
+        use crate::editor_settings::{ RainbowConfig, VariableColorMode };
+        
+        let mut cache = RainbowCache::new();
+        let config = RainbowConfig {
+            enabled: true,
+            mode: VariableColorMode::DynamicHSL,
+        };
+        let theme = SyntaxTheme::default();
+        
+        let result = apply_rainbow_highlighting("function", false, &config, &theme, &mut cache);
+        assert!(result.is_none(), "Non-variable should return None");
+    }
+
+    #[test]
+    fn test_apply_rainbow_with_empty_identifier() {
+        use crate::editor_settings::{ RainbowConfig, VariableColorMode };
+        
+        let mut cache = RainbowCache::new();
+        let config = RainbowConfig {
+            enabled: true,
+            mode: VariableColorMode::DynamicHSL,
+        };
+        let theme = SyntaxTheme::default();
+        
+        let result = apply_rainbow_highlighting("", true, &config, &theme, &mut cache);
+        assert!(result.is_none(), "Empty identifier should return None");
+    }
+
+    #[test]
+    fn test_apply_rainbow_with_single_char() {
+        use crate::editor_settings::{ RainbowConfig, VariableColorMode };
+        
+        let mut cache = RainbowCache::new();
+        let config = RainbowConfig {
+            enabled: true,
+            mode: VariableColorMode::DynamicHSL,
+        };
+        let theme = SyntaxTheme::default();
+        
+        let result = apply_rainbow_highlighting("x", true, &config, &theme, &mut cache);
+        assert!(result.is_none(), "Single char identifier should return None");
+    }
+
+    #[test]
+    fn test_apply_rainbow_caches_result() {
+        use crate::editor_settings::{ RainbowConfig, VariableColorMode };
+        
+        let mut cache = RainbowCache::new();
+        let config = RainbowConfig {
+            enabled: true,
+            mode: VariableColorMode::DynamicHSL,
+        };
+        let theme = SyntaxTheme::default();
+        
+        let result1 = apply_rainbow_highlighting("variable", true, &config, &theme, &mut cache);
+        assert!(result1.is_some(), "Should return style for valid variable");
+        
+        let hash = hash_identifier("variable");
+        let cached = cache.get_by_hash(hash);
+        assert!(cached.is_some(), "Result should be cached");
+        assert_eq!(cached, result1, "Cached result should match");
+    }
+
+    #[test]
+    fn test_fibonacci_hash_uniform_distribution() {
+        let mut bucket_counts = [0; 12];
+        
+        for i in 0..1200 {
+            let name = format!("identifier_{}", i);
+            let hash = hash_identifier(&name);
+            let bucket = fibonacci_hash(hash, 12);
+            bucket_counts[bucket] += 1;
+        }
+        
+        for (i, count) in bucket_counts.iter().enumerate() {
+            assert!(*count > 50, "Bucket {} has poor distribution: {} items", i, count);
+        }
+    }
+
+    #[test]
+    fn test_hash_identifier_deterministic() {
+        for _ in 0..100 {
+            let hash1 = hash_identifier("test_variable");
+            let hash2 = hash_identifier("test_variable");
+            assert_eq!(hash1, hash2, "Hash function must be deterministic");
+        }
+    }
+
+    #[test]
+    fn test_hash_identifier_different_values() {
+        let hash1 = hash_identifier("variable_a");
+        let hash2 = hash_identifier("variable_b");
+        let hash3 = hash_identifier("avariable_");
+        
+        assert_ne!(hash1, hash2, "Different strings should have different hashes");
+        assert_ne!(hash1, hash3, "Different strings should have different hashes");
+        assert_ne!(hash2, hash3, "Different strings should have different hashes");
+    }
+
+    #[test]
+    fn test_apply_by_hash_with_disabled_config() {
+        use crate::editor_settings::{ RainbowConfig, VariableColorMode };
+        
+        let mut cache = RainbowCache::new();
+        let config = RainbowConfig {
+            enabled: false,
+            mode: VariableColorMode::DynamicHSL,
+        };
+        let theme = SyntaxTheme::default();
+        let hash = hash_identifier("variable");
+        
+        let result = apply_rainbow_by_hash(hash, &config, &theme, &mut cache);
+        assert!(result.is_none(), "Disabled config should return None for hash-based apply");
+    }
+
+    #[test]
+    fn test_cache_eviction_occurs() {
+        let mut cache = RainbowCache {
+            cache: HashMap::default(),
+            max_entries: 10,
+        };
+        let style = HighlightStyle::default();
+        
+        for i in 0..20 {
+            let hash = i as u64;
+            cache.insert_by_hash(hash, style);
+        }
+        
+        assert!(cache.cache.len() < 20, "Cache should evict entries when exceeding max");
+    }
+
+    #[test]
+    fn test_cache_clear() {
+        let mut cache = RainbowCache::new();
+        let style = HighlightStyle::default();
+        
+        for i in 0..10 {
+            let hash = hash_identifier(&format!("var_{}", i));
+            cache.insert_by_hash(hash, style);
+        }
+        
+        assert!(cache.cache.len() > 0, "Cache should have entries");
+        
+        cache.clear();
+        assert_eq!(cache.cache.len(), 0, "Cache should be empty after clear");
     }
 }

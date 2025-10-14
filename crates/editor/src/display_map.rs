@@ -1565,30 +1565,22 @@ impl<'a> SemanticTokenStylizer<'a> {
         rainbow_config: Option<&crate::editor_settings::RainbowConfig>
     ) -> Option<HighlightStyle> {
         let token_type_name = self.token_type(token_type)?;
-
-        // Apply variable color highlighting to variable-like tokens before falling back to LSP token mapping.
-        if let (Some(config), Some(name)) = (rainbow_config, variable_name) {
-            if
-                let Some(rainbow_style) = crate::rainbow::with_rainbow_cache(|cache| {
-                    crate::rainbow::apply_rainbow_highlighting(
-                        name,
-                        token_type_name == "variable" || token_type_name == "parameter",
-                        config,
-                        theme,
-                        cache
-                    )
-                })
-            {
-                return Some(rainbow_style);
+        
+        let is_variable_like = token_type_name == "variable" || token_type_name == "parameter";
+        if is_variable_like {
+            if let (Some(config), Some(name)) = (rainbow_config, variable_name) {
+                if config.enabled {
+                    if let Some(rainbow_style) = crate::rainbow::with_rainbow_cache(|cache| {
+                        crate::rainbow::apply_rainbow_highlighting(name, true, config, theme, cache)
+                    }) {
+                        return Some(rainbow_style);
+                    }
+                }
             }
         }
 
         let has_modifier = |modifier| self.has_modifier(modifiers, modifier);
 
-        // See the VSCode docs [1] and the LSP Spec [2]
-        //
-        // [1]: https://code.visualstudio.com/api/language-extensions/semantic-highlight-guide#standard-token-types-and-modifiers
-        // [2]: https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#semanticTokenTypes
         let choices: &[&str] = match token_type_name {
             // Types
             "namespace" => &["namespace", "module", "type"],

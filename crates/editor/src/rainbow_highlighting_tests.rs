@@ -1,4 +1,4 @@
-use crate::rainbow::{ RainbowCache, is_variable_like_token, apply_rainbow_highlighting, hash_to_color_index };
+use crate::rainbow::{ RainbowCache, is_variable_like_token, apply_rainbow_highlighting, hash_to_color_index, hash_identifier };
 use crate::editor_settings::{ RainbowConfig, VariableColorMode };
 use gpui::HighlightStyle;
 use theme::SyntaxTheme;
@@ -110,7 +110,8 @@ fn test_rainbow_highlight_cache_hit() {
 
     let _ = apply_rainbow_highlighting("my_var", true, &enabled_config(), &theme, &mut cache);
 
-    let cached_result = cache.get("my_var");
+    let hash = hash_identifier("my_var");
+    let cached_result = cache.get_by_hash(hash);
     assert!(cached_result.is_some(), "Identifier should be cached after first access");
 }
 
@@ -118,7 +119,8 @@ fn test_rainbow_highlight_cache_hit() {
 fn test_rainbow_highlight_cache_miss() {
     let cache = RainbowCache::new();
 
-    let result = cache.get("non_existent");
+    let hash = hash_identifier("non_existent");
+    let result = cache.get_by_hash(hash);
     assert!(result.is_none(), "Cache should miss for unseen identifiers");
 }
 
@@ -253,14 +255,17 @@ fn test_cache_clear_functionality() {
     let mut cache = RainbowCache::new();
     let style = HighlightStyle::default();
 
-    cache.insert("var1", style);
-    cache.insert("var2", style);
-    assert!(cache.get("var1").is_some());
-    assert!(cache.get("var2").is_some());
+    let hash1 = hash_identifier("var1");
+    let hash2 = hash_identifier("var2");
+    
+    cache.insert_by_hash(hash1, style);
+    cache.insert_by_hash(hash2, style);
+    assert!(cache.get_by_hash(hash1).is_some());
+    assert!(cache.get_by_hash(hash2).is_some());
 
     cache.clear();
-    assert!(cache.get("var1").is_none());
-    assert!(cache.get("var2").is_none());
+    assert!(cache.get_by_hash(hash1).is_none());
+    assert!(cache.get_by_hash(hash2).is_none());
 }
 
 #[gpui::test]

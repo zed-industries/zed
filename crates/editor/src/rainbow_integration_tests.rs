@@ -102,7 +102,8 @@ async fn test_rainbow_cache_invalidation_on_lsp_update(cx: &mut TestAppContext) 
     crate::rainbow::clear_rainbow_cache();
 
     let cache_empty = crate::rainbow::with_rainbow_cache(|cache| {
-        cache.get("foo").is_none()
+        let hash = crate::rainbow::hash_identifier("foo");
+        cache.get_by_hash(hash).is_none()
     });
 
     assert!(cache_empty, "Cache should be empty after clearing");
@@ -282,11 +283,13 @@ async fn test_rainbow_settings_change_clears_cache(cx: &mut TestAppContext) {
     cx.set_state("ˇlet foo = 1;");
 
     crate::rainbow::with_rainbow_cache(|cache| {
-        cache.insert("foo", gpui::HighlightStyle::default());
+        let hash = crate::rainbow::hash_identifier("foo");
+        cache.insert_by_hash(hash, gpui::HighlightStyle::default());
     });
 
     let cache_has_foo = crate::rainbow::with_rainbow_cache(|cache| {
-        cache.get("foo").is_some()
+        let hash = crate::rainbow::hash_identifier("foo");
+        cache.get_by_hash(hash).is_some()
     });
     assert!(cache_has_foo, "Cache should contain foo");
 
@@ -303,7 +306,8 @@ async fn test_rainbow_settings_change_clears_cache(cx: &mut TestAppContext) {
     });
 
     let cache_cleared = crate::rainbow::with_rainbow_cache(|cache| {
-        cache.get("foo").is_none()
+        let hash = crate::rainbow::hash_identifier("foo");
+        cache.get_by_hash(hash).is_none()
     });
     assert!(cache_cleared, "Cache should be cleared after settings change");
 }
