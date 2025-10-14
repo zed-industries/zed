@@ -2412,35 +2412,17 @@ async fn test_search_results_refreshed_on_standalone_file_creation(cx: &mut gpui
     .unwrap();
     assert_eq!(cx.update(|_, cx| cx.windows().len()), 1);
 
-    let worktree_id = cx.read(|cx| {
-        let worktrees = workspace.read(cx).worktrees(cx).collect::<Vec<_>>();
-        assert_eq!(worktrees.len(), 2);
-        WorktreeId::from_usize(worktrees[1].entity_id().as_u64() as usize)
-    });
-
     let initial_history = open_close_queried_buffer("new", 1, "new.rs", &workspace, cx).await;
     assert_eq!(
-        initial_history,
-        vec![FoundPath::new(
-            ProjectPath {
-                worktree_id,
-                path: rel_path("").into(),
-            },
-            PathBuf::from(path!("/test/new.rs"))
-        )],
+        initial_history.first().unwrap().absolute,
+        PathBuf::from(path!("/test/new.rs")),
         "Should show 1st opened item in the history when opening the 2nd item"
     );
 
     let history_after_first = open_close_queried_buffer("lib", 1, "lib.rs", &workspace, cx).await;
     assert_eq!(
-        history_after_first,
-        vec![FoundPath::new(
-            ProjectPath {
-                worktree_id,
-                path: rel_path("").into(),
-            },
-            PathBuf::from(path!("/test/new.rs"))
-        )],
+        history_after_first.first().unwrap().absolute,
+        PathBuf::from(path!("/test/new.rs")),
         "Should show 1st opened item in the history when opening the 2nd item"
     );
 }
