@@ -331,8 +331,7 @@ impl ContextStrip {
                 cx.open_url(&fetched_url_context.url);
             }
 
-            AgentContextHandle::Thread(_thread_context) => {}
-
+            // AgentContextHandle::Thread(_thread_context) => {}
             AgentContextHandle::TextThread(text_thread_context) => {
                 workspace.update(cx, |workspace, cx| {
                     if let Some(panel) = workspace.panel::<AgentPanel>(cx) {

@@ -1,11 +1,10 @@
 use crate::{
+    ThreadId,
     context::{
         AgentContextHandle, AgentContextKey, ContextId, ContextKind, DirectoryContextHandle,
         FetchedUrlContext, FileContextHandle, ImageContext, RulesContextHandle,
-        SelectionContextHandle, SymbolContextHandle, TextThreadContextHandle, ThreadContextHandle,
+        SelectionContextHandle, SymbolContextHandle, TextThreadContextHandle,
     },
-    thread::{MessageId, Thread, ThreadId},
-    thread_store::ThreadStore,
 };
 use anyhow::{Context as _, Result, anyhow};
 use assistant_context::AssistantContext;
@@ -29,7 +28,6 @@ use text::{Anchor, OffsetRangeExt};
 
 pub struct ContextStore {
     project: WeakEntity<Project>,
-    thread_store: Option<WeakEntity<ThreadStore>>,
     next_context_id: ContextId,
     context_set: IndexSet<AgentContextKey>,
     context_thread_ids: HashSet<ThreadId>,
@@ -43,13 +41,9 @@ pub enum ContextStoreEvent {
 impl EventEmitter<ContextStoreEvent> for ContextStore {}
 
 impl ContextStore {
-    pub fn new(
-        project: WeakEntity<Project>,
-        thread_store: Option<WeakEntity<ThreadStore>>,
-    ) -> Self {
+    pub fn new(project: WeakEntity<Project>) -> Self {
         Self {
             project,
-            thread_store,
             next_context_id: ContextId::zero(),
             context_set: IndexSet::default(),
             context_thread_ids: HashSet::default(),
@@ -65,29 +59,6 @@ impl ContextStore {
         self.context_set.clear();
         self.context_thread_ids.clear();
         cx.notify();
-    }
-
-    pub fn new_context_for_thread(
-        &self,
-        thread: &Thread,
-        exclude_messages_from_id: Option<MessageId>,
-    ) -> Vec<AgentContextHandle> {
-        let existing_context = thread
-            .messages()
-            .take_while(|message| exclude_messages_from_id.is_none_or(|id| message.id != id))
-            .flat_map(|message| {
-                message
-                    .loaded_context
-                    .contexts
-                    .iter()
-                    .map(|context| AgentContextKey(context.handle()))
-            })
-            .collect::<HashSet<_>>();
-        self.context_set
-            .iter()
-            .filter(|context| !existing_context.contains(context))
-            .map(|entry| entry.0.clone())
-            .collect::<Vec<_>>()
     }
 
     pub fn add_file_from_path(
@@ -207,27 +178,27 @@ impl ContextStore {
         (Some(context), included)
     }
 
-    pub fn add_thread(
-        &mut self,
-        thread: Entity<Thread>,
-        remove_if_exists: bool,
-        cx: &mut Context<Self>,
-    ) -> Option<AgentContextHandle> {
-        let context_id = self.next_context_id.post_inc();
-        let context = AgentContextHandle::Thread(ThreadContextHandle { thread, context_id });
+    // pub fn add_thread(
+    //     &mut self,
+    //     thread: Entity<Thread>,
+    //     remove_if_exists: bool,
+    //     cx: &mut Context<Self>,
+    // ) -> Option<AgentContextHandle> {
+    //     let context_id = self.next_context_id.post_inc();
+    //     let context = AgentContextHandle::Thread(ThreadContextHandle { thread, context_id });
 
-        if let Some(existing) = self.context_set.get(AgentContextKey::ref_cast(&context)) {
-            if remove_if_exists {
-                self.remove_context(&context, cx);
-                None
-            } else {
-                Some(existing.as_ref().clone())
-            }
-        } else {
-            self.insert_context(context.clone(), cx);
-            Some(context)
-        }
-    }
+    //     if let Some(existing) = self.context_set.get(AgentContextKey::ref_cast(&context)) {
+    //         if remove_if_exists {
+    //             self.remove_context(&context, cx);
+    //             None
+    //         } else {
+    //             Some(existing.as_ref().clone())
+    //         }
+    //     } else {
+    //         self.insert_context(context.clone(), cx);
+    //         Some(context)
+    //     }
+    // }
 
     pub fn add_text_thread(
         &mut self,
@@ -384,15 +355,15 @@ impl ContextStore {
                     );
                 };
             }
-            SuggestedContext::Thread { thread, name: _ } => {
-                if let Some(thread) = thread.upgrade() {
-                    let context_id = self.next_context_id.post_inc();
-                    self.insert_context(
-                        AgentContextHandle::Thread(ThreadContextHandle { thread, context_id }),
-                        cx,
-                    );
-                }
-            }
+            // SuggestedContext::Thread { thread, name: _ } => {
+            //     if let Some(thread) = thread.upgrade() {
+            //         let context_id = self.next_context_id.post_inc();
+            //         self.insert_context(
+            //             AgentContextHandle::Thread(ThreadContextHandle { thread, context_id }),
+            //             cx,
+            //         );
+            //     }
+            // }
             SuggestedContext::TextThread { context, name: _ } => {
                 if let Some(context) = context.upgrade() {
                     let context_id = self.next_context_id.post_inc();
@@ -410,17 +381,17 @@ impl ContextStore {
 
     fn insert_context(&mut self, context: AgentContextHandle, cx: &mut Context<Self>) -> bool {
         match &context {
-            AgentContextHandle::Thread(thread_context) => {
-                if let Some(thread_store) = self.thread_store.clone() {
-                    thread_context.thread.update(cx, |thread, cx| {
-                        thread.start_generating_detailed_summary_if_needed(thread_store, cx);
-                    });
-                    self.context_thread_ids
-                        .insert(thread_context.thread.read(cx).id().clone());
-                } else {
-                    return false;
-                }
-            }
+            // AgentContextHandle::Thread(thread_context) => {
+            //     if let Some(thread_store) = self.thread_store.clone() {
+            //         thread_context.thread.update(cx, |thread, cx| {
+            //             thread.start_generating_detailed_summary_if_needed(thread_store, cx);
+            //         });
+            //         self.context_thread_ids
+            //             .insert(thread_context.thread.read(cx).id().clone());
+            //     } else {
+            //         return false;
+            //     }
+            // }
             AgentContextHandle::TextThread(text_thread_context) => {
                 self.context_text_thread_paths
                     .extend(text_thread_context.context.read(cx).path().cloned());
@@ -440,10 +411,10 @@ impl ContextStore {
             .shift_remove_full(AgentContextKey::ref_cast(context))
         {
             match context {
-                AgentContextHandle::Thread(thread_context) => {
-                    self.context_thread_ids
-                        .remove(thread_context.thread.read(cx).id());
-                }
+                // AgentContextHandle::Thread(thread_context) => {
+                //     self.context_thread_ids
+                //         .remove(thread_context.thread.read(cx).id());
+                // }
                 AgentContextHandle::TextThread(text_thread_context) => {
                     if let Some(path) = text_thread_context.context.read(cx).path() {
                         self.context_text_thread_paths.remove(path);
@@ -549,7 +520,6 @@ impl ContextStore {
                 | AgentContextHandle::Symbol(_)
                 | AgentContextHandle::Selection(_)
                 | AgentContextHandle::FetchedUrl(_)
-                | AgentContextHandle::Thread(_)
                 | AgentContextHandle::TextThread(_)
                 | AgentContextHandle::Rules(_)
                 | AgentContextHandle::Image(_) => None,
@@ -569,10 +539,10 @@ pub enum SuggestedContext {
         icon_path: Option<SharedString>,
         buffer: WeakEntity<Buffer>,
     },
-    Thread {
-        name: SharedString,
-        thread: WeakEntity<Thread>,
-    },
+    // Thread {
+    //     name: SharedString,
+    //     thread: WeakEntity<Thread>,
+    // },
     TextThread {
         name: SharedString,
         context: WeakEntity<AssistantContext>,
@@ -583,7 +553,7 @@ impl SuggestedContext {
     pub fn name(&self) -> &SharedString {
         match self {
             Self::File { name, .. } => name,
-            Self::Thread { name, .. } => name,
+            // Self::Thread { name, .. } => name,
             Self::TextThread { name, .. } => name,
         }
     }
@@ -591,7 +561,7 @@ impl SuggestedContext {
     pub fn icon_path(&self) -> Option<SharedString> {
         match self {
             Self::File { icon_path, .. } => icon_path.clone(),
-            Self::Thread { .. } => None,
+            // Self::Thread { .. } => None,
             Self::TextThread { .. } => None,
         }
     }
@@ -599,7 +569,7 @@ impl SuggestedContext {
     pub fn kind(&self) -> ContextKind {
         match self {
             Self::File { .. } => ContextKind::File,
-            Self::Thread { .. } => ContextKind::Thread,
+            // Self::Thread { .. } => ContextKind::Thread,
             Self::TextThread { .. } => ContextKind::TextThread,
         }
     }

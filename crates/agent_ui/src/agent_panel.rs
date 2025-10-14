@@ -466,12 +466,8 @@ impl AgentPanel {
                 Err(_) => None,
             };
             let tools = cx.new(|_| ToolWorkingSet::default())?;
-            let thread_store = workspace
-                .update(cx, |workspace, cx| {
-                    let project = workspace.project().clone();
-                    ThreadStore::load(project, tools.clone(), prompt_store.clone(), cx)
-                })?
-                .await?;
+            let thread_store =
+                cx.new(|cx| ThreadStore::new(tools.clone(), prompt_store.clone(), cx))?;
 
             let slash_commands = Arc::new(SlashCommandWorkingSet::default());
             let context_store = workspace
@@ -547,8 +543,7 @@ impl AgentPanel {
         let client = workspace.client().clone();
         let workspace = workspace.weak_handle();
 
-        let inline_assist_context_store =
-            cx.new(|_cx| ContextStore::new(project.downgrade(), Some(thread_store.downgrade())));
+        let inline_assist_context_store = cx.new(|_cx| ContextStore::new(project.downgrade()));
 
         let history_store = cx.new(|cx| agent2::HistoryStore::new(context_store.clone(), cx));
         let acp_history = cx.new(|cx| AcpThreadHistory::new(history_store.clone(), window, cx));
@@ -917,9 +912,6 @@ impl AgentPanel {
                 self.set_active_view(previous_view, window, cx);
             }
         } else {
-            self.thread_store
-                .update(cx, |thread_store, cx| thread_store.reload(cx))
-                .detach_and_log_err(cx);
             self.set_active_view(ActiveView::History, window, cx);
         }
         cx.notify();
@@ -2544,7 +2536,7 @@ impl rules_library::InlineAssistDelegate for PromptLibraryInlineAssist {
             let prompt_store = None;
             let thread_store = None;
             let text_thread_store = None;
-            let context_store = cx.new(|_| ContextStore::new(project.clone(), None));
+            let context_store = cx.new(|_| ContextStore::new(project.clone()));
             assistant.assist(
                 prompt_editor,
                 self.workspace.clone(),

@@ -1,6 +1,6 @@
 use crate::{AgentMessage, AgentMessageContent, UserMessage, UserMessageContent};
 use acp_thread::UserMessageId;
-use agent::{thread::DetailedSummaryState, thread_store};
+use agent::{DetailedSummaryState, thread_store};
 use agent_client_protocol as acp;
 use agent_settings::{AgentProfileId, CompletionMode};
 use anyhow::{Result, anyhow};
@@ -40,7 +40,7 @@ pub struct DbThread {
     #[serde(default)]
     pub detailed_summary: Option<SharedString>,
     #[serde(default)]
-    pub initial_project_snapshot: Option<Arc<agent::thread::ProjectSnapshot>>,
+    pub initial_project_snapshot: Option<Arc<agent::ProjectSnapshot>>,
     #[serde(default)]
     pub cumulative_token_usage: language_model::TokenUsage,
     #[serde(default)]

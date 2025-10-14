@@ -608,7 +608,7 @@ impl InlineAssistant {
         }
 
         let project = workspace.read(cx).project().downgrade();
-        let context_store = cx.new(|_cx| ContextStore::new(project.clone(), thread_store.clone()));
+        let context_store = cx.new(|_cx| ContextStore::new(project.clone()));
 
         let codegen = cx.new(|cx| {
             BufferCodegen::new(

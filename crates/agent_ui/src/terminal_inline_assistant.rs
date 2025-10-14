@@ -88,7 +88,7 @@ impl TerminalInlineAssistant {
                 cx,
             )
         });
-        let context_store = cx.new(|_cx| ContextStore::new(project, thread_store.clone()));
+        let context_store = cx.new(|_cx| ContextStore::new(project));
         let codegen = cx.new(|_| TerminalCodegen::new(terminal, self.telemetry.clone()));
 
         let prompt_editor = cx.new(|cx| {
