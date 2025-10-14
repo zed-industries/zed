@@ -133,7 +133,6 @@ util.workspace = true
 uuid.workspace = true
 waker-fn = "1.2.0"
 lyon = "1.0"
-workspace-hack.workspace = true
 libc.workspace = true
 pin-project = "1.1.10"
 

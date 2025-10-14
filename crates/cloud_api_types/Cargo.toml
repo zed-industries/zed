@@ -17,7 +17,6 @@ chrono.workspace = true
 ciborium.workspace = true
 cloud_llm_client.workspace = true
 serde.workspace = true
-workspace-hack.workspace = true
 
 [dev-dependencies]
 pretty_assertions.workspace = true

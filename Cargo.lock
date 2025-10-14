@@ -39,7 +39,6 @@ dependencies = [
  "util",
  "uuid",
  "watch",
- "workspace-hack",
 ]
 
 [[package]]
@@ -59,7 +58,6 @@ dependencies = [
  "ui",
  "util",
  "workspace",
- "workspace-hack",
 ]
 
 [[package]]
@@ -84,7 +82,6 @@ dependencies = [
  "text",
  "util",
  "watch",
- "workspace-hack",
  "zlog",
 ]
 
@@ -106,7 +103,6 @@ dependencies = [
  "ui",
  "util",
  "workspace",
- "workspace-hack",
 ]
 
 [[package]]
@@ -206,7 +202,6 @@ dependencies = [
  "uuid",
  "watch",
  "web_search",
- "workspace-hack",
  "worktree",
  "zed_env_vars",
  "zlog",
@@ -270,7 +265,6 @@ dependencies = [
  "util",
  "uuid",
  "watch",
- "workspace-hack",
 ]
 
 [[package]]
@@ -292,7 +286,6 @@ dependencies = [
  "serde_json_lenient",
  "settings",
  "util",
- "workspace-hack",
 ]
 
 [[package]]
@@ -385,7 +378,6 @@ dependencies = [
  "util",
  "watch",
  "workspace",
- "workspace-hack",
  "zed_actions",
 ]
 
@@ -437,7 +429,6 @@ dependencies = [
  "smallvec",
  "telemetry",
  "ui",
- "workspace-hack",
  "zed_actions",
 ]
 
@@ -625,7 +616,6 @@ dependencies = [
  "settings",
  "strum 0.27.2",
  "thiserror 2.0.12",
- "workspace-hack",
 ]
 
 [[package]]
@@ -789,7 +779,6 @@ dependencies = [
  "tempfile",
  "util",
  "windows 0.61.1",
- "workspace-hack",
  "zeroize",
 ]
 
@@ -800,7 +789,6 @@ dependencies = [
  "anyhow",
  "gpui",
  "rust-embed",
- "workspace-hack",
 ]
 
 [[package]]
@@ -847,7 +835,6 @@ dependencies = [
  "util",
  "uuid",
  "workspace",
- "workspace-hack",
  "zed_env_vars",
 ]
 
@@ -871,7 +858,6 @@ dependencies = [
  "ui",
  "util",
  "workspace",
- "workspace-hack",
 ]
 
 [[package]]
@@ -905,7 +891,6 @@ dependencies = [
  "ui",
  "util",
  "workspace",
- "workspace-hack",
  "worktree",
  "zlog",
 ]
@@ -1312,7 +1297,6 @@ dependencies = [
  "smol",
  "thiserror 2.0.12",
  "util",
- "workspace-hack",
 ]
 
 [[package]]
@@ -1346,7 +1330,6 @@ dependencies = [
  "tempfile",
  "which 6.0.3",
  "workspace",
- "workspace-hack",
 ]
 
 [[package]]
@@ -1358,7 +1341,6 @@ dependencies = [
  "simplelog",
  "windows 0.61.1",
  "winresource",
- "workspace-hack",
 ]
 
 [[package]]
@@ -1378,7 +1360,6 @@ dependencies = [
  "smol",
  "util",
  "workspace",
- "workspace-hack",
 ]
 
 [[package]]
@@ -1906,7 +1887,6 @@ dependencies = [
  "aws-smithy-runtime-api",
  "aws-smithy-types",
  "http_client",
- "workspace-hack",
 ]
 
 [[package]]
@@ -2045,7 +2025,6 @@ dependencies = [
  "serde_json",
  "strum 0.27.2",
  "thiserror 2.0.12",
- "workspace-hack",
 ]
 
 [[package]]
@@ -2398,7 +2377,6 @@ dependencies = [
  "theme",
  "ui",
  "workspace",
- "workspace-hack",
  "zed_actions",
 ]
 
@@ -2454,7 +2432,6 @@ dependencies = [
  "text",
  "unindent",
  "util",
- "workspace-hack",
  "zlog",
 ]
 
@@ -2644,7 +2621,6 @@ dependencies = [
  "settings",
  "telemetry",
  "util",
- "workspace-hack",
 ]
 
 [[package]]
@@ -2965,7 +2941,6 @@ dependencies = [
  "text",
  "time",
  "util",
- "workspace-hack",
 ]
 
 [[package]]
@@ -3125,7 +3100,6 @@ dependencies = [
  "tempfile",
  "util",
  "windows 0.61.1",
- "workspace-hack",
 ]
 
 [[package]]
@@ -3179,7 +3153,6 @@ dependencies = [
  "url",
  "util",
  "windows 0.61.1",
- "workspace-hack",
  "worktree",
 ]
 
@@ -3190,7 +3163,6 @@ dependencies = [
  "parking_lot",
  "serde",
  "smallvec",
- "workspace-hack",
 ]
 
 [[package]]
@@ -3205,7 +3177,6 @@ dependencies = [
  "http_client",
  "parking_lot",
  "serde_json",
- "workspace-hack",
  "yawc",
 ]
 
@@ -3220,7 +3191,6 @@ dependencies = [
  "pretty_assertions",
  "serde",
  "serde_json",
- "workspace-hack",
 ]
 
 [[package]]
@@ -3235,7 +3205,6 @@ dependencies = [
  "serde_json",
  "strum 0.27.2",
  "uuid",
- "workspace-hack",
 ]
 
 [[package]]
@@ -3356,7 +3325,6 @@ dependencies = [
  "serde_json",
  "smol",
  "text",
- "workspace-hack",
 ]
 
 [[package]]
@@ -3461,7 +3429,6 @@ dependencies = [
  "util",
  "uuid",
  "workspace",
- "workspace-hack",
  "worktree",
  "zlog",
 ]
@@ -3504,7 +3471,6 @@ dependencies = [
  "ui",
  "util",
  "workspace",
- "workspace-hack",
 ]
 
 [[package]]
@@ -3513,7 +3479,6 @@ version = "0.1.0"
 dependencies = [
  "indexmap 2.9.0",
  "rustc-hash 2.1.1",
- "workspace-hack",
 ]
 
 [[package]]
@@ -3589,7 +3554,6 @@ dependencies = [
  "ui",
  "util",
  "workspace",
- "workspace-hack",
  "zed_actions",
 ]
 
@@ -3630,7 +3594,6 @@ dependencies = [
  "parking_lot",
  "strum 0.27.2",
  "theme",
- "workspace-hack",
 ]
 
 [[package]]
@@ -3714,7 +3677,6 @@ dependencies = [
  "tempfile",
  "url",
  "util",
- "workspace-hack",
 ]
 
 [[package]]
@@ -3781,7 +3743,6 @@ dependencies = [
  "ui",
  "util",
  "workspace",
- "workspace-hack",
  "zlog",
 ]
 
@@ -4180,7 +4141,6 @@ dependencies = [
  "serde_json",
  "smol",
  "system_specs",
- "workspace-hack",
  "zstd 0.11.2+zstd.1.5.2",
 ]
 
@@ -4237,7 +4197,6 @@ dependencies = [
  "release_channel",
  "serde",
  "serde_json",
- "workspace-hack",
 ]
 
 [[package]]
@@ -4542,7 +4501,6 @@ dependencies = [
  "tree-sitter",
  "tree-sitter-go",
  "util",
- "workspace-hack",
  "zlog",
 ]
 
@@ -4578,7 +4536,6 @@ dependencies = [
  "smol",
  "task",
  "util",
- "workspace-hack",
 ]
 
 [[package]]
@@ -4676,7 +4633,6 @@ dependencies = [
  "sqlez_macros",
  "tempfile",
  "util",
- "workspace-hack",
  "zed_env_vars",
 ]
 
@@ -4704,7 +4660,6 @@ dependencies = [
  "serde_json",
  "task",
  "util",
- "workspace-hack",
 ]
 
 [[package]]
@@ -4728,7 +4683,6 @@ dependencies = [
  "smol",
  "util",
  "workspace",
- "workspace-hack",
 ]
 
 [[package]]
@@ -4784,7 +4738,6 @@ dependencies = [
  "unindent",
  "util",
  "workspace",
- "workspace-hack",
  "zed_actions",
  "zlog",
 ]
@@ -4808,7 +4761,6 @@ dependencies = [
  "schemars 1.0.1",
  "serde",
  "serde_json",
- "workspace-hack",
 ]
 
 [[package]]
@@ -4828,7 +4780,6 @@ dependencies = [
  "rodio",
  "rustfft",
  "thiserror 2.0.12",
- "workspace-hack",
 ]
 
 [[package]]
@@ -4893,7 +4844,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.101",
- "workspace-hack",
 ]
 
 [[package]]
@@ -4930,7 +4880,6 @@ dependencies = [
  "unindent",
  "util",
  "workspace",
- "workspace-hack",
  "zlog",
 ]
 
@@ -5088,7 +5037,6 @@ dependencies = [
  "task",
  "theme",
  "util",
- "workspace-hack",
  "zed",
  "zlog",
 ]
@@ -5247,7 +5195,6 @@ dependencies = [
  "client",
  "gpui",
  "language",
- "workspace-hack",
 ]
 
 [[package]]
@@ -5278,7 +5225,6 @@ dependencies = [
  "theme",
  "ui",
  "workspace",
- "workspace-hack",
  "zed_actions",
  "zeta",
 ]
@@ -5315,7 +5261,6 @@ dependencies = [
  "tree-sitter-cpp",
  "tree-sitter-go",
  "util",
- "workspace-hack",
  "zlog",
 ]
 
@@ -5392,7 +5337,6 @@ dependencies = [
  "uuid",
  "vim_mode_setting",
  "workspace",
- "workspace-hack",
  "zed_actions",
  "zlog",
 ]
@@ -5708,7 +5652,6 @@ dependencies = [
  "windows 0.61.1",
  "windows-core 0.61.0",
  "windows-registry 0.5.1",
- "workspace-hack",
 ]
 
 [[package]]
@@ -5761,7 +5704,6 @@ dependencies = [
  "util",
  "wasm-encoder 0.221.3",
  "wasmparser 0.221.3",
- "workspace-hack",
 ]
 
 [[package]]
@@ -5785,7 +5727,6 @@ dependencies = [
  "toml 0.8.20",
  "tree-sitter",
  "wasmtime",
- "workspace-hack",
 ]
 
 [[package]]
@@ -5835,7 +5776,6 @@ dependencies = [
  "wasmparser 0.221.3",
  "wasmtime",
  "wasmtime-wasi",
- "workspace-hack",
  "zlog",
 ]
 
@@ -5870,7 +5810,6 @@ dependencies = [
  "util",
  "vim_mode_setting",
  "workspace",
- "workspace-hack",
  "zed_actions",
 ]
 
@@ -5962,7 +5901,6 @@ dependencies = [
  "futures 0.3.31",
  "gpui",
  "smol",
- "workspace-hack",
 ]
 
 [[package]]
@@ -5975,7 +5913,6 @@ dependencies = [
  "urlencoding",
  "util",
  "workspace",
- "workspace-hack",
  "zed_actions",
 ]
 
@@ -6016,7 +5953,6 @@ dependencies = [
  "ui",
  "util",
  "workspace",
- "workspace-hack",
  "zlog",
 ]
 
@@ -6028,7 +5964,6 @@ dependencies = [
  "serde",
  "theme",
  "util",
- "workspace-hack",
 ]
 
 [[package]]
@@ -6294,7 +6229,6 @@ dependencies = [
  "time",
  "util",
  "windows 0.61.1",
- "workspace-hack",
 ]
 
 [[package]]
@@ -6353,7 +6287,6 @@ dependencies = [
  "log",
  "parking_lot",
  "tempfile",
- "workspace-hack",
 ]
 
 [[package]]
@@ -6533,7 +6466,6 @@ dependencies = [
  "gpui",
  "log",
  "util",
- "workspace-hack",
 ]
 
 [[package]]
@@ -6907,7 +6839,6 @@ dependencies = [
  "urlencoding",
  "util",
  "uuid",
- "workspace-hack",
 ]
 
 [[package]]
@@ -6941,7 +6872,6 @@ dependencies = [
  "settings",
  "url",
  "util",
- "workspace-hack",
 ]
 
 [[package]]
@@ -6995,7 +6925,6 @@ dependencies = [
  "watch",
  "windows 0.61.1",
  "workspace",
- "workspace-hack",
  "zed_actions",
  "zeroize",
  "zlog",
@@ -7065,7 +6994,6 @@ dependencies = [
  "ui",
  "util",
  "workspace",
- "workspace-hack",
 ]
 
 [[package]]
@@ -7216,7 +7144,6 @@ dependencies = [
  "windows-core 0.61.0",
  "windows-numerics",
  "windows-registry 0.5.1",
- "workspace-hack",
  "x11-clipboard",
  "x11rb",
  "xkbcommon",
@@ -7234,7 +7161,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.101",
- "workspace-hack",
 ]
 
 [[package]]
@@ -7245,7 +7171,6 @@ dependencies = [
  "gpui",
  "tokio",
  "util",
- "workspace-hack",
 ]
 
 [[package]]
@@ -7585,7 +7510,6 @@ dependencies = [
  "markup5ever_rcdom",
  "pretty_assertions",
  "regex",
- "workspace-hack",
 ]
 
 [[package]]
@@ -7671,7 +7595,6 @@ dependencies = [
  "tempfile",
  "url",
  "util",
- "workspace-hack",
  "zed-reqwest",
 ]
 
@@ -7681,7 +7604,6 @@ version = "0.1.0"
 dependencies = [
  "rustls 0.23.26",
  "rustls-platform-verifier",
- "workspace-hack",
 ]
 
 [[package]]
@@ -8070,7 +7992,6 @@ dependencies = [
  "ui",
  "util",
  "workspace",
- "workspace-hack",
 ]
 
 [[package]]
@@ -8193,7 +8114,6 @@ dependencies = [
  "util",
  "util_macros",
  "workspace",
- "workspace-hack",
  "zed_actions",
 ]
 
@@ -8208,7 +8128,6 @@ dependencies = [
  "smol",
  "util",
  "workspace",
- "workspace-hack",
 ]
 
 [[package]]
@@ -8459,7 +8378,6 @@ dependencies = [
  "settings",
  "shellexpand 2.1.2",
  "workspace",
- "workspace-hack",
 ]
 
 [[package]]
@@ -8509,7 +8427,6 @@ dependencies = [
  "task",
  "theme",
  "util",
- "workspace-hack",
 ]
 
 [[package]]
@@ -8620,7 +8537,6 @@ dependencies = [
  "util",
  "vim",
  "workspace",
- "workspace-hack",
  "zed_actions",
 ]
 
@@ -8730,7 +8646,6 @@ dependencies = [
  "unindent",
  "util",
  "watch",
- "workspace-hack",
  "zlog",
 ]
 
@@ -8752,7 +8667,6 @@ dependencies = [
  "serde",
  "serde_json",
  "util",
- "workspace-hack",
 ]
 
 [[package]]
@@ -8782,7 +8696,6 @@ dependencies = [
  "telemetry_events",
  "thiserror 2.0.12",
  "util",
- "workspace-hack",
 ]
 
 [[package]]
@@ -8837,7 +8750,6 @@ dependencies = [
  "ui_input",
  "util",
  "vercel",
- "workspace-hack",
  "x_ai",
  "zed_env_vars",
 ]
@@ -8852,7 +8764,6 @@ dependencies = [
  "project",
  "ui",
  "workspace",
- "workspace-hack",
 ]
 
 [[package]]
@@ -8872,7 +8783,6 @@ dependencies = [
  "ui",
  "util",
  "workspace",
- "workspace-hack",
 ]
 
 [[package]]
@@ -8900,7 +8810,6 @@ dependencies = [
  "ui",
  "util",
  "workspace",
- "workspace-hack",
  "zed_actions",
  "zlog",
 ]
@@ -8969,7 +8878,6 @@ dependencies = [
  "url",
  "util",
  "workspace",
- "workspace-hack",
 ]
 
 [[package]]
@@ -9162,7 +9070,6 @@ dependencies = [
  "ui",
  "util",
  "workspace",
- "workspace-hack",
 ]
 
 [[package]]
@@ -9292,7 +9199,6 @@ dependencies = [
  "prost-build 0.9.0",
  "prost-types 0.9.0",
  "serde",
- "workspace-hack",
  "zed-reqwest",
 ]
 
@@ -9332,7 +9238,6 @@ dependencies = [
  "tokio-tungstenite 0.26.2",
  "ui",
  "util",
- "workspace-hack",
  "zed-scap",
 ]
 
@@ -9357,7 +9262,6 @@ dependencies = [
  "schemars 1.0.1",
  "serde",
  "serde_json",
- "workspace-hack",
 ]
 
 [[package]]
@@ -9431,7 +9335,6 @@ dependencies = [
  "serde_json",
  "smol",
  "util",
- "workspace-hack",
  "zlog",
 ]
 
@@ -9589,7 +9492,6 @@ dependencies = [
  "theme",
  "ui",
  "util",
- "workspace-hack",
 ]
 
 [[package]]
@@ -9614,7 +9516,6 @@ dependencies = [
  "ui",
  "util",
  "workspace",
- "workspace-hack",
 ]
 
 [[package]]
@@ -9754,7 +9655,6 @@ dependencies = [
  "foreign-types 0.5.0",
  "metal",
  "objc",
- "workspace-hack",
 ]
 
 [[package]]
@@ -9796,7 +9696,6 @@ name = "menu"
 version = "0.1.0"
 dependencies = [
  "gpui",
- "workspace-hack",
 ]
 
 [[package]]
@@ -9830,7 +9729,6 @@ dependencies = [
  "tree-sitter",
  "tree-sitter-json",
  "unindent",
- "workspace-hack",
 ]
 
 [[package]]
@@ -10040,7 +9938,6 @@ dependencies = [
  "theme",
  "tree-sitter",
  "util",
- "workspace-hack",
  "zlog",
 ]
 
@@ -10132,7 +10029,6 @@ dependencies = [
  "futures 0.3.31",
  "net",
  "smol",
- "workspace-hack",
 ]
 
 [[package]]
@@ -10173,7 +10069,6 @@ dependencies = [
  "smol",
  "tempfile",
  "windows 0.61.1",
- "workspace-hack",
 ]
 
 [[package]]
@@ -10239,7 +10134,6 @@ dependencies = [
  "util",
  "watch",
  "which 6.0.3",
- "workspace-hack",
 ]
 
 [[package]]
@@ -10294,7 +10188,6 @@ dependencies = [
  "ui",
  "util",
  "workspace",
- "workspace-hack",
  "zed_actions",
 ]
 
@@ -10792,7 +10685,6 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
- "workspace-hack",
 ]
 
 [[package]]
@@ -10822,7 +10714,6 @@ dependencies = [
  "util",
  "vim_mode_setting",
  "workspace",
- "workspace-hack",
  "zed_actions",
  "zlog",
 ]
@@ -10914,7 +10805,6 @@ dependencies = [
  "settings",
  "strum 0.27.2",
  "thiserror 2.0.12",
- "workspace-hack",
 ]
 
 [[package]]
@@ -11065,7 +10955,6 @@ dependencies = [
  "ui",
  "util",
  "workspace",
- "workspace-hack",
  "zed_actions",
 ]
 
@@ -11097,7 +10986,6 @@ dependencies = [
  "ui",
  "util",
  "workspace",
- "workspace-hack",
  "worktree",
  "zed_actions",
 ]
@@ -11162,7 +11050,6 @@ dependencies = [
  "theme",
  "ui",
  "workspace",
- "workspace-hack",
 ]
 
 [[package]]
@@ -11269,7 +11156,6 @@ dependencies = [
  "dirs 4.0.0",
  "ignore",
  "util",
- "workspace-hack",
 ]
 
 [[package]]
@@ -11369,7 +11255,6 @@ dependencies = [
  "collections",
  "serde",
  "serde_json",
- "workspace-hack",
 ]
 
 [[package]]
@@ -11895,7 +11780,6 @@ dependencies = [
  "theme",
  "ui",
  "workspace",
- "workspace-hack",
 ]
 
 [[package]]
@@ -12691,7 +12575,6 @@ dependencies = [
  "serde",
  "serde_json",
  "util",
- "workspace-hack",
 ]
 
 [[package]]
@@ -12874,7 +12757,6 @@ dependencies = [
  "util",
  "watch",
  "which 6.0.3",
- "workspace-hack",
  "worktree",
  "zeroize",
  "zlog",
@@ -12911,7 +12793,6 @@ dependencies = [
  "ui",
  "util",
  "workspace",
- "workspace-hack",
  "worktree",
  "zed_actions",
 ]
@@ -12936,7 +12817,6 @@ dependencies = [
  "theme",
  "util",
  "workspace",
- "workspace-hack",
 ]
 
 [[package]]
@@ -12978,7 +12858,6 @@ dependencies = [
  "text",
  "util",
  "uuid",
- "workspace-hack",
 ]
 
 [[package]]
@@ -13097,7 +12976,6 @@ dependencies = [
  "prost-build 0.9.0",
  "serde",
  "typed-path",
- "workspace-hack",
 ]
 
 [[package]]
@@ -13594,7 +13472,6 @@ dependencies = [
  "util",
  "windows-registry 0.6.0",
  "workspace",
- "workspace-hack",
  "zed_actions",
 ]
 
@@ -13697,7 +13574,6 @@ name = "refineable"
 version = "0.1.0"
 dependencies = [
  "derive_refineable",
- "workspace-hack",
 ]
 
 [[package]]
@@ -13755,7 +13631,6 @@ name = "release_channel"
 version = "0.1.0"
 dependencies = [
  "gpui",
- "workspace-hack",
 ]
 
 [[package]]
@@ -13785,7 +13660,6 @@ dependencies = [
  "urlencoding",
  "util",
  "which 6.0.3",
- "workspace-hack",
 ]
 
 [[package]]
@@ -13912,7 +13786,6 @@ dependencies = [
  "util",
  "uuid",
  "workspace",
- "workspace-hack",
 ]
 
 [[package]]
@@ -14020,7 +13893,6 @@ dependencies = [
  "regex",
  "serde",
  "tokio",
- "workspace-hack",
  "zed-reqwest",
 ]
 
@@ -14070,7 +13942,6 @@ dependencies = [
  "theme",
  "ui",
  "util",
- "workspace-hack",
 ]
 
 [[package]]
@@ -14177,7 +14048,6 @@ dependencies = [
  "sum_tree",
  "unicode-segmentation",
  "util",
- "workspace-hack",
  "zlog",
 ]
 
@@ -14208,7 +14078,6 @@ dependencies = [
  "strum 0.27.2",
  "tracing",
  "util",
- "workspace-hack",
  "zlog",
  "zstd 0.11.2+zstd.1.5.2",
 ]
@@ -14262,7 +14131,6 @@ dependencies = [
  "ui",
  "util",
  "workspace",
- "workspace-hack",
  "zed_actions",
 ]
 
@@ -14663,7 +14531,6 @@ dependencies = [
  "futures 0.3.31",
  "parking_lot",
  "rand 0.9.1",
- "workspace-hack",
 ]
 
 [[package]]
@@ -14677,7 +14544,6 @@ dependencies = [
  "serde",
  "serde_json",
  "theme",
- "workspace-hack",
 ]
 
 [[package]]
@@ -14920,7 +14786,6 @@ dependencies = [
  "unindent",
  "util",
  "workspace",
- "workspace-hack",
  "zed_actions",
 ]
 
@@ -14986,7 +14851,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "serde",
- "workspace-hack",
 ]
 
 [[package]]
@@ -15184,7 +15048,6 @@ dependencies = [
  "serde_json",
  "util",
  "uuid",
- "workspace-hack",
 ]
 
 [[package]]
@@ -15219,7 +15082,6 @@ dependencies = [
  "tree-sitter-json",
  "unindent",
  "util",
- "workspace-hack",
  "zlog",
 ]
 
@@ -15230,7 +15092,6 @@ dependencies = [
  "quote",
  "settings",
  "syn 2.0.101",
- "workspace-hack",
 ]
 
 [[package]]
@@ -15250,7 +15111,6 @@ dependencies = [
  "theme",
  "ui",
  "workspace",
- "workspace-hack",
  "zed_actions",
 ]
 
@@ -15288,7 +15148,6 @@ dependencies = [
  "ui_input",
  "util",
  "workspace",
- "workspace-hack",
  "zed_actions",
  "zlog",
 ]
@@ -15568,7 +15427,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "smallvec",
- "workspace-hack",
 ]
 
 [[package]]
@@ -15590,7 +15448,6 @@ dependencies = [
  "serde_json_lenient",
  "snippet",
  "util",
- "workspace-hack",
 ]
 
 [[package]]
@@ -15608,7 +15465,6 @@ dependencies = [
  "ui",
  "util",
  "workspace",
- "workspace-hack",
 ]
 
 [[package]]
@@ -15710,7 +15566,6 @@ dependencies = [
  "thread_local",
  "util",
  "uuid",
- "workspace-hack",
 ]
 
 [[package]]
@@ -15720,7 +15575,6 @@ dependencies = [
  "sqlez",
  "sqlformat",
  "syn 2.0.101",
- "workspace-hack",
 ]
 
 [[package]]
@@ -16014,7 +15868,6 @@ dependencies = [
  "gpui",
  "itertools 0.14.0",
  "smallvec",
- "workspace-hack",
 ]
 
 [[package]]
@@ -16045,7 +15898,6 @@ dependencies = [
  "title_bar",
  "ui",
  "workspace",
- "workspace-hack",
 ]
 
 [[package]]
@@ -16071,7 +15923,6 @@ dependencies = [
  "rand 0.9.1",
  "rope",
  "util",
- "workspace-hack",
 ]
 
 [[package]]
@@ -16190,7 +16041,6 @@ dependencies = [
  "log",
  "rand 0.9.1",
  "rayon",
- "workspace-hack",
  "zlog",
 ]
 
@@ -16221,7 +16071,6 @@ dependencies = [
  "ui",
  "unicode-segmentation",
  "util",
- "workspace-hack",
 ]
 
 [[package]]
@@ -16236,7 +16085,6 @@ dependencies = [
  "serde_json",
  "smol",
  "util",
- "workspace-hack",
 ]
 
 [[package]]
@@ -16333,7 +16181,6 @@ dependencies = [
  "multi_buffer",
  "ui",
  "workspace",
- "workspace-hack",
 ]
 
 [[package]]
@@ -16709,7 +16556,6 @@ dependencies = [
  "release_channel",
  "serde",
  "sysinfo 0.37.2",
- "workspace-hack",
 ]
 
 [[package]]
@@ -16735,7 +16581,6 @@ dependencies = [
  "ui",
  "util",
  "workspace",
- "workspace-hack",
  "zlog",
 ]
 
@@ -16813,7 +16658,6 @@ dependencies = [
  "sha2",
  "shellexpand 2.1.2",
  "util",
- "workspace-hack",
  "zed_actions",
 ]
 
@@ -16840,7 +16684,6 @@ dependencies = [
  "ui",
  "util",
  "workspace",
- "workspace-hack",
  "zed_actions",
 ]
 
@@ -16852,7 +16695,6 @@ dependencies = [
  "serde",
  "serde_json",
  "telemetry_events",
- "workspace-hack",
 ]
 
 [[package]]
@@ -16862,7 +16704,6 @@ dependencies = [
  "semantic_version",
  "serde",
  "serde_json",
- "workspace-hack",
 ]
 
 [[package]]
@@ -16925,7 +16766,6 @@ dependencies = [
  "urlencoding",
  "util",
  "windows 0.61.1",
- "workspace-hack",
 ]
 
 [[package]]
@@ -16973,7 +16813,6 @@ dependencies = [
  "ui",
  "util",
  "workspace",
- "workspace-hack",
  "zed_actions",
 ]
 
@@ -16996,7 +16835,6 @@ dependencies = [
  "smallvec",
  "sum_tree",
  "util",
- "workspace-hack",
  "zlog",
 ]
 
@@ -17023,7 +16861,6 @@ dependencies = [
  "thiserror 2.0.12",
  "util",
  "uuid",
- "workspace-hack",
 ]
 
 [[package]]
@@ -17035,7 +16872,6 @@ dependencies = [
  "fs",
  "gpui",
  "theme",
- "workspace-hack",
 ]
 
 [[package]]
@@ -17056,7 +16892,6 @@ dependencies = [
  "strum 0.27.2",
  "theme",
  "vscode_theme",
- "workspace-hack",
 ]
 
 [[package]]
@@ -17075,7 +16910,6 @@ dependencies = [
  "ui",
  "util",
  "workspace",
- "workspace-hack",
  "zed_actions",
 ]
 
@@ -17195,7 +17029,6 @@ dependencies = [
  "core-foundation-sys",
  "sys-locale",
  "time",
- "workspace-hack",
 ]
 
 [[package]]
@@ -17312,7 +17145,6 @@ dependencies = [
  "util",
  "windows 0.61.1",
  "workspace",
- "workspace-hack",
  "zed_actions",
 ]
 
@@ -17533,7 +17365,6 @@ dependencies = [
  "ui",
  "util",
  "workspace",
- "workspace-hack",
 ]
 
 [[package]]
@@ -18122,7 +17953,6 @@ dependencies = [
  "ui_macros",
  "util",
  "windows 0.61.1",
- "workspace-hack",
 ]
 
 [[package]]
@@ -18138,7 +17968,6 @@ dependencies = [
  "settings",
  "theme",
  "ui",
- "workspace-hack",
 ]
 
 [[package]]
@@ -18149,7 +17978,6 @@ dependencies = [
  "quote",
  "syn 2.0.101",
  "ui",
- "workspace-hack",
 ]
 
 [[package]]
@@ -18163,7 +17991,6 @@ dependencies = [
  "theme",
  "ui",
  "workspace",
- "workspace-hack",
 ]
 
 [[package]]
@@ -18398,7 +18225,6 @@ dependencies = [
  "util_macros",
  "walkdir",
  "which 6.0.3",
- "workspace-hack",
 ]
 
 [[package]]
@@ -18408,7 +18234,6 @@ dependencies = [
  "perf",
  "quote",
  "syn 2.0.101",
- "workspace-hack",
 ]
 
 [[package]]
@@ -18564,7 +18389,6 @@ dependencies = [
  "util_macros",
  "vim_mode_setting",
  "workspace",
- "workspace-hack",
  "zed_actions",
 ]
 
@@ -18574,7 +18398,6 @@ version = "0.1.0"
 dependencies = [
  "gpui",
  "settings",
- "workspace-hack",
 ]
 
 [[package]]
@@ -19186,7 +19009,6 @@ dependencies = [
  "gpui",
  "parking_lot",
  "rand 0.9.1",
- "workspace-hack",
  "zlog",
 ]
 
@@ -19328,7 +19150,6 @@ dependencies = [
  "collections",
  "gpui",
  "serde",
- "workspace-hack",
 ]
 
 [[package]]
@@ -19345,7 +19166,6 @@ dependencies = [
  "serde",
  "serde_json",
  "web_search",
- "workspace-hack",
 ]
 
 [[package]]
@@ -20451,206 +20271,8 @@ dependencies = [
  "util",
  "uuid",
  "windows 0.61.1",
- "workspace-hack",
  "zed_actions",
  "zlog",
-]
-
-[[package]]
-name = "workspace-hack"
-version = "0.1.0"
-dependencies = [
- "aes",
- "ahash 0.8.11",
- "aho-corasick",
- "anstream",
- "arrayvec",
- "ashpd 0.11.0",
- "async-compression",
- "async-std",
- "async-tungstenite",
- "aws-config",
- "aws-credential-types",
- "aws-runtime",
- "aws-sigv4",
- "aws-smithy-async",
- "aws-smithy-http",
- "aws-smithy-runtime",
- "aws-smithy-runtime-api",
- "aws-smithy-types",
- "base64 0.22.1",
- "base64ct",
- "bigdecimal",
- "bit-set 0.8.0",
- "bit-vec 0.8.0",
- "bitflags 2.9.0",
- "bstr",
- "bytemuck",
- "byteorder",
- "bytes 1.10.1",
- "cc",
- "chrono",
- "cipher",
- "clap",
- "clap_builder",
- "codespan-reporting",
- "concurrent-queue",
- "core-foundation 0.9.4",
- "core-foundation-sys",
- "cranelift-codegen",
- "crossbeam-channel",
- "crossbeam-epoch",
- "crossbeam-utils",
- "crypto-common",
- "deranged",
- "digest",
- "either",
- "euclid",
- "event-listener 5.4.0",
- "event-listener-strategy",
- "flate2",
- "flume",
- "foldhash",
- "form_urlencoded",
- "futures 0.3.31",
- "futures-channel",
- "futures-core",
- "futures-executor",
- "futures-io",
- "futures-sink",
- "futures-task",
- "futures-util",
- "getrandom 0.2.15",
- "getrandom 0.3.2",
- "gimli",
- "half",
- "handlebars 4.5.0",
- "hashbrown 0.14.5",
- "hashbrown 0.15.3",
- "heck 0.4.1",
- "hmac",
- "hyper 0.14.32",
- "hyper-rustls 0.27.5",
- "idna",
- "indexmap 2.9.0",
- "inout",
- "itertools 0.12.1",
- "itertools 0.13.0",
- "lazy_static",
- "libc",
- "libsqlite3-sys",
- "linux-raw-sys 0.4.15",
- "linux-raw-sys 0.9.4",
- "livekit-runtime",
- "log",
- "lyon",
- "lyon_path",
- "md-5",
- "memchr",
- "memmap2",
- "mime_guess",
- "miniz_oxide",
- "mio 1.0.3",
- "naga",
- "nix 0.28.0",
- "nix 0.29.0",
- "nix 0.30.1",
- "nom 7.1.3",
- "num-bigint",
- "num-bigint-dig",
- "num-complex",
- "num-integer",
- "num-iter",
- "num-rational",
- "num-traits",
- "objc2",
- "objc2-core-foundation",
- "objc2-foundation",
- "objc2-metal",
- "object",
- "once_cell",
- "percent-encoding",
- "phf 0.11.3",
- "phf_shared 0.11.3",
- "prettyplease",
- "proc-macro2",
- "prost 0.12.6",
- "prost 0.9.0",
- "prost-types 0.9.0",
- "quote",
- "rand 0.8.5",
- "rand 0.9.1",
- "rand_chacha 0.3.1",
- "rand_core 0.6.4",
- "rand_distr",
- "regalloc2",
- "regex",
- "regex-automata",
- "regex-syntax",
- "reqwest 0.12.15",
- "ring",
- "rust_decimal",
- "rustc-hash 1.1.0",
- "rustix 0.38.44",
- "rustix 1.0.7",
- "rustls 0.23.26",
- "rustls-webpki 0.103.1",
- "scopeguard",
- "sea-orm",
- "sea-query-binder",
- "security-framework 3.2.0",
- "security-framework-sys",
- "semver",
- "serde",
- "serde_core",
- "serde_json",
- "simd-adler32",
- "smallvec",
- "spin",
- "sqlx",
- "sqlx-macros",
- "sqlx-macros-core",
- "sqlx-postgres",
- "sqlx-sqlite",
- "stable_deref_trait",
- "strum 0.26.3",
- "subtle",
- "syn 1.0.109",
- "syn 2.0.101",
- "thiserror 2.0.12",
- "time",
- "time-macros",
- "tokio",
- "tokio-rustls 0.26.2",
- "tokio-socks",
- "tokio-stream",
- "tokio-util",
- "toml_datetime",
- "toml_edit",
- "tower 0.5.2",
- "tracing",
- "tracing-core",
- "tungstenite 0.26.2",
- "unicode-properties",
- "url",
- "uuid",
- "wasmparser 0.221.3",
- "wasmtime",
- "wasmtime-cranelift",
- "wasmtime-environ",
- "wayland-backend",
- "wayland-sys",
- "winapi",
- "windows 0.61.1",
- "windows-core 0.61.0",
- "windows-numerics",
- "windows-sys 0.48.0",
- "windows-sys 0.52.0",
- "windows-sys 0.59.0",
- "windows-sys 0.61.0",
- "zbus_macros",
- "zeroize",
- "zvariant",
 ]
 
 [[package]]
@@ -20685,7 +20307,6 @@ dependencies = [
  "sum_tree",
  "text",
  "util",
- "workspace-hack",
  "zlog",
 ]
 
@@ -20866,7 +20487,6 @@ dependencies = [
  "indoc",
  "toml 0.8.20",
  "toml_edit",
- "workspace-hack",
 ]
 
 [[package]]
@@ -21166,7 +20786,6 @@ dependencies = [
  "windows 0.61.1",
  "winresource",
  "workspace",
- "workspace-hack",
  "zed-reqwest",
  "zed_actions",
  "zed_env_vars",
@@ -21292,7 +20911,6 @@ dependencies = [
  "schemars 1.0.1",
  "serde",
  "uuid",
- "workspace-hack",
 ]
 
 [[package]]
@@ -21300,7 +20918,6 @@ name = "zed_env_vars"
 version = "0.1.0"
 dependencies = [
  "gpui",
- "workspace-hack",
 ]
 
 [[package]]
@@ -21547,7 +21164,6 @@ dependencies = [
  "util",
  "uuid",
  "workspace",
- "workspace-hack",
  "worktree",
  "zed_actions",
  "zlog",
@@ -21584,7 +21200,6 @@ dependencies = [
  "util",
  "uuid",
  "workspace",
- "workspace-hack",
  "worktree",
 ]
 
@@ -21617,7 +21232,6 @@ dependencies = [
  "ui_input",
  "util",
  "workspace",
- "workspace-hack",
  "zeta2",
  "zlog",
 ]
@@ -21663,7 +21277,6 @@ dependencies = [
  "terminal_view",
  "util",
  "watch",
- "workspace-hack",
  "zeta",
  "zeta2",
  "zlog",
@@ -21719,7 +21332,6 @@ dependencies = [
  "collections",
  "log",
  "tempfile",
- "workspace-hack",
 ]
 
 [[package]]
@@ -21729,7 +21341,6 @@ dependencies = [
  "collections",
  "gpui",
  "settings",
- "workspace-hack",
  "zlog",
 ]
 
