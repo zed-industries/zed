@@ -7,19 +7,15 @@ use editor::{Editor, EditorEvent};
 use feature_flags::FeatureFlag;
 use fuzzy::StringMatchCandidate;
 use gpui::{
-    Action, App, Div, Entity, FocusHandle, Focusable, FontWeight, Global, ReadGlobal as _,
-    ScrollHandle, Stateful, Subscription, Task, TitlebarOptions, UniformListScrollHandle, Window,
-    WindowBounds, WindowHandle, WindowOptions, actions, div, point, prelude::*, px, size,
-    uniform_list,
+    Action, App, Div, Entity, FocusHandle, Focusable, Global, ReadGlobal as _, ScrollHandle,
+    Stateful, Subscription, Task, TitlebarOptions, UniformListScrollHandle, Window, WindowBounds,
+    WindowHandle, WindowOptions, actions, div, point, prelude::*, px, size, uniform_list,
 };
 use heck::ToTitleCase as _;
 use project::WorktreeId;
 use schemars::JsonSchema;
 use serde::Deserialize;
-use settings::{
-    BottomDockLayout, CloseWindowWhenNoItems, CodeFade, CursorShape, OnLastWindowClosed,
-    RestoreOnStartupBehavior, SaturatingBool, SettingsContent, SettingsStore,
-};
+use settings::{SettingsContent, SettingsStore};
 use std::{
     any::{Any, TypeId, type_name},
     cell::RefCell,
@@ -28,7 +24,6 @@ use std::{
     ops::Range,
     rc::Rc,
     sync::{Arc, LazyLock, RwLock},
-    thread::current,
 };
 use strum::IntoDiscriminant;
 use title_bar::platform_title_bar::PlatformTitleBar;
