@@ -2250,7 +2250,7 @@ impl CollabPanel {
                             })),
                     )
                     .child(
-                        div().flex().w_full().items_center().child(
+                        v_flex().w_full().items_center().child(
                             Label::new("Sign in to enable collaboration.")
                                 .color(Color::Muted)
                                 .size(LabelSize::Small),
