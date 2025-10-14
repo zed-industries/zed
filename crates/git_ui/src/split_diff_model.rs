@@ -195,9 +195,6 @@ impl DiffComputation {
         left_snapshot: &language::BufferSnapshot,
         right_snapshot: &text::BufferSnapshot,
     ) -> DiffHunk {
-        let left_lines = left_content.lines().collect::<Vec<_>>();
-        let right_lines = right_content.lines().collect::<Vec<_>>();
-
         // Calculate line ranges from buffer ranges
         let left_start_offset = buffer_hunk.diff_base_byte_range.start;
         let left_end_offset = buffer_hunk.diff_base_byte_range.end;
@@ -401,7 +398,6 @@ impl DiffComputation {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::TestAppContext;
 
     #[test]
     fn test_diff_spec_creation() {

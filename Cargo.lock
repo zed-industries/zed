@@ -4901,10 +4901,11 @@ checksum = "56254986775e3233ffa9c4d7d3faaf6d36a2c09d30b20687e9f88bc8bafc16c8"
 name = "diff_viewer"
 version = "0.1.0"
 dependencies = [
+ "buffer_diff",
  "ctor",
  "editor",
+ "git2",
  "gpui",
- "imara-diff 0.2.0",
  "language",
  "multi_buffer",
  "rand 0.9.1",
@@ -8034,16 +8035,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "imara-diff"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2f01d462f766df78ab820dd06f5eb700233c51f0f4c2e846520eaf4ba6aa5c5c"
-dependencies = [
- "hashbrown 0.15.3",
- "memchr",
-]
-
-[[package]]
 name = "imgref"
 version = "1.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8643,7 +8634,7 @@ dependencies = [
  "fuzzy",
  "globset",
  "gpui",
- "imara-diff 0.1.8",
+ "imara-diff",
  "indoc",
  "itertools 0.14.0",
  "log",

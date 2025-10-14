@@ -386,14 +386,13 @@ impl ProjectDiff {
         };
 
         let project = self.project.clone();
-        let git_repo_clone = git_repo.clone();
         let project_path_clone = project_path.clone();
 
         if let Some(viewer) = &self.split_diff_view {
             let viewer = viewer.clone();
             window
                 .spawn(cx, async move |cx| {
-                    let left_content = git_repo_clone
+                    let left_content = git_repo
                         .update(cx, |repo, _cx| {
                             repo.get_committed_text(repo_path.clone(), _cx)
                         })?
@@ -405,10 +404,8 @@ impl ProjectDiff {
                         })?
                         .await?;
 
-                    let right_content = right_buffer.read_with(cx, |buffer, _| buffer.text())?;
-
-                    viewer.update(cx, |viewer, cx| {
-                        viewer.update_content(left_content, right_content, cx);
+                    viewer.update_in(cx, |viewer, window, cx| {
+                        viewer.set_right_buffer(right_buffer, left_content, window, cx);
                     })?;
 
                     anyhow::Ok(())
@@ -453,7 +450,6 @@ impl ProjectDiff {
         };
 
         let project = self.project.clone();
-        let this = cx.weak_entity();
 
         let view = cx.new(|cx| {
             let mut viewer = DiffViewer::new(None, None, window, cx);
@@ -478,11 +474,13 @@ impl ProjectDiff {
                     })?
                     .await?;
 
-                let right_content = right_buffer.read_with(cx, |buffer, _| buffer.text())?;
-
-                view.update(cx, |viewer, cx| {
-                    viewer.update_content(left_content, right_content, cx);
-                    viewer.set_language_from_source_buffers(Some(&right_buffer), Some(&right_buffer), cx);
+                view.update_in(cx, |viewer, window, cx| {
+                    viewer.set_right_buffer(right_buffer.clone(), left_content, window, cx);
+                    viewer.set_language_from_source_buffers(
+                        Some(&right_buffer),
+                        Some(&right_buffer),
+                        cx,
+                    );
                 })?;
 
                 anyhow::Ok(())
@@ -1140,7 +1138,7 @@ impl ToolbarItemView for ProjectDiffToolbar {
         // Subscribe to the ProjectDiff to listen for view mode changes
         self._subscription = self.project_diff.as_ref().and_then(|project_diff| {
             project_diff.upgrade().map(|entity| {
-                cx.subscribe(&entity, |this, _, event: &ProjectDiffEvent, cx| {
+                cx.subscribe(&entity, |_this, _, event: &ProjectDiffEvent, cx| {
                     if matches!(event, ProjectDiffEvent::ViewModeChanged) {
                         cx.notify();
                     }
@@ -1265,7 +1263,6 @@ impl Render for ProjectDiffToolbar {
                     SplitDiffViewMode::Unified => "Split View",
                     SplitDiffViewMode::Split => "Unified View",
                 };
-                let project_diff_handle = project_diff.clone();
                 Button::new("split-diff", button_text)
                     .tooltip(Tooltip::for_action_title_in(
                         "Toggle between side-by-side and unified diff views",
@@ -1273,7 +1270,7 @@ impl Render for ProjectDiffToolbar {
                         &focus_handle,
                     ))
                     .on_click(cx.listener(move |_this, _, window, cx| {
-                        project_diff_handle.update(cx, |view, cx| {
+                        project_diff.update(cx, |view, cx| {
                             view.toggle_split_diff(&ToggleSplitDiff, window, cx);
                         });
                     }))

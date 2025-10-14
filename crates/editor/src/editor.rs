@@ -11156,6 +11156,68 @@ impl Editor {
         }
     }
 
+    pub fn prepare_restore_fragment_change(
+        &self,
+        revert_changes: &mut HashMap<BufferId, Vec<(Range<text::Anchor>, Rope)>>,
+        hunk: &MultiBufferDiffHunk,
+        fragment_range: Range<text::Anchor>,
+        fragment_base_range: Range<usize>,
+        cx: &mut App,
+    ) -> Option<()> {
+        if hunk.is_created_file() {
+            return None;
+        }
+
+        let buffer = self.buffer.read(cx);
+        let diff = buffer.diff_for(hunk.buffer_id)?;
+        let buffer = buffer.buffer(hunk.buffer_id)?;
+        let buffer = buffer.read(cx);
+
+        let original_text = diff
+            .read(cx)
+            .base_text()
+            .as_rope()
+            .slice(fragment_base_range);
+
+        let buffer_snapshot = buffer.snapshot();
+        let buffer_revert_changes = revert_changes.entry(buffer.remote_id()).or_default();
+
+        if let Err(i) = buffer_revert_changes.binary_search_by(|probe| {
+            probe
+                .0
+                .start
+                .cmp(&fragment_range.start, &buffer_snapshot)
+                .then(probe.0.end.cmp(&fragment_range.end, &buffer_snapshot))
+        }) {
+            buffer_revert_changes.insert(i, (fragment_range, original_text));
+            Some(())
+        } else {
+            None
+        }
+    }
+
+    pub fn generate_fragment_buffer_edits(
+        &self,
+        fragment_range: Range<text::Anchor>,
+        original_content: &text::Rope,
+        buffer_id: BufferId,
+        cx: &App,
+    ) -> Option<Vec<(Range<text::Anchor>, text::Rope)>> {
+        let buffer = self.buffer.read(cx);
+        let buffer = buffer.buffer(buffer_id)?;
+        let buffer = buffer.read(cx);
+        let buffer_snapshot = buffer.snapshot();
+
+        if !fragment_range.start.is_valid(&buffer_snapshot)
+            || !fragment_range.end.is_valid(&buffer_snapshot)
+        {
+            return None;
+        }
+
+        let edits = vec![(fragment_range, original_content.clone())];
+        Some(edits)
+    }
+
     pub fn reverse_lines(&mut self, _: &ReverseLines, window: &mut Window, cx: &mut Context<Self>) {
         self.manipulate_immutable_lines(window, cx, |lines| lines.reverse())
     }
@@ -21870,6 +21932,18 @@ impl Editor {
         self.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
             selections.refresh()
         });
+    }
+
+    pub fn restore_fragments(
+        &mut self,
+        fragment_changes: HashMap<BufferId, Vec<(Range<text::Anchor>, Rope)>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Result<(), String> {
+        self.transact(window, cx, |editor, window, cx| {
+            editor.restore(fragment_changes, window, cx);
+        });
+        Ok(())
     }
 
     pub fn to_pixel_point(

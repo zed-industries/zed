@@ -23,7 +23,8 @@ multi_buffer.workspace = true
 theme.workspace = true
 ui.workspace = true
 
-imara-diff = "0.2.0"
+buffer_diff.workspace = true
+git2.workspace = true
 
 [dev-dependencies]
 ctor.workspace = true
@@ -32,11 +33,3 @@ rand.workspace = true
 serde_json.workspace = true
 unindent.workspace = true
 zlog.workspace = true
-
-[[example]]
-name = "demo"
-path = "examples/demo.rs"
-
-[[example]]
-name = "demo_gpui"
-path = "examples/demo_gpui.rs"

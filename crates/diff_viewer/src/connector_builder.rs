@@ -1,20 +1,28 @@
 use crate::connector::{ConnectorCurve, ConnectorKind};
-use crate::imara::{ImaraBlockOperation, ImaraDiffAnalysis};
+use buffer_diff::DiffHunkStatusKind;
+use std::ops::Range;
+
+/// Represents a simplified diff block for connector rendering
+#[derive(Debug, Clone)]
+pub struct DiffBlock {
+    pub left_range: Range<usize>,
+    pub right_range: Range<usize>,
+    pub kind: DiffHunkStatusKind,
+}
 
 /// Build connector ribbons between matching change ranges on left and right panes.
-pub fn build_connector_curves(analysis: &ImaraDiffAnalysis) -> Vec<ConnectorCurve> {
-    analysis
-        .blocks
+pub fn build_connector_curves(blocks: &[DiffBlock]) -> Vec<ConnectorCurve> {
+    blocks
         .iter()
         .filter_map(|block| {
             if block.left_range.is_empty() && block.right_range.is_empty() {
                 return None;
             }
 
-            let kind = match block.operation {
-                ImaraBlockOperation::Modify => ConnectorKind::Modify,
-                ImaraBlockOperation::Insert => ConnectorKind::Insert,
-                ImaraBlockOperation::Delete => ConnectorKind::Delete,
+            let kind = match block.kind {
+                DiffHunkStatusKind::Modified => ConnectorKind::Modify,
+                DiffHunkStatusKind::Added => ConnectorKind::Insert,
+                DiffHunkStatusKind::Deleted => ConnectorKind::Delete,
             };
 
             let left_crushed = block.left_range.is_empty();
