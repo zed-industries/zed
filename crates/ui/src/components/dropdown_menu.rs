@@ -30,6 +30,7 @@ pub struct DropdownMenu {
     attach: Option<Corner>,
     offset: Option<Point<Pixels>>,
     tab_index: Option<isize>,
+    chevron: bool,
 }
 
 impl DropdownMenu {
@@ -50,6 +51,7 @@ impl DropdownMenu {
             attach: None,
             offset: None,
             tab_index: None,
+            chevron: true,
         }
     }
 
@@ -70,6 +72,7 @@ impl DropdownMenu {
             attach: None,
             offset: None,
             tab_index: None,
+            chevron: true,
         }
     }
 
@@ -109,6 +112,11 @@ impl DropdownMenu {
         self.tab_index = Some(arg);
         self
     }
+
+    pub fn no_chevron(mut self) -> Self {
+        self.chevron = false;
+        self
+    }
 }
 
 impl Disableable for DropdownMenu {
@@ -132,19 +140,23 @@ impl RenderOnce for DropdownMenu {
         let button = match self.label {
             LabelKind::Text(text) => Button::new(self.id.clone(), text)
                 .style(button_style)
-                .icon(IconName::ChevronUpDown)
-                .icon_position(IconPosition::End)
-                .icon_size(IconSize::XSmall)
-                .icon_color(Color::Muted)
+                .when(self.chevron, |this| {
+                    this.icon(IconName::ChevronUpDown)
+                        .icon_position(IconPosition::End)
+                        .icon_size(IconSize::XSmall)
+                        .icon_color(Color::Muted)
+                })
                 .when(full_width, |this| this.full_width())
                 .size(trigger_size)
                 .disabled(self.disabled),
             LabelKind::Element(_element) => Button::new(self.id.clone(), "")
                 .style(button_style)
-                .icon(IconName::ChevronUpDown)
-                .icon_position(IconPosition::End)
-                .icon_size(IconSize::XSmall)
-                .icon_color(Color::Muted)
+                .when(self.chevron, |this| {
+                    this.icon(IconName::ChevronUpDown)
+                        .icon_position(IconPosition::End)
+                        .icon_size(IconSize::XSmall)
+                        .icon_color(Color::Muted)
+                })
                 .when(full_width, |this| this.full_width())
                 .size(trigger_size)
                 .disabled(self.disabled),
