@@ -264,6 +264,7 @@ impl PromptBuilder {
                 // Initial scan of the prompt overrides directory
                 if let Ok(mut entries) = params.fs.read_dir(&templates_dir).await {
                     while let Some(Ok(file_path)) = entries.next().await {
+                        let file_path = file_path.path();
                         if file_path.to_string_lossy().ends_with(".hbs")
                             && let Ok(content) = params.fs.load(&file_path).await {
                                 let file_name = file_path.file_stem().unwrap().to_string_lossy();

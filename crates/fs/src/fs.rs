@@ -12,6 +12,7 @@ use gpui::App;
 use gpui::BackgroundExecutor;
 use gpui::Global;
 use gpui::ReadGlobal as _;
+use smol::stream::StreamExt;
 use std::borrow::Cow;
 use util::command::new_smol_command;
 
@@ -25,7 +26,7 @@ use std::os::unix::fs::{FileTypeExt, MetadataExt};
 use std::mem::MaybeUninit;
 
 use async_tar::Archive;
-use futures::{AsyncRead, Stream, StreamExt, future::BoxFuture};
+use futures::{AsyncRead, Stream, future::BoxFuture};
 use git::repository::{GitRepository, RealGitRepository};
 use rope::Rope;
 use serde::{Deserialize, Serialize};
@@ -124,7 +125,7 @@ pub trait Fs: Send + Sync {
     async fn read_dir(
         &self,
         path: &Path,
-    ) -> Result<Pin<Box<dyn Send + Stream<Item = Result<PathBuf>>>>>;
+    ) -> Result<Pin<Box<dyn Send + Stream<Item = Result<DirEntry>>>>>;
 
     async fn watch(
         &self,
@@ -152,6 +153,49 @@ pub trait Fs: Send + Sync {
     }
 }
 
+enum DirEntryPayload {
+    Entry(Option<std::fs::DirEntry>),
+    Metadata(Result<Metadata>),
+}
+pub struct DirEntry {
+    path: Arc<Path>,
+    payload: DirEntryPayload,
+    executor: BackgroundExecutor,
+}
+
+impl DirEntry {
+    fn new(entry: std::fs::DirEntry, executor: BackgroundExecutor) -> Self {
+        let path = entry.path().into();
+
+        Self {
+            path,
+            payload: DirEntryPayload::Entry(Some(entry)),
+            executor,
+        }
+    }
+    pub async fn metadata(&mut self) -> &Result<Metadata> {
+        if let DirEntryPayload::Entry(entry) = &mut self.payload {
+            let dir_entry = entry.take().unwrap();
+            let meta = self
+                .executor
+                .spawn(async move { dir_entry.metadata() })
+                .await;
+            let is_symlink = meta.as_ref().ok().is_some_and(|meta| meta.is_symlink());
+            let payload = match meta {
+                Ok(meta) => RealFs::std_meta_to_zed_metadata(&self.path, meta, is_symlink).await,
+                Err(e) => Err(e.into()),
+            };
+            self.payload = DirEntryPayload::Metadata(payload);
+        }
+        let DirEntryPayload::Metadata(meta) = &self.payload else {
+            unreachable!();
+        };
+        meta
+    }
+    pub fn path(&self) -> &Arc<Path> {
+        &self.path
+    }
+}
 struct GlobalFs(Arc<dyn Fs>);
 
 impl Global for GlobalFs {}
@@ -333,6 +377,32 @@ impl RealFs {
             bundled_git_binary_path: git_binary_path,
             executor,
         }
+    }
+    async fn std_meta_to_zed_metadata(
+        _path: &Path,
+        metadata: std::fs::Metadata,
+        is_symlink: bool,
+    ) -> Result<Metadata> {
+        #[cfg(unix)]
+        let inode = metadata.ino();
+
+        #[cfg(windows)]
+        let inode = file_id(_path).await?;
+
+        #[cfg(windows)]
+        let is_fifo = false;
+
+        #[cfg(unix)]
+        let is_fifo = metadata.file_type().is_fifo();
+
+        Ok(Metadata {
+            inode,
+            mtime: MTime(metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH)),
+            len: metadata.len(),
+            is_symlink,
+            is_dir: metadata.file_type().is_dir(),
+            is_fifo,
+        })
     }
 }
 
@@ -714,27 +784,9 @@ impl Fs for RealFs {
         } else {
             symlink_metadata
         };
-
-        #[cfg(unix)]
-        let inode = metadata.ino();
-
-        #[cfg(windows)]
-        let inode = file_id(path).await?;
-
-        #[cfg(windows)]
-        let is_fifo = false;
-
-        #[cfg(unix)]
-        let is_fifo = metadata.file_type().is_fifo();
-
-        Ok(Some(Metadata {
-            inode,
-            mtime: MTime(metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH)),
-            len: metadata.len(),
-            is_symlink,
-            is_dir: metadata.file_type().is_dir(),
-            is_fifo,
-        }))
+        Self::std_meta_to_zed_metadata(path, metadata, is_symlink)
+            .await
+            .map(Some)
     }
 
     async fn read_link(&self, path: &Path) -> Result<PathBuf> {
@@ -749,15 +801,17 @@ impl Fs for RealFs {
     async fn read_dir(
         &self,
         path: &Path,
-    ) -> Result<Pin<Box<dyn Send + Stream<Item = Result<PathBuf>>>>> {
+    ) -> Result<Pin<Box<dyn Send + Stream<Item = Result<DirEntry>>>>> {
         let path = path.to_owned();
+
+        let executor = self.executor.clone();
         let result = iter(
             self.executor
                 .spawn(async move { std::fs::read_dir(path) })
                 .await?,
         )
-        .map(|entry| match entry {
-            Ok(entry) => Ok(entry.path()),
+        .map(move |entry| match entry {
+            Ok(entry) => Ok(DirEntry::new(entry, executor.clone())),
             Err(error) => Err(anyhow!("failed to read dir entry {error:?}")),
         });
         Ok(Box::pin(result))
@@ -2650,7 +2704,7 @@ fn read_recursive<'a>(
             let mut children = fs.read_dir(source).await?;
             while let Some(child_path) = children.next().await {
                 if let Ok(child_path) = child_path {
-                    read_recursive(fs, &child_path, output).await?;
+                    read_recursive(fs, &child_path.path(), output).await?;
                 }
             }
         } else {
