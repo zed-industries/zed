@@ -328,6 +328,7 @@ impl Editor {
                 .entry(buffer_id)
                 .or_default()
                 .push(spawn_editor_hints_refresh(
+                    buffer_id,
                     invalidate_cache,
                     ignore_previous_fetches,
                     debounce,
@@ -671,6 +672,8 @@ impl Editor {
 
     fn apply_fetched_hints(
         &mut self,
+        buffer_id: BufferId,
+        query_version: Global,
         invalidate_cache: InvalidationStrategy,
         excerpts_queried: Vec<ExcerptId>,
         new_hints: Vec<(Range<BufferRow>, anyhow::Result<CacheInlayHints>)>,
@@ -707,6 +710,13 @@ impl Editor {
                     log::error!(
                         "Failed to query inlays for buffer row range {chunk_range:?}, {e:#}"
                     );
+                    if let Some((for_version, chunks_fetched)) =
+                        inlay_hints.hint_chunk_fetched.get_mut(&buffer_id)
+                    {
+                        if for_version == &query_version {
+                            chunks_fetched.remove(&chunk_range);
+                        }
+                    }
                     None
                 }
             })
@@ -740,6 +750,7 @@ struct VisibleExcerpts {
 }
 
 fn spawn_editor_hints_refresh(
+    buffer_id: BufferId,
     invalidate_cache: InvalidationStrategy,
     ignore_previous_fetches: bool,
     debounce: Option<Duration>,
@@ -752,6 +763,7 @@ fn spawn_editor_hints_refresh(
         }
 
         let excerpts_queried = buffer_excerpts.excerpts.clone();
+        let query_version = buffer_excerpts.buffer_version.clone();
         let Some(hint_tasks) = editor
             .update(cx, |editor, cx| {
                 editor.inlay_hints_for_buffer(
@@ -772,7 +784,14 @@ fn spawn_editor_hints_refresh(
         let new_hints = join_all(hint_tasks).await;
         editor
             .update(cx, |editor, cx| {
-                editor.apply_fetched_hints(invalidate_cache, excerpts_queried, new_hints, cx);
+                editor.apply_fetched_hints(
+                    buffer_id,
+                    query_version,
+                    invalidate_cache,
+                    excerpts_queried,
+                    new_hints,
+                    cx,
+                );
             })
             .ok();
     })
