@@ -234,7 +234,6 @@ impl UserSettingsContent {
     Eq,
     Default,
     strum::VariantArray,
-    strum::VariantNames,
 )]
 pub enum BaseKeymapContent {
     #[default]
@@ -246,6 +245,19 @@ pub enum BaseKeymapContent {
     Emacs,
     Cursor,
     None,
+}
+
+impl strum::VariantNames for BaseKeymapContent {
+    const VARIANTS: &'static [&'static str] = &[
+        "VSCode",
+        "JetBrains",
+        "Sublime Text",
+        "Atom",
+        "TextMate",
+        "Emacs",
+        "Cursor",
+        "None",
+    ];
 }
 
 #[skip_serializing_none]

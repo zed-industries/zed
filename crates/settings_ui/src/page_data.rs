@@ -1,6 +1,6 @@
 use gpui::App;
 use settings::{LanguageSettingsContent, SettingsContent};
-use std::{sync::Arc, thread::current};
+use std::sync::Arc;
 use ui::{IntoElement, SharedString};
 
 use crate::{
@@ -577,7 +577,10 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         pick: |settings_content| &settings_content.base_keymap,
                         pick_mut: |settings_content| &mut settings_content.base_keymap,
                     }),
-                    metadata: None,
+                    metadata: Some(Box::new(SettingsFieldMetadata {
+                        should_do_titlecase: Some(false),
+                        ..Default::default()
+                    })),
                     files: USER,
                 }),
                 SettingsPageItem::SectionHeader("Modal Editing"),
@@ -1860,7 +1863,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SectionHeader("File Finder"),
                 // todo: null by default
-                // todo! differentiate from Include Ignored above
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Include Ignored in Search",
                     description: "Use gitignored files when searching",
@@ -3454,7 +3456,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Sort By Path",
-                    // todo! reword this
                     description: "Enable to sort entries in the panel by path, disable to sort by status",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
@@ -4984,6 +4985,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     ),
                     metadata: Some(Box::new(SettingsFieldMetadata {
                         placeholder: Some("socks5h://localhost:10808"),
+                        ..Default::default()
                     })),
                     files: USER,
                 }),
@@ -4996,6 +4998,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: Some(Box::new(SettingsFieldMetadata {
                         placeholder: Some("https://zed.dev"),
+                        ..Default::default()
                     })),
                     files: USER,
                 }),
