@@ -469,13 +469,7 @@ impl AgentPanel {
             let thread_store = workspace
                 .update(cx, |workspace, cx| {
                     let project = workspace.project().clone();
-                    ThreadStore::load(
-                        project,
-                        tools.clone(),
-                        prompt_store.clone(),
-                        prompt_builder.clone(),
-                        cx,
-                    )
+                    ThreadStore::load(project, tools.clone(), prompt_store.clone(), cx)
                 })?
                 .await?;
 

@@ -1,32 +1,12 @@
 use agent::{context::AgentContextKey, context_store::ContextStoreEvent};
-use agent_settings::AgentProfileId;
 use collections::HashMap;
 use editor::display_map::CreaseId;
 use editor::{Addon, AnchorRangeExt, Editor};
-use gpui::{App, Entity, Subscription};
+use gpui::{Entity, Subscription};
 use ui::prelude::*;
 
 use crate::context_picker::crease_for_mention;
-use crate::profile_selector::ProfileProvider;
-use agent::{MessageCrease, Thread, context_store::ContextStore};
-
-impl ProfileProvider for Entity<Thread> {
-    fn profiles_supported(&self, cx: &App) -> bool {
-        self.read(cx)
-            .configured_model()
-            .is_some_and(|model| model.model.supports_tools())
-    }
-
-    fn profile_id(&self, cx: &App) -> AgentProfileId {
-        self.read(cx).profile().id().clone()
-    }
-
-    fn set_profile(&self, profile_id: AgentProfileId, cx: &mut App) {
-        self.update(cx, |this, cx| {
-            this.set_profile(profile_id, cx);
-        });
-    }
-}
+use agent::{MessageCrease, context_store::ContextStore};
 
 #[derive(Default)]
 pub struct ContextCreasesAddon {

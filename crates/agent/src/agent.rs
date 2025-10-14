@@ -12,7 +12,7 @@ use fs::Fs;
 use std::sync::Arc;
 pub use thread::{
     LastRestoreCheckpoint, Message, MessageCrease, MessageId, MessageSegment, Thread, ThreadError,
-    ThreadEvent, ThreadFeedback, ThreadId, ThreadSummary, TokenUsageRatio,
+    ThreadEvent, ThreadId, ThreadSummary, TokenUsageRatio,
 };
 pub use thread_store::{SerializedThread, TextThreadStore, ThreadStore};
 

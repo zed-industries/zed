@@ -25,8 +25,8 @@ use language_model::{LanguageModelToolResultContent, LanguageModelToolUseId, Rol
 use project::context_server_store::{ContextServerStatus, ContextServerStore};
 use project::{Project, ProjectItem, ProjectPath, Worktree};
 use prompt_store::{
-    ProjectContext, PromptBuilder, PromptId, PromptStore, PromptsUpdatedEvent, RulesFileContext,
-    UserRulesContext, WorktreeContext,
+    ProjectContext, PromptId, PromptStore, PromptsUpdatedEvent, RulesFileContext, UserRulesContext,
+    WorktreeContext,
 };
 use serde::{Deserialize, Serialize};
 use sqlez::{
@@ -107,7 +107,6 @@ pub type TextThreadStore = assistant_context::ContextStore;
 pub struct ThreadStore {
     project: Entity<Project>,
     tools: Entity<ToolWorkingSet>,
-    prompt_builder: Arc<PromptBuilder>,
     prompt_store: Option<Entity<PromptStore>>,
     context_server_tool_ids: HashMap<ContextServerId, Vec<ToolId>>,
     threads: Vec<SerializedThreadMetadata>,
@@ -128,15 +127,13 @@ impl ThreadStore {
         project: Entity<Project>,
         tools: Entity<ToolWorkingSet>,
         prompt_store: Option<Entity<PromptStore>>,
-        prompt_builder: Arc<PromptBuilder>,
         cx: &mut App,
     ) -> Task<Result<Entity<Self>>> {
         cx.spawn(async move |cx| {
             let (thread_store, ready_rx) = cx.update(|cx| {
                 let mut option_ready_rx = None;
                 let thread_store = cx.new(|cx| {
-                    let (thread_store, ready_rx) =
-                        Self::new(project, tools, prompt_builder, prompt_store, cx);
+                    let (thread_store, ready_rx) = Self::new(project, tools, prompt_store, cx);
                     option_ready_rx = Some(ready_rx);
                     thread_store
                 });
@@ -150,7 +147,6 @@ impl ThreadStore {
     fn new(
         project: Entity<Project>,
         tools: Entity<ToolWorkingSet>,
-        prompt_builder: Arc<PromptBuilder>,
         prompt_store: Option<Entity<PromptStore>>,
         cx: &mut Context<Self>,
     ) -> (Self, oneshot::Receiver<()>) {
@@ -193,7 +189,6 @@ impl ThreadStore {
         let this = Self {
             project,
             tools,
-            prompt_builder,
             prompt_store,
             context_server_tool_ids: HashMap::default(),
             threads: Vec::new(),
@@ -212,7 +207,6 @@ impl ThreadStore {
         Self {
             project,
             tools: cx.new(|_| ToolWorkingSet::default()),
-            prompt_builder: Arc::new(PromptBuilder::new(None).unwrap()),
             prompt_store: None,
             context_server_tool_ids: HashMap::default(),
             threads: Vec::new(),
@@ -425,7 +419,6 @@ impl ThreadStore {
             Thread::new(
                 self.project.clone(),
                 self.tools.clone(),
-                self.prompt_builder.clone(),
                 self.project_context.clone(),
                 cx,
             )
@@ -443,7 +436,6 @@ impl ThreadStore {
                 serialized,
                 self.project.clone(),
                 self.tools.clone(),
-                self.prompt_builder.clone(),
                 self.project_context.clone(),
                 None,
                 cx,
@@ -474,7 +466,6 @@ impl ThreadStore {
                         thread,
                         this.project.clone(),
                         this.tools.clone(),
-                        this.prompt_builder.clone(),
                         this.project_context.clone(),
                         Some(window),
                         cx,
