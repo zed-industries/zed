@@ -7071,6 +7071,15 @@ impl Editor {
             {
                 self.edit_prediction_settings =
                     self.edit_prediction_settings_at_position(&buffer, cursor_buffer_position, cx);
+
+                if matches!(
+                    self.edit_prediction_settings,
+                    EditPredictionSettings::Disabled
+                ) {
+                    self.edit_prediction_preview = EditPredictionPreview::Inactive {
+                        released_too_fast: false,
+                    };
+                }
             }
         }
     }
