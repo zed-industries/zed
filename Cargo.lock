@@ -1137,7 +1137,7 @@ version = "2.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "09f7e37c0ed80b2a977691c47dae8625cfb21e205827106c64f7c588766b2e50"
 dependencies = [
- "async-lock",
+ "async-lock 3.4.1",
  "blocking",
  "futures-lite 2.6.0",
 ]
@@ -1151,7 +1151,7 @@ dependencies = [
  "async-channel 2.3.1",
  "async-executor",
  "async-io",
- "async-lock",
+ "async-lock 3.4.1",
  "blocking",
  "futures-lite 2.6.0",
  "once_cell",
@@ -1163,7 +1163,7 @@ version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "19634d6336019ef220f09fd31168ce5c184b295cbf80345437cc36094ef223ca"
 dependencies = [
- "async-lock",
+ "async-lock 3.4.1",
  "cfg-if",
  "concurrent-queue",
  "futures-io",
@@ -1173,6 +1173,15 @@ dependencies = [
  "rustix 1.0.7",
  "slab",
  "windows-sys 0.60.2",
+]
+
+[[package]]
+name = "async-lock"
+version = "2.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "287272293e9d8c41773cec55e365490fe034813a2f172f502d6ddcf75b2f582b"
+dependencies = [
+ "event-listener 2.5.3",
 ]
 
 [[package]]
@@ -1214,7 +1223,7 @@ checksum = "63255f1dc2381611000436537bbedfe83183faa303a5a0edaf191edef06526bb"
 dependencies = [
  "async-channel 2.3.1",
  "async-io",
- "async-lock",
+ "async-lock 3.4.1",
  "async-signal",
  "async-task",
  "blocking",
@@ -1243,7 +1252,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "637e00349800c0bdf8bfc21ebbc0b6524abea702b0da4168ac00d070d0c0b9f3"
 dependencies = [
  "async-io",
- "async-lock",
+ "async-lock 3.4.1",
  "atomic-waker",
  "cfg-if",
  "futures-core",
@@ -1264,7 +1273,7 @@ dependencies = [
  "async-channel 1.9.0",
  "async-global-executor",
  "async-io",
- "async-lock",
+ "async-lock 3.4.1",
  "async-process",
  "crossbeam-utils",
  "futures-channel",
@@ -9036,7 +9045,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc2f4eb4bc735547cfed7c0a4922cbd04a4655978c09b54f1f7b228750664c34"
 dependencies = [
  "cfg-if",
- "windows-targets 0.48.5",
+ "windows-targets 0.52.6",
 ]
 
 [[package]]
@@ -10736,7 +10745,7 @@ dependencies = [
  "ashpd 0.12.0",
  "async-fs",
  "async-io",
- "async-lock",
+ "async-lock 3.4.1",
  "blocking",
  "cbc",
  "cipher",
@@ -14823,7 +14832,7 @@ dependencies = [
  "async-executor",
  "async-fs",
  "async-io",
- "async-lock",
+ "async-lock 3.4.1",
  "async-net",
  "async-process",
  "blocking",
@@ -19868,6 +19877,7 @@ name = "worktree"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-lock 2.8.0",
  "clock",
  "collections",
  "fs",
@@ -20163,7 +20173,7 @@ dependencies = [
  "async-broadcast",
  "async-executor",
  "async-io",
- "async-lock",
+ "async-lock 3.4.1",
  "async-process",
  "async-recursion",
  "async-task",

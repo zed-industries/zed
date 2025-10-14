@@ -9,6 +9,10 @@ license = "GPL-3.0-or-later"
 path = "src/worktree.rs"
 doctest = false
 
+[[bin]]
+name = "bench_background_scan"
+path = "bin/bench_background_scan.rs"
+
 [lints]
 workspace = true
 
@@ -24,6 +28,7 @@ test-support = [
 
 [dependencies]
 anyhow.workspace = true
+async-lock.workspace = true
 clock.workspace = true
 collections.workspace = true
 fs.workspace = true
