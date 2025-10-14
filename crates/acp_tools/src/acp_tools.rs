@@ -230,10 +230,8 @@ impl AcpTools {
         cx.notify();
     }
 
-    fn copy_thread(&self, _cx: &App) -> String {
-        let Some(connection) = self.watched_connection.as_ref() else {
-            return String::new();
-        };
+    fn serialize_observed_messages(&self) -> Option<String> {
+        let connection = self.watched_connection.as_ref()?;
 
         let messages: Vec<serde_json::Value> = connection
             .messages
@@ -258,7 +256,7 @@ impl AcpTools {
             })
             .collect();
 
-        serde_json::to_string_pretty(&messages).unwrap_or_default()
+        serde_json::to_string_pretty(&messages).ok()
     }
 
     fn render_message(
@@ -548,12 +546,18 @@ impl Render for AcpToolsToolbarItemView {
         h_flex()
             .gap_2()
             .child(
-                IconButton::new("copy_thread", IconName::Copy)
+                IconButton::new("copy_all_messages", IconName::Copy)
                     .icon_size(IconSize::Small)
-                    .tooltip(Tooltip::text("Copy Thread"))
+                    .tooltip(Tooltip::text("Copy All Messages"))
+                    .disabled(
+                        acp_tools
+                            .read(cx)
+                            .watched_connection
+                            .as_ref()
+                            .is_none_or(|connection| connection.messages.is_empty()),
+                    )
                     .on_click(cx.listener(move |_this, _, _window, cx| {
-                        let content = acp_tools.read(cx).copy_thread(cx);
-                        if !content.is_empty() {
+                        if let Some(content) = acp_tools.read(cx).serialize_observed_messages() {
                             cx.write_to_clipboard(ClipboardItem::new_string(content));
                         }
                     })),
