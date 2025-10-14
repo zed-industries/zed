@@ -57,6 +57,14 @@ struct HintForId {
     position: usize,
 }
 
+/// An range of rows, exclusive as [`lsp::Range`] and
+/// <https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#range>
+/// denote.
+///
+/// Represents an area in a text editor, adjacent to other ones.
+/// Together, chunks form entire document at a particular version [`clock::Global`].
+/// Each chunk is queried for inlays as `(start_row, 0)..(end_exclusive, 0)` via
+/// <https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#inlayHintParams>
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct BufferChunk {
     id: usize,
@@ -82,27 +90,14 @@ impl BufferInlayHints {
         let buffer = buffer.read(cx);
         let snapshot = buffer.snapshot();
         let buffer_point_range = (0..buffer.len()).to_point(&snapshot);
-        let buffer_row_range = buffer_point_range.start.row..=buffer_point_range.end.row;
-        let buffer_chunks = buffer_row_range
-            .clone()
+        let last_row = buffer_point_range.end.row;
+        let buffer_chunks = (buffer_point_range.start.row..=last_row)
             .step_by(MAX_ROWS_IN_A_CHUNK as usize)
             .enumerate()
-            .map(|(id, chunk_start)| {
-                let chunk_start = if id == 0 {
-                    chunk_start
-                } else {
-                    chunk_start + 1
-                };
-                // TODO kb is this correct? Are LSP ranges inclusive or exclusive?
-                let chunk_end = std::cmp::min(
-                    chunk_start + MAX_ROWS_IN_A_CHUNK - 1,
-                    *buffer_row_range.end(),
-                );
-                BufferChunk {
-                    id,
-                    start: chunk_start,
-                    end: chunk_end,
-                }
+            .map(|(id, chunk_start)| BufferChunk {
+                id,
+                start: chunk_start,
+                end: (chunk_start + MAX_ROWS_IN_A_CHUNK).min(last_row),
             })
             .collect::<Vec<_>>();
 

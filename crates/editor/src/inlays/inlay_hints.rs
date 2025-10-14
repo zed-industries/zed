@@ -1885,8 +1885,7 @@ pub mod tests {
                 let first_scroll = &ranges[0];
                 let second_scroll = &ranges[1];
                 assert_eq!(
-                    first_scroll.end.line + 1,
-                    second_scroll.start.line,
+                    first_scroll.end.line, second_scroll.start.line,
                     "Should query 2 adjacent ranges after the scrolls, but got: {ranges:?}"
                 );
 
@@ -1896,12 +1895,12 @@ pub mod tests {
                     "Should query hints initially, and after each scroll (2 times)"
                 );
                 assert_eq!(
-                    vec!["49".to_string(), "100".to_string(), "150".to_string()],
+                    vec!["50".to_string(), "100".to_string(), "150".to_string()],
                     cached_hint_labels(editor, cx),
                     "Chunks of 50 line width should have been queried each time"
                 );
                 assert_eq!(
-                    vec!["49".to_string(), "100".to_string(), "150".to_string()],
+                    vec!["50".to_string(), "100".to_string(), "150".to_string()],
                     visible_hint_labels(editor, cx),
                     "Editor should show only hints that it's scrolled to"
                 );
@@ -1947,7 +1946,7 @@ pub mod tests {
                 "On edit, should scroll to selection and query a range around it: that range should split into 2 50 rows wide chunks. Instead, got query ranges {ranges:?}");
             let first_chunk = &ranges[0];
             let second_chunk = &ranges[1];
-            assert!(first_chunk.end.line + 1 == second_chunk.start.line,
+            assert!(first_chunk.end.line == second_chunk.start.line,
                 "First chunk {first_chunk:?} should be before second chunk {second_chunk:?}");
             assert!(first_chunk.start.line < selection_in_cached_range.row,
                 "Hints should be queried with the selected range after the query range start");
