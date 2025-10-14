@@ -327,6 +327,10 @@ fn run_command(command: &mut Command) -> Result<Output> {
         .wait_with_output()
         .context("failed to wait for child process")?;
 
+    if !output.status.success() {
+        bail!("Command failed with status {}", output.status);
+    }
+
     Ok(output)
 }
 
