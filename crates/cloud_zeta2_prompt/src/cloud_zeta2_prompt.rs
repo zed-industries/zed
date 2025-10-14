@@ -404,7 +404,11 @@ impl<'a> PlannedPrompt<'a> {
 
         let mut prompt = String::new();
         prompt.push_str("## User Edits\n\n");
-        Self::push_events(&mut prompt, &self.request.events);
+        if self.request.events.is_empty() {
+            prompt.push_str("No edits yet.\n");
+        } else {
+            Self::push_events(&mut prompt, &self.request.events);
+        }
 
         prompt.push_str("\n## Code\n\n");
         let section_labels =
@@ -442,13 +446,17 @@ impl<'a> PlannedPrompt<'a> {
                     if *predicted {
                         writeln!(
                             output,
-                            "User accepted prediction {:?}:\n```diff\n{}\n```\n",
+                            "User accepted prediction {:?}:\n`````diff\n{}\n`````\n",
                             path, diff
                         )
                         .unwrap();
                     } else {
-                        writeln!(output, "User edited {:?}:\n```diff\n{}\n```\n", path, diff)
-                            .unwrap();
+                        writeln!(
+                            output,
+                            "User edited {:?}:\n`````diff\n{}\n`````\n",
+                            path, diff
+                        )
+                        .unwrap();
                     }
                 }
             }
@@ -488,7 +496,8 @@ impl<'a> PlannedPrompt<'a> {
                 disjoint_snippets.push(current_snippet);
             }
 
-            writeln!(output, "```{}", file_path.display()).ok();
+            // TODO: remove filename=?
+            writeln!(output, "`````filename={}", file_path.display()).ok();
             let mut skipped_last_snippet = false;
             for (snippet, range) in disjoint_snippets {
                 let section_index = section_ranges.len();
@@ -589,7 +598,7 @@ impl<'a> PlannedPrompt<'a> {
                 section_ranges.push((snippet.path.clone(), range));
             }
 
-            output.push_str("```\n\n");
+            output.push_str("`````\n\n");
         }
 
         Ok(SectionLabels {
