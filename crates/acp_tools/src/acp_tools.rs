@@ -4,6 +4,7 @@ use std::{
     fmt::Display,
     rc::{Rc, Weak},
     sync::Arc,
+    time::Duration,
 };
 
 use agent_client_protocol as acp;
@@ -526,11 +527,15 @@ impl Render for AcpTools {
 
 pub struct AcpToolsToolbarItemView {
     acp_tools: Option<Entity<AcpTools>>,
+    just_copied: bool,
 }
 
 impl AcpToolsToolbarItemView {
     pub fn new() -> Self {
-        Self { acp_tools: None }
+        Self {
+            acp_tools: None,
+            just_copied: false,
+        }
     }
 }
 
@@ -545,21 +550,42 @@ impl Render for AcpToolsToolbarItemView {
         h_flex()
             .gap_2()
             .child(
-                IconButton::new("copy_all_messages", IconName::Copy)
-                    .icon_size(IconSize::Small)
-                    .tooltip(Tooltip::text("Copy All Messages"))
-                    .disabled(
-                        acp_tools
-                            .read(cx)
-                            .watched_connection
-                            .as_ref()
-                            .is_none_or(|connection| connection.messages.is_empty()),
-                    )
-                    .on_click(cx.listener(move |_this, _, _window, cx| {
-                        if let Some(content) = acp_tools.read(cx).serialize_observed_messages() {
-                            cx.write_to_clipboard(ClipboardItem::new_string(content));
-                        }
-                    })),
+                IconButton::new(
+                    "copy_all_messages",
+                    if self.just_copied {
+                        IconName::Check
+                    } else {
+                        IconName::Copy
+                    },
+                )
+                .icon_size(IconSize::Small)
+                .tooltip(Tooltip::text(if self.just_copied {
+                    "Copied!"
+                } else {
+                    "Copy All Messages"
+                }))
+                .disabled(
+                    acp_tools
+                        .read(cx)
+                        .watched_connection
+                        .as_ref()
+                        .is_none_or(|connection| connection.messages.is_empty()),
+                )
+                .on_click(cx.listener(move |this, _, _window, cx| {
+                    if let Some(content) = acp_tools.read(cx).serialize_observed_messages() {
+                        cx.write_to_clipboard(ClipboardItem::new_string(content));
+
+                        this.just_copied = true;
+                        cx.spawn(async move |this, cx| {
+                            cx.background_executor().timer(Duration::from_secs(2)).await;
+                            this.update(cx, |this, cx| {
+                                this.just_copied = false;
+                                cx.notify();
+                            })
+                        })
+                        .detach();
+                    }
+                })),
             )
             .into_any()
     }
