@@ -232,7 +232,7 @@ impl DisplayMap {
         if self.variable_color_cache.is_none() {
             self.variable_color_cache = other.variable_color_cache.clone();
         }
-        
+
         self.fold(
             other
                 .folds_in_range(0..other.buffer_snapshot.len())
@@ -563,10 +563,7 @@ impl DisplayMap {
         language_settings(language, file, cx).tab_size
     }
 
-    pub fn set_variable_color_cache(
-        &mut self,
-        cache: Option<Arc<crate::rainbow::VariableColorCache>>
-    ) {
+    pub fn set_variable_color_cache(&mut self, cache: Option<Arc<crate::rainbow::VariableColorCache>>) {
         self.variable_color_cache = cache;
     }
 
@@ -883,7 +880,7 @@ impl DisplaySnapshot {
         &'a self,
         display_rows: Range<DisplayRow>,
         language_aware: bool,
-        editor_style: &'a EditorStyle,
+        editor_style: &'a EditorStyle
     ) -> impl Iterator<Item = HighlightedChunk<'a>> {
         let rainbow_config = &editor_style.rainbow_highlighting;
         let theme = &editor_style.syntax;
@@ -927,8 +924,9 @@ impl DisplaySnapshot {
                                 let hash = crate::rainbow::hash_identifier_from_iter(
                                     self.buffer_snapshot.text_for_range(node_range.clone())
                                 );
-                                
-                                if hash != 0 {  // 0 means empty or too short
+
+                                if hash != 0 {
+                                    // 0 means empty or too short
                                     // Cache the node range and hash for subsequent chunks
                                     *cached_node = Some((node_range.clone(), hash));
                                     Some(hash)
@@ -940,11 +938,12 @@ impl DisplaySnapshot {
                             }
                         } else {
                             // Check if this chunk is part of a previously seen node
-                            cached_node.as_ref()
+                            cached_node
+                                .as_ref()
                                 .filter(|(range, _)| chunk_start >= range.start && chunk_start < range.end)
                                 .map(|(_, hash)| *hash)
                         };
-                        
+
                         identifier_hash.map(|hash| cache.get_or_insert_by_hash(hash, theme))
                     })
                 } else {
@@ -1454,6 +1453,7 @@ impl SemanticTokenView {
         multibuffer: &MultiBuffer,
         lsp: &SemanticTokens,
         legend: &lsp::SemanticTokensLegend,
+        variable_color_cache: Option<&Arc<crate::rainbow::VariableColorCache>>,
         cx: &App
     ) -> Option<SemanticTokenView> {
         use crate::editor_settings::EditorSettings;
@@ -1467,7 +1467,8 @@ impl SemanticTokenView {
         let stylizer = SemanticTokenStylizer::new(legend);
         let rainbow_config = EditorSettings::get_global(cx).rainbow_highlighting;
 
-        log::debug!("Variable color highlighting: enabled={}, mode={:?}", rainbow_config.enabled, rainbow_config.mode);
+        log::debug!("Variable color highlighting: enabled={}, mode={:?}, cache_available={}", 
+            rainbow_config.enabled, rainbow_config.mode, variable_color_cache.is_some());
 
         let mut tokens = lsp
             .tokens()
@@ -1504,19 +1505,21 @@ impl SemanticTokenView {
                     }
                 };
 
-                stylizer.convert(
-                    cx.theme().syntax(),
-                    token.token_type,
-                    token.token_modifiers,
-                    variable_name.as_deref(),
-                    Some(&rainbow_config),
-                    None // Cache not available at token creation time
-                ).map(|style| MultibufferSemanticToken {
-                    range: start_offset..end_offset,
-                    style,
-                    lsp_type: token.token_type,
-                    lsp_modifiers: token.token_modifiers,
-                })
+                stylizer
+                    .convert(
+                        cx.theme().syntax(),
+                        token.token_type,
+                        token.token_modifiers,
+                        variable_name.as_deref(),
+                        Some(&rainbow_config),
+                        variable_color_cache
+                    )
+                    .map(|style| MultibufferSemanticToken {
+                        range: start_offset..end_offset,
+                        style,
+                        lsp_type: token.token_type,
+                        lsp_modifiers: token.token_modifiers,
+                    })
             })
             .collect::<Vec<_>>();
 
@@ -1598,21 +1601,21 @@ impl<'a> SemanticTokenStylizer<'a> {
         variable_color_cache: Option<&Arc<crate::rainbow::VariableColorCache>>
     ) -> Option<HighlightStyle> {
         let token_type_name = self.token_type(token_type)?;
-        
-        // Early return for rainbow-highlighted variables/parameters
-        // When rainbow is enabled for variables, LSP should not provide colors
-        // to allow tree-sitter rainbow highlighting to take precedence
+
+        // If rainbow highlighting is enabled and cache is available, apply rainbow color
         let is_variable_like = token_type_name == "variable" || token_type_name == "parameter";
         if is_variable_like {
             if let Some(config) = rainbow_config {
                 if config.enabled {
-                    // If cache is available (during rendering), use it for rainbow color
-                    // Otherwise return None to prevent LSP from overriding tree-sitter rainbow
-                    return variable_color_cache
-                        .and_then(|cache| variable_name.map(|name| cache.get_or_insert(name, theme)));
+                    if let Some(cache) = variable_color_cache {
+                        if let Some(name) = variable_name {
+                            return Some(cache.get_or_insert(name, theme));
+                        }
+                    }
                 }
             }
         }
+        // If rainbow not applicable, fall through to theme color logic below
 
         let has_modifier = |modifier| self.has_modifier(modifiers, modifier);
 

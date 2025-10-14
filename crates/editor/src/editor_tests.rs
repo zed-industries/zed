@@ -27426,3 +27426,280 @@ async fn test_rainbow_deterministic_hashing_in_multibuffer(cx: &mut TestAppConte
         assert_eq!(color_1.color, color_3.color, "First and third 'result' should have same color");
     });
 }
+
+#[gpui::test]
+async fn test_rainbow_cache_preserved_on_settings_refresh(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities::default(),
+        cx
+    ).await;
+
+    // Enable rainbow highlighting
+    update_test_editor_settings(&mut cx.cx, |settings| {
+        settings.editor.rainbow_highlighting.get_or_insert_default().enabled = Some(true);
+    });
+
+    cx.set_state(indoc! {r#"
+        fn testˇ(value: i32) {
+            let result = value + 1;
+            result
+        }
+    "#});
+
+    // Get initial colors for variables
+    let (initial_value_color, initial_result_color) = cx.update_editor(|editor, _window, cx| {
+        let cache = editor.display_map.read(cx)
+            .get_variable_color_cache()
+            .expect("Cache should exist");
+        
+        let value_hash = crate::rainbow::hash_identifier("value");
+        let result_hash = crate::rainbow::hash_identifier("result");
+        
+        let value_color = cache.get_or_insert_by_hash(value_hash, &cx.theme().syntax()).color.unwrap();
+        let result_color = cache.get_or_insert_by_hash(result_hash, &cx.theme().syntax()).color.unwrap();
+        
+        (value_color, result_color)
+    });
+
+    // Trigger settings refresh by changing an unrelated setting
+    // This causes refresh_local_settings to be called internally
+    update_test_editor_settings(&mut cx.cx, |settings| {
+        settings.editor.cursor_blink = Some(true); // Just change something to trigger refresh
+    });
+
+    // Verify colors are preserved after settings refresh
+    cx.update_editor(|editor, _window, cx| {
+        let cache = editor.display_map.read(cx)
+            .get_variable_color_cache()
+            .expect("Cache should still exist after settings refresh");
+        
+        let value_hash = crate::rainbow::hash_identifier("value");
+        let result_hash = crate::rainbow::hash_identifier("result");
+        
+        let value_color = cache.get_or_insert_by_hash(value_hash, &cx.theme().syntax()).color.unwrap();
+        let result_color = cache.get_or_insert_by_hash(result_hash, &cx.theme().syntax()).color.unwrap();
+        
+        assert_eq!(
+            value_color, initial_value_color,
+            "Variable 'value' should have same color after settings refresh"
+        );
+        assert_eq!(
+            result_color, initial_result_color,
+            "Variable 'result' should have same color after settings refresh"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_rainbow_cache_replaced_when_mode_changes(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities::default(),
+        cx
+    ).await;
+
+    // Enable rainbow highlighting with ThemePalette mode
+    update_test_editor_settings(&mut cx.cx, |settings| {
+        settings.editor.rainbow_highlighting.get_or_insert_default().enabled = Some(true);
+        settings.editor.rainbow_highlighting.get_or_insert_default().mode = Some("theme_palette".to_string());
+    });
+
+    cx.set_state(indoc! {r#"
+        fn testˇ(value: i32) {
+            let result = value + 1;
+            result
+        }
+    "#});
+
+    // Get initial cache pointer
+    let initial_cache_ptr = cx.update_editor(|editor, _window, cx| {
+        let cache = editor.display_map.read(cx)
+            .get_variable_color_cache()
+            .expect("Cache should exist");
+        Arc::as_ptr(&cache)
+    });
+
+    // Change mode to DynamicHSL (this triggers settings refresh internally)
+    update_test_editor_settings(&mut cx.cx, |settings| {
+        settings.editor.rainbow_highlighting.get_or_insert_default().mode = Some("dynamic_hsl".to_string());
+    });
+
+    // Verify cache was replaced (new cache instance)
+    cx.update_editor(|editor, _window, cx| {
+        let cache = editor.display_map.read(cx)
+            .get_variable_color_cache()
+            .expect("Cache should exist with new mode");
+        
+        let new_cache_ptr = Arc::as_ptr(&cache);
+        
+        assert_ne!(
+            initial_cache_ptr, new_cache_ptr,
+            "Cache should be replaced when mode changes"
+        );
+        
+        assert_eq!(
+            cache.mode(),
+            crate::editor_settings::VariableColorMode::DynamicHSL,
+            "New cache should use DynamicHSL mode"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_rainbow_cache_populated_from_lsp(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            semantic_tokens_provider: Some(
+                lsp::SemanticTokensServerCapabilities::SemanticTokensOptions(
+                    lsp::SemanticTokensOptions {
+                        legend: lsp::SemanticTokensLegend {
+                            token_types: vec!["variable".into(), "parameter".into()],
+                            token_modifiers: vec![],
+                        },
+                        full: Some(lsp::SemanticTokensFullOptions::Bool(true)),
+                        ..Default::default()
+                    },
+                ),
+            ),
+            ..Default::default()
+        },
+        cx
+    ).await;
+
+    let mut semantic_request = cx.set_request_handler::<lsp::request::SemanticTokensFullRequest, _, _>(
+        move |_, _, _| async move {
+            Ok(Some(lsp::SemanticTokensResult::Tokens(lsp::SemanticTokens {
+                result_id: None,
+                data: vec![
+                    // Line 0: fn test(value: i32, result: bool) {
+                    lsp::SemanticToken { delta_line: 0, delta_start: 11, length: 5, token_type: 1, token_modifiers_bitset: 0 }, // value (parameter)
+                    lsp::SemanticToken { delta_line: 0, delta_start: 11, length: 6, token_type: 1, token_modifiers_bitset: 0 }, // result (parameter)
+                    // Line 1: let data = value;
+                    lsp::SemanticToken { delta_line: 1, delta_start: 8, length: 4, token_type: 0, token_modifiers_bitset: 0 }, // data (variable)
+                    lsp::SemanticToken { delta_line: 0, delta_start: 7, length: 5, token_type: 0, token_modifiers_bitset: 0 }, // value (variable)
+                    // Line 2: let flag = result;
+                    lsp::SemanticToken { delta_line: 1, delta_start: 8, length: 4, token_type: 0, token_modifiers_bitset: 0 }, // flag (variable)
+                    lsp::SemanticToken { delta_line: 0, delta_start: 7, length: 6, token_type: 0, token_modifiers_bitset: 0 }, // result (variable)
+                    // Line 3: data + flag as i32
+                    lsp::SemanticToken { delta_line: 1, delta_start: 4, length: 4, token_type: 0, token_modifiers_bitset: 0 }, // data (variable)
+                    lsp::SemanticToken { delta_line: 0, delta_start: 7, length: 4, token_type: 0, token_modifiers_bitset: 0 }, // flag (variable)
+                ],
+            })))
+        },
+    );
+
+    // Enable rainbow highlighting
+    update_test_editor_settings(&mut cx.cx, |settings| {
+        settings.editor.rainbow_highlighting.get_or_insert_default().enabled = Some(true);
+    });
+
+    cx.set_state(indoc! {r#"
+        fn testˇ(value: i32, result: bool) {
+            let data = value;
+            let flag = result;
+            data + flag as i32
+        }
+    "#});
+
+    // Wait for semantic tokens request
+    assert!(semantic_request.next().await.is_some());
+    
+    // Wait for semantic token processing
+    let task = cx.update_editor(|e, _, _| {
+        std::mem::replace(&mut e.update_semantic_tokens_task, Task::ready(()))
+    });
+    task.await;
+
+    // Now check if cache has entries
+    let cache_size = cx.update_editor(|editor, _window, cx| {
+        let cache = editor.display_map.read(cx)
+            .get_variable_color_cache()
+            .expect("Cache should exist when rainbow highlighting is enabled");
+        
+        cache.len()
+    });
+    
+    // The cache should have entries for the variables we used
+    // At minimum: value, result, data, flag (4 unique variables)
+    assert!(
+        cache_size >= 4,
+        "Cache should have at least 4 entries for the 4 unique variables, but has {}",
+        cache_size
+    );
+}
+
+#[gpui::test]
+async fn test_rainbow_fallback_when_variable_name_missing(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            semantic_tokens_provider: Some(
+                lsp::SemanticTokensServerCapabilities::SemanticTokensOptions(
+                    lsp::SemanticTokensOptions {
+                        legend: lsp::SemanticTokensLegend {
+                            token_types: vec!["variable".into()],
+                            token_modifiers: vec![],
+                        },
+                        full: Some(lsp::SemanticTokensFullOptions::Bool(true)),
+                        ..Default::default()
+                    },
+                ),
+            ),
+            ..Default::default()
+        },
+        cx
+    ).await;
+
+    // Create semantic tokens with a very short variable name (< 2 chars)
+    // which should be filtered out, leaving no variable name
+    let mut semantic_request = cx.set_request_handler::<lsp::request::SemanticTokensFullRequest, _, _>(
+        move |_, _, _| async move {
+            Ok(Some(lsp::SemanticTokensResult::Tokens(lsp::SemanticTokens {
+                result_id: None,
+                data: vec![
+                    // Single char variable - will be filtered out
+                    lsp::SemanticToken { delta_line: 0, delta_start: 4, length: 1, token_type: 0, token_modifiers_bitset: 0 },
+                ],
+            })))
+        },
+    );
+
+    // Enable rainbow highlighting
+    update_test_editor_settings(&mut cx.cx, |settings| {
+        settings.editor.rainbow_highlighting.get_or_insert_default().enabled = Some(true);
+    });
+
+    cx.set_state("let xˇ = 5;");
+
+    // Wait for semantic tokens request
+    assert!(semantic_request.next().await.is_some());
+    
+    // Wait for semantic token processing
+    let task = cx.update_editor(|e, _, _| {
+        std::mem::replace(&mut e.update_semantic_tokens_task, Task::ready(()))
+    });
+    task.await;
+
+    // Verify that even with filtered variable names, we still get some styling
+    // (either from theme fallback or from rainbow if name was captured)
+    let has_tokens = cx.update_editor(|editor, _window, cx| {
+        if let Some(semantic_tokens) = editor.display_map.read(cx).semantic_tokens.values().next() {
+            !semantic_tokens.tokens.is_empty()
+        } else {
+            false
+        }
+    });
+
+    // With the bug, tokens with missing names would return None and be filtered out
+    // With the fix, they should still be included with theme color
+    assert!(
+        has_tokens,
+        "Variables should still have theme color fallback even when name is filtered out"
+    );
+}

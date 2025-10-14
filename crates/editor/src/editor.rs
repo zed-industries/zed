@@ -6463,6 +6463,7 @@ impl Editor {
                                     this.buffer.read(cx),
                                     &tokens,
                                     &legend,
+                                    display_map.get_variable_color_cache().as_ref(),
                                     cx
                                 );
                                 if let Some(view) = view {
@@ -19039,7 +19040,17 @@ impl Editor {
         let rainbow_config = EditorSettings::get_global(cx).rainbow_highlighting;
         self.display_map.update(cx, |display_map, _| {
             let cache = if rainbow_config.enabled {
-                Some(Arc::new(rainbow::VariableColorCache::new(rainbow_config.mode)))
+                // Only create a new cache if we don't have one, or if the mode changed
+                match display_map.get_variable_color_cache() {
+                    Some(existing) if existing.mode() == rainbow_config.mode => {
+                        // Keep existing cache - don't lose color assignments
+                        Some(existing)
+                    }
+                    _ => {
+                        // Create new cache: either we don't have one, or mode changed
+                        Some(Arc::new(rainbow::VariableColorCache::new(rainbow_config.mode)))
+                    }
+                }
             } else {
                 None
             };

@@ -86,6 +86,14 @@ impl VariableColorCache {
     pub fn clear(&self) {
         self.colors.clear();
     }
+
+    pub fn mode(&self) -> VariableColorMode {
+        self.mode
+    }
+
+    pub fn len(&self) -> usize {
+        self.colors.len()
+    }
 }
 
 // ============================================================================
