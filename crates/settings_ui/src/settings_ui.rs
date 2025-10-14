@@ -734,7 +734,8 @@ fn render_settings_item(
                         .when_some(
                             setting_item
                                 .field
-                                .reset_to_default_fn(&file, &found_in_file, cx),
+                                .reset_to_default_fn(&file, &found_in_file, cx)
+                                .filter(|_| file_set_in.as_ref() == Some(&file)),
                             |this, reset_to_default| {
                                 this.child(
                                     IconButton::new("reset-to-default-btn", IconName::Undo)
