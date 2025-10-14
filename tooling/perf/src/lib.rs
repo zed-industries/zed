@@ -3,5 +3,7 @@
 //!
 //! For usage documentation, see the docs on this crate's binary.
 
+/// The implementation of the this crate is kept in a separate module
+/// so that it is easy to publish this crate as part of GPUI's dependencies
 mod implementation;
 pub use implementation::*;
