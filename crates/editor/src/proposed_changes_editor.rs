@@ -1,11 +1,11 @@
 use crate::{ApplyAllDiffHunks, Editor, EditorEvent, SelectionEffects, SemanticsProvider};
 use buffer_diff::BufferDiff;
-use collections::HashSet;
+use collections::{HashMap, HashSet};
 use futures::{channel::mpsc, future::join_all};
 use gpui::{App, Entity, EventEmitter, Focusable, Render, Subscription, Task};
-use language::{Buffer, BufferEvent, Capability};
+use language::{Buffer, BufferEvent, BufferRow, Capability};
 use multi_buffer::{ExcerptRange, MultiBuffer};
-use project::Project;
+use project::{InvalidationStrategy, Project, lsp_store::CacheInlayHints};
 use smol::stream::StreamExt;
 use std::{any::TypeId, ops::Range, rc::Rc, time::Duration};
 use text::ToOffset;
@@ -434,6 +434,23 @@ impl SemanticsProvider for BranchBufferSemanticsProvider {
     ) -> Option<Task<Option<Vec<project::Hover>>>> {
         let buffer = self.to_base(buffer, &[position], cx)?;
         self.0.hover(&buffer, position, cx)
+    }
+
+    fn inlay_hints(
+        &self,
+        invalidate: InvalidationStrategy,
+        buffer: Entity<Buffer>,
+        ranges: Vec<Range<text::Anchor>>,
+        known_chunks: Option<(clock::Global, HashSet<Range<BufferRow>>)>,
+        cx: &mut App,
+    ) -> Option<HashMap<Range<BufferRow>, Task<anyhow::Result<CacheInlayHints>>>> {
+        let positions = ranges
+            .iter()
+            .flat_map(|range| [range.start, range.end])
+            .collect::<Vec<_>>();
+        let buffer = self.to_base(&buffer, &positions, cx)?;
+        self.0
+            .inlay_hints(invalidate, buffer, ranges, known_chunks, cx)
     }
 
     fn inline_values(

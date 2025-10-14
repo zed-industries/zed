@@ -22493,14 +22493,12 @@ pub trait SemanticsProvider {
 
     fn inlay_hints(
         &self,
-        _invalidate: InvalidationStrategy,
-        _buffer: Entity<Buffer>,
-        _ranges: Vec<Range<text::Anchor>>,
-        _known_chunks: Option<(clock::Global, HashSet<Range<BufferRow>>)>,
-        _cx: &mut App,
-    ) -> Option<HashMap<Range<BufferRow>, Task<Result<CacheInlayHints>>>> {
-        None
-    }
+        invalidate: InvalidationStrategy,
+        buffer: Entity<Buffer>,
+        ranges: Vec<Range<text::Anchor>>,
+        known_chunks: Option<(clock::Global, HashSet<Range<BufferRow>>)>,
+        cx: &mut App,
+    ) -> Option<HashMap<Range<BufferRow>, Task<Result<CacheInlayHints>>>>;
 
     fn supports_inlay_hints(&self, buffer: &Entity<Buffer>, cx: &mut App) -> bool;
 
