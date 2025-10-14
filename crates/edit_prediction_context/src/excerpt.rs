@@ -1,6 +1,6 @@
 use language::{BufferSnapshot, LanguageId};
 use std::ops::Range;
-use text::{Point, ToOffset as _, ToPoint as _};
+use text::{Point, ToOffset, ToPoint as _};
 use tree_sitter::{Node, TreeCursor};
 use util::RangeExt;
 
@@ -353,18 +353,11 @@ impl<'a> ExcerptSelector<'a> {
         let before_bytes =
             (self.options.target_before_cursor_over_total_bytes * bytes_remaining as f32) as usize;
 
-        let start_point = {
-            let offset = self.query_offset.saturating_sub(before_bytes);
-            let point = offset.to_point(self.buffer);
-            Point::new(point.row + 1, 0)
-        };
-        let start_offset = start_point.to_offset(&self.buffer);
-        let end_point = {
-            let offset = start_offset + bytes_remaining;
-            let point = offset.to_point(self.buffer);
-            Point::new(point.row, 0)
-        };
-        let end_offset = end_point.to_offset(&self.buffer);
+        let start_offset =
+            next_line_start(self.query_offset.saturating_sub(before_bytes), &self.buffer)
+                .to_offset(&self.buffer);
+        let end_offset = previous_line_start(start_offset + bytes_remaining, &self.buffer)
+            .to_offset(&self.buffer);
 
         // this could be expanded further since recalculated `signature_size` may be smaller, but
         // skipping that for now for simplicity
@@ -430,6 +423,26 @@ impl<'a> ExcerptSelector<'a> {
             return 0.0;
         };
         bytes_before_cursor as f32 / excerpt.range.len() as f32
+    }
+}
+
+/// Returns the next line start if the offset is not already at the start of a line.
+pub(crate) fn next_line_start(offset: usize, buffer: &text::BufferSnapshot) -> Point {
+    if offset == 0 {
+        Point::new(0, 0)
+    } else {
+        let point = offset.to_point(buffer);
+        Point::new(point.row + 1, 0)
+    }
+}
+
+/// Returns the previous line start if the offset is not already at the start of a line.
+pub(crate) fn previous_line_start(offset: usize, buffer: &text::BufferSnapshot) -> Point {
+    if offset >= buffer.len() {
+        buffer.max_point()
+    } else {
+        let point = offset.to_point(buffer);
+        Point::new(point.row, 0)
     }
 }
 

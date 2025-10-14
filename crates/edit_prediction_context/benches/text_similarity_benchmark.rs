@@ -1,5 +1,5 @@
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use edit_prediction_context::{CodeParts, IdentifierParts};
+use edit_prediction_context::{CodeParts, IdentifierParts, OccurrenceSource};
 use rand::prelude::*;
 use rand::rngs::StdRng;
 use util::RandomCharIter;
@@ -27,7 +27,7 @@ fn text_similarity_benchmark(c: &mut Criterion) {
         group.throughput(Throughput::Bytes(*size as u64));
         group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, &size| {
             let text = generate_random_text(rng.clone(), *size);
-            b.iter(|| CodeParts::within_str(text.as_str()).collect::<Vec<_>>());
+            b.iter(|| CodeParts::occurrences_in_str(text.as_str()).collect::<Vec<_>>());
         });
     }
     group.finish();

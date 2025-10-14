@@ -11,7 +11,7 @@ pub mod text_similarity;
 use collections::HashMap;
 use gpui::{App, AppContext as _, Entity, Task};
 use language::BufferSnapshot;
-use std::{path::Path, sync::Arc};
+use std::{path::Path, sync::Arc, time::Instant};
 use text::{Point, ToOffset as _};
 
 pub use declaration::*;
@@ -152,13 +152,14 @@ impl EditPredictionContext {
             vec![]
         };
 
+        let before = Instant::now();
         let similar_snippets = similar_snippets(
             &excerpt_trigram_occurrences,
-            // todo! is this correct?
-            excerpt.range.end..buffer.len(),
+            excerpt.range.clone(),
             buffer,
             &options.similar_snippets,
         );
+        dbg!(before.elapsed());
 
         // buffer.debug(&excerpt.range, "excerpt");
 

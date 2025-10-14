@@ -1,8 +1,12 @@
 use language::BufferSnapshot;
 use std::{borrow::Cow, ops::Range, sync::Arc};
+use text::ToOffset;
 use util::RangeExt as _;
 
-use crate::{OccurrenceSource, Occurrences, SlidingWindow};
+use crate::{
+    OccurrenceSource, Occurrences, SlidingWindow,
+    excerpt::{next_line_start, previous_line_start},
+};
 
 // TODO:
 //
@@ -20,6 +24,8 @@ use crate::{OccurrenceSource, Occurrences, SlidingWindow};
 // * Tokenizer that includes symbols
 //
 // * Accumulate `Occurrences` for the whole buffer, for BM25/TF-IDF, where the buffer is the corpus.
+//
+// * Configurable ratio of forward scan bytes when limit is reached
 
 #[derive(Clone, Debug)]
 pub struct SimilarSnippet {
@@ -40,6 +46,7 @@ pub struct SimilarSnippetOptions {
     pub max_bytes: usize,
     pub min_bytes_delta_since_last_window: usize,
     pub min_similarity: f32,
+    pub max_scan_bytes: usize,
     pub similarity_metric: SimilarityMetric,
     pub max_result_count: usize,
 }
@@ -50,6 +57,7 @@ impl SimilarSnippetOptions {
         max_bytes: 256,
         min_bytes_delta_since_last_window: 64,
         min_similarity: 0.05,
+        max_scan_bytes: 512 * 1024,
         similarity_metric: SimilarityMetric::OverlapCoefficient,
         max_result_count: 5,
     };
@@ -62,21 +70,74 @@ impl Default for SimilarSnippetOptions {
 }
 
 pub fn similar_snippets<S: OccurrenceSource>(
-    excerpt_trigram_occurrences: &Occurrences<S>,
-    // todo!
-    // backward_range: Option<Range<usize>>,
-    forward_range: Range<usize>,
+    target: &Occurrences<S>,
+    excerpt_range: Range<usize>,
     buffer: &BufferSnapshot,
     options: &SimilarSnippetOptions,
 ) -> Vec<SimilarSnippet> {
-    let mut window = SlidingWindow::with_capacity(excerpt_trigram_occurrences, 16);
-    let mut lines = buffer.text_for_range(forward_range.clone()).lines();
+    let mut backward_range = 0..excerpt_range.start;
+    let mut forward_range = excerpt_range.end..buffer.len();
+    let full_scan_bytes = backward_range.len() + forward_range.len();
+    if full_scan_bytes > options.max_scan_bytes {
+        let backward_start = next_line_start(
+            excerpt_range
+                .start
+                .saturating_sub(options.max_scan_bytes / 2),
+            buffer,
+        )
+        .to_offset(buffer);
+        backward_range = backward_start..excerpt_range.start;
 
+        let remaining_bytes = options.max_scan_bytes - backward_range.len();
+        let forward_end =
+            previous_line_start(excerpt_range.end + remaining_bytes, buffer).to_offset(buffer);
+        forward_range = excerpt_range.end..forward_end;
+    }
+
+    let mut window = SlidingWindow::with_capacity(target, 16);
     let mut top_windows: Vec<TopWindow> = Vec::new();
+    add_similar_snippets_in_range(
+        forward_range,
+        buffer,
+        options,
+        &mut window,
+        &mut top_windows,
+    );
+    window.clear();
+    add_similar_snippets_in_range(
+        backward_range,
+        buffer,
+        options,
+        &mut window,
+        &mut top_windows,
+    );
 
+    top_windows
+        .into_iter()
+        .map(|window| SimilarSnippet {
+            score: window.similarity,
+            range: window.range.clone(),
+            text: buffer
+                .text_for_range(window.range)
+                .collect::<Cow<str>>()
+                .into(),
+        })
+        .collect()
+}
+
+fn add_similar_snippets_in_range<S: OccurrenceSource>(
+    range: Range<usize>,
+    buffer: &BufferSnapshot,
+    options: &SimilarSnippetOptions,
+    window: &mut SlidingWindow<usize, &Occurrences<S>, S>,
+    top_windows: &mut Vec<TopWindow>,
+) {
     let mut bytes = 0;
     let mut bytes_delta_since_last_window = usize::MAX;
-    let mut start_offset = forward_range.start;
+    let mut start_offset = range.start;
+    // TODO: This could be more efficient if there was a way to iterate the chunks within lines. The
+    // chunk bytes can be iterated and provided to occurrences_in_utf8_bytes.
+    let mut lines = buffer.text_for_range(range).lines();
     while let Some(line) = lines.next() {
         let len_with_newline = line.len() + 1;
         bytes += len_with_newline;
@@ -106,27 +167,15 @@ pub fn similar_snippets<S: OccurrenceSource>(
 
             if similarity > options.min_similarity {
                 insert_into_top_windows(
-                    &mut top_windows,
                     similarity,
                     start_offset..start_offset + bytes,
                     options,
+                    top_windows,
                 );
             }
             bytes_delta_since_last_window = 0;
         }
     }
-
-    top_windows
-        .into_iter()
-        .map(|window| SimilarSnippet {
-            score: window.similarity,
-            range: window.range.clone(),
-            text: buffer
-                .text_for_range(window.range)
-                .collect::<Cow<str>>()
-                .into(),
-        })
-        .collect()
 }
 
 struct TopWindow {
@@ -137,10 +186,10 @@ struct TopWindow {
 /// Maintains the sort order of `top_windows`. If it overlaps with an existing window that has a
 /// lower similarity score, that window is removed.
 fn insert_into_top_windows(
-    top_windows: &mut Vec<TopWindow>,
     similarity: f32,
     range: Range<usize>,
     options: &SimilarSnippetOptions,
+    top_windows: &mut Vec<TopWindow>,
 ) {
     if top_windows.len() >= options.max_result_count
         && let Some(min_top_window) = top_windows.last()
