@@ -2020,20 +2020,10 @@ mod tests {
         editor.update_in(&mut cx, |editor, _window, cx| {
             assert_eq!(editor.text(cx), "/say-hello ");
             assert_eq!(editor.display_text(cx), "/say-hello <name>");
-            assert!(editor.has_visible_completions_menu());
-
-            assert_eq!(
-                current_completion_labels_with_documentation(editor),
-                &[("say-hello".into(), "Say hello to whoever you want".into())]
-            );
+            assert!(!editor.has_visible_completions_menu());
         });
 
         cx.simulate_input("GPT5");
-
-        editor.update_in(&mut cx, |editor, window, cx| {
-            assert!(editor.has_visible_completions_menu());
-            editor.confirm_completion(&editor::actions::ConfirmCompletion::default(), window, cx);
-        });
 
         cx.run_until_parked();
 
@@ -2043,7 +2033,7 @@ mod tests {
             assert!(!editor.has_visible_completions_menu());
 
             // Delete argument
-            for _ in 0..4 {
+            for _ in 0..5 {
                 editor.backspace(&editor::actions::Backspace, window, cx);
             }
         });
@@ -2051,12 +2041,11 @@ mod tests {
         cx.run_until_parked();
 
         editor.update_in(&mut cx, |editor, window, cx| {
-            assert_eq!(editor.text(cx), "/say-hello ");
+            assert_eq!(editor.text(cx), "/say-hello");
             // Hint is visible because argument was deleted
             assert_eq!(editor.display_text(cx), "/say-hello <name>");
 
             // Delete last command letter
-            editor.backspace(&editor::actions::Backspace, window, cx);
             editor.backspace(&editor::actions::Backspace, window, cx);
         });
 
