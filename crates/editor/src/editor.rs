@@ -14338,12 +14338,13 @@ impl Editor {
                         };
 
                     let mut maybe_new_selection = None;
+                    let direction = if above { -1 } else { 1 };
+
                     while row != end_row {
-                        if above {
-                            row.0 -= 1;
-                        } else {
-                            row.0 += 1;
-                        }
+                        row = display_map
+                            .start_of_relative_buffer_row(DisplayPoint::new(row, 0), direction)
+                            .row();
+
                         if let Some(new_selection) = self.selections.build_columnar_selection(
                             &display_map,
                             row,
