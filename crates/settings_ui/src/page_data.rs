@@ -1,6 +1,6 @@
 use gpui::App;
 use settings::{LanguageSettingsContent, SettingsContent};
-use std::sync::Arc;
+use std::{sync::Arc, thread::current};
 use ui::{IntoElement, SharedString};
 
 use crate::{
@@ -20,18 +20,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     field: Box::new(SettingField {
                         pick: |settings_content| &settings_content.workspace.confirm_quit,
                         pick_mut: |settings_content| &mut settings_content.workspace.confirm_quit,
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Restore On Startup",
-                    description: "Restore previous session when opening Zed",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| &settings_content.workspace.restore_on_startup,
-                        pick_mut: |settings_content| {
-                            &mut settings_content.workspace.restore_on_startup
-                        },
                     }),
                     metadata: None,
                     files: USER,
@@ -95,6 +83,54 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         pick: |settings_content| &settings_content.editor.redact_private_values,
                         pick_mut: |settings_content| {
                             &mut settings_content.editor.redact_private_values
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Private Files",
+                    description: "Globs to match against file paths to determine if a file is private",
+                    field: Box::new(
+                        SettingField {
+                            pick: |settings_content| {
+                                &settings_content.project.worktree.private_files
+                            },
+                            pick_mut: |settings_content| {
+                                &mut settings_content.project.worktree.private_files
+                            },
+                        }
+                        .unimplemented(),
+                    ),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SectionHeader("Workspace Restoration"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Restore Unsaved Buffers",
+                    description: "Direction to split horizontally",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| match settings_content.session.as_ref() {
+                            Some(session) => &session.restore_unsaved_buffers,
+                            None => &None,
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .session
+                                .get_or_insert_default()
+                                .restore_unsaved_buffers
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Restore On Startup",
+                    description: "Restore previous session when opening Zed",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| &settings_content.workspace.restore_on_startup,
+                        pick_mut: |settings_content| {
+                            &mut settings_content.workspace.restore_on_startup
                         },
                     }),
                     metadata: None,
@@ -255,6 +291,36 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     metadata: None,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
+                    files: USER,
+                    title: "Buffer Font Features",
+                    description: "The OpenType features to enable for rendering in text buffers.",
+                    field: Box::new(
+                        SettingField {
+                            pick: |settings_content| &settings_content.theme.buffer_font_features,
+                            pick_mut: |settings_content| {
+                                &mut settings_content.theme.buffer_font_features
+                            },
+                        }
+                        .unimplemented(),
+                    ),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    files: USER,
+                    title: "Buffer Font Fallbacks",
+                    description: "The font fallbacks to use for rendering in text buffers.",
+                    field: Box::new(
+                        SettingField {
+                            pick: |settings_content| &settings_content.theme.buffer_font_fallbacks,
+                            pick_mut: |settings_content| {
+                                &mut settings_content.theme.buffer_font_fallbacks
+                            },
+                        }
+                        .unimplemented(),
+                    ),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
                     title: "UI Font Family",
                     description: "Font family for UI elements",
                     field: Box::new(SettingField {
@@ -283,6 +349,36 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    files: USER,
+                    title: "UI Font Features",
+                    description: "The OpenType features to enable for rendering in UI elements.",
+                    field: Box::new(
+                        SettingField {
+                            pick: |settings_content| &settings_content.theme.ui_font_features,
+                            pick_mut: |settings_content| {
+                                &mut settings_content.theme.ui_font_features
+                            },
+                        }
+                        .unimplemented(),
+                    ),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    files: USER,
+                    title: "UI Font Fallbacks",
+                    description: "The font fallbacks to use for rendering in the UI.",
+                    field: Box::new(
+                        SettingField {
+                            pick: |settings_content| &settings_content.theme.ui_font_fallbacks,
+                            pick_mut: |settings_content| {
+                                &mut settings_content.theme.ui_font_fallbacks
+                            },
+                        }
+                        .unimplemented(),
+                    ),
+                    metadata: None,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Agent Panel UI Font Size",
@@ -551,16 +647,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                 }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Zoomed Padding",
-                    description: "Show padding for zoomed panels",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| &settings_content.workspace.zoomed_padding,
-                        pick_mut: |settings_content| &mut settings_content.workspace.zoomed_padding,
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
                 SettingsPageItem::SectionHeader("Window"),
                 // todo(settings_ui): Should we filter by platform?
                 SettingsPageItem::SettingItem(SettingItem {
@@ -575,12 +661,114 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     metadata: None,
                     files: USER,
                 }),
+                SettingsPageItem::SectionHeader("Pane Modifiers"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Inactive Opacity",
+                    description: "Opacity of inactive panels (0.0 - 1.0)",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| match settings_content
+                            .workspace
+                            .active_pane_modifiers
+                            .as_ref()
+                        {
+                            Some(modifiers) => &modifiers.inactive_opacity,
+                            None => &None,
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .workspace
+                                .active_pane_modifiers
+                                .get_or_insert_default()
+                                .inactive_opacity
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Border Size",
+                    description: "Size of the border surrounding the active pane",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| match settings_content
+                            .workspace
+                            .active_pane_modifiers
+                            .as_ref()
+                        {
+                            Some(modifiers) => &modifiers.border_size,
+                            None => &None,
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .workspace
+                                .active_pane_modifiers
+                                .get_or_insert_default()
+                                .border_size
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Zoomed Padding",
+                    description: "Show padding for zoomed panes",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| &settings_content.workspace.zoomed_padding,
+                        pick_mut: |settings_content| &mut settings_content.workspace.zoomed_padding,
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SectionHeader("Pane Split Direction"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Vertical Split Direction",
+                    description: "Direction to split vertically",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            &settings_content.workspace.pane_split_direction_vertical
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content.workspace.pane_split_direction_vertical
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Horizontal Split Direction",
+                    description: "Direction to split horizontally",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            &settings_content.workspace.pane_split_direction_horizontal
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content.workspace.pane_split_direction_horizontal
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
             ],
         },
         SettingsPage {
             title: "Editor",
             items: {
                 let mut items = vec![
+                    SettingsPageItem::SectionHeader("Auto Save"),
+                    SettingsPageItem::SettingItem(SettingItem {
+                        title: "Auto Save Mode",
+                        description: "When to Auto Save Buffer Changes",
+                        field: Box::new(
+                            SettingField {
+                                pick: |settings_content| &settings_content.workspace.autosave,
+                                pick_mut: |settings_content| {
+                                    &mut settings_content.workspace.autosave
+                                },
+                            }
+                            .unimplemented(),
+                        ),
+                        metadata: None,
+                        files: USER,
+                    }),
                     SettingsPageItem::SectionHeader("Multibuffer"),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Double Click In Multibuffer",
@@ -615,6 +803,27 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             pick: |settings_content| &settings_content.editor.excerpt_context_lines,
                             pick_mut: |settings_content| {
                                 &mut settings_content.editor.excerpt_context_lines
+                            },
+                        }),
+                        metadata: None,
+                        files: USER,
+                    }),
+                    SettingsPageItem::SettingItem(SettingItem {
+                        title: "Expand Outlines With Depth",
+                        description: "Default depth to expand outline items in the current file",
+                        field: Box::new(SettingField {
+                            pick: |settings_content| {
+                                if let Some(outline_panel) = &settings_content.outline_panel {
+                                    &outline_panel.expand_outlines_with_depth
+                                } else {
+                                    &None
+                                }
+                            },
+                            pick_mut: |settings_content| {
+                                &mut settings_content
+                                    .outline_panel
+                                    .get_or_insert_default()
+                                    .expand_outlines_with_depth
                             },
                         }),
                         metadata: None,
@@ -1409,6 +1618,26 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
             items: {
                 let mut items = vec![];
                 items.extend(non_editor_language_settings_data());
+                items.extend([
+                    SettingsPageItem::SectionHeader("File Types"),
+                    SettingsPageItem::SettingItem(SettingItem {
+                        title: "File Type Associations",
+                        description: "A Mapping from Languages to files and file extensions that should be treated as that language",
+                        field: Box::new(
+                            SettingField {
+                                pick: |settings_content| {
+                                    &settings_content.project.all_languages.file_types
+                                },
+                                pick_mut: |settings_content| {
+                                    &mut settings_content.project.all_languages.file_types
+                                },
+                            }
+                            .unimplemented(),
+                        ),
+                        metadata: None,
+                        files: USER | LOCAL,
+                    }),
+                ]);
                 // todo(settings_ui): Refresh on extension (un)/installed
                 // Note that `crates/json_schema_store` solves the same problem, there is probably a way to unify the two
                 items.push(SettingsPageItem::SectionHeader(LANGUAGES_SECTION_HEADER));
@@ -1522,6 +1751,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     files: USER,
                 }),
                 // todo: null by default
+                // todo! differentiate from Include Ignored above
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Include Ignored in Search",
                     description: "Use gitignored files when searching",
@@ -1692,6 +1922,40 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     files: USER,
                 }),
                 SettingsPageItem::SectionHeader("File Scan"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "File Scan Exclusions",
+                    description: "Files or globs of files that will be excluded by Zed entirely. They will be skipped during file scans, file searches, and not be displayed in the project file tree. Takes precedence over \"File Scan Inclusions\"",
+                    field: Box::new(
+                        SettingField {
+                            pick: |settings_content| {
+                                &settings_content.project.worktree.file_scan_exclusions
+                            },
+                            pick_mut: |settings_content| {
+                                &mut settings_content.project.worktree.file_scan_exclusions
+                            },
+                        }
+                        .unimplemented(),
+                    ),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "File Scan Inclusions",
+                    description: "Files or globs of files that will be included by Zed, even when ignored by git. This is useful for files that are not tracked by git, but are still important to your project. Note that globs that are overly broad can slow down Zed's file scanning. \"File Scan Exclusions\" takes precedence over these inclusions",
+                    field: Box::new(
+                        SettingField {
+                            pick: |settings_content| {
+                                &settings_content.project.worktree.file_scan_exclusions
+                            },
+                            pick_mut: |settings_content| {
+                                &mut settings_content.project.worktree.file_scan_exclusions
+                            },
+                        }
+                        .unimplemented(),
+                    ),
+                    metadata: None,
+                    files: USER,
+                }),
             ],
         },
         SettingsPage {
@@ -2926,6 +3190,114 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .git_panel
                                 .get_or_insert_default()
                                 .default_width
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Git Panel Status Style",
+                    description: "How entry statuses are displayed",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(git_panel) = &settings_content.git_panel {
+                                &git_panel.status_style
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .git_panel
+                                .get_or_insert_default()
+                                .status_style
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Fallback Branch Name",
+                    description: "Default branch name will be when init.defaultBranch is not set in git",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(git_panel) = &settings_content.git_panel {
+                                &git_panel.fallback_branch_name
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .git_panel
+                                .get_or_insert_default()
+                                .fallback_branch_name
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Sort By Path",
+                    // todo! reword this
+                    description: "Enable to sort entries in the panel by path, disable to sort by status",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(git_panel) = &settings_content.git_panel {
+                                &git_panel.sort_by_path
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .git_panel
+                                .get_or_insert_default()
+                                .sort_by_path
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Collapse Untracked Diff",
+                    description: "Whether to collapse untracked files in the diff panel",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(git_panel) = &settings_content.git_panel {
+                                &git_panel.collapse_untracked_diff
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .git_panel
+                                .get_or_insert_default()
+                                .collapse_untracked_diff
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Scroll Bar",
+                    description: "How and when the scrollbar should be displayed",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| match &settings_content.git_panel {
+                            Some(settings::GitPanelSettingsContent {
+                                scrollbar: Some(scrollbar),
+                                ..
+                            }) => &scrollbar.show,
+                            _ => &None,
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .git_panel
+                                .get_or_insert_default()
+                                .scrollbar
+                                .get_or_insert_default()
+                                .show
                         },
                     }),
                     metadata: None,
@@ -4234,6 +4606,18 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     metadata: None,
                     files: USER,
                 }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "LSP Highlight Debounce",
+                    description: "The debounce delay before querying highlights from the language",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| &settings_content.editor.lsp_highlight_debounce,
+                        pick_mut: |settings_content| {
+                            &mut settings_content.editor.lsp_highlight_debounce
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
             ],
         },
         SettingsPage {
@@ -4675,7 +5059,7 @@ fn language_settings_field_mut<T>(
 }
 
 fn language_settings_data() -> Vec<SettingsPageItem> {
-    vec![
+    let mut items = vec![
         SettingsPageItem::SectionHeader("Indentation"),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Tab Size",
@@ -5525,6 +5909,20 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             metadata: None,
             files: USER | LOCAL,
         }),
+    ];
+    if current_language().is_none() {
+        items.push(SettingsPageItem::SettingItem(SettingItem {
+            title: "LSP Document Colors",
+            description: "How to render LSP color previews in the editor",
+            field: Box::new(SettingField {
+                pick: |settings_content| &settings_content.editor.lsp_document_colors,
+                pick_mut: |settings_content| &mut settings_content.editor.lsp_document_colors,
+            }),
+            metadata: None,
+            files: USER,
+        }))
+    }
+    items.extend([
         SettingsPageItem::SectionHeader("Tasks"),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Enabled",
@@ -5643,7 +6041,63 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             metadata: None,
             files: USER | LOCAL,
         }),
-    ]
+    ]);
+
+    if current_language().is_none() {
+        items.extend([
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Image Viewer",
+                description: "The unit for image file sizes",
+                field: Box::new(SettingField {
+                    pick: |settings_content| {
+                        if let Some(image_viewer) = settings_content.image_viewer.as_ref() {
+                            &image_viewer.unit
+                        } else {
+                            &None
+                        }
+                    },
+                    pick_mut: |settings_content| {
+                        &mut settings_content.image_viewer.get_or_insert_default().unit
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Auto Replace Emoji Shortcode",
+                description: "Whether to automatically replace emoji shortcodes with emoji characters",
+                field: Box::new(SettingField {
+                    pick: |settings_content| {
+                        if let Some(message_editor) = settings_content.message_editor.as_ref() {
+                            &message_editor.auto_replace_emoji_shortcode
+                        } else {
+                            &None
+                        }
+                    },
+                    pick_mut: |settings_content| {
+                        &mut settings_content.message_editor.get_or_insert_default().auto_replace_emoji_shortcode
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Drop Size Target",
+                description: "Relative size of the drop target in the editor that will open dropped file as a split pane",
+                field: Box::new(SettingField {
+                    pick: |settings_content| {
+                        &settings_content.workspace.drop_target_size
+                    },
+                    pick_mut: |settings_content| {
+                        &mut settings_content.workspace.drop_target_size
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+        ]);
+    }
+    items
 }
 
 /// LanguageSettings items that should be included in the "Languages & Tools" page

@@ -17,8 +17,9 @@ use project::WorktreeId;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use settings::{
-    BottomDockLayout, CloseWindowWhenNoItems, CodeFade, CursorShape, OnLastWindowClosed,
-    RestoreOnStartupBehavior, SaturatingBool, SettingsContent, SettingsStore,
+    BottomDockLayout, CloseWindowWhenNoItems, CodeFade, CursorShape, GitPanelSettingsContent,
+    ImageFileSizeUnit, OnLastWindowClosed, RestoreOnStartupBehavior, SaturatingBool,
+    SettingsContent, SettingsStore, StatusStyle,
 };
 use std::{
     any::{Any, TypeId, type_name},
@@ -370,11 +371,11 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<bool>(render_toggle_button)
         .add_basic_renderer::<String>(render_text_field)
         .add_basic_renderer::<SaturatingBool>(render_toggle_button)
-        .add_basic_renderer::<CursorShape>(render_dropdown)
-        .add_basic_renderer::<RestoreOnStartupBehavior>(render_dropdown)
-        .add_basic_renderer::<BottomDockLayout>(render_dropdown)
-        .add_basic_renderer::<OnLastWindowClosed>(render_dropdown)
-        .add_basic_renderer::<CloseWindowWhenNoItems>(render_dropdown)
+        .add_basic_renderer::<settings::CursorShape>(render_dropdown)
+        .add_basic_renderer::<settings::RestoreOnStartupBehavior>(render_dropdown)
+        .add_basic_renderer::<settings::BottomDockLayout>(render_dropdown)
+        .add_basic_renderer::<settings::OnLastWindowClosed>(render_dropdown)
+        .add_basic_renderer::<settings::CloseWindowWhenNoItems>(render_dropdown)
         .add_basic_renderer::<settings::FontFamilyName>(render_font_picker)
         // todo(settings_ui): This needs custom ui
         // .add_renderer::<settings::BufferLineHeight>(|settings_field, file, _, window, cx| {
@@ -421,7 +422,7 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<usize>(render_number_field)
         .add_basic_renderer::<NonZero<usize>>(render_number_field)
         .add_basic_renderer::<NonZeroU32>(render_number_field)
-        .add_basic_renderer::<CodeFade>(render_number_field)
+        .add_basic_renderer::<settings::CodeFade>(render_number_field)
         .add_basic_renderer::<FontWeight>(render_number_field)
         .add_basic_renderer::<settings::MinimumContrast>(render_number_field)
         .add_basic_renderer::<settings::ShowScrollbar>(render_dropdown)
@@ -431,7 +432,15 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::MinimapThumb>(render_dropdown)
         .add_basic_renderer::<settings::MinimapThumbBorder>(render_dropdown)
         .add_basic_renderer::<settings::SteppingGranularity>(render_dropdown)
-        .add_basic_renderer::<settings::NotifyWhenAgentWaiting>(render_dropdown);
+        .add_basic_renderer::<settings::NotifyWhenAgentWaiting>(render_dropdown)
+        .add_basic_renderer::<settings::ImageFileSizeUnit>(render_dropdown)
+        .add_basic_renderer::<settings::StatusStyle>(render_dropdown)
+        .add_basic_renderer::<settings::PaneSplitDirectionHorizontal>(render_dropdown)
+        .add_basic_renderer::<settings::PaneSplitDirectionVertical>(render_dropdown)
+        .add_basic_renderer::<settings::PaneSplitDirectionVertical>(render_dropdown)
+        .add_basic_renderer::<settings::DocumentColorsRenderMode>(render_dropdown)
+    // please semicolon stay on next line
+    ;
     // .add_renderer::<ThemeSelection>(|settings_field, file, _, window, cx| {
     //     render_dropdown(*settings_field, file, window, cx)
     // });
