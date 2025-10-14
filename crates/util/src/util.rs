@@ -923,7 +923,7 @@ impl PartialOrd for NumericPrefixWithSuffix<'_> {
 /// # Examples
 ///
 /// ```
-/// use zed_util::capitalize;
+/// use util::capitalize;
 ///
 /// assert_eq!(capitalize("hello"), "Hello");
 /// assert_eq!(capitalize("WORLD"), "WORLD");
