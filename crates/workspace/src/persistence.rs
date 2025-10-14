@@ -1348,7 +1348,7 @@ impl WorkspaceDb {
             }
 
             let has_wsl_path = {
-                #[cfg(target_os = "windows")]
+                #[cfg(windows)]
                 {
                     fn is_wsl_path(path: &PathBuf) -> bool {
                         use std::path::{Component, Prefix};
@@ -1373,7 +1373,7 @@ impl WorkspaceDb {
 
                     paths.paths().iter().any(|path| is_wsl_path(path))
                 }
-                #[cfg(not(target_os = "windows"))]
+                #[cfg(not(windows))]
                 {
                     false
                 }
