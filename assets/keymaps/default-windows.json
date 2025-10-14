@@ -215,7 +215,7 @@
     "context": "ContextEditor > Editor",
     "use_key_equivalents": true,
     "bindings": {
-      "ctrl-enter": "assistant::Assist",
+      "ctrl-i ctrl-enter": "assistant::Assist",
       "ctrl-s": "workspace::Save",
       "ctrl-shift-,": "assistant::InsertIntoEditor",
       "shift-enter": "assistant::Split",
@@ -290,7 +290,7 @@
     "use_key_equivalents": true,
     "bindings": {
       "enter": "agent::Chat",
-      "ctrl-enter": "agent::ChatWithFollow",
+      "ctrl-i ctrl-enter": "agent::ChatWithFollow",
       "ctrl-i": "agent::ToggleProfileSelector",
       "ctrl-shift-r": "agent::OpenAgentDiff",
       "ctrl-shift-y": "agent::KeepAll",
@@ -301,7 +301,7 @@
     "context": "MessageEditor && !Picker > Editor && use_modifier_to_send",
     "use_key_equivalents": true,
     "bindings": {
-      "ctrl-enter": "agent::Chat",
+      "ctrl-i ctrl-enter": "agent::Chat",
       "enter": "editor::Newline",
       "ctrl-i": "agent::ToggleProfileSelector",
       "ctrl-shift-r": "agent::OpenAgentDiff",
@@ -360,7 +360,7 @@
     "context": "AcpThread > Editor && use_modifier_to_send",
     "use_key_equivalents": true,
     "bindings": {
-      "ctrl-enter": "agent::Chat",
+      "ctrl-i ctrl-enter": "agent::Chat",
       "ctrl-shift-r": "agent::OpenAgentDiff",
       "ctrl-shift-y": "agent::KeepAll",
       "ctrl-shift-n": "agent::RejectAll",
@@ -812,7 +812,7 @@
       "ctrl-shift-e": "pane::RevealInProjectPanel",
       "ctrl-f8": "editor::GoToHunk",
       "ctrl-shift-f8": "editor::GoToPreviousHunk",
-      "ctrl-enter": "assistant::InlineAssist",
+      "ctrl-i ctrl-enter": "assistant::InlineAssist",
       "ctrl-shift-;": "editor::ToggleInlayHints"
     }
   },
@@ -1118,7 +1118,7 @@
       "ctrl-shift-c": "terminal::Copy",
       "shift-insert": "terminal::Paste",
       "ctrl-shift-v": "terminal::Paste",
-      "ctrl-enter": "assistant::InlineAssist",
+      "ctrl-i ctrl-enter": "assistant::InlineAssist",
       "alt-b": ["terminal::SendText", "\u001bb"],
       "alt-f": ["terminal::SendText", "\u001bf"],
       "alt-.": ["terminal::SendText", "\u001b."],
