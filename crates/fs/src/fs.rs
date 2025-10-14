@@ -7,6 +7,7 @@ pub mod fs_watcher;
 use anyhow::{Context as _, Result, anyhow};
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use ashpd::desktop::trash;
+use futures::stream::iter;
 use gpui::App;
 use gpui::BackgroundExecutor;
 use gpui::Global;
@@ -742,7 +743,13 @@ impl Fs for RealFs {
         &self,
         path: &Path,
     ) -> Result<Pin<Box<dyn Send + Stream<Item = Result<PathBuf>>>>> {
-        let result = smol::fs::read_dir(path).await?.map(|entry| match entry {
+        let path = path.to_owned();
+        let result = iter(
+            self.executor
+                .spawn(async move { std::fs::read_dir(path) })
+                .await?,
+        )
+        .map(|entry| match entry {
             Ok(entry) => Ok(entry.path()),
             Err(error) => Err(anyhow!("failed to read dir entry {error:?}")),
         });
