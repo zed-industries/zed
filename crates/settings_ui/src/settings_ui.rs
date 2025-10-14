@@ -104,7 +104,14 @@ impl<T: 'static> Copy for SettingField<T> {}
 /// Helper for unimplemented settings, used in combination with `SettingField::unimplemented`
 /// to keep the setting around in the UI with valid pick and pick_mut implementations, but don't actually try to render it.
 /// TODO(settings_ui): In non-dev builds (`#[cfg(not(debug_assertions))]`) make this render as edit-in-json
+#[derive(Clone, Copy)]
 struct UnimplementedSettingField;
+
+impl PartialEq for UnimplementedSettingField {
+    fn eq(&self, _other: &Self) -> bool {
+        true
+    }
+}
 
 impl<T: 'static> SettingField<T> {
     /// Helper for settings with types that are not yet implemented.
@@ -123,9 +130,15 @@ trait AnySettingField {
     fn type_id(&self) -> TypeId;
     // Returns the file this value was set in and true, or File::Default and false to indicate it was not found in any file (missing default)
     fn file_set_in(&self, file: SettingsUiFile, cx: &App) -> (settings::SettingsFile, bool);
+    fn reset_to_default_fn(
+        &self,
+        current_file: &SettingsUiFile,
+        file_set_in: &settings::SettingsFile,
+        cx: &App,
+    ) -> Option<Box<dyn Fn(&mut App)>>;
 }
 
-impl<T> AnySettingField for SettingField<T> {
+impl<T: PartialEq + Clone + Send + Sync + 'static> AnySettingField for SettingField<T> {
     fn as_any(&self) -> &dyn Any {
         self
     }
@@ -143,6 +156,47 @@ impl<T> AnySettingField for SettingField<T> {
             .global::<SettingsStore>()
             .get_value_from_file(file.to_settings(), self.pick);
         return (file, value.is_some());
+    }
+
+    fn reset_to_default_fn(
+        &self,
+        current_file: &SettingsUiFile,
+        file_set_in: &settings::SettingsFile,
+        cx: &App,
+    ) -> Option<Box<dyn Fn(&mut App)>> {
+        if file_set_in == &settings::SettingsFile::Default {
+            return None;
+        }
+        let this = *self;
+        let store = SettingsStore::global(cx);
+        let default_value = (this.pick)(store.raw_default_settings());
+        let is_default = store
+            .get_content_for_file(file_set_in.clone())
+            .map_or(&None, this.pick)
+            == default_value;
+        if is_default {
+            return None;
+        }
+        let current_file = current_file.clone();
+
+        return Some(Box::new(move |cx| {
+            let store = SettingsStore::global(cx);
+            let default_value = (this.pick)(store.raw_default_settings());
+            let is_set_somewhere_other_than_default = store
+                .get_value_up_to_file(current_file.to_settings(), this.pick)
+                .0
+                != settings::SettingsFile::Default;
+            let value_to_set = if is_set_somewhere_other_than_default {
+                default_value.clone()
+            } else {
+                None
+            };
+            update_settings_file(current_file.clone(), cx, move |settings, _| {
+                *(this.pick_mut)(settings) = value_to_set;
+            })
+            // todo(settings_ui): Don't log err
+            .log_err();
+        }));
     }
 }
 
@@ -616,10 +670,14 @@ impl SettingsPageItem {
                 .gap_2()
                 .justify_between()
                 .pt_4()
-                .when(!is_last, |this| {
-                    this.pb_4()
-                        .border_b_1()
-                        .border_color(cx.theme().colors().border_variant)
+                .map(|this| {
+                    if is_last {
+                        this.pb_10()
+                    } else {
+                        this.pb_4()
+                            .border_b_1()
+                            .border_color(cx.theme().colors().border_variant)
+                    }
                 })
                 .child(
                     v_flex()
@@ -676,7 +734,7 @@ fn render_settings_item(
     cx: &mut Context<'_, SettingsWindow>,
 ) -> Stateful<Div> {
     let (found_in_file, _) = setting_item.field.file_set_in(file.clone(), cx);
-    let file_set_in = SettingsUiFile::from_settings(found_in_file);
+    let file_set_in = SettingsUiFile::from_settings(found_in_file.clone());
 
     h_flex()
         .id(setting_item.title)
@@ -692,11 +750,30 @@ fn render_settings_item(
                         .gap_1()
                         .child(Label::new(SharedString::new_static(setting_item.title)))
                         .when_some(
+                            setting_item
+                                .field
+                                .reset_to_default_fn(&file, &found_in_file, cx)
+                                .filter(|_| file_set_in.as_ref() == Some(&file)),
+                            |this, reset_to_default| {
+                                this.child(
+                                    IconButton::new("reset-to-default-btn", IconName::Undo)
+                                        .icon_color(Color::Muted)
+                                        .icon_size(IconSize::Small)
+                                        .tooltip(Tooltip::text("Reset to Default"))
+                                        .on_click({
+                                            move |_, _, cx| {
+                                                reset_to_default(cx);
+                                            }
+                                        }),
+                                )
+                            },
+                        )
+                        .when_some(
                             file_set_in.filter(|file_set_in| file_set_in != &file),
                             |this, file_set_in| {
                                 this.child(
                                     Label::new(format!(
-                                        "— set in {}",
+                                        "—  Modified in {}",
                                         settings_window
                                             .display_name(&file_set_in)
                                             .expect("File name should exist")

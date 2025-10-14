@@ -29,6 +29,7 @@ use tempfile::TempDir;
 use util::{
     paths::{PathStyle, RemotePathBuf},
     rel_path::RelPath,
+    shell::ShellKind,
 };
 
 pub(crate) struct SshRemoteConnection {
@@ -372,12 +373,12 @@ impl SshRemoteConnection {
         .await?;
         drop(askpass);
 
-        let ssh_platform = socket.platform().await?;
+        let ssh_shell = socket.shell().await;
+        let ssh_platform = socket.platform(ShellKind::new(&ssh_shell, false)).await?;
         let ssh_path_style = match ssh_platform.os {
             "windows" => PathStyle::Windows,
             _ => PathStyle::Posix,
         };
-        let ssh_shell = socket.shell().await;
         let ssh_default_system_shell = String::from("/bin/sh");
 
         let mut this = Self {
@@ -788,8 +789,13 @@ impl SshSocket {
         arguments
     }
 
-    async fn platform(&self) -> Result<RemotePlatform> {
-        let uname = self.run_command("uname", &["-sm"]).await?;
+    async fn platform(&self, shell: ShellKind) -> Result<RemotePlatform> {
+        let program = if shell == ShellKind::Nushell {
+            "^uname"
+        } else {
+            "uname"
+        };
+        let uname = self.run_command(program, &["-sm"]).await?;
         let Some((os, arch)) = uname.split_once(" ") else {
             anyhow::bail!("unknown uname: {uname:?}")
         };

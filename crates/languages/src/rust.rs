@@ -40,7 +40,7 @@ impl RustLspAdapter {
 #[cfg(target_os = "linux")]
 impl RustLspAdapter {
     const GITHUB_ASSET_KIND: AssetKind = AssetKind::Gz;
-    const ARCH_SERVER_NAME: &str = "unknown-linux-gnu";
+    const ARCH_SERVER_NAME: &str = "unknown-linux";
 }
 
 #[cfg(target_os = "freebsd")]
@@ -58,6 +58,35 @@ impl RustLspAdapter {
 const SERVER_NAME: LanguageServerName = LanguageServerName::new_static("rust-analyzer");
 
 impl RustLspAdapter {
+    #[cfg(target_os = "linux")]
+    fn build_arch_server_name_linux() -> String {
+        enum LibcType {
+            Gnu,
+            Musl,
+        }
+
+        let has_musl = std::fs::exists(&format!("/lib/ld-musl-{}.so.1", std::env::consts::ARCH))
+            .unwrap_or(false);
+        let has_gnu = std::fs::exists(&format!("/lib/ld-linux-{}.so.1", std::env::consts::ARCH))
+            .unwrap_or(false);
+
+        let libc_type = match (has_musl, has_gnu) {
+            (true, _) => LibcType::Musl,
+            (_, true) => LibcType::Gnu,
+            _ => {
+                // defaulting to gnu because nix doesn't have either of those files due to not following FHS
+                LibcType::Gnu
+            }
+        };
+
+        let libc = match libc_type {
+            LibcType::Musl => "musl",
+            LibcType::Gnu => "gnu",
+        };
+
+        format!("{}-{}", Self::ARCH_SERVER_NAME, libc)
+    }
+
     fn build_asset_name() -> String {
         let extension = match Self::GITHUB_ASSET_KIND {
             AssetKind::TarGz => "tar.gz",
@@ -65,11 +94,16 @@ impl RustLspAdapter {
             AssetKind::Zip => "zip",
         };
 
+        #[cfg(target_os = "linux")]
+        let arch_server_name = Self::build_arch_server_name_linux();
+        #[cfg(not(target_os = "linux"))]
+        let arch_server_name = Self::ARCH_SERVER_NAME.to_string();
+
         format!(
             "{}-{}-{}.{}",
             SERVER_NAME,
             std::env::consts::ARCH,
-            Self::ARCH_SERVER_NAME,
+            &arch_server_name,
             extension
         )
     }
