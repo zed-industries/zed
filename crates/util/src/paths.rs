@@ -558,7 +558,7 @@ impl PathWithPosition {
     /// # Examples
     ///
     /// ```
-    /// # use zed_util::paths::PathWithPosition;
+    /// # use util::paths::PathWithPosition;
     /// # use std::path::PathBuf;
     /// assert_eq!(PathWithPosition::parse_str("test_file"), PathWithPosition {
     ///     path: PathBuf::from("test_file"),
@@ -589,7 +589,7 @@ impl PathWithPosition {
     ///
     /// # Expected parsing results when encounter ill-formatted inputs.
     /// ```
-    /// # use zed_util::paths::PathWithPosition;
+    /// # use util::paths::PathWithPosition;
     /// # use std::path::PathBuf;
     /// assert_eq!(PathWithPosition::parse_str("test_file.rs:a"), PathWithPosition {
     ///     path: PathBuf::from("test_file.rs:a"),

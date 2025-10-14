@@ -1,7 +1,7 @@
 [package]
-name = "zed-perf"
+name = "perf"
 version = "0.1.0"
-publish = true
+publish = false
 edition.workspace = true
 license = "Apache-2.0"
 description = "A tool for measuring Zed test performance, with too many Clippy lints"

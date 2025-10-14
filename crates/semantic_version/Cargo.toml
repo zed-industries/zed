@@ -1,8 +1,8 @@
 [package]
-name = "zed-semantic-version"
+name = "semantic_version"
 version = "0.1.0"
 edition.workspace = true
-publish = true
+publish = false
 license = "Apache-2.0"
 description = "A library for working with semantic versioning in gpui and Zed"
 

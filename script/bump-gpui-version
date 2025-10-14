@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+
+# Parse arguments
+bump_type=${1:-minor}
+
+if [[ "$bump_type" != "minor" && "$bump_type" != "patch" ]]; then
+  echo "Usage: $0 [minor|patch]"
+  echo "  minor (default): bumps the minor version (e.g., 0.1.0 -> 0.2.0)"
+  echo "  patch: bumps the patch version (e.g., 0.1.0 -> 0.1.1)"
+  exit 1
+fi
+
+# Ensure we're in a clean state on an up-to-date `main` branch.
+if [[ -n $(git status --short --untracked-files=no) ]]; then
+  echo "can't bump versions with uncommitted changes"
+  exit 1
+fi
+if [[ $(git rev-parse --abbrev-ref HEAD) != "main" ]]; then
+  echo "this command must be run on main"
+  exit 1
+fi
+git pull -q --ff-only origin main
+
+
+# Parse the current version
+version=$(script/get-crate-version gpui)
+major=$(echo $version | cut -d. -f1)
+minor=$(echo $version | cut -d. -f2)
+patch=$(echo $version | cut -d. -f3)
+
+if [[ "$bump_type" == "minor" ]]; then
+  next_minor=$(expr $minor + 1)
+  next_version="${major}.${next_minor}.0"
+else
+  next_patch=$(expr $patch + 1)
+  next_version="${major}.${minor}.${next_patch}"
+fi
+
+branch_name="bump-gpui-to-v${next_version}"
+
+git checkout -b ${branch_name}
+
+script/lib/bump-version.sh gpui gpui-v "" $bump_type true
+
+git checkout -q main
