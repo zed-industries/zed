@@ -28,7 +28,9 @@ use std::{
     ops::Range,
     rc::Rc,
     sync::{Arc, LazyLock, RwLock},
+    thread::current,
 };
+use strum::IntoDiscriminant;
 use title_bar::platform_title_bar::PlatformTitleBar;
 use ui::{
     ContextMenu, Divider, DividerColor, DropdownMenu, DropdownStyle, IconButtonShape, KeyBinding,
@@ -165,6 +167,9 @@ impl<T: PartialEq + Clone + Send + Sync + 'static> AnySettingField for SettingFi
         cx: &App,
     ) -> Option<Box<dyn Fn(&mut App)>> {
         if file_set_in == &settings::SettingsFile::Default {
+            return None;
+        }
+        if file_set_in != &current_file.to_settings() {
             return None;
         }
         let this = *self;
@@ -369,12 +374,12 @@ fn init_renderers(cx: &mut App) {
         })
         .add_basic_renderer::<bool>(render_toggle_button)
         .add_basic_renderer::<String>(render_text_field)
-        .add_basic_renderer::<SaturatingBool>(render_toggle_button)
-        .add_basic_renderer::<CursorShape>(render_dropdown)
-        .add_basic_renderer::<RestoreOnStartupBehavior>(render_dropdown)
-        .add_basic_renderer::<BottomDockLayout>(render_dropdown)
-        .add_basic_renderer::<OnLastWindowClosed>(render_dropdown)
-        .add_basic_renderer::<CloseWindowWhenNoItems>(render_dropdown)
+        .add_basic_renderer::<settings::SaturatingBool>(render_toggle_button)
+        .add_basic_renderer::<settings::CursorShape>(render_dropdown)
+        .add_basic_renderer::<settings::RestoreOnStartupBehavior>(render_dropdown)
+        .add_basic_renderer::<settings::BottomDockLayout>(render_dropdown)
+        .add_basic_renderer::<settings::OnLastWindowClosed>(render_dropdown)
+        .add_basic_renderer::<settings::CloseWindowWhenNoItems>(render_dropdown)
         .add_basic_renderer::<settings::FontFamilyName>(render_font_picker)
         // todo(settings_ui): This needs custom ui
         // .add_renderer::<settings::BufferLineHeight>(|settings_field, file, _, window, cx| {
@@ -421,8 +426,8 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<usize>(render_number_field)
         .add_basic_renderer::<NonZero<usize>>(render_number_field)
         .add_basic_renderer::<NonZeroU32>(render_number_field)
-        .add_basic_renderer::<CodeFade>(render_number_field)
-        .add_basic_renderer::<FontWeight>(render_number_field)
+        .add_basic_renderer::<settings::CodeFade>(render_number_field)
+        .add_basic_renderer::<gpui::FontWeight>(render_number_field)
         .add_basic_renderer::<settings::MinimumContrast>(render_number_field)
         .add_basic_renderer::<settings::ShowScrollbar>(render_dropdown)
         .add_basic_renderer::<settings::ScrollbarDiagnostics>(render_dropdown)
@@ -431,10 +436,31 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::MinimapThumb>(render_dropdown)
         .add_basic_renderer::<settings::MinimapThumbBorder>(render_dropdown)
         .add_basic_renderer::<settings::SteppingGranularity>(render_dropdown)
-        .add_basic_renderer::<settings::NotifyWhenAgentWaiting>(render_dropdown);
-    // .add_renderer::<ThemeSelection>(|settings_field, file, _, window, cx| {
-    //     render_dropdown(*settings_field, file, window, cx)
-    // });
+        .add_basic_renderer::<settings::NotifyWhenAgentWaiting>(render_dropdown)
+        .add_renderer::<settings::ThemeSelection>(
+            |settings_window, settings_item, settings_field, file, metadata, window, cx| {
+                // <settings::ThemeSelection as strum::IntoDiscriminant>::Discriminant
+                let store = SettingsStore::global(cx);
+                // let pick_discriminant = |content: &SettingsContent| -> &Option<usize> {
+                //     match content.theme.theme.as_ref() {
+                //         Some(theme) => &Some(theme.discriminant() as usize),
+                //         None => &None,
+                //     }
+                // };
+                let discriminant_field = store
+                    .get_value_from_file(file.to_settings(), settings_field.pick)
+                    .1
+                    .map_or(
+                        settings::ThemeSelection::Static(settings::ThemeName(
+                            cx.theme().name.clone().into(),
+                        ))
+                        .discriminant(),
+                        strum::IntoDiscriminant::discriminant,
+                    );
+                // render_dropdown(*settings_field, file, window, cx)
+                div().id("foo")
+            },
+        );
 }
 
 pub fn open_settings_editor(
@@ -567,6 +593,7 @@ enum SettingsPageItem {
     SectionHeader(&'static str),
     SettingItem(SettingItem),
     SubPageLink(SubPageLink),
+    DynamicItem(DynamicItem),
 }
 
 impl std::fmt::Debug for SettingsPageItem {
@@ -578,6 +605,9 @@ impl std::fmt::Debug for SettingsPageItem {
             }
             SettingsPageItem::SubPageLink(sub_page_link) => {
                 write!(f, "SubPageLink({})", sub_page_link.title)
+            }
+            SettingsPageItem::DynamicItem(dynamic_item) => {
+                write!(f, "DynamicItem({})", dynamic_item.discriminant.title)
             }
         }
     }
@@ -593,19 +623,17 @@ impl SettingsPageItem {
         cx: &mut Context<SettingsWindow>,
     ) -> AnyElement {
         let file = settings_window.current_file.clone();
-        match self {
-            SettingsPageItem::SectionHeader(header) => v_flex()
-                .w_full()
-                .gap_1p5()
-                .child(
-                    Label::new(SharedString::new_static(header))
-                        .size(LabelSize::Small)
-                        .color(Color::Muted)
-                        .buffer_font(cx),
-                )
-                .child(Divider::horizontal().color(DividerColor::BorderFaded))
-                .into_any_element(),
-            SettingsPageItem::SettingItem(setting_item) => {
+        let border_variant = cx.theme().colors().border_variant;
+        let apply_padding = |element: Stateful<Div>| -> Stateful<Div> {
+            let element = element.pt_4();
+            if is_last {
+                element.pb_10()
+            } else {
+                element.pb_4().border_b_1().border_color(border_variant)
+            }
+        };
+        let mut render_setting_item_inner =
+            |setting_item: &SettingItem, cx: &mut Context<SettingsWindow>| {
                 let renderer = cx.default_global::<SettingFieldRenderer>().clone();
                 let (_, found) = setting_item.field.file_set_in(file.clone(), cx);
 
@@ -625,7 +653,7 @@ impl SettingsPageItem {
                     Ok(field_renderer) => field_renderer(
                         settings_window,
                         setting_item,
-                        file,
+                        file.clone(),
                         setting_item.metadata.as_deref(),
                         window,
                         cx,
@@ -633,7 +661,7 @@ impl SettingsPageItem {
                     Err(warning) => render_settings_item(
                         settings_window,
                         setting_item,
-                        file,
+                        file.clone(),
                         Button::new("error-warning", warning)
                             .style(ButtonStyle::Outlined)
                             .size(ButtonSize::Medium)
@@ -648,17 +676,23 @@ impl SettingsPageItem {
                     ),
                 };
 
-                field
-                    .pt_4()
-                    .map(|this| {
-                        if is_last {
-                            this.pb_10()
-                        } else {
-                            this.pb_4()
-                                .border_b_1()
-                                .border_color(cx.theme().colors().border_variant)
-                        }
-                    })
+                (field.map(apply_padding), field_renderer_or_warning.is_ok())
+            };
+        match self {
+            SettingsPageItem::SectionHeader(header) => v_flex()
+                .w_full()
+                .gap_1p5()
+                .child(
+                    Label::new(SharedString::new_static(header))
+                        .size(LabelSize::Small)
+                        .color(Color::Muted)
+                        .buffer_font(cx),
+                )
+                .child(Divider::horizontal().color(DividerColor::BorderFaded))
+                .into_any_element(),
+            SettingsPageItem::SettingItem(setting_item) => {
+                render_setting_item_inner(setting_item, cx)
+                    .0
                     .into_any_element()
             }
             SettingsPageItem::SubPageLink(sub_page_link) => h_flex()
@@ -667,16 +701,7 @@ impl SettingsPageItem {
                 .min_w_0()
                 .gap_2()
                 .justify_between()
-                .pt_4()
-                .map(|this| {
-                    if is_last {
-                        this.pb_10()
-                    } else {
-                        this.pb_4()
-                            .border_b_1()
-                            .border_color(cx.theme().colors().border_variant)
-                    }
-                })
+                .map(apply_padding)
                 .child(
                     v_flex()
                         .w_full()
@@ -703,6 +728,32 @@ impl SettingsPageItem {
                     }),
                 )
                 .into_any_element(),
+            SettingsPageItem::DynamicItem(DynamicItem {
+                discriminant: discriminant_setting_item,
+                pick_discriminant,
+                fields,
+            }) => {
+                let file = file.to_settings();
+                let discriminant = SettingsStore::global(cx)
+                    .get_value_from_file_owned(file, *pick_discriminant)
+                    .1;
+                let (discriminant_element, rendered_ok) =
+                    render_setting_item_inner(discriminant_setting_item, cx);
+                let mut content = v_flex()
+                    .gap_2()
+                    .id("dynamic-item")
+                    .child(discriminant_element);
+                if rendered_ok {
+                    let discriminant =
+                        discriminant.expect("This should be Some if rendered_ok is true");
+                    let sub_fields = &fields[discriminant];
+                    for field in sub_fields {
+                        content = content.child(render_setting_item_inner(field, cx).0.pl_6());
+                    }
+                }
+
+                return content.into_any_element();
+            }
         }
     }
 }
@@ -734,8 +785,7 @@ fn render_settings_item(
                         .when_some(
                             setting_item
                                 .field
-                                .reset_to_default_fn(&file, &found_in_file, cx)
-                                .filter(|_| file_set_in.as_ref() == Some(&file)),
+                                .reset_to_default_fn(&file, &found_in_file, cx),
                             |this, reset_to_default| {
                                 this.child(
                                     IconButton::new("reset-to-default-btn", IconName::Undo)
@@ -781,6 +831,13 @@ struct SettingItem {
     field: Box<dyn AnySettingField>,
     metadata: Option<Box<SettingsFieldMetadata>>,
     files: FileMask,
+}
+
+#[derive(PartialEq)]
+struct DynamicItem {
+    discriminant: SettingItem,
+    pick_discriminant: fn(&SettingsContent) -> Option<usize>,
+    fields: Vec<Vec<SettingItem>>,
 }
 
 #[derive(PartialEq, Eq, Clone, Copy)]
@@ -1144,7 +1201,11 @@ impl SettingsWindow {
                         any_found_since_last_header = false;
                     }
                     SettingsPageItem::SettingItem(SettingItem { files, .. })
-                    | SettingsPageItem::SubPageLink(SubPageLink { files, .. }) => {
+                    | SettingsPageItem::SubPageLink(SubPageLink { files, .. })
+                    | SettingsPageItem::DynamicItem(DynamicItem {
+                        discriminant: SettingItem { files, .. },
+                        ..
+                    }) => {
                         if !files.contains(current_file) {
                             page_filter[index] = false;
                         } else {
@@ -1313,7 +1374,10 @@ impl SettingsWindow {
             for (item_index, item) in page.items.iter().enumerate() {
                 let key_index = key_lut.len();
                 match item {
-                    SettingsPageItem::SettingItem(item) => {
+                    SettingsPageItem::DynamicItem(DynamicItem {
+                        discriminant: item, ..
+                    })
+                    | SettingsPageItem::SettingItem(item) => {
                         documents.push(bm25::Document {
                             id: key_index,
                             contents: [page.title, header_str, item.title, item.description]

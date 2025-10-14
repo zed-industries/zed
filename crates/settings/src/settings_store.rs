@@ -594,6 +594,46 @@ impl SettingsStore {
 
         (SettingsFile::Default, None)
     }
+
+    // todo! can this be combined with get_value_from_file_inner?
+    pub fn get_value_from_file_owned<T>(
+        &self,
+        target_file: SettingsFile,
+        pick: fn(&SettingsContent) -> Option<T>,
+    ) -> (SettingsFile, Option<T>) {
+        // todo(settings_ui): Add a metadata field for overriding the "overrides" tag, for contextually different settings
+        //  e.g. disable AI isn't overridden, or a vec that gets extended instead or some such
+
+        // todo(settings_ui) cache all files
+        let all_files = self.get_all_files();
+        let mut found_file = false;
+
+        for file in all_files.into_iter() {
+            if !found_file && file != SettingsFile::Default {
+                if file != target_file {
+                    continue;
+                }
+                found_file = true;
+            }
+
+            if let SettingsFile::Project((worktree_id, ref path)) = file
+                && let SettingsFile::Project((target_worktree_id, ref target_path)) = target_file
+                && (worktree_id != target_worktree_id || !target_path.starts_with(&path))
+            {
+                // if requesting value from a local file, don't return values from local files in different worktrees
+                continue;
+            }
+
+            let Some(content) = self.get_content_for_file(file.clone()) else {
+                continue;
+            };
+            if let Some(value) = pick(content) {
+                return (file, Some(value));
+            }
+        }
+
+        (SettingsFile::Default, None)
+    }
 }
 
 impl SettingsStore {

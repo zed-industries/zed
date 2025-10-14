@@ -1,11 +1,12 @@
 use gpui::App;
 use settings::{LanguageSettingsContent, SettingsContent};
 use std::sync::Arc;
+use strum::IntoDiscriminant as _;
 use ui::{IntoElement, SharedString};
 
 use crate::{
-    LOCAL, SettingField, SettingItem, SettingsFieldMetadata, SettingsPage, SettingsPageItem,
-    SubPageLink, USER, all_language_names, sub_page_stack,
+    DynamicItem, LOCAL, SettingField, SettingItem, SettingsFieldMetadata, SettingsPage,
+    SettingsPageItem, SubPageLink, USER, all_language_names, sub_page_stack,
 };
 
 pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
@@ -177,405 +178,441 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
         SettingsPage {
             title: "Appearance & Behavior",
             items: vec![
-                SettingsPageItem::SectionHeader("Theme"),
-                // todo(settings_ui): Figure out how we want to add these
-                SettingsPageItem::SettingItem(SettingItem {
-                    files: USER,
-                    title: "Theme Mode",
-                    description: "How to select the theme",
-                    field: Box::new(
-                        SettingField {
-                            pick: |settings_content| &settings_content.theme.theme,
-                            pick_mut: |settings_content| &mut settings_content.theme.theme,
-                        }
-                        .unimplemented(),
-                    ),
-                    metadata: None,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    files: USER,
-                    title: "Icon Theme",
-                    // todo(settings_ui)
-                    // This description is misleading because the icon theme is used in more places than the file explorer)
-                    description: "Choose the icon theme for file explorer",
-                    field: Box::new(
-                        SettingField {
-                            pick: |settings_content| &settings_content.theme.icon_theme,
-                            pick_mut: |settings_content| &mut settings_content.theme.icon_theme,
-                        }
-                        .unimplemented(),
-                    ),
-                    metadata: None,
-                }),
-                SettingsPageItem::SectionHeader("Fonts"),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Buffer Font Family",
-                    description: "Font family for editor text",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| &settings_content.theme.buffer_font_family,
-                        pick_mut: |settings_content| &mut settings_content.theme.buffer_font_family,
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Buffer Font Size",
-                    description: "Font size for editor text",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| &settings_content.theme.buffer_font_size,
-                        pick_mut: |settings_content| &mut settings_content.theme.buffer_font_size,
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Buffer Font Weight",
-                    description: "Font weight for editor text (100-900)",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| &settings_content.theme.buffer_font_weight,
-                        pick_mut: |settings_content| &mut settings_content.theme.buffer_font_weight,
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                // todo(settings_ui): This needs custom ui
-                SettingsPageItem::SettingItem(SettingItem {
-                    files: USER,
-                    title: "Buffer Line Height",
-                    description: "Line height for editor text",
-                    field: Box::new(
-                        SettingField {
-                            pick: |settings_content| &settings_content.theme.buffer_line_height,
-                            pick_mut: |settings_content| {
-                                &mut settings_content.theme.buffer_line_height
-                            },
-                        }
-                        .unimplemented(),
-                    ),
-                    metadata: None,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "UI Font Family",
-                    description: "Font family for UI elements",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| &settings_content.theme.ui_font_family,
-                        pick_mut: |settings_content| &mut settings_content.theme.ui_font_family,
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "UI Font Size",
-                    description: "Font size for UI elements",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| &settings_content.theme.ui_font_size,
-                        pick_mut: |settings_content| &mut settings_content.theme.ui_font_size,
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "UI Font Weight",
-                    description: "Font weight for UI elements (100-900)",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| &settings_content.theme.ui_font_weight,
-                        pick_mut: |settings_content| &mut settings_content.theme.ui_font_weight,
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Agent Panel UI Font Size",
-                    description: "Font size for agent response text in the agent panel. Falls back to the regular UI font size.",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if settings_content.theme.agent_ui_font_size.is_some() {
-                                &settings_content.theme.agent_ui_font_size
-                            } else {
-                                &settings_content.theme.ui_font_size
-                            }
-                        },
-                        pick_mut: |settings_content| &mut settings_content.theme.agent_ui_font_size,
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Agent Panel Buffer Font Size",
-                    description: "Font size for user messages text in the agent panel",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| &settings_content.theme.agent_buffer_font_size,
-                        pick_mut: |settings_content| {
-                            &mut settings_content.theme.agent_buffer_font_size
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SectionHeader("Keymap"),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Base Keymap",
-                    description: "The name of a base set of key bindings to use",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| &settings_content.base_keymap,
-                        pick_mut: |settings_content| &mut settings_content.base_keymap,
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                // todo(settings_ui): Vim/Helix Mode should be apart of one type because it's undefined
-                // behavior to have them both enabled at the same time
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Vim Mode",
-                    description: "Enable vim modes and key bindings",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| &settings_content.vim_mode,
-                        pick_mut: |settings_content| &mut settings_content.vim_mode,
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Helix Mode",
-                    description: "Enable helix modes and key bindings",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| &settings_content.helix_mode,
-                        pick_mut: |settings_content| &mut settings_content.helix_mode,
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Multi Cursor Modifier",
-                    description: "Modifier key for adding multiple cursors",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| &settings_content.editor.multi_cursor_modifier,
-                        pick_mut: |settings_content| {
-                            &mut settings_content.editor.multi_cursor_modifier
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SectionHeader("Cursor"),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Cursor Blink",
-                    description: "Whether the cursor blinks in the editor",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| &settings_content.editor.cursor_blink,
-                        pick_mut: |settings_content| &mut settings_content.editor.cursor_blink,
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Cursor Shape",
-                    description: "Cursor shape for the editor",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| &settings_content.editor.cursor_shape,
-                        pick_mut: |settings_content| &mut settings_content.editor.cursor_shape,
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Hide Mouse",
-                    description: "When to hide the mouse cursor",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| &settings_content.editor.hide_mouse,
-                        pick_mut: |settings_content| &mut settings_content.editor.hide_mouse,
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SectionHeader("Highlighting"),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Unnecessary Code Fade",
-                    description: "How much to fade out unused code (0.0 - 0.9)",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| &settings_content.theme.unnecessary_code_fade,
-                        pick_mut: |settings_content| {
-                            &mut settings_content.theme.unnecessary_code_fade
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Current Line Highlight",
-                    description: "How to highlight the current line",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| &settings_content.editor.current_line_highlight,
-                        pick_mut: |settings_content| {
-                            &mut settings_content.editor.current_line_highlight
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Selection Highlight",
-                    description: "Highlight all occurrences of selected text",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| &settings_content.editor.selection_highlight,
-                        pick_mut: |settings_content| {
-                            &mut settings_content.editor.selection_highlight
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Rounded Selection",
-                    description: "Whether the text selection should have rounded corners",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| &settings_content.editor.rounded_selection,
-                        pick_mut: |settings_content| &mut settings_content.editor.rounded_selection,
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Minimum Contrast For Highlights",
-                    description: "The minimum APCA perceptual contrast to maintain when rendering text over highlight backgrounds",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            &settings_content.editor.minimum_contrast_for_highlights
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content.editor.minimum_contrast_for_highlights
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SectionHeader("Guides"),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Show Wrap Guides",
-                    description: "Show wrap guides (vertical rulers)",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            &settings_content
-                                .project
-                                .all_languages
-                                .defaults
-                                .show_wrap_guides
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .project
-                                .all_languages
-                                .defaults
-                                .show_wrap_guides
-                        },
-                    }),
-                    metadata: None,
-                    files: USER | LOCAL,
-                }),
-                // todo(settings_ui): This needs a custom component
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Wrap Guides",
-                    description: "Character counts at which to show wrap guides",
-                    field: Box::new(
-                        SettingField {
-                            pick: |settings_content| {
-                                &settings_content.project.all_languages.defaults.wrap_guides
-                            },
-                            pick_mut: |settings_content| {
-                                &mut settings_content.project.all_languages.defaults.wrap_guides
-                            },
-                        }
-                        .unimplemented(),
-                    ),
-                    metadata: None,
-                    files: USER | LOCAL,
-                }),
-                SettingsPageItem::SectionHeader("Layout"),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Bottom Dock Layout",
-                    description: "Layout mode for the bottom dock",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| &settings_content.workspace.bottom_dock_layout,
-                        pick_mut: |settings_content| {
-                            &mut settings_content.workspace.bottom_dock_layout
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    files: USER,
-                    title: "Centered Layout Left Padding",
-                    description: "Left padding for centered layout",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(centered_layout) =
-                                &settings_content.workspace.centered_layout
-                            {
-                                &centered_layout.left_padding
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .workspace
-                                .centered_layout
-                                .get_or_insert_default()
-                                .left_padding
-                        },
-                    }),
-                    metadata: None,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    files: USER,
-                    title: "Centered Layout Right Padding",
-                    description: "Right padding for centered layout",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(centered_layout) =
-                                &settings_content.workspace.centered_layout
-                            {
-                                &centered_layout.right_padding
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .workspace
-                                .centered_layout
-                                .get_or_insert_default()
-                                .right_padding
-                        },
-                    }),
-                    metadata: None,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Zoomed Padding",
-                    description: "Show padding for zoomed panels",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| &settings_content.workspace.zoomed_padding,
-                        pick_mut: |settings_content| &mut settings_content.workspace.zoomed_padding,
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SectionHeader("Window"),
-                // todo(settings_ui): Should we filter by platform?
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Use System Window Tabs",
-                    description: "(macOS only) Whether to allow windows to tab together",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| &settings_content.workspace.use_system_window_tabs,
-                        pick_mut: |settings_content| {
-                            &mut settings_content.workspace.use_system_window_tabs
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-            ],
+                            SettingsPageItem::SectionHeader("Theme"),
+                            // todo(settings_ui): Figure out how we want to add these
+                            SettingsPageItem::DynamicItem(DynamicItem {
+                                discriminant: SettingItem {
+                                    files: USER,
+                                    title: "Theme Mode",
+                                    description: "How to select the theme",
+                                    field: Box::new(SettingField {
+                                        pick: |settings_content| {
+                                            &settings_content
+                                                .theme
+                                                .theme
+                                                .map(|theme| theme.discriminant())
+                                        },
+                                        pick_mut: |settings_content| todo!(),
+                                    }),
+                                    metadata: None,
+                                },
+                                pick_discriminant: |settings_content| {
+                                    settings_content.theme.theme.map(|theme| theme.discriminant() as usize)
+                                },
+                                fields: <<settings::ThemeSelection as strum::IntoDiscriminant>::Discriminant as strum::VariantArray>::VARIANTS.into_iter().map(|variant| {
+                                    match variant {
+                                        settings::ThemeSelectionDiscriminants::Static => vec![
+                                            SettingItem {
+                                                    files: USER,
+                                                    title: "Theme",
+                                                    description: "Active Theme",
+                                                    field: Box::new(SettingField {
+                                                        pick: |settings_content| {
+                                                            match settings_content .theme .theme {
+                                                                    Some(settings::ThemeSelection::Static(name)) => &Some(name),
+                                                                    _ => unreachable!("inactive field")
+                                                                }
+                                                        },
+                                                        pick_mut: |settings_content| {
+                                                            match settings_content
+                                                                .theme
+                                                                .theme.as_mut() {
+                                                                    Some(settings::ThemeSelection::Static(name)) => &mut Some(name),
+                                                                    _ => unreachable!("inactive field")
+                                                                }
+                                                        },
+                                                    }),
+                                                    metadata: None,
+                                                }
+                                                ],
+                                        settings::ThemeSelectionDiscriminants::Dynamic => todo!(),
+                                    }
+                                }).collect(),
+                            }),
+                            SettingsPageItem::SettingItem(SettingItem {
+                                files: USER,
+                                title: "Icon Theme",
+                                // todo(settings_ui)
+                                // This description is misleading because the icon theme is used in more places than the file explorer)
+                                description: "Choose the icon theme for file explorer",
+                                field: Box::new(
+                                    SettingField {
+                                        pick: |settings_content| &settings_content.theme.icon_theme,
+                                        pick_mut: |settings_content| &mut settings_content.theme.icon_theme,
+                                    }
+                                    .unimplemented(),
+                                ),
+                                metadata: None,
+                            }),
+                            SettingsPageItem::SectionHeader("Fonts"),
+                            SettingsPageItem::SettingItem(SettingItem {
+                                title: "Buffer Font Family",
+                                description: "Font family for editor text",
+                                field: Box::new(SettingField {
+                                    pick: |settings_content| &settings_content.theme.buffer_font_family,
+                                    pick_mut: |settings_content| &mut settings_content.theme.buffer_font_family,
+                                }),
+                                metadata: None,
+                                files: USER,
+                            }),
+                            SettingsPageItem::SettingItem(SettingItem {
+                                title: "Buffer Font Size",
+                                description: "Font size for editor text",
+                                field: Box::new(SettingField {
+                                    pick: |settings_content| &settings_content.theme.buffer_font_size,
+                                    pick_mut: |settings_content| &mut settings_content.theme.buffer_font_size,
+                                }),
+                                metadata: None,
+                                files: USER,
+                            }),
+                            SettingsPageItem::SettingItem(SettingItem {
+                                title: "Buffer Font Weight",
+                                description: "Font weight for editor text (100-900)",
+                                field: Box::new(SettingField {
+                                    pick: |settings_content| &settings_content.theme.buffer_font_weight,
+                                    pick_mut: |settings_content| &mut settings_content.theme.buffer_font_weight,
+                                }),
+                                metadata: None,
+                                files: USER,
+                            }),
+                            // todo(settings_ui): This needs custom ui
+                            SettingsPageItem::SettingItem(SettingItem {
+                                files: USER,
+                                title: "Buffer Line Height",
+                                description: "Line height for editor text",
+                                field: Box::new(
+                                    SettingField {
+                                        pick: |settings_content| &settings_content.theme.buffer_line_height,
+                                        pick_mut: |settings_content| {
+                                            &mut settings_content.theme.buffer_line_height
+                                        },
+                                    }
+                                    .unimplemented(),
+                                ),
+                                metadata: None,
+                            }),
+                            SettingsPageItem::SettingItem(SettingItem {
+                                title: "UI Font Family",
+                                description: "Font family for UI elements",
+                                field: Box::new(SettingField {
+                                    pick: |settings_content| &settings_content.theme.ui_font_family,
+                                    pick_mut: |settings_content| &mut settings_content.theme.ui_font_family,
+                                }),
+                                metadata: None,
+                                files: USER,
+                            }),
+                            SettingsPageItem::SettingItem(SettingItem {
+                                title: "UI Font Size",
+                                description: "Font size for UI elements",
+                                field: Box::new(SettingField {
+                                    pick: |settings_content| &settings_content.theme.ui_font_size,
+                                    pick_mut: |settings_content| &mut settings_content.theme.ui_font_size,
+                                }),
+                                metadata: None,
+                                files: USER,
+                            }),
+                            SettingsPageItem::SettingItem(SettingItem {
+                                title: "UI Font Weight",
+                                description: "Font weight for UI elements (100-900)",
+                                field: Box::new(SettingField {
+                                    pick: |settings_content| &settings_content.theme.ui_font_weight,
+                                    pick_mut: |settings_content| &mut settings_content.theme.ui_font_weight,
+                                }),
+                                metadata: None,
+                                files: USER,
+                            }),
+                            SettingsPageItem::SettingItem(SettingItem {
+                                title: "Agent Panel UI Font Size",
+                                description: "Font size for agent response text in the agent panel. Falls back to the regular UI font size.",
+                                field: Box::new(SettingField {
+                                    pick: |settings_content| {
+                                        if settings_content.theme.agent_ui_font_size.is_some() {
+                                            &settings_content.theme.agent_ui_font_size
+                                        } else {
+                                            &settings_content.theme.ui_font_size
+                                        }
+                                    },
+                                    pick_mut: |settings_content| &mut settings_content.theme.agent_ui_font_size,
+                                }),
+                                metadata: None,
+                                files: USER,
+                            }),
+                            SettingsPageItem::SettingItem(SettingItem {
+                                title: "Agent Panel Buffer Font Size",
+                                description: "Font size for user messages text in the agent panel",
+                                field: Box::new(SettingField {
+                                    pick: |settings_content| &settings_content.theme.agent_buffer_font_size,
+                                    pick_mut: |settings_content| {
+                                        &mut settings_content.theme.agent_buffer_font_size
+                                    },
+                                }),
+                                metadata: None,
+                                files: USER,
+                            }),
+                            SettingsPageItem::SectionHeader("Keymap"),
+                            SettingsPageItem::SettingItem(SettingItem {
+                                title: "Base Keymap",
+                                description: "The name of a base set of key bindings to use",
+                                field: Box::new(SettingField {
+                                    pick: |settings_content| &settings_content.base_keymap,
+                                    pick_mut: |settings_content| &mut settings_content.base_keymap,
+                                }),
+                                metadata: None,
+                                files: USER,
+                            }),
+                            // todo(settings_ui): Vim/Helix Mode should be apart of one type because it's undefined
+                            // behavior to have them both enabled at the same time
+                            SettingsPageItem::SettingItem(SettingItem {
+                                title: "Vim Mode",
+                                description: "Enable vim modes and key bindings",
+                                field: Box::new(SettingField {
+                                    pick: |settings_content| &settings_content.vim_mode,
+                                    pick_mut: |settings_content| &mut settings_content.vim_mode,
+                                }),
+                                metadata: None,
+                                files: USER,
+                            }),
+                            SettingsPageItem::SettingItem(SettingItem {
+                                title: "Helix Mode",
+                                description: "Enable helix modes and key bindings",
+                                field: Box::new(SettingField {
+                                    pick: |settings_content| &settings_content.helix_mode,
+                                    pick_mut: |settings_content| &mut settings_content.helix_mode,
+                                }),
+                                metadata: None,
+                                files: USER,
+                            }),
+                            SettingsPageItem::SettingItem(SettingItem {
+                                title: "Multi Cursor Modifier",
+                                description: "Modifier key for adding multiple cursors",
+                                field: Box::new(SettingField {
+                                    pick: |settings_content| &settings_content.editor.multi_cursor_modifier,
+                                    pick_mut: |settings_content| {
+                                        &mut settings_content.editor.multi_cursor_modifier
+                                    },
+                                }),
+                                metadata: None,
+                                files: USER,
+                            }),
+                            SettingsPageItem::SectionHeader("Cursor"),
+                            SettingsPageItem::SettingItem(SettingItem {
+                                title: "Cursor Blink",
+                                description: "Whether the cursor blinks in the editor",
+                                field: Box::new(SettingField {
+                                    pick: |settings_content| &settings_content.editor.cursor_blink,
+                                    pick_mut: |settings_content| &mut settings_content.editor.cursor_blink,
+                                }),
+                                metadata: None,
+                                files: USER,
+                            }),
+                            SettingsPageItem::SettingItem(SettingItem {
+                                title: "Cursor Shape",
+                                description: "Cursor shape for the editor",
+                                field: Box::new(SettingField {
+                                    pick: |settings_content| &settings_content.editor.cursor_shape,
+                                    pick_mut: |settings_content| &mut settings_content.editor.cursor_shape,
+                                }),
+                                metadata: None,
+                                files: USER,
+                            }),
+                            SettingsPageItem::SettingItem(SettingItem {
+                                title: "Hide Mouse",
+                                description: "When to hide the mouse cursor",
+                                field: Box::new(SettingField {
+                                    pick: |settings_content| &settings_content.editor.hide_mouse,
+                                    pick_mut: |settings_content| &mut settings_content.editor.hide_mouse,
+                                }),
+                                metadata: None,
+                                files: USER,
+                            }),
+                            SettingsPageItem::SectionHeader("Highlighting"),
+                            SettingsPageItem::SettingItem(SettingItem {
+                                title: "Unnecessary Code Fade",
+                                description: "How much to fade out unused code (0.0 - 0.9)",
+                                field: Box::new(SettingField {
+                                    pick: |settings_content| &settings_content.theme.unnecessary_code_fade,
+                                    pick_mut: |settings_content| {
+                                        &mut settings_content.theme.unnecessary_code_fade
+                                    },
+                                }),
+                                metadata: None,
+                                files: USER,
+                            }),
+                            SettingsPageItem::SettingItem(SettingItem {
+                                title: "Current Line Highlight",
+                                description: "How to highlight the current line",
+                                field: Box::new(SettingField {
+                                    pick: |settings_content| &settings_content.editor.current_line_highlight,
+                                    pick_mut: |settings_content| {
+                                        &mut settings_content.editor.current_line_highlight
+                                    },
+                                }),
+                                metadata: None,
+                                files: USER,
+                            }),
+                            SettingsPageItem::SettingItem(SettingItem {
+                                title: "Selection Highlight",
+                                description: "Highlight all occurrences of selected text",
+                                field: Box::new(SettingField {
+                                    pick: |settings_content| &settings_content.editor.selection_highlight,
+                                    pick_mut: |settings_content| {
+                                        &mut settings_content.editor.selection_highlight
+                                    },
+                                }),
+                                metadata: None,
+                                files: USER,
+                            }),
+                            SettingsPageItem::SettingItem(SettingItem {
+                                title: "Rounded Selection",
+                                description: "Whether the text selection should have rounded corners",
+                                field: Box::new(SettingField {
+                                    pick: |settings_content| &settings_content.editor.rounded_selection,
+                                    pick_mut: |settings_content| &mut settings_content.editor.rounded_selection,
+                                }),
+                                metadata: None,
+                                files: USER,
+                            }),
+                            SettingsPageItem::SettingItem(SettingItem {
+                                title: "Minimum Contrast For Highlights",
+                                description: "The minimum APCA perceptual contrast to maintain when rendering text over highlight backgrounds",
+                                field: Box::new(SettingField {
+                                    pick: |settings_content| {
+                                        &settings_content.editor.minimum_contrast_for_highlights
+                                    },
+                                    pick_mut: |settings_content| {
+                                        &mut settings_content.editor.minimum_contrast_for_highlights
+                                    },
+                                }),
+                                metadata: None,
+                                files: USER,
+                            }),
+                            SettingsPageItem::SectionHeader("Guides"),
+                            SettingsPageItem::SettingItem(SettingItem {
+                                title: "Show Wrap Guides",
+                                description: "Show wrap guides (vertical rulers)",
+                                field: Box::new(SettingField {
+                                    pick: |settings_content| {
+                                        &settings_content
+                                            .project
+                                            .all_languages
+                                            .defaults
+                                            .show_wrap_guides
+                                    },
+                                    pick_mut: |settings_content| {
+                                        &mut settings_content
+                                            .project
+                                            .all_languages
+                                            .defaults
+                                            .show_wrap_guides
+                                    },
+                                }),
+                                metadata: None,
+                                files: USER | LOCAL,
+                            }),
+                            // todo(settings_ui): This needs a custom component
+                            SettingsPageItem::SettingItem(SettingItem {
+                                title: "Wrap Guides",
+                                description: "Character counts at which to show wrap guides",
+                                field: Box::new(
+                                    SettingField {
+                                        pick: |settings_content| {
+                                            &settings_content.project.all_languages.defaults.wrap_guides
+                                        },
+                                        pick_mut: |settings_content| {
+                                            &mut settings_content.project.all_languages.defaults.wrap_guides
+                                        },
+                                    }
+                                    .unimplemented(),
+                                ),
+                                metadata: None,
+                                files: USER | LOCAL,
+                            }),
+                            SettingsPageItem::SectionHeader("Layout"),
+                            SettingsPageItem::SettingItem(SettingItem {
+                                title: "Bottom Dock Layout",
+                                description: "Layout mode for the bottom dock",
+                                field: Box::new(SettingField {
+                                    pick: |settings_content| &settings_content.workspace.bottom_dock_layout,
+                                    pick_mut: |settings_content| {
+                                        &mut settings_content.workspace.bottom_dock_layout
+                                    },
+                                }),
+                                metadata: None,
+                                files: USER,
+                            }),
+                            SettingsPageItem::SettingItem(SettingItem {
+                                files: USER,
+                                title: "Centered Layout Left Padding",
+                                description: "Left padding for centered layout",
+                                field: Box::new(SettingField {
+                                    pick: |settings_content| {
+                                        if let Some(centered_layout) =
+                                            &settings_content.workspace.centered_layout
+                                        {
+                                            &centered_layout.left_padding
+                                        } else {
+                                            &None
+                                        }
+                                    },
+                                    pick_mut: |settings_content| {
+                                        &mut settings_content
+                                            .workspace
+                                            .centered_layout
+                                            .get_or_insert_default()
+                                            .left_padding
+                                    },
+                                }),
+                                metadata: None,
+                            }),
+                            SettingsPageItem::SettingItem(SettingItem {
+                                files: USER,
+                                title: "Centered Layout Right Padding",
+                                description: "Right padding for centered layout",
+                                field: Box::new(SettingField {
+                                    pick: |settings_content| {
+                                        if let Some(centered_layout) =
+                                            &settings_content.workspace.centered_layout
+                                        {
+                                            &centered_layout.right_padding
+                                        } else {
+                                            &None
+                                        }
+                                    },
+                                    pick_mut: |settings_content| {
+                                        &mut settings_content
+                                            .workspace
+                                            .centered_layout
+                                            .get_or_insert_default()
+                                            .right_padding
+                                    },
+                                }),
+                                metadata: None,
+                            }),
+                            SettingsPageItem::SettingItem(SettingItem {
+                                title: "Zoomed Padding",
+                                description: "Show padding for zoomed panels",
+                                field: Box::new(SettingField {
+                                    pick: |settings_content| &settings_content.workspace.zoomed_padding,
+                                    pick_mut: |settings_content| &mut settings_content.workspace.zoomed_padding,
+                                }),
+                                metadata: None,
+                                files: USER,
+                            }),
+                            SettingsPageItem::SectionHeader("Window"),
+                            // todo(settings_ui): Should we filter by platform?
+                            SettingsPageItem::SettingItem(SettingItem {
+                                title: "Use System Window Tabs",
+                                description: "(macOS only) Whether to allow windows to tab together",
+                                field: Box::new(SettingField {
+                                    pick: |settings_content| &settings_content.workspace.use_system_window_tabs,
+                                    pick_mut: |settings_content| {
+                                        &mut settings_content.workspace.use_system_window_tabs
+                                    },
+                                }),
+                                metadata: None,
+                                files: USER,
+                            }),
+                        ],
         },
         SettingsPage {
             title: "Editor",
