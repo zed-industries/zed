@@ -45,7 +45,6 @@ const LABELED_SECTIONS_SYSTEM_PROMPT: &str = indoc! {r#"
     }
 "#};
 
-// todo! confirm with oleksiy
 const NUMBERED_LINES_SYSTEM_PROMPT: &str = indoc! {r#"
     # Instructions
 
