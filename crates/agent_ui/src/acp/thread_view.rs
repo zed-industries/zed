@@ -9,7 +9,7 @@ use agent_client_protocol::{self as acp, PromptCapabilities};
 use agent_servers::{AgentServer, AgentServerDelegate};
 use agent_settings::{AgentProfileId, AgentSettings, CompletionMode};
 use agent2::{DbThreadMetadata, HistoryEntry, HistoryEntryId, HistoryStore, NativeAgentServer};
-use anyhow::{Result, anyhow, bail};
+use anyhow::{Result, anyhow};
 use arrayvec::ArrayVec;
 use audio::{Audio, Sound};
 use buffer_diff::BufferDiff;
@@ -4499,32 +4499,40 @@ impl AcpThreadView {
             let markdown_language = markdown_language_task.await?;
 
             workspace.update_in(cx, |workspace, window, cx| {
-                let project = workspace.project().clone();
+                workspace
+                    .with_local_workspace(window, cx, move |workspace, window, cx| {
+                        let project = workspace.project().clone();
 
-                if !project.read(cx).is_local() {
-                    bail!("failed to open active thread as markdown in remote project");
-                }
+                        let buffer = project.update(cx, |project, cx| {
+                            project.create_local_buffer(
+                                &markdown,
+                                Some(markdown_language),
+                                true,
+                                cx,
+                            )
+                        });
+                        let buffer = cx.new(|cx| {
+                            MultiBuffer::singleton(buffer, cx).with_title(thread_summary.clone())
+                        });
 
-                let buffer = project.update(cx, |project, cx| {
-                    project.create_local_buffer(&markdown, Some(markdown_language), true, cx)
-                });
-                let buffer = cx.new(|cx| {
-                    MultiBuffer::singleton(buffer, cx).with_title(thread_summary.clone())
-                });
-
-                workspace.add_item_to_active_pane(
-                    Box::new(cx.new(|cx| {
-                        let mut editor =
-                            Editor::for_multibuffer(buffer, Some(project.clone()), window, cx);
-                        editor.set_breadcrumb_header(thread_summary);
-                        editor
-                    })),
-                    None,
-                    true,
-                    window,
-                    cx,
-                );
-
+                        workspace.add_item_to_active_pane(
+                            Box::new(cx.new(|cx| {
+                                let mut editor = Editor::for_multibuffer(
+                                    buffer,
+                                    Some(project.clone()),
+                                    window,
+                                    cx,
+                                );
+                                editor.set_breadcrumb_header(thread_summary);
+                                editor
+                            })),
+                            None,
+                            true,
+                            window,
+                            cx,
+                        );
+                    })
+                    .detach_and_log_err(cx);
                 anyhow::Ok(())
             })??;
             anyhow::Ok(())
