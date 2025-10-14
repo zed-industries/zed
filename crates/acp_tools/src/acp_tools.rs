@@ -242,15 +242,14 @@ impl AcpTools {
                     Ok(None) => serde_json::Value::Null,
                     Err(err) => serde_json::to_value(err).ok()?,
                 };
-
                 Some(serde_json::json!({
-                    "direction": match message.direction {
+                    "_direction": match message.direction {
                         acp::StreamMessageDirection::Incoming => "incoming",
                         acp::StreamMessageDirection::Outgoing => "outgoing",
                     },
-                    "type": message.message_type.to_string().to_lowercase(),
+                    "_type": message.message_type.to_string().to_lowercase(),
+                    "id": message.request_id,
                     "method": message.name.to_string(),
-                    "request_id": message.request_id,
                     "params": params,
                 }))
             })
