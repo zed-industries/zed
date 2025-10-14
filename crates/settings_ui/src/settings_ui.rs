@@ -740,13 +740,13 @@ fn render_settings_item(
                                 this.child(
                                     IconButton::new("reset-to-default-btn", IconName::Undo)
                                         .icon_color(Color::Muted)
-                                        .size(ButtonSize::Compact)
+                                        .icon_size(IconSize::Small)
+                                        .tooltip(Tooltip::text("Reset to Default"))
                                         .on_click({
                                             move |_, _, cx| {
                                                 reset_to_default(cx);
                                             }
-                                        })
-                                        .tooltip(Tooltip::text("Reset to default")),
+                                        }),
                                 )
                             },
                         )
@@ -755,7 +755,7 @@ fn render_settings_item(
                             |this, file_set_in| {
                                 this.child(
                                     Label::new(format!(
-                                        "— set in {}",
+                                        "—  Modified in {}",
                                         settings_window
                                             .display_name(&file_set_in)
                                             .expect("File name should exist")
