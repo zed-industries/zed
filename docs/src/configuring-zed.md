@@ -3948,7 +3948,7 @@ Disable with:
 
 - Description: The multiplier for scrolling speed in the terminal when using mouse wheel or trackpad.
 - Setting: `scroll_multiplier`
-- Default: `3.0`
+- Default: `4.0` on macOS or `1.0` on other platforms
 
 **Options**
 
