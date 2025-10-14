@@ -7098,7 +7098,7 @@ dependencies = [
 
 [[package]]
 name = "gpui"
-version = "0.2.1-test2"
+version = "0.2.1-test3"
 dependencies = [
  "anyhow",
  "as-raw-xcb-connection",
