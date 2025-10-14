@@ -16,11 +16,11 @@ use language::CursorShape;
 use markdown::{Markdown, MarkdownElement, MarkdownStyle};
 use release_channel::ReleaseChannel;
 use remote::{
-    ConnectionIdentifier, RemoteClient, RemoteConnectionOptions, RemotePlatform,
-    SshConnectionOptions,
+    ConnectionIdentifier, IrohConnectionOptions, RemoteClient, RemoteConnectionOptions,
+    RemotePlatform, SshConnectionOptions,
 };
 pub use settings::SshConnection;
-use settings::{ExtendingVec, Settings, WslConnection};
+use settings::{ExtendingVec, P2pConnection, Settings, WslConnection};
 use theme::ThemeSettings;
 use ui::{
     ActiveTheme, Color, CommonAnimationExt, Context, Icon, IconName, IconSize, InteractiveElement,
@@ -31,6 +31,7 @@ use workspace::{AppState, ModalView, Workspace};
 pub struct SshSettings {
     pub ssh_connections: ExtendingVec<SshConnection>,
     pub wsl_connections: ExtendingVec<WslConnection>,
+    pub p2p_connections: ExtendingVec<P2pConnection>,
     /// Whether to read ~/.ssh/config for ssh connection sources.
     pub read_ssh_config: bool,
 }
@@ -42,6 +43,10 @@ impl SshSettings {
 
     pub fn wsl_connections(&self) -> impl Iterator<Item = WslConnection> + use<> {
         self.wsl_connections.clone().0.into_iter()
+    }
+
+    pub fn p2p_connections(&self) -> impl Iterator<Item = P2pConnection> + use<> {
+        self.p2p_connections.clone().0.into_iter()
     }
 
     pub fn fill_connection_options_from_settings(&self, options: &mut SshConnectionOptions) {
@@ -80,6 +85,7 @@ impl SshSettings {
 pub enum Connection {
     Ssh(SshConnection),
     Wsl(WslConnection),
+    P2p(P2pConnection),
 }
 
 impl From<Connection> for RemoteConnectionOptions {
@@ -87,6 +93,7 @@ impl From<Connection> for RemoteConnectionOptions {
         match val {
             Connection::Ssh(conn) => RemoteConnectionOptions::Ssh(conn.into()),
             Connection::Wsl(conn) => RemoteConnectionOptions::Wsl(conn.into()),
+            Connection::P2p(conn) => RemoteConnectionOptions::Iroh(conn.into()),
         }
     }
 }
@@ -103,12 +110,20 @@ impl From<WslConnection> for Connection {
     }
 }
 
+impl From<P2pConnection> for Connection {
+    fn from(val: P2pConnection) -> Self {
+        Connection::P2p(val)
+    }
+}
+
 impl Settings for SshSettings {
     fn from_settings(content: &settings::SettingsContent) -> Self {
         let remote = &content.remote;
         Self {
             ssh_connections: remote.ssh_connections.clone().unwrap_or_default().into(),
             wsl_connections: remote.wsl_connections.clone().unwrap_or_default().into(),
+
+            p2p_connections: remote.p2p_connections.clone().unwrap_or_default().into(),
             read_ssh_config: remote.read_ssh_config.unwrap(),
         }
     }
@@ -287,6 +302,11 @@ impl RemoteConnectionModal {
                 (options.connection_string(), options.nickname.clone(), false)
             }
             RemoteConnectionOptions::Wsl(options) => (options.distro_name.clone(), None, true),
+            RemoteConnectionOptions::Iroh(options) => (
+                options.ticket.node_addr().node_id.fmt_short().to_string(),
+                options.nickname.clone(),
+                false,
+            ),
         };
         Self {
             prompt: cx.new(|cx| {
@@ -561,6 +581,30 @@ pub fn connect_over_ssh(
     )
 }
 
+pub fn connect_over_p2p(
+    unique_identifier: ConnectionIdentifier,
+    connection_options: IrohConnectionOptions,
+    ui: Entity<RemoteConnectionPrompt>,
+    window: &mut Window,
+    cx: &mut App,
+) -> Task<Result<Option<Entity<RemoteClient>>>> {
+    let window = window.window_handle();
+    let (tx, rx) = oneshot::channel();
+    ui.update(cx, |ui, _cx| ui.set_cancellation_tx(tx));
+
+    remote::RemoteClient::p2p(
+        unique_identifier,
+        connection_options,
+        rx,
+        Arc::new(RemoteClientDelegate {
+            window,
+            ui: ui.downgrade(),
+            known_password: None,
+        }),
+        cx,
+    )
+}
+
 pub fn connect(
     unique_identifier: ConnectionIdentifier,
     connection_options: RemoteConnectionOptions,
@@ -599,6 +643,8 @@ pub async fn open_remote_project(
     open_options: workspace::OpenOptions,
     cx: &mut AsyncApp,
 ) -> Result<()> {
+    log::debug!("open remote project {:?}", connection_options);
+
     let window = if let Some(window) = open_options.replace_window {
         window
     } else {
@@ -702,6 +748,7 @@ pub async fn open_remote_project(
                         match connection_options {
                             RemoteConnectionOptions::Ssh(_) => "Failed to connect over SSH",
                             RemoteConnectionOptions::Wsl(_) => "Failed to connect to WSL",
+                            RemoteConnectionOptions::Iroh(_) => "Failed to connect over Iroh",
                         },
                         Some(&e.to_string()),
                         &["Retry", "Ok"],
