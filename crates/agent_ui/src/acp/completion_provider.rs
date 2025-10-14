@@ -775,7 +775,7 @@ impl CompletionProvider for ContextPickerCompletionProvider {
                                                 }
                                             });
                                         }
-                                        is_missing_argument
+                                        false
                                     }
                                 })),
                             }
@@ -910,6 +910,17 @@ impl CompletionProvider for ContextPickerCompletionProvider {
                 offset_to_line,
                 self.prompt_capabilities.borrow().embedded_context,
             )
+            .filter(|completion| {
+                // Right now we don't support completing arguments of slash commands
+                let is_slash_command_with_argument = matches!(
+                    completion,
+                    ContextCompletion::SlashCommand(SlashCommandCompletion {
+                        argument: Some(_),
+                        ..
+                    })
+                );
+                !is_slash_command_with_argument
+            })
             .map(|completion| {
                 completion.source_range().start <= offset_to_line + position.column as usize
                     && completion.source_range().end >= offset_to_line + position.column as usize
