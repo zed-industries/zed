@@ -688,6 +688,13 @@ impl Editor {
         let mut hints_to_remove = Vec::new();
         let multi_buffer_snapshot = self.buffer.read(cx).snapshot(cx);
 
+        // If we've received hints from the cache, it means `invalidate_cache` had invalidated whatever possible there,
+        // and most probably there are no more hints with IDs from `visible_inlay_hint_ids` in the cache.
+        // So, if we hover such hints, no resolve will happen.
+        //
+        // Another issue is in the fact that changing one buffer may lead to other buffers' hints changing, so more cache entries may be removed.
+        // Hence, clear all excerpts' hints in the multi buffer: later, the invalidated ones will re-trigger the LSP query, the rest will be restored
+        // from the cache.
         if invalidate_cache.should_invalidate() {
             hints_to_remove.extend(visible_inlay_hint_ids);
         }
@@ -720,7 +727,6 @@ impl Editor {
                 None
             })
             .collect::<Vec<_>>();
-        // TODO kb hints to remove and to insert may be [almost] the same, causing unnecessary flickering
         self.splice_inlays(&hints_to_remove, hints_to_insert, cx);
     }
 }
@@ -789,6 +795,7 @@ pub mod tests {
     use lsp::FakeLanguageServer;
     use multi_buffer::MultiBuffer;
     use parking_lot::Mutex;
+    use pretty_assertions::assert_eq;
     use project::{FakeFs, Project};
     use serde_json::json;
     use settings::{AllLanguageSettingsContent, InlayHintSettingsContent, SettingsStore};

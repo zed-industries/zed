@@ -128,13 +128,12 @@ impl BufferInlayHints {
         self.buffer_chunks
             .iter()
             .filter(move |chunk| -> bool {
+                // Be lenient and yield multiple chunks if they "touch" the exclusive part of the range.
+                // This will result in LSP hints [re-]queried for more ranges, but also more hints already visible when scrolling around.
                 let chunk_range = chunk.start..=chunk.end;
                 row_ranges.iter().any(|row_range| {
-                    // TODO kb is this right?
                     chunk_range.contains(&row_range.start())
                         || chunk_range.contains(&row_range.end())
-                        || row_range.contains(&chunk_range.start())
-                        || row_range.contains(&chunk_range.end())
                 })
             })
             .copied()
