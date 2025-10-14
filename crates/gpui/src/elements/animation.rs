@@ -175,7 +175,8 @@ impl<E: IntoElement + 'static> animatable::AnimatableExt for AnimationElement<E>
 mod animatable {
     use crate::{
         AnyElement, App, Element, ElementId, GlobalElementId, InspectorElementId,
-        InteractiveElement, IntoElement, StyleRefinement, Styled, Window,
+        InteractiveElement, IntoElement, ParentElement, StatefulInteractiveElement,
+        StyleRefinement, Styled, Window,
     };
 
     /// An extension trait that reduces the boilerplate required to make an element animated.
@@ -295,6 +296,20 @@ mod animatable {
         fn interactivity(&mut self) -> &mut crate::Interactivity {
             self.element_mut().unwrap().interactivity()
         }
+    }
+
+    impl<E: AnimatableExt + 'static> ParentElement for E
+    where
+        <Self as AnimatableExt>::Element: ParentElement,
+    {
+        fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>) {
+            self.element_mut().unwrap().extend(elements);
+        }
+    }
+
+    impl<E: AnimatableExt + 'static> StatefulInteractiveElement for E where
+        <Self as AnimatableExt>::Element: StatefulInteractiveElement
+    {
     }
 }
 
