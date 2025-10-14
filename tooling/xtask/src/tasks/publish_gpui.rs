@@ -7,10 +7,6 @@ use clap::Parser;
 
 #[derive(Parser)]
 pub struct PublishGpuiArgs {
-    /// Optional pre-release identifier to append to the version (e.g., alpha, test.1). Always bumps the minor version.
-    #[arg(long)]
-    pre_release: Option<String>,
-
     /// Perform a dry-run and wait for user confirmation before each publish
     #[arg(long)]
     dry_run: bool,
@@ -53,26 +49,26 @@ fn read_gpui_version() -> Result<String> {
 
 fn publish_dependencies(new_version: &str, dry_run: bool) -> Result<()> {
     let gpui_dependencies = vec![
-        ("collections", "gpui_collections"),
-        ("perf", "gpui_perf"),
-        ("util_macros", "gpui_util_macros"),
-        ("util", "gpui_util"),
-        ("gpui_macros", "gpui-macros"),
-        ("http_client", "gpui_http_client"),
-        ("derive_refineable", "gpui_derive_refineable"),
-        ("refineable", "gpui_refineable"),
-        ("semantic_version", "gpui_semantic_version"),
-        ("sum_tree", "gpui_sum_tree"),
-        ("media", "gpui_media"),
+        ("collections", "gpui_collections", "crates"),
+        ("perf", "gpui_perf", "tooling"),
+        ("util_macros", "gpui_util_macros", "crates"),
+        ("util", "gpui_util", "crates"),
+        ("gpui_macros", "gpui-macros", "crates"),
+        ("http_client", "gpui_http_client", "crates"),
+        ("derive_refineable", "gpui_derive_refineable", "crates"),
+        ("refineable", "gpui_refineable", "crates"),
+        ("semantic_version", "gpui_semantic_version", "crates"),
+        ("sum_tree", "gpui_sum_tree", "crates"),
+        ("media", "gpui_media", "crates"),
     ];
 
-    for (package_name, crate_name) in gpui_dependencies {
+    for (package_name, crate_name, package_dir) in gpui_dependencies {
         println!(
             "Publishing dependency: {} (package: {})",
             crate_name, package_name
         );
 
-        update_crate_cargo_toml(package_name, crate_name, new_version)?;
+        update_crate_cargo_toml(package_name, crate_name, package_dir, new_version)?;
         update_workspace_dependency_version(package_name, crate_name, new_version)?;
         publish_crate(crate_name, dry_run)?;
     }
@@ -81,15 +77,20 @@ fn publish_dependencies(new_version: &str, dry_run: bool) -> Result<()> {
 }
 
 fn publish_gpui(new_version: &str, dry_run: bool) -> Result<()> {
-    update_crate_cargo_toml("gpui", "gpui", new_version)?;
+    update_crate_cargo_toml("gpui", "gpui", "crates", new_version)?;
 
     publish_crate("gpui", dry_run)?;
 
     Ok(())
 }
 
-fn update_crate_cargo_toml(package_name: &str, crate_name: &str, new_version: &str) -> Result<()> {
-    let cargo_toml_path = format!("crates/{}/Cargo.toml", package_name);
+fn update_crate_cargo_toml(
+    package_name: &str,
+    crate_name: &str,
+    package_dir: &str,
+    new_version: &str,
+) -> Result<()> {
+    let cargo_toml_path = format!("{}/{}/Cargo.toml", package_dir, package_name);
     let contents = std::fs::read_to_string(&cargo_toml_path)
         .context(format!("Failed to read {}", cargo_toml_path))?;
 
