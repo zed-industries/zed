@@ -14,6 +14,7 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow.workspace = true
+chrono.workspace = true
 clap.workspace = true
 client.workspace = true
 cloud_llm_client.workspace= true
@@ -35,6 +36,7 @@ log.workspace = true
 node_runtime.workspace = true
 ordered-float.workspace = true
 paths.workspace = true
+polars = { version = "0.51", features = ["lazy", "dtype-struct", "parquet"] }
 project.workspace = true
 prompt_store.workspace = true
 release_channel.workspace = true
@@ -44,6 +46,7 @@ serde_json.workspace = true
 settings.workspace = true
 shellexpand.workspace = true
 smol.workspace = true
+soa-rs = "0.8.1"
 terminal_view.workspace = true
 util.workspace = true
 watch.workspace = true
