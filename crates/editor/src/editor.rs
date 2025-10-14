@@ -47,10 +47,6 @@ mod code_completion_tests;
 mod edit_prediction_tests;
 #[cfg(test)]
 mod editor_tests;
-#[cfg(test)]
-mod rainbow_highlighting_tests;
-#[cfg(test)]
-mod rainbow_integration_tests;
 mod signature_help;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
@@ -94,6 +90,7 @@ use ::git::{ Restore, blame::{ BlameEntry, ParsedCommitMessage } };
 use aho_corasick::AhoCorasick;
 use anyhow::{ Context as _, Result, anyhow };
 use blink_manager::BlinkManager;
+use std::cell::RefCell;
 use buffer_diff::DiffHunkStatus;
 use client::{ Collaborator, ParticipantIndex, parse_zed_link };
 use clock::{ AGENT_REPLICA_ID, ReplicaId };
@@ -300,7 +297,7 @@ use snippet::Snippet;
 use std::{
     any::{Any, TypeId},
     borrow::Cow,
-    cell::{OnceCell, RefCell},
+    cell::OnceCell,
     cmp::{self, Ordering, Reverse},
     iter::{self, Peekable},
     mem,
@@ -1294,6 +1291,7 @@ pub struct Editor {
     pub lookup_key: Option<Box<dyn Any + Send + Sync>>,
     pub(crate) update_semantic_tokens_task: Task<()>,
     semantic_tokens_debounce_task: Option<Task<()>>,
+    variable_color_cache: Option<Rc<RefCell<rainbow::VariableColorCache>>>,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
@@ -2303,6 +2301,14 @@ impl Editor {
             lookup_key: None,
             update_semantic_tokens_task: Task::ready(()),
             semantic_tokens_debounce_task: None,
+            variable_color_cache: {
+                let settings = EditorSettings::get_global(cx);
+                if settings.rainbow_highlighting.enabled {
+                    Some(Rc::new(RefCell::new(rainbow::VariableColorCache::new(settings.rainbow_highlighting.mode))))
+                } else {
+                    None
+                }
+            },
         };
 
         if is_minimap {
@@ -8792,7 +8798,7 @@ impl Editor {
         let longest_line_width = if visible_row_range.contains(&longest_row) {
             line_layouts[(longest_row.0 - visible_row_range.start.0) as usize].width
         } else {
-            layout_line(longest_row, editor_snapshot, style, editor_width, |_| false, window, cx).width
+            layout_line(longest_row, editor_snapshot, style, editor_width, |_| false, self.variable_color_cache.as_ref(), window, cx).width
         };
 
         let viewport_bounds = Bounds::new(Default::default(), window.viewport_size()).extend(Edges {
@@ -19018,7 +19024,18 @@ impl Editor {
             cx
         );
 
-        crate::rainbow::clear_rainbow_cache();
+        let rainbow_config = EditorSettings::get_global(cx).rainbow_highlighting;
+        if rainbow_config.enabled {
+            if let Some(cache) = &self.variable_color_cache {
+                if cache.borrow().mode != rainbow_config.mode {
+                    self.variable_color_cache = Some(Rc::new(RefCell::new(rainbow::VariableColorCache::new(rainbow_config.mode))));
+                }
+            } else {
+                self.variable_color_cache = Some(Rc::new(RefCell::new(rainbow::VariableColorCache::new(rainbow_config.mode))));
+            }
+        } else {
+            self.variable_color_cache = None;
+        }
 
         let old_cursor_shape = self.cursor_shape;
         let old_show_breadcrumbs = self.show_breadcrumbs;

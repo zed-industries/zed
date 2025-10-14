@@ -860,7 +860,8 @@ impl DisplaySnapshot {
         &'a self,
         display_rows: Range<DisplayRow>,
         language_aware: bool,
-        editor_style: &'a EditorStyle
+        editor_style: &'a EditorStyle,
+        variable_color_cache: Option<&'a std::rc::Rc<std::cell::RefCell<crate::rainbow::VariableColorCache>>>
     ) -> impl Iterator<Item = HighlightedChunk<'a>> {
         let rainbow_config = &editor_style.rainbow_highlighting;
         let theme = &editor_style.syntax;
@@ -886,42 +887,41 @@ impl DisplaySnapshot {
 
                 let is_variable_like = capture_name
                     .map(|name| {
-                        name.starts_with("variable") &&
+                        (name.starts_with("variable") || name.starts_with("parameter")) &&
                             !name.contains("special") &&
                             !name.contains("builtin") &&
                             !name.contains("member")
                     })
                     .unwrap_or(false);
 
-                let rainbow_style = if is_variable_like {
-                    let identifier_hash = if let Some(ref node_range) = chunk.capture_node_range {
-                        let buffer_len = self.buffer_snapshot.len();
-                        if node_range.end <= buffer_len {
-                            let should_extract = cached_node.as_ref()
-                                .map_or(true, |(cached_range, _)| cached_range != node_range);
-                            
-                            if should_extract {
-                                let full_text: String = self.buffer_snapshot.text_for_range(node_range.clone()).collect();
-                                let hash = if !full_text.is_empty() && full_text.len() >= 2 {
-                                    let h = crate::rainbow::hash_identifier(&full_text);
-                                    *cached_node = Some((node_range.clone(), h));
-                                    h
+                let rainbow_style = if is_variable_like && rainbow_config.enabled {
+                    variable_color_cache.and_then(|cache| {
+                        let identifier = if let Some(ref node_range) = chunk.capture_node_range {
+                            let buffer_len = self.buffer_snapshot.len();
+                            if node_range.end <= buffer_len {
+                                let should_extract = cached_node.as_ref()
+                                    .map_or(true, |(cached_range, _)| cached_range != node_range);
+                                
+                                if should_extract {
+                                    let full_text: String = self.buffer_snapshot.text_for_range(node_range.clone()).collect();
+                                    if !full_text.is_empty() && full_text.len() >= 2 {
+                                        let h = crate::rainbow::hash_identifier(&full_text);
+                                        *cached_node = Some((node_range.clone(), h));
+                                        Some(full_text)
+                                    } else {
+                                        Some(chunk.text.to_string())
+                                    }
                                 } else {
-                                    crate::rainbow::hash_identifier(chunk.text)
-                                };
-                                hash
+                                    None
+                                }
                             } else {
-                                cached_node.as_ref().unwrap().1
+                                Some(chunk.text.to_string())
                             }
                         } else {
-                            crate::rainbow::hash_identifier(chunk.text)
-                        }
-                    } else {
-                        crate::rainbow::hash_identifier(chunk.text)
-                    };
-                    
-                    crate::rainbow::with_rainbow_cache(|cache| {
-                        crate::rainbow::apply_rainbow_by_hash(identifier_hash, rainbow_config, theme, cache)
+                            Some(chunk.text.to_string())
+                        };
+                        
+                        identifier.map(|id| cache.borrow_mut().get_or_insert(&id, theme))
                     })
                 } else {
                     None
@@ -992,7 +992,7 @@ impl DisplaySnapshot {
         let mut line = String::new();
 
         let range = display_row..display_row.next_row();
-        for chunk in self.highlighted_chunks(range, false, editor_style) {
+        for chunk in self.highlighted_chunks(range, false, editor_style, None) {
             line.push_str(chunk.text);
 
             let text_style = if let Some(style) = chunk.style {
@@ -1473,15 +1473,16 @@ impl SemanticTokenView {
                     }
                 };
 
-                Some(MultibufferSemanticToken {
+                stylizer.convert(
+                    cx.theme().syntax(),
+                    token.token_type,
+                    token.token_modifiers,
+                    variable_name.as_deref(),
+                    Some(&rainbow_config),
+                    None // Cache not available at token creation time
+                ).map(|style| MultibufferSemanticToken {
                     range: start_offset..end_offset,
-                    style: stylizer.convert(
-                        cx.theme().syntax(),
-                        token.token_type,
-                        token.token_modifiers,
-                        variable_name.as_deref(),
-                        Some(&rainbow_config) // Always pass rainbow config - it checks enabled flag internally
-                    )?,
+                    style,
                     lsp_type: token.token_type,
                     lsp_modifiers: token.token_modifiers,
                 })
@@ -1562,19 +1563,22 @@ impl<'a> SemanticTokenStylizer<'a> {
         token_type: u32,
         modifiers: u32,
         variable_name: Option<&str>,
-        rainbow_config: Option<&crate::editor_settings::RainbowConfig>
+        rainbow_config: Option<&crate::editor_settings::RainbowConfig>,
+        variable_color_cache: Option<&std::rc::Rc<std::cell::RefCell<crate::rainbow::VariableColorCache>>>
     ) -> Option<HighlightStyle> {
         let token_type_name = self.token_type(token_type)?;
         
+        // Early return for rainbow-highlighted variables/parameters
+        // When rainbow is enabled for variables, LSP should not provide colors
+        // to allow tree-sitter rainbow highlighting to take precedence
         let is_variable_like = token_type_name == "variable" || token_type_name == "parameter";
         if is_variable_like {
-            if let (Some(config), Some(name)) = (rainbow_config, variable_name) {
+            if let Some(config) = rainbow_config {
                 if config.enabled {
-                    if let Some(rainbow_style) = crate::rainbow::with_rainbow_cache(|cache| {
-                        crate::rainbow::apply_rainbow_highlighting(name, true, config, theme, cache)
-                    }) {
-                        return Some(rainbow_style);
-                    }
+                    // If cache is available (during rendering), use it for rainbow color
+                    // Otherwise return None to prevent LSP from overriding tree-sitter rainbow
+                    return variable_color_cache
+                        .and_then(|cache| variable_name.map(|name| cache.borrow_mut().get_or_insert(name, theme)));
                 }
             }
         }
