@@ -119,7 +119,9 @@ pub(crate) fn execute(persist: bool, mut persist_at: Option<PathBuf>) -> Result<
             println!("TICKET: {}", ticket);
 
             // TODO: better shutdown
-            loop {}
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+            }
         })
         .detach();
 
