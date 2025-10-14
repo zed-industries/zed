@@ -12509,7 +12509,6 @@ async fn test_strip_whitespace_and_format_via_lsp(cx: &mut TestAppContext) {
     )
     .await;
 
-    cx.run_until_parked();
     // Set up a buffer white some trailing whitespace and no trailing newline.
     cx.set_state(
         &[
