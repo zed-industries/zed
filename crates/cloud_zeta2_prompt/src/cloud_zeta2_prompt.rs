@@ -513,6 +513,17 @@ impl<'a> PlannedPrompt<'a> {
                     }
                 }
 
+                let push_full_snippet = |output: &mut String| {
+                    if self.request.prompt_format == PromptFormat::NumberedLines {
+                        for (i, line) in snippet.text.lines().enumerate() {
+                            writeln!(output, "{}|{}", i as u32 + range.start.0 + 1, line)?;
+                        }
+                    } else {
+                        output.push_str(&snippet.text);
+                    }
+                    anyhow::Ok(())
+                };
+
                 if is_excerpt_file {
                     if self.request.prompt_format == PromptFormat::OnlySnippets {
                         if range.start >= self.request.excerpt_line_range.start
@@ -537,6 +548,9 @@ impl<'a> PlannedPrompt<'a> {
                                     writeln!(output, "{}", line)?;
                                 }
                                 if let Some(next_line) = lines.get(line_ix) {
+                                    if self.request.prompt_format == PromptFormat::NumberedLines {
+                                        write!(output, "{}|", line_ix as u32 + range.start.0 + 1)?
+                                    }
                                     output.push_str(&next_line[..point.column as usize]);
                                     output.push_str(insertion);
                                     writeln!(output, "{}", &next_line[point.column as usize..])?;
@@ -550,16 +564,19 @@ impl<'a> PlannedPrompt<'a> {
                             insertion_ix += 1;
                         }
                         skipped_last_snippet = false;
-                        for line in lines.get(last_line_ix..).into_iter().flatten() {
-                            writeln!(output, "{}", line)?;
+                        for line_ix in last_line_ix..lines.len() {
+                            if self.request.prompt_format == PromptFormat::NumberedLines {
+                                write!(output, "{}|", line_ix as u32 + range.start.0 + 1)?
+                            }
+                            writeln!(output, "{}", lines[line_ix])?;
                         }
                     } else {
                         skipped_last_snippet = false;
-                        output.push_str(&snippet.text);
+                        push_full_snippet(output)?;
                     }
                 } else {
                     skipped_last_snippet = false;
-                    output.push_str(snippet.text);
+                    push_full_snippet(output)?;
                 }
 
                 section_ranges.push((snippet.path.clone(), range));
