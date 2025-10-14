@@ -1,6 +1,6 @@
 [package]
 name = "gpui"
-version = "0.2.0"
+version = "0.2.1"
 edition.workspace = true
 authors = ["Nathan Sobo <nathan@zed.dev>"]
 description = "Zed's GPU-accelerated UI framework"
