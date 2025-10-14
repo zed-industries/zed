@@ -538,7 +538,7 @@ impl AcpToolsToolbarItemView {
 impl Render for AcpToolsToolbarItemView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let Some(acp_tools) = self.acp_tools.as_ref() else {
-            return div().into_any();
+            return Empty.into_any_element();
         };
 
         let acp_tools = acp_tools.clone();
