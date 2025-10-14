@@ -2075,9 +2075,11 @@ impl SettingsWindow {
         window: &mut Window,
         cx: &mut Context<SettingsWindow>,
     ) -> impl IntoElement {
-        let mut page_content = v_flex().id("settings-ui-page").size_full();
-        // .overflow_y_scroll();
-        // .track_scroll(&self.page_scroll_handle);
+        let mut page_content = v_flex()
+            .id("settings-ui-page")
+            .size_full()
+            .overflow_y_scroll()
+            .track_scroll(&self.page_scroll_handle);
 
         let items: Vec<_> = items.collect();
         let items_len = items.len();
@@ -2193,13 +2195,19 @@ impl SettingsWindow {
         }
 
         return v_flex()
+            .id("Settings-ui-page")
             .size_full()
             .pt_6()
             .pb_8()
             .px_8()
             .bg(cx.theme().colors().editor_background)
             .child(page_header)
-            .vertical_scrollbar_for(self.list_state.clone(), window, cx)
+            .when(sub_page_stack().is_empty(), |this| {
+                this.vertical_scrollbar_for(self.list_state.clone(), window, cx)
+            })
+            .when(!sub_page_stack().is_empty(), |this| {
+                this.vertical_scrollbar_for(self.page_scroll_handle.clone(), window, cx)
+            })
             .track_focus(&self.content_focus_handle.focus_handle(cx))
             .child(
                 div()
