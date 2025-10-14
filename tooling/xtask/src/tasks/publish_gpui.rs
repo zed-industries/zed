@@ -24,7 +24,6 @@ pub fn run_publish_gpui(args: PublishGpuiArgs) -> Result<()> {
 
     let start_time = std::time::Instant::now();
     check_workspace_root()?;
-    ensure_cargo_set_version()?;
     check_git_clean()?;
 
     let version = read_gpui_version()?;
@@ -248,27 +247,6 @@ fn check_workspace_root() -> Result<()> {
         bail!(
             "Current directory does not appear to be a workspace root. Please run this command from the workspace root."
         );
-    }
-
-    Ok(())
-}
-
-fn ensure_cargo_set_version() -> Result<()> {
-    let output = run_command(
-        Command::new("which")
-            .arg("cargo-set-version")
-            .stdout(Stdio::piped()),
-    )
-    .context("Failed to check for cargo-set-version")?;
-
-    if !output.status.success() {
-        println!("cargo-set-version not found. Installing cargo-edit...");
-
-        let install_output = run_command(Command::new("cargo").arg("install").arg("cargo-edit"))?;
-
-        if !install_output.status.success() {
-            bail!("Failed to install cargo-edit");
-        }
     }
 
     Ok(())
