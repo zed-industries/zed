@@ -1,45 +1,21 @@
 # Zed on Windows
 
-## Install Zed (Windows)
-
-### **Option A**: Standard installer (recommended)
+## Installing Zed
 
 Get the latest stable builds via [the download page](https://zed.dev/download). If you want to download our preview build, you can find it on its [releases page](https://zed.dev/releases/preview). After the first manual installation, Zed will periodically check for install updates.
 
-### **_Option B_**: Build from source
-
-1. Install prerequisites:
-
-- Rust via rustup.
-- [Visual Studio](https://visualstudio.microsoft.com/downloads/) with the Desktop development with C++ workload (or Build Tools for Visual Studio), including MSVC toolchain and Spectre‑mitigated libs.
-- Windows 10/11 SDK (version 10.0.20348.0 or newer).
-- [CMake](https://cmake.org/download) (installed via Visual Studio or standalone; ensure cmake is on your PATH).
-
-2. Clone the Zed repository and build:
-
-```json
-# Debug build
-cargo run
-
-# Release build
-cargo run --release
-
-# Run tests
-cargo test --workspace
-```
-
-You can learn more here: [Building Windows] ( https://zed.dev/docs/development/windows)
+You can also build zed from source, see [these docs](https://zed.dev/docs/development/windows) for instructions.
 
 ## Uninstall
 
-- Installed via installer: Use Settings → Apps → Installed apps, search for Zed, and click Uninstall.
+- Installed via installer: Use `Settings` → `Apps` → `Installed apps`, search for Zed, and click Uninstall.
 - Built from source: Remove the build output directory you created (e.g., your target/install folder).
 
 Your settings and extensions live in your user profile. When uninstalling, you can choose to keep or remove them.
 
 ## Remote Development (SSH)
 
-Zed supports SSH remoting on Windows and will prompt for credentials using a Windows‑compatible askpass flow when needed.
+Zed supports SSH remoting on Windows and will prompt for credentials when needed.
 
 If you encounter authentication issues, confirm that your SSH key agent is running (e.g., ssh-agent or your Git client’s agent) and that ssh.exe is on PATH.
 
@@ -79,6 +55,6 @@ To check if your GPU supports DX11, you can use the following command:
 dxdiag
 ```
 
-Which will open the diagnostic tool that will show the minimum DirectX version your GPU supports under `System` -> `System Information` -> `DirectX Version`.
+Which will open the diagnostic tool that will show the minimum DirectX version your GPU supports under `System` → `System Information` → `DirectX Version`.
 
 You might also be trying to run Zed inside a virtual machine in which case it will use the emulated adapter that your VM provides, while Zed will work the performance will be degraded.
