@@ -76,10 +76,9 @@ impl<T: TransitionGoal + Clone + PartialEq + 'static> Transition<T> {
             "delta should always be between 0 and 1"
         );
 
-        let evaluated_value = state.last_goal.apply_delta(&state.current_goal, delta);
-
         state.last_delta = delta;
-        drop(state_entity);
+
+        let evaluated_value = state.last_goal.apply_delta(&state.current_goal, delta);
 
         (delta != 1., evaluated_value)
     }
