@@ -1291,7 +1291,6 @@ pub struct Editor {
     pub lookup_key: Option<Box<dyn Any + Send + Sync>>,
     pub(crate) update_semantic_tokens_task: Task<()>,
     semantic_tokens_debounce_task: Option<Task<()>>,
-    variable_color_cache: Option<Rc<RefCell<rainbow::VariableColorCache>>>,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
@@ -2301,14 +2300,6 @@ impl Editor {
             lookup_key: None,
             update_semantic_tokens_task: Task::ready(()),
             semantic_tokens_debounce_task: None,
-            variable_color_cache: {
-                let settings = EditorSettings::get_global(cx);
-                if settings.rainbow_highlighting.enabled {
-                    Some(Rc::new(RefCell::new(rainbow::VariableColorCache::new(settings.rainbow_highlighting.mode))))
-                } else {
-                    None
-                }
-            },
         };
 
         if is_minimap {
@@ -2324,6 +2315,16 @@ impl Editor {
         }
         editor.tasks_update_task = Some(editor.refresh_runnables(window, cx));
         editor._subscriptions.extend(project_subscriptions);
+        
+        // Initialize rainbow variable color cache
+        let rainbow_config = EditorSettings::get_global(cx).rainbow_highlighting;
+        if rainbow_config.enabled {
+            editor.display_map.update(cx, |display_map, _| {
+                display_map.set_variable_color_cache(
+                    Some(Arc::new(parking_lot::Mutex::new(rainbow::VariableColorCache::new(rainbow_config.mode))))
+                );
+            });
+        }
         
         editor.request_initial_semantic_tokens(window, cx);
 
@@ -8798,7 +8799,7 @@ impl Editor {
         let longest_line_width = if visible_row_range.contains(&longest_row) {
             line_layouts[(longest_row.0 - visible_row_range.start.0) as usize].width
         } else {
-            layout_line(longest_row, editor_snapshot, style, editor_width, |_| false, self.variable_color_cache.as_ref(), window, cx).width
+            layout_line(longest_row, editor_snapshot, style, editor_width, |_| false, window, cx).width
         };
 
         let viewport_bounds = Bounds::new(Default::default(), window.viewport_size()).extend(Edges {
@@ -19025,17 +19026,14 @@ impl Editor {
         );
 
         let rainbow_config = EditorSettings::get_global(cx).rainbow_highlighting;
-        if rainbow_config.enabled {
-            if let Some(cache) = &self.variable_color_cache {
-                if cache.borrow().mode != rainbow_config.mode {
-                    self.variable_color_cache = Some(Rc::new(RefCell::new(rainbow::VariableColorCache::new(rainbow_config.mode))));
-                }
+        self.display_map.update(cx, |display_map, _| {
+            let cache = if rainbow_config.enabled {
+                Some(Arc::new(parking_lot::Mutex::new(rainbow::VariableColorCache::new(rainbow_config.mode))))
             } else {
-                self.variable_color_cache = Some(Rc::new(RefCell::new(rainbow::VariableColorCache::new(rainbow_config.mode))));
-            }
-        } else {
-            self.variable_color_cache = None;
-        }
+                None
+            };
+            display_map.set_variable_color_cache(cache);
+        });
 
         let old_cursor_shape = self.cursor_shape;
         let old_show_breadcrumbs = self.show_breadcrumbs;

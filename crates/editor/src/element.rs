@@ -3483,7 +3483,6 @@ impl EditorElement {
         editor_width: Pixels,
         is_row_soft_wrapped: impl Copy + Fn(usize) -> bool,
         bg_segments_per_row: &[Vec<(Range<DisplayPoint>, Hsla)>],
-        variable_color_cache: Option<std::rc::Rc<std::cell::RefCell<crate::rainbow::VariableColorCache>>>,
         window: &mut Window,
         cx: &mut App,
     ) -> Vec<LineWithInvisibles> {
@@ -3533,7 +3532,7 @@ impl EditorElement {
                 })
                 .collect()
         } else {
-            let chunks = snapshot.highlighted_chunks(rows.clone(), true, style, variable_color_cache.as_ref());
+            let chunks = snapshot.highlighted_chunks(rows.clone(), true, style);
             LineWithInvisibles::from_chunks(
                 chunks,
                 style,
@@ -3557,7 +3556,6 @@ impl EditorElement {
         scroll_position: gpui::Point<ScrollOffset>,
         scroll_pixel_position: gpui::Point<ScrollPixelOffset>,
         content_origin: gpui::Point<Pixels>,
-        _variable_color_cache: Option<std::rc::Rc<std::cell::RefCell<crate::rainbow::VariableColorCache>>>,
         window: &mut Window,
         cx: &mut App,
     ) -> SmallVec<[AnyElement; 1]> {
@@ -3600,7 +3598,6 @@ impl EditorElement {
         selected_buffer_ids: &Vec<BufferId>,
         is_row_soft_wrapped: impl Copy + Fn(usize) -> bool,
         sticky_header_excerpt_id: Option<ExcerptId>,
-        variable_color_cache: Option<std::rc::Rc<std::cell::RefCell<crate::rainbow::VariableColorCache>>>,
         window: &mut Window,
         cx: &mut App,
     ) -> Option<(AnyElement, Size<Pixels>, DisplayRow, Pixels)> {
@@ -3630,7 +3627,6 @@ impl EditorElement {
                             &self.style,
                             editor_width,
                             is_row_soft_wrapped,
-                            variable_color_cache.as_ref(),
                             window,
                             cx,
                         ))
@@ -4142,7 +4138,6 @@ impl EditorElement {
         selected_buffer_ids: &Vec<BufferId>,
         is_row_soft_wrapped: impl Copy + Fn(usize) -> bool,
         sticky_header_excerpt_id: Option<ExcerptId>,
-        variable_color_cache: Option<std::rc::Rc<std::cell::RefCell<crate::rainbow::VariableColorCache>>>,
         window: &mut Window,
         cx: &mut App,
     ) -> Result<(Vec<BlockLayout>, HashMap<DisplayRow, bool>), HashMap<CustomBlockId, u32>> {
@@ -4186,7 +4181,6 @@ impl EditorElement {
                 selected_buffer_ids,
                 is_row_soft_wrapped,
                 sticky_header_excerpt_id,
-                variable_color_cache.clone(),
                 window,
                 cx,
             ) {
@@ -4244,7 +4238,6 @@ impl EditorElement {
                 selected_buffer_ids,
                 is_row_soft_wrapped,
                 sticky_header_excerpt_id,
-                variable_color_cache.clone(),
                 window,
                 cx,
             ) {
@@ -4300,7 +4293,6 @@ impl EditorElement {
                 selected_buffer_ids,
                 is_row_soft_wrapped,
                 sticky_header_excerpt_id,
-                variable_color_cache,
                 window,
                 cx,
             ) {
@@ -8922,7 +8914,6 @@ impl Element for EditorElement {
                         self.style.background,
                     );
 
-                    let variable_color_cache = self.editor.read(cx).variable_color_cache.clone();
                     let mut line_layouts = Self::layout_lines(
                         start_row..end_row,
                         &snapshot,
@@ -8930,7 +8921,6 @@ impl Element for EditorElement {
                         editor_width,
                         is_row_soft_wrapped,
                         &bg_segments_per_row,
-                        variable_color_cache.clone(),
                         window,
                         cx,
                     );
@@ -8990,7 +8980,6 @@ impl Element for EditorElement {
                         style,
                         editor_width,
                         is_row_soft_wrapped,
-                        variable_color_cache.as_ref(),
                         window,
                         cx,
                     )
@@ -9036,7 +9025,6 @@ impl Element for EditorElement {
                                     &selected_buffer_ids,
                                     is_row_soft_wrapped,
                                     sticky_header_excerpt_id,
-                                    variable_color_cache.clone(),
                                     window,
                                     cx,
                                 )
@@ -9252,7 +9240,6 @@ impl Element for EditorElement {
                         scroll_position,
                         scroll_pixel_position,
                         content_origin,
-                        variable_color_cache.clone(),
                         window,
                         cx,
                     );
@@ -10306,11 +10293,10 @@ pub fn layout_line(
     style: &EditorStyle,
     text_width: Pixels,
     is_row_soft_wrapped: impl Copy + Fn(usize) -> bool,
-    variable_color_cache: Option<&std::rc::Rc<std::cell::RefCell<crate::rainbow::VariableColorCache>>>,
     window: &mut Window,
     cx: &mut App,
 ) -> LineWithInvisibles {
-    let chunks = snapshot.highlighted_chunks(row..row + DisplayRow(1), true, style, variable_color_cache);
+    let chunks = snapshot.highlighted_chunks(row..row + DisplayRow(1), true, style);
     LineWithInvisibles::from_chunks(
         chunks,
         style,

@@ -22,6 +22,7 @@ use crate::editor_settings::VariableColorMode;
 // Variable Color Cache (Optimized for Hot Path)
 // ============================================================================
 
+#[derive(Debug)]
 pub struct VariableColorCache {
     colors: HashMap<u64, Hsla>,
     pub mode: VariableColorMode,
