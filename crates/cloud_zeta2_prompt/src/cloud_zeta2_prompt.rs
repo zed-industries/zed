@@ -536,6 +536,12 @@ impl<'a> PlannedPrompt<'a> {
                         }
                     } else if !excerpt_file_insertions.is_empty() {
                         let lines = snippet.text.lines().collect::<Vec<_>>();
+                        let push_line = |output: &mut String, line_ix: usize| {
+                            if self.request.prompt_format == PromptFormat::NumberedLines {
+                                write!(output, "{}|", line_ix as u32 + range.start.0 + 1)?;
+                            }
+                            anyhow::Ok(writeln!(output, "{}", lines[line_ix])?)
+                        };
                         let mut last_line_ix = 0;
                         let mut insertion_ix = 0;
                         while insertion_ix < excerpt_file_insertions.len() {
@@ -543,13 +549,17 @@ impl<'a> PlannedPrompt<'a> {
                             let found = point.line >= range.start && point.line <= range.end;
                             if found {
                                 excerpt_index = Some(section_index);
-                                let line_ix = (point.line.0 - range.start.0) as usize;
-                                for line in &lines[last_line_ix..line_ix] {
-                                    writeln!(output, "{}", line)?;
+                                let insertion_line_ix = (point.line.0 - range.start.0) as usize;
+                                for line_ix in last_line_ix..insertion_line_ix {
+                                    push_line(output, line_ix)?;
                                 }
-                                if let Some(next_line) = lines.get(line_ix) {
+                                if let Some(next_line) = lines.get(insertion_line_ix) {
                                     if self.request.prompt_format == PromptFormat::NumberedLines {
-                                        write!(output, "{}|", line_ix as u32 + range.start.0 + 1)?
+                                        write!(
+                                            output,
+                                            "{}|",
+                                            insertion_line_ix as u32 + range.start.0 + 1
+                                        )?
                                     }
                                     output.push_str(&next_line[..point.column as usize]);
                                     output.push_str(insertion);
@@ -557,7 +567,7 @@ impl<'a> PlannedPrompt<'a> {
                                 } else {
                                     writeln!(output, "{}", insertion)?;
                                 }
-                                last_line_ix = line_ix + 1;
+                                last_line_ix = insertion_line_ix + 1;
                                 excerpt_file_insertions.remove(insertion_ix);
                                 continue;
                             }
@@ -565,10 +575,7 @@ impl<'a> PlannedPrompt<'a> {
                         }
                         skipped_last_snippet = false;
                         for line_ix in last_line_ix..lines.len() {
-                            if self.request.prompt_format == PromptFormat::NumberedLines {
-                                write!(output, "{}|", line_ix as u32 + range.start.0 + 1)?
-                            }
-                            writeln!(output, "{}", lines[line_ix])?;
+                            push_line(output, line_ix)?;
                         }
                     } else {
                         skipped_last_snippet = false;
