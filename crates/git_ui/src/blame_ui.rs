@@ -218,7 +218,7 @@ impl BlameRenderer for GitBlameRenderer {
             style.link.refine(&TextStyleRefinement {
                 color: Some(link_color),
                 underline: Some(UnderlineStyle {
-                    color: Some(link_color),
+                    color: Some(link_color.opacity(0.4)),
                     thickness: px(1.0),
                     ..Default::default()
                 }),
