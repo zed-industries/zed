@@ -14,7 +14,7 @@ use crate::{
 
 /// A transition that can be applied to an element.
 #[derive(Clone)]
-pub struct Transition<T: TransitionGoal + Clone> {
+pub struct Transition<T: TransitionGoal + Clone + PartialEq + 'static> {
     /// The amount of time for which this transtion should run.
     duration_secs: f32,
 
@@ -87,7 +87,7 @@ impl<T: TransitionGoal + Clone + PartialEq + 'static> Transition<T> {
 
 /// State for a transition.
 #[derive(Clone)]
-pub struct TransitionState<T: TransitionGoal + Clone> {
+pub struct TransitionState<T: TransitionGoal + Clone + PartialEq + 'static> {
     goal_last_updated_at: Instant,
     current_goal: T,
     start_delta: f32,
@@ -95,7 +95,7 @@ pub struct TransitionState<T: TransitionGoal + Clone> {
     last_goal: T,
 }
 
-impl<T: TransitionGoal + Clone> TransitionState<T> {
+impl<T: TransitionGoal + Clone + PartialEq + 'static> TransitionState<T> {
     fn new(initial_goal: T) -> Self {
         Self {
             goal_last_updated_at: Instant::now(),
@@ -107,7 +107,7 @@ impl<T: TransitionGoal + Clone> TransitionState<T> {
     }
 }
 
-impl<T: TransitionGoal + Clone + 'static> Transition<T> {
+impl<T: TransitionGoal + Clone + PartialEq + 'static> Transition<T> {
     /// Create a new transition with the given duration and goal.
     pub fn new(
         id: impl Into<ElementId>,
@@ -145,7 +145,7 @@ impl<T: TransitionGoal + Clone + 'static> Transition<T> {
 /// An extension trait for adding the transition wrapper to both Elements and Components
 pub trait TransitionExt {
     /// Render this component or element with transitions
-    fn with_transitions<'a, T: TransitionValues<'a>>(
+    fn with_transitions<'a, T>(
         self,
         transitions: T,
         animator: impl Fn(&mut App, Self, T::Values) -> Self + 'static,
@@ -171,28 +171,20 @@ pub struct TransitionElement<'a, E, T: TransitionValues<'a>> {
     animator: Box<dyn Fn(&mut App, E, T::Values) -> E + 'a>,
 }
 
-impl<'a, E, T: TransitionValues<'a>> TransitionElement<'a, E, T> {
-    /// Returns a new [`TransitionElement<E, T>`] after applying the given function
-    /// to the element being animated.
-    pub fn map_element(mut self, f: impl FnOnce(E) -> E) -> TransitionElement<'a, E, T> {
-        self.element = self.element.map(f);
-        self
-    }
-}
-
-impl<E: IntoElement + 'static, T: TransitionValues<'static> + Clone + 'static> IntoElement
-    for TransitionElement<'static, E, T>
-{
-    type Element = TransitionElement<'static, E, T>;
-
-    fn into_element(self) -> Self::Element {
-        self
-    }
-}
-
 impl<E: IntoElement + 'static, T: TransitionValues<'static> + Clone + 'static> AnimatableExt
     for TransitionElement<'static, E, T>
 {
+    type Element = E;
+
+    fn element_mut(&mut self) -> Option<&mut E> {
+        self.element.as_mut()
+    }
+
+    fn map_element(mut self, f: impl FnOnce(E) -> E) -> Self {
+        self.element = self.element.map(f);
+        self
+    }
+
     fn request_layout(
         &mut self,
         _global_id: Option<&GlobalElementId>,

@@ -105,20 +105,23 @@ impl<E> AnimationElement<E> {
     }
 }
 
-impl<E: IntoElement + 'static> IntoElement for AnimationElement<E> {
-    type Element = AnimationElement<E>;
-
-    fn into_element(self) -> Self::Element {
-        self
-    }
-}
-
 struct AnimationState {
     start: Instant,
     animation_ix: usize,
 }
 
 impl<E: IntoElement + 'static> animatable::AnimatableExt for AnimationElement<E> {
+    type Element = E;
+
+    fn element_mut(&mut self) -> Option<&mut E> {
+        self.element.as_mut()
+    }
+
+    fn map_element(mut self, f: impl FnOnce(E) -> E) -> Self {
+        self.element = self.element.map(f);
+        self
+    }
+
     fn id(&self) -> Option<ElementId> {
         Some(self.id.clone())
     }
@@ -171,12 +174,22 @@ impl<E: IntoElement + 'static> animatable::AnimatableExt for AnimationElement<E>
 
 mod animatable {
     use crate::{
-        AnyElement, App, Element, ElementId, GlobalElementId, InspectorElementId, IntoElement,
-        Window,
+        AnyElement, App, Element, ElementId, GlobalElementId, InspectorElementId,
+        InteractiveElement, IntoElement, StyleRefinement, Styled, Window,
     };
 
     /// An extension trait that reduces the boilerplate required to make an element animated.
     pub trait AnimatableExt {
+        /// The underlying element type.
+        type Element;
+
+        /// Gets a mutable reference to the underlying element.
+        fn element_mut(&mut self) -> Option<&mut Self::Element>;
+
+        /// Returns a new animatable element after applying the given function
+        /// to the animatable element.
+        fn map_element(self, f: impl FnOnce(Self::Element) -> Self::Element) -> Self;
+
         /// If this element has a unique identifier, return it here. This is used to track elements across frames, and
         /// will cause a GlobalElementId to be passed to the request_layout, prepaint, and paint methods.
         ///
@@ -255,6 +268,32 @@ mod animatable {
             cx: &mut App,
         ) {
             element.paint(window, cx)
+        }
+    }
+
+    impl<E: AnimatableExt + 'static> IntoElement for E {
+        type Element = E;
+
+        fn into_element(self) -> Self::Element {
+            self
+        }
+    }
+
+    impl<E: AnimatableExt + 'static> Styled for E
+    where
+        <Self as AnimatableExt>::Element: Styled,
+    {
+        fn style(&mut self) -> &mut StyleRefinement {
+            self.element_mut().unwrap().style()
+        }
+    }
+
+    impl<E: AnimatableExt + 'static> InteractiveElement for E
+    where
+        <Self as AnimatableExt>::Element: InteractiveElement,
+    {
+        fn interactivity(&mut self) -> &mut crate::Interactivity {
+            self.element_mut().unwrap().interactivity()
         }
     }
 }
