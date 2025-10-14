@@ -1826,8 +1826,13 @@ impl Editor {
         let mut clone = Self::new(self.mode.clone(), self.buffer.clone(), self.project.clone(), window, cx);
         self.display_map.update(cx, |display_map, cx| {
             let snapshot = display_map.snapshot(cx);
+            let cache = display_map.get_variable_color_cache();
             clone.display_map.update(cx, |display_map, cx| {
                 display_map.set_state(&snapshot, cx);
+                // Explicitly share the rainbow color cache so cloned editors maintain color consistency
+                if let Some(cache) = cache {
+                    display_map.set_variable_color_cache(Some(cache));
+                }
             });
         });
         clone.folds_did_change(cx);
@@ -2316,12 +2321,12 @@ impl Editor {
         editor.tasks_update_task = Some(editor.refresh_runnables(window, cx));
         editor._subscriptions.extend(project_subscriptions);
         
-        // Initialize rainbow variable color cache
+        // Initialize rainbow variable color cache (lock-free with DashMap)
         let rainbow_config = EditorSettings::get_global(cx).rainbow_highlighting;
         if rainbow_config.enabled {
             editor.display_map.update(cx, |display_map, _| {
                 display_map.set_variable_color_cache(
-                    Some(Arc::new(parking_lot::Mutex::new(rainbow::VariableColorCache::new(rainbow_config.mode))))
+                    Some(Arc::new(rainbow::VariableColorCache::new(rainbow_config.mode)))
                 );
             });
         }
@@ -19034,7 +19039,7 @@ impl Editor {
         let rainbow_config = EditorSettings::get_global(cx).rainbow_highlighting;
         self.display_map.update(cx, |display_map, _| {
             let cache = if rainbow_config.enabled {
-                Some(Arc::new(parking_lot::Mutex::new(rainbow::VariableColorCache::new(rainbow_config.mode))))
+                Some(Arc::new(rainbow::VariableColorCache::new(rainbow_config.mode)))
             } else {
                 None
             };

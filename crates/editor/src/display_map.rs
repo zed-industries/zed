@@ -125,7 +125,8 @@ pub struct DisplayMap {
     /// The semantic tokens from the language server.
     pub semantic_tokens: HashMap<BufferId, Arc<SemanticTokenView>>,
     /// Cache for rainbow variable coloring (owned by DisplayMap, snapshot via Arc).
-    variable_color_cache: Option<Arc<parking_lot::Mutex<crate::rainbow::VariableColorCache>>>,
+    /// Uses DashMap internally for lock-free concurrent access.
+    variable_color_cache: Option<Arc<crate::rainbow::VariableColorCache>>,
     /// A container for explicitly foldable ranges, which supersede indentation based fold range suggestions.
     crease_map: CreaseMap,
     pub(crate) fold_placeholder: FoldPlaceholder,
@@ -226,9 +227,11 @@ impl DisplayMap {
     }
 
     pub fn set_state(&mut self, other: &DisplaySnapshot, cx: &mut Context<Self>) {
-        // Share the rainbow color cache from the source display map
-        // This ensures consistent colors across cloned editors (e.g., in excerpt views)
-        self.variable_color_cache = other.variable_color_cache.clone();
+        // Share the rainbow color cache from the source display map, but only if we don't already have one
+        // This ensures consistent colors across all excerpts in multibuffer views
+        if self.variable_color_cache.is_none() {
+            self.variable_color_cache = other.variable_color_cache.clone();
+        }
         
         self.fold(
             other
@@ -562,12 +565,12 @@ impl DisplayMap {
 
     pub fn set_variable_color_cache(
         &mut self,
-        cache: Option<Arc<parking_lot::Mutex<crate::rainbow::VariableColorCache>>>
+        cache: Option<Arc<crate::rainbow::VariableColorCache>>
     ) {
         self.variable_color_cache = cache;
     }
 
-    pub fn get_variable_color_cache(&self) -> Option<Arc<parking_lot::Mutex<crate::rainbow::VariableColorCache>>> {
+    pub fn get_variable_color_cache(&self) -> Option<Arc<crate::rainbow::VariableColorCache>> {
         self.variable_color_cache.clone()
     }
 
@@ -718,7 +721,7 @@ pub struct DisplaySnapshot {
     text_highlights: TextHighlights,
     inlay_highlights: InlayHighlights,
     semantic_tokens: HashMap<BufferId, Arc<SemanticTokenView>>,
-    variable_color_cache: Option<Arc<parking_lot::Mutex<crate::rainbow::VariableColorCache>>>,
+    variable_color_cache: Option<Arc<crate::rainbow::VariableColorCache>>,
     clip_at_line_ends: bool,
     masked: bool,
     diagnostics_max_severity: DiagnosticSeverity,
@@ -888,8 +891,10 @@ impl DisplaySnapshot {
         let display_row_start = display_rows.start;
         let start_point = self.display_point_to_point(DisplayPoint::new(display_row_start, 0), Bias::Left);
         let start_buffer_offset = self.buffer_snapshot.point_to_offset(start_point);
-        // State: (current_offset, cached_node: Option<(range, identifier_text)>)
-        let state = (start_buffer_offset, None::<(Range<usize>, String)>);
+        let buffer_len = self.buffer_snapshot.len();
+        // State: (current_offset, cached_node: Option<(range, identifier_hash)>)
+        // Store hash instead of String to avoid allocations
+        let state = (start_buffer_offset, None::<(Range<usize>, u64)>);
 
         self.chunks(display_rows, language_aware, HighlightStyles {
             inlay_hint: Some(editor_style.inlay_hints_style),
@@ -916,15 +921,17 @@ impl DisplaySnapshot {
 
                 let rainbow_style = if is_variable_like && rainbow_config.enabled {
                     self.variable_color_cache.as_ref().and_then(|cache| {
-                        let identifier = if let Some(ref node_range) = chunk.capture_node_range {
-                            let buffer_len = self.buffer_snapshot.len();
+                        let identifier_hash = if let Some(ref node_range) = chunk.capture_node_range {
                             if node_range.end <= buffer_len {
-                                // Extract the full identifier text for this node
-                                let full_text: String = self.buffer_snapshot.text_for_range(node_range.clone()).collect();
-                                if !full_text.is_empty() && full_text.len() >= 2 {
-                                    // Cache the node range and identifier text for subsequent chunks
-                                    *cached_node = Some((node_range.clone(), full_text.clone()));
-                                    Some(full_text)
+                                // Hash directly from iterator - zero allocations!
+                                let hash = crate::rainbow::hash_identifier_from_iter(
+                                    self.buffer_snapshot.text_for_range(node_range.clone())
+                                );
+                                
+                                if hash != 0 {  // 0 means empty or too short
+                                    // Cache the node range and hash for subsequent chunks
+                                    *cached_node = Some((node_range.clone(), hash));
+                                    Some(hash)
                                 } else {
                                     None
                                 }
@@ -933,13 +940,12 @@ impl DisplaySnapshot {
                             }
                         } else {
                             // Check if this chunk is part of a previously seen node
-                            // by checking if current chunk_start is within cached_node range
                             cached_node.as_ref()
                                 .filter(|(range, _)| chunk_start >= range.start && chunk_start < range.end)
-                                .map(|(_, identifier)| identifier.clone())
+                                .map(|(_, hash)| *hash)
                         };
                         
-                        identifier.map(|id| cache.lock().get_or_insert(&id, theme))
+                        identifier_hash.map(|hash| cache.get_or_insert_by_hash(hash, theme))
                     })
                 } else {
                     None
@@ -978,10 +984,17 @@ impl DisplaySnapshot {
                     });
 
                 // Precedence: tree-sitter base < tree-sitter rainbow < LSP semantic < diagnostics
-                let style = [highlight_style, rainbow_style, chunk_highlight, diagnostic_highlight]
-                    .into_iter()
-                    .flatten()
-                    .reduce(|acc, highlight| acc.highlight(highlight));
+                // Manual merging to avoid array allocation
+                let mut style = highlight_style;
+                if let Some(rainbow) = rainbow_style {
+                    style = Some(style.map_or(rainbow, |s| s.highlight(rainbow)));
+                }
+                if let Some(chunk) = chunk_highlight {
+                    style = Some(style.map_or(chunk, |s| s.highlight(chunk)));
+                }
+                if let Some(diag) = diagnostic_highlight {
+                    style = Some(style.map_or(diag, |s| s.highlight(diag)));
+                }
 
                 Some(HighlightedChunk {
                     text: chunk.text,
@@ -1582,7 +1595,7 @@ impl<'a> SemanticTokenStylizer<'a> {
         modifiers: u32,
         variable_name: Option<&str>,
         rainbow_config: Option<&crate::editor_settings::RainbowConfig>,
-        variable_color_cache: Option<&Arc<parking_lot::Mutex<crate::rainbow::VariableColorCache>>>
+        variable_color_cache: Option<&Arc<crate::rainbow::VariableColorCache>>
     ) -> Option<HighlightStyle> {
         let token_type_name = self.token_type(token_type)?;
         
@@ -1596,7 +1609,7 @@ impl<'a> SemanticTokenStylizer<'a> {
                     // If cache is available (during rendering), use it for rainbow color
                     // Otherwise return None to prevent LSP from overriding tree-sitter rainbow
                     return variable_color_cache
-                        .and_then(|cache| variable_name.map(|name| cache.lock().get_or_insert(name, theme)));
+                        .and_then(|cache| variable_name.map(|name| cache.get_or_insert(name, theme)));
                 }
             }
         }

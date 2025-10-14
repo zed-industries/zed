@@ -27158,3 +27158,271 @@ async fn test_rainbow_highlighting_immediate_application(cx: &mut TestAppContext
     });
     assert!(!is_enabled, "Rainbow highlighting should be immediately disabled");
 }
+
+// ============================================================================
+// Regression tests for cache consistency bugs
+// ============================================================================
+
+#[gpui::test]
+async fn test_rainbow_multibuffer_cache_consistency(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities::default(),
+        cx
+    ).await;
+
+    // Enable rainbow highlighting
+    update_test_editor_settings(&mut cx.cx, |settings| {
+        settings.editor.rainbow_highlighting.get_or_insert_default().enabled = Some(true);
+    });
+
+    // Create buffers with the same variable name "result"
+    let buffer_a = cx.cx.new(|cx| {
+        Buffer::local(indoc! {r#"
+            fn test_one(result: i32) {
+                use_value(result);
+            }
+        "#}, cx)
+    });
+    
+    let buffer_b = cx.cx.new(|cx| {
+        Buffer::local(indoc! {r#"
+            fn test_two(result: i32) {
+                process(result);
+            }
+        "#}, cx)
+    });
+    
+    let multibuffer = cx.cx.new(|cx| {
+        let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);
+        
+        // Add excerpts from both buffers
+        multibuffer.push_excerpts(
+            buffer_a.clone(),
+            [ExcerptRange::new(0..buffer_a.read(cx).len())],
+            cx
+        );
+        
+        multibuffer.push_excerpts(
+            buffer_b.clone(),
+            [ExcerptRange::new(0..buffer_b.read(cx).len())],
+            cx
+        );
+        
+        multibuffer
+    });
+    
+    let (multibuffer_editor, editor_cx) = cx.cx.add_window_view(|window, cx| {
+        build_editor(multibuffer, window, cx)
+    });
+    
+    // Verify both excerpts use the same cache and produce same color
+    multibuffer_editor.update(editor_cx, |editor, cx| {
+        let cache = editor.display_map.read(cx)
+            .get_variable_color_cache()
+            .expect("Cache should exist");
+        
+        // Hash "result" - should be consistent across excerpts
+        let result_hash = crate::rainbow::hash_identifier("result");
+        
+        let color_1 = cache.get_or_insert_by_hash(result_hash, &cx.theme().syntax());
+        let color_2 = cache.get_or_insert_by_hash(result_hash, &cx.theme().syntax());
+        
+        assert_eq!(
+            color_1.color, color_2.color,
+            "Same variable 'result' should have same color in multibuffer across different files"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_rainbow_excerpt_cache_not_overwritten(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities::default(),
+        cx
+    ).await;
+
+    // Enable rainbow highlighting
+    update_test_editor_settings(&mut cx.cx, |settings| {
+        settings.editor.rainbow_highlighting.get_or_insert_default().enabled = Some(true);
+    });
+
+    cx.set_state(indoc! {r#"
+        fn testˇ(result: i32) {
+            let value = result;
+        }
+    "#});
+
+    cx.update_editor(|editor, _window, cx| {
+        let initial_cache = editor.display_map.read(cx).get_variable_color_cache();
+        
+        assert!(initial_cache.is_some(), "Initial cache should exist");
+        
+        // Get initial cache reference
+        let cache_arc = initial_cache.as_ref().unwrap();
+        let initial_ptr = Arc::as_ptr(cache_arc);
+        
+        // Simulate set_state() call (as happens in excerpts)
+        editor.display_map.update(cx, |display_map, cx| {
+            let snapshot = display_map.snapshot(cx);
+            display_map.set_state(&snapshot, cx);
+        });
+        
+        // Verify cache was NOT overwritten
+        let final_cache = editor.display_map.read(cx).get_variable_color_cache();
+        
+        assert!(final_cache.is_some(), "Cache should still exist");
+        
+        let cache_arc = final_cache.as_ref().unwrap();
+        let final_ptr = Arc::as_ptr(cache_arc);
+        
+        assert_eq!(
+            initial_ptr, final_ptr,
+            "Cache should be the same Arc (not replaced by set_state)"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_rainbow_cache_shared_across_cloned_editors(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities::default(),
+        cx
+    ).await;
+
+    // Enable rainbow highlighting
+    update_test_editor_settings(&mut cx.cx, |settings| {
+        settings.editor.rainbow_highlighting.get_or_insert_default().enabled = Some(true);
+    });
+
+    cx.set_state(indoc! {r#"
+        fn testˇ(value: i32) {
+            process(value);
+        }
+    "#});
+
+    cx.update_editor(|editor, window, cx| {
+        let original_cache = editor.display_map.read(cx).get_variable_color_cache();
+        assert!(original_cache.is_some(), "Original editor should have cache");
+        
+        // Clone the editor (as happens in split views)
+        let cloned = editor.clone(window, cx);
+        
+        let cloned_cache = cloned.display_map.read(cx).get_variable_color_cache();
+        assert!(cloned_cache.is_some(), "Cloned editor should have cache");
+        
+        // Verify they share the same cache Arc
+        let original_ptr = Arc::as_ptr(original_cache.as_ref().unwrap());
+        let cloned_ptr = Arc::as_ptr(cloned_cache.as_ref().unwrap());
+        
+        assert_eq!(
+            original_ptr, cloned_ptr,
+            "Original and cloned editors should share the same cache"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_rainbow_cache_preserved_with_no_source_cache(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities::default(),
+        cx
+    ).await;
+
+    // Enable rainbow highlighting
+    update_test_editor_settings(&mut cx.cx, |settings| {
+        settings.editor.rainbow_highlighting.get_or_insert_default().enabled = Some(true);
+    });
+
+    cx.set_state(indoc! {r#"
+        fn testˇ() {}
+    "#});
+
+    cx.update_editor(|editor, _window, cx| {
+        let initial_cache = editor.display_map.read(cx).get_variable_color_cache();
+        assert!(initial_cache.is_some(), "Should have initial cache");
+        
+        let initial_ptr = Arc::as_ptr(initial_cache.as_ref().unwrap());
+        
+        // Set cache to None temporarily, then back via set_state
+        // This simulates what happens when rainbow is disabled in source but enabled in target
+        editor.display_map.update(cx, |display_map, cx| {
+            // Temporarily clear cache
+            display_map.set_variable_color_cache(None);
+            
+            // Create snapshot with no cache
+            let snapshot = display_map.snapshot(cx);
+            
+            // Restore original cache
+            display_map.set_variable_color_cache(initial_cache.clone());
+            
+            // Call set_state with cache-less snapshot
+            // This should NOT overwrite the existing cache
+            display_map.set_state(&snapshot, cx);
+        });
+        
+        // Verify cache was preserved (not overwritten with None)
+        let final_cache = editor.display_map.read(cx).get_variable_color_cache();
+        assert!(final_cache.is_some(), "Cache should be preserved, not set to None");
+        
+        let final_ptr = Arc::as_ptr(final_cache.as_ref().unwrap());
+        assert_eq!(
+            initial_ptr, final_ptr,
+            "Cache should be the same (not overwritten by None)"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_rainbow_deterministic_hashing_in_multibuffer(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities::default(),
+        cx
+    ).await;
+
+    // Enable rainbow highlighting
+    update_test_editor_settings(&mut cx.cx, |settings| {
+        settings.editor.rainbow_highlighting.get_or_insert_default().enabled = Some(true);
+    });
+
+    // Create buffer with same variable name repeated
+    cx.set_state(indoc! {r#"
+        fn test_oneˇ(result: i32) {
+            let value = result;
+        }
+        
+        fn test_two(result: i32) {
+            let value = result;
+        }
+        
+        fn test_three(result: i32) {
+            let value = result;
+        }
+    "#});
+    
+    cx.update_editor(|editor, _window, cx| {
+        let cache = editor.display_map.read(cx)
+            .get_variable_color_cache()
+            .expect("Cache should exist");
+        
+        // Hash "result" multiple times - should be deterministic
+        let result_hash = crate::rainbow::hash_identifier("result");
+        
+        let color_1 = cache.get_or_insert_by_hash(result_hash, &cx.theme().syntax());
+        let color_2 = cache.get_or_insert_by_hash(result_hash, &cx.theme().syntax());
+        let color_3 = cache.get_or_insert_by_hash(result_hash, &cx.theme().syntax());
+        
+        assert_eq!(color_1.color, color_2.color, "First and second 'result' should have same color");
+        assert_eq!(color_2.color, color_3.color, "Second and third 'result' should have same color");
+        assert_eq!(color_1.color, color_3.color, "First and third 'result' should have same color");
+    });
+}

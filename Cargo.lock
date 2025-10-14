@@ -5204,6 +5204,7 @@ dependencies = [
  "criterion",
  "ctor",
  "dap",
+ "dashmap 6.1.0",
  "db",
  "edit_prediction",
  "emojis",

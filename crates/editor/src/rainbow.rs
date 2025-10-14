@@ -12,19 +12,19 @@
 //
 // This module provides the shared logic for both systems including caching.
 
-use std::collections::HashMap;
+use dashmap::DashMap;
 use gpui::{ Hsla, HighlightStyle };
 use theme::SyntaxTheme;
 
 use crate::editor_settings::VariableColorMode;
 
 // ============================================================================
-// Variable Color Cache (Optimized for Hot Path)
+// Variable Color Cache (Lock-Free, Optimized for Hot Path)
 // ============================================================================
 
 #[derive(Debug)]
 pub struct VariableColorCache {
-    colors: HashMap<u64, Hsla>,
+    colors: DashMap<u64, Hsla>,
     pub mode: VariableColorMode,
     max_entries: usize,
 }
@@ -32,24 +32,31 @@ pub struct VariableColorCache {
 impl VariableColorCache {
     pub fn new(mode: VariableColorMode) -> Self {
         Self {
-            colors: HashMap::default(),
+            colors: DashMap::new(),
             mode,
             max_entries: 1000,
         }
     }
 
     #[inline]
-    pub fn get_or_insert(&mut self, identifier: &str, theme: &SyntaxTheme) -> HighlightStyle {
+    pub fn get_or_insert(&self, identifier: &str, theme: &SyntaxTheme) -> HighlightStyle {
         let hash = hash_identifier(identifier);
-        
-        if let Some(&color) = self.colors.get(&hash) {
+        self.get_or_insert_by_hash(hash, theme)
+    }
+
+    #[inline]
+    pub fn get_or_insert_by_hash(&self, hash: u64, theme: &SyntaxTheme) -> HighlightStyle {
+        // Fast path: check if color exists (lock-free read)
+        if let Some(entry) = self.colors.get(&hash) {
             return HighlightStyle {
-                color: Some(color),
+                color: Some(*entry.value()),
                 ..Default::default()
             };
         }
         
+        // Eviction if cache is full
         if self.colors.len() >= self.max_entries {
+            // DashMap has efficient bulk operations
             self.colors.retain(|k, _| k % 2 == 0);
         }
         
@@ -67,6 +74,7 @@ impl VariableColorCache {
             }
         };
         
+        // Insert and return (lock-free write)
         self.colors.insert(hash, color);
         
         HighlightStyle {
@@ -75,7 +83,7 @@ impl VariableColorCache {
         }
     }
 
-    pub fn clear(&mut self) {
+    pub fn clear(&self) {
         self.colors.clear();
     }
 }
@@ -93,6 +101,28 @@ const GOLDEN_RATIO_MULTIPLIER: u64 = 11400714819323198485u64;
 #[inline]
 pub fn hash_identifier(s: &str) -> u64 {
     s.bytes().fold(FNV_OFFSET, |hash, byte| { (hash ^ (byte as u64)).wrapping_mul(FNV_PRIME) })
+}
+
+/// Zero-allocation hash function that works directly on string iterators.
+/// Returns 0 if the identifier is empty or too short (< 2 chars).
+#[inline]
+pub fn hash_identifier_from_iter<'a>(chunks: impl Iterator<Item = &'a str>) -> u64 {
+    let mut hash = FNV_OFFSET;
+    let mut char_count = 0;
+    
+    for chunk in chunks {
+        for byte in chunk.bytes() {
+            hash = (hash ^ (byte as u64)).wrapping_mul(FNV_PRIME);
+            char_count += 1;
+        }
+    }
+    
+    // Return 0 for empty or single-char identifiers (not valid for rainbow)
+    if char_count < 2 {
+        0
+    } else {
+        hash
+    }
 }
 
 /// Fibonacci hashing to distribute hash values into palette indices.
@@ -213,5 +243,30 @@ mod tests {
         assert_ne!(hash1, hash2, "Different strings should have different hashes");
         assert_ne!(hash1, hash3, "Different strings should have different hashes");
         assert_ne!(hash2, hash3, "Different strings should have different hashes");
+    }
+
+    #[test]
+    fn test_hash_identifier_from_iter() {
+        // Test that iterator hashing matches string hashing
+        let identifier = "my_variable";
+        let hash_direct = hash_identifier(identifier);
+        
+        // Simulate chunked iteration (as from buffer snapshot)
+        let chunks = vec!["my_", "varia", "ble"];
+        let hash_iter = hash_identifier_from_iter(chunks.into_iter());
+        
+        assert_eq!(hash_direct, hash_iter, "Hash from iterator should match direct hash");
+    }
+
+    #[test]
+    fn test_hash_identifier_from_iter_empty() {
+        let hash = hash_identifier_from_iter(std::iter::empty());
+        assert_eq!(hash, 0, "Empty identifier should return 0");
+    }
+
+    #[test]
+    fn test_hash_identifier_from_iter_too_short() {
+        let hash = hash_identifier_from_iter(vec!["x"].into_iter());
+        assert_eq!(hash, 0, "Single-char identifier should return 0");
     }
 }
