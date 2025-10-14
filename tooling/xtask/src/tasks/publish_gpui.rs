@@ -74,11 +74,7 @@ fn publish_dependencies(new_version: &str, dry_run: bool) -> Result<()> {
 
         update_crate_cargo_toml(package_name, crate_name, new_version)?;
         update_workspace_dependency_version(package_name, crate_name, new_version)?;
-
         publish_crate(crate_name, dry_run)?;
-
-        // println!("Waiting 60s for the rate limit...");
-        // thread::sleep(Duration::from_secs(60));
     }
 
     Ok(())
