@@ -14,7 +14,8 @@ pub struct DiffBlock {
 pub fn build_connector_curves(blocks: &[DiffBlock]) -> Vec<ConnectorCurve> {
     blocks
         .iter()
-        .filter_map(|block| {
+        .enumerate()
+        .filter_map(|(index, block)| {
             if block.left_range.is_empty() && block.right_range.is_empty() {
                 return None;
             }
@@ -52,11 +53,12 @@ pub fn build_connector_curves(blocks: &[DiffBlock]) -> Vec<ConnectorCurve> {
 
             let focus_line = match (left_crushed, right_crushed) {
                 (true, false) => right_start,
-                (false, true) => right_start.saturating_sub(1),
+                (false, true) => right_start + 1,
                 _ => left_start.min(right_start),
             };
 
             Some(ConnectorCurve::new(
+                index,
                 focus_line,
                 left_start,
                 left_end,

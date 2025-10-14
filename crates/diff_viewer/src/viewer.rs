@@ -10,6 +10,7 @@ use std::path::PathBuf;
 
 use crate::connector::ConnectorCurve;
 use crate::connector_builder::{DiffBlock, build_connector_curves};
+use crate::constants::*;
 
 #[derive(Clone, Copy, Debug)]
 pub enum PendingScroll {
@@ -74,6 +75,78 @@ impl DiffViewer {
         cx.notify();
     }
 
+    fn reset_scroll_to_top(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.is_syncing_scroll = true;
+
+        self.left_editor.update(cx, |editor, cx| {
+            editor.set_scroll_position(gpui::Point::new(0.0, 0.0), window, cx);
+            editor.change_selections(editor::SelectionEffects::no_scroll(), window, cx, |s| {
+                s.select_ranges([0..0]);
+            });
+        });
+
+        self.right_editor.update(cx, |editor, cx| {
+            editor.set_scroll_position(gpui::Point::new(0.0, 0.0), window, cx);
+            editor.change_selections(editor::SelectionEffects::no_scroll(), window, cx, |s| {
+                s.select_ranges([0..0]);
+            });
+        });
+
+        self.is_syncing_scroll = false;
+        self.left_scroll_offset = 0.0;
+        self.right_scroll_offset = 0.0;
+        self.left_scroll_rows = 0.0;
+        self.right_scroll_rows = 0.0;
+        self.pending_scroll = None;
+    }
+
+    fn apply_pending_scroll(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(pending) = self.pending_scroll.take() {
+            match pending {
+                PendingScroll::LeftToRight { source_rows } => {
+                    let target_rows = self.map_left_line_to_right(source_rows);
+
+                    if target_rows >= 0.0
+                        && target_rows < self.right_total_lines as f32
+                        && (target_rows - self.right_scroll_rows).abs() > f32::EPSILON
+                    {
+                        self.is_syncing_scroll = true;
+                        self.right_scroll_rows = target_rows;
+                        self.right_scroll_offset = target_rows * self.line_height;
+                        self.right_editor.update(cx, |editor, cx| {
+                            editor.set_scroll_position(
+                                gpui::Point::new(0.0, target_rows as f64),
+                                window,
+                                cx,
+                            );
+                        });
+                        self.is_syncing_scroll = false;
+                    }
+                }
+                PendingScroll::RightToLeft { source_rows } => {
+                    let target_rows = self.map_right_line_to_left(source_rows);
+
+                    if target_rows >= 0.0
+                        && target_rows < self.left_total_lines as f32
+                        && (target_rows - self.left_scroll_rows).abs() > f32::EPSILON
+                    {
+                        self.is_syncing_scroll = true;
+                        self.left_scroll_rows = target_rows;
+                        self.left_scroll_offset = target_rows * self.line_height;
+                        self.left_editor.update(cx, |editor, cx| {
+                            editor.set_scroll_position(
+                                gpui::Point::new(0.0, target_rows as f64),
+                                window,
+                                cx,
+                            );
+                        });
+                        self.is_syncing_scroll = false;
+                    }
+                }
+            }
+        }
+    }
+
     pub fn left_line_to_anchor(&self, line: u32, cx: &Context<Self>) -> Anchor {
         let snapshot = self.left_multibuffer.read(cx).snapshot(cx);
         snapshot.anchor_before(Point::new(line, 0))
@@ -135,13 +208,13 @@ impl DiffViewer {
             editor
         });
 
-        let viewport_height = 600.0;
+        let viewport_height = DEFAULT_VIEWPORT_HEIGHT;
 
         let line_height = left_editor
             .read(cx)
             .style()
             .map(|style| f32::from(style.text.line_height_in_pixels(window.rem_size())))
-            .unwrap_or(22.0);
+            .unwrap_or(DEFAULT_LINE_HEIGHT);
 
         let default_visible_lines = viewport_height / line_height;
 
@@ -173,8 +246,8 @@ impl DiffViewer {
         }
     }
 
-    pub fn initialize(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
-        let left_subscription = cx.subscribe(
+    fn subscribe_to_left_editor(&self, cx: &mut Context<Self>) -> Subscription {
+        cx.subscribe(
             &self.left_editor,
             |this: &mut DiffViewer, _editor, event: &EditorEvent, cx| match event {
                 EditorEvent::ScrollPositionChanged {
@@ -200,9 +273,11 @@ impl DiffViewer {
                 }
                 _ => {}
             },
-        );
+        )
+    }
 
-        let right_subscription = cx.subscribe(
+    fn subscribe_to_right_editor(&self, cx: &mut Context<Self>) -> Subscription {
+        cx.subscribe(
             &self.right_editor,
             |this: &mut DiffViewer, _editor, event: &EditorEvent, cx| match event {
                 EditorEvent::ScrollPositionChanged {
@@ -228,7 +303,12 @@ impl DiffViewer {
                 }
                 _ => {}
             },
-        );
+        )
+    }
+
+    pub fn initialize(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        let left_subscription = self.subscribe_to_left_editor(cx);
+        let right_subscription = self.subscribe_to_right_editor(cx);
 
         self._subscriptions.push(left_subscription);
         self._subscriptions.push(right_subscription);
@@ -262,11 +342,11 @@ impl DiffViewer {
         cx: &mut Context<Self>,
     ) {
         self.left_buffer.update(cx, |buffer, cx| {
-            buffer.edit([(0..buffer.len(), left_content.clone())], None, cx);
+            buffer.edit([(0..buffer.len(), left_content.as_str())], None, cx);
         });
 
         self.right_buffer.update(cx, |buffer, cx| {
-            buffer.edit([(0..buffer.len(), right_content.clone())], None, cx);
+            buffer.edit([(0..buffer.len(), right_content.as_str())], None, cx);
         });
 
         use crate::diff_operations::count_lines;
@@ -295,7 +375,7 @@ impl DiffViewer {
         cx: &mut Context<Self>,
     ) {
         self.left_buffer.update(cx, |buf, cx| {
-            buf.edit([(0..buf.len(), left_content.clone())], None, cx);
+            buf.edit([(0..buf.len(), left_content.as_str())], None, cx);
         });
 
         self.right_buffer = buffer.clone();
@@ -319,33 +399,7 @@ impl DiffViewer {
             editor
         });
 
-        let right_subscription = cx.subscribe(
-            &self.right_editor,
-            |this: &mut DiffViewer, _editor, event: &EditorEvent, cx| match event {
-                EditorEvent::ScrollPositionChanged {
-                    autoscroll: _,
-                    local: _,
-                } => {
-                    if this.is_syncing_scroll {
-                        return;
-                    }
-
-                    let rows = this
-                        .right_editor
-                        .update(cx, |editor, cx| editor.scroll_position(cx).y);
-
-                    if (rows as f32 - this.right_scroll_rows).abs() > f32::EPSILON {
-                        this.right_scroll_rows = rows as f32;
-                        this.right_scroll_offset = (rows as f32) * this.line_height;
-                        this.request_sync_from_right(rows as f32, cx);
-                    }
-                }
-                EditorEvent::BufferEdited | EditorEvent::Edited { .. } => {
-                    this.refresh_diff_on_content_change(cx);
-                }
-                _ => {}
-            },
-        );
+        let right_subscription = self.subscribe_to_right_editor(cx);
 
         self._subscriptions.truncate(1);
         self._subscriptions.push(right_subscription);
@@ -390,75 +444,10 @@ impl Render for DiffViewer {
 
         if self.needs_scroll_reset {
             self.needs_scroll_reset = false;
-            self.is_syncing_scroll = true;
-
-            self.left_editor.update(cx, |editor, cx| {
-                editor.set_scroll_position(gpui::Point::new(0.0, 0.0), window, cx);
-                editor.change_selections(editor::SelectionEffects::no_scroll(), window, cx, |s| {
-                    s.select_ranges([0..0]);
-                });
-            });
-
-            self.right_editor.update(cx, |editor, cx| {
-                editor.set_scroll_position(gpui::Point::new(0.0, 0.0), window, cx);
-                editor.change_selections(editor::SelectionEffects::no_scroll(), window, cx, |s| {
-                    s.select_ranges([0..0]);
-                });
-            });
-
-            self.is_syncing_scroll = false;
-            self.left_scroll_offset = 0.0;
-            self.right_scroll_offset = 0.0;
-            self.left_scroll_rows = 0.0;
-            self.right_scroll_rows = 0.0;
-            self.pending_scroll = None;
+            self.reset_scroll_to_top(window, cx);
         }
 
-        if let Some(pending) = self.pending_scroll.take() {
-            match pending {
-                PendingScroll::LeftToRight { source_rows } => {
-                    let target_rows = self.map_left_line_to_right(source_rows);
-
-                    if target_rows >= 0.0
-                        && target_rows < self.right_total_lines as f32
-                        && (target_rows - self.right_scroll_rows).abs() > f32::EPSILON
-                    {
-                        self.is_syncing_scroll = true;
-                        self.right_scroll_rows = target_rows;
-                        self.right_scroll_offset = target_rows * self.line_height;
-                        self.right_editor.update(cx, |editor, cx| {
-                            editor.set_scroll_position(
-                                gpui::Point::new(0.0, target_rows as f64),
-                                window,
-                                cx,
-                            );
-                        });
-                        self.is_syncing_scroll = false;
-                    }
-                }
-                PendingScroll::RightToLeft { source_rows } => {
-                    let target_rows = self.map_right_line_to_left(source_rows);
-
-                    if target_rows >= 0.0
-                        && target_rows < self.left_total_lines as f32
-                        && (target_rows - self.left_scroll_rows).abs() > f32::EPSILON
-                    {
-                        self.is_syncing_scroll = true;
-                        self.left_scroll_rows = target_rows;
-                        self.left_scroll_offset = target_rows * self.line_height;
-                        self.left_editor.update(cx, |editor, cx| {
-                            editor.set_scroll_position(
-                                gpui::Point::new(0.0, target_rows as f64),
-                                window,
-                                cx,
-                            );
-                        });
-                        self.is_syncing_scroll = false;
-                    }
-                }
-            }
-        }
-
+        self.apply_pending_scroll(window, cx);
         self.update_crushed_blocks(cx);
 
         div()
@@ -504,19 +493,6 @@ impl Render for DiffViewer {
                                                     .left_0()
                                                     .right_0()
                                                     .bottom_0()
-                                                    .on_mouse_move(cx.listener(
-                                                        |this, event, _, cx| {
-                                                            this.handle_mouse_move(event, cx);
-                                                        },
-                                                    )),
-                                            )
-                                            .child(
-                                                div()
-                                                    .absolute()
-                                                    .top_0()
-                                                    .left_0()
-                                                    .right_0()
-                                                    .bottom_0()
                                                     .child(self.render_left_crushed_blocks(cx)),
                                             )
                                             .child(
@@ -537,7 +513,7 @@ impl Render for DiffViewer {
                     )
                     .child(
                         div()
-                            .w(px(45.))
+                            .w(px(CONNECTOR_GUTTER_WIDTH))
                             .flex()
                             .flex_col()
                             .child(

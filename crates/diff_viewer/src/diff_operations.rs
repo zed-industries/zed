@@ -1,10 +1,10 @@
 use buffer_diff::DiffHunkStatusKind;
-use editor::RowHighlightOptions;
-use gpui::Context;
+use editor::{Editor, RowHighlightOptions};
+use gpui::{Context, Entity, Hsla};
 use language::Point;
 
 use crate::connector_builder::{DiffBlock, build_connector_curves};
-use crate::rendering::get_diff_colors;
+use crate::rendering::colors::get_diff_colors;
 use crate::viewer::DiffViewer;
 
 struct DiffAdditionHighlight;
@@ -20,6 +20,38 @@ pub fn count_lines(content: &str) -> usize {
 }
 
 impl DiffViewer {
+    fn highlight_editor_range<T: 'static>(
+        editor: &Entity<Editor>,
+        row_range: std::ops::Range<usize>,
+        color: Hsla,
+        cx: &mut Context<Self>,
+    ) {
+        if row_range.is_empty() {
+            return;
+        }
+
+        editor.update(cx, |editor, cx| {
+            let start_row = row_range.start as u32;
+            let end_row = row_range.end.saturating_sub(1).max(row_range.start) as u32;
+
+            let buffer = editor.buffer().read(cx);
+            let snapshot = buffer.snapshot(cx);
+
+            let actual_end_row = end_row.min(snapshot.max_row().0);
+            let start_anchor = snapshot.anchor_before(Point::new(start_row, 0));
+            let end_anchor = snapshot.anchor_before(Point::new(actual_end_row + 1, 0));
+
+            editor.highlight_rows::<T>(
+                start_anchor..end_anchor,
+                color,
+                RowHighlightOptions {
+                    autoscroll: false,
+                    include_gutter: true,
+                },
+                cx,
+            );
+        });
+    }
 
     pub fn extract_diff_blocks(&self, cx: &Context<Self>) -> Vec<DiffBlock> {
         use git2::{DiffOptions as GitOptions, Patch as GitPatch};
@@ -97,127 +129,35 @@ impl DiffViewer {
         for block in &self.diff_blocks {
             match block.kind {
                 DiffHunkStatusKind::Deleted => {
-                    if !block.left_range.is_empty() {
-                        self.left_editor.update(cx, |editor, cx| {
-                            let start_row = block.left_range.start as u32;
-                            let end_row = block
-                                .left_range
-                                .end
-                                .saturating_sub(1)
-                                .max(block.left_range.start)
-                                as u32;
-
-                            let buffer = editor.buffer().read(cx);
-                            let snapshot = buffer.snapshot(cx);
-
-                            let actual_end_row = end_row.min(snapshot.max_row().0);
-                            let start_anchor = snapshot.anchor_before(Point::new(start_row, 0));
-                            let end_anchor =
-                                snapshot.anchor_before(Point::new(actual_end_row + 1, 0));
-
-                            editor.highlight_rows::<DiffDeletionHighlight>(
-                                start_anchor..end_anchor,
-                                deleted_bg,
-                                RowHighlightOptions {
-                                    autoscroll: false,
-                                    include_gutter: true,
-                                },
-                                cx,
-                            );
-                        });
-                    }
+                    Self::highlight_editor_range::<DiffDeletionHighlight>(
+                        &self.left_editor,
+                        block.left_range.clone(),
+                        deleted_bg,
+                        cx,
+                    );
                 }
                 DiffHunkStatusKind::Added => {
-                    if !block.right_range.is_empty() {
-                        self.right_editor.update(cx, |editor, cx| {
-                            let start_row = block.right_range.start as u32;
-                            let end_row = block
-                                .right_range
-                                .end
-                                .saturating_sub(1)
-                                .max(block.right_range.start)
-                                as u32;
-
-                            let buffer = editor.buffer().read(cx);
-                            let snapshot = buffer.snapshot(cx);
-
-                            let actual_end_row = end_row.min(snapshot.max_row().0);
-                            let start_anchor = snapshot.anchor_before(Point::new(start_row, 0));
-                            let end_anchor =
-                                snapshot.anchor_before(Point::new(actual_end_row + 1, 0));
-
-                            editor.highlight_rows::<DiffAdditionHighlight>(
-                                start_anchor..end_anchor,
-                                created_bg,
-                                RowHighlightOptions {
-                                    autoscroll: false,
-                                    include_gutter: true,
-                                },
-                                cx,
-                            );
-                        });
-                    }
+                    Self::highlight_editor_range::<DiffAdditionHighlight>(
+                        &self.right_editor,
+                        block.right_range.clone(),
+                        created_bg,
+                        cx,
+                    );
                 }
                 DiffHunkStatusKind::Modified => {
-                    if !block.left_range.is_empty() {
-                        self.left_editor.update(cx, |editor, cx| {
-                            let start_row = block.left_range.start as u32;
-                            let end_row = block
-                                .left_range
-                                .end
-                                .saturating_sub(1)
-                                .max(block.left_range.start)
-                                as u32;
-
-                            let buffer = editor.buffer().read(cx);
-                            let snapshot = buffer.snapshot(cx);
-
-                            let actual_end_row = end_row.min(snapshot.max_row().0);
-                            let start_anchor = snapshot.anchor_before(Point::new(start_row, 0));
-                            let end_anchor =
-                                snapshot.anchor_before(Point::new(actual_end_row + 1, 0));
-
-                            editor.highlight_rows::<DiffModificationHighlight>(
-                                start_anchor..end_anchor,
-                                modified_bg,
-                                RowHighlightOptions {
-                                    autoscroll: false,
-                                    include_gutter: true,
-                                },
-                                cx,
-                            );
-                        });
-                    }
-
-                    if !block.right_range.is_empty() {
-                        self.right_editor.update(cx, |editor, cx| {
-                            let start_row = block.right_range.start as u32;
-                            let end_row = block
-                                .right_range
-                                .end
-                                .saturating_sub(1)
-                                .max(block.right_range.start)
-                                as u32;
-
-                            let buffer = editor.buffer().read(cx);
-                            let snapshot = buffer.snapshot(cx);
-
-                            let actual_end_row = end_row.min(snapshot.max_row().0);
-                            let start_anchor = snapshot.anchor_before(Point::new(start_row, 0));
-                            let end_anchor =
-                                snapshot.anchor_before(Point::new(actual_end_row + 1, 0));
-
-                            editor.highlight_rows::<DiffModificationHighlight>(
-                                start_anchor..end_anchor,
-                                modified_bg,
-                                RowHighlightOptions {
-                                    autoscroll: false,
-                                    include_gutter: true,
-                                },
-                                cx,
-                            );
-                        });
-                    }
+                    // Both ranges need to be cloned since they're used independently
+                    Self::highlight_editor_range::<DiffModificationHighlight>(
+                        &self.left_editor,
+                        block.left_range.clone(),
+                        modified_bg,
+                        cx,
+                    );
+                    Self::highlight_editor_range::<DiffModificationHighlight>(
+                        &self.right_editor,
+                        block.right_range.clone(),
+                        modified_bg,
+                        cx,
+                    );
                 }
             }
         }
@@ -299,7 +239,6 @@ impl DiffViewer {
         self.apply_diff_highlights(cx);
 
         self.pending_scroll = None;
-        self.needs_scroll_reset = true;
         self.left_scroll_offset = 0.0;
         self.right_scroll_offset = 0.0;
         self.left_scroll_rows = 0.0;
@@ -310,30 +249,48 @@ impl DiffViewer {
 
     pub fn handle_revert_block(&mut self, block_index: usize, cx: &mut Context<Self>) {
         if let Some(block) = self.diff_blocks.get(block_index) {
-            if matches!(
-                block.kind,
+            match block.kind {
                 DiffHunkStatusKind::Modified | DiffHunkStatusKind::Deleted
-            ) && !block.left_range.is_empty()
-                && !block.right_range.is_empty()
-            {
-                let old_content = self
-                    .left_buffer
-                    .read(cx)
-                    .text_for_range(
-                        Point::new(block.left_range.start as u32, 0)
-                            ..Point::new(block.left_range.end as u32, 0),
-                    )
-                    .collect::<String>();
+                    if !block.left_range.is_empty() =>
+                {
+                    let old_content = self
+                        .left_buffer
+                        .read(cx)
+                        .text_for_range(
+                            Point::new(block.left_range.start as u32, 0)
+                                ..Point::new(block.left_range.end as u32, 0),
+                        )
+                        .collect::<String>();
 
-                self.right_buffer.update(cx, |buffer, cx| {
-                    let start = buffer.anchor_before(Point::new(block.right_range.start as u32, 0));
-                    let end = buffer.anchor_after(Point::new(block.right_range.end as u32, 0));
-                    buffer.edit([(start..end, old_content)], None, cx);
-                });
+                    self.right_buffer.update(cx, |buffer, cx| {
+                        let (start, end) = if block.right_range.is_empty() {
+                            let insert_point = buffer
+                                .anchor_before(Point::new(block.right_range.start as u32 + 1, 0));
+                            (insert_point, insert_point)
+                        } else {
+                            let start =
+                                buffer.anchor_before(Point::new(block.right_range.start as u32, 0));
+                            let end =
+                                buffer.anchor_after(Point::new(block.right_range.end as u32, 0));
+                            (start, end)
+                        };
+                        buffer.edit([(start..end, old_content)], None, cx);
+                    });
 
-                cx.notify();
+                    cx.notify();
+                }
+                DiffHunkStatusKind::Added if !block.right_range.is_empty() => {
+                    self.right_buffer.update(cx, |buffer, cx| {
+                        let start =
+                            buffer.anchor_before(Point::new(block.right_range.start as u32, 0));
+                        let end = buffer.anchor_after(Point::new(block.right_range.end as u32, 0));
+                        buffer.edit([(start..end, String::new())], None, cx);
+                    });
+
+                    cx.notify();
+                }
+                _ => {}
             }
         }
     }
 }
-
