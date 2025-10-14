@@ -691,25 +691,28 @@ impl Fs for RealFs {
             }
         };
 
-        let path_buf = path.to_path_buf();
-        let path_exists = self
-            .executor
-            .spawn(async move {
-                path_buf
-                    .try_exists()
-                    .with_context(|| format!("checking existence for path {path_buf:?}"))
-            })
-            .await?;
         let is_symlink = symlink_metadata.file_type().is_symlink();
-        let metadata = match (is_symlink, path_exists) {
-            (true, true) => {
+        let metadata = if is_symlink {
+            let path_buf = path.to_path_buf();
+            let path_exists = self
+                .executor
+                .spawn(async move {
+                    path_buf
+                        .try_exists()
+                        .with_context(|| format!("checking existence for path {path_buf:?}"))
+                })
+                .await?;
+            if path_exists {
                 let path_buf = path.to_path_buf();
                 self.executor
                     .spawn(async move { std::fs::metadata(path_buf) })
                     .await
                     .with_context(|| "accessing symlink for path {path}")?
+            } else {
+                symlink_metadata
             }
-            _ => symlink_metadata,
+        } else {
+            symlink_metadata
         };
 
         #[cfg(unix)]
