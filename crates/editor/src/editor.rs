@@ -2873,21 +2873,27 @@ impl Editor {
 
         let style = window.text_style();
 
-        self.placeholder_display_map = Some(
-            cx.new(|cx| {
-                DisplayMap::new(
-                    multibuffer,
-                    style.font(),
-                    style.font_size.to_pixels(window.rem_size()),
-                    None,
-                    FILE_HEADER_HEIGHT,
-                    MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
-                    Default::default(),
-                    DiagnosticSeverity::Off,
-                    cx
-                )
-            })
-        );
+        let placeholder_map = cx.new(|cx| {
+            DisplayMap::new(
+                multibuffer,
+                style.font(),
+                style.font_size.to_pixels(window.rem_size()),
+                None,
+                FILE_HEADER_HEIGHT,
+                MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
+                Default::default(),
+                DiagnosticSeverity::Off,
+                cx
+            )
+        });
+        
+        // Share the rainbow color cache with the placeholder display map
+        let cache = self.display_map.read(cx).get_variable_color_cache();
+        placeholder_map.update(cx, |map, _| {
+            map.set_variable_color_cache(cache);
+        });
+        
+        self.placeholder_display_map = Some(placeholder_map);
         cx.notify();
     }
 

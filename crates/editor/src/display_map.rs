@@ -226,6 +226,10 @@ impl DisplayMap {
     }
 
     pub fn set_state(&mut self, other: &DisplaySnapshot, cx: &mut Context<Self>) {
+        // Share the rainbow color cache from the source display map
+        // This ensures consistent colors across cloned editors (e.g., in excerpt views)
+        self.variable_color_cache = other.variable_color_cache.clone();
+        
         self.fold(
             other
                 .folds_in_range(0..other.buffer_snapshot.len())
@@ -561,6 +565,10 @@ impl DisplayMap {
         cache: Option<Arc<parking_lot::Mutex<crate::rainbow::VariableColorCache>>>
     ) {
         self.variable_color_cache = cache;
+    }
+
+    pub fn get_variable_color_cache(&self) -> Option<Arc<parking_lot::Mutex<crate::rainbow::VariableColorCache>>> {
+        self.variable_color_cache.clone()
     }
 
     #[cfg(test)]
