@@ -6,7 +6,7 @@ use util::ResultExt;
 
 use extension::ExtensionHostProxy;
 use fs::{Fs, RealFs};
-use futures::channel::mpsc;
+use futures::channel::{mpsc, oneshot};
 use futures::{AsyncRead, AsyncWrite, AsyncWriteExt, FutureExt, SinkExt, select, select_biased};
 use git::GitHostingProviderRegistry;
 use gpui::{App, AppContext as _, Context, Entity, SemanticVersion, UpdateGlobal as _};
@@ -368,6 +368,14 @@ pub fn execute_run(
 
     let listeners = ServerListeners::new(stdin_socket, stdout_socket, stderr_socket)?;
 
+    let (shell_env_loaded_tx, shell_env_loaded_rx) = oneshot::channel();
+    app.background_executor()
+        .spawn(async {
+            util::load_login_shell_environment().await.log_err();
+            shell_env_loaded_tx.send(()).ok();
+        })
+        .detach();
+
     let git_hosting_provider_registry = Arc::new(GitHostingProviderRegistry::new());
     app.run(move |cx| {
         settings::init(cx);
@@ -413,7 +421,11 @@ pub fn execute_run(
                 )
             };
 
-            let node_runtime = NodeRuntime::new(http_client.clone(), None, node_settings_rx);
+            let node_runtime = NodeRuntime::new(
+                http_client.clone(),
+                Some(shell_env_loaded_rx),
+                node_settings_rx,
+            );
 
             let mut languages = LanguageRegistry::new(cx.background_executor().clone());
             languages.set_language_server_download_dir(paths::languages_dir().clone());
@@ -988,10 +1000,9 @@ fn is_new_version(version: &str) -> bool {
 }
 
 fn is_file_in_use(file_name: &OsStr) -> bool {
-    let info =
-        sysinfo::System::new_with_specifics(sysinfo::RefreshKind::new().with_processes(
-            sysinfo::ProcessRefreshKind::new().with_exe(sysinfo::UpdateKind::Always),
-        ));
+    let info = sysinfo::System::new_with_specifics(sysinfo::RefreshKind::nothing().with_processes(
+        sysinfo::ProcessRefreshKind::nothing().with_exe(sysinfo::UpdateKind::Always),
+    ));
 
     for process in info.processes().values() {
         if process

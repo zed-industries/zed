@@ -278,7 +278,7 @@ pub struct AcpThreadView {
     thread_feedback: ThreadFeedbackState,
     list_state: ListState,
     auth_task: Option<Task<()>>,
-    expanded_tool_calls: HashSet<acp::ToolCallId>,
+    collapsed_tool_calls: HashSet<acp::ToolCallId>,
     expanded_thinking_blocks: HashSet<(usize, usize)>,
     edits_expanded: bool,
     plan_expanded: bool,
@@ -419,7 +419,7 @@ impl AcpThreadView {
             thread_error: None,
             thread_feedback: Default::default(),
             auth_task: None,
-            expanded_tool_calls: HashSet::default(),
+            collapsed_tool_calls: HashSet::default(),
             expanded_thinking_blocks: HashSet::default(),
             editing_message: None,
             edits_expanded: false,
@@ -954,17 +954,17 @@ impl AcpThreadView {
     ) {
         match &event.view_event {
             ViewEvent::NewDiff(tool_call_id) => {
-                if AgentSettings::get_global(cx).expand_edit_card {
-                    self.expanded_tool_calls.insert(tool_call_id.clone());
+                if !AgentSettings::get_global(cx).expand_edit_card {
+                    self.collapsed_tool_calls.insert(tool_call_id.clone());
                 }
             }
             ViewEvent::NewTerminal(tool_call_id) => {
-                if AgentSettings::get_global(cx).expand_terminal_card {
-                    self.expanded_tool_calls.insert(tool_call_id.clone());
+                if !AgentSettings::get_global(cx).expand_terminal_card {
+                    self.collapsed_tool_calls.insert(tool_call_id.clone());
                 }
             }
             ViewEvent::TerminalMovedToBackground(tool_call_id) => {
-                self.expanded_tool_calls.remove(tool_call_id);
+                self.collapsed_tool_calls.insert(tool_call_id.clone());
             }
             ViewEvent::MessageEditorEvent(_editor, MessageEditorEvent::Focus) => {
                 if let Some(thread) = self.thread()
@@ -1044,6 +1044,9 @@ impl AcpThreadView {
             let ThreadState::Ready { thread, .. } = &self.thread_state else {
                 return;
             };
+
+            self.message_editor
+                .update(cx, |editor, cx| editor.clear(window, cx));
 
             let connection = thread.read(cx).connection().clone();
             let can_login = !connection.auth_methods().is_empty() || self.login.is_some();
@@ -1249,12 +1252,6 @@ impl AcpThreadView {
             anyhow::Ok(())
         })
         .detach();
-    }
-
-    fn open_agent_diff(&mut self, _: &OpenAgentDiff, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(thread) = self.thread() {
-            AgentDiffPane::deploy(thread.clone(), self.workspace.clone(), window, cx).log_err();
-        }
     }
 
     fn open_edited_buffer(
@@ -2122,7 +2119,7 @@ impl AcpThreadView {
 
         let is_collapsible = !tool_call.content.is_empty() && !needs_confirmation;
 
-        let is_open = needs_confirmation || self.expanded_tool_calls.contains(&tool_call.id);
+        let is_open = needs_confirmation || !self.collapsed_tool_calls.contains(&tool_call.id);
 
         let tool_output_display =
             if is_open {
@@ -2272,9 +2269,9 @@ impl AcpThreadView {
                                                     let id = tool_call.id.clone();
                                                     move |this: &mut Self, _, _, cx: &mut Context<Self>| {
                                                         if is_open {
-                                                            this.expanded_tool_calls.remove(&id);
+                                                            this.collapsed_tool_calls.insert(id.clone());
                                                         } else {
-                                                            this.expanded_tool_calls.insert(id.clone());
+                                                            this.collapsed_tool_calls.remove(&id);
                                                         }
                                                         cx.notify();
                                                     }
@@ -2476,7 +2473,7 @@ impl AcpThreadView {
                         .icon_color(Color::Muted)
                         .on_click(cx.listener({
                             move |this: &mut Self, _, _, cx: &mut Context<Self>| {
-                                this.expanded_tool_calls.remove(&tool_call_id);
+                                this.collapsed_tool_calls.insert(tool_call_id.clone());
                                 cx.notify();
                             }
                         })),
@@ -2754,7 +2751,7 @@ impl AcpThreadView {
             .map(|path| path.display().to_string())
             .unwrap_or_else(|| "current directory".to_string());
 
-        let is_expanded = self.expanded_tool_calls.contains(&tool_call.id);
+        let is_expanded = !self.collapsed_tool_calls.contains(&tool_call.id);
 
         let header = h_flex()
             .id(header_id)
@@ -2889,9 +2886,9 @@ impl AcpThreadView {
                     let id = tool_call.id.clone();
                     move |this, _event, _window, _cx| {
                         if is_expanded {
-                            this.expanded_tool_calls.remove(&id);
+                            this.collapsed_tool_calls.insert(id.clone());
                         } else {
-                            this.expanded_tool_calls.insert(id.clone());
+                            this.collapsed_tool_calls.remove(&id);
                         }
                     }
                 })),
@@ -5442,7 +5439,6 @@ impl Render for AcpThreadView {
         v_flex()
             .size_full()
             .key_context("AcpThread")
-            .on_action(cx.listener(Self::open_agent_diff))
             .on_action(cx.listener(Self::toggle_burn_mode))
             .on_action(cx.listener(Self::keep_all))
             .on_action(cx.listener(Self::reject_all))

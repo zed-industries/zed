@@ -484,7 +484,7 @@ impl SettingsStore {
         files
     }
 
-    fn get_content_for_file(&self, file: SettingsFile) -> Option<&SettingsContent> {
+    pub fn get_content_for_file(&self, file: SettingsFile) -> Option<&SettingsContent> {
         match file {
             SettingsFile::User => self
                 .user_settings
@@ -539,6 +539,25 @@ impl SettingsStore {
         target_file: SettingsFile,
         pick: fn(&SettingsContent) -> &Option<T>,
     ) -> (SettingsFile, Option<&T>) {
+        self.get_value_from_file_inner(target_file, pick, true)
+    }
+
+    /// Same as `Self::get_value_from_file` except that it does not include the current file.
+    /// Therefore it returns the value that was potentially overloaded by the target file.
+    pub fn get_value_up_to_file<T>(
+        &self,
+        target_file: SettingsFile,
+        pick: fn(&SettingsContent) -> &Option<T>,
+    ) -> (SettingsFile, Option<&T>) {
+        self.get_value_from_file_inner(target_file, pick, false)
+    }
+
+    fn get_value_from_file_inner<T>(
+        &self,
+        target_file: SettingsFile,
+        pick: fn(&SettingsContent) -> &Option<T>,
+        include_target_file: bool,
+    ) -> (SettingsFile, Option<&T>) {
         // todo(settings_ui): Add a metadata field for overriding the "overrides" tag, for contextually different settings
         //  e.g. disable AI isn't overridden, or a vec that gets extended instead or some such
 
@@ -547,10 +566,15 @@ impl SettingsStore {
         let mut found_file = false;
 
         for file in all_files.into_iter() {
-            if !found_file && file != target_file && file != SettingsFile::Default {
-                continue;
+            if !found_file && file != SettingsFile::Default {
+                if file != target_file {
+                    continue;
+                }
+                found_file = true;
+                if !include_target_file {
+                    continue;
+                }
             }
-            found_file = true;
 
             if let SettingsFile::Project((worktree_id, ref path)) = file
                 && let SettingsFile::Project((target_worktree_id, ref target_path)) = target_file

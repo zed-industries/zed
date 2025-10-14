@@ -10,7 +10,7 @@ use project::Project;
 use project::agent_server_store::AgentServerCommand;
 use serde::Deserialize;
 use task::Shell;
-use util::ResultExt as _;
+use util::{ResultExt as _, get_default_system_shell_preferring_bash};
 
 use std::path::PathBuf;
 use std::{any::Any, cell::RefCell};
@@ -168,7 +168,10 @@ impl AcpConnection {
                         meta: None,
                     },
                     terminal: true,
-                    meta: None,
+                    meta: Some(serde_json::json!({
+                        // Experimental: Allow for rendering terminal output from the agents
+                        "terminal_output": true,
+                    })),
                 },
                 meta: None,
             })
@@ -834,7 +837,7 @@ impl acp::Client for ClientDelegate {
                     .and_then(|r| r.read(cx).default_system_shell())
                     .map(Shell::Program)
             })?
-            .unwrap_or(task::Shell::System);
+            .unwrap_or_else(|| Shell::Program(get_default_system_shell_preferring_bash()));
         let is_windows = project
             .read_with(&self.cx, |project, cx| project.path_style(cx).is_windows())
             .unwrap_or(cfg!(windows));
