@@ -90,7 +90,7 @@ impl Watcher for FsWatcher {
             let path = path.clone();
             |g| {
                 g.add(path, mode, move |event: &notify::Event| {
-                    log::trace!("watcher received event: {event:?}, path: {path:?}");
+                    log::trace!("watcher received event: {event:?}");
                     let kind = match event.kind {
                         EventKind::Create(_) => Some(PathEventKind::Created),
                         EventKind::Modify(_) => Some(PathEventKind::Changed),
