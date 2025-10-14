@@ -606,21 +606,19 @@ impl DirectWriteState {
             };
 
             let mut first_run = true;
-            let mut max_ascent = 0.0_f32;
-            let mut max_descent = 0.0_f32;
+            let mut ascent = Pixels::default();
+            let mut descent = Pixels::default();
             for run in font_runs {
-                let font_info = &self.fonts[run.font_id.0];
-                let mut metrics = std::mem::zeroed();
-                font_info.font_face.GetMetrics(&mut metrics);
-                let font_scale = font_size.0 / metrics.Base.designUnitsPerEm as f32;
-                max_ascent = max_ascent.max(metrics.Base.ascent as f32 * font_scale);
-                max_descent = max_descent.max(-(metrics.Base.descent as f32 * font_scale));
-
                 if first_run {
                     first_run = false;
+                    let mut metrics = vec![DWRITE_LINE_METRICS::default(); 4];
+                    let mut line_count = 0u32;
+                    text_layout.GetLineMetrics(Some(&mut metrics), &mut line_count as _)?;
+                    ascent = px(metrics[0].baseline);
+                    descent = px(metrics[0].height - metrics[0].baseline);
                     continue;
                 }
-
+                let font_info = &self.fonts[run.font_id.0];
                 let current_text = &text[utf8_offset..(utf8_offset + run.len)];
                 utf8_offset += run.len;
                 let current_text_utf16_length = current_text.encode_utf16().count() as u32;
@@ -662,8 +660,8 @@ impl DirectWriteState {
             Ok(LineLayout {
                 font_size,
                 width,
-                ascent: max_ascent.into(),
-                descent: max_descent.into(),
+                ascent,
+                descent,
                 runs,
                 len: text.len(),
             })
