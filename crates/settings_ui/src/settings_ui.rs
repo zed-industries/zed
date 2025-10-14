@@ -908,7 +908,7 @@ impl SettingsWindow {
         };
 
         // high overdraw value so the list scrollbar len doesn't change too much
-        let list_state = gpui::ListState::new(0, gpui::ListAlignment::Top, px(100.0));
+        let list_state = gpui::ListState::new(0, gpui::ListAlignment::Top, px(100.0)).measure_all();
         list_state.set_scroll_handler(|_, _, _| {});
 
         let mut this = Self {

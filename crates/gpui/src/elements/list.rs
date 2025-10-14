@@ -224,10 +224,18 @@ impl ListState {
             scroll_handler: None,
             reset: false,
             scrollbar_drag_start_height: None,
-            measuring_behavior: ListMeasuringBehavior::Measure(false),
+            measuring_behavior: ListMeasuringBehavior::default(),
         })));
         this.splice(0..0, item_count);
         this
+    }
+
+    /// Set the list to measure all items in the list in the first layout phase.
+    ///
+    /// This is useful for ensuring that the scrollbar size is correct instead of based on only rendered elements.
+    pub fn measure_all(self) -> Self {
+        self.0.borrow_mut().measuring_behavior = ListMeasuringBehavior::Measure(false);
+        self
     }
 
     /// Reset this instantiation of the list state.
