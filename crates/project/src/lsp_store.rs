@@ -3485,7 +3485,7 @@ pub struct BufferLspData {
     buffer_version: Global,
     document_colors: Option<DocumentColorData>,
     code_lens: Option<CodeLensData>,
-    pub inlay_hints: BufferInlayHints,
+    inlay_hints: BufferInlayHints,
     lsp_requests: HashMap<LspKey, HashMap<LspRequestId, Task<()>>>,
     chunk_lsp_requests: HashMap<LspKey, HashMap<BufferChunk, LspRequestId>>,
 }

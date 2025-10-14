@@ -2941,7 +2941,7 @@ pub mod tests {
                 assert_eq!(
                     Vec::<String>::new(),
                     visible_hint_labels(editor, cx),
-                    "Nothing changes on concequent modifiers change of the same kind"
+                    "Nothing changes on consequent modifiers change of the same kind"
                 );
             })
             .unwrap();
@@ -2978,7 +2978,7 @@ pub mod tests {
                 assert_eq!(
                     vec!["1".to_string()],
                     visible_hint_labels(editor, cx),
-                    "Nothing changes on concequent modifiers change of the same kind (2)"
+                    "Nothing changes on consequent modifiers change of the same kind (2)"
                 );
             })
             .unwrap();
@@ -3036,7 +3036,7 @@ pub mod tests {
                 assert_eq!(
                     vec!["1".to_string()],
                     visible_hint_labels(editor, cx),
-                    "Nothing changes on concequent modifiers change of the same kind"
+                    "Nothing changes on consequent modifiers change of the same kind"
                 );
             })
             .unwrap();
@@ -3073,7 +3073,7 @@ pub mod tests {
                 assert_eq!(
                     Vec::<String>::new(),
                     visible_hint_labels(editor, cx),
-                    "Nothing changes on concequent modifiers change of the same kind (3)"
+                    "Nothing changes on consequent modifiers change of the same kind (3)"
                 );
             })
             .unwrap();
