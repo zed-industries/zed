@@ -623,7 +623,7 @@ impl settings::Settings for AllLanguageSettings {
 
         let mut file_types: FxHashMap<Arc<str>, GlobSet> = FxHashMap::default();
 
-        for (language, patterns) in &all_languages.file_types {
+        for (language, patterns) in all_languages.file_types.iter().flatten() {
             let mut builder = GlobSetBuilder::new();
 
             for pattern in &patterns.0 {
@@ -761,6 +761,7 @@ impl settings::Settings for AllLanguageSettings {
             .project
             .all_languages
             .file_types
+            .get_or_insert_default()
             .extend(associations);
 
         // cursor global ignore list applies to cursor-tab, so transfer it to edit_predictions.disabled_globs

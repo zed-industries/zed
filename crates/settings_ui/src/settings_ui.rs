@@ -1,4 +1,3 @@
-//! # settings_ui
 mod components;
 mod page_data;
 
@@ -16,10 +15,7 @@ use heck::ToTitleCase as _;
 use project::WorktreeId;
 use schemars::JsonSchema;
 use serde::Deserialize;
-use settings::{
-    BottomDockLayout, CloseWindowWhenNoItems, CodeFade, CursorShape, OnLastWindowClosed,
-    RestoreOnStartupBehavior, SaturatingBool, SettingsContent, SettingsStore,
-};
+use settings::{SettingsContent, SettingsStore};
 use std::{
     any::{Any, TypeId, type_name},
     cell::RefCell,
@@ -330,8 +326,10 @@ impl Focusable for NonFocusableHandle {
     }
 }
 
+#[derive(Default)]
 struct SettingsFieldMetadata {
     placeholder: Option<&'static str>,
+    should_do_titlecase: Option<bool>,
 }
 
 pub struct SettingsUiFeatureFlag;
@@ -369,12 +367,12 @@ fn init_renderers(cx: &mut App) {
         })
         .add_basic_renderer::<bool>(render_toggle_button)
         .add_basic_renderer::<String>(render_text_field)
-        .add_basic_renderer::<SaturatingBool>(render_toggle_button)
-        .add_basic_renderer::<CursorShape>(render_dropdown)
-        .add_basic_renderer::<RestoreOnStartupBehavior>(render_dropdown)
-        .add_basic_renderer::<BottomDockLayout>(render_dropdown)
-        .add_basic_renderer::<OnLastWindowClosed>(render_dropdown)
-        .add_basic_renderer::<CloseWindowWhenNoItems>(render_dropdown)
+        .add_basic_renderer::<settings::SaturatingBool>(render_toggle_button)
+        .add_basic_renderer::<settings::CursorShape>(render_dropdown)
+        .add_basic_renderer::<settings::RestoreOnStartupBehavior>(render_dropdown)
+        .add_basic_renderer::<settings::BottomDockLayout>(render_dropdown)
+        .add_basic_renderer::<settings::OnLastWindowClosed>(render_dropdown)
+        .add_basic_renderer::<settings::CloseWindowWhenNoItems>(render_dropdown)
         .add_basic_renderer::<settings::FontFamilyName>(render_font_picker)
         // todo(settings_ui): This needs custom ui
         // .add_renderer::<settings::BufferLineHeight>(|settings_field, file, _, window, cx| {
@@ -421,7 +419,7 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<usize>(render_number_field)
         .add_basic_renderer::<NonZero<usize>>(render_number_field)
         .add_basic_renderer::<NonZeroU32>(render_number_field)
-        .add_basic_renderer::<CodeFade>(render_number_field)
+        .add_basic_renderer::<settings::CodeFade>(render_number_field)
         .add_basic_renderer::<FontWeight>(render_number_field)
         .add_basic_renderer::<settings::MinimumContrast>(render_number_field)
         .add_basic_renderer::<settings::ShowScrollbar>(render_dropdown)
@@ -431,7 +429,15 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::MinimapThumb>(render_dropdown)
         .add_basic_renderer::<settings::MinimapThumbBorder>(render_dropdown)
         .add_basic_renderer::<settings::SteppingGranularity>(render_dropdown)
-        .add_basic_renderer::<settings::NotifyWhenAgentWaiting>(render_dropdown);
+        .add_basic_renderer::<settings::NotifyWhenAgentWaiting>(render_dropdown)
+        .add_basic_renderer::<settings::ImageFileSizeUnit>(render_dropdown)
+        .add_basic_renderer::<settings::StatusStyle>(render_dropdown)
+        .add_basic_renderer::<settings::PaneSplitDirectionHorizontal>(render_dropdown)
+        .add_basic_renderer::<settings::PaneSplitDirectionVertical>(render_dropdown)
+        .add_basic_renderer::<settings::PaneSplitDirectionVertical>(render_dropdown)
+        .add_basic_renderer::<settings::DocumentColorsRenderMode>(render_dropdown)
+    // please semicolon stay on next line
+    ;
     // .add_renderer::<ThemeSelection>(|settings_field, file, _, window, cx| {
     //     render_dropdown(*settings_field, file, window, cx)
     // });
@@ -1838,7 +1844,7 @@ impl SettingsWindow {
                 return;
             };
             self.page_scroll_handle
-                .scroll_to_top_of_item(selected_item_index);
+                .scroll_to_top_of_item(selected_item_index + 1);
 
             if focus_content {
                 self.focus_content_element(entry_item_index, window, cx);
@@ -2531,7 +2537,7 @@ fn render_number_field<T: NumberFieldType + Send + Sync>(
 fn render_dropdown<T>(
     field: SettingField<T>,
     file: SettingsUiFile,
-    _metadata: Option<&SettingsFieldMetadata>,
+    metadata: Option<&SettingsFieldMetadata>,
     window: &mut Window,
     cx: &mut App,
 ) -> AnyElement
@@ -2540,6 +2546,9 @@ where
 {
     let variants = || -> &'static [T] { <T as strum::VariantArray>::VARIANTS };
     let labels = || -> &'static [&'static str] { <T as strum::VariantNames>::VARIANTS };
+    let should_do_titlecase = metadata
+        .and_then(|metadata| metadata.should_do_titlecase)
+        .unwrap_or(true);
 
     let (_, current_value) =
         SettingsStore::global(cx).get_value_from_file(file.to_settings(), field.pick);
@@ -2550,12 +2559,20 @@ where
 
     DropdownMenu::new(
         "dropdown",
-        current_value_label.to_title_case(),
+        if should_do_titlecase {
+            current_value_label.to_title_case()
+        } else {
+            current_value_label.to_string()
+        },
         ContextMenu::build(window, cx, move |mut menu, _, _| {
             for (&value, &label) in std::iter::zip(variants(), labels()) {
                 let file = file.clone();
                 menu = menu.toggleable_entry(
-                    label.to_title_case(),
+                    if should_do_titlecase {
+                        label.to_title_case()
+                    } else {
+                        label.to_string()
+                    },
                     value == current_value,
                     IconPosition::End,
                     None,
