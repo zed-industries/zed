@@ -819,6 +819,7 @@ impl LanguageModel for CloudLanguageModel {
                     model.id(),
                     model.supports_parallel_tool_calls(),
                     model.supports_prompt_cache_key(),
+                    model.supports_tools(),
                     None,
                     None,
                 );
@@ -869,6 +870,7 @@ impl LanguageModel for CloudLanguageModel {
                     model.id(),
                     model.supports_parallel_tool_calls(),
                     model.supports_prompt_cache_key(),
+                    model.supports_tool(),
                     None,
                     None,
                 );
