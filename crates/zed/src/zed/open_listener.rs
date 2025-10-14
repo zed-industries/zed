@@ -282,6 +282,21 @@ pub async fn open_paths_with_positions(
     let (workspace, mut items) = cx
         .update(|cx| workspace::open_paths(&paths, app_state, open_options, cx))?
         .await?;
+    workspace.update(cx, |workspace, _window, cx| {
+        let message = "test";
+        // let workspace_weak = cx.weak_entity();
+        // let operation = action.name();
+
+        let status_toast =
+            notifications::status_toast::StatusToast::new(message, cx, move |this, _cx| {
+                this.icon(
+                    notifications::status_toast::ToastIcon::new(ui::IconName::XCircle)
+                        .color(ui::Color::Error),
+                )
+                .dismiss_button(true)
+            });
+        workspace.toggle_status_toast(status_toast, cx)
+    })?;
 
     for diff_pair in diff_paths {
         let old_path = Path::new(&diff_pair[0]).canonicalize()?;

@@ -7326,6 +7326,8 @@ pub fn open_paths(
     let mut existing = None;
     let mut best_match = None;
     let mut open_visible = OpenVisible::All;
+    // #[cfg(target_os = "windows")]
+    let wsl_path = abs_paths.iter().find(|p| p.starts_with("\\wsl")).cloned();
 
     cx.spawn(async move |cx| {
         if open_options.open_new_workspace != Some(true) {
@@ -7389,7 +7391,7 @@ pub fn open_paths(
             }
         }
 
-        if let Some(existing) = existing {
+        let result = if let Some(existing) = existing {
             let open_task = existing
                 .update(cx, |workspace, window, cx| {
                     window.activate_window();
@@ -7426,7 +7428,30 @@ pub fn open_paths(
                 )
             })?
             .await
-        }
+        };
+        if let Some(path) = wsl_path
+            && let Ok((workspace, _)) = &result
+        {
+            workspace
+                .update(cx, |workspace, window, cx| {
+                    struct OpenInWsl;
+                    workspace.show_notification(NotificationId::unique::<OpenInWsl>(), cx, |cx| {
+                        cx.new(|cx| {
+                            MessageNotification::new("opened wsl path", cx)
+                                .primary_message("{path:?} is inside a WSL filesystem. Some features such as git and language servers may not work on this file from windows")
+                                .primary_icon(IconName::Plus)
+                                .primary_on_click(|window, cx| {
+                                    // window.dispatch_action(Box::new(zed_actions::wsl_actions::OpenFolderInWsl {
+                                    //         create_new_window: false,
+                                    //     }), cx)
+                                    window.dispatch_action(Box::new(zed_actions::OpenSettings), cx)
+                                })
+                        })
+                    });
+                })
+                .unwrap();
+        };
+        result
     })
 }
 
