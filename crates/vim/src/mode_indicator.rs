@@ -97,7 +97,6 @@ impl Render for ModeIndicator {
         let temp_mode = vim_readable.temp_mode;
         let mode = vim_readable.mode.clone();
 
-        // Extract all theme-dependent colors before any mutable borrow of cx
         let theme = cx.theme();
         let colors = theme.colors();
         let system_transparent = gpui::hsla(0.0, 0.0, 0.0, 0.0);
@@ -134,9 +133,6 @@ impl Render for ModeIndicator {
                 format!("--{} {} --", pending, mode_str).into()
             }
         };
-
-
-
 
         let mut div_elem = div();
         if bg_color != system_transparent {
