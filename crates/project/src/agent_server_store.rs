@@ -577,6 +577,7 @@ fn get_or_npm_install_builtin_agent(
     package_name: SharedString,
     entrypoint_path: PathBuf,
     minimum_version: Option<semver::Version>,
+    channel: &'static str,
     status_tx: Option<watch::Sender<SharedString>>,
     new_version_available: Option<watch::Sender<Option<String>>>,
     fs: Arc<dyn Fs>,
@@ -658,6 +659,7 @@ fn get_or_npm_install_builtin_agent(
                             dir.clone(),
                             node_runtime,
                             package_name.clone(),
+                            channel,
                         )
                         .await
                         .log_err();
@@ -681,6 +683,7 @@ fn get_or_npm_install_builtin_agent(
                 dir.clone(),
                 node_runtime,
                 package_name.clone(),
+                channel,
             ))
             .await?
             .into()
@@ -729,13 +732,14 @@ async fn download_latest_version(
     dir: PathBuf,
     node_runtime: NodeRuntime,
     package_name: SharedString,
+    channel: &'static str,
 ) -> Result<String> {
     log::debug!("downloading latest version of {package_name}");
 
     let tmp_dir = tempfile::tempdir_in(&dir)?;
 
     node_runtime
-        .npm_install_packages(tmp_dir.path(), &[(&package_name, "latest")])
+        .npm_install_packages(tmp_dir.path(), &[(&package_name, channel)])
         .await?;
 
     let version = node_runtime
@@ -878,7 +882,17 @@ impl ExternalAgentServer for LocalGemini {
                     GEMINI_NAME.into(),
                     "@google/gemini-cli".into(),
                     "node_modules/@google/gemini-cli/dist/index.js".into(),
-                    Some("0.2.1".parse().unwrap()),
+                    // TODO remove these windows-specific workarounds once v0.9.0 stable is released
+                    if cfg!(windows) {
+                        Some("0.9.0-preview.4".parse().unwrap())
+                    } else {
+                        Some("0.2.1".parse().unwrap())
+                    },
+                    if cfg!(windows) {
+                        "0.9.0-preview.4"
+                    } else {
+                        "latest"
+                    },
                     status_tx,
                     new_version_available_tx,
                     fs,
@@ -962,6 +976,7 @@ impl ExternalAgentServer for LocalClaudeCode {
                     "@zed-industries/claude-code-acp".into(),
                     "node_modules/@zed-industries/claude-code-acp/dist/index.js".into(),
                     Some("0.5.2".parse().unwrap()),
+                    "latest",
                     status_tx,
                     new_version_available_tx,
                     fs,
