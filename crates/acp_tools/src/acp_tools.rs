@@ -18,9 +18,11 @@ use markdown::{CodeBlockRenderer, Markdown, MarkdownElement, MarkdownStyle};
 use project::Project;
 use settings::Settings;
 use theme::ThemeSettings;
-use ui::{prelude::*, Tooltip};
+use ui::{Tooltip, prelude::*};
 use util::ResultExt as _;
-use workspace::{Item, ItemHandle, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace};
+use workspace::{
+    Item, ItemHandle, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
+};
 
 actions!(dev, [OpenAcpLogs]);
 
@@ -569,15 +571,16 @@ impl ToolbarItemView for AcpToolsToolbarItemView {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> ToolbarItemLocation {
-        if let Some(item) = active_pane_item {
-            if let Some(acp_tools) = item.downcast::<AcpTools>() {
-                self.acp_tools = Some(acp_tools);
-                cx.notify();
-                return ToolbarItemLocation::PrimaryRight;
-            }
+        if let Some(item) = active_pane_item
+            && let Some(acp_tools) = item.downcast::<AcpTools>()
+        {
+            self.acp_tools = Some(acp_tools);
+            cx.notify();
+            return ToolbarItemLocation::PrimaryRight;
         }
-        self.acp_tools = None;
-        cx.notify();
+        if self.acp_tools.take().is_some() {
+            cx.notify();
+        }
         ToolbarItemLocation::Hidden
     }
 }
