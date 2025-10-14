@@ -8,8 +8,8 @@ use git::{
     repository::CommitSummary,
 };
 use gpui::{
-    ClipboardItem, Entity, Hsla, MouseButton, ScrollHandle, Subscription, TextStyle, WeakEntity,
-    prelude::*,
+    ClipboardItem, Entity, Hsla, MouseButton, ScrollHandle, Subscription, TextStyle,
+    TextStyleRefinement, UnderlineStyle, WeakEntity, prelude::*,
 };
 use markdown::{Markdown, MarkdownElement};
 use project::{git_store::Repository, project_settings::ProjectSettings};
@@ -208,11 +208,21 @@ impl BlameRenderer for GitBlameRenderer {
             OffsetDateTime::now_utc(),
             time_format::TimestampFormat::MediumAbsolute,
         );
+        let link_color = cx.theme().colors().text_accent;
         let markdown_style = {
             let mut style = hover_markdown_style(window, cx);
             if let Some(code_block) = &style.code_block.text {
                 style.base_text_style.refine(code_block);
             }
+            style.link.refine(&TextStyleRefinement {
+                color: Some(link_color),
+                underline: Some(UnderlineStyle {
+                    color: Some(link_color.opacity(0.4)),
+                    thickness: px(1.0),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            });
             style
         };
 
