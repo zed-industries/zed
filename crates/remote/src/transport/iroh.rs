@@ -115,10 +115,25 @@ impl RemoteConnection for IrohZedRemote {
         _working_dir: Option<String>,
         _port_forward: Option<(u16, String, u16)>,
     ) -> Result<CommandTemplate> {
+        // TODO: reevaluate
         Ok(CommandTemplate {
             program: "iroh".into(),
             args: vec![],
             env: input_env.clone(),
+        })
+    }
+
+    fn build_forward_port_command(
+        &self,
+        _local_port: u16,
+        _remote: String,
+        _remote_port: u16,
+    ) -> Result<CommandTemplate> {
+        // TODO: reevaluate
+        Ok(CommandTemplate {
+            program: "iroh".into(),
+            args: vec![],
+            env: Default::default(),
         })
     }
 
