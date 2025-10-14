@@ -53,7 +53,7 @@ pub enum PromptFormat {
 }
 
 impl PromptFormat {
-    pub const DEFAULT: PromptFormat = PromptFormat::LabeledSections;
+    pub const DEFAULT: PromptFormat = PromptFormat::NumberedLines;
 }
 
 impl Default for PromptFormat {
