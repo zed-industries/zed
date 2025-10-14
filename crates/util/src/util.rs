@@ -280,7 +280,7 @@ fn load_shell_from_passwd() -> Result<()> {
 
     let shell = unsafe { std::ffi::CStr::from_ptr(entry.pw_shell).to_str().unwrap() };
     let should_set_shell = env::var("SHELL").map_or(true, |shell_env| {
-        shell_env != shell && !std::Path::new(&shell_env).exists()
+        shell_env != shell && !std::path::Path::new(&shell_env).exists()
     });
 
     if should_set_shell {
