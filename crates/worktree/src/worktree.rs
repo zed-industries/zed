@@ -3769,6 +3769,7 @@ impl BackgroundScanner {
     }
 
     async fn process_events(&self, mut abs_paths: Vec<PathBuf>) {
+        log::trace!("process events: {abs_paths:?}");
         let root_path = self.state.lock().snapshot.abs_path.clone();
         let root_canonical_path = self.fs.canonicalize(root_path.as_path()).await;
         let root_canonical_path = match &root_canonical_path {
