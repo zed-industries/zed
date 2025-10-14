@@ -735,7 +735,11 @@ impl Fs for RealFs {
     }
 
     async fn read_link(&self, path: &Path) -> Result<PathBuf> {
-        let path = smol::fs::read_link(path).await?;
+        let path = path.to_owned();
+        let path = self
+            .executor
+            .spawn(async move { std::fs::read_link(&path) })
+            .await?;
         Ok(path)
     }
 
