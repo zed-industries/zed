@@ -649,9 +649,13 @@ fn get_or_npm_install_builtin_agent(
                 let dir = dir.clone();
                 let fs = fs.clone();
                 async move {
-                    let latest_version =
-                        node_runtime.npm_package_latest_version(&package_name).await;
-                    if let Ok(latest_version) = latest_version
+                    // TODO remove the filter
+                    let latest_version = node_runtime
+                        .npm_package_latest_version(&package_name)
+                        .await
+                        .ok()
+                        .filter(|_| channel == "latest");
+                    if let Some(latest_version) = latest_version
                         && &latest_version != &file_name.to_string_lossy()
                     {
                         let download_result = download_latest_version(
