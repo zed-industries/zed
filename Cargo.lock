@@ -161,7 +161,6 @@ dependencies = [
  "http_client",
  "icons",
  "indoc",
- "itertools 0.14.0",
  "language",
  "language_model",
  "log",

@@ -39,7 +39,6 @@ heed.workspace = true
 http_client.workspace = true
 icons.workspace = true
 indoc.workspace = true
-itertools.workspace = true
 language.workspace = true
 language_model.workspace = true
 log.workspace = true
