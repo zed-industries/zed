@@ -37,7 +37,14 @@ fn main() {
                 .unwrap();
             let start = std::time::Instant::now();
             did_finish_scan.await;
-            println!("{:?}", start.elapsed());
+            let elapsed = start.elapsed();
+            let (files, directories) = worktree
+                .read_with(cx, |this, _| (this.file_count(), this.dir_count()))
+                .unwrap();
+            println!(
+                "{:?} for {directories} directories and {files} files",
+                elapsed
+            );
             cx.update(|cx| {
                 cx.quit();
             })
