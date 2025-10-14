@@ -1096,7 +1096,9 @@ impl RemoteConnectionOptions {
         match self {
             RemoteConnectionOptions::Ssh(opts) => opts.host.clone(),
             RemoteConnectionOptions::Wsl(opts) => opts.distro_name.clone(),
-            RemoteConnectionOptions::Iroh(opts) => opts.ticket.node_addr().node_id.fmt_short(),
+            RemoteConnectionOptions::Iroh(opts) => {
+                opts.ticket.node_addr().node_id.fmt_short().to_string()
+            }
         }
     }
 }

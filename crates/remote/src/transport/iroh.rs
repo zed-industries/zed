@@ -12,7 +12,7 @@ use futures::{
     channel::mpsc::{Sender, UnboundedReceiver, UnboundedSender},
 };
 use gpui::{App, AppContext as _, AsyncApp, Task};
-use iroh::{Endpoint, NodeAddr, NodeId, RelayUrl, Watcher};
+use iroh::{Endpoint, NodeAddr, NodeId, RelayUrl};
 use iroh_base::ticket::{self, ParseError, Ticket};
 use rpc::proto::Envelope;
 use schemars::JsonSchema;
@@ -205,8 +205,8 @@ impl IrohZedRemote {
         Ok(this)
     }
 
-    pub async fn ticket(&self) -> ZedIrohTicket {
-        let addr = self.endpoint.node_addr().initialized().await;
+    pub fn ticket(&self) -> ZedIrohTicket {
+        let addr = self.endpoint.node_addr();
         ZedIrohTicket::new(addr)
     }
 }

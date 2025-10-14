@@ -1019,7 +1019,12 @@ impl RemoteServerProjects {
         let is_wsl = false;
         let p2p_prompt = cx.new(|cx| {
             RemoteConnectionPrompt::new(
-                connection_options.ticket.node_addr().node_id.fmt_short(),
+                connection_options
+                    .ticket
+                    .node_addr()
+                    .node_id
+                    .fmt_short()
+                    .to_string(),
                 connection_options.nickname.clone(),
                 is_wsl,
                 window,
@@ -2186,7 +2191,13 @@ impl RemoteServerProjects {
                     .render(window, cx)
                     .into_any_element(),
                     ViewServerOptionsState::P2p { connection, .. } => SshConnectionHeader {
-                        connection_string: connection.ticket.node_addr().node_id.fmt_short().into(),
+                        connection_string: connection
+                            .ticket
+                            .node_addr()
+                            .node_id
+                            .fmt_short()
+                            .to_string()
+                            .into(),
                         paths: Default::default(),
                         nickname: connection.nickname.clone().map(|s| s.into()),
                         is_wsl: false,

@@ -303,7 +303,7 @@ impl RemoteConnectionModal {
             }
             RemoteConnectionOptions::Wsl(options) => (options.distro_name.clone(), None, true),
             RemoteConnectionOptions::Iroh(options) => (
-                options.ticket.node_addr().node_id.fmt_short(),
+                options.ticket.node_addr().node_id.fmt_short().to_string(),
                 options.nickname.clone(),
                 false,
             ),

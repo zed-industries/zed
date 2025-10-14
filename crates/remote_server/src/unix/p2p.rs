@@ -13,7 +13,7 @@ use gpui::AppContext;
 use gpui_tokio::Tokio;
 use iroh::endpoint::Connection;
 use iroh::protocol::{AcceptError, ProtocolHandler, Router};
-use iroh::{Endpoint, SecretKey, Watcher};
+use iroh::{Endpoint, SecretKey};
 use language::LanguageRegistry;
 use node_runtime::NodeRuntime;
 use proto::Envelope;
@@ -112,10 +112,8 @@ pub(crate) fn execute(persist: bool, mut persist_at: Option<PathBuf>) -> Result<
             };
             log::info!("ADDR: iroh started {}", iroh.endpoint().node_id());
 
-            let home_relay = iroh.endpoint().home_relay().initialized().await;
-            log::info!("ADDR: home relay: {}", home_relay);
-
-            let ticket = iroh.ticket().await;
+            iroh.endpoint().online().await;
+            let ticket = iroh.ticket();
             println!("TICKET: {}", ticket);
 
             // TODO: better shutdown
@@ -250,8 +248,8 @@ impl IrohZedListener {
         })
     }
 
-    async fn ticket(&self) -> ZedIrohTicket {
-        let addr = self.endpoint.node_addr().initialized().await;
+    fn ticket(&self) -> ZedIrohTicket {
+        let addr = self.endpoint.node_addr();
         ZedIrohTicket::new(addr)
     }
 
@@ -383,7 +381,7 @@ async fn get_secret_key(persist: Option<&PathBuf>) -> SecretKey {
             }
         }
     }
-    let key = SecretKey::generate(rand::rngs::OsRng);
+    let key = SecretKey::generate(&mut rand::rng());
     if let Some(node_path) = persist {
         if let Err(error) = write_key(&node_path, &key).await {
             log::error!(
