@@ -1555,37 +1555,47 @@ impl SettingsWindow {
                                     })
                                 }),
                         )
-                        .child(
-                            DropdownMenu::new(
-                                "more-files",
-                                format!("+{}", self.files.len() - (OVERFLOW_LIMIT + 1)),
-                                ContextMenu::build(window, cx, move |mut menu, _, _| {
-                                    for (ix, (file, focus_handle)) in
-                                        self.files.iter().enumerate().skip(OVERFLOW_LIMIT + 1)
-                                    {
-                                        menu = menu.entry(
-                                            self.display_name(file)
-                                                .expect("Files should always have a name"),
-                                            None,
+                        .when(
+                            self.files.len() > OVERFLOW_LIMIT + 1,
+                            |div| {
+                                div.child(
+                                    DropdownMenu::new(
+                                        "more-files",
+                                        format!("+{}", self.files.len() - (OVERFLOW_LIMIT + 1)),
+                                        ContextMenu::build(window, cx, move |mut menu, _, _| {
+                                            for (ix, (file, focus_handle)) in self
+                                                .files
+                                                .iter()
+                                                .enumerate()
+                                                .skip(OVERFLOW_LIMIT + 1)
                                             {
-                                                let this = this.clone();
-                                                let focus_handle = focus_handle.clone();
-                                                move |window, cx| {
-                                                    this.update(cx, |this, cx| {
-                                                        this.change_file(ix, window, true, cx);
-                                                    });
-                                                    focus_handle.focus(window);
-                                                }
-                                            },
-                                        );
-                                    }
+                                                menu = menu.entry(
+                                                    self.display_name(file)
+                                                        .expect("Files should always have a name"),
+                                                    None,
+                                                    {
+                                                        let this = this.clone();
+                                                        let focus_handle = focus_handle.clone();
+                                                        move |window, cx| {
+                                                            this.update(cx, |this, cx| {
+                                                                this.change_file(
+                                                                    ix, window, true, cx,
+                                                                );
+                                                            });
+                                                            focus_handle.focus(window);
+                                                        }
+                                                    },
+                                                );
+                                            }
 
-                                    menu
-                                }),
-                            )
-                            .style(DropdownStyle::Ghost)
-                            .tab_index(0)
-                            .no_chevron(),
+                                            menu
+                                        }),
+                                    )
+                                    .style(DropdownStyle::Ghost)
+                                    .tab_index(0)
+                                    .no_chevron(),
+                                )
+                            },
                         )
                     }),
             )
