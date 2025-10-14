@@ -522,7 +522,7 @@ pub struct SettingsWindow {
     filter_table: Vec<Vec<bool>>,
     has_query: bool,
     content_handles: Vec<Vec<Entity<NonFocusableHandle>>>,
-    page_scroll_handle: ScrollHandle,
+    sub_page_scroll_handle: ScrollHandle,
     focus_handle: FocusHandle,
     navbar_focus_handle: Entity<NonFocusableHandle>,
     content_focus_handle: Entity<NonFocusableHandle>,
@@ -1003,7 +1003,7 @@ impl SettingsWindow {
             filter_table: vec![],
             has_query: false,
             content_handles: vec![],
-            page_scroll_handle: ScrollHandle::new(),
+            sub_page_scroll_handle: ScrollHandle::new(),
             focus_handle: cx.focus_handle(),
             navbar_focus_handle: NonFocusableHandle::new(
                 NAVBAR_CONTAINER_TAB_INDEX,
@@ -1865,7 +1865,8 @@ impl SettingsWindow {
         if self.navbar_entries[navbar_entry_index].is_root
             || !self.is_nav_entry_visible(navbar_entry_index)
         {
-            self.page_scroll_handle.set_offset(point(px(0.), px(0.)));
+            self.sub_page_scroll_handle
+                .set_offset(point(px(0.), px(0.)));
             if focus_content {
                 let Some(first_item_index) =
                     self.visible_page_items().next().map(|(index, _)| index)
@@ -2079,7 +2080,7 @@ impl SettingsWindow {
             .id("settings-ui-page")
             .size_full()
             .overflow_y_scroll()
-            .track_scroll(&self.page_scroll_handle);
+            .track_scroll(&self.sub_page_scroll_handle);
 
         let items: Vec<_> = items.collect();
         let items_len = items.len();
@@ -2206,7 +2207,7 @@ impl SettingsWindow {
                 this.vertical_scrollbar_for(self.list_state.clone(), window, cx)
             })
             .when(!sub_page_stack().is_empty(), |this| {
-                this.vertical_scrollbar_for(self.page_scroll_handle.clone(), window, cx)
+                this.vertical_scrollbar_for(self.sub_page_scroll_handle.clone(), window, cx)
             })
             .track_focus(&self.content_focus_handle.focus_handle(cx))
             .child(
@@ -2837,7 +2838,7 @@ mod test {
             has_query: false,
             content_handles: vec![],
             search_task: None,
-            page_scroll_handle: ScrollHandle::new(),
+            sub_page_scroll_handle: ScrollHandle::new(),
             focus_handle: cx.focus_handle(),
             navbar_focus_handle: NonFocusableHandle::new(
                 NAVBAR_CONTAINER_TAB_INDEX,
