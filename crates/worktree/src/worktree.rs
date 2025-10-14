@@ -2439,6 +2439,7 @@ impl LocalSnapshot {
     }
 
     fn insert_entry(&mut self, mut entry: Entry, fs: &dyn Fs) -> Entry {
+        log::trace!("insert entry {:?}", entry.path);
         if entry.is_file() && entry.path.file_name() == Some(&GITIGNORE) {
             let abs_path = self.absolutize(&entry.path);
             match smol::block_on(build_gitignore(&abs_path, fs)) {
@@ -4369,7 +4370,6 @@ impl BackgroundScanner {
         // detected regardless of the order of the paths.
         for (path, metadata) in relative_paths.iter().zip(metadata.iter()) {
             if matches!(metadata, Ok(None)) || doing_recursive_update {
-                log::trace!("remove path {:?}", path);
                 state.remove_path(path);
             }
         }
