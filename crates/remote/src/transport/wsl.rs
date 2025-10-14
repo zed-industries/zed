@@ -21,6 +21,7 @@ use std::{
 use util::{
     paths::{PathStyle, RemotePathBuf},
     rel_path::RelPath,
+    shell::ShellKind,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -76,9 +77,10 @@ impl WslRemoteConnection {
             can_exec: true,
         };
         delegate.set_status(Some("Detecting WSL environment"), cx);
-        this.can_exec = this.detect_can_exec().await?;
-        this.platform = this.detect_platform().await?;
         this.shell = this.detect_shell().await?;
+        let shell = ShellKind::new(&this.shell, false);
+        this.can_exec = this.detect_can_exec(shell).await?;
+        this.platform = this.detect_platform(shell).await?;
         this.remote_binary_path = Some(
             this.ensure_server_binary(&delegate, release_channel, version, commit, cx)
                 .await?,
@@ -88,9 +90,13 @@ impl WslRemoteConnection {
         Ok(this)
     }
 
-    async fn detect_can_exec(&self) -> Result<bool> {
+    async fn detect_can_exec(&self, shell: ShellKind) -> Result<bool> {
         let options = &self.connection_options;
-        let program = "uname";
+        let program = if shell == ShellKind::Nushell {
+            "^uname"
+        } else {
+            "uname"
+        };
         let args = &["-m"];
         let output = wsl_command_impl(options, program, args, true)
             .output()
@@ -114,9 +120,14 @@ impl WslRemoteConnection {
             Ok(true)
         }
     }
-
-    async fn detect_platform(&self) -> Result<RemotePlatform> {
-        let arch_str = self.run_wsl_command("uname", &["-m"]).await?;
+    async fn detect_platform(&self, shell: ShellKind) -> Result<RemotePlatform> {
+        let arch_str = if shell == ShellKind::Nushell {
+            // https://github.com/nushell/nushell/issues/12570
+            self.run_wsl_command("sh", &["-c", "uname -m"])
+        } else {
+            self.run_wsl_command("uname", &["-m"])
+        }
+        .await?;
         let arch_str = arch_str.trim().to_string();
         let arch = match arch_str.as_str() {
             "x86_64" => "x86_64",
@@ -131,7 +142,7 @@ impl WslRemoteConnection {
             .run_wsl_command("sh", &["-c", "echo $SHELL"])
             .await
             .ok()
-            .unwrap_or_else(|| "bash".to_string()))
+            .unwrap_or_else(|| "/bin/sh".to_string()))
     }
 
     async fn windows_path_to_wsl_path(&self, source: &Path) -> Result<String> {
