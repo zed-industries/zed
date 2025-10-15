@@ -28,7 +28,7 @@ pub struct Transition<T: TransitionGoal + Clone + PartialEq + 'static> {
 impl<T: TransitionGoal + Clone + PartialEq + 'static> Transition<T> {
     /// Reads the transition's goal.
     pub fn read_goal<'a>(&self, cx: &'a App) -> &'a T {
-        &self.state.read(cx).current_goal
+        &self.state.read(cx).end_goal
     }
 
     /// Updates the goal for the transition without notifying gpui of any changes.
@@ -36,13 +36,15 @@ impl<T: TransitionGoal + Clone + PartialEq + 'static> Transition<T> {
         let mut was_updated = false;
 
         self.state.update(cx, |state, _cx| {
-            if state.current_goal == new_goal {
+            if state.end_goal == new_goal {
                 return;
             };
 
             state.goal_last_updated_at = Instant::now();
-            state.last_goal = std::mem::replace(&mut state.current_goal, new_goal);
-            state.start_delta = 1. - state.last_delta;
+            state.start_goal = state
+                .start_goal
+                .apply_delta(&state.end_goal, state.last_delta);
+            state.end_goal = new_goal;
 
             was_updated = true;
         });
@@ -62,14 +64,13 @@ impl<T: TransitionGoal + Clone + PartialEq + 'static> Transition<T> {
         was_updated
     }
 
-    // Evaluates the value for the transition based on the last and current goal.
+    // Evaluates the value for the transition based on the start and end goal.
     fn evaluate(&self, cx: &mut App) -> (bool, T) {
         let mut state_entity = self.state.as_mut(cx);
         let state: &mut TransitionState<T> = state_entity.borrow_mut();
 
         let elapsed_secs = state.goal_last_updated_at.elapsed().as_secs_f32();
-        let delta =
-            (self.easing)((state.start_delta + (elapsed_secs / self.duration_secs)).min(1.));
+        let delta = (self.easing)((elapsed_secs / self.duration_secs).min(1.));
 
         debug_assert!(
             (0.0..=1.0).contains(&delta),
@@ -78,7 +79,7 @@ impl<T: TransitionGoal + Clone + PartialEq + 'static> Transition<T> {
 
         state.last_delta = delta;
 
-        let evaluated_value = state.last_goal.apply_delta(&state.current_goal, delta);
+        let evaluated_value = state.start_goal.apply_delta(&state.end_goal, delta);
 
         (delta != 1., evaluated_value)
     }
@@ -88,20 +89,18 @@ impl<T: TransitionGoal + Clone + PartialEq + 'static> Transition<T> {
 #[derive(Clone)]
 pub struct TransitionState<T: TransitionGoal + Clone + PartialEq + 'static> {
     goal_last_updated_at: Instant,
-    current_goal: T,
-    start_delta: f32,
+    start_goal: T,
+    end_goal: T,
     last_delta: f32,
-    last_goal: T,
 }
 
 impl<T: TransitionGoal + Clone + PartialEq + 'static> TransitionState<T> {
     fn new(initial_goal: T) -> Self {
         Self {
             goal_last_updated_at: Instant::now(),
-            current_goal: initial_goal.clone(),
-            start_delta: 1.,
+            start_goal: initial_goal.clone(),
+            end_goal: initial_goal,
             last_delta: 1.,
-            last_goal: initial_goal,
         }
     }
 }
@@ -202,7 +201,7 @@ impl<E: IntoElement + 'static, T: TransitionValues<'static> + Clone + 'static> A
 
 /// A type which can be used as a transition goal.
 pub trait TransitionGoal {
-    /// Defines how a value is calculated from the last and current goal.
+    /// Defines how a value is calculated from the start and end goal.
     fn apply_delta(&self, to: &Self, delta: f32) -> Self;
 }
 
@@ -307,7 +306,7 @@ pub trait TransitionValues<'a> {
     /// The underlying type of the values.
     type Values;
 
-    /// Evaluates the values for the transitions based on the last and current goals.
+    /// Evaluates the values for the transitions based on the start and end goals.
     fn evaluate(&self, cx: &mut App) -> (bool, Self::Values);
 }
 
