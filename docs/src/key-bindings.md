@@ -23,8 +23,12 @@ For more information, see the documentation for [Vim mode](./vim.md) and [Helix 
 
 ## User keymaps
 
-Zed reads your keymap from `~/.config/zed/keymap.json`, which you can open with the {#action zed::OpenKeymap} action from the command palette.
-You can also edit your keymap through the Zed Keymap Editor, accessible via the {#action zed::OpenKeymap} action or the {#kb zed::OpenKeymap} keybinding.
+Where Zed looks for your keymap:
+
+- macOS/Linux: `~/.config/zed/keymap.json`
+- Windows: `~\AppData\Roaming\Zed/keymap.json`
+
+You can open the keymap with the {#action zed::OpenKeymapFile} action from the command palette, or edit it in Zed's Keymap Editor, accessible via the {#action zed::OpenKeymap} action or the {#kb zed::OpenKeymap} keybinding.
 
 The `keymap.json` file contains a JSON array of objects with `"bindings"`. If no `"context"` is set, the bindings are always active. If it is set, the binding is only active when the [context matches](#contexts).
 
@@ -51,7 +55,11 @@ For example:
 ]
 ```
 
-You can see all of Zed's default bindings in the default keymaps for [macOS](https://github.com/zed-industries/zed/blob/main/assets/keymaps/default-macos.json) or [Linux](https://github.com/zed-industries/zed/blob/main/assets/keymaps/default-linux.json).
+You can see all of Zed's default bindings in the default keymaps for:
+
+- [macOS](https://github.com/zed-industries/zed/blob/main/assets/keymaps/default-macos.json)
+- [Windows](https://github.com/zed-industries/zed/blob/main/assets/keymaps/default-windows.json)
+- [Linux](https://github.com/zed-industries/zed/blob/main/assets/keymaps/default-linux.json).
 
 If you want to debug problems with custom keymaps, you can use `dev: Open Key Context View` from the command palette. Please file [an issue](https://github.com/zed-industries/zed) if you run into something you think should work but isn't.
 
@@ -130,7 +138,7 @@ If you're using Vim mode, we have information on how [vim modes influence the co
 ### Actions
 
 Almost all of Zed's functionality is exposed as actions.
-Although there is no explicitly documented list, you can find most of them by searching in the command palette, by looking in the default keymaps for [macOS](https://github.com/zed-industries/zed/blob/main/assets/keymaps/default-macos.json) or [Linux](https://github.com/zed-industries/zed/blob/main/assets/keymaps/default-linux.json), or by using Zed's autocomplete in your keymap file.
+Although there is no explicitly documented list, you can find most of them by searching in the command palette, by looking in the default keymaps for [macOS](https://github.com/zed-industries/zed/blob/main/assets/keymaps/default-macos.json), [Windows](https://github.com/zed-industries/zed/blob/main/assets/keymaps/default-windows.json) or [Linux](https://github.com/zed-industries/zed/blob/main/assets/keymaps/default-linux.json), or by using Zed's autocomplete in your keymap file.
 
 Most actions do not require any arguments, and so you can bind them as strings: `"ctrl-a": "language_selector::Toggle"`. Some require a single argument and must be bound as an array: `"cmd-1": ["workspace::ActivatePane", 0]`. Some actions require multiple arguments and are bound as an array of a string and an object: `"ctrl-a": ["pane::DeploySearch", { "replace_enabled": true }]`.
 
