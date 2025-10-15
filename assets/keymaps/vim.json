@@ -500,8 +500,8 @@
       "ctrl-c": "editor::ToggleComments",
       "d": "vim::HelixDelete",
       "c": "vim::Substitute",
-      "shift-c": "editor::AddSelectionBelow",
-      "alt-shift-c": "editor::AddSelectionAbove"
+      "shift-c": ["editor::AddSelectionBelow", { "skip_soft_wrap": true }],
+      "alt-shift-c": ["editor::AddSelectionAbove", { "skip_soft_wrap": true }]
     }
   },
   {

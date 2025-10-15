@@ -14235,23 +14235,29 @@ impl Editor {
 
     pub fn add_selection_above(
         &mut self,
-        _: &AddSelectionAbove,
+        action: &AddSelectionAbove,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.add_selection(true, window, cx);
+        self.add_selection(true, action.skip_soft_wrap, window, cx);
     }
 
     pub fn add_selection_below(
         &mut self,
-        _: &AddSelectionBelow,
+        action: &AddSelectionBelow,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.add_selection(false, window, cx);
+        self.add_selection(false, action.skip_soft_wrap, window, cx);
     }
 
-    fn add_selection(&mut self, above: bool, window: &mut Window, cx: &mut Context<Self>) {
+    fn add_selection(
+        &mut self,
+        above: bool,
+        skip_soft_wrap: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.hide_mouse_cursor(HideMouseCursorOrigin::MovementAction, cx);
 
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
@@ -14341,9 +14347,15 @@ impl Editor {
                     let direction = if above { -1 } else { 1 };
 
                     while row != end_row {
-                        row = display_map
-                            .start_of_relative_buffer_row(DisplayPoint::new(row, 0), direction)
-                            .row();
+                        if skip_soft_wrap {
+                            row = display_map
+                                .start_of_relative_buffer_row(DisplayPoint::new(row, 0), direction)
+                                .row();
+                        } else if above {
+                            row.0 -= 1;
+                        } else {
+                            row.0 += 1;
+                        }
 
                         if let Some(new_selection) = self.selections.build_columnar_selection(
                             &display_map,
