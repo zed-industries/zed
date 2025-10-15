@@ -335,7 +335,10 @@ impl AcpThreadView {
 
         let placeholder = if agent.name() == "Zed Agent" {
             format!("Message the {} — @ to include context", agent.name())
-        } else if agent.name() == "Claude Code" || !available_commands.borrow().is_empty() {
+        } else if agent.name() == "Claude Code"
+            || agent.name() == "Codex"
+            || !available_commands.borrow().is_empty()
+        {
             format!(
                 "Message {} — @ to include context, / for commands",
                 agent.name()
