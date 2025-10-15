@@ -2768,7 +2768,7 @@ impl Session {
 
         let mut console_output = self.console_output(cx);
         let task = cx.spawn(async move |this, cx| {
-            let (dap_port, _child) =
+            let (dap_port, forward_port_process) =
                 if remote_client.read_with(cx, |client, _| client.shares_network_interface())? {
                     (request.server_port, None)
                 } else {
@@ -2816,10 +2816,15 @@ impl Session {
                 };
             this.update(cx, |this, cx| {
                 this.companion_port = Some(companion_port);
-                let Some(mut child) = companion_process else {
+                if let Some(mut forward_port_process) = forward_port_process {
+                    this.background_tasks.push(cx.spawn(async move |_, _| {
+                        forward_port_process.status().await.log_err();
+                    }));
+                };
+                let Some(mut companion_process) = companion_process else {
                     return;
                 };
-                if let Some(stderr) = child.stderr.take() {
+                if let Some(stderr) = companion_process.stderr.take() {
                     let mut console_output = console_output.clone();
                     this.background_tasks.push(cx.spawn(async move |_, _| {
                         let mut stderr = BufReader::new(stderr);
@@ -2837,7 +2842,7 @@ impl Session {
                 }
                 this.background_tasks.push(cx.spawn({
                     let mut console_output = console_output.clone();
-                    async move |_, _| match child.status().await {
+                    async move |_, _| match companion_process.status().await {
                         Ok(status) => {
                             if status.success() {
                                 console_output

@@ -152,13 +152,14 @@ impl RemoteConnection for SshRemoteConnection {
         host: String,
         remote_port: u16,
     ) -> Result<CommandTemplate> {
+        let Self { socket, .. } = self;
+        let mut args = socket.ssh_args();
+        args.push("-N".into());
+        args.push("-L".into());
+        args.push(format!("{local_port}:{host}:{remote_port}"));
         Ok(CommandTemplate {
             program: "ssh".into(),
-            args: vec![
-                "-N".into(),
-                "-L".into(),
-                format!("{local_port}:{host}:{remote_port}"),
-            ],
+            args,
             env: Default::default(),
         })
     }
