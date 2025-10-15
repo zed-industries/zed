@@ -17,8 +17,8 @@ use gpui::{
     App, Entity, EntityId, Global, SemanticVersion, SharedString, Subscription, Task, WeakEntity,
     http_client, prelude::*,
 };
+use language::BufferSnapshot;
 use language::{Buffer, DiagnosticSet, LanguageServerId, ToOffset as _, ToPoint};
-use language::{BufferSnapshot, TextBufferSnapshot};
 use language_model::{LlmApiToken, RefreshLlmTokenListener};
 use project::Project;
 use release_channel::AppVersion;
@@ -106,30 +106,40 @@ struct ZetaProject {
     current_prediction: Option<CurrentEditPrediction>,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 struct CurrentEditPrediction {
     pub requested_by_buffer_id: EntityId,
     pub prediction: EditPrediction,
 }
 
 impl CurrentEditPrediction {
-    fn should_replace_prediction(
-        &self,
-        old_prediction: &Self,
-        snapshot: &TextBufferSnapshot,
-    ) -> bool {
-        if self.requested_by_buffer_id != old_prediction.requested_by_buffer_id {
+    fn should_replace_prediction(&self, old_prediction: &Self, cx: &App) -> bool {
+        let Some(new_edits) = self
+            .prediction
+            .interpolate(&self.prediction.buffer.read(cx))
+        else {
+            return false;
+        };
+
+        if self.prediction.buffer != old_prediction.prediction.buffer {
             return true;
         }
 
-        let Some(old_edits) = old_prediction.prediction.interpolate(snapshot) else {
+        let Some(old_edits) = old_prediction
+            .prediction
+            .interpolate(&old_prediction.prediction.buffer.read(cx))
+        else {
             return true;
         };
 
-        let Some(new_edits) = self.prediction.interpolate(snapshot) else {
-            return false;
-        };
-        if old_edits.len() == 1 && new_edits.len() == 1 {
+        // This reduces the occurrence of UI thrash from replacing edits
+        //
+        // TODO: This is fairly arbitrary - should have a more general heuristic that handles multiple edits.
+        if self.requested_by_buffer_id == self.prediction.buffer.entity_id()
+            && self.requested_by_buffer_id == old_prediction.prediction.buffer.entity_id()
+            && old_edits.len() == 1
+            && new_edits.len() == 1
+        {
             let (old_range, old_text) = &old_edits[0];
             let (new_range, new_text) = &new_edits[0];
             new_range == old_range && new_text.starts_with(old_text)
@@ -421,8 +431,7 @@ impl Zeta {
                         .current_prediction
                         .as_ref()
                         .is_none_or(|old_prediction| {
-                            new_prediction
-                                .should_replace_prediction(&old_prediction, buffer.read(cx))
+                            new_prediction.should_replace_prediction(&old_prediction, cx)
                         })
                     {
                         project_state.current_prediction = Some(new_prediction);
@@ -926,7 +935,7 @@ fn make_cloud_request(
         referenced_declarations.push(predict_edits_v3::ReferencedDeclaration {
             path: path.as_std_path().into(),
             text: text.into(),
-            range: snippet.declaration.item_range(),
+            range: snippet.declaration.item_line_range(),
             text_is_truncated,
             signature_range: snippet.declaration.signature_range_in_item_text(),
             parent_index,
@@ -954,8 +963,12 @@ fn make_cloud_request(
     predict_edits_v3::PredictEditsRequest {
         excerpt_path,
         excerpt: context.excerpt_text.body,
+        excerpt_line_range: context.excerpt.line_range,
         excerpt_range: context.excerpt.range,
-        cursor_offset: context.cursor_offset_in_excerpt,
+        cursor_point: predict_edits_v3::Point {
+            line: predict_edits_v3::Line(context.cursor_point.row),
+            column: context.cursor_point.column,
+        },
         referenced_declarations,
         signatures,
         excerpt_parent,
@@ -992,7 +1005,7 @@ fn add_signature(
         text: text.into(),
         text_is_truncated,
         parent_index,
-        range: parent_declaration.signature_range(),
+        range: parent_declaration.signature_line_range(),
     });
     declaration_to_signature_index.insert(declaration_id, signature_index);
     Some(signature_index)
@@ -1007,7 +1020,8 @@ mod tests {
 
     use client::UserStore;
     use clock::FakeSystemClock;
-    use cloud_llm_client::predict_edits_v3;
+    use cloud_llm_client::predict_edits_v3::{self, Point};
+    use edit_prediction_context::Line;
     use futures::{
         AsyncReadExt, StreamExt,
         channel::{mpsc, oneshot},
@@ -1067,7 +1081,7 @@ mod tests {
                 request_id: Uuid::new_v4(),
                 edits: vec![predict_edits_v3::Edit {
                     path: Path::new(path!("root/1.txt")).into(),
-                    range: 0..snapshot1.len(),
+                    range: Line(0)..Line(snapshot1.max_point().row + 1),
                     content: "Hello!\nHow are you?\nBye".into(),
                 }],
                 debug_info: None,
@@ -1083,7 +1097,6 @@ mod tests {
         });
 
         // Prediction for another file
-
         let prediction_task = zeta.update(cx, |zeta, cx| {
             zeta.refresh_prediction(&project, &buffer1, position, cx)
         });
@@ -1093,14 +1106,13 @@ mod tests {
                 request_id: Uuid::new_v4(),
                 edits: vec![predict_edits_v3::Edit {
                     path: Path::new(path!("root/2.txt")).into(),
-                    range: 0..snapshot1.len(),
+                    range: Line(0)..Line(snapshot1.max_point().row + 1),
                     content: "Hola!\nComo estas?\nAdios".into(),
                 }],
                 debug_info: None,
             })
             .unwrap();
         prediction_task.await.unwrap();
-
         zeta.read_with(cx, |zeta, cx| {
             let prediction = zeta
                 .current_prediction_for_buffer(&buffer1, &project, cx)
@@ -1159,14 +1171,20 @@ mod tests {
             request.excerpt_path.as_ref(),
             Path::new(path!("root/foo.md"))
         );
-        assert_eq!(request.cursor_offset, 10);
+        assert_eq!(
+            request.cursor_point,
+            Point {
+                line: Line(1),
+                column: 3
+            }
+        );
 
         respond_tx
             .send(predict_edits_v3::PredictEditsResponse {
                 request_id: Uuid::new_v4(),
                 edits: vec![predict_edits_v3::Edit {
                     path: Path::new(path!("root/foo.md")).into(),
-                    range: 0..snapshot.len(),
+                    range: Line(0)..Line(snapshot.max_point().row + 1),
                     content: "Hello!\nHow are you?\nBye".into(),
                 }],
                 debug_info: None,
@@ -1244,7 +1262,7 @@ mod tests {
                 request_id: Uuid::new_v4(),
                 edits: vec![predict_edits_v3::Edit {
                     path: Path::new(path!("root/foo.md")).into(),
-                    range: 0..snapshot.len(),
+                    range: Line(0)..Line(snapshot.max_point().row + 1),
                     content: "Hello!\nHow are you?\nBye".into(),
                 }],
                 debug_info: None,

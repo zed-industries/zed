@@ -33,7 +33,7 @@ pub struct EditPrediction {
     pub snapshot: BufferSnapshot,
     pub edit_preview: EditPreview,
     // We keep a reference to the buffer so that we do not need to reload it from disk when applying the prediction.
-    _buffer: Entity<Buffer>,
+    pub buffer: Entity<Buffer>,
 }
 
 impl EditPrediction {
@@ -108,7 +108,7 @@ impl EditPrediction {
             edits,
             snapshot,
             edit_preview,
-            _buffer: buffer,
+            buffer,
         })
     }
 
@@ -184,6 +184,10 @@ pub fn interpolate_edits(
     if edits.is_empty() { None } else { Some(edits) }
 }
 
+pub fn line_range_to_point_range(range: Range<predict_edits_v3::Line>) -> Range<language::Point> {
+    language::Point::new(range.start.0, 0)..language::Point::new(range.end.0, 0)
+}
+
 fn edits_from_response(
     edits: &[predict_edits_v3::Edit],
     snapshot: &TextBufferSnapshot,
@@ -191,12 +195,14 @@ fn edits_from_response(
     edits
         .iter()
         .flat_map(|edit| {
-            let old_text = snapshot.text_for_range(edit.range.clone());
+            let point_range = line_range_to_point_range(edit.range.clone());
+            let offset = point_range.to_offset(snapshot).start;
+            let old_text = snapshot.text_for_range(point_range);
 
             excerpt_edits_from_response(
                 old_text.collect::<Cow<str>>(),
                 &edit.content,
-                edit.range.start,
+                offset,
                 &snapshot,
             )
         })
@@ -252,6 +258,7 @@ mod tests {
 
     use super::*;
     use cloud_llm_client::predict_edits_v3;
+    use edit_prediction_context::Line;
     use gpui::{App, Entity, TestAppContext, prelude::*};
     use indoc::indoc;
     use language::{Buffer, ToOffset as _};
@@ -278,7 +285,7 @@ mod tests {
         // TODO cover more cases when multi-file is supported
         let big_edits = vec![predict_edits_v3::Edit {
             path: PathBuf::from("test.txt").into(),
-            range: 0..old.len(),
+            range: Line(0)..Line(old.lines().count() as u32),
             content: new.into(),
         }];
 
@@ -317,7 +324,7 @@ mod tests {
             edits,
             snapshot: cx.read(|cx| buffer.read(cx).snapshot()),
             path: Path::new("test.txt").into(),
-            _buffer: buffer.clone(),
+            buffer: buffer.clone(),
             edit_preview,
         };
 
