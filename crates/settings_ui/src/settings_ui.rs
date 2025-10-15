@@ -482,7 +482,7 @@ pub fn open_settings_editor(
                 focus: true,
                 show: true,
                 is_movable: true,
-                kind: gpui::WindowKind::Floating,
+                kind: gpui::WindowKind::Dialog,
                 window_background: cx.theme().window_background_appearance(),
                 window_min_size: Some(scaled_bounds),
                 window_bounds: Some(WindowBounds::centered(scaled_bounds, cx)),
