@@ -12,7 +12,7 @@ use anyhow::Result;
 use editor::{CompletionProvider, Editor, ExcerptId};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{App, Entity, Task, WeakEntity};
-use language::{Buffer, CodeLabel, HighlightId};
+use language::{Buffer, CodeLabel, CodeLabelBuilder, HighlightId};
 use lsp::CompletionContext;
 use project::lsp_store::{CompletionDocumentation, SymbolLocation};
 use project::{
@@ -673,7 +673,7 @@ impl ContextPickerCompletionProvider {
 
 fn build_code_label_for_full_path(file_name: &str, directory: Option<&str>, cx: &App) -> CodeLabel {
     let comment_id = cx.theme().syntax().highlight_id("comment").map(HighlightId);
-    let mut label = CodeLabel::default();
+    let mut label = CodeLabelBuilder::default();
 
     label.push_str(file_name, None);
     label.push_str(" ", None);
@@ -682,9 +682,7 @@ fn build_code_label_for_full_path(file_name: &str, directory: Option<&str>, cx: 
         label.push_str(directory, comment_id);
     }
 
-    label.filter_range = 0..label.text().len();
-
-    label
+    label.build()
 }
 
 impl CompletionProvider for ContextPickerCompletionProvider {
