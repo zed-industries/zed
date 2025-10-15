@@ -254,9 +254,9 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     ),
                     metadata: None,
                 }),
-                SettingsPageItem::SectionHeader("Fonts"),
+                SettingsPageItem::SectionHeader("Buffer Font"),
                 SettingsPageItem::SettingItem(SettingItem {
-                    title: "Buffer Font Family",
+                    title: "Font Family",
                     description: "Font family for editor text",
                     field: Box::new(SettingField {
                         pick: |settings_content| &settings_content.theme.buffer_font_family,
@@ -266,7 +266,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
-                    title: "Buffer Font Size",
+                    title: "Font Size",
                     description: "Font size for editor text",
                     field: Box::new(SettingField {
                         pick: |settings_content| &settings_content.theme.buffer_font_size,
@@ -276,7 +276,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
-                    title: "Buffer Font Weight",
+                    title: "Font Weight",
                     description: "Font weight for editor text (100-900)",
                     field: Box::new(SettingField {
                         pick: |settings_content| &settings_content.theme.buffer_font_weight,
@@ -288,7 +288,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                 // todo(settings_ui): This needs custom ui
                 SettingsPageItem::SettingItem(SettingItem {
                     files: USER,
-                    title: "Buffer Line Height",
+                    title: "Line Height",
                     description: "Line height for editor text",
                     field: Box::new(
                         SettingField {
@@ -303,7 +303,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     files: USER,
-                    title: "Buffer Font Features",
+                    title: "Font Features",
                     description: "The OpenType features to enable for rendering in text buffers.",
                     field: Box::new(
                         SettingField {
@@ -318,7 +318,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     files: USER,
-                    title: "Buffer Font Fallbacks",
+                    title: "Font Fallbacks",
                     description: "The font fallbacks to use for rendering in text buffers.",
                     field: Box::new(
                         SettingField {
@@ -331,8 +331,9 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     ),
                     metadata: None,
                 }),
+                SettingsPageItem::SectionHeader("UI Font"),
                 SettingsPageItem::SettingItem(SettingItem {
-                    title: "UI Font Family",
+                    title: "Font Family",
                     description: "Font family for UI elements",
                     field: Box::new(SettingField {
                         pick: |settings_content| &settings_content.theme.ui_font_family,
@@ -342,7 +343,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
-                    title: "UI Font Size",
+                    title: "Font Size",
                     description: "Font size for UI elements",
                     field: Box::new(SettingField {
                         pick: |settings_content| &settings_content.theme.ui_font_size,
@@ -352,7 +353,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
-                    title: "UI Font Weight",
+                    title: "Font Weight",
                     description: "Font weight for UI elements (100-900)",
                     field: Box::new(SettingField {
                         pick: |settings_content| &settings_content.theme.ui_font_weight,
@@ -363,7 +364,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     files: USER,
-                    title: "UI Font Features",
+                    title: "Font Features",
                     description: "The OpenType features to enable for rendering in UI elements.",
                     field: Box::new(
                         SettingField {
@@ -378,7 +379,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     files: USER,
-                    title: "UI Font Fallbacks",
+                    title: "Font Fallbacks",
                     description: "The font fallbacks to use for rendering in the UI.",
                     field: Box::new(
                         SettingField {
@@ -391,8 +392,9 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     ),
                     metadata: None,
                 }),
+                SettingsPageItem::SectionHeader("Agent Panel Font"),
                 SettingsPageItem::SettingItem(SettingItem {
-                    title: "Agent Panel UI Font Size",
+                    title: "UI Font Size",
                     description: "Font size for agent response text in the agent panel. Falls back to the regular UI font size.",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
@@ -408,7 +410,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
-                    title: "Agent Panel Buffer Font Size",
+                    title: "Buffer Font Size",
                     description: "Font size for user messages text in the agent panel",
                     field: Box::new(SettingField {
                         pick: |settings_content| &settings_content.theme.agent_buffer_font_size,
