@@ -1702,7 +1702,7 @@ impl SettingsWindow {
         };
 
         v_flex()
-            .w_64()
+            .w_56()
             .p_2p5()
             .when(cfg!(target_os = "macos"), |c| c.pt_10())
             .h_full()
@@ -2137,7 +2137,7 @@ impl SettingsWindow {
         }
 
         return v_flex()
-            .size_full()
+            .flex_1()
             .pt_6()
             .pb_8()
             .px_8()
