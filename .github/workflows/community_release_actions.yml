@@ -38,6 +38,25 @@ jobs:
           webhook-url: ${{ secrets.DISCORD_WEBHOOK_RELEASE_NOTES }}
           content: ${{ steps.get-content.outputs.string }}
 
+  publish-winget:
+    runs-on:
+      - ubuntu-latest
+    steps:
+      - name: Set channel
+        run: |
+          if [ "${{ github.event.release.prerelease }}" == "true" ]; then
+              PKG_NAME=ZedIndustries.Zed.Preview
+          else
+              PKG_NAME=ZedIndustries.Zed
+          fi
+
+          echo "PGK_NAME=$PKG_NAME" >> "$GITHUB_OUTPUT"
+      - uses: vedantmgoyal9/winget-releaser@main
+        with:
+          identifier: ${{ PKG_NAME }}
+          max-versions-to-keep: 5
+          token: ${{ secrets.WINGET_TOKEN }}
+
   send_release_notes_email:
     if: false && github.repository_owner == 'zed-industries' && !github.event.release.prerelease
     runs-on: ubuntu-latest
