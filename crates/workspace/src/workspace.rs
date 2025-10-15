@@ -424,6 +424,16 @@ actions!(
     ]
 );
 
+#[derive(PartialEq, Eq, Debug, Clone, Copy)]
+pub enum PathMatch {
+    /// Exact path match
+    Exact,
+    /// Glob pattern match
+    Glob,
+    /// No match
+    None,
+}
+
 #[derive(PartialEq, Eq, Debug)]
 pub enum CloseIntent {
     /// Quit the program entirely.
@@ -5161,6 +5171,63 @@ impl Workspace {
             .visible_worktrees(cx)
             .map(|worktree| worktree.read(cx).abs_path())
             .collect::<Vec<_>>()
+    }
+
+    pub fn match_path(&self, pattern: &str, cx: &App) -> PathMatch {
+        let root_paths = self.root_paths(cx);
+
+        if root_paths.is_empty() {
+            return PathMatch::None;
+        }
+
+        // Expand tilde in pattern
+        let expanded_pattern = shellexpand::tilde(pattern);
+        let pattern_path = Path::new(expanded_pattern.as_ref());
+
+        // Try exact match first
+        for root_path in &root_paths {
+            if root_path.as_ref() == pattern_path {
+                return PathMatch::Exact;
+            }
+        }
+
+        // Try glob pattern matching
+        if let Ok(glob_pattern) = globset::Glob::new(&expanded_pattern) {
+            let matcher = glob_pattern.compile_matcher();
+            for root_path in &root_paths {
+                if matcher.is_match(root_path.as_ref()) {
+                    return PathMatch::Glob;
+                }
+            }
+        }
+
+        PathMatch::None
+    }
+
+    pub fn winning_workspace_profile<'a>(
+        &self,
+        profiles: &'a collections::IndexMap<String, settings::WorkspaceProfileSettingsContent>,
+        cx: &App,
+    ) -> Option<(&'a str, PathMatch)> {
+        let first_exact_match = profiles
+            .iter()
+            .find(|(_, profile)| self.match_path(&profile.path, cx) == PathMatch::Exact)
+            .map(|(name, _)| (name.as_str(), PathMatch::Exact));
+
+        if let Some(exact_match) = first_exact_match {
+            return Some(exact_match);
+        }
+
+        let first_glob_match = profiles
+            .iter()
+            .find(|(_, profile)| self.match_path(&profile.path, cx) == PathMatch::Glob)
+            .map(|(name, _)| (name.as_str(), PathMatch::Glob));
+
+        if let Some(glob_match) = first_glob_match {
+            return Some(glob_match);
+        }
+
+        None
     }
 
     fn remove_panes(&mut self, member: Member, window: &mut Window, cx: &mut Context<Workspace>) {
