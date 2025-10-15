@@ -3949,9 +3949,10 @@ impl Project {
                 Some((tree.snapshot(), tree.as_local()?.settings()))
             })
             .collect::<Vec<_>>();
+
         let searcher = ProjectSearcher {
             fs: self.fs.clone(),
-            buffer_store: self.buffer_store.downgrade(),
+            buffer_store: self.buffer_store.clone(),
             snapshots,
             open_buffers: Default::default(),
         };
