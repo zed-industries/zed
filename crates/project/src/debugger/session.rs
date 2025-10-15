@@ -14,12 +14,13 @@ use super::dap_command::{
     TerminateCommand, TerminateThreadsCommand, ThreadsCommand, VariablesCommand,
 };
 use super::dap_store::DapStore;
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, Result, anyhow, bail};
 use base64::Engine;
 use collections::{HashMap, HashSet, IndexMap};
 use dap::adapters::{DebugAdapterBinary, DebugAdapterName};
 use dap::messages::Response;
 use dap::requests::{Request, RunInTerminal, StartDebugging};
+use dap::transport::TcpTransport;
 use dap::{
     Capabilities, ContinueArguments, EvaluateArgumentsContext, Module, Source, StackFrameId,
     SteppingGranularity, StoppedEvent, VariableReference,
@@ -47,12 +48,14 @@ use remote::RemoteClient;
 use rpc::ErrorExt;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use smol::net::TcpListener;
+use smol::net::{TcpListener, TcpStream};
 use std::any::TypeId;
 use std::collections::BTreeMap;
+use std::net::Ipv4Addr;
 use std::ops::RangeInclusive;
 use std::path::PathBuf;
 use std::process::Stdio;
+use std::time::Duration;
 use std::u64;
 use std::{
     any::Any,
@@ -63,6 +66,7 @@ use std::{
 };
 use task::TaskContext;
 use text::{PointUtf16, ToPointUtf16};
+use url::Url;
 use util::command::new_smol_command;
 use util::{ResultExt, debug_panic, maybe};
 use worktree::Worktree;
@@ -2768,31 +2772,42 @@ impl Session {
 
         let mut console_output = self.console_output(cx);
         let task = cx.spawn(async move |this, cx| {
-            let (dap_port, forward_port_process) =
-                if remote_client.read_with(cx, |client, _| client.shares_network_interface())? {
-                    (request.server_port, None)
-                } else {
-                    let port = {
-                        let listener = TcpListener::bind("127.0.0.1:0")
-                            .await
-                            .context("getting port for DAP")?;
-                        listener.local_addr()?.port()
-                    };
-                    let child = remote_client.update(cx, |client, _| {
-                        let command = client.build_forward_port_command(
-                            port,
-                            "localhost".into(),
-                            request.server_port,
-                        )?;
-                        let child = new_smol_command(command.program)
-                            .args(command.args)
-                            .envs(command.env)
-                            .spawn()
-                            .context("spawning port forwarding process")?;
-                        anyhow::Ok(child)
-                    })??;
-                    (port, Some(child))
-                };
+            let forward_ports_process = if remote_client
+                .read_with(cx, |client, _| client.shares_network_interface())?
+            {
+                request.other.insert(
+                    "proxyUri".into(),
+                    format!("127.0.0.1:{}", request.server_port).into(),
+                );
+                None
+            } else {
+                let port = TcpTransport::unused_port(Ipv4Addr::LOCALHOST)
+                    .await
+                    .context("getting port for DAP")?;
+                request
+                    .other
+                    .insert("proxyUri".into(), format!("127.0.0.1:{port}").into());
+                let mut port_forwards = vec![(port, "localhost".to_owned(), request.server_port)];
+
+                if let Some(value) = request.params.get("url")
+                    && let Some(url) = value.as_str()
+                    && let Some(url) = Url::parse(url).ok()
+                    && let Some(frontend_port) = url.port()
+                {
+                    port_forwards.push((frontend_port, "localhost".to_owned(), frontend_port));
+                }
+
+                let child = remote_client.update(cx, |client, _| {
+                    let command = client.build_forward_ports_command(port_forwards)?;
+                    let child = new_smol_command(command.program)
+                        .args(command.args)
+                        .envs(command.env)
+                        .spawn()
+                        .context("spawning port forwarding process")?;
+                    anyhow::Ok(child)
+                })??;
+                Some(child)
+            };
 
             let mut companion_process = None;
             let companion_port =
@@ -2816,9 +2831,9 @@ impl Session {
                 };
             this.update(cx, |this, cx| {
                 this.companion_port = Some(companion_port);
-                if let Some(mut forward_port_process) = forward_port_process {
+                if let Some(mut forward_ports_process) = forward_ports_process {
                     this.background_tasks.push(cx.spawn(async move |_, _| {
-                        forward_port_process.status().await.log_err();
+                        forward_ports_process.status().await.log_err();
                     }));
                 };
                 let Some(mut companion_process) = companion_process else {
@@ -2868,14 +2883,30 @@ impl Session {
                 }))
             })?;
 
-            request
-                .other
-                .insert("proxyUri".into(), format!("127.0.0.1:{dap_port}").into());
             // TODO pass wslInfo as needed
+
+            let companion_address = format!("127.0.0.1:{companion_port}");
+            let mut companion_started = false;
+            for _ in 0..10 {
+                if TcpStream::connect(&companion_address).await.is_ok() {
+                    companion_started = true;
+                    break;
+                }
+                cx.background_executor()
+                    .timer(Duration::from_millis(100))
+                    .await;
+            }
+            if !companion_started {
+                console_output
+                    .send(format!("Browser companion failed to start"))
+                    .await
+                    .ok();
+                bail!("Browser companion failed to start");
+            }
 
             let response = http_client
                 .post_json(
-                    &format!("http://127.0.0.1:{companion_port}/launch-and-attach"),
+                    &format!("http://{companion_address}/launch-and-attach"),
                     serde_json::to_string(&request)
                         .context("serializing request")?
                         .into(),
@@ -2931,15 +2962,16 @@ impl Session {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 struct LaunchBrowserInCompanionParams {
     server_port: u16,
+    params: HashMap<String, serde_json::Value>,
     #[serde(flatten)]
     other: HashMap<String, serde_json::Value>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 struct KillCompanionBrowserParams {
     launch_id: u64,
