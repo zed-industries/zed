@@ -8,8 +8,8 @@ use std::{
 
 use crate::{
     AnimatableExt, AnyElement, App, Bounds, Corners, DevicePixels, Edges, ElementId, Entity,
-    GlobalElementId, Hsla, InspectorElementId, IntoElement, Percentage, Pixels, Point, Radians,
-    Rems, Rgba, ScaledPixels, Size, Window, colors::Colors, linear,
+    GlobalElementId, InspectorElementId, IntoElement, Percentage, Pixels, Point, Radians, Rems,
+    Rgba, ScaledPixels, Size, Window, colors::Colors, linear,
 };
 
 /// A transition that can be applied to an element.
@@ -269,7 +269,6 @@ struct_transition_goals!(
     Corners<T> { top_left, top_right, bottom_right, bottom_left },
     Bounds<T> { origin, size },
     Rgba { r, g, b, a },
-    Hsla { h, s, l, a },
     Colors { text, selected_text, background, disabled, selected, border, separator, container }
 );
 
