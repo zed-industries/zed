@@ -999,93 +999,14 @@ impl WorktreeStore {
         matching_paths_rx
     }
 
-    fn scan_ignored_dir<'a>(
-        fs: &'a Arc<dyn Fs>,
-        snapshot: &'a worktree::Snapshot,
-        path: &'a RelPath,
-        query: &'a SearchQuery,
-        filter_tx: &'a Sender<MatchingEntry>,
-        output_tx: &'a Sender<oneshot::Receiver<ProjectPath>>,
-    ) -> BoxFuture<'a, Result<()>> {
-        async move {
-            let abs_path = snapshot.absolutize(path);
-            let Some(mut files) = fs
-                .read_dir(&abs_path)
-                .await
-                .with_context(|| format!("listing ignored path {abs_path:?}"))
-                .log_err()
-            else {
-                return Ok(());
-            };
-
-            let mut results = Vec::new();
-
-            while let Some(Ok(file)) = files.next().await {
-                let Some(metadata) = fs
-                    .metadata(&file)
-                    .await
-                    .with_context(|| format!("fetching fs metadata for {abs_path:?}"))
-                    .log_err()
-                    .flatten()
-                else {
-                    continue;
-                };
-                if metadata.is_symlink || metadata.is_fifo {
-                    continue;
-                }
-                let relative_path = file.strip_prefix(snapshot.abs_path())?;
-                let relative_path = RelPath::new(&relative_path, snapshot.path_style())
-                    .context("getting relative path")?;
-                results.push((relative_path.into_arc(), !metadata.is_dir))
-            }
-            results.sort_by(|(a_path, _), (b_path, _)| a_path.cmp(b_path));
-            for (path, is_file) in results {
-                if is_file {
-                    if query.filters_path() {
-                        let matched_path = if query.match_full_paths() {
-                            let mut full_path = snapshot.root_name().as_std_path().to_owned();
-                            full_path.push(path.as_std_path());
-                            query.match_path(&full_path)
-                        } else {
-                            query.match_path(&path.as_std_path())
-                        };
-                        if !matched_path {
-                            continue;
-                        }
-                    }
-                    let (tx, rx) = oneshot::channel();
-                    output_tx.send(rx).await?;
-                    filter_tx
-                        .send(MatchingEntry {
-                            respond: tx,
-                            worktree_root: snapshot.abs_path().clone(),
-                            path: ProjectPath {
-                                worktree_id: snapshot.id(),
-                                path: path.into_arc(),
-                            },
-                        })
-                        .await?;
-                } else {
-                    Self::scan_ignored_dir(fs, snapshot, &path, query, filter_tx, output_tx)
-                        .await?;
-                }
-            }
-            Ok(())
-        }
-        .boxed()
-    }
-
     async fn find_candidate_paths(
-        fs: Arc<dyn Fs>,
-        snapshots: Vec<(worktree::Snapshot, WorktreeSettings)>,
-        open_entries: HashSet<ProjectEntryId>,
-        query: SearchQuery,
-        filter_tx: Sender<MatchingEntry>,
-        output_tx: Sender<oneshot::Receiver<ProjectPath>>,
+        _: Arc<dyn Fs>,
+        _: Vec<(worktree::Snapshot, WorktreeSettings)>,
+        _: HashSet<ProjectEntryId>,
+        _: SearchQuery,
+        _: Sender<MatchingEntry>,
+        _: Sender<oneshot::Receiver<ProjectPath>>,
     ) -> Result<()> {
-        for (snapshot, settings) in snapshots {
-            for entry in snapshot.entries(query.include_ignored(), 0) {}
-        }
         Ok(())
     }
 
