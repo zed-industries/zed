@@ -261,6 +261,14 @@ impl WindowsWindowInner {
     }
 
     fn handle_destroy_msg(&self, handle: HWND) -> Option<isize> {
+        // Re-enable parent window if this was a modal dialog
+        if let Some(parent_hwnd) = self.parent_hwnd {
+            unsafe {
+                let _ = EnableWindow(parent_hwnd, true);
+                let _ = SetForegroundWindow(parent_hwnd);
+            }
+        }
+
         let callback = {
             let mut lock = self.state.borrow_mut();
             lock.callbacks.close.take()
