@@ -223,7 +223,7 @@ fn main() {
                 eprintln!("failed to read or decode {}: {msg}", icon_src.display());
                 std::process::exit(1);
             }
-            Ok(image) => imageops::resize(&image, 256, 256, imageops::FilterType::Nearest),
+            Ok(image) => imageops::resize(&image, 256, 256, imageops::FilterType::Lanczos3),
         };
 
         // name should match include_bytes! call in src/zed.rs
