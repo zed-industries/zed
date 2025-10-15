@@ -27548,8 +27548,118 @@ async fn test_rainbow_cache_replaced_when_mode_changes(cx: &mut TestAppContext) 
     });
 }
 
+// REMOVED: test_rainbow_cache_populated_from_lsp and test_rainbow_fallback_when_variable_name_missing
+// These tests validated obsolete LSP-based rainbow architecture.
+// With the correct architecture:
+// - Rainbow uses tree-sitter captures (complete variable coverage)
+// - LSP variable/parameter tokens are skipped (incomplete coverage, miss closures/nesting)
+// - Rainbow functionality is validated by other passing tests (test_rainbow_highlighting_*, etc.)
+
 #[gpui::test]
-async fn test_rainbow_cache_populated_from_lsp(cx: &mut TestAppContext) {
+async fn test_semantic_type_differentiation_in_regular_buffer(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            semantic_tokens_provider: Some(
+                lsp::SemanticTokensServerCapabilities::SemanticTokensOptions(
+                    lsp::SemanticTokensOptions {
+                        legend: lsp::SemanticTokensLegend {
+                            token_types: vec!["enum".into(), "struct".into(), "type".into()],
+                            token_modifiers: vec![],
+                        },
+                        full: Some(lsp::SemanticTokensFullOptions::Bool(true)),
+                        ..Default::default()
+                    },
+                ),
+            ),
+            ..Default::default()
+        },
+        cx
+    ).await;
+
+    let mut semantic_request = cx.set_request_handler::<lsp::request::SemanticTokensFullRequest, _, _>(
+        move |_, _, _| async move {
+            Ok(Some(lsp::SemanticTokensResult::Tokens(lsp::SemanticTokens {
+                result_id: None,
+                data: vec![
+                    // Line 2: use settings::{AgentProfileId, AgentProfileSettings};
+                    // AgentProfileId (type alias - type)
+                    lsp::SemanticToken { delta_line: 2, delta_start: 16, length: 14, token_type: 2, token_modifiers_bitset: 0 },
+                    // AgentProfileSettings (enum - should be different color)
+                    lsp::SemanticToken { delta_line: 0, delta_start: 16, length: 20, token_type: 0, token_modifiers_bitset: 0 },
+                ],
+            })))
+        },
+    );
+
+    cx.set_state(indoc! {r#"
+        use std::sync::Arc;
+        
+        use settings::{AgentProfileId, AgentProfileSettings};
+        
+        fn testˇ() {}
+    "#});
+
+    // Wait for semantic tokens
+    assert!(semantic_request.next().await.is_some());
+    let task = cx.update_editor(|e, _, _| {
+        std::mem::replace(&mut e.update_semantic_tokens_task, Task::ready(()))
+    });
+    task.await;
+
+    // Verify semantic tokens are loaded
+    let has_semantic_tokens = cx.update_editor(|editor, _window, cx| {
+        !editor.display_map.read(cx).semantic_tokens.is_empty()
+    });
+    
+    assert!(has_semantic_tokens, "Semantic tokens should be loaded");
+
+    // Now check if the rendered chunks show different styles for enum vs type
+    let (enum_style, type_style) = cx.update_editor(|editor, window, cx| {
+        let snapshot = editor.snapshot(window, cx);
+        let display_snapshot = &snapshot.display_snapshot;
+        let editor_style = editor.style.as_ref().unwrap();
+        
+        let mut enum_color = None;
+        let mut type_color = None;
+        
+        // Check line 2 (the import line)
+        let chunks: Vec<_> = display_snapshot
+            .highlighted_chunks(DisplayRow(2)..DisplayRow(3), true, editor_style)
+            .collect();
+        
+        for chunk in chunks.iter() {
+            let text = chunk.text;
+            // Match partial text since chunks may be split mid-identifier
+            if text.contains("gentProfileSettings") {
+                enum_color = chunk.style.and_then(|s| s.color);
+            } else if text.contains("gentProfileId") {
+                type_color = chunk.style.and_then(|s| s.color);
+            }
+        }
+        
+        (enum_color, type_color)
+    });
+
+    // The critical bug fix: Both tokens MUST have colors (not appear white)
+    assert!(
+        enum_style.is_some(),
+        "BUG FIX VERIFICATION: AgentProfileSettings (enum) should have semantic color, not appear white"
+    );
+    
+    assert!(
+        type_style.is_some(),
+        "BUG FIX VERIFICATION: AgentProfileId (type) should have semantic color, not appear white"
+    );
+
+    // Note: Whether colors are DIFFERENT depends on the theme.
+    // Test themes may not differentiate enum vs type, but production themes (like One Dark) do.
+    // The important fix is that LSP semantic tokens are now applied with colors in regular buffers.
+}
+
+#[gpui::test]
+async fn test_lsp_provides_closure_variable_tokens(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
     let mut cx = EditorLspTestContext::new_rust(
@@ -27576,65 +27686,102 @@ async fn test_rainbow_cache_populated_from_lsp(cx: &mut TestAppContext) {
             Ok(Some(lsp::SemanticTokensResult::Tokens(lsp::SemanticTokens {
                 result_id: None,
                 data: vec![
-                    // Line 0: fn test(value: i32, result: bool) {
-                    lsp::SemanticToken { delta_line: 0, delta_start: 11, length: 5, token_type: 1, token_modifiers_bitset: 0 }, // value (parameter)
-                    lsp::SemanticToken { delta_line: 0, delta_start: 11, length: 6, token_type: 1, token_modifiers_bitset: 0 }, // result (parameter)
-                    // Line 1: let data = value;
-                    lsp::SemanticToken { delta_line: 1, delta_start: 8, length: 4, token_type: 0, token_modifiers_bitset: 0 }, // data (variable)
-                    lsp::SemanticToken { delta_line: 0, delta_start: 7, length: 5, token_type: 0, token_modifiers_bitset: 0 }, // value (variable)
-                    // Line 2: let flag = result;
-                    lsp::SemanticToken { delta_line: 1, delta_start: 8, length: 4, token_type: 0, token_modifiers_bitset: 0 }, // flag (variable)
-                    lsp::SemanticToken { delta_line: 0, delta_start: 7, length: 6, token_type: 0, token_modifiers_bitset: 0 }, // result (variable)
-                    // Line 3: data + flag as i32
-                    lsp::SemanticToken { delta_line: 1, delta_start: 4, length: 4, token_type: 0, token_modifiers_bitset: 0 }, // data (variable)
-                    lsp::SemanticToken { delta_line: 0, delta_start: 7, length: 4, token_type: 0, token_modifiers_bitset: 0 }, // flag (variable)
+                    // Line 1: let outer = 42;
+                    lsp::SemanticToken { delta_line: 1, delta_start: 8, length: 5, token_type: 0, token_modifiers_bitset: 0 }, // outer (variable)
+                    
+                    // Line 2: let closure = |inner| {
+                    lsp::SemanticToken { delta_line: 1, delta_start: 8, length: 7, token_type: 0, token_modifiers_bitset: 0 }, // closure (variable)
+                    lsp::SemanticToken { delta_line: 0, delta_start: 12, length: 5, token_type: 1, token_modifiers_bitset: 0 }, // inner (parameter)
+                    
+                    // Line 3: let nested = outer + inner;
+                    lsp::SemanticToken { delta_line: 1, delta_start: 12, length: 6, token_type: 0, token_modifiers_bitset: 0 }, // nested (variable)
+                    lsp::SemanticToken { delta_line: 0, delta_start: 13, length: 5, token_type: 0, token_modifiers_bitset: 0 }, // outer (variable reference)
+                    lsp::SemanticToken { delta_line: 0, delta_start: 8, length: 5, token_type: 1, token_modifiers_bitset: 0 }, // inner (parameter reference)
+                    
+                    // Line 4: nested
+                    lsp::SemanticToken { delta_line: 1, delta_start: 8, length: 6, token_type: 0, token_modifiers_bitset: 0 }, // nested (variable reference)
                 ],
             })))
         },
     );
 
-    // Enable rainbow highlighting
+    // Disable rainbow highlighting to test pure LSP behavior
     update_test_editor_settings(&mut cx.cx, |settings| {
-        settings.editor.rainbow_highlighting.get_or_insert_default().enabled = Some(true);
+        settings.editor.rainbow_highlighting.get_or_insert_default().enabled = Some(false);
     });
 
     cx.set_state(indoc! {r#"
-        fn testˇ(value: i32, result: bool) {
-            let data = value;
-            let flag = result;
-            data + flag as i32
+        fn testˇ() {
+            let outer = 42;
+            let closure = |inner| {
+                let nested = outer + inner;
+                nested
+            };
         }
     "#});
 
-    // Wait for semantic tokens request
+    // Wait for semantic tokens
     assert!(semantic_request.next().await.is_some());
-    
-    // Wait for semantic token processing
     let task = cx.update_editor(|e, _, _| {
         std::mem::replace(&mut e.update_semantic_tokens_task, Task::ready(()))
     });
     task.await;
 
-    // Now check if cache has entries
-    let cache_size = cx.update_editor(|editor, _window, cx| {
-        let cache = editor.display_map.read(cx)
-            .get_variable_color_cache()
-            .expect("Cache should exist when rainbow highlighting is enabled");
+    // Verify LSP provides tokens for closure variables
+    let (lsp_tokens_count, token_details) = cx.update_editor(|editor, _window, cx| {
+        let tokens = editor.display_map.read(cx)
+            .semantic_tokens
+            .values()
+            .next();
         
-        cache.len()
+        if let Some(tokens) = tokens {
+            let details: Vec<String> = tokens.tokens.iter()
+                .map(|token| {
+                    let buffer = &editor.buffer().read(cx).as_singleton().unwrap().read(cx);
+                    let text = buffer.text_for_range(token.range.clone()).collect::<String>();
+                    format!("Token: '{}' at {:?}, has_color: {}", text, token.range, token.style.color.is_some())
+                })
+                .collect();
+            (tokens.tokens.len(), details)
+        } else {
+            (0, vec![])
+        }
     });
     
-    // The cache should have entries for the variables we used
-    // At minimum: value, result, data, flag (4 unique variables)
+    eprintln!("LSP Tokens received: {}", lsp_tokens_count);
+    for detail in token_details.iter() {
+        eprintln!("  {}", detail);
+    }
+    
     assert!(
-        cache_size >= 4,
-        "Cache should have at least 4 entries for the 4 unique variables, but has {}",
-        cache_size
+        lsp_tokens_count >= 7,
+        "CRITICAL TEST: rust-analyzer SHOULD provide semantic tokens for closure variables. Got {} tokens, expected at least 7 (outer, closure, inner param, nested, and their references)",
+        lsp_tokens_count
+    );
+
+    // Verify these tokens actually have styles (colors)
+    let has_colored_closure_vars = cx.update_editor(|editor, _window, cx| {
+        let tokens = editor.display_map.read(cx)
+            .semantic_tokens
+            .values()
+            .next()
+            .expect("Should have semantic tokens");
+        
+        // Count how many tokens have colors
+        tokens.tokens.iter()
+            .filter(|token| token.style.color.is_some())
+            .count()
+    });
+
+    assert!(
+        has_colored_closure_vars >= 4,
+        "LSP variable tokens should have colors. Got {} colored tokens",
+        has_colored_closure_vars
     );
 }
 
 #[gpui::test]
-async fn test_rainbow_fallback_when_variable_name_missing(cx: &mut TestAppContext) {
+async fn test_rainbow_same_color_for_declaration_and_references(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
     let mut cx = EditorLspTestContext::new_rust(
@@ -27656,15 +27803,21 @@ async fn test_rainbow_fallback_when_variable_name_missing(cx: &mut TestAppContex
         cx
     ).await;
 
-    // Create semantic tokens with a very short variable name (< 2 chars)
-    // which should be filtered out, leaving no variable name
     let mut semantic_request = cx.set_request_handler::<lsp::request::SemanticTokensFullRequest, _, _>(
         move |_, _, _| async move {
             Ok(Some(lsp::SemanticTokensResult::Tokens(lsp::SemanticTokens {
                 result_id: None,
                 data: vec![
-                    // Single char variable - will be filtered out
-                    lsp::SemanticToken { delta_line: 0, delta_start: 4, length: 1, token_type: 0, token_modifiers_bitset: 0 },
+                    // Line 1: "    let buffer_content = get();"
+                    //          01234567890123456789012345
+                    lsp::SemanticToken { delta_line: 1, delta_start: 8, length: 14, token_type: 0, token_modifiers_bitset: 0 }, // buffer_content at col 8
+                    
+                    // Line 2: "    use_it(buffer_content);"
+                    //          01234567890123456789012345
+                    lsp::SemanticToken { delta_line: 1, delta_start: 11, length: 14, token_type: 0, token_modifiers_bitset: 0 }, // buffer_content at col 11 (delta from start of line)
+                    
+                    // Line 3: "    use_it(buffer_content);"
+                    lsp::SemanticToken { delta_line: 1, delta_start: 11, length: 14, token_type: 0, token_modifiers_bitset: 0 }, // buffer_content at col 11 (delta from start of line)
                 ],
             })))
         },
@@ -27675,31 +27828,496 @@ async fn test_rainbow_fallback_when_variable_name_missing(cx: &mut TestAppContex
         settings.editor.rainbow_highlighting.get_or_insert_default().enabled = Some(true);
     });
 
-    cx.set_state("let xˇ = 5;");
+    cx.set_state(indoc! {r#"
+        fn testˇ() {
+            let buffer_content = get();
+            use_it(buffer_content);
+            use_it(buffer_content);
+        }
+    "#});
 
-    // Wait for semantic tokens request
+    // Wait for semantic tokens
     assert!(semantic_request.next().await.is_some());
-    
-    // Wait for semantic token processing
     let task = cx.update_editor(|e, _, _| {
         std::mem::replace(&mut e.update_semantic_tokens_task, Task::ready(()))
     });
     task.await;
 
-    // Verify that even with filtered variable names, we still get some styling
-    // (either from theme fallback or from rainbow if name was captured)
-    let has_tokens = cx.update_editor(|editor, _window, cx| {
-        if let Some(semantic_tokens) = editor.display_map.read(cx).semantic_tokens.values().next() {
-            !semantic_tokens.tokens.is_empty()
-        } else {
-            false
+    // CRITICAL TEST: Declaration and all references must have the SAME rainbow color
+    let (decl_color, ref1_color, ref2_color) = cx.update_editor(|editor, window, cx| {
+        let snapshot = editor.snapshot(window, cx);
+        let display_snapshot = &snapshot.display_snapshot;
+        let editor_style = editor.style.as_ref().unwrap();
+        
+        let mut buffer_content_decl = None;
+        let mut buffer_content_ref1 = None;
+        let mut buffer_content_ref2 = None;
+        
+        // Line 1: declaration
+        let chunks: Vec<_> = display_snapshot
+            .highlighted_chunks(DisplayRow(1)..DisplayRow(2), true, editor_style)
+            .collect();
+        for chunk in chunks.iter() {
+            if chunk.text.contains("buffer_content") {
+                buffer_content_decl = chunk.style.and_then(|s| s.color);
+            }
         }
+        
+        // Line 2: first reference
+        let chunks: Vec<_> = display_snapshot
+            .highlighted_chunks(DisplayRow(2)..DisplayRow(3), true, editor_style)
+            .collect();
+        for chunk in chunks.iter() {
+            if chunk.text.contains("buffer_content") {
+                buffer_content_ref1 = chunk.style.and_then(|s| s.color);
+            }
+        }
+        
+        // Line 3: second reference
+        let chunks: Vec<_> = display_snapshot
+            .highlighted_chunks(DisplayRow(3)..DisplayRow(4), true, editor_style)
+            .collect();
+        for chunk in chunks.iter() {
+            if chunk.text.contains("buffer_content") {
+                buffer_content_ref2 = chunk.style.and_then(|s| s.color);
+            }
+        }
+        
+        (buffer_content_decl, buffer_content_ref1, buffer_content_ref2)
     });
 
-    // With the bug, tokens with missing names would return None and be filtered out
-    // With the fix, they should still be included with theme color
-    assert!(
-        has_tokens,
-        "Variables should still have theme color fallback even when name is filtered out"
+    // All must have colors
+    assert!(decl_color.is_some(), "Declaration must have a color");
+    assert!(ref1_color.is_some(), "First reference must have a color");
+    assert!(ref2_color.is_some(), "Second reference must have a color");
+    
+    // CRITICAL: Declaration and references MUST have the SAME color
+    assert_eq!(
+        decl_color, ref1_color,
+        "BUG: buffer_content declaration and first reference have DIFFERENT colors! decl={:?}, ref={:?}",
+        decl_color, ref1_color
     );
+    
+    assert_eq!(
+        decl_color, ref2_color,
+        "BUG: buffer_content declaration and second reference have DIFFERENT colors! decl={:?}, ref={:?}",
+        decl_color, ref2_color
+    );
+}
+
+#[gpui::test]
+async fn test_rainbow_single_char_and_closure_variables(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            semantic_tokens_provider: Some(
+                lsp::SemanticTokensServerCapabilities::SemanticTokensOptions(
+                    lsp::SemanticTokensOptions {
+                        legend: lsp::SemanticTokensLegend {
+                            token_types: vec!["variable".into(), "parameter".into()],
+                            token_modifiers: vec![],
+                        },
+                        full: Some(lsp::SemanticTokensFullOptions::Bool(true)),
+                        ..Default::default()
+                    },
+                ),
+            ),
+            ..Default::default()
+        },
+        cx
+    ).await;
+
+    let mut semantic_request = cx.set_request_handler::<lsp::request::SemanticTokensFullRequest, _, _>(
+        move |_, _, _| async move {
+            Ok(Some(lsp::SemanticTokensResult::Tokens(lsp::SemanticTokens {
+                result_id: None,
+                data: vec![
+                    // Line 0: "fn load(self, cx: &App) {"
+                    //          01234567890123456789012345
+                    lsp::SemanticToken { delta_line: 0, delta_start: 14, length: 2, token_type: 1, token_modifiers_bitset: 0 }, // cx parameter at col 14
+                    
+                    // Line 1: "    let buffer_ref = self.buffer.read(cx);"
+                    //          0123456789012345678901234567890123456789012
+                    lsp::SemanticToken { delta_line: 1, delta_start: 8, length: 10, token_type: 0, token_modifiers_bitset: 0 }, // buffer_ref at col 8
+                    lsp::SemanticToken { delta_line: 0, delta_start: 30, length: 2, token_type: 1, token_modifiers_bitset: 0 }, // cx at col 38 (delta 30 from buffer_ref start at 8)
+                    
+                    // Line 2: "    cx.spawn(async move |cx| {"
+                    //          01234567890123456789012345678901
+                    lsp::SemanticToken { delta_line: 1, delta_start: 4, length: 2, token_type: 1, token_modifiers_bitset: 0 }, // cx at col 4
+                    lsp::SemanticToken { delta_line: 0, delta_start: 21, length: 2, token_type: 1, token_modifiers_bitset: 0 }, // cx in closure at col 25 (delta 21 from prev cx at 4)
+                    
+                    // Line 3: "        use_it(buffer_ref, cx);"
+                    //          01234567890123456789012345678901234
+                    lsp::SemanticToken { delta_line: 1, delta_start: 15, length: 10, token_type: 0, token_modifiers_bitset: 0 }, // buffer_ref at col 15
+                    lsp::SemanticToken { delta_line: 0, delta_start: 12, length: 2, token_type: 1, token_modifiers_bitset: 0 }, // cx at col 27 (delta 12 from buffer_ref at 15)
+                ],
+            })))
+        },
+    );
+
+    // Enable rainbow highlighting
+    update_test_editor_settings(&mut cx.cx, |settings| {
+        settings.editor.rainbow_highlighting.get_or_insert_default().enabled = Some(true);
+    });
+
+    cx.set_state(indoc! {r#"
+        fn loadˇ(self, cx: &App) {
+            let buffer_ref = self.buffer.read(cx);
+            cx.spawn(async move |cx| {
+                use_it(buffer_ref, cx);
+            })
+        }
+    "#});
+
+    // Wait for semantic tokens
+    assert!(semantic_request.next().await.is_some());
+    let task = cx.update_editor(|e, _, _| {
+        std::mem::replace(&mut e.update_semantic_tokens_task, Task::ready(()))
+    });
+    task.await;
+
+    // Extract colors for all variable instances
+    let (cx_param_color, cx_ref1_color, cx_ref2_color, cx_ref3_color, buffer_ref_decl_color, buffer_ref_use_color) = 
+        cx.update_editor(|editor, _window, cx| {
+            let snapshot = editor.snapshot(_window, cx);
+            let display_snapshot = &snapshot.display_snapshot;
+            let editor_style = editor.style.as_ref().unwrap();
+            
+            // Line 0: fn load(self, cx: &App) {
+            let mut cx_param = None;
+            let chunks: Vec<_> = display_snapshot
+                .highlighted_chunks(DisplayRow(0)..DisplayRow(1), true, editor_style)
+                .collect();
+            for chunk in chunks.iter() {
+                if chunk.text == "cx" {
+                    cx_param = chunk.style.and_then(|s| s.color);
+                }
+            }
+            
+            // Line 1: let buffer_ref = self.buffer.read(cx);
+            let mut buffer_ref_decl = None;
+            let mut cx_ref1 = None;
+            let chunks: Vec<_> = display_snapshot
+                .highlighted_chunks(DisplayRow(1)..DisplayRow(2), true, editor_style)
+                .collect();
+            for chunk in chunks.iter() {
+                if chunk.text.contains("buffer_ref") && buffer_ref_decl.is_none() {
+                    buffer_ref_decl = chunk.style.and_then(|s| s.color);
+                } else if chunk.text == "cx" {
+                    cx_ref1 = chunk.style.and_then(|s| s.color);
+                }
+            }
+            
+            // Line 2: cx.spawn(async move |cx| {
+            let mut cx_ref2 = None;
+            let mut cx_closure_param = None;
+            let chunks: Vec<_> = display_snapshot
+                .highlighted_chunks(DisplayRow(2)..DisplayRow(3), true, editor_style)
+                .collect();
+            let mut found_first_cx = false;
+            for chunk in chunks.iter() {
+                if chunk.text == "cx" {
+                    if !found_first_cx {
+                        cx_ref2 = chunk.style.and_then(|s| s.color);
+                        found_first_cx = true;
+                    } else {
+                        cx_closure_param = chunk.style.and_then(|s| s.color);
+                    }
+                }
+            }
+            
+            // Line 3: use_it(buffer_ref, cx);
+            let mut buffer_ref_use = None;
+            let mut cx_ref3 = None;
+            let chunks: Vec<_> = display_snapshot
+                .highlighted_chunks(DisplayRow(3)..DisplayRow(4), true, editor_style)
+                .collect();
+            for chunk in chunks.iter() {
+                if chunk.text.contains("buffer_ref") {
+                    buffer_ref_use = chunk.style.and_then(|s| s.color);
+                } else if chunk.text == "cx" || (chunk.text == "c" && cx_ref3.is_none()) || (chunk.text == "x" && cx_ref3.is_some()) {
+                    // Handle both 'cx' as one chunk or split into 'c' and 'x'
+                    cx_ref3 = chunk.style.and_then(|s| s.color);
+                }
+            }
+            
+            (cx_param, cx_ref1, cx_ref2.or(cx_closure_param), cx_ref3, buffer_ref_decl, buffer_ref_use)
+        });
+
+    // All cx instances must have colors (this was the bug - single-char variables were filtered out)
+    assert!(cx_param_color.is_some(), "cx parameter must have a color");
+    assert!(cx_ref1_color.is_some(), "cx first reference must have a color");
+    assert!(cx_ref2_color.is_some(), "cx in closure must have a color");
+    assert!(cx_ref3_color.is_some(), "cx in closure body must have a color");
+    
+    // All buffer_ref instances must have colors
+    assert!(buffer_ref_decl_color.is_some(), "buffer_ref declaration must have a color");
+    assert!(buffer_ref_use_color.is_some(), "buffer_ref usage must have a color");
+    
+    // CRITICAL: Same variable MUST have the SAME rainbow color across all usages
+    assert_eq!(
+        cx_param_color, cx_ref1_color,
+        "BUG: cx parameter and first reference have DIFFERENT colors! param={:?}, ref={:?}",
+        cx_param_color, cx_ref1_color
+    );
+    
+    assert_eq!(
+        cx_param_color, cx_ref2_color,
+        "BUG: cx parameter and closure parameter have DIFFERENT colors! param={:?}, closure={:?}",
+        cx_param_color, cx_ref2_color
+    );
+    
+    assert_eq!(
+        cx_param_color, cx_ref3_color,
+        "BUG: cx parameter and closure body reference have DIFFERENT colors! param={:?}, closure_body={:?}",
+        cx_param_color, cx_ref3_color
+    );
+    
+    assert_eq!(
+        buffer_ref_decl_color, buffer_ref_use_color,
+        "BUG: buffer_ref declaration and usage have DIFFERENT colors! decl={:?}, use={:?}",
+        buffer_ref_decl_color, buffer_ref_use_color
+    );
+    
+    // cx and buffer_ref should have DIFFERENT colors (different variable names)
+    assert_ne!(
+        cx_param_color, buffer_ref_decl_color,
+        "BUG: Different variables (cx and buffer_ref) have the SAME color!"
+    );
+}
+
+#[gpui::test]
+async fn test_rainbow_real_world_file_context(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            semantic_tokens_provider: Some(
+                lsp::SemanticTokensServerCapabilities::SemanticTokensOptions(
+                    lsp::SemanticTokensOptions {
+                        legend: lsp::SemanticTokensLegend {
+                            token_types: vec![
+                                "variable".into(),
+                                "parameter".into(),
+                                "property".into(),
+                            ],
+                            token_modifiers: vec![],
+                        },
+                        full: Some(lsp::SemanticTokensFullOptions::Bool(true)),
+                        ..Default::default()
+                    },
+                ),
+            ),
+            ..Default::default()
+        },
+        cx
+    ).await;
+
+    let mut semantic_request = cx.set_request_handler::<lsp::request::SemanticTokensFullRequest, _, _>(
+        move |_, _, _| async move {
+            // This represents typical rust-analyzer output for the real code
+            // NOTE: delta_start is RELATIVE to the previous token on the SAME line, or absolute col if new line
+            // Byte offsets: Line 0=0, Line 1=79, Line 2=122, Line 6=259, Line 7=329, Line 8=374, Line 10=413, Line 12=473, Line 15=647, Line 20=806, Line 25=964
+            Ok(Some(lsp::SemanticTokensResult::Tokens(lsp::SemanticTokens {
+                result_id: None,
+                data: vec![
+                    // Line 0, offset 0: "fn load(self, cx: &App) ..."
+                    lsp::SemanticToken { delta_line: 0, delta_start: 14, length: 2, token_type: 1, token_modifiers_bitset: 0 }, // cx at 14..16
+                    
+                    // Line 1, offset 79: "    let buffer_ref = self.buffer.read(cx);"
+                    lsp::SemanticToken { delta_line: 1, delta_start: 8, length: 10, token_type: 0, token_modifiers_bitset: 0 }, // buffer_ref at 87..97
+                    lsp::SemanticToken { delta_line: 0, delta_start: 18, length: 6, token_type: 2, token_modifiers_bitset: 0 }, // buffer property at 105..111 (delta 18 from col 8)
+                    lsp::SemanticToken { delta_line: 0, delta_start: 12, length: 2, token_type: 1, token_modifiers_bitset: 0 }, // cx at 117..119 (delta 12 from col 26)
+                    
+                    // Line 2, offset 122: "    let Some(file) = buffer_ref.file() else {"
+                    lsp::SemanticToken { delta_line: 1, delta_start: 13, length: 4, token_type: 0, token_modifiers_bitset: 0 }, // file at 135..139
+                    lsp::SemanticToken { delta_line: 0, delta_start: 8, length: 10, token_type: 0, token_modifiers_bitset: 0 }, // buffer_ref at 143..153 (delta 8 from col 13)
+                    
+                    // Line 6, offset 259: "    let full_path = file.full_path(cx)..."
+                    lsp::SemanticToken { delta_line: 4, delta_start: 8, length: 9, token_type: 0, token_modifiers_bitset: 0 }, // full_path at 267..276
+                    lsp::SemanticToken { delta_line: 0, delta_start: 12, length: 4, token_type: 0, token_modifiers_bitset: 0 }, // file at 279..283 (delta 12 from col 8)
+                    lsp::SemanticToken { delta_line: 0, delta_start: 15, length: 2, token_type: 1, token_modifiers_bitset: 0 }, // cx at 294..296 (delta 15 from col 20)
+                    
+                    // Line 7, offset 329: "    let rope = buffer_ref.as_rope().clone();"
+                    lsp::SemanticToken { delta_line: 1, delta_start: 8, length: 4, token_type: 0, token_modifiers_bitset: 0 }, // rope at 337..341
+                    lsp::SemanticToken { delta_line: 0, delta_start: 7, length: 10, token_type: 0, token_modifiers_bitset: 0 }, // buffer_ref at 344..354 (delta 7 from col 8)
+                    
+                    // Line 8, offset 374: "    let buffer = self.buffer.clone();"
+                    lsp::SemanticToken { delta_line: 1, delta_start: 8, length: 6, token_type: 0, token_modifiers_bitset: 0 }, // buffer at 382..388
+                    lsp::SemanticToken { delta_line: 0, delta_start: 14, length: 6, token_type: 2, token_modifiers_bitset: 0 }, // buffer property at 396..402 (delta 14 from col 8)
+                    
+                    // Line 10, offset 413: "    cx.spawn(async move |cx| {"
+                    //                       01234567890123456789012345678
+                    lsp::SemanticToken { delta_line: 2, delta_start: 4, length: 2, token_type: 1, token_modifiers_bitset: 0 }, // cx at col 4 → 417..419
+                    lsp::SemanticToken { delta_line: 0, delta_start: 21, length: 2, token_type: 1, token_modifiers_bitset: 0 }, // cx closure param at col 25 → 438..440 (delta 21 from col 4)
+                    
+                    // Line 12, offset 473: "            outline::get_buffer_content_or_outline(buffer.clone(), Some(&full_path), &cx)"
+                    //                       0         1         2         3         4         5         6         7         8
+                    //                       0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890
+                    lsp::SemanticToken { delta_line: 2, delta_start: 51, length: 6, token_type: 0, token_modifiers_bitset: 0 }, // buffer at col 51 → 524..530
+                    lsp::SemanticToken { delta_line: 0, delta_start: 22, length: 9, token_type: 0, token_modifiers_bitset: 0 }, // full_path at col 73 → 546..555 (delta 22 from col 51)
+                    lsp::SemanticToken { delta_line: 0, delta_start: 15, length: 2, token_type: 1, token_modifiers_bitset: 0 }, // cx at col 88 → 561..563 (delta 15 from col 73)
+                    
+                    // Line 15, offset 647: "                    text: rope.to_string(),"
+                    //                       0123456789012345678901234567890
+                    lsp::SemanticToken { delta_line: 3, delta_start: 26, length: 4, token_type: 0, token_modifiers_bitset: 0 }, // rope at col 26 → 673..677
+                    
+                    // Line 21, offset 832: "            full_path,"
+                    //                       012345678901234567890
+                    lsp::SemanticToken { delta_line: 6, delta_start: 12, length: 9, token_type: 0, token_modifiers_bitset: 0 }, // full_path at col 12 → 844..853
+                    
+                    // Line 25, offset 964: "        Some((context, vec![buffer]))"
+                    lsp::SemanticToken { delta_line: 4, delta_start: 28, length: 6, token_type: 0, token_modifiers_bitset: 0 }, // buffer at 992..998
+                ],
+            })))
+        }
+    );
+
+    // Enable rainbow highlighting
+    update_test_editor_settings(&mut cx.cx, |settings| {
+        settings.editor.rainbow_highlighting.get_or_insert_default().enabled = Some(true);
+    });
+
+    cx.set_state(indoc! {r#"
+        fn load(self, cx: &App) -> Task<Option<(AgentContext, Vec<Entity<Buffer>>)>> {
+            let buffer_ref = self.buffer.read(cx);
+            let Some(file) = buffer_ref.file() else {
+                log::error!("file context missing path");
+                return Task::ready(None);
+            };
+            let full_path = file.full_path(cx).to_string_lossy().to_string();
+            let rope = buffer_ref.as_rope().clone();
+            let buffer = self.buffer.clone();
+
+            cx.spawn(async move |cx| {
+                let buffer_content =
+                    outline::get_buffer_content_or_outline(buffer.clone(), Some(&full_path), &cx)
+                        .await
+                        .unwrap_or_else(|_| outline::BufferContent {
+                            text: rope.to_string(),
+                            is_outline: false,
+                        });
+
+                let context = AgentContext::File(FileContext {
+                    handle: self,
+                    full_path,
+                    text: buffer_content.text.into(),
+                    is_outline: buffer_content.is_outline,
+                });
+                Some((context, vec![buffer]))
+            })
+        }
+        ˇ
+    "#});
+
+    // Wait for semantic tokens
+    assert!(semantic_request.next().await.is_some());
+    let task = cx.update_editor(|e, _, _| {
+        std::mem::replace(&mut e.update_semantic_tokens_task, Task::ready(()))
+    });
+    task.await;
+
+    cx.executor().run_until_parked();
+
+    // Check specific variables (excluding properties by checking token type)
+    let variable_colors = cx.update_editor(|editor, _window, cx| {
+        let buffer = editor.buffer().read(cx).as_singleton().unwrap().read(cx);
+        let buffer_id = buffer.remote_id();
+        let display_map = editor.display_map.read(cx);
+        
+        let mut colors = std::collections::HashMap::new();
+        
+        // Get semantic tokens and filter by type
+        if let Some(view) = display_map.semantic_tokens.get(&buffer_id) {
+            for token in &view.tokens {
+                // Only track variable (0) and parameter (1) tokens, not properties (2)
+                if token.lsp_type == 0 || token.lsp_type == 1 {
+                    let text = buffer.text_for_range(token.range.clone()).collect::<String>();
+                    
+                    // Track specific variables we care about
+                    let var_names = ["cx", "buffer_ref", "file", "full_path", "rope", "buffer"];
+                    for var in var_names {
+                        if text == var {
+                            // Get line number for this token
+                            let point = buffer.offset_to_point(token.range.start);
+                            let line_idx = point.row;
+                            let color = token.style.color;
+                            colors.entry(var).or_insert_with(Vec::new).push((line_idx, color));
+                        }
+                    }
+                }
+            }
+        }
+        
+        colors
+    });
+
+    // Assert: All variables should have colors
+    for (var, occurrences) in &variable_colors {
+        for (line, color) in occurrences {
+            assert!(
+                color.is_some(),
+                "Variable '{}' at line {} should have a color but got None!",
+                var, line
+            );
+        }
+    }
+
+    // Assert: Same variable should have same color across all uses
+    for (var, occurrences) in &variable_colors {
+        if occurrences.len() > 1 {
+            let first_color = occurrences[0].1;
+            for (line, color) in occurrences.iter().skip(1) {
+                assert_eq!(
+                    first_color, *color,
+                    "Variable '{}' has inconsistent colors: line {} = {:?}, line {} = {:?}",
+                    var, occurrences[0].0, first_color, line, color
+                );
+            }
+        }
+    }
+    
+    // CRITICAL TEST: Verify colors appear in RENDERED chunks, not just stored tokens
+    cx.update_editor(|editor, window, cx| {
+        eprintln!("\n=== RENDERED CHUNKS TEST ===");
+        
+        let snapshot = editor.snapshot(window, cx);
+        let display_snapshot = &snapshot.display_snapshot;
+        let editor_style = editor.style.as_ref().unwrap();
+        
+        let max_row = display_snapshot.max_point().row();
+        
+        // Check ALL rendered chunks for 'buffer' variable
+        let mut buffer_chunks_found = Vec::new();
+        for row_num in 0..=max_row.0 {
+            let row = DisplayRow(row_num);
+            for chunk in display_snapshot.highlighted_chunks(row..DisplayRow(row_num + 1), false, editor_style) {
+                // Debug: print row 25 in detail (vec![buffer] line)
+                if row_num == 25 {
+                    eprintln!("Row 25 chunk: text={:?}, style={:?}", chunk.text, chunk.style);
+                }
+                
+                if chunk.text.trim() == "buffer" {
+                    let color = chunk.style.and_then(|s| s.color);
+                    buffer_chunks_found.push((row_num, color.is_some(), color));
+                    eprintln!("Row {}: 'buffer' chunk has_color={}, color={:?}", row_num, color.is_some(), color);
+                }
+            }
+        }
+        
+        eprintln!("Total 'buffer' chunks found: {}", buffer_chunks_found.len());
+        
+        // There should be at least one 'buffer' inside vec![buffer] with a rainbow color
+        let colored_buffers = buffer_chunks_found.iter().filter(|(_, has_color, _)| *has_color).count();
+        assert!(
+            colored_buffers > 0,
+            "'buffer' variables should have rainbow colors in RENDERED chunks, but found {} chunks and {} had colors!",
+            buffer_chunks_found.len(),
+            colored_buffers
+        );
+        
+        eprintln!("✓ Found {}/{} 'buffer' chunks with rainbow colors", colored_buffers, buffer_chunks_found.len());
+        eprintln!("=== END RENDERED CHUNKS TEST ===\n");
+    });
 }

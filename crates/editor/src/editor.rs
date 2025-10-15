@@ -35,7 +35,7 @@ mod mouse_context_menu;
 pub mod movement;
 mod persistence;
 mod proposed_changes_editor;
-mod rainbow;           // Consolidated rainbow highlighting logic (includes caching)
+mod rainbow; // Consolidated rainbow highlighting logic (includes caching)
 mod rust_analyzer_ext;
 pub mod scroll;
 mod selections_collection;
@@ -295,18 +295,18 @@ use settings::{ GitGutterSetting, Settings, SettingsLocation, SettingsStore, upd
 use smallvec::{ SmallVec, smallvec };
 use snippet::Snippet;
 use std::{
-    any::{Any, TypeId},
+    any::{ Any, TypeId },
     borrow::Cow,
     cell::OnceCell,
-    cmp::{self, Ordering, Reverse},
-    iter::{self, Peekable},
+    cmp::{ self, Ordering, Reverse },
+    iter::{ self, Peekable },
     mem,
     num::NonZeroU32,
-    ops::{ControlFlow, Deref, DerefMut, Not, Range, RangeInclusive},
-    path::{Path, PathBuf},
+    ops::{ ControlFlow, Deref, DerefMut, Not, Range, RangeInclusive },
+    path::{ Path, PathBuf },
     rc::Rc,
     sync::Arc,
-    time::{Duration, Instant},
+    time::{ Duration, Instant },
 };
 use task::{ ResolvedTask, RunnableTag, TaskTemplate, TaskVariables };
 use text::{ BufferId, FromAnchor, OffsetUtf16, Rope };
@@ -2320,7 +2320,7 @@ impl Editor {
         }
         editor.tasks_update_task = Some(editor.refresh_runnables(window, cx));
         editor._subscriptions.extend(project_subscriptions);
-        
+
         // Initialize rainbow variable color cache (lock-free with DashMap)
         let rainbow_config = EditorSettings::get_global(cx).rainbow_highlighting;
         if rainbow_config.enabled {
@@ -2330,8 +2330,9 @@ impl Editor {
                 );
             });
         }
-        
+
         editor.request_initial_semantic_tokens(window, cx);
+        editor.request_initial_syntax_tokens(cx);
 
         editor._subscriptions.push(
             cx.subscribe_in(&cx.entity(), window, |editor, _, e: &EditorEvent, window, cx| {
@@ -2891,13 +2892,13 @@ impl Editor {
                 cx
             )
         });
-        
+
         // Share the rainbow color cache with the placeholder display map
         let cache = self.display_map.read(cx).get_variable_color_cache();
         placeholder_map.update(cx, |map, _| {
             map.set_variable_color_cache(cache);
         });
-        
+
         self.placeholder_display_map = Some(placeholder_map);
         cx.notify();
     }
@@ -6392,20 +6393,22 @@ impl Editor {
         cx: &mut Context<Self>
     ) {
         const DEBOUNCE_DELAY_MS: u64 = 250;
-        
+
         let buffer = buffer.clone();
-        
+
         // Cancel any pending debounce task
-        self.semantic_tokens_debounce_task = Some(cx.spawn_in(window, async move |this, cx| {
-            cx.background_executor().timer(std::time::Duration::from_millis(DEBOUNCE_DELAY_MS)).await;
-            
-            this.update(cx, |this, cx| {
-                this.update_semantic_tokens_immediate(&buffer, cx);
-                cx.notify();
-            }).log_err();
-        }));
+        self.semantic_tokens_debounce_task = Some(
+            cx.spawn_in(window, async move |this, cx| {
+                cx.background_executor().timer(std::time::Duration::from_millis(DEBOUNCE_DELAY_MS)).await;
+
+                this.update(cx, |this, cx| {
+                    this.update_semantic_tokens_immediate(&buffer, cx);
+                    cx.notify();
+                }).log_err();
+            })
+        );
     }
-    
+
     /// Internal immediate update (for initial load and non-debounced cases)
     pub(crate) fn update_semantic_tokens(
         &mut self,
@@ -6415,16 +6418,12 @@ impl Editor {
     ) {
         self.update_semantic_tokens_immediate(buffer, cx);
     }
-    
-    fn update_semantic_tokens_immediate(
-        &mut self,
-        buffer: &Entity<Buffer>,
-        cx: &mut Context<Self>
-    ) {
+
+    fn update_semantic_tokens_immediate(&mut self, buffer: &Entity<Buffer>, cx: &mut Context<Self>) {
         if let Some(sema) = self.semantics_provider.as_ref() {
             let buffer_id = buffer.read(cx).remote_id();
             let is_multibuffer = self.buffer.read(cx).as_singleton().is_none();
-            
+
             log::debug!("Requesting semantic tokens for buffer_id={:?}", buffer_id);
             let task = sema
                 .semantic_tokens(buffer.clone(), cx)
@@ -6451,12 +6450,6 @@ impl Editor {
 
                             let legend = legend.clone();
 
-                            // Performance monitoring: log large token sets
-                            let token_count = tokens.tokens().count();
-                            if token_count > 5000 {
-                                log::debug!("⚠️ LARGE TOKEN SET: Processing {} tokens (optimized with early filtering)", token_count);
-                            }
-                            
                             this.display_map.update(cx, |display_map, cx| {
                                 let view = SemanticTokenView::new(
                                     buffer_id,
@@ -6478,7 +6471,7 @@ impl Editor {
                     }).log_err();
                 }
             });
-            
+
             if is_multibuffer {
                 // Multibuffer: detach to allow concurrent requests for all buffers
                 spawned_task.detach();
@@ -6490,19 +6483,21 @@ impl Editor {
     }
 
     fn request_initial_semantic_tokens(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(project) = self.project.as_ref() else { return };
-        
-        let has_any_semantic_capable_server = project.read(cx)
+        let Some(project) = self.project.as_ref() else {
+            return;
+        };
+
+        let has_any_semantic_capable_server = project
+            .read(cx)
             .lsp_store()
             .read(cx)
-            .lsp_server_capabilities
-            .values()
+            .lsp_server_capabilities.values()
             .any(|caps| caps.semantic_tokens_provider.is_some());
-        
+
         if !has_any_semantic_capable_server {
             return;
         }
-        
+
         // Handle both singleton and multibuffer editors
         let all_buffers: Vec<Entity<Buffer>> = if let Some(buffer) = self.buffer.read(cx).as_singleton() {
             vec![buffer]
@@ -6510,14 +6505,14 @@ impl Editor {
             // Multibuffer: get all buffers
             self.buffer.read(cx).all_buffers().into_iter().collect()
         };
-        
+
         // Deduplicate buffers by buffer_id to avoid redundant LSP requests
         let mut seen = HashSet::default();
         let buffers_to_request: Vec<_> = all_buffers
             .into_iter()
             .filter(|buffer| seen.insert(buffer.read(cx).remote_id()))
             .collect();
-        
+
         if buffers_to_request.len() != seen.len() {
             log::debug!(
                 "Deduplicated {} buffers to {} unique buffers for semantic tokens",
@@ -6525,15 +6520,14 @@ impl Editor {
                 buffers_to_request.len()
             );
         }
-        
+
         for buffer in buffers_to_request {
             let should_request = {
                 let buffer_snapshot = buffer.read(cx);
                 let buffer_id = buffer_snapshot.remote_id();
-                buffer_snapshot.len() > 0 
-                    && !self.display_map.read(cx).semantic_tokens.contains_key(&buffer_id)
+                buffer_snapshot.len() > 0 && !self.display_map.read(cx).semantic_tokens.contains_key(&buffer_id)
             };
-            
+
             if should_request {
                 let buffer_id = buffer.read(cx).remote_id();
                 log::debug!("Requesting initial semantic tokens for buffer {:?}", buffer_id);
@@ -6542,26 +6536,69 @@ impl Editor {
         }
     }
 
+    fn request_initial_syntax_tokens(&mut self, cx: &mut Context<Self>) {
+        use crate::editor_settings::EditorSettings;
+        use settings::Settings;
+
+        let rainbow_config = EditorSettings::get_global(cx).rainbow_highlighting;
+        if !rainbow_config.enabled {
+            return;
+        }
+
+        // Handle both singleton and multibuffer editors
+        let all_buffers: Vec<Entity<Buffer>> = if let Some(buffer) = self.buffer.read(cx).as_singleton() {
+            vec![buffer]
+        } else {
+            self.buffer.read(cx).all_buffers().into_iter().collect()
+        };
+
+        // Deduplicate by buffer_id
+        let mut seen = HashSet::default();
+        let buffers_to_process: Vec<_> = all_buffers
+            .into_iter()
+            .filter(|buffer| seen.insert(buffer.read(cx).remote_id()))
+            .collect();
+
+        // Spawn async task with small delay to allow tree-sitter parsing to complete
+        cx.spawn(async move |editor, cx| {
+            cx.background_executor().timer(Duration::from_millis(50)).await;
+
+            editor
+                .update(cx, |editor, cx| {
+                    for buffer in buffers_to_process {
+                        let buffer_id = buffer.read(cx).remote_id();
+                        if buffer.read(cx).len() > 0 {
+                            editor.refresh_syntax_tokens(buffer_id, cx);
+                        }
+                    }
+                })
+                .log_err();
+        })
+        .detach();
+    }
+
     fn request_semantic_tokens_if_capable(
         &mut self,
         server_id: LanguageServerId,
         window: &mut Window,
         cx: &mut Context<Self>
     ) {
-        let Some(project) = self.project.as_ref() else { return };
-        
-        let has_semantic_tokens = project.read(cx)
+        let Some(project) = self.project.as_ref() else {
+            return;
+        };
+
+        let has_semantic_tokens = project
+            .read(cx)
             .lsp_store()
             .read(cx)
-            .lsp_server_capabilities
-            .get(&server_id)
+            .lsp_server_capabilities.get(&server_id)
             .and_then(|caps| caps.semantic_tokens_provider.as_ref())
             .is_some();
-        
+
         if !has_semantic_tokens {
             return;
         }
-        
+
         // Handle both singleton and multibuffer editors
         let all_buffers: Vec<Entity<Buffer>> = if let Some(buffer) = self.buffer.read(cx).as_singleton() {
             vec![buffer]
@@ -6569,14 +6606,14 @@ impl Editor {
             // Multibuffer: get all buffers
             self.buffer.read(cx).all_buffers().into_iter().collect()
         };
-        
+
         // Deduplicate buffers by buffer_id to avoid redundant LSP requests
         let mut seen = HashSet::default();
         let buffers_to_request: Vec<_> = all_buffers
             .into_iter()
             .filter(|buffer| seen.insert(buffer.read(cx).remote_id()))
             .collect();
-        
+
         if buffers_to_request.len() != seen.len() {
             log::debug!(
                 "Deduplicated {} buffers to {} unique buffers for semantic tokens (LSP server {})",
@@ -6585,18 +6622,21 @@ impl Editor {
                 server_id.0
             );
         }
-        
+
         for buffer in buffers_to_request {
             let should_request = {
                 let buffer_snapshot = buffer.read(cx);
                 let buffer_id = buffer_snapshot.remote_id();
-                buffer_snapshot.len() > 0 
-                    && !self.display_map.read(cx).semantic_tokens.contains_key(&buffer_id)
+                buffer_snapshot.len() > 0 && !self.display_map.read(cx).semantic_tokens.contains_key(&buffer_id)
             };
-            
+
             if should_request {
                 let buffer_id = buffer.read(cx).remote_id();
-                log::debug!("Language server {} started with semantic tokens support, fetching tokens for buffer {:?}", server_id.0, buffer_id);
+                log::debug!(
+                    "Language server {} started with semantic tokens support, fetching tokens for buffer {:?}",
+                    server_id.0,
+                    buffer_id
+                );
                 self.update_semantic_tokens(&buffer, window, cx);
             }
         }
@@ -6609,19 +6649,44 @@ impl Editor {
         cx: &mut Context<Self>
     ) {
         let buffer_id = buffer.read(cx).remote_id();
-        
+
         if self.display_map.read(cx).semantic_tokens.contains_key(&buffer_id) {
             return;
         }
-        
+
         let buffer = buffer.clone();
         cx.spawn_in(window, async move |editor, cx| {
             cx.background_executor().timer(Duration::from_millis(200)).await;
-            
-            editor.update_in(cx, |editor, window, cx| {
-                editor.update_semantic_tokens(&buffer, window, cx);
-            }).log_err();
+
+            editor
+                .update_in(cx, |editor, window, cx| {
+                    editor.update_semantic_tokens(&buffer, window, cx);
+                })
+                .log_err();
         }).detach();
+    }
+
+    fn refresh_syntax_tokens(&mut self, buffer_id: BufferId, cx: &mut Context<Self>) {
+        self.display_map.update(cx, |display_map, cx| {
+            let cache = display_map.get_variable_color_cache();
+            if cache.is_none() {
+                return;
+            }
+
+            let theme = &cx.theme().syntax();
+            let view = crate::display_map::SyntaxTokenView::new(
+                buffer_id,
+                self.buffer.read(cx),
+                cache.as_ref(),
+                theme,
+                cx
+            );
+
+            if let Some(view) = view {
+                display_map.syntax_tokens.insert(buffer_id, Arc::new(view));
+                cx.notify();
+            }
+        });
     }
 
     fn start_inline_blame_timer(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -7434,7 +7499,7 @@ impl Editor {
                         partial_completion = text
                             .chars()
                             .by_ref()
-                            .take_while(|c| c.is_whitespace() || !c.is_alphabetic())
+                            .take_while(|c| (c.is_whitespace() || !c.is_alphabetic()))
                             .collect::<String>();
                     }
 
@@ -18956,6 +19021,8 @@ impl Editor {
             multi_buffer::Event::Reparsed(buffer_id) => {
                 self.tasks_update_task = Some(self.refresh_runnables(window, cx));
                 jsx_tag_auto_close::refresh_enabled_in_any_buffer(self, multibuffer, cx);
+
+                self.refresh_syntax_tokens(*buffer_id, cx);
 
                 cx.emit(EditorEvent::Reparsed(*buffer_id));
             }

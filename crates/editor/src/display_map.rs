@@ -124,6 +124,8 @@ pub struct DisplayMap {
     inlay_highlights: InlayHighlights,
     /// The semantic tokens from the language server.
     pub semantic_tokens: HashMap<BufferId, Arc<SemanticTokenView>>,
+    /// Tree-sitter based syntax tokens for rainbow highlighting (fallback when LSP unavailable).
+    pub syntax_tokens: HashMap<BufferId, Arc<SyntaxTokenView>>,
     /// Cache for rainbow variable coloring (owned by DisplayMap, snapshot via Arc).
     /// Uses DashMap internally for lock-free concurrent access.
     variable_color_cache: Option<Arc<crate::rainbow::VariableColorCache>>,
@@ -150,6 +152,147 @@ pub struct MultibufferSemanticToken {
     // These are only used in the debug syntax tree.
     pub lsp_type: u32,
     pub lsp_modifiers: u32,
+}
+
+#[derive(Debug, Default, Clone)]
+pub struct SyntaxTokenView {
+    pub tokens: Vec<SyntaxToken>,
+    pub version: Global,
+}
+
+impl SyntaxTokenView {
+    pub fn new(
+        buffer_id: BufferId,
+        multibuffer: &MultiBuffer,
+        variable_color_cache: Option<&Arc<crate::rainbow::VariableColorCache>>,
+        theme: &theme::SyntaxTheme,
+        cx: &App
+    ) -> Option<Self> {
+        use crate::editor_settings::EditorSettings;
+        use settings::Settings;
+
+        let rainbow_config = EditorSettings::get_global(cx).rainbow_highlighting;
+        if !rainbow_config.enabled {
+            return None;
+        }
+
+        let Some(cache) = variable_color_cache else {
+            return None;
+        };
+
+        let Some(buffer_entity) = multibuffer.buffer(buffer_id) else {
+            return None;
+        };
+        let buffer = buffer_entity.read(cx);
+        let snapshot = buffer.snapshot();
+
+        let mut tokens = Vec::new();
+        for layer in snapshot.syntax_layers() {
+            let root = layer.node();
+            Self::extract_identifiers_recursive(root, &snapshot, cache, theme, &mut tokens);
+        }
+
+        if tokens.is_empty() {
+            return None;
+        }
+        tokens.sort_by_key(|token| token.range.start);
+        tokens.dedup_by(|a, b| {
+            let overlaps = a.range.start < b.range.end && b.range.start < a.range.end;
+            if overlaps {
+                if b.range.end - b.range.start > a.range.end - a.range.start {
+                    *a = b.clone();
+                }
+                true
+            } else {
+                false
+            }
+        });
+
+        Some(SyntaxTokenView {
+            tokens,
+            version: snapshot.version().clone(),
+        })
+    }
+
+    fn extract_identifiers_recursive(
+        node: language::Node,
+        snapshot: &language::BufferSnapshot,
+        cache: &crate::rainbow::VariableColorCache,
+        theme: &theme::SyntaxTheme,
+        tokens: &mut Vec<SyntaxToken>
+    ) {
+        if node.kind() == "identifier" {
+            let start = node.start_byte();
+            let end = node.end_byte();
+            let identifier: String = snapshot.text_for_range(start..end).collect();
+            
+            if Self::is_variable_context(&node, &identifier) {
+                if let Some(validated) = crate::rainbow::validate_identifier_for_rainbow(&identifier) {
+                    let style = cache.get_or_insert(validated, theme);
+
+                    tokens.push(SyntaxToken {
+                        range: start..end,
+                        style,
+                    });
+                }
+            }
+        }
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            Self::extract_identifiers_recursive(child, snapshot, cache, theme, tokens);
+        }
+    }
+
+    fn is_variable_context(node: &language::Node, _identifier: &str) -> bool {
+        let Some(parent) = node.parent() else {
+            return false;
+        };
+
+        matches!(
+            parent.kind(),
+            "let_declaration" |
+            "parameter" |
+            "closure_parameters" |
+            "for_expression" |
+            "field_expression" |
+            "call_expression" |
+            "arguments" |
+            "binary_expression" |
+            "unary_expression" |
+            "reference_expression" |
+            "index_expression" |
+            "array_expression" |
+            "tuple_expression" |
+            "match_arm" |
+            "if_expression" |
+            "while_expression" |
+            "loop_expression" |
+            "assignment_expression" |
+            "compound_assignment_expr" |
+            "identifier_pattern" |
+            "shorthand_field_identifier" |
+            "field_initializer" |
+            "token_tree"
+        )
+    }
+
+    pub fn tokens_in_range(&self, range: Range<usize>) -> &[SyntaxToken] {
+        let start = self.tokens
+            .binary_search_by_key(&range.start, |token| token.range.start)
+            .unwrap_or_else(|next_ix| next_ix);
+
+        let end = self.tokens
+            .binary_search_by_key(&range.end, |token| token.range.start)
+            .unwrap_or_else(|next_ix| next_ix);
+
+        &self.tokens[start..end]
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct SyntaxToken {
+    pub range: Range<usize>,
+    pub style: HighlightStyle,
 }
 
 impl DisplayMap {
@@ -191,6 +334,7 @@ impl DisplayMap {
             text_highlights: Default::default(),
             inlay_highlights: Default::default(),
             semantic_tokens: Default::default(),
+            syntax_tokens: Default::default(),
             variable_color_cache: None,
             clip_at_line_ends: false,
             masked: false,
@@ -219,6 +363,7 @@ impl DisplayMap {
             text_highlights: self.text_highlights.clone(),
             inlay_highlights: self.inlay_highlights.clone(),
             semantic_tokens: self.semantic_tokens.clone(),
+            syntax_tokens: self.syntax_tokens.clone(),
             variable_color_cache: self.variable_color_cache.clone(),
             clip_at_line_ends: self.clip_at_line_ends,
             masked: self.masked,
@@ -582,6 +727,7 @@ pub(crate) struct Highlights<'a> {
     pub text_highlights: Option<&'a TextHighlights>,
     pub inlay_highlights: Option<&'a InlayHighlights>,
     pub semantic_tokens: Option<&'a HashMap<BufferId, Arc<SemanticTokenView>>>,
+    pub syntax_tokens: Option<&'a HashMap<BufferId, Arc<SyntaxTokenView>>>,
     pub styles: HighlightStyles,
 }
 
@@ -718,6 +864,7 @@ pub struct DisplaySnapshot {
     text_highlights: TextHighlights,
     inlay_highlights: InlayHighlights,
     semantic_tokens: HashMap<BufferId, Arc<SemanticTokenView>>,
+    syntax_tokens: HashMap<BufferId, Arc<SyntaxTokenView>>,
     variable_color_cache: Option<Arc<crate::rainbow::VariableColorCache>>,
     clip_at_line_ends: bool,
     masked: bool,
@@ -872,6 +1019,7 @@ impl DisplaySnapshot {
             text_highlights: Some(&self.text_highlights),
             inlay_highlights: Some(&self.inlay_highlights),
             semantic_tokens: Some(&self.semantic_tokens),
+            syntax_tokens: Some(&self.syntax_tokens),
             styles: highlight_styles,
         })
     }
@@ -882,73 +1030,22 @@ impl DisplaySnapshot {
         language_aware: bool,
         editor_style: &'a EditorStyle
     ) -> impl Iterator<Item = HighlightedChunk<'a>> {
-        let rainbow_config = &editor_style.rainbow_highlighting;
         let theme = &editor_style.syntax;
 
         let display_row_start = display_rows.start;
         let start_point = self.display_point_to_point(DisplayPoint::new(display_row_start, 0), Bias::Left);
         let start_buffer_offset = self.buffer_snapshot.point_to_offset(start_point);
-        let buffer_len = self.buffer_snapshot.len();
-        // State: (current_offset, cached_node: Option<(range, identifier_hash)>)
-        // Store hash instead of String to avoid allocations
-        let state = (start_buffer_offset, None::<(Range<usize>, u64)>);
 
         self.chunks(display_rows, language_aware, HighlightStyles {
             inlay_hint: Some(editor_style.inlay_hints_style),
             edit_prediction: Some(editor_style.edit_prediction_styles),
         })
-            .scan(state, move |state, chunk| {
-                let (offset, cached_node) = state;
+            .scan(start_buffer_offset, move |offset, chunk| {
                 let chunk_start = *offset;
                 let chunk_end = chunk_start + chunk.text.len();
                 *offset = chunk_end;
 
-                let (capture_name, highlight_style) = chunk.syntax_highlight_id
-                    .map(|id| (id.name(theme), id.style(theme)))
-                    .unwrap_or((None, None));
-
-                let is_variable_like = capture_name
-                    .map(|name| {
-                        (name.starts_with("variable") || name.starts_with("parameter")) &&
-                            !name.contains("special") &&
-                            !name.contains("builtin") &&
-                            !name.contains("member")
-                    })
-                    .unwrap_or(false);
-
-                let rainbow_style = if is_variable_like && rainbow_config.enabled {
-                    self.variable_color_cache.as_ref().and_then(|cache| {
-                        let identifier_hash = if let Some(ref node_range) = chunk.capture_node_range {
-                            if node_range.end <= buffer_len {
-                                // Hash directly from iterator - zero allocations!
-                                let hash = crate::rainbow::hash_identifier_from_iter(
-                                    self.buffer_snapshot.text_for_range(node_range.clone())
-                                );
-
-                                if hash != 0 {
-                                    // 0 means empty or too short
-                                    // Cache the node range and hash for subsequent chunks
-                                    *cached_node = Some((node_range.clone(), hash));
-                                    Some(hash)
-                                } else {
-                                    None
-                                }
-                            } else {
-                                None
-                            }
-                        } else {
-                            // Check if this chunk is part of a previously seen node
-                            cached_node
-                                .as_ref()
-                                .filter(|(range, _)| chunk_start >= range.start && chunk_start < range.end)
-                                .map(|(_, hash)| *hash)
-                        };
-
-                        identifier_hash.map(|hash| cache.get_or_insert_by_hash(hash, theme))
-                    })
-                } else {
-                    None
-                };
+                let highlight_style = chunk.syntax_highlight_id.and_then(|id| id.style(theme));
 
                 let chunk_highlight = chunk.highlight_style.map(|chunk_highlight| {
                     let color = chunk_highlight.color.map(|color| {
@@ -982,15 +1079,30 @@ impl DisplaySnapshot {
                         ..Default::default()
                     });
 
-                // Precedence: tree-sitter base < tree-sitter rainbow < LSP semantic < diagnostics
-                // Manual merging to avoid array allocation
+                // Simplified Precedence: tree-sitter base < LSP semantic (includes rainbow) < diagnostics
+                // LSP semantic tokens include rainbow coloring for variables when enabled
+                // Key: LSP REPLACES colors (not blend) to preserve precise semantic/rainbow colors
                 let mut style = highlight_style;
-                if let Some(rainbow) = rainbow_style {
-                    style = Some(style.map_or(rainbow, |s| s.highlight(rainbow)));
-                }
+
+                // LSP Semantic: REPLACE tree-sitter colors with LSP semantic + rainbow colors
                 if let Some(chunk) = chunk_highlight {
-                    style = Some(style.map_or(chunk, |s| s.highlight(chunk)));
+                    if chunk.color.is_some() {
+                        // LSP has explicit color: REPLACE tree-sitter's color (don't blend)
+                        if let Some(mut base) = style {
+                            base.color = chunk.color;
+                            // Also apply other LSP properties (font weight, etc.)
+                            base.font_weight = chunk.font_weight.or(base.font_weight);
+                            base.font_style = chunk.font_style.or(base.font_style);
+                            style = Some(base);
+                        } else {
+                            style = Some(chunk);
+                        }
+                    } else {
+                        // No LSP color: merge properties only
+                        style = Some(style.map_or(chunk, |s| s.highlight(chunk)));
+                    }
                 }
+                // Diagnostics: blend underlines
                 if let Some(diag) = diagnostic_highlight {
                     style = Some(style.map_or(diag, |s| s.highlight(diag)));
                 }
@@ -1446,7 +1558,6 @@ impl ToDisplayPoint for Anchor {
         self.to_point(&map.buffer_snapshot).to_display_point(map)
     }
 }
-
 impl SemanticTokenView {
     pub fn new(
         buffer_id: BufferId,
@@ -1464,11 +1575,8 @@ impl SemanticTokenView {
         };
         let buffer = buffer.read(cx);
 
-        let stylizer = SemanticTokenStylizer::new(legend);
         let rainbow_config = EditorSettings::get_global(cx).rainbow_highlighting;
-
-        log::debug!("Variable color highlighting: enabled={}, mode={:?}, cache_available={}", 
-            rainbow_config.enabled, rainbow_config.mode, variable_color_cache.is_some());
+        let stylizer = SemanticTokenStylizer::new(legend, &rainbow_config);
 
         let mut tokens = lsp
             .tokens()
@@ -1480,46 +1588,19 @@ impl SemanticTokenView {
                     &buffer
                 );
 
-                // Always extract variable names - needed for both rainbow highlighting and theme fallback
-                let variable_name = {
-                    let token_type_name = stylizer.token_type(token.token_type);
-
-                    if matches!(token_type_name, Some("variable" | "parameter")) {
-                        let token_len = end_offset.saturating_sub(start_offset);
-
-                        // Reasonable bounds: skip very short (<2) or extremely long (>120) identifiers
-                        // 120 chars allows for descriptive names while preventing performance issues
-                        if token_len < 2 || token_len > 120 {
-                            None
-                        } else {
-                            let name = buffer.text_for_range(start_offset..end_offset).collect::<String>();
-                            // Skip purely numeric identifiers
-                            if name.chars().all(|c| c.is_numeric()) {
-                                None
-                            } else {
-                                Some(name)
-                            }
-                        }
-                    } else {
-                        None
-                    }
-                };
-
-                stylizer
-                    .convert(
+                Some(MultibufferSemanticToken {
+                    range: start_offset..end_offset,
+                    style: stylizer.convert(
                         cx.theme().syntax(),
                         token.token_type,
                         token.token_modifiers,
-                        variable_name.as_deref(),
-                        Some(&rainbow_config),
+                        &buffer,
+                        start_offset..end_offset,
                         variable_color_cache
-                    )
-                    .map(|style| MultibufferSemanticToken {
-                        range: start_offset..end_offset,
-                        style,
-                        lsp_type: token.token_type,
-                        lsp_modifiers: token.token_modifiers,
-                    })
+                    )?,
+                    lsp_type: token.token_type,
+                    lsp_modifiers: token.token_modifiers,
+                })
             })
             .collect::<Vec<_>>();
 
@@ -1558,13 +1639,22 @@ fn point_offset_to_offsets(
     (start, end)
 }
 
+/// Stylizer for LSP semantic tokens with encapsulated rainbow highlighting logic.
+/// 
+/// Architecture: The convert method extracts variable names from the buffer and applies
+/// rainbow colors when enabled, following SOLID principles by keeping all token styling
+/// logic in one place.
 struct SemanticTokenStylizer<'a> {
     token_types: Vec<&'a str>,
     modifier_mask: HashMap<&'a str, u32>,
+    rainbow_config: &'a crate::editor_settings::RainbowConfig,
 }
 
 impl<'a> SemanticTokenStylizer<'a> {
-    pub fn new(legend: &'a lsp::SemanticTokensLegend) -> Self {
+    pub fn new(
+        legend: &'a lsp::SemanticTokensLegend,
+        rainbow_config: &'a crate::editor_settings::RainbowConfig
+    ) -> Self {
         let token_types = legend.token_types
             .iter()
             .map(|s| s.as_str())
@@ -1577,6 +1667,7 @@ impl<'a> SemanticTokenStylizer<'a> {
         SemanticTokenStylizer {
             token_types,
             modifier_mask,
+            rainbow_config,
         }
     }
 
@@ -1596,27 +1687,11 @@ impl<'a> SemanticTokenStylizer<'a> {
         theme: &'a SyntaxTheme,
         token_type: u32,
         modifiers: u32,
-        variable_name: Option<&str>,
-        rainbow_config: Option<&crate::editor_settings::RainbowConfig>,
+        buffer: &text::Buffer,
+        range: Range<usize>,
         variable_color_cache: Option<&Arc<crate::rainbow::VariableColorCache>>
     ) -> Option<HighlightStyle> {
         let token_type_name = self.token_type(token_type)?;
-
-        // If rainbow highlighting is enabled and cache is available, apply rainbow color
-        let is_variable_like = token_type_name == "variable" || token_type_name == "parameter";
-        if is_variable_like {
-            if let Some(config) = rainbow_config {
-                if config.enabled {
-                    if let Some(cache) = variable_color_cache {
-                        if let Some(name) = variable_name {
-                            return Some(cache.get_or_insert(name, theme));
-                        }
-                    }
-                }
-            }
-        }
-        // If rainbow not applicable, fall through to theme color logic below
-
         let has_modifier = |modifier| self.has_modifier(modifiers, modifier);
 
         let choices: &[&str] = match token_type_name {
@@ -1648,6 +1723,7 @@ impl<'a> SemanticTokenStylizer<'a> {
             "variable" if has_modifier("defaultLibrary") => &["variable.builtin", "variable"],
             "variable" if has_modifier("constant") => &["constant"],
             "variable" => &["variable"],
+            "const" => &["const", "constant", "variable"],
             "property" => &["property"],
             "enumMember" => &["type.enum.member", "type.enum", "variant"],
             "decorator" => &["function.decorator", "function.annotation"],
@@ -1685,9 +1761,25 @@ impl<'a> SemanticTokenStylizer<'a> {
             }
         };
 
+        // Rainbow coloring for variables (when enabled)
+        // Extract variable name from buffer and apply rainbow color
+        let is_variable = matches!(token_type_name, "variable" | "parameter" | "const");
+        if is_variable && self.rainbow_config.enabled {
+            if let Some(cache) = variable_color_cache {
+                let variable_name: String = buffer.text_for_range(range).collect();
+                if let Some(validated) = crate::rainbow::validate_identifier_for_rainbow(&variable_name) {
+                    return Some(cache.get_or_insert(validated, theme));
+                }
+                // Validation failed (keyword, single char, etc.) - fall through to theme color
+            }
+        }
+
+        // Theme color lookup: try each choice in order until we find one with a color
         for choice in choices {
             if let Some(style) = theme.get_opt(choice) {
-                return Some(style);
+                if style.color.is_some() {
+                    return Some(style);
+                }
             }
         }
 

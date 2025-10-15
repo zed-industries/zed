@@ -1164,6 +1164,7 @@ impl InlaySnapshot {
             language_aware,
             highlights.text_highlights,
             highlights.semantic_tokens,
+            highlights.syntax_tokens,
             &self.buffer,
         );
 
@@ -2169,6 +2170,7 @@ mod tests {
             text_highlights: None,
             inlay_highlights: Some(&inlay_highlights),
             semantic_tokens: None,
+            syntax_tokens: None,
             styles: crate::display_map::HighlightStyles::default(),
         };
 
@@ -2285,6 +2287,7 @@ mod tests {
                 text_highlights: None,
                 inlay_highlights: Some(&inlay_highlights),
                 semantic_tokens: None,
+                syntax_tokens: None,
                 styles: crate::display_map::HighlightStyles::default(),
             };
 

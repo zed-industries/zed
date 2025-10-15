@@ -1,26 +1,8 @@
-// Rainbow Highlighting - Complete Implementation
-//
-// This module provides deterministic, hash-based color highlighting for variables
-// to improve code readability. Each variable name gets a consistent color based
-// on a hash of its identifier.
-//
-// ## Architecture
-//
-// Rainbow highlighting exists in two places:
-// 1. LSP Semantic Tokens - Colors variables when LSP provides tokens
-// 2. Tree-sitter Fallback - Colors variables when LSP doesn't provide tokens (especially in closures)
-//
-// This module provides the shared logic for both systems including caching.
-
 use dashmap::DashMap;
 use gpui::{ Hsla, HighlightStyle };
 use theme::SyntaxTheme;
 
 use crate::editor_settings::VariableColorMode;
-
-// ============================================================================
-// Variable Color Cache (Lock-Free, Optimized for Hot Path)
-// ============================================================================
 
 #[derive(Debug)]
 pub struct VariableColorCache {
@@ -96,52 +78,40 @@ impl VariableColorCache {
     }
 }
 
-// ============================================================================
-// Core Hashing Logic
-// ============================================================================
-
 const FNV_OFFSET: u64 = 14695981039346656037;
 const FNV_PRIME: u64 = 1099511628211;
 const GOLDEN_RATIO_MULTIPLIER: u64 = 11400714819323198485u64;
 
-/// FNV-1a hash function for identifier names.
-/// Fast, simple, and provides good distribution for variable names.
 #[inline]
 pub fn hash_identifier(s: &str) -> u64 {
     s.bytes().fold(FNV_OFFSET, |hash, byte| { (hash ^ (byte as u64)).wrapping_mul(FNV_PRIME) })
 }
-
-/// Zero-allocation hash function that works directly on string iterators.
-/// Returns 0 if the identifier is empty or too short (< 2 chars).
-#[inline]
-pub fn hash_identifier_from_iter<'a>(chunks: impl Iterator<Item = &'a str>) -> u64 {
-    let mut hash = FNV_OFFSET;
-    let mut char_count = 0;
+pub fn validate_identifier_for_rainbow(text: &str) -> Option<&str> {
+    let trimmed = text.trim();
     
-    for chunk in chunks {
-        for byte in chunk.bytes() {
-            hash = (hash ^ (byte as u64)).wrapping_mul(FNV_PRIME);
-            char_count += 1;
-        }
+    if trimmed.is_empty() || trimmed.len() > 120 {
+        return None;
+    }
+    let mut chars = trimmed.chars();
+    let first = chars.next()?;
+    
+    if !first.is_alphabetic() && first != '_' {
+        return None;
     }
     
-    // Return 0 for empty or single-char identifiers (not valid for rainbow)
-    if char_count < 2 {
-        0
-    } else {
-        hash
+    if !chars.all(|c| c.is_alphanumeric() || c == '_') {
+        return None;
     }
+    
+    Some(trimmed)
 }
 
-/// Fibonacci hashing to distribute hash values into palette indices.
-/// Provides better distribution than simple modulo.
 #[inline]
 fn fibonacci_hash(hash: u64, palette_size: usize) -> usize {
     let distributed = hash.wrapping_mul(GOLDEN_RATIO_MULTIPLIER);
     (distributed as usize) % palette_size
 }
 
-/// Maps an identifier name to a color palette index (test helper).
 #[inline]
 #[cfg(test)]
 pub fn hash_to_color_index(identifier: &str, palette_size: usize) -> usize {
@@ -149,21 +119,11 @@ pub fn hash_to_color_index(identifier: &str, palette_size: usize) -> usize {
     fibonacci_hash(hash, palette_size)
 }
 
-// ============================================================================
-// Golden Ratio HSL Color Generation
-// ============================================================================
-
-const GOLDEN_RATIO_MULTIPLIER_F64: u64 = 11400714819323198485u64;
-
 #[inline]
 fn hash_to_hue(hash: u64) -> f32 {
-    let distributed = hash.wrapping_mul(GOLDEN_RATIO_MULTIPLIER_F64);
+    let distributed = hash.wrapping_mul(GOLDEN_RATIO_MULTIPLIER);
     (distributed as f32) / (u64::MAX as f32)
 }
-
-// ============================================================================
-// Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {
@@ -253,28 +213,4 @@ mod tests {
         assert_ne!(hash2, hash3, "Different strings should have different hashes");
     }
 
-    #[test]
-    fn test_hash_identifier_from_iter() {
-        // Test that iterator hashing matches string hashing
-        let identifier = "my_variable";
-        let hash_direct = hash_identifier(identifier);
-        
-        // Simulate chunked iteration (as from buffer snapshot)
-        let chunks = vec!["my_", "varia", "ble"];
-        let hash_iter = hash_identifier_from_iter(chunks.into_iter());
-        
-        assert_eq!(hash_direct, hash_iter, "Hash from iterator should match direct hash");
-    }
-
-    #[test]
-    fn test_hash_identifier_from_iter_empty() {
-        let hash = hash_identifier_from_iter(std::iter::empty());
-        assert_eq!(hash, 0, "Empty identifier should return 0");
-    }
-
-    #[test]
-    fn test_hash_identifier_from_iter_too_short() {
-        let hash = hash_identifier_from_iter(vec!["x"].into_iter());
-        assert_eq!(hash, 0, "Single-char identifier should return 0");
-    }
 }
