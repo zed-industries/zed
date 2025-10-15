@@ -231,11 +231,7 @@ impl LspAdapter for GoLspAdapter {
                             .map(|start| start..start + filter_text.len())
                     })
                     .unwrap_or(0..label.len());
-                return Some(CodeLabel {
-                    text,
-                    runs,
-                    filter_range,
-                });
+                return Some(CodeLabel::new(text, filter_range, runs));
             }
             Some((
                 lsp::CompletionItemKind::CONSTANT | lsp::CompletionItemKind::VARIABLE,
@@ -256,11 +252,7 @@ impl LspAdapter for GoLspAdapter {
                             .map(|start| start..start + filter_text.len())
                     })
                     .unwrap_or(0..label.len());
-                return Some(CodeLabel {
-                    text,
-                    runs,
-                    filter_range,
-                });
+                return Some(CodeLabel::new(text, filter_range, runs));
             }
             Some((lsp::CompletionItemKind::STRUCT, _)) => {
                 let text = format!("{label} struct {{}}");
@@ -277,11 +269,7 @@ impl LspAdapter for GoLspAdapter {
                             .map(|start| start..start + filter_text.len())
                     })
                     .unwrap_or(0..label.len());
-                return Some(CodeLabel {
-                    text,
-                    runs,
-                    filter_range,
-                });
+                return Some(CodeLabel::new(text, filter_range, runs));
             }
             Some((lsp::CompletionItemKind::INTERFACE, _)) => {
                 let text = format!("{label} interface {{}}");
@@ -298,11 +286,7 @@ impl LspAdapter for GoLspAdapter {
                             .map(|start| start..start + filter_text.len())
                     })
                     .unwrap_or(0..label.len());
-                return Some(CodeLabel {
-                    text,
-                    runs,
-                    filter_range,
-                });
+                return Some(CodeLabel::new(text, filter_range, runs));
             }
             Some((lsp::CompletionItemKind::FIELD, detail)) => {
                 let text = format!("{label} {detail}");
@@ -320,11 +304,7 @@ impl LspAdapter for GoLspAdapter {
                             .map(|start| start..start + filter_text.len())
                     })
                     .unwrap_or(0..label.len());
-                return Some(CodeLabel {
-                    text,
-                    runs,
-                    filter_range,
-                });
+                return Some(CodeLabel::new(text, filter_range, runs));
             }
             Some((lsp::CompletionItemKind::FUNCTION | lsp::CompletionItemKind::METHOD, detail)) => {
                 if let Some(signature) = detail.strip_prefix("func") {
@@ -342,11 +322,7 @@ impl LspAdapter for GoLspAdapter {
                                 .map(|start| start..start + filter_text.len())
                         })
                         .unwrap_or(0..label.len());
-                    return Some(CodeLabel {
-                        filter_range,
-                        text,
-                        runs,
-                    });
+                    return Some(CodeLabel::new(text, filter_range, runs));
                 }
             }
             _ => {}
@@ -406,11 +382,11 @@ impl LspAdapter for GoLspAdapter {
             _ => return None,
         };
 
-        Some(CodeLabel {
-            runs: language.highlight_text(&text.as_str().into(), display_range.clone()),
-            text: text[display_range].to_string(),
+        Some(CodeLabel::new(
+            text[display_range.clone()].to_string(),
             filter_range,
-        })
+            language.highlight_text(&text.as_str().into(), display_range),
+        ))
     }
 
     fn diagnostic_message_to_markdown(&self, message: &str) -> Option<String> {
@@ -810,15 +786,15 @@ mod tests {
                     &language
                 )
                 .await,
-            Some(CodeLabel {
-                text: "Hello(a B) c.D".to_string(),
-                filter_range: 0..5,
-                runs: vec![
+            Some(CodeLabel::new(
+                "Hello(a B) c.D".to_string(),
+                0..5,
+                vec![
                     (0..5, highlight_function),
                     (8..9, highlight_type),
                     (13..14, highlight_type),
-                ],
-            })
+                ]
+            ))
         );
 
         // Nested methods
@@ -834,15 +810,15 @@ mod tests {
                     &language
                 )
                 .await,
-            Some(CodeLabel {
-                text: "one.two.Three() [3]interface{}".to_string(),
-                filter_range: 0..13,
-                runs: vec![
+            Some(CodeLabel::new(
+                "one.two.Three() [3]interface{}".to_string(),
+                0..13,
+                vec![
                     (8..13, highlight_function),
                     (17..18, highlight_number),
                     (19..28, highlight_keyword),
                 ],
-            })
+            ))
         );
 
         // Nested fields
@@ -858,11 +834,11 @@ mod tests {
                     &language
                 )
                 .await,
-            Some(CodeLabel {
-                text: "two.Three a.Bcd".to_string(),
-                filter_range: 0..9,
-                runs: vec![(4..9, highlight_field), (12..15, highlight_type)],
-            })
+            Some(CodeLabel::new(
+                "two.Three a.Bcd".to_string(),
+                0..9,
+                vec![(4..9, highlight_field), (12..15, highlight_type)],
+            ))
         );
     }
 

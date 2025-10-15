@@ -678,6 +678,7 @@ impl Vim {
                     vim.push_operator(
                         Operator::ChangeSurrounds {
                             target: action.target,
+                            opening: false,
                         },
                         window,
                         cx,
@@ -945,6 +946,7 @@ impl Vim {
                 self.update_editor(cx, |_, editor, cx| {
                     editor.hide_mouse_cursor(HideMouseCursorOrigin::MovementAction, cx)
                 });
+
                 return;
             }
         } else if window.has_pending_keystrokes() || keystroke_event.keystroke.is_ime_in_progress()
@@ -1523,6 +1525,7 @@ impl Vim {
                 post_count
                     .checked_mul(10)
                     .and_then(|post_count| post_count.checked_add(number))
+                    .filter(|post_count| *post_count < isize::MAX as usize)
                     .unwrap_or(post_count),
             )
         } else {
@@ -1532,6 +1535,7 @@ impl Vim {
                 pre_count
                     .checked_mul(10)
                     .and_then(|pre_count| pre_count.checked_add(number))
+                    .filter(|pre_count| *pre_count < isize::MAX as usize)
                     .unwrap_or(pre_count),
             )
         }
@@ -1780,10 +1784,10 @@ impl Vim {
                 }
                 _ => self.clear_operator(window, cx),
             },
-            Some(Operator::ChangeSurrounds { target }) => match self.mode {
+            Some(Operator::ChangeSurrounds { target, opening }) => match self.mode {
                 Mode::Normal => {
                     if let Some(target) = target {
-                        self.change_surrounds(text, target, window, cx);
+                        self.change_surrounds(text, target, opening, window, cx);
                         self.clear_operator(window, cx);
                     }
                 }

@@ -11,6 +11,7 @@ pub enum ShellKind {
     PowerShell,
     Nushell,
     Cmd,
+    Xonsh,
 }
 
 pub fn get_system_shell() -> String {
@@ -165,24 +166,23 @@ impl fmt::Display for ShellKind {
             ShellKind::Nushell => write!(f, "nu"),
             ShellKind::Cmd => write!(f, "cmd"),
             ShellKind::Rc => write!(f, "rc"),
+            ShellKind::Xonsh => write!(f, "xonsh"),
         }
     }
 }
 
 impl ShellKind {
     pub fn system() -> Self {
-        Self::new(&get_system_shell())
+        Self::new(&get_system_shell(), cfg!(windows))
     }
 
-    pub fn new(program: impl AsRef<Path>) -> Self {
+    pub fn new(program: impl AsRef<Path>, is_windows: bool) -> Self {
         let program = program.as_ref();
-        let Some(program) = program.file_stem().and_then(|s| s.to_str()) else {
-            return if cfg!(windows) {
-                ShellKind::PowerShell
-            } else {
-                ShellKind::Posix
-            };
-        };
+        let program = program
+            .file_stem()
+            .unwrap_or_else(|| program.as_os_str())
+            .to_string_lossy();
+
         if program == "powershell" || program == "pwsh" {
             ShellKind::PowerShell
         } else if program == "cmd" {
@@ -197,10 +197,12 @@ impl ShellKind {
             ShellKind::Tcsh
         } else if program == "rc" {
             ShellKind::Rc
+        } else if program == "xonsh" {
+            ShellKind::Xonsh
         } else if program == "sh" || program == "bash" {
             ShellKind::Posix
         } else {
-            if cfg!(windows) {
+            if is_windows {
                 ShellKind::PowerShell
             } else {
                 // Some other shell detected, the user might install and use a
@@ -220,6 +222,7 @@ impl ShellKind {
             Self::Tcsh => input.to_owned(),
             Self::Rc => input.to_owned(),
             Self::Nushell => Self::to_nushell_variable(input),
+            Self::Xonsh => input.to_owned(),
         }
     }
 
@@ -345,7 +348,8 @@ impl ShellKind {
             | ShellKind::Fish
             | ShellKind::Csh
             | ShellKind::Tcsh
-            | ShellKind::Rc => interactive
+            | ShellKind::Rc
+            | ShellKind::Xonsh => interactive
                 .then(|| "-i".to_owned())
                 .into_iter()
                 .chain(["-c".to_owned(), combined_command])
@@ -387,6 +391,7 @@ impl ShellKind {
             ShellKind::Csh => "source",
             ShellKind::Tcsh => "source",
             ShellKind::Posix | ShellKind::Rc => "source",
+            ShellKind::Xonsh => "source",
         }
     }
 

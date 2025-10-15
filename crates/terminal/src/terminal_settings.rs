@@ -31,7 +31,7 @@ pub struct TerminalSettings {
     pub font_weight: Option<FontWeight>,
     pub line_height: TerminalLineHeight,
     pub env: HashMap<String, String>,
-    pub cursor_shape: Option<CursorShape>,
+    pub cursor_shape: CursorShape,
     pub blinking: TerminalBlink,
     pub alternate_scroll: AlternateScroll,
     pub option_as_meta: bool,
@@ -95,7 +95,7 @@ impl settings::Settings for TerminalSettings {
             font_weight: user_content.font_weight.map(FontWeight),
             line_height: user_content.line_height.unwrap(),
             env: project_content.env.unwrap(),
-            cursor_shape: user_content.cursor_shape.map(Into::into),
+            cursor_shape: user_content.cursor_shape.unwrap().into(),
             blinking: user_content.blinking.unwrap(),
             alternate_scroll: user_content.alternate_scroll.unwrap(),
             option_as_meta: user_content.option_as_meta.unwrap(),
@@ -123,9 +123,11 @@ impl settings::Settings for TerminalSettings {
         let name = |s| format!("terminal.integrated.{s}");
 
         vscode.f32_setting(&name("fontSize"), &mut current.font_size);
-        if let Some(font_family) = vscode.read_string(&name("fontFamily")) {
-            current.font_family = Some(FontFamilyName(font_family.into()));
-        }
+        vscode.font_family_setting(
+            &name("fontFamily"),
+            &mut current.font_family,
+            &mut current.font_fallbacks,
+        );
         vscode.bool_setting(&name("copyOnSelection"), &mut current.copy_on_select);
         vscode.bool_setting("macOptionIsMeta", &mut current.option_as_meta);
         vscode.usize_setting("scrollback", &mut current.max_scroll_history_lines);

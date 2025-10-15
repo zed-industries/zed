@@ -39,8 +39,8 @@
       "cmd-+": ["zed::IncreaseBufferFontSize", { "persist": false }],
       "cmd--": ["zed::DecreaseBufferFontSize", { "persist": false }],
       "cmd-0": ["zed::ResetBufferFontSize", { "persist": false }],
-      "cmd-,": "zed::OpenSettingsEditor",
-      "cmd-alt-,": "zed::OpenSettings",
+      "cmd-,": "zed::OpenSettings",
+      "cmd-alt-,": "zed::OpenSettingsFile",
       "cmd-q": "zed::Quit",
       "cmd-h": "zed::Hide",
       "alt-cmd-h": "zed::HideOthers",
@@ -690,7 +690,7 @@
       "cmd-shift-f": "pane::DeploySearch",
       "cmd-shift-h": ["pane::DeploySearch", { "replace_enabled": true }],
       "cmd-shift-t": "pane::ReopenClosedItem",
-      "cmd-k cmd-s": "zed::OpenKeymapEditor",
+      "cmd-k cmd-s": "zed::OpenKeymap",
       "cmd-k cmd-t": "theme_selector::Toggle",
       "ctrl-alt-cmd-p": "settings_profile_selector::Toggle",
       "cmd-t": "project_symbols::Toggle",
@@ -1334,10 +1334,7 @@
     "context": "Onboarding",
     "use_key_equivalents": true,
     "bindings": {
-      "cmd-1": "onboarding::ActivateBasicsPage",
-      "cmd-2": "onboarding::ActivateEditingPage",
-      "cmd-3": "onboarding::ActivateAISetupPage",
-      "cmd-escape": "onboarding::Finish",
+      "cmd-enter": "onboarding::Finish",
       "alt-tab": "onboarding::SignIn",
       "alt-shift-a": "onboarding::OpenAccount"
     }
@@ -1357,6 +1354,7 @@
       "escape": "workspace::CloseWindow",
       "cmd-m": "settings_editor::Minimize",
       "cmd-f": "search::FocusSearch",
+      "left": "settings_editor::ToggleFocusNav",
       "cmd-shift-e": "settings_editor::ToggleFocusNav",
       // todo(settings_ui): cut this down based on the max files and overflow UI
       "ctrl-1": ["settings_editor::FocusFile", 0],
@@ -1371,6 +1369,20 @@
       "ctrl-0": ["settings_editor::FocusFile", 9],
       "cmd-{": "settings_editor::FocusPreviousFile",
       "cmd-}": "settings_editor::FocusNextFile"
+    }
+  },
+  {
+    "context": "SettingsWindow > NavigationMenu",
+    "use_key_equivalents": true,
+    "bindings": {
+      "up": "settings_editor::FocusPreviousNavEntry",
+      "down": "settings_editor::FocusNextNavEntry",
+      "right": "settings_editor::ExpandNavEntry",
+      "left": "settings_editor::CollapseNavEntry",
+      "pageup": "settings_editor::FocusPreviousRootNavEntry",
+      "pagedown": "settings_editor::FocusNextRootNavEntry",
+      "home": "settings_editor::FocusFirstNavEntry",
+      "end": "settings_editor::FocusLastNavEntry"
     }
   }
 ]

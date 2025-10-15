@@ -731,9 +731,11 @@ impl settings::Settings for ThemeSettings {
     fn import_from_vscode(vscode: &settings::VsCodeSettings, current: &mut SettingsContent) {
         vscode.from_f32_setting("editor.fontWeight", &mut current.theme.buffer_font_weight);
         vscode.from_f32_setting("editor.fontSize", &mut current.theme.buffer_font_size);
-        if let Some(font) = vscode.read_string("editor.font") {
-            current.theme.buffer_font_family = Some(FontFamilyName(font.into()));
-        }
+        vscode.font_family_setting(
+            "editor.fontFamily",
+            &mut current.theme.buffer_font_family,
+            &mut current.theme.buffer_font_fallbacks,
+        )
         // TODO: possibly map editor.fontLigatures to buffer_font_features?
     }
 }

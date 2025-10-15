@@ -77,7 +77,7 @@ Other built-in language servers are:
 
 These are disabled by default, but can be enabled in your settings. For example:
 
-```json
+```json [settings]
 {
   "languages": {
     "Python": {
@@ -123,12 +123,12 @@ For example, in order to:
 
 You can use the following configuration:
 
-```json
+```json [settings]
 {
   "lsp": {
     "basedpyright": {
       "settings": {
-        "basedpyright.analysis": {
+        "analysis": {
           "diagnosticMode": "workspace",
           "inlayHints.callArgumentNames": false
         }
@@ -144,7 +144,7 @@ basedpyright reads project-specific configuration from the `pyrightconfig.json` 
 
 Here's an example `pyrightconfig.json` file that configures basedpyright to use the `strict` type-checking mode and not to issue diagnostics for any files in `__pycache__` directories:
 
-```json
+```json [settings]
 {
   "typeCheckingMode": "strict",
   "ignore": ["**/__pycache__"]
@@ -194,7 +194,7 @@ Zed provides the [Ruff](https://docs.astral.sh/ruff/) formatter and linter for P
 
 You can disable format-on-save for Python files in your `settings.json`:
 
-```json
+```json [settings]
 {
   "languages": {
     "Python": {
@@ -206,7 +206,7 @@ You can disable format-on-save for Python files in your `settings.json`:
 
 Alternatively, you can use the `black` command-line tool for Python formatting, while keeping Ruff enabled for linting:
 
-```json
+```json [settings]
 {
   "languages": {
     "Python": {
@@ -228,7 +228,7 @@ Like basedpyright, Ruff reads options from both Zed's language server settings a
 
 Here's an example of using language server settings in Zed's `settings.json` to disable all Ruff lints in Zed (while still using Ruff as a formatter):
 
-```json
+```json [settings]
 {
   "lsp": {
     "ruff": {
@@ -277,7 +277,7 @@ For reusable setups, create a `.zed/debug.json` file in your project root. This 
 
 #### Debug Active File
 
-```json
+```json [debug]
 [
   {
     "label": "Python Active File",
@@ -309,7 +309,7 @@ requirements.txt
 
 …the following configuration can be used:
 
-```json
+```json [debug]
 [
   {
     "label": "Python: Flask",
