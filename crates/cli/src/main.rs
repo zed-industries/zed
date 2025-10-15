@@ -71,7 +71,10 @@ struct Args {
     /// This overrides the default platform-specific data directory location:
     #[cfg_attr(target_os = "macos", doc = "`~/Library/Application Support/Zed`.")]
     #[cfg_attr(target_os = "windows", doc = "`%LOCALAPPDATA%\\Zed`.")]
-    #[cfg_attr(not(any(target_os = "windows", target_os = "macos")), doc="`$XDG_DATA_HOME/zed`.")]
+    #[cfg_attr(
+        not(any(target_os = "windows", target_os = "macos")),
+        doc = "`$XDG_DATA_HOME/zed`."
+    )]
     #[arg(long, value_name = "DIR")]
     user_data_dir: Option<String>,
     /// The paths to open in Zed (space-separated).
