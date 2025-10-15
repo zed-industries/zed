@@ -4936,6 +4936,7 @@ dependencies = [
  "editor",
  "gpui",
  "indoc",
+ "itertools 0.14.0",
  "language",
  "log",
  "lsp",
