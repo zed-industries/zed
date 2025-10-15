@@ -222,7 +222,7 @@ members = [
 
     "tooling/perf",
     "tooling/workspace-hack",
-    "tooling/xtask", "crates/fs_benchmarks",
+    "tooling/xtask", "crates/fs_benchmarks", "crates/worktree_benchmarks",
 ]
 default-members = ["crates/zed"]
 
