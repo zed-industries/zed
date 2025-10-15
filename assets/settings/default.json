@@ -2062,6 +2062,31 @@
   // }
   "profiles": {},
 
+  // Workspace-specific settings profiles that are automatically applied
+  // when opening a workspace whose path matches the profile's path pattern.
+  //
+  // Supports:
+  // - Exact paths: "/home/user/project"
+  // - Tilde expansion: "~/Development/app"
+  // - Glob patterns: "~/work/*" or "/projects/client-*"
+  //
+  // When multiple workspace_profiles match, the most specific match is used.
+  //
+  // Example:
+  // "workspace_profiles": {
+  //   "work_project": {
+  //     "path": "~/work/client-project",
+  //     "theme": "One Dark",
+  //     "buffer_font_size": 16
+  //   },
+  //   "personal": {
+  //     "path": "~/personal/*",
+  //     "theme": "Solarized Light",
+  //     "ui_font_size": 14
+  //   }
+  // }
+  "workspace_profiles": {},
+
   // A map of log scopes to the desired log level.
   // Useful for filtering out noisy logs or enabling more verbose logging.
   //
