@@ -3,10 +3,7 @@ mod worktree_settings;
 #[cfg(test)]
 mod worktree_tests;
 
-use ::ignore::{
-    DirEntry,
-    gitignore::{Gitignore, GitignoreBuilder},
-};
+use ::ignore::gitignore::{Gitignore, GitignoreBuilder};
 use anyhow::{Context as _, Result, anyhow};
 use clock::ReplicaId;
 use collections::{HashMap, HashSet, VecDeque};
@@ -4182,13 +4179,13 @@ impl BackgroundScanner {
         swap_to_front(&mut child_paths, DOT_GIT);
 
         if let Some(path) = child_paths.first()
-            && path.path().ends_with(DOT_GIT)
+            && path.ends_with(DOT_GIT)
         {
             ignore_stack.repo_root = Some(job.abs_path.clone());
         }
 
-        for mut child in child_paths {
-            let child_abs_path: Arc<Path> = child.path().clone();
+        for child_abs_path in child_paths {
+            let child_abs_path: Arc<Path> = child_abs_path.into();
             let child_name = child_abs_path.file_name().unwrap();
             let Some(child_path) = child_name
                 .to_str()
@@ -4229,8 +4226,9 @@ impl BackgroundScanner {
                 continue;
             }
 
-            let child_metadata = match child.metadata().await {
-                Ok(metadata) => metadata,
+            let child_metadata = match self.fs.metadata(&child_abs_path).await {
+                Ok(Some(metadata)) => metadata,
+                Ok(None) => continue,
                 Err(err) => {
                     log::error!("error processing {child_abs_path:?}: {err:?}");
                     continue;
@@ -5007,10 +5005,10 @@ fn build_diff(
     changes.into()
 }
 
-fn swap_to_front(child_paths: &mut Vec<fs::DirEntry>, file: &str) {
+fn swap_to_front(child_paths: &mut Vec<PathBuf>, file: &str) {
     let position = child_paths
         .iter()
-        .position(|path| path.path().file_name().unwrap() == file);
+        .position(|path| path.file_name().unwrap() == file);
     if let Some(position) = position {
         let temp = child_paths.remove(position);
         child_paths.insert(0, temp);

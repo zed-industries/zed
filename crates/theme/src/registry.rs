@@ -220,7 +220,7 @@ impl ThemeRegistry {
                 continue;
             };
 
-            self.load_user_theme(&theme_path.path(), fs.clone())
+            self.load_user_theme(&theme_path, fs.clone())
                 .await
                 .log_err();
         }
