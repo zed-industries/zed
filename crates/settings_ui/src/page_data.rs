@@ -1723,7 +1723,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         title: language_name,
                         files: USER | LOCAL,
                         render: Arc::new(|this, window, cx| {
-                            this.render_page_items(
+                            this.render_sub_page_items(
                                 language_settings_data()
                                     .iter()
                                     .chain(non_editor_language_settings_data().iter())
