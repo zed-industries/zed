@@ -1884,7 +1884,7 @@ mod tests {
             .unwrap_err();
 
         window_handle
-            .update(cx, |_, window, cx| {
+            .update(cx, |_, _, cx| {
                 terminal_panel.update(cx, |terminal_panel, cx| {
                     assert!(
                         terminal_panel
