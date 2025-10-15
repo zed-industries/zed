@@ -1786,7 +1786,7 @@ impl Editor {
 
     fn new_internal(
         mode: EditorMode,
-        buffer: Entity<MultiBuffer>,
+        multi_buffer: Entity<MultiBuffer>,
         project: Option<Entity<Project>>,
         display_map: Option<Entity<DisplayMap>>,
         window: &mut Window,
@@ -1844,7 +1844,7 @@ impl Editor {
         let display_map = display_map.unwrap_or_else(|| {
             cx.new(|cx| {
                 DisplayMap::new(
-                    buffer.clone(),
+                    multi_buffer.clone(),
                     style.font(),
                     font_size,
                     None,
@@ -1857,7 +1857,7 @@ impl Editor {
             })
         });
 
-        let selections = SelectionsCollection::new(display_map.clone(), buffer.clone());
+        let selections = SelectionsCollection::new(display_map.clone(), multi_buffer.clone());
 
         let blink_manager = cx.new(|cx| {
             let mut blink_manager = BlinkManager::new(CURSOR_BLINK_INTERVAL, cx);
@@ -1909,11 +1909,14 @@ impl Editor {
                         }
                     }
                     project::Event::LanguageServerBufferRegistered { buffer_id, .. } => {
-                        // TODO kb also insert the registration key
-                        if editor.buffer().read(cx).buffer(*buffer_id).is_some() {
-                            editor.update_lsp_data(Some(*buffer_id), window, cx);
+                        let buffer_id = *buffer_id;
+                        if editor.buffer().read(cx).buffer(buffer_id).is_some() {
+                            editor.register_buffer(buffer_id, cx);
+                            editor.update_lsp_data(Some(buffer_id), window, cx);
                             editor
                                 .refresh_inlay_hints(InlayHintRefreshReason::RefreshRequested, cx);
+                            editor.refresh_code_actions(window, cx);
+                            editor.refresh_document_highlights(cx);
                         }
                     }
 
@@ -2032,7 +2035,7 @@ impl Editor {
             }));
         }
 
-        let buffer_snapshot = buffer.read(cx).snapshot(cx);
+        let buffer_snapshot = multi_buffer.read(cx).snapshot(cx);
 
         let inlay_hint_settings =
             inlay_hint_settings(selections.newest_anchor().head(), &buffer_snapshot, cx);
@@ -2069,8 +2072,8 @@ impl Editor {
                 update_uncommitted_diff_for_buffer(
                     cx.entity(),
                     &project,
-                    buffer.read(cx).all_buffers(),
-                    buffer.clone(),
+                    multi_buffer.read(cx).all_buffers(),
+                    multi_buffer.clone(),
                     cx,
                 )
                 .shared(),
@@ -2082,7 +2085,7 @@ impl Editor {
             focus_handle,
             show_cursor_when_unfocused: false,
             last_focused_descendant: None,
-            buffer: buffer.clone(),
+            buffer: multi_buffer.clone(),
             display_map: display_map.clone(),
             placeholder_display_map: None,
             selections,
@@ -2224,8 +2227,8 @@ impl Editor {
             _subscriptions: (!is_minimap)
                 .then(|| {
                     vec![
-                        cx.observe(&buffer, Self::on_buffer_changed),
-                        cx.subscribe_in(&buffer, window, Self::on_buffer_event),
+                        cx.observe(&multi_buffer, Self::on_buffer_changed),
+                        cx.subscribe_in(&multi_buffer, window, Self::on_buffer_event),
                         cx.observe_in(&display_map, window, Self::on_display_map_changed),
                         cx.observe(&blink_manager, |_, _, cx| cx.notify()),
                         cx.observe_global_in::<SettingsStore>(window, Self::settings_changed),
@@ -2373,7 +2376,7 @@ impl Editor {
         editor.selection_history.mode = SelectionHistoryMode::Normal;
 
         editor.scroll_manager.show_scrollbars(window, cx);
-        jsx_tag_auto_close::refresh_enabled_in_any_buffer(&mut editor, &buffer, cx);
+        jsx_tag_auto_close::refresh_enabled_in_any_buffer(&mut editor, &multi_buffer, cx);
 
         if full_mode {
             let should_auto_hide_scrollbars = cx.should_auto_hide_scrollbars();
@@ -2385,15 +2388,8 @@ impl Editor {
 
             editor.go_to_active_debug_line(window, cx);
 
-            if let Some(buffer) = buffer.read(cx).as_singleton()
-                && let Some(project) = editor.project()
-            {
-                let handle = project.update(cx, |project, cx| {
-                    project.register_buffer_with_language_servers(&buffer, cx)
-                });
-                editor
-                    .registered_buffers
-                    .insert(buffer.read(cx).remote_id(), handle);
+            if let Some(buffer) = multi_buffer.read(cx).as_singleton() {
+                editor.register_buffer(buffer.read(cx).remote_id(), cx);
             }
 
             editor.minimap =
@@ -2901,20 +2897,6 @@ impl Editor {
         self.collapse_matches = collapse_matches;
     }
 
-    fn register_buffers_with_language_servers(&mut self, cx: &mut Context<Self>) {
-        let buffers = self.buffer.read(cx).all_buffers();
-        let Some(project) = self.project.as_ref() else {
-            return;
-        };
-        project.update(cx, |project, cx| {
-            for buffer in buffers {
-                self.registered_buffers
-                    .entry(buffer.read(cx).remote_id())
-                    .or_insert_with(|| project.register_buffer_with_language_servers(&buffer, cx));
-            }
-        })
-    }
-
     pub fn range_for_match<T: std::marker::Copy>(&self, range: &Range<T>) -> Range<T> {
         if self.collapse_matches {
             return range.start..range.start;
@@ -3114,19 +3096,8 @@ impl Editor {
         }
 
         if local {
-            if let Some(buffer_id) = new_cursor_position.buffer_id
-                && !self.registered_buffers.contains_key(&buffer_id)
-                && let Some(project) = self.project.as_ref()
-            {
-                project.update(cx, |project, cx| {
-                    let Some(buffer) = self.buffer.read(cx).buffer(buffer_id) else {
-                        return;
-                    };
-                    self.registered_buffers.insert(
-                        buffer_id,
-                        project.register_buffer_with_language_servers(&buffer, cx),
-                    );
-                })
+            if let Some(buffer_id) = new_cursor_position.buffer_id {
+                self.register_buffer(buffer_id, cx);
             }
 
             let mut context_menu = self.context_menu.borrow_mut();
@@ -3174,8 +3145,6 @@ impl Editor {
             {
                 self.available_code_actions.take();
             }
-            // TODO kb those 3, should they also be part of `update_lsp_data`
-            // OR, rather, moved to scroll change handler?
             self.refresh_code_actions(window, cx);
             self.refresh_document_highlights(cx);
             refresh_linked_ranges(self, window, cx);
@@ -16963,40 +16932,31 @@ impl Editor {
                 editor
             })
         });
-        editor.update(cx, |editor, cx| {
-            match multibuffer_selection_mode {
-                MultibufferSelectionMode::First => {
-                    if let Some(first_range) = ranges.first() {
-                        editor.change_selections(
-                            SelectionEffects::no_scroll(),
-                            window,
-                            cx,
-                            |selections| {
-                                selections.clear_disjoint();
-                                selections
-                                    .select_anchor_ranges(std::iter::once(first_range.clone()));
-                            },
-                        );
-                    }
-                    editor.highlight_background::<Self>(
-                        &ranges,
-                        |theme| theme.colors().editor_highlighted_line_background,
-                        cx,
-                    );
-                }
-                MultibufferSelectionMode::All => {
+        editor.update(cx, |editor, cx| match multibuffer_selection_mode {
+            MultibufferSelectionMode::First => {
+                if let Some(first_range) = ranges.first() {
                     editor.change_selections(
                         SelectionEffects::no_scroll(),
                         window,
                         cx,
                         |selections| {
                             selections.clear_disjoint();
-                            selections.select_anchor_ranges(ranges);
+                            selections.select_anchor_ranges(std::iter::once(first_range.clone()));
                         },
                     );
                 }
+                editor.highlight_background::<Self>(
+                    &ranges,
+                    |theme| theme.colors().editor_highlighted_line_background,
+                    cx,
+                );
             }
-            editor.register_buffers_with_language_servers(cx);
+            MultibufferSelectionMode::All => {
+                editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+                    selections.clear_disjoint();
+                    selections.select_anchor_ranges(ranges);
+                });
+            }
         });
 
         let item = Box::new(editor);
@@ -17843,7 +17803,7 @@ impl Editor {
         window: &Window,
         cx: &mut Context<Self>,
     ) -> Option<()> {
-        if !self.mode().is_full() {
+        if self.ignore_lsp_data() {
             return None;
         }
         let pull_diagnostics_settings = ProjectSettings::get_global(cx)
@@ -20870,16 +20830,10 @@ impl Editor {
                         cx.emit(EditorEvent::TitleChanged);
                     }
 
+                    let buffer_id = edited_buffer.read(cx).remote_id();
                     if let Some(project) = self.project.clone() {
-                        project.update(cx, |project, cx| {
-                            self.registered_buffers
-                                .entry(edited_buffer.read(cx).remote_id())
-                                .or_insert_with(|| {
-                                    project.register_buffer_with_language_servers(edited_buffer, cx)
-                                });
-                        });
-
-                        self.update_lsp_data(Some(edited_buffer.read(cx).remote_id()), window, cx);
+                        self.register_buffer(buffer_id, cx);
+                        self.update_lsp_data(Some(buffer_id), window, cx);
                         #[allow(clippy::mutable_key_type)]
                         let languages_affected = multibuffer.update(cx, |multibuffer, cx| {
                             multibuffer
@@ -20950,9 +20904,9 @@ impl Editor {
                 removed_buffer_ids,
             } => {
                 self.refresh_inlay_hints(InlayHintRefreshReason::ExcerptsRemoved(ids.clone()), cx);
-                let buffer = self.buffer.read(cx);
-                self.registered_buffers
-                    .retain(|buffer_id, _| buffer.buffer(*buffer_id).is_some());
+                for buffer_id in removed_buffer_ids {
+                    self.registered_buffers.remove(buffer_id);
+                }
                 jsx_tag_auto_close::refresh_enabled_in_any_buffer(self, multibuffer, cx);
                 cx.emit(EditorEvent::ExcerptsRemoved {
                     ids: ids.clone(),
@@ -20984,7 +20938,7 @@ impl Editor {
                 self.tasks_update_task = Some(self.refresh_runnables(window, cx));
             }
             multi_buffer::Event::LanguageChanged(buffer_id) => {
-                // TODO kb invalidate server registrations? refresh lsp data?
+                self.registered_buffers.remove(&buffer_id);
                 jsx_tag_auto_close::refresh_enabled_in_any_buffer(self, multibuffer, cx);
                 cx.emit(EditorEvent::Reparsed(*buffer_id));
                 cx.notify();
@@ -22042,14 +21996,42 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        // `ActiveDiagnostic::All` is a special mode where editor's diagnostics are managed by the external view,
-        // skip any LSP updates for it.
-        if self.active_diagnostics == ActiveDiagnostic::All {
-            return;
-        }
         self.pull_diagnostics(for_buffer, window, cx);
         self.refresh_colors(for_buffer, window, cx);
         refresh_linked_ranges(self, window, cx);
+    }
+
+    fn register_visible_buffers(&mut self, cx: &mut Context<Self>) {
+        // Singletons are registered on editor creation.
+        if self.ignore_lsp_data() || self.buffer().read(cx).is_singleton() {
+            return;
+        }
+        for (_, (visible_buffer, _, _)) in self.visible_excerpts(None, cx) {
+            self.register_buffer(visible_buffer.read(cx).remote_id(), cx);
+        }
+    }
+
+    fn register_buffer(&mut self, buffer_id: BufferId, cx: &mut Context<Self>) {
+        if !self.registered_buffers.contains_key(&buffer_id)
+            && let Some(project) = self.project.as_ref()
+        {
+            let Some(buffer) = self.buffer.read(cx).buffer(buffer_id) else {
+                self.registered_buffers.remove(&buffer_id);
+                return;
+            };
+            project.update(cx, |project, cx| {
+                self.registered_buffers.insert(
+                    buffer_id,
+                    project.register_buffer_with_language_servers(&buffer, cx),
+                );
+            })
+        }
+    }
+
+    fn ignore_lsp_data(&self) -> bool {
+        // `ActiveDiagnostic::All` is a special mode where editor's diagnostics are managed by the external view,
+        // skip any LSP updates for it.
+        self.active_diagnostics == ActiveDiagnostic::All || !self.mode().is_full()
     }
 }
 

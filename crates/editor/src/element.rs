@@ -8551,11 +8551,7 @@ impl Element for EditorElement {
                     snapshot = self.editor.update(cx, |editor, cx| {
                         editor.last_bounds = Some(bounds);
                         editor.gutter_dimensions = gutter_dimensions;
-                        editor.set_visible_line_count(
-                            (bounds.size.height / line_height) as f64,
-                            window,
-                            cx,
-                        );
+                        editor.set_visible_line_count((bounds.size.height / line_height) as f64);
                         editor.set_visible_column_count(f64::from(editor_width / em_advance));
 
                         if matches!(

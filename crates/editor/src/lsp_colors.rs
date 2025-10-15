@@ -149,7 +149,7 @@ impl Editor {
         _: &Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.mode().is_full() {
+        if self.ignore_lsp_data() {
             return;
         }
         let Some(project) = self.project.clone() else {
