@@ -20905,6 +20905,7 @@ dependencies = [
  "fs",
  "gpui",
  "settings",
+ "workspace-hack",
  "worktree",
 ]
 
