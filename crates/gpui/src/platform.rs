@@ -1349,8 +1349,8 @@ pub enum WindowKind {
     #[cfg(all(target_os = "linux", feature = "wayland"))]
     LayerShell(layer_shell::LayerShellOptions),
 
-    /// A window that appears on top of its parent window. Unlike Floating windows, when
-    /// the parent is closed, this window is closed as well.
+    /// A window that appears on top of its parent window and blocks interaction with it
+    /// until the modal window is closed
     Dialog,
 }
 
