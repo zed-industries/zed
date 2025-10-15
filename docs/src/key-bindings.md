@@ -24,6 +24,7 @@ For more information, see the documentation for [Vim mode](./vim.md) and [Helix 
 ## User keymaps
 
 Where Zed looks for your keymap:
+
 - macOS/Linux: `~/.config/zed/keymap.json`
 - Windows: `~\AppData\Roaming\Zed/keymap.json`
 
