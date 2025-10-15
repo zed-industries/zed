@@ -12,7 +12,6 @@ use gpui::App;
 use gpui::BackgroundExecutor;
 use gpui::Global;
 use gpui::ReadGlobal as _;
-use smol::stream::StreamExt;
 use std::borrow::Cow;
 use util::command::new_smol_command;
 
@@ -182,7 +181,10 @@ impl DirEntry {
                 .await;
             let is_symlink = meta.as_ref().ok().is_some_and(|meta| meta.is_symlink());
             let payload = match meta {
-                Ok(meta) => RealFs::std_meta_to_zed_metadata(&self.path, meta, is_symlink).await,
+                Ok(meta) => {
+                    RealFs::std_meta_to_zed_metadata(&self.executor, &self.path, meta, is_symlink)
+                        .await
+                }
                 Err(e) => Err(e.into()),
             };
             self.payload = DirEntryPayload::Metadata(payload);
@@ -379,6 +381,7 @@ impl RealFs {
         }
     }
     async fn std_meta_to_zed_metadata(
+        _executor: &BackgroundExecutor,
         _path: &Path,
         metadata: std::fs::Metadata,
         is_symlink: bool,
@@ -387,7 +390,7 @@ impl RealFs {
         let inode = metadata.ino();
 
         #[cfg(windows)]
-        let inode = file_id(_path).await?;
+        let inode = file_id(_executor, _path).await?;
 
         #[cfg(windows)]
         let is_fifo = false;
@@ -784,7 +787,7 @@ impl Fs for RealFs {
         } else {
             symlink_metadata
         };
-        Self::std_meta_to_zed_metadata(path, metadata, is_symlink)
+        Self::std_meta_to_zed_metadata(&self.executor, path, metadata, is_symlink)
             .await
             .map(Some)
     }
@@ -802,6 +805,7 @@ impl Fs for RealFs {
         &self,
         path: &Path,
     ) -> Result<Pin<Box<dyn Send + Stream<Item = Result<DirEntry>>>>> {
+        use smol::stream::StreamExt;
         let path = path.to_owned();
 
         let executor = self.executor.clone();
@@ -917,7 +921,7 @@ impl Fs for RealFs {
                 watcher.add(parent).log_err();
             }
         }
-
+        use futures::StreamExt;
         (
             Box::pin(rx.filter_map({
                 let watcher = watcher.clone();
@@ -2700,6 +2704,7 @@ fn read_recursive<'a>(
             .with_context(|| format!("path does not exist: {source:?}"))?;
 
         if metadata.is_dir {
+            use futures::StreamExt;
             output.push((source.to_path_buf(), true));
             let mut children = fs.read_dir(source).await?;
             while let Some(child_path) = children.next().await {
