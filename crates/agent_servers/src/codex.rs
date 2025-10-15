@@ -1,11 +1,16 @@
 use std::rc::Rc;
+use std::sync::Arc;
 use std::{any::Any, path::Path};
 
-use crate::{AgentServer, AgentServerDelegate, load_proxy_env};
 use acp_thread::AgentConnection;
+use agent_client_protocol as acp;
 use anyhow::{Context as _, Result};
-use gpui::{App, SharedString, Task};
-use project::agent_server_store::CODEX_NAME;
+use fs::Fs;
+use gpui::{App, AppContext as _, SharedString, Task};
+use project::agent_server_store::{AllAgentServersSettings, CODEX_NAME};
+use settings::{SettingsStore, update_settings_file};
+
+use crate::{AgentServer, AgentServerDelegate, load_proxy_env};
 
 #[derive(Clone)]
 pub struct Codex;
@@ -28,6 +33,27 @@ impl AgentServer for Codex {
 
     fn logo(&self) -> ui::IconName {
         ui::IconName::AiOpenAi
+    }
+
+    fn default_mode(&self, cx: &mut App) -> Option<acp::SessionModeId> {
+        let settings = cx.read_global(|settings: &SettingsStore, _| {
+            settings.get::<AllAgentServersSettings>(None).codex.clone()
+        });
+
+        settings
+            .as_ref()
+            .and_then(|s| s.default_mode.clone().map(|m| acp::SessionModeId(m.into())))
+    }
+
+    fn set_default_mode(&self, mode_id: Option<acp::SessionModeId>, fs: Arc<dyn Fs>, cx: &mut App) {
+        update_settings_file(fs, cx, |settings, _| {
+            settings
+                .agent_servers
+                .get_or_insert_default()
+                .codex
+                .get_or_insert_default()
+                .default_mode = mode_id.map(|m| m.to_string())
+        });
     }
 
     fn connect(
