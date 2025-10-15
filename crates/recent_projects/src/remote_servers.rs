@@ -1385,14 +1385,21 @@ impl RemoteServerProjects {
         cx: &mut Context<Self>,
     ) {
         self.update_settings_file(cx, move |setting, _| {
-            setting
-                .wsl_connections
-                .get_or_insert(Default::default())
-                .push(settings::WslConnection {
-                    distro_name: SharedString::from(connection_options.distro_name),
-                    user: connection_options.user,
+            let connections = setting.wsl_connections.get_or_insert(Default::default());
+
+            let distro_name = SharedString::from(connection_options.distro_name);
+            let user = connection_options.user;
+
+            if !connections
+                .iter()
+                .any(|conn| conn.distro_name == distro_name && conn.user == user)
+            {
+                connections.push(settings::WslConnection {
+                    distro_name,
+                    user,
                     projects: BTreeSet::new(),
                 })
+            }
         });
     }
 
