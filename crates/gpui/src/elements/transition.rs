@@ -167,7 +167,7 @@ pub struct TransitionElement<'a, E, T: TransitionValues<'a>> {
     animator: Box<dyn Fn(&mut App, E, T::Values) -> E + 'a>,
 }
 
-impl<E: IntoElement + 'static, T: TransitionValues<'static> + Clone + 'static> AnimatableExt
+impl<E: IntoElement + 'static, T: TransitionValues<'static> + 'static> AnimatableExt
     for TransitionElement<'static, E, T>
 {
     type Element = E;
