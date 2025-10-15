@@ -1,4 +1,4 @@
-use gpui::{Corner, Entity, Pixels, Point};
+use gpui::{AnyView, Corner, Entity, Pixels, Point};
 
 use crate::{ButtonLike, ContextMenu, PopoverMenu, prelude::*};
 
@@ -9,6 +9,7 @@ pub enum DropdownStyle {
     #[default]
     Solid,
     Outlined,
+    Subtle,
     Ghost,
 }
 
@@ -22,6 +23,8 @@ pub struct DropdownMenu {
     id: ElementId,
     label: LabelKind,
     trigger_size: ButtonSize,
+    trigger_tooltip: Option<Box<dyn Fn(&mut Window, &mut App) -> AnyView + 'static>>,
+    trigger_icon: Option<IconName>,
     style: DropdownStyle,
     menu: Entity<ContextMenu>,
     full_width: bool,
@@ -43,6 +46,8 @@ impl DropdownMenu {
             id: id.into(),
             label: LabelKind::Text(label.into()),
             trigger_size: ButtonSize::Default,
+            trigger_tooltip: None,
+            trigger_icon: Some(IconName::ChevronUpDown),
             style: DropdownStyle::default(),
             menu,
             full_width: false,
@@ -64,6 +69,8 @@ impl DropdownMenu {
             id: id.into(),
             label: LabelKind::Element(label),
             trigger_size: ButtonSize::Default,
+            trigger_tooltip: None,
+            trigger_icon: Some(IconName::ChevronUpDown),
             style: DropdownStyle::default(),
             menu,
             full_width: false,
@@ -76,13 +83,26 @@ impl DropdownMenu {
         }
     }
 
+    pub fn style(mut self, style: DropdownStyle) -> Self {
+        self.style = style;
+        self
+    }
+
     pub fn trigger_size(mut self, size: ButtonSize) -> Self {
         self.trigger_size = size;
         self
     }
 
-    pub fn style(mut self, style: DropdownStyle) -> Self {
-        self.style = style;
+    pub fn trigger_tooltip(
+        mut self,
+        tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static,
+    ) -> Self {
+        self.trigger_tooltip = Some(Box::new(tooltip));
+        self
+    }
+
+    pub fn trigger_icon(mut self, icon: IconName) -> Self {
+        self.trigger_icon = Some(icon);
         self
     }
 
@@ -130,6 +150,7 @@ impl RenderOnce for DropdownMenu {
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         let button_style = match self.style {
             DropdownStyle::Solid => ButtonStyle::Filled,
+            DropdownStyle::Subtle => ButtonStyle::Subtle,
             DropdownStyle::Outlined => ButtonStyle::Outlined,
             DropdownStyle::Ghost => ButtonStyle::Transparent,
         };
@@ -143,7 +164,7 @@ impl RenderOnce for DropdownMenu {
                     Button::new(self.id.clone(), text)
                         .style(button_style)
                         .when(self.chevron, |this| {
-                            this.icon(IconName::ChevronUpDown)
+                            this.icon(self.trigger_icon)
                                 .icon_position(IconPosition::End)
                                 .icon_size(IconSize::XSmall)
                                 .icon_color(Color::Muted)
@@ -176,13 +197,23 @@ impl RenderOnce for DropdownMenu {
             ),
         };
 
-        PopoverMenu::new((self.id.clone(), "popover"))
+        let mut popover = PopoverMenu::new((self.id.clone(), "popover"))
             .full_width(self.full_width)
-            .menu(move |_window, _cx| Some(self.menu.clone()))
-            .when_some(text_button, |this, text_button| this.trigger(text_button))
-            .when_some(element_button, |this, element_button| {
-                this.trigger(element_button)
-            })
+            .menu(move |_window, _cx| Some(self.menu.clone()));
+
+        popover = match (text_button, element_button, self.trigger_tooltip) {
+            (Some(text_button), None, Some(tooltip)) => {
+                popover.trigger_with_tooltip(text_button, tooltip)
+            }
+            (Some(text_button), None, None) => popover.trigger(text_button),
+            (None, Some(element_button), Some(tooltip)) => {
+                popover.trigger_with_tooltip(element_button, tooltip)
+            }
+            (None, Some(element_button), None) => popover.trigger(element_button),
+            _ => popover,
+        };
+
+        popover
             .attach(match self.attach {
                 Some(attach) => attach,
                 None => Corner::BottomRight,
