@@ -57,29 +57,65 @@ impl RustLspAdapter {
 
 const SERVER_NAME: LanguageServerName = LanguageServerName::new_static("rust-analyzer");
 
+#[cfg(target_os = "linux")]
+enum LibcType {
+    Gnu,
+    Musl,
+}
+
 impl RustLspAdapter {
     #[cfg(target_os = "linux")]
-    fn build_arch_server_name_linux() -> String {
-        enum LibcType {
-            Gnu,
-            Musl,
+    async fn determine_libc_type() -> LibcType {
+        use futures::pin_mut;
+        use smol::process::Command;
+
+        async fn from_ldd_version() -> Option<LibcType> {
+            let ldd_output = Command::new("ldd").arg("--version").output().await.ok()?;
+            let ldd_version = String::from_utf8_lossy(&ldd_output.stdout);
+
+            if ldd_version.contains("GNU libc") || ldd_version.contains("GLIBC") {
+                Some(LibcType::Gnu)
+            } else if ldd_version.contains("musl") {
+                Some(LibcType::Musl)
+            } else {
+                None
+            }
         }
 
-        let has_musl = std::fs::exists(&format!("/lib/ld-musl-{}.so.1", std::env::consts::ARCH))
-            .unwrap_or(false);
-        let has_gnu = std::fs::exists(&format!("/lib/ld-linux-{}.so.1", std::env::consts::ARCH))
-            .unwrap_or(false);
+        if let Some(libc_type) = from_ldd_version().await {
+            return libc_type;
+        }
 
-        let libc_type = match (has_musl, has_gnu) {
+        let Ok(dir_entries) = smol::fs::read_dir("/lib").await else {
+            // defaulting to gnu because nix doesn't have /lib files due to not following FHS
+            return LibcType::Gnu;
+        };
+        let dir_entries = dir_entries.filter_map(async move |e| e.ok());
+        pin_mut!(dir_entries);
+
+        let mut has_musl = false;
+        let mut has_gnu = false;
+
+        while let Some(entry) = dir_entries.next().await {
+            let file_name = entry.file_name();
+            let file_name = file_name.to_string_lossy();
+            if file_name.starts_with("ld-musl-") {
+                has_musl = true;
+            } else if file_name.starts_with("ld-linux-") {
+                has_gnu = true;
+            }
+        }
+
+        match (has_musl, has_gnu) {
             (true, _) => LibcType::Musl,
             (_, true) => LibcType::Gnu,
-            _ => {
-                // defaulting to gnu because nix doesn't have either of those files due to not following FHS
-                LibcType::Gnu
-            }
-        };
+            _ => LibcType::Gnu,
+        }
+    }
 
-        let libc = match libc_type {
+    #[cfg(target_os = "linux")]
+    async fn build_arch_server_name_linux() -> String {
+        let libc = match Self::determine_libc_type().await {
             LibcType::Musl => "musl",
             LibcType::Gnu => "gnu",
         };
@@ -87,7 +123,7 @@ impl RustLspAdapter {
         format!("{}-{}", Self::ARCH_SERVER_NAME, libc)
     }
 
-    fn build_asset_name() -> String {
+    async fn build_asset_name() -> String {
         let extension = match Self::GITHUB_ASSET_KIND {
             AssetKind::TarGz => "tar.gz",
             AssetKind::Gz => "gz",
@@ -95,7 +131,7 @@ impl RustLspAdapter {
         };
 
         #[cfg(target_os = "linux")]
-        let arch_server_name = Self::build_arch_server_name_linux();
+        let arch_server_name = Self::build_arch_server_name_linux().await;
         #[cfg(not(target_os = "linux"))]
         let arch_server_name = Self::ARCH_SERVER_NAME.to_string();
 
@@ -443,7 +479,7 @@ impl LspInstaller for RustLspAdapter {
             delegate.http_client(),
         )
         .await?;
-        let asset_name = Self::build_asset_name();
+        let asset_name = Self::build_asset_name().await;
         let asset = release
             .assets
             .into_iter()
