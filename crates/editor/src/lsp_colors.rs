@@ -2,7 +2,7 @@ use std::{cmp, ops::Range};
 
 use collections::HashMap;
 use futures::future::join_all;
-use gpui::{Hsla, Rgba};
+use gpui::{Hsla, Rgba, Task};
 use itertools::Itertools;
 use language::point_from_lsp;
 use multi_buffer::Anchor;
@@ -168,7 +168,9 @@ impl Editor {
             .into_values()
             .map(|(buffer, ..)| buffer)
             .filter(|editor_buffer| {
-                buffer_id.is_none_or(|buffer_id| buffer_id == editor_buffer.read(cx).remote_id())
+                let editor_buffer_id = editor_buffer.read(cx).remote_id();
+                buffer_id.is_none_or(|buffer_id| buffer_id == editor_buffer_id)
+                    && self.registered_buffers.contains_key(&editor_buffer_id)
             })
             .unique_by(|buffer| buffer.read(cx).remote_id())
             .collect::<Vec<_>>();
@@ -186,6 +188,11 @@ impl Editor {
                 })
                 .collect::<Vec<_>>()
         });
+
+        if all_colors_task.is_empty() {
+            self.refresh_colors_task = Task::ready(());
+            return;
+        }
 
         self.refresh_colors_task = cx.spawn(async move |editor, cx| {
             cx.background_executor()

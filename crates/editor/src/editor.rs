@@ -5279,12 +5279,18 @@ impl Editor {
             }
         };
 
+        let mut visible_excerpts = self.visible_excerpts(required_languages.as_ref(), cx);
+        visible_excerpts.retain(|_, (buffer, _, _)| {
+            self.registered_buffers
+                .contains_key(&buffer.read(cx).remote_id())
+        });
+
         if let Some(InlaySplice {
             to_remove,
             to_insert,
         }) = self.inlay_hint_cache.spawn_hint_refresh(
             reason_description,
-            self.visible_excerpts(required_languages.as_ref(), cx),
+            visible_excerpts,
             invalidate_cache,
             ignore_debounce,
             cx,
@@ -17818,8 +17824,14 @@ impl Editor {
         let project = self.project()?.downgrade();
         let debounce = Duration::from_millis(pull_diagnostics_settings.debounce_ms);
         let mut buffers = self.buffer.read(cx).all_buffers();
-        if let Some(buffer_id) = buffer_id {
-            buffers.retain(|buffer| buffer.read(cx).remote_id() == buffer_id);
+        buffers.retain(|buffer| {
+            let buffer_id_to_retain = buffer.read(cx).remote_id();
+            buffer_id.is_none_or(|buffer_id| buffer_id == buffer_id_to_retain)
+                && self.registered_buffers.contains_key(&buffer_id_to_retain)
+        });
+        if buffers.is_empty() {
+            self.pull_diagnostics_task = Task::ready(());
+            return None;
         }
 
         self.pull_diagnostics_task = cx.spawn_in(window, async move |editor, cx| {
