@@ -450,6 +450,7 @@ impl Vim {
         &mut self,
         object: Object,
         times: Option<usize>,
+        opening: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -520,10 +521,11 @@ impl Vim {
             Some(Operator::DeleteSurrounds) => {
                 waiting_operator = Some(Operator::DeleteSurrounds);
             }
-            Some(Operator::ChangeSurrounds { target: None }) => {
+            Some(Operator::ChangeSurrounds { target: None, .. }) => {
                 if self.check_and_move_to_valid_bracket_pair(object, window, cx) {
                     waiting_operator = Some(Operator::ChangeSurrounds {
                         target: Some(object),
+                        opening,
                     });
                 }
             }
@@ -1998,14 +2000,6 @@ mod test {
         cx.shared_state().await.assert_eq("// hello\n// ˇ\n");
         cx.simulate_shared_keystrokes("x escape shift-o").await;
         cx.shared_state().await.assert_eq("// hello\n// ˇ\n// x\n");
-    }
-
-    #[gpui::test]
-    async fn test_yank_to_end_of_line(cx: &mut gpui::TestAppContext) {
-        let mut cx = NeovimBackedTestContext::new(cx).await;
-        cx.set_shared_state("heˇllo\n").await;
-        cx.simulate_shared_keystrokes("Y p").await;
-        cx.shared_state().await.assert_eq("helllˇolo\n");
     }
 
     #[gpui::test]

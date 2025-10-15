@@ -9,8 +9,9 @@ use futures::io::BufReader;
 use project::Project;
 use project::agent_server_store::AgentServerCommand;
 use serde::Deserialize;
+use settings::{Settings as _, SettingsLocation};
 use task::Shell;
-use util::ResultExt as _;
+use util::{ResultExt as _, get_default_system_shell_preferring_bash};
 
 use std::path::PathBuf;
 use std::{any::Any, cell::RefCell};
@@ -22,7 +23,7 @@ use gpui::{App, AppContext as _, AsyncApp, Entity, SharedString, Task, WeakEntit
 
 use acp_thread::{AcpThread, AuthRequired, LoadError, TerminalProviderEvent};
 use terminal::TerminalBuilder;
-use terminal::terminal_settings::{AlternateScroll, CursorShape};
+use terminal::terminal_settings::{AlternateScroll, CursorShape, TerminalSettings};
 
 #[derive(Debug, Error)]
 #[error("Unsupported version")]
@@ -82,7 +83,7 @@ impl AcpConnection {
         is_remote: bool,
         cx: &mut AsyncApp,
     ) -> Result<Self> {
-        let mut child = util::command::new_smol_command(command.path);
+        let mut child = util::command::new_smol_command(&command.path);
         child
             .args(command.args.iter().map(|arg| arg.as_str()))
             .envs(command.env.iter().flatten())
@@ -97,6 +98,11 @@ impl AcpConnection {
         let stdout = child.stdout.take().context("Failed to take stdout")?;
         let stdin = child.stdin.take().context("Failed to take stdin")?;
         let stderr = child.stderr.take().context("Failed to take stderr")?;
+        log::info!(
+            "Spawning external agent server: {:?}, {:?}",
+            command.path,
+            command.args
+        );
         log::trace!("Spawned (pid: {})", child.id());
 
         let sessions = Rc::new(RefCell::new(HashMap::default()));
@@ -163,7 +169,10 @@ impl AcpConnection {
                         meta: None,
                     },
                     terminal: true,
-                    meta: None,
+                    meta: Some(serde_json::json!({
+                        // Experimental: Allow for rendering terminal output from the agents
+                        "terminal_output": true,
+                    })),
                 },
                 meta: None,
             })
@@ -713,23 +722,24 @@ impl acp::Client for ClientDelegate {
                     if let Some(id_str) = terminal_info.get("terminal_id").and_then(|v| v.as_str())
                     {
                         let terminal_id = acp::TerminalId(id_str.into());
+                        let cwd = terminal_info
+                            .get("cwd")
+                            .and_then(|v| v.as_str().map(PathBuf::from));
 
                         // Create a minimal display-only lower-level terminal and register it.
                         let _ = session.thread.update(&mut self.cx.clone(), |thread, cx| {
                             let builder = TerminalBuilder::new_display_only(
-                                None,
                                 CursorShape::default(),
                                 AlternateScroll::On,
                                 None,
                                 0,
-                                cx,
                             )?;
                             let lower = cx.new(|cx| builder.subscribe(cx));
                             thread.on_terminal_provider_event(
                                 TerminalProviderEvent::Created {
                                     terminal_id: terminal_id.clone(),
                                     label: tc.title.clone(),
-                                    cwd: None,
+                                    cwd,
                                     output_byte_limit: None,
                                     terminal: lower,
                                 },
@@ -809,13 +819,25 @@ impl acp::Client for ClientDelegate {
         let mut env = if let Some(dir) = &args.cwd {
             project
                 .update(&mut self.cx.clone(), |project, cx| {
-                    project.directory_environment(&task::Shell::System, dir.clone().into(), cx)
+                    let worktree = project.find_worktree(dir.as_path(), cx);
+                    let shell = TerminalSettings::get(
+                        worktree.as_ref().map(|(worktree, path)| SettingsLocation {
+                            worktree_id: worktree.read(cx).id(),
+                            path: &path,
+                        }),
+                        cx,
+                    )
+                    .shell
+                    .clone();
+                    project.directory_environment(&shell, dir.clone().into(), cx)
                 })?
                 .await
                 .unwrap_or_default()
         } else {
             Default::default()
         };
+        // Disables paging for `git` and hopefully other commands
+        env.insert("PAGER".into(), "".into());
         for var in args.env {
             env.insert(var.name, var.value);
         }
@@ -828,8 +850,11 @@ impl acp::Client for ClientDelegate {
                     .and_then(|r| r.read(cx).default_system_shell())
                     .map(Shell::Program)
             })?
-            .unwrap_or(task::Shell::System);
-        let (task_command, task_args) = task::ShellBuilder::new(&shell)
+            .unwrap_or_else(|| Shell::Program(get_default_system_shell_preferring_bash()));
+        let is_windows = project
+            .read_with(&self.cx, |project, cx| project.path_style(cx).is_windows())
+            .unwrap_or(cfg!(windows));
+        let (task_command, task_args) = task::ShellBuilder::new(&shell, is_windows)
             .redirect_stdin_to_dev_null()
             .build(Some(args.command.clone()), &args.args);
 

@@ -30,6 +30,13 @@ impl Rope {
         Self::default()
     }
 
+    /// Checks that `index`-th byte is the first byte in a UTF-8 code point
+    /// sequence or the end of the string.
+    ///
+    /// The start and end of the string (when `index == self.len()`) are
+    /// considered to be boundaries.
+    ///
+    /// Returns `false` if `index` is greater than `self.len()`.
     pub fn is_char_boundary(&self, offset: usize) -> bool {
         if self.chunks.is_empty() {
             return offset == 0;
@@ -114,11 +121,9 @@ impl Rope {
             chunks.next();
             chunks.next();
             self.chunks.append(chunks.suffix(), ());
-            self.check_invariants();
-            return;
+        } else {
+            self.chunks.append(rope.chunks, ());
         }
-
-        self.chunks.append(rope.chunks.clone(), ());
         self.check_invariants();
     }
 
@@ -675,6 +680,12 @@ impl<'a> Chunks<'a> {
             chunks.seek(&range.start, Bias::Right);
             range.start
         };
+        let chunk_offset = offset - chunks.start();
+        if let Some(chunk) = chunks.item()
+            && !chunk.text.is_char_boundary(chunk_offset)
+        {
+            panic!("byte index {} is not a char boundary", offset);
+        }
         Self {
             chunks,
             range,

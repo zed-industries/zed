@@ -49,8 +49,8 @@ impl RangeInEditor {
     ) -> bool {
         match (self, trigger_point) {
             (Self::Text(range), TriggerPoint::Text(point)) => {
-                let point_after_start = range.start.cmp(point, &snapshot.buffer_snapshot).is_le();
-                point_after_start && range.end.cmp(point, &snapshot.buffer_snapshot).is_ge()
+                let point_after_start = range.start.cmp(point, &snapshot.buffer_snapshot()).is_le();
+                point_after_start && range.end.cmp(point, &snapshot.buffer_snapshot()).is_ge()
             }
             (Self::Inlay(highlight), TriggerPoint::InlayHint(point, _, _)) => {
                 highlight.inlay == point.inlay
@@ -131,7 +131,7 @@ impl Editor {
             Some(point) => {
                 let trigger_point = TriggerPoint::Text(
                     snapshot
-                        .buffer_snapshot
+                        .buffer_snapshot()
                         .anchor_before(point.to_offset(&snapshot.display_snapshot, Bias::Left)),
                 );
 
@@ -307,7 +307,6 @@ pub fn update_inlay_link_and_hover_points(
             buffer_snapshot.anchor_after(point_for_position.next_valid.to_point(snapshot));
         if let Some(hovered_hint) = editor
             .visible_inlay_hints(cx)
-            .into_iter()
             .skip_while(|hint| {
                 hint.position
                     .cmp(&previous_valid_anchor, &buffer_snapshot)
@@ -326,7 +325,7 @@ pub fn update_inlay_link_and_hover_points(
                 match cached_hint.resolve_state {
                     ResolveState::CanResolve(_, _) => {
                         if let Some(buffer_id) = snapshot
-                            .buffer_snapshot
+                            .buffer_snapshot()
                             .buffer_id_for_anchor(previous_valid_anchor)
                         {
                             inlay_hint_cache.spawn_hint_resolve(
@@ -534,7 +533,7 @@ pub fn show_link_definition(
     let project = editor.project.clone();
     let provider = editor.semantics_provider.clone();
 
-    let snapshot = snapshot.buffer_snapshot.clone();
+    let snapshot = snapshot.buffer_snapshot().clone();
     hovered_link_state.task = Some(cx.spawn_in(window, async move |this, cx| {
         async move {
             let result = match &trigger_point {

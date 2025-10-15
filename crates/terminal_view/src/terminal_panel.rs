@@ -449,12 +449,16 @@ impl TerminalPanel {
             .read(cx)
             .active_item()
             .and_then(|item| item.downcast::<TerminalView>());
-        let working_directory = terminal_view.as_ref().and_then(|terminal_view| {
-            let terminal = terminal_view.read(cx).terminal().read(cx);
-            terminal
-                .working_directory()
-                .or_else(|| default_working_directory(workspace, cx))
-        });
+        let working_directory = terminal_view
+            .as_ref()
+            .and_then(|terminal_view| {
+                terminal_view
+                    .read(cx)
+                    .terminal()
+                    .read(cx)
+                    .working_directory()
+            })
+            .or_else(|| default_working_directory(workspace, cx));
         let is_zoomed = active_pane.read(cx).is_zoomed();
         cx.spawn_in(window, async move |panel, cx| {
             let terminal = project
@@ -462,7 +466,7 @@ impl TerminalPanel {
                     Some(view) => Task::ready(project.clone_terminal(
                         &view.read(cx).terminal.clone(),
                         cx,
-                        || working_directory,
+                        working_directory,
                     )),
                     None => project.create_terminal_shell(working_directory, cx),
                 })
@@ -522,23 +526,18 @@ impl TerminalPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<WeakEntity<Terminal>>> {
-        let remote_client = self
-            .workspace
-            .update(cx, |workspace, cx| {
-                let project = workspace.project().read(cx);
-                if project.is_via_collab() {
-                    Err(anyhow!("cannot spawn tasks as a guest"))
-                } else {
-                    Ok(project.remote_client())
-                }
-            })
-            .flatten();
-
-        let remote_client = match remote_client {
-            Ok(remote_client) => remote_client,
-            Err(e) => return Task::ready(Err(e)),
+        let Some(workspace) = self.workspace.upgrade() else {
+            return Task::ready(Err(anyhow!("failed to read workspace")));
         };
 
+        let project = workspace.read(cx).project().read(cx);
+
+        if project.is_via_collab() {
+            return Task::ready(Err(anyhow!("cannot spawn tasks as a guest")));
+        }
+
+        let remote_client = project.remote_client();
+        let is_windows = project.path_style(cx).is_windows();
         let remote_shell = remote_client
             .as_ref()
             .and_then(|remote_client| remote_client.read(cx).shell());
@@ -551,7 +550,7 @@ impl TerminalPanel {
             task.shell.clone()
         };
 
-        let builder = ShellBuilder::new(&shell);
+        let builder = ShellBuilder::new(&shell, is_windows);
         let command_label = builder.command_label(task.command.as_deref().unwrap_or(""));
         let (command, args) = builder.build(task.command.clone(), &task.args);
 

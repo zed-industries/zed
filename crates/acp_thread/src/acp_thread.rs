@@ -12,7 +12,7 @@ use language::language_settings::FormatOnSave;
 pub use mention::*;
 use project::lsp_store::{FormatTrigger, LspFormatTarget};
 use serde::{Deserialize, Serialize};
-use settings::Settings as _;
+use settings::{Settings as _, SettingsLocation};
 use task::{Shell, ShellBuilder};
 pub use terminal::*;
 
@@ -35,7 +35,7 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 use std::{fmt::Display, mem, path::PathBuf, sync::Arc};
 use ui::App;
-use util::{ResultExt, get_default_system_shell};
+use util::{ResultExt, get_default_system_shell_preferring_bash};
 use uuid::Uuid;
 
 #[derive(Debug)]
@@ -2086,7 +2086,16 @@ impl AcpThread {
     ) -> Task<Result<Entity<Terminal>>> {
         let env = match &cwd {
             Some(dir) => self.project.update(cx, |project, cx| {
-                let shell = TerminalSettings::get_global(cx).shell.clone();
+                let worktree = project.find_worktree(dir.as_path(), cx);
+                let shell = TerminalSettings::get(
+                    worktree.as_ref().map(|(worktree, path)| SettingsLocation {
+                        worktree_id: worktree.read(cx).id(),
+                        path: &path,
+                    }),
+                    cx,
+                )
+                .shell
+                .clone();
                 project.directory_environment(&shell, dir.as_path().into(), cx)
             }),
             None => Task::ready(None).shared(),
@@ -2103,6 +2112,7 @@ impl AcpThread {
 
         let project = self.project.clone();
         let language_registry = project.read(cx).languages().clone();
+        let is_windows = project.read(cx).path_style(cx).is_windows();
 
         let terminal_id = acp::TerminalId(Uuid::new_v4().to_string().into());
         let terminal_task = cx.spawn({
@@ -2115,10 +2125,11 @@ impl AcpThread {
                             .remote_client()
                             .and_then(|r| r.read(cx).default_system_shell())
                     })?
-                    .unwrap_or_else(|| get_default_system_shell());
-                let (task_command, task_args) = ShellBuilder::new(&Shell::Program(shell))
-                    .redirect_stdin_to_dev_null()
-                    .build(Some(command.clone()), &args);
+                    .unwrap_or_else(|| get_default_system_shell_preferring_bash());
+                let (task_command, task_args) =
+                    ShellBuilder::new(&Shell::Program(shell), is_windows)
+                        .redirect_stdin_to_dev_null()
+                        .build(Some(command.clone()), &args);
                 let terminal = project
                     .update(cx, |project, cx| {
                         project.create_terminal_task(
@@ -2331,12 +2342,10 @@ mod tests {
         // Create a display-only terminal and then send Created
         let lower = cx.new(|cx| {
             let builder = ::terminal::TerminalBuilder::new_display_only(
-                None,
                 ::terminal::terminal_settings::CursorShape::default(),
                 ::terminal::terminal_settings::AlternateScroll::On,
                 None,
                 0,
-                cx,
             )
             .unwrap();
             builder.subscribe(cx)
@@ -2410,12 +2419,10 @@ mod tests {
         // Now create a display-only lower-level terminal and send Created
         let lower = cx.new(|cx| {
             let builder = ::terminal::TerminalBuilder::new_display_only(
-                None,
                 ::terminal::terminal_settings::CursorShape::default(),
                 ::terminal::terminal_settings::AlternateScroll::On,
                 None,
                 0,
-                cx,
             )
             .unwrap();
             builder.subscribe(cx)
