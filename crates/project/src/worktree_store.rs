@@ -8,10 +8,7 @@ use std::{
 use anyhow::{Context as _, Result, anyhow};
 use collections::{HashMap, HashSet};
 use fs::{Fs, copy_recursive};
-use futures::{
-    FutureExt, SinkExt,
-    future::{BoxFuture, Shared},
-};
+use futures::{FutureExt, SinkExt, future::Shared};
 use gpui::{
     App, AppContext as _, AsyncApp, Context, Entity, EntityId, EventEmitter, Task, WeakEntity,
 };
