@@ -9365,11 +9365,7 @@ impl LspStore {
                         name: symbol.name,
                         kind: symbol.kind,
                         range: symbol.range,
-                        label: CodeLabel {
-                            text: Default::default(),
-                            runs: Default::default(),
-                            filter_range: Default::default(),
-                        },
+                        label: CodeLabel::default(),
                     },
                     cx,
                 )
@@ -9559,11 +9555,7 @@ impl LspStore {
                     new_text: completion.new_text,
                     source: completion.source,
                     documentation: None,
-                    label: CodeLabel {
-                        text: Default::default(),
-                        runs: Default::default(),
-                        filter_range: Default::default(),
-                    },
+                    label: CodeLabel::default(),
                     insert_text_mode: None,
                     icon_path: None,
                     confirm: None,
@@ -13060,19 +13052,19 @@ mod tests {
 
     #[test]
     fn test_multi_len_chars_normalization() {
-        let mut label = CodeLabel {
-            text: "myElˇ (parameter) myElˇ: {\n    foo: string;\n}".to_string(),
-            runs: vec![(0..6, HighlightId(1))],
-            filter_range: 0..6,
-        };
+        let mut label = CodeLabel::new(
+            "myElˇ (parameter) myElˇ: {\n    foo: string;\n}".to_string(),
+            0..6,
+            vec![(0..6, HighlightId(1))],
+        );
         ensure_uniform_list_compatible_label(&mut label);
         assert_eq!(
             label,
-            CodeLabel {
-                text: "myElˇ (parameter) myElˇ: { foo: string; }".to_string(),
-                runs: vec![(0..6, HighlightId(1))],
-                filter_range: 0..6,
-            }
+            CodeLabel::new(
+                "myElˇ (parameter) myElˇ: { foo: string; }".to_string(),
+                0..6,
+                vec![(0..6, HighlightId(1))],
+            )
         );
     }
 }

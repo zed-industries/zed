@@ -11,7 +11,7 @@ use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{App, Entity, Task, WeakEntity};
 use http_client::HttpClientWithUrl;
 use itertools::Itertools;
-use language::{Buffer, CodeLabel, HighlightId};
+use language::{Buffer, CodeLabel, CodeLabelBuilder, HighlightId};
 use lsp::CompletionContext;
 use project::lsp_store::SymbolLocation;
 use project::{
@@ -686,7 +686,8 @@ impl ContextPickerCompletionProvider {
         };
 
         let comment_id = cx.theme().syntax().highlight_id("comment").map(HighlightId);
-        let mut label = CodeLabel::plain(symbol.name.clone(), None);
+        let mut label = CodeLabelBuilder::default();
+        label.push_str(&symbol.name, None);
         label.push_str(" ", None);
         label.push_str(&file_name, comment_id);
         label.push_str(&format!(" L{}", symbol.range.start.0.row + 1), comment_id);
@@ -696,7 +697,7 @@ impl ContextPickerCompletionProvider {
         Some(Completion {
             replace_range: source_range.clone(),
             new_text,
-            label,
+            label: label.build(),
             documentation: None,
             source: project::CompletionSource::Custom,
             icon_path: Some(IconName::Code.path().into()),
@@ -729,7 +730,7 @@ impl ContextPickerCompletionProvider {
 
 fn build_code_label_for_full_path(file_name: &str, directory: Option<&str>, cx: &App) -> CodeLabel {
     let comment_id = cx.theme().syntax().highlight_id("comment").map(HighlightId);
-    let mut label = CodeLabel::default();
+    let mut label = CodeLabelBuilder::default();
 
     label.push_str(file_name, None);
     label.push_str(" ", None);
@@ -738,9 +739,7 @@ fn build_code_label_for_full_path(file_name: &str, directory: Option<&str>, cx: 
         label.push_str(directory, comment_id);
     }
 
-    label.filter_range = 0..label.text().len();
-
-    label
+    label.build()
 }
 
 impl CompletionProvider for ContextPickerCompletionProvider {

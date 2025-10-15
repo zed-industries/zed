@@ -225,18 +225,14 @@ impl LineWrapper {
 
 fn update_runs_after_truncation(result: &str, ellipsis: &str, runs: &mut Vec<TextRun>) {
     let mut truncate_at = result.len() - ellipsis.len();
-    let mut run_end = None;
     for (run_index, run) in runs.iter_mut().enumerate() {
         if run.len <= truncate_at {
             truncate_at -= run.len;
         } else {
             run.len = truncate_at + ellipsis.len();
-            run_end = Some(run_index + 1);
+            runs.truncate(run_index + 1);
             break;
         }
-    }
-    if let Some(run_end) = run_end {
-        runs.truncate(run_end);
     }
 }
 

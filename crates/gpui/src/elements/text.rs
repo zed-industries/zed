@@ -180,8 +180,7 @@ impl StyledText {
             "Can't use `with_default_highlights` and `with_highlights`"
         );
         let runs = Self::compute_runs(&self.text, default_style, highlights);
-        self.runs = Some(runs);
-        self
+        self.with_runs(runs)
     }
 
     /// Set the styling attributes for the given text, as well as
@@ -194,7 +193,15 @@ impl StyledText {
             self.runs.is_none(),
             "Can't use `with_highlights` and `with_default_highlights`"
         );
-        self.delayed_highlights = Some(highlights.into_iter().collect::<Vec<_>>());
+        self.delayed_highlights = Some(
+            highlights
+                .into_iter()
+                .inspect(|(run, _)| {
+                    debug_assert!(self.text.is_char_boundary(run.start));
+                    debug_assert!(self.text.is_char_boundary(run.end));
+                })
+                .collect::<Vec<_>>(),
+        );
         self
     }
 
@@ -207,8 +214,10 @@ impl StyledText {
         let mut ix = 0;
         for (range, highlight) in highlights {
             if ix < range.start {
+                debug_assert!(text.is_char_boundary(range.start));
                 runs.push(default_style.clone().to_run(range.start - ix));
             }
+            debug_assert!(text.is_char_boundary(range.end));
             runs.push(
                 default_style
                     .clone()
@@ -225,6 +234,11 @@ impl StyledText {
 
     /// Set the text runs for this piece of text.
     pub fn with_runs(mut self, runs: Vec<TextRun>) -> Self {
+        let mut text = &**self.text;
+        for run in &runs {
+            text = text.get(run.len..).expect("invalid text run");
+        }
+        assert!(text.is_empty(), "invalid text run");
         self.runs = Some(runs);
         self
     }
