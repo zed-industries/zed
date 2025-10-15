@@ -30,6 +30,7 @@ pub struct GrepToolInput {
     /// A regex pattern to search for in the entire project. Note that the regex will be parsed by the Rust `regex` crate.
     ///
     /// Do NOT specify a path here! This will only be matched against the code **content**.
+    #[serde(alias = "pattern", alias = "query")]
     pub regex: String,
     /// A glob pattern for the paths of files to include in the search.
     /// Supports standard glob patterns like "**/*.rs" or "src/**/*.ts".
@@ -316,6 +317,21 @@ mod tests {
     use settings::SettingsStore;
     use unindent::Unindent;
     use util::path;
+
+    #[test]
+    fn test_grep_tool_input_accepts_aliases() {
+        let input: GrepToolInput = serde_json::from_value(json!({
+            "pattern": "foo"
+        }))
+        .unwrap();
+        assert_eq!(input.regex, "foo");
+
+        let input: GrepToolInput = serde_json::from_value(json!({
+            "query": "bar"
+        }))
+        .unwrap();
+        assert_eq!(input.regex, "bar");
+    }
 
     #[gpui::test]
     async fn test_grep_tool_with_include_pattern(cx: &mut TestAppContext) {
