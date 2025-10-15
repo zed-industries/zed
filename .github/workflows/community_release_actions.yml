@@ -52,7 +52,7 @@ jobs:
           fi
 
           echo "PACKAGE_NAME=$PACKAGE_NAME" >> "$GITHUB_OUTPUT"
-      - uses: vedantmgoyal9/winget-releaser@main
+      - uses: vedantmgoyal9/winget-releaser@19e706d4c9121098010096f9c495a70a7518b30f # v2
         with:
           identifier: ${{ steps.set-package-name.outputs.PACKAGE_NAME }}
           max-versions-to-keep: 5
