@@ -596,9 +596,19 @@ impl Editor {
             cx,
         );
 
-        self.register_visible_buffers(cx);
-        self.refresh_colors_for_visible_range(None, window, cx);
-        self.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
+        self.post_scroll_update = cx.spawn_in(window, async move |editor, cx| {
+            cx.background_executor()
+                .timer(Duration::from_millis(100))
+                .await;
+            editor
+                .update_in(cx, |editor, window, cx| {
+                    editor.register_visible_buffers(cx);
+                    editor.refresh_colors_for_visible_range(None, window, cx);
+                    editor.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
+                })
+                .ok();
+        });
+
         editor_was_scrolled
     }
 
