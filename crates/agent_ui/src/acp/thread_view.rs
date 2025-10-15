@@ -1045,9 +1045,6 @@ impl AcpThreadView {
                 return;
             };
 
-            self.message_editor
-                .update(cx, |editor, cx| editor.clear(window, cx));
-
             let connection = thread.read(cx).connection().clone();
             let can_login = !connection.auth_methods().is_empty() || self.login.is_some();
             // Does the agent have a specific logout command? Prefer that in case they need to reset internal state.
@@ -1058,6 +1055,9 @@ impl AcpThreadView {
                     .iter()
                     .any(|command| command.name == "logout");
             if can_login && !logout_supported {
+                self.message_editor
+                    .update(cx, |editor, cx| editor.clear(window, cx));
+
                 let this = cx.weak_entity();
                 let agent = self.agent.clone();
                 window.defer(cx, |window, cx| {
