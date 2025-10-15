@@ -57,10 +57,10 @@ impl Render for AcpModelSelectorPopover {
 
         let focus_handle = self.focus_handle.clone();
 
-        let color = if self.menu_handle.is_deployed() {
-            Color::Accent
+        let (color, icon) = if self.menu_handle.is_deployed() {
+            (Color::Accent, IconName::ChevronUp)
         } else {
-            Color::Muted
+            (Color::Muted, IconName::ChevronDown)
         };
 
         PickerPopoverMenu::new(
@@ -76,11 +76,7 @@ impl Render for AcpModelSelectorPopover {
                         .size(LabelSize::Small)
                         .ml_0p5(),
                 )
-                .child(
-                    Icon::new(IconName::ChevronDown)
-                        .color(Color::Muted)
-                        .size(IconSize::XSmall),
-                ),
+                .child(Icon::new(icon).color(Color::Muted).size(IconSize::XSmall)),
             move |window, cx| {
                 Tooltip::for_action_in(
                     "Change Model",
