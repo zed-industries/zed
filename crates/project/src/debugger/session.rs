@@ -2898,7 +2898,7 @@ impl Session {
             }
             if !companion_started {
                 console_output
-                    .send(format!("Browser companion failed to start"))
+                    .send("Browser companion failed to start".into())
                     .await
                     .ok();
                 bail!("Browser companion failed to start");
