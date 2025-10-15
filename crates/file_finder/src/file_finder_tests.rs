@@ -8,7 +8,7 @@ use pretty_assertions::{assert_eq, assert_matches};
 use project::{FS_WATCH_LATENCY, RemoveOptions};
 use serde_json::json;
 use util::{path, rel_path::rel_path};
-use workspace::{AppState, CloseActiveItem, OpenOptions, ToggleFileFinder, Workspace};
+use workspace::{AppState, CloseActiveItem, OpenOptions, ToggleFileFinder, Workspace, open_paths};
 
 #[ctor::ctor]
 fn init_logger() {
@@ -2337,7 +2337,6 @@ async fn test_search_results_refreshed_on_worktree_updates(cx: &mut gpui::TestAp
         assert_match_at_position(finder, 1, "main.rs");
         assert_match_at_position(finder, 2, "rs");
     });
-
     // Delete main.rs
     app_state
         .fs
@@ -2368,6 +2367,64 @@ async fn test_search_results_refreshed_on_worktree_updates(cx: &mut gpui::TestAp
         assert_match_at_position(finder, 1, "util.rs");
         assert_match_at_position(finder, 2, "rs");
     });
+}
+
+#[gpui::test]
+async fn test_search_results_refreshed_on_standalone_file_creation(cx: &mut gpui::TestAppContext) {
+    let app_state = init_test(cx);
+
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            "/src",
+            json!({
+                "lib.rs": "// Lib file",
+                "main.rs": "// Bar file",
+                "read.me": "// Readme file",
+            }),
+        )
+        .await;
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            "/test",
+            json!({
+                "new.rs": "// New file",
+            }),
+        )
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), ["/src".as_ref()], cx).await;
+    let (workspace, cx) =
+        cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+    cx.update(|_, cx| {
+        open_paths(
+            &[PathBuf::from(path!("/test/new.rs"))],
+            app_state,
+            workspace::OpenOptions::default(),
+            cx,
+        )
+    })
+    .await
+    .unwrap();
+    assert_eq!(cx.update(|_, cx| cx.windows().len()), 1);
+
+    let initial_history = open_close_queried_buffer("new", 1, "new.rs", &workspace, cx).await;
+    assert_eq!(
+        initial_history.first().unwrap().absolute,
+        PathBuf::from(path!("/test/new.rs")),
+        "Should show 1st opened item in the history when opening the 2nd item"
+    );
+
+    let history_after_first = open_close_queried_buffer("lib", 1, "lib.rs", &workspace, cx).await;
+    assert_eq!(
+        history_after_first.first().unwrap().absolute,
+        PathBuf::from(path!("/test/new.rs")),
+        "Should show 1st opened item in the history when opening the 2nd item"
+    );
 }
 
 #[gpui::test]
