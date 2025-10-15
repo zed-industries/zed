@@ -30,6 +30,13 @@ impl Rope {
         Self::default()
     }
 
+    /// Checks that `index`-th byte is the first byte in a UTF-8 code point
+    /// sequence or the end of the string.
+    ///
+    /// The start and end of the string (when `index == self.len()`) are
+    /// considered to be boundaries.
+    ///
+    /// Returns `false` if `index` is greater than `self.len()`.
     pub fn is_char_boundary(&self, offset: usize) -> bool {
         if self.chunks.is_empty() {
             return offset == 0;
