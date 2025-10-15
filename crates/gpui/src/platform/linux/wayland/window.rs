@@ -178,8 +178,16 @@ impl WaylandSurfaceState {
             .get_xdg_surface(&surface, &globals.qh, surface.id());
 
         let toplevel = xdg_surface.get_toplevel(&globals.qh, surface.id());
-        if params.kind == WindowKind::Floating {
+        if params.kind == WindowKind::Floating || params.kind == WindowKind::Dialog {
             toplevel.set_parent(parent.as_ref());
+        }
+
+        if params.kind == WindowKind::Dialog
+            && let Some(dialog) = &globals.dialog
+        {
+            let xdg_dialog = dialog.get_xdg_dialog(&toplevel, &globals.qh, ());
+
+            xdg_dialog.set_modal();
         }
 
         if let Some(size) = params.window_min_size {
