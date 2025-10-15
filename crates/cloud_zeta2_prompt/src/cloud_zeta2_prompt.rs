@@ -479,11 +479,9 @@ impl<'a> PlannedPrompt<'a> {
             let mut disjoint_snippets: Vec<(&PlannedSnippet, Range<Line>)> = Vec::new();
             for snippet in snippets {
                 if let Some((_, current_snippet_range)) = current_snippet.as_mut()
-                    && snippet.range.start < current_snippet_range.end
+                    && snippet.range.start <= current_snippet_range.end
                 {
-                    if snippet.range.end > current_snippet_range.end {
-                        current_snippet_range.end = snippet.range.end;
-                    }
+                    current_snippet_range.end = current_snippet_range.end.max(snippet.range.end);
                     continue;
                 }
                 if let Some(current_snippet) = current_snippet.take() {
