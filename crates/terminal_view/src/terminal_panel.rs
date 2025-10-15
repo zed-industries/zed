@@ -813,6 +813,7 @@ impl TerminalPanel {
         cx: &mut Context<Self>,
     ) -> Task<Result<WeakEntity<Terminal>>> {
         let workspace = self.workspace.clone();
+
         cx.spawn_in(window, async move |terminal_panel, cx| {
             if workspace.update(cx, |workspace, cx| !is_enabled_in_workspace(workspace, cx))? {
                 anyhow::bail!("terminal not yet supported for collaborative projects");
@@ -824,43 +825,59 @@ impl TerminalPanel {
             let project = workspace.read_with(cx, |workspace, _| workspace.project().clone())?;
             let terminal = project
                 .update(cx, |project, cx| project.create_terminal_shell(cwd, cx))?
-                .await?;
-            let result = workspace.update_in(cx, |workspace, window, cx| {
-                let terminal_view = Box::new(cx.new(|cx| {
-                    TerminalView::new(
-                        terminal.clone(),
-                        workspace.weak_handle(),
-                        workspace.database_id(),
-                        workspace.project().downgrade(),
-                        window,
-                        cx,
-                    )
-                }));
+                .await;
 
-                match reveal_strategy {
-                    RevealStrategy::Always => {
-                        workspace.focus_panel::<Self>(window, cx);
-                    }
-                    RevealStrategy::NoFocus => {
-                        workspace.open_panel::<Self>(window, cx);
-                    }
-                    RevealStrategy::Never => {}
+            match terminal {
+                Ok(terminal) => {
+                    let result = workspace.update_in(cx, |workspace, window, cx| {
+                        let terminal_view = Box::new(cx.new(|cx| {
+                            TerminalView::new(
+                                terminal.clone(),
+                                workspace.weak_handle(),
+                                workspace.database_id(),
+                                workspace.project().downgrade(),
+                                window,
+                                cx,
+                            )
+                        }));
+
+                        match reveal_strategy {
+                            RevealStrategy::Always => {
+                                workspace.focus_panel::<Self>(window, cx);
+                            }
+                            RevealStrategy::NoFocus => {
+                                workspace.open_panel::<Self>(window, cx);
+                            }
+                            RevealStrategy::Never => {}
+                        }
+
+                        pane.update(cx, |pane, cx| {
+                            let focus = pane.has_focus(window, cx)
+                                || matches!(reveal_strategy, RevealStrategy::Always);
+                            pane.add_item(terminal_view, true, focus, None, window, cx);
+                        });
+
+                        Ok(terminal.downgrade())
+                    })?;
+                    terminal_panel.update(cx, |terminal_panel, cx| {
+                        terminal_panel.pending_terminals_to_add =
+                            terminal_panel.pending_terminals_to_add.saturating_sub(1);
+                        terminal_panel.serialize(cx)
+                    })?;
+                    result
                 }
-
-                pane.update(cx, |pane, cx| {
-                    let focus = pane.has_focus(window, cx)
-                        || matches!(reveal_strategy, RevealStrategy::Always);
-                    pane.add_item(terminal_view, true, focus, None, window, cx);
-                });
-
-                Ok(terminal.downgrade())
-            })?;
-            terminal_panel.update(cx, |terminal_panel, cx| {
-                terminal_panel.pending_terminals_to_add =
-                    terminal_panel.pending_terminals_to_add.saturating_sub(1);
-                terminal_panel.serialize(cx)
-            })?;
-            result
+                Err(error) => {
+                    pane.update_in(cx, |pane, window, cx| {
+                        let focus = pane.has_focus(window, cx);
+                        let failed_to_spawn = cx.new(|cx| FailedToSpawnTerminal {
+                            error: format!("{:#}", error),
+                            focus_handle: cx.focus_handle(),
+                        });
+                        pane.add_item(Box::new(failed_to_spawn), true, focus, None, window, cx);
+                    })?;
+                    Err(error)
+                }
+            }
         })
     }
 
@@ -1278,6 +1295,84 @@ fn add_paths_to_terminal(
     }
 }
 
+struct FailedToSpawnTerminal {
+    error: String,
+    focus_handle: FocusHandle,
+}
+
+impl Focusable for FailedToSpawnTerminal {
+    fn focus_handle(&self, _: &App) -> FocusHandle {
+        self.focus_handle.clone()
+    }
+}
+
+impl Render for FailedToSpawnTerminal {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let make_button = |id, text, action: &'static (dyn Action + 'static)| {
+            Button::new((id, cx.entity_id()), text)
+                .on_click(|_, window, cx| {
+                    window.dispatch_action(action.boxed_clone(), cx);
+                })
+                .style(ButtonStyle::Outlined)
+        };
+
+        let error_message = h_flex()
+            .justify_center()
+            .child(Label::new("Failed to spawn terminal").color(Color::Error));
+
+        let detail_message = h_flex()
+            .id(("failed-to-spawn-terminal-error-message", cx.entity_id()))
+            .w_full()
+            .max_h_full()
+            .justify_center()
+            .child(
+                div()
+                    .child(Label::new(self.error.to_string()).size(LabelSize::Small))
+                    .max_h_full()
+                    .max_w_3_4(),
+            );
+
+        let settings_ui_button = make_button(
+            "failed-to-spawn-terminal-edit-settings-ui-button",
+            "Edit settings (UI)",
+            &zed_actions::OpenSettings,
+        );
+
+        let settings_json_button = make_button(
+            "failed-to-spawn-terminal-edit-settings-file-button",
+            "Edit settings (JSON)",
+            &zed_actions::OpenSettingsFile,
+        );
+
+        let button_row = h_flex()
+            .w_full()
+            .justify_center()
+            .gap_4()
+            .child(settings_ui_button)
+            .child(settings_json_button);
+
+        v_flex()
+            .track_focus(&self.focus_handle)
+            .p_4()
+            .justify_center()
+            .size_full()
+            .gap_4()
+            .child(error_message)
+            .child(detail_message)
+            .child(button_row)
+    }
+}
+
+impl EventEmitter<()> for FailedToSpawnTerminal {}
+
+impl workspace::Item for FailedToSpawnTerminal {
+    type Event = ();
+
+    fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
+        SharedString::new_static("Failed to spawn terminal")
+    }
+}
+
 impl EventEmitter<PanelEvent> for TerminalPanel {}
 
 impl Render for TerminalPanel {
@@ -1635,7 +1730,7 @@ impl Render for InlineAssistTabBarButton {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::TestAppContext;
+    use gpui::{TestAppContext, UpdateGlobal as _};
     use pretty_assertions::assert_eq;
     use project::FakeFs;
     use settings::SettingsStore;
@@ -1749,6 +1844,57 @@ mod tests {
                     task_metadata.command_label,
                     format!("{shell} {interactive}-c '{user_command}'", interactive = if cfg!(windows) {""} else {"-i "}),
                     "We want to show to the user the entire command spawned");
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    async fn renders_error_if_default_shell_fails(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.terminal.get_or_insert_default().project.shell =
+                        Some(settings::Shell::Program("asdf".to_owned()));
+                });
+            });
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let workspace = cx.add_window(|window, cx| Workspace::test_new(project, window, cx));
+
+        let (window_handle, terminal_panel) = workspace
+            .update(cx, |workspace, window, cx| {
+                let window_handle = window.window_handle();
+                let terminal_panel = cx.new(|cx| TerminalPanel::new(workspace, window, cx));
+                (window_handle, terminal_panel)
+            })
+            .unwrap();
+
+        window_handle
+            .update(cx, |_, window, cx| {
+                terminal_panel.update(cx, |terminal_panel, cx| {
+                    terminal_panel.add_terminal_shell(None, RevealStrategy::Always, window, cx)
+                })
+            })
+            .unwrap()
+            .await
+            .unwrap_err();
+
+        window_handle
+            .update(cx, |_, window, cx| {
+                terminal_panel.update(cx, |terminal_panel, cx| {
+                    assert!(
+                        terminal_panel
+                            .active_pane
+                            .read(cx)
+                            .items()
+                            .any(|item| item.downcast::<FailedToSpawnTerminal>().is_some()),
+                        "should spawn `FailedToSpawnTerminal` pane"
+                    );
+                })
             })
             .unwrap();
     }
