@@ -106,6 +106,36 @@ impl Render for WindowDemo {
                 )
                 .unwrap();
             }))
+            .child(button("Floating", move |_, cx| {
+                cx.open_window(
+                    WindowOptions {
+                        window_bounds: Some(window_bounds),
+                        kind: WindowKind::Floating,
+                        ..Default::default()
+                    },
+                    |_, cx| {
+                        cx.new(|_| SubWindow {
+                            custom_titlebar: false,
+                        })
+                    },
+                )
+                .unwrap();
+            }))
+            .child(button("Dialog", move |_, cx| {
+                cx.open_window(
+                    WindowOptions {
+                        window_bounds: Some(window_bounds),
+                        kind: WindowKind::Dialog,
+                        ..Default::default()
+                    },
+                    |_, cx| {
+                        cx.new(|_| SubWindow {
+                            custom_titlebar: false,
+                        })
+                    },
+                )
+                .unwrap();
+            }))
             .child(button("Custom Titlebar", move |_, cx| {
                 cx.open_window(
                     WindowOptions {
