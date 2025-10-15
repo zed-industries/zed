@@ -649,7 +649,7 @@ impl Drop for TcpTransport {
 }
 
 pub struct StdioTransport {
-    process: Mutex<Option<Child>>,
+    process: Mutex<Child>,
     _stderr_task: Option<Task<()>>,
 }
 
@@ -684,7 +684,7 @@ impl StdioTransport {
             ))
         });
 
-        let process = Mutex::new(Some(process));
+        let process = Mutex::new(process);
 
         Ok(Self {
             process,
@@ -699,9 +699,7 @@ impl Transport for StdioTransport {
     }
 
     fn kill(&mut self) {
-        if let Some(process) = &mut *self.process.lock() {
-            process.kill();
-        }
+        self.process.lock().kill();
     }
 
     fn connect(
@@ -713,8 +711,7 @@ impl Transport for StdioTransport {
         )>,
     > {
         let result = util::maybe!({
-            let mut guard = self.process.lock();
-            let process = guard.as_mut().context("oops")?;
+            let mut process = self.process.lock();
             Ok((
                 Box::new(process.stdin.take().context("Cannot reconnect")?) as _,
                 Box::new(process.stdout.take().context("Cannot reconnect")?) as _,
@@ -730,9 +727,7 @@ impl Transport for StdioTransport {
 
 impl Drop for StdioTransport {
     fn drop(&mut self) {
-        if let Some(process) = &mut *self.process.lock() {
-            process.kill();
-        }
+        self.process.lock().kill();
     }
 }
 
