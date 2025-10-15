@@ -198,14 +198,14 @@ wayland-backend = { version = "0.3.3", features = [
     "client_system",
     "dlopen",
 ], optional = true }
-wayland-client = { version = "0.31.2", optional = true }
-wayland-cursor = { version = "0.31.1", optional = true }
-wayland-protocols = { version = "0.31.2", features = [
+wayland-client = { version = "0.31.11", optional = true }
+wayland-cursor = { version = "0.31.11", optional = true }
+wayland-protocols = { version = "0.32.9", features = [
     "client",
     "staging",
     "unstable",
 ], optional = true }
-wayland-protocols-plasma = { version = "0.2.0", features = [
+wayland-protocols-plasma = { version = "0.3.9", features = [
     "client",
 ], optional = true }
 wayland-protocols-wlr = { version = "0.3.9", features = [
