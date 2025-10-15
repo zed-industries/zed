@@ -1,0 +1,33 @@
+name: Publish to WinGet
+on:
+  release:
+    types: [released]
+jobs:
+  publish:
+    runs-on:
+      - namespace-profile-2x4-ubuntu-2404
+    steps:
+      - name: Set channel
+        run: |
+          set -eux
+
+          channel="$(cat crates/zed/RELEASE_CHANNEL)"
+
+          tag_suffix=""
+          case $channel in
+            stable)
+              echo "PKG_NAME=ZedIndustries.Zed" >> $GITHUB_ENV
+              ;;
+            preview)
+              echo "PKG_NAME=ZedIndustries.Zed.Preview" >> $GITHUB_ENV
+              ;;
+            *)
+              echo "this must be run on either of stable|preview release branches" >&2
+              exit 1
+              ;;
+          esac
+      - uses: vedantmgoyal9/winget-releaser@main
+        with:
+          identifier: ${{ PKG_NAME }}
+          max-versions-to-keep: 5
+          token: ${{ secrets.WINGET_TOKEN }}
