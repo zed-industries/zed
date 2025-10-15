@@ -15,7 +15,7 @@ use heck::ToTitleCase as _;
 use project::WorktreeId;
 use schemars::JsonSchema;
 use serde::Deserialize;
-use settings::{SettingsContent, SettingsStore};
+use settings::{Settings, SettingsContent, SettingsStore};
 use std::{
     any::{Any, TypeId, type_name},
     cell::RefCell,
@@ -466,6 +466,13 @@ pub fn open_settings_editor(
     // We have to defer this to get the workspace off the stack.
 
     cx.defer(move |cx| {
+        let current_rem_size: f32 = theme::ThemeSettings::get_global(cx).ui_font_size(cx).into();
+
+        let default_bounds = size(px(900.), px(750.)); // 4:3 Aspect Ratio
+        let default_rem_size = 16.0;
+        let scale_factor = current_rem_size / default_rem_size;
+        let scaled_bounds: gpui::Size<Pixels> = default_bounds.map(|axis| axis * scale_factor);
+
         cx.open_window(
             WindowOptions {
                 titlebar: Some(TitlebarOptions {
@@ -478,8 +485,8 @@ pub fn open_settings_editor(
                 is_movable: true,
                 kind: gpui::WindowKind::Floating,
                 window_background: cx.theme().window_background_appearance(),
-                window_min_size: Some(size(px(900.), px(750.))), // 4:3 Aspect Ratio
-                window_bounds: Some(WindowBounds::centered(size(px(900.), px(750.)), cx)),
+                window_min_size: Some(scaled_bounds),
+                window_bounds: Some(WindowBounds::centered(scaled_bounds, cx)),
                 ..Default::default()
             },
             |window, cx| cx.new(|cx| SettingsWindow::new(Some(workspace_handle), window, cx)),
@@ -1701,7 +1708,7 @@ impl SettingsWindow {
         };
 
         v_flex()
-            .w_64()
+            .w_56()
             .p_2p5()
             .when(cfg!(target_os = "macos"), |c| c.pt_10())
             .h_full()
@@ -2136,7 +2143,7 @@ impl SettingsWindow {
         }
 
         return v_flex()
-            .size_full()
+            .flex_1()
             .pt_6()
             .pb_8()
             .px_8()
