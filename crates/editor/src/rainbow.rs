@@ -28,7 +28,6 @@ impl VariableColorCache {
 
     #[inline]
     pub fn get_or_insert_by_hash(&self, hash: u64, theme: &SyntaxTheme) -> HighlightStyle {
-        // Fast path: check if color exists (lock-free read)
         if let Some(entry) = self.colors.get(&hash) {
             return HighlightStyle {
                 color: Some(*entry.value()),
@@ -36,12 +35,30 @@ impl VariableColorCache {
             };
         }
         
-        // Eviction if cache is full
         if self.colors.len() >= self.max_entries {
-            // DashMap has efficient bulk operations
-            self.colors.retain(|k, _| k % 2 == 0);
+            return self.generate_color_without_cache(hash, theme);
         }
         
+        let style = self.generate_color_without_cache(hash, theme);
+        if let Some(color) = style.color {
+            self.colors.insert(hash, color);
+        }
+        style
+    }
+
+    pub fn clear(&self) {
+        self.colors.clear();
+    }
+
+    pub fn mode(&self) -> VariableColorMode {
+        self.mode
+    }
+
+    pub fn len(&self) -> usize {
+        self.colors.len()
+    }
+
+    fn generate_color_without_cache(&self, hash: u64, theme: &SyntaxTheme) -> HighlightStyle {
         let color = match self.mode {
             VariableColorMode::ThemePalette => {
                 const RAINBOW_PALETTE_SIZE: usize = 32;
@@ -56,25 +73,10 @@ impl VariableColorCache {
             }
         };
         
-        // Insert and return (lock-free write)
-        self.colors.insert(hash, color);
-        
         HighlightStyle {
             color: Some(color),
             ..Default::default()
         }
-    }
-
-    pub fn clear(&self) {
-        self.colors.clear();
-    }
-
-    pub fn mode(&self) -> VariableColorMode {
-        self.mode
-    }
-
-    pub fn len(&self) -> usize {
-        self.colors.len()
     }
 }
 

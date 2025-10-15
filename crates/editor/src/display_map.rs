@@ -176,16 +176,28 @@ impl SyntaxTokenView {
             return None;
         }
 
-        let Some(cache) = variable_color_cache else {
-            return None;
-        };
-
-        let Some(buffer_entity) = multibuffer.buffer(buffer_id) else {
-            return None;
-        };
+        let cache = variable_color_cache?;
+        let buffer_entity = multibuffer.buffer(buffer_id)?;
         let buffer = buffer_entity.read(cx);
         let snapshot = buffer.snapshot();
 
+        Self::extract_tokens(snapshot, cache, theme)
+    }
+
+    pub fn new_on_background(
+        _buffer_id: BufferId,
+        snapshot: language::BufferSnapshot,
+        cache: &Arc<crate::rainbow::VariableColorCache>,
+        theme: &theme::SyntaxTheme,
+    ) -> Option<Self> {
+        Self::extract_tokens(snapshot, cache, theme)
+    }
+
+    fn extract_tokens(
+        snapshot: language::BufferSnapshot,
+        cache: &crate::rainbow::VariableColorCache,
+        theme: &theme::SyntaxTheme,
+    ) -> Option<Self> {
         let mut tokens = Vec::new();
         for layer in snapshot.syntax_layers() {
             let root = layer.node();

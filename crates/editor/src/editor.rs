@@ -6667,26 +6667,35 @@ impl Editor {
     }
 
     fn refresh_syntax_tokens(&mut self, buffer_id: BufferId, cx: &mut Context<Self>) {
-        self.display_map.update(cx, |display_map, cx| {
-            let cache = display_map.get_variable_color_cache();
-            if cache.is_none() {
-                return;
-            }
+        let Some((cache, theme, buffer_snapshot)) = self.display_map.update(cx, |display_map, cx| {
+            let cache = display_map.get_variable_color_cache()?;
+            let theme = cx.theme().syntax().clone();
+            let buffer_entity = self.buffer.read(cx).buffer(buffer_id)?;
+            let buffer_snapshot = buffer_entity.read(cx).snapshot();
+            Some((cache.clone(), theme, buffer_snapshot))
+        }) else {
+            return;
+        };
 
-            let theme = &cx.theme().syntax();
-            let view = crate::display_map::SyntaxTokenView::new(
-                buffer_id,
-                self.buffer.read(cx),
-                cache.as_ref(),
-                theme,
-                cx
-            );
+        cx.spawn(async move |editor, cx| {
+            let view = cx.background_executor().spawn(async move {
+                crate::display_map::SyntaxTokenView::new_on_background(
+                    buffer_id,
+                    buffer_snapshot,
+                    &cache,
+                    &theme,
+                )
+            }).await;
 
             if let Some(view) = view {
-                display_map.syntax_tokens.insert(buffer_id, Arc::new(view));
-                cx.notify();
+                editor.update(cx, |editor, cx| {
+                    editor.display_map.update(cx, |display_map, _| {
+                        display_map.syntax_tokens.insert(buffer_id, Arc::new(view));
+                    });
+                    cx.notify();
+                }).log_err();
             }
-        });
+        }).detach();
     }
 
     fn start_inline_blame_timer(&mut self, window: &mut Window, cx: &mut Context<Self>) {
