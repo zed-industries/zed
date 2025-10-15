@@ -12,8 +12,8 @@ use crate::{
 
 use blade_graphics as gpu;
 use collections::FxHashSet;
-use raw_window_handle as rwh;
 use image::Pixel as _;
+use raw_window_handle as rwh;
 use util::{ResultExt, maybe};
 use x11rb::{
     connection::Connection,
@@ -520,7 +520,7 @@ impl X11WindowState {
                 property_data.push(image.height());
                 property_data.extend(image.pixels().map(|px| {
                     let [r, g, b, a]: [u8; 4] = px.to_rgba().0;
-                    u32::from_le_bytes([r, g, b, a])
+                    u32::from_le_bytes([b, g, r, a])
                 }));
 
                 check_reply(
