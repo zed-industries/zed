@@ -110,7 +110,9 @@ impl ProjectSearcher {
                 else {
                     return;
                 };
-                results.send(should_scan_rx).await;
+                if results.send(should_scan_rx).await.is_err() {
+                    return;
+                };
             }
         }
     }
@@ -126,7 +128,9 @@ impl ProjectSearcher {
                 // This math did not produce a match, hence skip it.
                 continue;
             };
-            paths_for_full_scan.send(successful_path).await;
+            if paths_for_full_scan.send(successful_path).await.is_err() {
+                return;
+            };
         }
     }
 
@@ -263,7 +267,8 @@ impl RequestHandler<'_> {
         {
             Some(LimitReached)
         } else {
-            self.publish_matches
+            _ = self
+                .publish_matches
                 .send(SearchResult::Buffer { buffer, ranges })
                 .await;
             None
