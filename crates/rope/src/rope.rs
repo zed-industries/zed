@@ -673,6 +673,12 @@ impl<'a> Chunks<'a> {
             chunks.seek(&range.start, Bias::Right);
             range.start
         };
+        let chunk_offset = offset - chunks.start();
+        if let Some(chunk) = chunks.item()
+            && !chunk.text.is_char_boundary(chunk_offset)
+        {
+            panic!("byte index {} is not a char boundary", offset);
+        }
         Self {
             chunks,
             range,
