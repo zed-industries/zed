@@ -140,7 +140,7 @@ Authentication to Zed's Codex installation is decoupled entirely from Zed's agen
 
 To ensure you're using your billing method of choice, [open a new Codex thread](./agent-panel.md#new-thread). The first time you will be prompted to authenticate with one of three methods:
 
-1. Login with ChatGPT - allows you to use your existing, paid ChatGPT subscription. *Note: This method isn't currently supported in remote projects*
+1. Login with ChatGPT - allows you to use your existing, paid ChatGPT subscription. _Note: This method isn't currently supported in remote projects_
 2. `CODEX_API_KEY` - uses an API key you have set in your environment under the variable `CODEX_API_KEY`.
 3. `OPENAI_API_KEY` - uses an API key you have set in your environment under the variable `OPENAI_API_KEY`.
 
