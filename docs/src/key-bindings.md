@@ -28,7 +28,7 @@ Where Zed looks for your keymap:
 - macOS/Linux: `~/.config/zed/keymap.json`
 - Windows: `~\AppData\Roaming\Zed/keymap.json`
 
-You can open the keymap with the {#action zed::OpenKeymap} action from the command palette, or edit it in Zed's Keymap Editor, accessible via the {#action zed::OpenKeymapEditor} action or the {#kb zed::OpenKeymapEditor} keybinding.
+You can open the keymap with the {#action zed::OpenKeymapFile} action from the command palette, or edit it in Zed's Keymap Editor, accessible via the {#action zed::OpenKeymap} action or the {#kb zed::OpenKeymap} keybinding.
 
 The `keymap.json` file contains a JSON array of objects with `"bindings"`. If no `"context"` is set, the bindings are always active. If it is set, the binding is only active when the [context matches](#contexts).
 
