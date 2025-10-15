@@ -866,6 +866,8 @@ impl FileFinderDelegate {
         let worktrees = self
             .project
             .read(cx)
+            .worktree_store()
+            .read(cx)
             .visible_worktrees_and_single_files(cx)
             .collect::<Vec<_>>();
         let include_root_name = worktrees.len() > 1;
