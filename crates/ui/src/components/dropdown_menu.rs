@@ -172,7 +172,6 @@ impl RenderOnce for DropdownMenu {
                         .when(full_width, |this| this.full_width())
                         .size(trigger_size)
                         .disabled(self.disabled)
-                        // .when_some(self.trigger_tooltip, |this, tooltip| this.tooltip(tooltip))
                         .when_some(self.tab_index, |this, tab_index| this.tab_index(tab_index)),
                 ),
                 None,
