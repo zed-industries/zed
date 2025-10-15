@@ -510,7 +510,6 @@ pub enum TreeDiffStatus {
     Added { new: Oid },
     Modified { old: Oid, new: Oid },
     Deleted { old: Oid },
-    TypeChanged {},
 }
 
 impl FromStr for TreeDiff {
@@ -562,7 +561,6 @@ impl FromStr for TreeDiffStatus {
             StatusCode::Added => TreeDiffStatus::Added { new: new_sha },
             StatusCode::Deleted => TreeDiffStatus::Deleted { old: old_sha },
             // todo! what if something is modified and the type changed?
-            StatusCode::TypeChanged => TreeDiffStatus::TypeChanged {},
             status => {
                 anyhow::bail!("unexpected status: {:?}", status)
             }

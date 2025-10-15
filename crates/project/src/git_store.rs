@@ -4802,7 +4802,7 @@ impl Repository {
         let rx = self.send_job(None, move |state, _| async move {
             match state {
                 RepositoryState::Local { backend, .. } => backend.load_blob_content(oid).await,
-                RepositoryState::Remote { project_id, client } => {
+                RepositoryState::Remote { .. } => {
                     todo!();
                     // let response = client
                     //     .request(proto::OpenUnstagedDiff {

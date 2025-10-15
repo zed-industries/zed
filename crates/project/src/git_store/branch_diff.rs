@@ -274,6 +274,7 @@ impl BranchDiff {
                 else {
                     continue;
                 };
+                let repo = repo.clone();
                 let task = cx.spawn(async move |project, cx| {
                     let buffer = project
                         .update(cx, |project, cx| project.open_buffer(project_path, cx))?
@@ -285,31 +286,28 @@ impl BranchDiff {
                     let changes;
                     if let Some(entry) = branch_diff {
                         let buffer_snapshot = buffer.update(cx, |buffer, cx| buffer.snapshot())?;
-                        let content =
-                            repo.update(cx, |repo, cx| repo.load_blob_content(entry.old, cx));
+                        let content = match entry {
+                            git::status::TreeDiffStatus::Added { .. } => None,
+                            git::status::TreeDiffStatus::Modified { old, .. }
+                            | git::status::TreeDiffStatus::Deleted { old } => Some(
+                                repo.update(cx, |repo, cx| repo.load_blob_content(old, cx))?
+                                    .await?,
+                            ),
+                        };
 
                         let buffer_diff = cx.new(|cx| BufferDiff::new(&buffer_snapshot, cx))?;
                         buffer_diff
                             .update(cx, |buffer_diff, cx| {
                                 buffer_diff.set_base_text(
                                     content.map(Arc::new),
-                                    // buffer_snapshot.language().cloned(),
+                                    buffer_snapshot.language().cloned(),
                                     Some(language_registry.clone()),
                                     buffer_snapshot.text,
                                     cx,
                                 )
                             })?
                             .await?;
-
-                        this.read_with(cx, |this, cx| {
-                            BufferDiffSnapshot::new_with_base_buffer(
-                                buffer.clone(),
-                                base_text,
-                                this.base_text().clone(),
-                                cx,
-                            )
-                        })?
-                        .await;
+                        changes = buffer_diff;
                     } else {
                         changes = project
                             .update(cx, |project, cx| {
