@@ -65,7 +65,8 @@ impl<T: TransitionGoal + Clone + PartialEq + 'static> Transition<T> {
     }
 
     /// Updates the goal for the transition without notifying gpui of any changes.
-    pub fn update_goal_silently(&self, new_goal: T, cx: &mut App) -> bool {
+    pub fn update_goal_silently(&self, cx: &mut App, new_goal: impl Into<T>) -> bool {
+        let new_goal = new_goal.into();
         let mut was_updated = false;
 
         self.state.update(cx, |state, _cx| {
@@ -87,8 +88,8 @@ impl<T: TransitionGoal + Clone + PartialEq + 'static> Transition<T> {
 
     /// Updates the goal for the transition and notifies gpui
     /// of the change if the new goal is different from the last.
-    pub fn update_goal(&self, new_goal: impl Into<T>, cx: &mut App) -> bool {
-        let was_updated = self.update_goal_silently(new_goal.into(), cx);
+    pub fn update_goal(&self, cx: &mut App, new_goal: impl Into<T>) -> bool {
+        let was_updated = self.update_goal_silently(cx, new_goal.into());
 
         if was_updated {
             cx.notify(self.state.entity_id());
