@@ -870,7 +870,7 @@ impl TerminalPanel {
                     pane.update_in(cx, |pane, window, cx| {
                         let focus = pane.has_focus(window, cx);
                         let failed_to_spawn = cx.new(|cx| FailedToSpawnTerminal {
-                            error: format!("{:#}", error),
+                            error: error.to_string(),
                             focus_handle: cx.focus_handle(),
                         });
                         pane.add_item(Box::new(failed_to_spawn), true, focus, None, window, cx);
