@@ -26,6 +26,39 @@ pub struct Transition<T: TransitionGoal + Clone + PartialEq + 'static> {
 }
 
 impl<T: TransitionGoal + Clone + PartialEq + 'static> Transition<T> {
+    /// Create a new transition with the given duration and goal.
+    pub fn new(
+        id: impl Into<ElementId>,
+        duration: Duration,
+        initial_goal: T,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Self {
+        Self {
+            duration_secs: duration.as_secs_f32(),
+            easing: Rc::new(linear),
+            state: window
+                .use_keyed_state(id, cx, |_window, _cx| TransitionState::new(initial_goal)),
+        }
+    }
+
+    /// Create a new transition with the given duration using the specified state.
+    pub fn from_state(state: Entity<TransitionState<T>>, duration: Duration) -> Self {
+        Self {
+            duration_secs: duration.as_secs_f32(),
+            easing: Rc::new(linear),
+            state,
+        }
+    }
+
+    /// Set the easing function to use for this transition.
+    /// The easing function will take a time delta between 0 and 1 and return a new delta
+    /// between 0 and 1
+    pub fn with_easing(mut self, easing: impl Fn(f32) -> f32 + 'static) -> Self {
+        self.easing = Rc::new(easing);
+        self
+    }
+
     /// Reads the transition's goal.
     pub fn read_goal<'a>(&self, cx: &'a App) -> &'a T {
         &self.state.read(cx).end_goal
@@ -102,41 +135,6 @@ impl<T: TransitionGoal + Clone + PartialEq + 'static> TransitionState<T> {
             end_goal: initial_goal,
             last_delta: 1.,
         }
-    }
-}
-
-impl<T: TransitionGoal + Clone + PartialEq + 'static> Transition<T> {
-    /// Create a new transition with the given duration and goal.
-    pub fn new(
-        id: impl Into<ElementId>,
-        duration: Duration,
-        initial_goal: T,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> Self {
-        Self {
-            duration_secs: duration.as_secs_f32(),
-            easing: Rc::new(linear),
-            state: window
-                .use_keyed_state(id, cx, |_window, _cx| TransitionState::new(initial_goal)),
-        }
-    }
-
-    /// Create a new transition with the given duration using the specified state.
-    pub fn from_state(state: Entity<TransitionState<T>>, duration: Duration) -> Self {
-        Self {
-            duration_secs: duration.as_secs_f32(),
-            easing: Rc::new(linear),
-            state,
-        }
-    }
-
-    /// Set the easing function to use for this transition.
-    /// The easing function will take a time delta between 0 and 1 and return a new delta
-    /// between 0 and 1
-    pub fn with_easing(mut self, easing: impl Fn(f32) -> f32 + 'static) -> Self {
-        self.easing = Rc::new(easing);
-        self
     }
 }
 
