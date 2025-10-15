@@ -1319,7 +1319,7 @@ pub struct WindowOptions {
     pub window_decorations: Option<WindowDecorations>,
 
     /// Icon image (X11 only)
-    pub icon: Option<image::RgbaImage>,
+    pub icon: Option<Arc<image::RgbaImage>>,
 
     /// Tab group name, allows opening the window as a native tab on macOS 10.12+. Windows with the same tabbing identifier will be grouped together.
     pub tabbing_identifier: Option<String>,
@@ -1368,7 +1368,7 @@ pub(crate) struct WindowParams {
 
     /// An image to set as the window icon (x11 only)
     #[cfg_attr(feature = "wayland", allow(dead_code))]
-    pub icon: Option<image::RgbaImage>,
+    pub icon: Option<Arc<image::RgbaImage>>,
 
     #[cfg_attr(feature = "wayland", allow(dead_code))]
     pub display_id: Option<DisplayId>,
