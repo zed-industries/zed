@@ -421,6 +421,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     metadata: None,
                     files: USER,
                 }),
+                SettingsPageItem::SectionHeader("Cursor"),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Multi Cursor Modifier",
                     description: "Modifier key for adding multiple cursors",
@@ -433,7 +434,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     metadata: None,
                     files: USER,
                 }),
-                SettingsPageItem::SectionHeader("Cursor"),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Cursor Blink",
                     description: "Whether the cursor blinks in the editor",
@@ -810,9 +810,9 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         metadata: None,
                         files: USER,
                     }),
-                    SettingsPageItem::SectionHeader("Hover"),
+                    SettingsPageItem::SectionHeader("Hover Popover"),
                     SettingsPageItem::SettingItem(SettingItem {
-                        title: "Hover Popover Enabled",
+                        title: "Enabled",
                         description: "Show the informational hover box when moving the mouse over symbols in the editor",
                         field: Box::new(SettingField {
                             pick: |settings_content| &settings_content.editor.hover_popover_enabled,
@@ -825,7 +825,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     // todo(settings ui): add units to this number input
                     SettingsPageItem::SettingItem(SettingItem {
-                        title: "Hover Popover Delay",
+                        title: "Delay",
                         description: "Time to wait in milliseconds before showing the informational hover box",
                         field: Box::new(SettingField {
                             pick: |settings_content| &settings_content.editor.hover_popover_delay,
@@ -836,21 +836,9 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         metadata: None,
                         files: USER,
                     }),
-                    SettingsPageItem::SectionHeader("Code Actions & Selection"),
+                    SettingsPageItem::SectionHeader("Drag And Drop Selection"),
                     SettingsPageItem::SettingItem(SettingItem {
-                        title: "Inline Code Actions",
-                        description: "Show code action button at start of buffer line",
-                        field: Box::new(SettingField {
-                            pick: |settings_content| &settings_content.editor.inline_code_actions,
-                            pick_mut: |settings_content| {
-                                &mut settings_content.editor.inline_code_actions
-                            },
-                        }),
-                        metadata: None,
-                        files: USER,
-                    }),
-                    SettingsPageItem::SettingItem(SettingItem {
-                        title: "Drag And Drop Selection",
+                        title: "Enabled",
                         description: "Enable drag and drop selection",
                         field: Box::new(SettingField {
                             pick: |settings_content| {
@@ -874,7 +862,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         files: USER,
                     }),
                     SettingsPageItem::SettingItem(SettingItem {
-                        title: "Drag And Drop Selection Delay",
+                        title: "Delay",
                         description: "Delay in milliseconds before drag and drop selection starts",
                         field: Box::new(SettingField {
                             pick: |settings_content| {
@@ -1011,6 +999,18 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                     .gutter
                                     .get_or_insert_default()
                                     .min_line_number_digits
+                            },
+                        }),
+                        metadata: None,
+                        files: USER,
+                    }),
+                    SettingsPageItem::SettingItem(SettingItem {
+                        title: "Inline Code Actions",
+                        description: "Show code action button at start of buffer line",
+                        field: Box::new(SettingField {
+                            pick: |settings_content| &settings_content.editor.inline_code_actions,
+                            pick_mut: |settings_content| {
+                                &mut settings_content.editor.inline_code_actions
                             },
                         }),
                         metadata: None,
