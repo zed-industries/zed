@@ -9,7 +9,9 @@ use html5ever::{ParseOpts, local_name, parse_document, tendril::TendrilSink};
 use language::LanguageRegistry;
 use markup5ever_rcdom::RcDom;
 use pulldown_cmark::{Alignment, Event, Options, Parser, Tag, TagEnd};
-use std::{cell::RefCell, collections::HashMap, ops::Range, path::PathBuf, rc::Rc, sync::Arc, vec};
+use std::{
+    cell::RefCell, collections::HashMap, mem, ops::Range, path::PathBuf, rc::Rc, sync::Arc, vec,
+};
 
 pub async fn parse_markdown(
     markdown_input: &str,
@@ -290,18 +292,16 @@ impl<'a> MarkdownParser<'a> {
                         finder.kinds(&[linkify::LinkKind::Url]);
                         let mut last_link_len = prev_len;
                         for link in finder.links(t) {
-                            let start = link.start();
-                            let end = link.end();
-                            let range = (prev_len + start)..(prev_len + end);
+                            let start = prev_len + link.start();
+                            let end = prev_len + link.end();
+                            let range = start..end;
                             link_ranges.push(range.clone());
                             link_urls.push(link.as_str().to_string());
 
                             // If there is a style before we match a link, we have to add this to the highlighted ranges
-                            if style != MarkdownHighlightStyle::default()
-                                && last_link_len < link.start()
-                            {
+                            if style != MarkdownHighlightStyle::default() && last_link_len < start {
                                 highlights.push((
-                                    last_link_len..link.start(),
+                                    last_link_len..start,
                                     MarkdownHighlight::Style(style.clone()),
                                 ));
                             }
@@ -374,15 +374,11 @@ impl<'a> MarkdownParser<'a> {
                         if !text.is_empty() {
                             let parsed_regions = MarkdownParagraphChunk::Text(ParsedMarkdownText {
                                 source_range: source_range.clone(),
-                                contents: text.into(),
-                                highlights: highlights.clone(),
-                                region_ranges: region_ranges.clone(),
-                                regions: regions.clone(),
+                                contents: mem::take(&mut text).into(),
+                                highlights: mem::take(&mut highlights),
+                                region_ranges: mem::take(&mut region_ranges),
+                                regions: mem::take(&mut regions),
                             });
-                            text = String::new();
-                            highlights = vec![];
-                            region_ranges = vec![];
-                            regions = vec![];
                             markdown_text_like.push(parsed_regions);
                         }
                         image = Image::identify(
