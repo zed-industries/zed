@@ -757,20 +757,13 @@ impl TitleBar {
                     this.trigger_with_tooltip(
                         ButtonLike::new("user-menu")
                             .child(
-                                h_flex()
-                                    .gap_0p5()
-                                    .children(
-                                        TitleBarSettings::get_global(cx)
-                                            .show_user_picture
-                                            .then(|| user_avatar.clone())
-                                            .flatten()
-                                            .map(|avatar| Avatar::new(avatar)),
-                                    )
-                                    .child(
-                                        Icon::new(IconName::ChevronDown)
-                                            .size(IconSize::Small)
-                                            .color(Color::Muted),
-                                    ),
+                                h_flex().gap_0p5().mr_1().children(
+                                    TitleBarSettings::get_global(cx)
+                                        .show_user_picture
+                                        .then(|| user_avatar.clone())
+                                        .flatten()
+                                        .map(|avatar| Avatar::new(avatar)),
+                                ),
                             )
                             .style(ButtonStyle::Subtle),
                         Tooltip::text("Toggle User Menu"),
