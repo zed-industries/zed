@@ -1526,20 +1526,20 @@ impl SettingsWindow {
                     }
                 }))
             };
+
         let this = cx.entity();
+
         h_flex()
             .w_full()
             .pb_4()
             .gap_1()
             .justify_between()
-            .tab_group()
             .track_focus(&self.files_focus_handle)
+            .tab_group()
             .tab_index(HEADER_GROUP_TAB_INDEX)
             .child(
                 h_flex()
-                    .id("file_buttons_container")
                     .gap_1()
-                    .overflow_x_scroll()
                     .children(
                         self.files.iter().enumerate().take(OVERFLOW_LIMIT).map(
                             |(ix, (file, focus_handle))| file_button(ix, file, focus_handle, cx),
@@ -1598,9 +1598,15 @@ impl SettingsWindow {
                                             menu
                                         }),
                                     )
-                                    .style(DropdownStyle::Ghost)
-                                    .tab_index(0)
-                                    .no_chevron(),
+                                    .style(DropdownStyle::Subtle)
+                                    .trigger_tooltip(Tooltip::text("View Other Projects"))
+                                    .trigger_icon(IconName::ChevronDown)
+                                    .attach(gpui::Corner::BottomLeft)
+                                    .offset(gpui::Point {
+                                        x: px(0.0),
+                                        y: px(2.0),
+                                    })
+                                    .tab_index(0),
                                 )
                             },
                         )
