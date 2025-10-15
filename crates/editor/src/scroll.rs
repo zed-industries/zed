@@ -597,6 +597,7 @@ impl Editor {
         );
 
         self.register_visible_buffers(cx);
+        self.refresh_colors_for_visible_range(None, window, cx);
         self.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
         editor_was_scrolled
     }

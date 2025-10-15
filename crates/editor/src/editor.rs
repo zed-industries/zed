@@ -1915,6 +1915,7 @@ impl Editor {
                             editor.update_lsp_data(Some(buffer_id), window, cx);
                             editor
                                 .refresh_inlay_hints(InlayHintRefreshReason::RefreshRequested, cx);
+                            refresh_linked_ranges(editor, window, cx);
                             editor.refresh_code_actions(window, cx);
                             editor.refresh_document_highlights(cx);
                         }
@@ -21079,7 +21080,7 @@ impl Editor {
             if !inlay_splice.to_insert.is_empty() || !inlay_splice.to_remove.is_empty() {
                 self.splice_inlays(&inlay_splice.to_remove, inlay_splice.to_insert, cx);
             }
-            self.refresh_colors(None, window, cx);
+            self.refresh_colors_for_visible_range(None, window, cx);
         }
 
         cx.notify();
@@ -21989,7 +21990,6 @@ impl Editor {
         self.read_scroll_position_from_db(item_id, workspace_id, window, cx);
     }
 
-    // TODO kb do only for the visible range
     fn update_lsp_data(
         &mut self,
         for_buffer: Option<BufferId>,
@@ -21997,8 +21997,7 @@ impl Editor {
         cx: &mut Context<'_, Self>,
     ) {
         self.pull_diagnostics(for_buffer, window, cx);
-        self.refresh_colors(for_buffer, window, cx);
-        refresh_linked_ranges(self, window, cx);
+        self.refresh_colors_for_visible_range(for_buffer, window, cx);
     }
 
     fn register_visible_buffers(&mut self, cx: &mut Context<Self>) {
