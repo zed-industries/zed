@@ -66,10 +66,10 @@ impl Render for AcpModelSelectorPopover {
         PickerPopoverMenu::new(
             self.selector.clone(),
             ButtonLike::new("active-model")
+                .selected_style(ButtonStyle::Tinted(TintColor::Accent))
                 .when_some(model_icon, |this, icon| {
                     this.child(Icon::new(icon).color(color).size(IconSize::XSmall))
                 })
-                .selected_style(ButtonStyle::Tinted(TintColor::Accent))
                 .child(
                     Label::new(model_name)
                         .color(color)
