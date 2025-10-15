@@ -2829,19 +2829,17 @@ impl Session {
                         }
                     }
                 };
-            this.update(cx, |this, cx| {
-                this.companion_port = Some(companion_port);
-                if let Some(mut forward_ports_process) = forward_ports_process {
-                    this.background_tasks.push(cx.spawn(async move |_, _| {
-                        forward_ports_process.status().await.log_err();
-                    }));
-                };
-                let Some(mut companion_process) = companion_process else {
-                    return;
-                };
+
+            let mut background_tasks = Vec::new();
+            if let Some(mut forward_ports_process) = forward_ports_process {
+                background_tasks.push(cx.spawn(async move |_| {
+                    forward_ports_process.status().await.log_err();
+                }));
+            };
+            if let Some(mut companion_process) = companion_process {
                 if let Some(stderr) = companion_process.stderr.take() {
                     let mut console_output = console_output.clone();
-                    this.background_tasks.push(cx.spawn(async move |_, _| {
+                    background_tasks.push(cx.spawn(async move |_| {
                         let mut stderr = BufReader::new(stderr);
                         let mut line = String::new();
                         while let Ok(n) = stderr.read_line(&mut line).await
@@ -2855,9 +2853,9 @@ impl Session {
                         }
                     }));
                 }
-                this.background_tasks.push(cx.spawn({
+                background_tasks.push(cx.spawn({
                     let mut console_output = console_output.clone();
-                    async move |_, _| match companion_process.status().await {
+                    async move |_| match companion_process.status().await {
                         Ok(status) => {
                             if status.success() {
                                 console_output
@@ -2880,8 +2878,8 @@ impl Session {
                                 .ok();
                         }
                     }
-                }))
-            })?;
+                }));
+            }
 
             // TODO pass wslInfo as needed
 
@@ -2930,6 +2928,11 @@ impl Session {
                     return Err(e);
                 }
             }
+
+            this.update(cx, |this, _| {
+                this.background_tasks.extend(background_tasks);
+                this.companion_port = Some(companion_port);
+            })?;
 
             anyhow::Ok(())
         });
