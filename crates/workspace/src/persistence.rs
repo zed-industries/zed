@@ -1347,7 +1347,39 @@ impl WorkspaceDb {
                 continue;
             }
 
-            if paths.paths().iter().all(|path| path.exists())
+            let has_wsl_path = if cfg!(windows) {
+                fn is_wsl_path(path: &PathBuf) -> bool {
+                    use std::path::{Component, Prefix};
+
+                    path.components()
+                        .next()
+                        .and_then(|component| match component {
+                            Component::Prefix(prefix) => Some(prefix),
+                            _ => None,
+                        })
+                        .and_then(|prefix| match prefix.kind() {
+                            Prefix::UNC(server, _) => Some(server),
+                            Prefix::VerbatimUNC(server, _) => Some(server),
+                            _ => None,
+                        })
+                        .map(|server| {
+                            let server_str = server.to_string_lossy();
+                            server_str == "wsl.localhost" || server_str == "wsl$"
+                        })
+                        .unwrap_or(false)
+                }
+
+                paths.paths().iter().any(|path| is_wsl_path(path))
+            } else {
+                false
+            };
+
+            // Delete the workspace if any of the paths are WSL paths.
+            // If a local workspace points to WSL, this check will cause us to wait for the
+            // WSL VM and file server to boot up. This can block for many seconds.
+            // Supported scenarios use remote workspaces.
+            if !has_wsl_path
+                && paths.paths().iter().all(|path| path.exists())
                 && paths.paths().iter().any(|path| path.is_dir())
             {
                 result.push((id, SerializedWorkspaceLocation::Local, paths));

@@ -466,16 +466,15 @@ impl TerminalBuilder {
 
         let shell_params = match shell.clone() {
             Shell::System => {
-                #[cfg(target_os = "windows")]
-                {
+                if cfg!(windows) {
                     Some(ShellParams::new(
                         util::shell::get_windows_system_shell(),
                         None,
                         None,
                     ))
+                } else {
+                    None
                 }
-                #[cfg(not(target_os = "windows"))]
-                None
             }
             Shell::Program(program) => Some(ShellParams::new(program, None, None)),
             Shell::WithArguments {
@@ -495,6 +494,11 @@ impl TerminalBuilder {
                 .unwrap_or(params.program.clone())
         });
 
+        // Note: when remoting, this shell_kind will scrutinize `ssh` or
+        // `wsl.exe` as a shell and fall back to posix or powershell based on
+        // the compilation target. This is fine right now due to the restricted
+        // way we use the return value, but would become incorrect if we
+        // supported remoting into windows.
         let shell_kind = shell.shell_kind(cfg!(windows));
 
         let pty_options = {
@@ -2183,21 +2187,13 @@ fn task_summary(task: &TaskState, error_code: Option<i32>) -> (bool, String, Str
         .full_label
         .replace("\r\n", "\r")
         .replace('\n', "\r");
-    let (success, task_line) = match error_code {
-        Some(0) => (
-            true,
-            format!("{TASK_DELIMITER}Task `{escaped_full_label}` finished successfully"),
+    let success = error_code == Some(0);
+    let task_line = match error_code {
+        Some(0) => format!("{TASK_DELIMITER}Task `{escaped_full_label}` finished successfully"),
+        Some(error_code) => format!(
+            "{TASK_DELIMITER}Task `{escaped_full_label}` finished with non-zero error code: {error_code}"
         ),
-        Some(error_code) => (
-            false,
-            format!(
-                "{TASK_DELIMITER}Task `{escaped_full_label}` finished with non-zero error code: {error_code}"
-            ),
-        ),
-        None => (
-            false,
-            format!("{TASK_DELIMITER}Task `{escaped_full_label}` finished"),
-        ),
+        None => format!("{TASK_DELIMITER}Task `{escaped_full_label}` finished"),
     };
     let escaped_command_label = task
         .spawned_task

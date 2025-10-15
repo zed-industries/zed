@@ -5243,15 +5243,7 @@ impl Editor {
                         if enabled {
                             (InvalidationStrategy::RefreshRequested, None)
                         } else {
-                            self.splice_inlays(
-                                &self
-                                    .visible_inlay_hints(cx)
-                                    .iter()
-                                    .map(|inlay| inlay.id)
-                                    .collect::<Vec<InlayId>>(),
-                                Vec::new(),
-                                cx,
-                            );
+                            self.clear_inlay_hints(cx);
                             return;
                         }
                     }
@@ -5263,15 +5255,7 @@ impl Editor {
                     if enabled {
                         (InvalidationStrategy::RefreshRequested, None)
                     } else {
-                        self.splice_inlays(
-                            &self
-                                .visible_inlay_hints(cx)
-                                .iter()
-                                .map(|inlay| inlay.id)
-                                .collect::<Vec<InlayId>>(),
-                            Vec::new(),
-                            cx,
-                        );
+                        self.clear_inlay_hints(cx);
                         return;
                     }
                 } else {
@@ -5282,7 +5266,7 @@ impl Editor {
                 match self.inlay_hint_cache.update_settings(
                     &self.buffer,
                     new_settings,
-                    self.visible_inlay_hints(cx),
+                    self.visible_inlay_hints(cx).cloned().collect::<Vec<_>>(),
                     cx,
                 ) {
                     ControlFlow::Break(Some(InlaySplice {
@@ -5332,13 +5316,25 @@ impl Editor {
         }
     }
 
-    fn visible_inlay_hints(&self, cx: &Context<Editor>) -> Vec<Inlay> {
+    pub fn clear_inlay_hints(&self, cx: &mut Context<Editor>) {
+        self.splice_inlays(
+            &self
+                .visible_inlay_hints(cx)
+                .map(|inlay| inlay.id)
+                .collect::<Vec<_>>(),
+            Vec::new(),
+            cx,
+        );
+    }
+
+    fn visible_inlay_hints<'a>(
+        &'a self,
+        cx: &'a Context<Editor>,
+    ) -> impl Iterator<Item = &'a Inlay> {
         self.display_map
             .read(cx)
             .current_inlays()
             .filter(move |inlay| matches!(inlay.id, InlayId::Hint(_)))
-            .cloned()
-            .collect()
     }
 
     pub fn visible_excerpts(
@@ -7005,6 +7001,7 @@ impl Editor {
                 ) else {
                     return Vec::default();
                 };
+                let query_range = query_range.to_anchors(&multi_buffer_snapshot);
                 for (buffer_snapshot, search_range, excerpt_id) in buffer_ranges {
                     match_ranges.extend(
                         regex
@@ -23080,11 +23077,7 @@ fn snippet_completions(
                         }),
                         lsp_defaults: None,
                     },
-                    label: CodeLabel {
-                        text: matching_prefix.clone(),
-                        runs: Vec::new(),
-                        filter_range: 0..matching_prefix.len(),
-                    },
+                    label: CodeLabel::plain(matching_prefix.clone(), None),
                     icon_path: None,
                     documentation: Some(CompletionDocumentation::SingleLineAndMultiLinePlainText {
                         single_line: snippet.name.clone().into(),
