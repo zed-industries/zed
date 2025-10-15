@@ -9,6 +9,7 @@ pub mod text_similarity;
 
 use std::{path::Path, sync::Arc};
 
+use cloud_llm_client::predict_edits_v3;
 use collections::HashMap;
 use gpui::{App, AppContext as _, Entity, Task};
 use language::BufferSnapshot;
@@ -21,6 +22,8 @@ pub use imports::*;
 pub use reference::*;
 pub use syntax_index::*;
 
+pub use predict_edits_v3::Line;
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct EditPredictionContextOptions {
     pub use_imports: bool,
@@ -32,7 +35,7 @@ pub struct EditPredictionContextOptions {
 pub struct EditPredictionContext {
     pub excerpt: EditPredictionExcerpt,
     pub excerpt_text: EditPredictionExcerptText,
-    pub cursor_offset_in_excerpt: usize,
+    pub cursor_point: Point,
     pub declarations: Vec<ScoredDeclaration>,
 }
 
@@ -124,8 +127,6 @@ impl EditPredictionContext {
         );
 
         let cursor_offset_in_file = cursor_point.to_offset(buffer);
-        // TODO fix this to not need saturating_sub
-        let cursor_offset_in_excerpt = cursor_offset_in_file.saturating_sub(excerpt.range.start);
 
         let declarations = if let Some(index_state) = index_state {
             let references = get_references(&excerpt, &excerpt_text, buffer);
@@ -148,7 +149,7 @@ impl EditPredictionContext {
         Some(Self {
             excerpt,
             excerpt_text,
-            cursor_offset_in_excerpt,
+            cursor_point,
             declarations,
         })
     }

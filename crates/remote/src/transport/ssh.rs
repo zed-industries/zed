@@ -146,19 +146,20 @@ impl RemoteConnection for SshRemoteConnection {
         )
     }
 
-    fn build_forward_port_command(
+    fn build_forward_ports_command(
         &self,
-        local_port: u16,
-        host: String,
-        remote_port: u16,
+        forwards: Vec<(u16, String, u16)>,
     ) -> Result<CommandTemplate> {
+        let Self { socket, .. } = self;
+        let mut args = socket.ssh_args();
+        args.push("-N".into());
+        for (local_port, host, remote_port) in forwards {
+            args.push("-L".into());
+            args.push(format!("{local_port}:{host}:{remote_port}"));
+        }
         Ok(CommandTemplate {
             program: "ssh".into(),
-            args: vec![
-                "-N".into(),
-                "-L".into(),
-                format!("{local_port}:{host}:{remote_port}"),
-            ],
+            args,
             env: Default::default(),
         })
     }

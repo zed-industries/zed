@@ -1,4 +1,3 @@
-//! # settings_ui
 mod components;
 mod page_data;
 
@@ -16,10 +15,7 @@ use heck::ToTitleCase as _;
 use project::WorktreeId;
 use schemars::JsonSchema;
 use serde::Deserialize;
-use settings::{
-    BottomDockLayout, CloseWindowWhenNoItems, CodeFade, CursorShape, OnLastWindowClosed,
-    RestoreOnStartupBehavior, SaturatingBool, SettingsContent, SettingsStore,
-};
+use settings::{SettingsContent, SettingsStore};
 use std::{
     any::{Any, TypeId, type_name},
     cell::RefCell,
@@ -330,8 +326,10 @@ impl Focusable for NonFocusableHandle {
     }
 }
 
+#[derive(Default)]
 struct SettingsFieldMetadata {
     placeholder: Option<&'static str>,
+    should_do_titlecase: Option<bool>,
 }
 
 pub struct SettingsUiFeatureFlag;
@@ -369,12 +367,12 @@ fn init_renderers(cx: &mut App) {
         })
         .add_basic_renderer::<bool>(render_toggle_button)
         .add_basic_renderer::<String>(render_text_field)
-        .add_basic_renderer::<SaturatingBool>(render_toggle_button)
-        .add_basic_renderer::<CursorShape>(render_dropdown)
-        .add_basic_renderer::<RestoreOnStartupBehavior>(render_dropdown)
-        .add_basic_renderer::<BottomDockLayout>(render_dropdown)
-        .add_basic_renderer::<OnLastWindowClosed>(render_dropdown)
-        .add_basic_renderer::<CloseWindowWhenNoItems>(render_dropdown)
+        .add_basic_renderer::<settings::SaturatingBool>(render_toggle_button)
+        .add_basic_renderer::<settings::CursorShape>(render_dropdown)
+        .add_basic_renderer::<settings::RestoreOnStartupBehavior>(render_dropdown)
+        .add_basic_renderer::<settings::BottomDockLayout>(render_dropdown)
+        .add_basic_renderer::<settings::OnLastWindowClosed>(render_dropdown)
+        .add_basic_renderer::<settings::CloseWindowWhenNoItems>(render_dropdown)
         .add_basic_renderer::<settings::FontFamilyName>(render_font_picker)
         // todo(settings_ui): This needs custom ui
         // .add_renderer::<settings::BufferLineHeight>(|settings_field, file, _, window, cx| {
@@ -421,7 +419,7 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<usize>(render_number_field)
         .add_basic_renderer::<NonZero<usize>>(render_number_field)
         .add_basic_renderer::<NonZeroU32>(render_number_field)
-        .add_basic_renderer::<CodeFade>(render_number_field)
+        .add_basic_renderer::<settings::CodeFade>(render_number_field)
         .add_basic_renderer::<FontWeight>(render_number_field)
         .add_basic_renderer::<settings::MinimumContrast>(render_number_field)
         .add_basic_renderer::<settings::ShowScrollbar>(render_dropdown)
@@ -431,7 +429,15 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::MinimapThumb>(render_dropdown)
         .add_basic_renderer::<settings::MinimapThumbBorder>(render_dropdown)
         .add_basic_renderer::<settings::SteppingGranularity>(render_dropdown)
-        .add_basic_renderer::<settings::NotifyWhenAgentWaiting>(render_dropdown);
+        .add_basic_renderer::<settings::NotifyWhenAgentWaiting>(render_dropdown)
+        .add_basic_renderer::<settings::ImageFileSizeUnit>(render_dropdown)
+        .add_basic_renderer::<settings::StatusStyle>(render_dropdown)
+        .add_basic_renderer::<settings::PaneSplitDirectionHorizontal>(render_dropdown)
+        .add_basic_renderer::<settings::PaneSplitDirectionVertical>(render_dropdown)
+        .add_basic_renderer::<settings::PaneSplitDirectionVertical>(render_dropdown)
+        .add_basic_renderer::<settings::DocumentColorsRenderMode>(render_dropdown)
+    // please semicolon stay on next line
+    ;
     // .add_renderer::<ThemeSelection>(|settings_field, file, _, window, cx| {
     //     render_dropdown(*settings_field, file, window, cx)
     // });
@@ -506,6 +512,7 @@ pub struct SettingsWindow {
     title_bar: Option<Entity<PlatformTitleBar>>,
     original_window: Option<WindowHandle<Workspace>>,
     files: Vec<(SettingsUiFile, FocusHandle)>,
+    drop_down_file: Option<usize>,
     worktree_root_dirs: HashMap<WorktreeId, String>,
     current_file: SettingsUiFile,
     pages: Vec<SettingsPage>,
@@ -993,6 +1000,7 @@ impl SettingsWindow {
             original_window,
             worktree_root_dirs: HashMap::default(),
             files: vec![],
+            drop_down_file: None,
             current_file: current_file,
             pages: vec![],
             navbar_entries: vec![],
@@ -1479,7 +1487,7 @@ impl SettingsWindow {
             .iter()
             .any(|(file, _)| file == &self.current_file);
         if !current_file_still_exists {
-            self.change_file(0, window, cx);
+            self.change_file(0, window, false, cx);
         }
     }
 
@@ -1509,12 +1517,22 @@ impl SettingsWindow {
         self.open_navbar_entry_page(first_navbar_entry_index);
     }
 
-    fn change_file(&mut self, ix: usize, window: &mut Window, cx: &mut Context<SettingsWindow>) {
+    fn change_file(
+        &mut self,
+        ix: usize,
+        window: &mut Window,
+        drop_down_file: bool,
+        cx: &mut Context<SettingsWindow>,
+    ) {
         if ix >= self.files.len() {
             self.current_file = SettingsUiFile::User;
             self.build_ui(window, cx);
             return;
         }
+        if drop_down_file {
+            self.drop_down_file = Some(ix);
+        }
+
         if self.files[ix].0 == self.current_file {
             return;
         }
@@ -1534,9 +1552,30 @@ impl SettingsWindow {
 
     fn render_files_header(
         &self,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<SettingsWindow>,
     ) -> impl IntoElement {
+        const OVERFLOW_LIMIT: usize = 1;
+
+        let file_button =
+            |ix, file: &SettingsUiFile, focus_handle, cx: &mut Context<SettingsWindow>| {
+                Button::new(
+                    ix,
+                    self.display_name(&file)
+                        .expect("Files should always have a name"),
+                )
+                .toggle_state(file == &self.current_file)
+                .selected_style(ButtonStyle::Tinted(ui::TintColor::Accent))
+                .track_focus(focus_handle)
+                .on_click(cx.listener({
+                    let focus_handle = focus_handle.clone();
+                    move |this, _: &gpui::ClickEvent, window, cx| {
+                        this.change_file(ix, window, false, cx);
+                        focus_handle.focus(window);
+                    }
+                }))
+            };
+        let this = cx.entity();
         h_flex()
             .w_full()
             .pb_4()
@@ -1548,31 +1587,73 @@ impl SettingsWindow {
             .child(
                 h_flex()
                     .id("file_buttons_container")
-                    .w_64() // Temporary fix until long-term solution is a fixed set of buttons representing a file location (User, Project, and Remote)
                     .gap_1()
                     .overflow_x_scroll()
                     .children(
-                        self.files
-                            .iter()
-                            .enumerate()
-                            .map(|(ix, (file, focus_handle))| {
-                                Button::new(
-                                    ix,
-                                    self.display_name(&file)
-                                        .expect("Files should always have a name"),
+                        self.files.iter().enumerate().take(OVERFLOW_LIMIT).map(
+                            |(ix, (file, focus_handle))| file_button(ix, file, focus_handle, cx),
+                        ),
+                    )
+                    .when(self.files.len() > OVERFLOW_LIMIT, |div| {
+                        div.children(
+                            self.files
+                                .iter()
+                                .enumerate()
+                                .skip(OVERFLOW_LIMIT)
+                                .find(|(_, (file, _))| file == &self.current_file)
+                                .map(|(ix, (file, focus_handle))| {
+                                    file_button(ix, file, focus_handle, cx)
+                                })
+                                .or_else(|| {
+                                    let ix = self.drop_down_file.unwrap_or(OVERFLOW_LIMIT);
+                                    self.files.get(ix).map(|(file, focus_handle)| {
+                                        file_button(ix, file, focus_handle, cx)
+                                    })
+                                }),
+                        )
+                        .when(
+                            self.files.len() > OVERFLOW_LIMIT + 1,
+                            |div| {
+                                div.child(
+                                    DropdownMenu::new(
+                                        "more-files",
+                                        format!("+{}", self.files.len() - (OVERFLOW_LIMIT + 1)),
+                                        ContextMenu::build(window, cx, move |mut menu, _, _| {
+                                            for (ix, (file, focus_handle)) in self
+                                                .files
+                                                .iter()
+                                                .enumerate()
+                                                .skip(OVERFLOW_LIMIT + 1)
+                                            {
+                                                menu = menu.entry(
+                                                    self.display_name(file)
+                                                        .expect("Files should always have a name"),
+                                                    None,
+                                                    {
+                                                        let this = this.clone();
+                                                        let focus_handle = focus_handle.clone();
+                                                        move |window, cx| {
+                                                            this.update(cx, |this, cx| {
+                                                                this.change_file(
+                                                                    ix, window, true, cx,
+                                                                );
+                                                            });
+                                                            focus_handle.focus(window);
+                                                        }
+                                                    },
+                                                );
+                                            }
+
+                                            menu
+                                        }),
+                                    )
+                                    .style(DropdownStyle::Ghost)
+                                    .tab_index(0)
+                                    .no_chevron(),
                                 )
-                                .toggle_state(file == &self.current_file)
-                                .selected_style(ButtonStyle::Tinted(ui::TintColor::Accent))
-                                .track_focus(focus_handle)
-                                .on_click(cx.listener({
-                                    let focus_handle = focus_handle.clone();
-                                    move |this, _: &gpui::ClickEvent, window, cx| {
-                                        this.change_file(ix, window, cx);
-                                        focus_handle.focus(window);
-                                    }
-                                }))
-                            }),
-                    ),
+                            },
+                        )
+                    }),
             )
             .child(
                 Button::new("edit-in-json", "Edit in settings.json")
@@ -2684,7 +2765,7 @@ fn render_number_field<T: NumberFieldType + Send + Sync>(
 fn render_dropdown<T>(
     field: SettingField<T>,
     file: SettingsUiFile,
-    _metadata: Option<&SettingsFieldMetadata>,
+    metadata: Option<&SettingsFieldMetadata>,
     window: &mut Window,
     cx: &mut App,
 ) -> AnyElement
@@ -2693,6 +2774,9 @@ where
 {
     let variants = || -> &'static [T] { <T as strum::VariantArray>::VARIANTS };
     let labels = || -> &'static [&'static str] { <T as strum::VariantNames>::VARIANTS };
+    let should_do_titlecase = metadata
+        .and_then(|metadata| metadata.should_do_titlecase)
+        .unwrap_or(true);
 
     let (_, current_value) =
         SettingsStore::global(cx).get_value_from_file(file.to_settings(), field.pick);
@@ -2703,12 +2787,20 @@ where
 
     DropdownMenu::new(
         "dropdown",
-        current_value_label.to_title_case(),
+        if should_do_titlecase {
+            current_value_label.to_title_case()
+        } else {
+            current_value_label.to_string()
+        },
         ContextMenu::build(window, cx, move |mut menu, _, _| {
             for (&value, &label) in std::iter::zip(variants(), labels()) {
                 let file = file.clone();
                 menu = menu.toggleable_entry(
-                    label.to_title_case(),
+                    if should_do_titlecase {
+                        label.to_title_case()
+                    } else {
+                        label.to_string()
+                    },
                     value == current_value,
                     IconPosition::End,
                     None,
@@ -2828,6 +2920,7 @@ mod test {
             worktree_root_dirs: HashMap::default(),
             files: Vec::default(),
             current_file: crate::SettingsUiFile::User,
+            drop_down_file: None,
             pages,
             search_bar: cx.new(|cx| Editor::single_line(window, cx)),
             navbar_entry: selected_idx.expect("Must have a selected navbar entry"),

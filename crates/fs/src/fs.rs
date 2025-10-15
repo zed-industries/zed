@@ -749,6 +749,7 @@ impl Fs for RealFs {
                         events
                             .into_iter()
                             .map(|event| {
+                                log::trace!("fs path event: {event:?}");
                                 let kind = if event.flags.contains(StreamFlags::ITEM_REMOVED) {
                                     Some(PathEventKind::Removed)
                                 } else if event.flags.contains(StreamFlags::ITEM_CREATED) {
@@ -806,6 +807,7 @@ impl Fs for RealFs {
 
         // Check if path is a symlink and follow the target parent
         if let Some(mut target) = self.read_link(path).await.ok() {
+            log::trace!("watch symlink {path:?} -> {target:?}");
             // Check if symlink target is relative path, if so make it absolute
             if target.is_relative()
                 && let Some(parent) = path.parent()
