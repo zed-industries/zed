@@ -1,6 +1,6 @@
 use gpui::{Corner, Entity, Pixels, Point};
 
-use crate::{ContextMenu, PopoverMenu, prelude::*};
+use crate::{ButtonLike, ContextMenu, PopoverMenu, prelude::*};
 
 use super::PopoverMenuHandle;
 
@@ -137,36 +137,52 @@ impl RenderOnce for DropdownMenu {
         let full_width = self.full_width;
         let trigger_size = self.trigger_size;
 
-        let button = match self.label {
-            LabelKind::Text(text) => Button::new(self.id.clone(), text)
-                .style(button_style)
-                .when(self.chevron, |this| {
-                    this.icon(IconName::ChevronUpDown)
-                        .icon_position(IconPosition::End)
-                        .icon_size(IconSize::XSmall)
-                        .icon_color(Color::Muted)
-                })
-                .when(full_width, |this| this.full_width())
-                .size(trigger_size)
-                .disabled(self.disabled),
-            LabelKind::Element(_element) => Button::new(self.id.clone(), "")
-                .style(button_style)
-                .when(self.chevron, |this| {
-                    this.icon(IconName::ChevronUpDown)
-                        .icon_position(IconPosition::End)
-                        .icon_size(IconSize::XSmall)
-                        .icon_color(Color::Muted)
-                })
-                .when(full_width, |this| this.full_width())
-                .size(trigger_size)
-                .disabled(self.disabled),
-        }
-        .when_some(self.tab_index, |this, tab_index| this.tab_index(tab_index));
+        let (text_button, element_button) = match self.label {
+            LabelKind::Text(text) => (
+                Some(
+                    Button::new(self.id.clone(), text)
+                        .style(button_style)
+                        .when(self.chevron, |this| {
+                            this.icon(IconName::ChevronUpDown)
+                                .icon_position(IconPosition::End)
+                                .icon_size(IconSize::XSmall)
+                                .icon_color(Color::Muted)
+                        })
+                        .when(full_width, |this| this.full_width())
+                        .size(trigger_size)
+                        .disabled(self.disabled)
+                        .when_some(self.tab_index, |this, tab_index| this.tab_index(tab_index)),
+                ),
+                None,
+            ),
+            LabelKind::Element(element) => (
+                None,
+                Some(
+                    ButtonLike::new(self.id.clone())
+                        .child(element)
+                        .style(button_style)
+                        .when(self.chevron, |this| {
+                            this.child(
+                                Icon::new(IconName::ChevronUpDown)
+                                    .size(IconSize::XSmall)
+                                    .color(Color::Muted),
+                            )
+                        })
+                        .when(full_width, |this| this.full_width())
+                        .size(trigger_size)
+                        .disabled(self.disabled)
+                        .when_some(self.tab_index, |this, tab_index| this.tab_index(tab_index)),
+                ),
+            ),
+        };
 
         PopoverMenu::new((self.id.clone(), "popover"))
             .full_width(self.full_width)
             .menu(move |_window, _cx| Some(self.menu.clone()))
-            .trigger(button)
+            .when_some(text_button, |this, text_button| this.trigger(text_button))
+            .when_some(element_button, |this, element_button| {
+                this.trigger(element_button)
+            })
             .attach(match self.attach {
                 Some(attach) => attach,
                 None => Corner::BottomRight,
