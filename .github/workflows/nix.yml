@@ -59,6 +59,9 @@ jobs:
           pushFilter: "${{ inputs.cachix-filter }}"
           cachixArgs: "-v"
 
+      - run: which protoc || true
+      - run: mount
+      - run: nix-build --expr 'derivation { system = "x86_64-linux"; builder = "not-a-builder"; name = "not-a-name"; }' -vvv
       - run: nix build .#${{ inputs.flake-output }} -L --accept-flake-config
 
       - name: Limit /nix/store to 50GB on macs
