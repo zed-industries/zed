@@ -15,6 +15,7 @@ pub mod tasks;
 mod theme_preview;
 mod toast_layer;
 mod toolbar;
+mod workspace_profile_resolution;
 mod workspace_settings;
 
 pub use crate::notifications::NotificationFrame;
@@ -559,6 +560,7 @@ pub fn init(app_state: Arc<AppState>, cx: &mut App) {
     init_settings(cx);
     component::init();
     theme_preview::init(cx);
+    workspace_profile_resolution::init(cx);
     toast_layer::init(cx);
     history_manager::init(cx);
 
