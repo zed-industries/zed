@@ -11,7 +11,7 @@ use std::{
 use collections::HashSet;
 use fs::Fs;
 use futures::{SinkExt, StreamExt, select_biased};
-use gpui::{App, AsyncApp, Entity, WeakEntity};
+use gpui::{App, AsyncApp, Entity};
 use language::{Buffer, BufferSnapshot};
 use postage::oneshot;
 use smol::channel::{Receiver, Sender, bounded, unbounded};
@@ -20,14 +20,14 @@ use util::{ResultExt, maybe};
 use worktree::{Entry, ProjectEntryId, Snapshot, WorktreeSettings};
 
 use crate::{
-    ProjectPath,
+    ProjectItem, ProjectPath,
     buffer_store::BufferStore,
     search::{SearchQuery, SearchResult},
 };
 
 pub(crate) struct ProjectSearcher {
     pub(crate) fs: Arc<dyn Fs>,
-    pub(crate) buffer_store: WeakEntity<BufferStore>,
+    pub(crate) buffer_store: Entity<BufferStore>,
     pub(crate) snapshots: Vec<(Snapshot, WorktreeSettings)>,
     pub(crate) open_buffers: HashSet<ProjectEntryId>,
 }
@@ -37,6 +37,21 @@ const MAX_SEARCH_RESULT_RANGES: usize = 10_000;
 
 impl ProjectSearcher {
     pub(crate) fn run(self, query: SearchQuery, cx: &mut App) -> Receiver<SearchResult> {
+        let mut open_buffers = HashSet::default();
+        let mut unnamed_buffers = Vec::new();
+
+        let buffers = self.buffer_store.read(cx);
+        for handle in buffers.buffers() {
+            let buffer = handle.read(cx);
+            if !buffers.is_searchable(&buffer.remote_id()) {
+                continue;
+            } else if let Some(entry_id) = buffer.entry_id(cx) {
+                open_buffers.insert(entry_id);
+            } else {
+                // limit = limit.saturating_sub(1); todo!()
+                unnamed_buffers.push(handle)
+            };
+        }
         let executor = cx.background_executor().clone();
         let (tx, rx) = unbounded();
         cx.spawn(async move |cx| {
@@ -202,23 +217,33 @@ impl Worker<'_> {
             get_buffer_for_full_scan_tx: &self.get_buffer_for_full_scan_tx,
             publish_matches: &self.publish_matches,
         };
+
         loop {
             select_biased! {
                 find_all_matches = find_all_matches.next() => {
-                    let result = handler.handle_find_all_matches(find_all_matches).await;
+                    let Some(matches) = find_all_matches else {
+                        self.publish_matches.close();
+                        continue;
+                        };
+                    let result = handler.handle_find_all_matches(matches).await;
                     if let Some(_should_bail) = result {
-                        return;
+                        self.publish_matches.close();
+                        break;
                     }
                 },
                 find_first_match = find_first_match.next() => {
                     if let Some(buffer_with_at_least_one_match) = find_first_match {
                         handler.handle_find_first_match(buffer_with_at_least_one_match).await;
+                    } else {
+                        self.get_buffer_for_full_scan_tx.close();
                     }
 
                 },
                 scan_path = scan_path.next() => {
                     if let Some(path_to_scan) = scan_path {
                         handler.handle_scan_path(path_to_scan).await;
+                    } else {
+                        self.confirm_contents_will_match_tx.close();
                     }
 
                  }
@@ -245,11 +270,8 @@ struct LimitReached;
 impl RequestHandler<'_> {
     async fn handle_find_all_matches(
         &self,
-        req: Option<(Entity<Buffer>, BufferSnapshot)>,
+        (buffer, snapshot): (Entity<Buffer>, BufferSnapshot),
     ) -> Option<LimitReached> {
-        let Some((buffer, snapshot)) = req else {
-            unreachable!()
-        };
         let ranges = self
             .query
             .search(&snapshot, None)
