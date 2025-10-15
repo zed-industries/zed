@@ -42,18 +42,19 @@ jobs:
     runs-on:
       - ubuntu-latest
     steps:
-      - name: Set channel
+      - name: Set Package Name
+        id: set-package-name
         run: |
           if [ "${{ github.event.release.prerelease }}" == "true" ]; then
-              PKG_NAME=ZedIndustries.Zed.Preview
+              PACKAGE_NAME=ZedIndustries.Zed.Preview
           else
-              PKG_NAME=ZedIndustries.Zed
+              PACKAGE_NAME=ZedIndustries.Zed
           fi
 
-          echo "PGK_NAME=$PKG_NAME" >> "$GITHUB_OUTPUT"
+          echo "PACKAGE_NAME=$PACKAGE_NAME" >> "$GITHUB_OUTPUT"
       - uses: vedantmgoyal9/winget-releaser@main
         with:
-          identifier: ${{ PKG_NAME }}
+          identifier: ${{ steps.set-package-name.outputs.PACKAGE_NAME }}
           max-versions-to-keep: 5
           token: ${{ secrets.WINGET_TOKEN }}
 
