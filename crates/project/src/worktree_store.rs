@@ -138,7 +138,7 @@ impl WorktreeStore {
             .filter(|worktree| worktree.read(cx).is_visible())
     }
 
-    /// Iterates through all user-visible worktrees (the ones that appear in the project panel) and single files.
+    /// Iterates through all user-visible worktrees (directories and files that appear in the project panel) and other, invisible single files that could appear e.g. due to drag and drop.
     pub fn visible_worktrees_and_single_files<'a>(
         &'a self,
         cx: &'a App,
