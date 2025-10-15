@@ -74,6 +74,7 @@ x11rb::atom_manager! {
         _NET_WM_WINDOW_TYPE,
         _NET_WM_WINDOW_TYPE_NOTIFICATION,
         _NET_WM_WINDOW_TYPE_DIALOG,
+        _NET_WM_STATE_MODAL,
         _NET_WM_SYNC,
         _NET_SUPPORTED,
         _MOTIF_WM_HINTS,
@@ -546,7 +547,7 @@ impl X11WindowState {
                 )?;
             }
 
-            if params.kind == WindowKind::Floating {
+            if params.kind == WindowKind::Floating || params.kind == WindowKind::Dialog {
                 if let Some(parent_window) = parent_window {
                     // WM_TRANSIENT_FOR hint indicating the main application window. For floating windows, we set
                     // a parent window (WM_TRANSIENT_FOR) such that the window manager knows where to
@@ -563,7 +564,9 @@ impl X11WindowState {
                         ),
                     )?;
                 }
+            }
 
+            if params.kind == WindowKind::Dialog {
                 // _NET_WM_WINDOW_TYPE_DIALOG indicates that this is a dialog (floating) window
                 // https://specifications.freedesktop.org/wm-spec/1.4/ar01s05.html
                 check_reply(
@@ -574,6 +577,20 @@ impl X11WindowState {
                         atoms._NET_WM_WINDOW_TYPE,
                         xproto::AtomEnum::ATOM,
                         &[atoms._NET_WM_WINDOW_TYPE_DIALOG],
+                    ),
+                )?;
+
+                // We set the modal state for dialog windows, so that the window manager
+                // can handle it appropriately (e.g., prevent interaction with the parent window
+                // while the dialog is open).
+                check_reply(
+                    || "X11 ChangeProperty32 setting modal state for floating window failed.",
+                    xcb.change_property32(
+                        xproto::PropMode::REPLACE,
+                        x_window,
+                        atoms._NET_WM_STATE,
+                        xproto::AtomEnum::ATOM,
+                        &[atoms._NET_WM_STATE_MODAL],
                     ),
                 )?;
             }
