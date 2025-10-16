@@ -3803,13 +3803,7 @@ impl EditorElement {
         let multi_buffer = editor.buffer.read(cx);
         let file_status = multi_buffer
             .all_diff_hunks_expanded()
-            .then(|| {
-                editor
-                    .project
-                    .as_ref()?
-                    .read(cx)
-                    .status_for_buffer_id(for_excerpt.buffer_id, cx)
-            })
+            .then(|| editor.status_for_buffer_id(for_excerpt.buffer_id, cx))
             .flatten();
         let indicator = multi_buffer
             .buffer(for_excerpt.buffer_id)

@@ -72,6 +72,7 @@ pub use text::Bias;
 use ::git::{
     Restore,
     blame::{BlameEntry, ParsedCommitMessage},
+    status::FileStatus,
 };
 use aho_corasick::AhoCorasick;
 use anyhow::{Context as _, Result, anyhow};
@@ -868,6 +869,10 @@ pub trait Addon: 'static {
         _: &Window,
         _: &App,
     ) -> Option<AnyElement> {
+        None
+    }
+
+    fn override_status_for_buffer_id(&self, buffer_id: BufferId, _: &App) -> Option<FileStatus> {
         None
     }
 
@@ -10797,6 +10802,20 @@ impl Editor {
                 editor.restore(revert_changes, window, cx);
             });
         }
+    }
+
+    pub fn status_for_buffer_id(&self, buffer_id: BufferId, cx: &App) -> Option<FileStatus> {
+        if let Some(status) = self
+            .addons
+            .iter()
+            .find_map(|(_, addon)| addon.override_status_for_buffer_id(buffer_id, cx))
+        {
+            return Some(status);
+        }
+        self.project
+            .as_ref()?
+            .read(cx)
+            .status_for_buffer_id(buffer_id, cx)
     }
 
     pub fn open_active_item_in_terminal(

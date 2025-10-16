@@ -8,7 +8,7 @@ use anyhow::{Context as _, Result, anyhow};
 use buffer_diff::{BufferDiff, DiffHunkSecondaryStatus};
 use collections::HashSet;
 use editor::{
-    Editor, EditorEvent, SelectionEffects,
+    Addon, Editor, EditorEvent, SelectionEffects,
     actions::{GoToHunk, GoToPreviousHunk},
     multibuffer_context_lines,
     scroll::Autoscroll,
@@ -25,7 +25,7 @@ use gpui::{
 use language::{Anchor, Buffer, Capability, OffsetRangeExt};
 use multi_buffer::{MultiBuffer, PathKey};
 use project::{
-    Project, ProjectPath,
+    Project, ProjectItem, ProjectPath,
     git_store::{
         Repository,
         branch_diff::{self, BranchDiffEvent, DiffBase},
@@ -34,6 +34,7 @@ use project::{
 use settings::{Settings, SettingsStore};
 use std::any::{Any, TypeId};
 use std::ops::Range;
+use std::sync::Arc;
 use theme::ActiveTheme;
 use ui::{KeyBinding, Tooltip, prelude::*, vertical_divider};
 use util::ResultExt as _;
@@ -220,9 +221,25 @@ impl ProjectDiff {
                 Editor::for_multibuffer(multibuffer.clone(), Some(project.clone()), window, cx);
             diff_display_editor.disable_diagnostics(cx);
             diff_display_editor.set_expand_all_diff_hunks(cx);
-            diff_display_editor.register_addon(GitPanelAddon {
-                workspace: workspace.downgrade(),
-            });
+
+            match branch_diff.read(cx).diff_base() {
+                DiffBase::Head => {
+                    diff_display_editor.register_addon(GitPanelAddon {
+                        workspace: workspace.downgrade(),
+                    });
+                }
+                DiffBase::Merge { .. } => {
+                    diff_display_editor.register_addon(BranchDiffAddon {
+                        branch_diff: branch_diff.clone(),
+                    });
+                    diff_display_editor.start_temporary_diff_override();
+                    diff_display_editor.set_render_diff_hunk_controls(
+                        Arc::new(|_, _, _, _, _, _, _, _| gpui::Empty.into_any_element()),
+                        cx,
+                    );
+                    //
+                }
+            }
             diff_display_editor
         });
         window.defer(cx, {
@@ -439,6 +456,11 @@ impl ProjectDiff {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.branch_diff.read(cx).diff_base().is_merge_base() {
+            self.multibuffer.update(cx, |multibuffer, cx| {
+                multibuffer.add_diff(diff.clone(), cx);
+            });
+        }
         let conflict_addon = self
             .editor
             .read(cx)
@@ -459,6 +481,7 @@ impl ProjectDiff {
         let excerpt_ranges = merge_anchor_ranges(diff_hunk_ranges, conflicts, &snapshot)
             .map(|range| range.to_point(&snapshot))
             .collect::<Vec<_>>();
+        dbg!(&excerpt_ranges.len(), &path_key);
 
         let (was_empty, is_excerpt_newly_added) = self.multibuffer.update(cx, |multibuffer, cx| {
             let was_empty = multibuffer.is_empty();
@@ -1380,6 +1403,26 @@ fn merge_anchor_ranges<'a>(
 
         Some(next_range)
     })
+}
+
+struct BranchDiffAddon {
+    branch_diff: Entity<branch_diff::BranchDiff>,
+}
+
+impl Addon for BranchDiffAddon {
+    fn to_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn override_status_for_buffer_id(
+        &self,
+        buffer_id: language::BufferId,
+        cx: &App,
+    ) -> Option<FileStatus> {
+        self.branch_diff
+            .read(cx)
+            .status_for_buffer_id(buffer_id, cx)
+    }
 }
 
 #[cfg(test)]
