@@ -32,6 +32,17 @@ impl ContextServerRegistry {
         this
     }
 
+    pub fn tools_for_server(
+        &self,
+        server_id: &ContextServerId,
+    ) -> impl Iterator<Item = &Arc<dyn AnyAgentTool>> {
+        self.registered_servers
+            .get(server_id)
+            .map(|server| server.tools.values())
+            .into_iter()
+            .flatten()
+    }
+
     pub fn servers(
         &self,
     ) -> impl Iterator<

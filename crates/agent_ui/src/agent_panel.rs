@@ -4,7 +4,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use acp_thread::AcpThread;
-use agent2::{DbThreadMetadata, HistoryEntry, HistoryStore};
+use agent2::{ContextServerRegistry, DbThreadMetadata, HistoryEntry, HistoryStore};
 use db::kvp::{Dismissable, KEY_VALUE_STORE};
 use project::agent_server_store::{
     AgentServerCommand, AllAgentServersSettings, CLAUDE_CODE_NAME, CODEX_NAME, GEMINI_NAME,
@@ -414,6 +414,7 @@ pub struct AgentPanel {
     history_store: Entity<agent2::HistoryStore>,
     text_thread_store: Entity<assistant_context::ContextStore>,
     prompt_store: Option<Entity<PromptStore>>,
+    context_server_registry: Entity<ContextServerRegistry>,
     inline_assist_context_store: Entity<ContextStore>,
     configuration: Option<Entity<AgentConfiguration>>,
     configuration_subscription: Option<Subscription>,
@@ -526,6 +527,8 @@ impl AgentPanel {
         let workspace = workspace.weak_handle();
 
         let inline_assist_context_store = cx.new(|_cx| ContextStore::new(project.downgrade()));
+        let context_server_registry =
+            cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
 
         let history_store = cx.new(|cx| agent2::HistoryStore::new(text_thread_store.clone(), cx));
         let acp_history = cx.new(|cx| AcpThreadHistory::new(history_store.clone(), window, cx));
@@ -642,6 +645,7 @@ impl AgentPanel {
             prompt_store,
             configuration: None,
             configuration_subscription: None,
+            context_server_registry,
             inline_assist_context_store,
             previous_view: None,
             new_thread_menu_handle: PopoverMenuHandle::default(),
@@ -1070,7 +1074,6 @@ impl AgentPanel {
     pub(crate) fn open_configuration(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let agent_server_store = self.project.read(cx).agent_server_store().clone();
         let context_server_store = self.project.read(cx).context_server_store();
-        let tools = self.thread_store.read(cx).tools();
         let fs = self.fs.clone();
 
         self.set_active_view(ActiveView::Configuration, window, cx);
@@ -1079,7 +1082,7 @@ impl AgentPanel {
                 fs,
                 agent_server_store,
                 context_server_store,
-                tools,
+                self.context_server_registry.clone(),
                 self.language_registry.clone(),
                 self.workspace.clone(),
                 window,
