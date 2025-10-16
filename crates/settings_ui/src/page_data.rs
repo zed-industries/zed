@@ -241,55 +241,56 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
             title: "Appearance",
             items: vec![
                 SettingsPageItem::SectionHeader("Theme"),
-                // SettingsPageItem::DynamicItem(DynamicItem {
-                //     discriminant: SettingItem {
-                //         files: USER,
-                //         title: "Theme Mode",
-                //         description: "How to select the theme",
-                //         field: Box::new(SettingField {
-                //             pick: |settings_content| {
-                //                 &settings_content
-                //                     .theme
-                //                     .theme
-                //                     .map(|theme| theme.discriminant())
-                //             },
-                //             pick_mut: |settings_content| todo!(),
-                //         }),
-                //         metadata: None,
-                //     },
-                //     pick_discriminant: |settings_content| {
-                //         settings_content.theme.theme.map(|theme| theme.discriminant() as usize)
-                //     },
-                //     fields: <<settings::ThemeSelection as strum::IntoDiscriminant>::Discriminant as strum::VariantArray>::VARIANTS.into_iter().map(|variant| {
-                //         match variant {
-                //             settings::ThemeSelectionDiscriminants::Static => vec![
-                //                 SettingItem {
-                //                         files: USER,
-                //                         title: "Theme",
-                //                         description: "Active Theme",
-                //                         field: Box::new(SettingField {
-                //                             pick: |settings_content| {
-                //                                 match settings_content .theme .theme {
-                //                                         Some(settings::ThemeSelection::Static(name)) => &Some(name),
-                //                                         _ => unreachable!("inactive field")
-                //                                     }
-                //                             },
-                //                             pick_mut: |settings_content| {
-                //                                 match settings_content
-                //                                     .theme
-                //                                     .theme.as_mut() {
-                //                                         Some(settings::ThemeSelection::Static(name)) => &mut Some(name),
-                //                                         _ => unreachable!("inactive field")
-                //                                     }
-                //                             },
-                //                         }),
-                //                         metadata: None,
-                //                     }
-                //                     ],
-                //             settings::ThemeSelectionDiscriminants::Dynamic => todo!(),
-                //         }
-                //     }).collect(),
-                // }),
+                SettingsPageItem::DynamicItem(DynamicItem {
+                    discriminant: SettingItem {
+                        files: USER,
+                        title: "Theme Mode",
+                        description: "How to select the theme",
+                        field: Box::new(SettingField {
+                            pick: |settings_content| {
+                                settings_content
+                                    .theme
+                                    .theme
+                                    .as_ref()
+                                    .map(|theme| &theme.discriminant())
+                            },
+                            pick_mut: |settings_content| todo!(),
+                        }),
+                        metadata: None,
+                    },
+                    pick_discriminant: |settings_content| {
+                        settings_content.theme.theme.map(|theme| theme.discriminant() as usize)
+                    },
+                    fields: <<settings::ThemeSelection as strum::IntoDiscriminant>::Discriminant as strum::VariantArray>::VARIANTS.into_iter().map(|variant| {
+                        match variant {
+                            settings::ThemeSelectionDiscriminants::Static => vec![
+                                SettingItem {
+                                        files: USER,
+                                        title: "Theme",
+                                        description: "Active Theme",
+                                        field: Box::new(SettingField {
+                                            pick: |settings_content| {
+                                                match settings_content.theme.theme {
+                                                        Some(settings::ThemeSelection::Static(name)) => Some(&name),
+                                                        _ => unreachable!("inactive field")
+                                                    }
+                                            },
+                                            pick_mut: |settings_content| {
+                                                match settings_content
+                                                    .theme
+                                                    .theme.as_mut() {
+                                                        Some(settings::ThemeSelection::Static(name)) => &mut Some(name),
+                                                        _ => unreachable!("inactive field")
+                                                    }
+                                            },
+                                        }),
+                                        metadata: None,
+                                    }
+                                    ],
+                            settings::ThemeSelectionDiscriminants::Dynamic => todo!(),
+                        }
+                    }).collect(),
+                }),
                 SettingsPageItem::SettingItem(SettingItem {
                     files: USER,
                     title: "Icon Theme",
