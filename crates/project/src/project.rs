@@ -3954,57 +3954,11 @@ impl Project {
             fs: self.fs.clone(),
             buffer_store: self.buffer_store.clone(),
             snapshots,
-            open_buffers: Default::default(),
         };
         searcher.into_results(query, cx)
     }
     pub fn search(&mut self, query: SearchQuery, cx: &mut Context<Self>) -> Receiver<SearchResult> {
         self.search_impl(query, cx).results(cx)
-    }
-
-    fn find_search_candidates_remote(
-        &mut self,
-        query: &SearchQuery,
-        limit: usize,
-        cx: &mut Context<Project>,
-    ) -> Receiver<Entity<Buffer>> {
-        let (tx, rx) = smol::channel::unbounded();
-
-        let (client, remote_id): (AnyProtoClient, _) = if let Some(ssh_client) = &self.remote_client
-        {
-            (ssh_client.read(cx).proto_client(), 0)
-        } else if let Some(remote_id) = self.remote_id() {
-            (self.collab_client.clone().into(), remote_id)
-        } else {
-            return rx;
-        };
-
-        let request = client.request(proto::FindSearchCandidates {
-            project_id: remote_id,
-            query: Some(query.to_proto()),
-            limit: limit as _,
-        });
-        let guard = self.retain_remotely_created_models(cx);
-
-        cx.spawn(async move |project, cx| {
-            let response = request.await?;
-            for buffer_id in response.buffer_ids {
-                let buffer_id = BufferId::new(buffer_id)?;
-                let buffer = project
-                    .update(cx, |project, cx| {
-                        project.buffer_store.update(cx, |buffer_store, cx| {
-                            buffer_store.wait_for_remote_buffer(buffer_id, cx)
-                        })
-                    })?
-                    .await?;
-                let _ = tx.send(buffer).await;
-            }
-
-            drop(guard);
-            anyhow::Ok(())
-        })
-        .detach_and_log_err(cx);
-        rx
     }
 
     pub fn request_lsp<R: LspCommand>(
