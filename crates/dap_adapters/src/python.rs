@@ -239,20 +239,23 @@ impl PythonDebugAdapter {
                     })?
                 };
 
-                let did_succeed = util::command::new_smol_command(base_python)
+                let debug_adapter_path = paths::debug_adapters_dir().join(Self::DEBUG_ADAPTER_NAME.as_ref());
+                let output = util::command::new_smol_command(&base_python)
                     .args(["-m", "venv", "zed_base_venv"])
                     .current_dir(
-                        paths::debug_adapters_dir().join(Self::DEBUG_ADAPTER_NAME.as_ref()),
+                        &debug_adapter_path,
                     )
                     .spawn()
                     .map_err(|e| format!("{e:#?}"))?
-                    .status()
+                    .output()
                     .await
-                    .map_err(|e| format!("{e:#?}"))?
-                    .success();
+                    .map_err(|e| format!("{e:#?}"))?;
 
-                if !did_succeed {
-                    return Err("Failed to create base virtual environment".into());
+                if !output.status.success() {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    let stdout = String::from_utf8_lossy(&output.stdout);
+                    let debug_adapter_path = debug_adapter_path.display();
+                    return Err(format!("Failed to create base virtual environment with {base_python} in:\n{debug_adapter_path}\nstderr:\n{stderr}\nstdout:\n{stdout}\n"));
                 }
 
                 const PYTHON_PATH: &str = if cfg!(target_os = "windows") {
