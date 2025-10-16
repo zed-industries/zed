@@ -3899,6 +3899,9 @@ impl Editor {
                 }
             })
             .collect::<Vec<_>>();
+        if selection_ranges.is_empty() {
+            return;
+        }
 
         let ranges = match columnar_state {
             ColumnarSelectionState::FromMouse { .. } => {
