@@ -5437,6 +5437,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             metadata: None,
             files: USER | LOCAL,
         }),
+        // todo! code_actions_on_format
         SettingsPageItem::SectionHeader("Autoclose"),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Use Autoclose",
