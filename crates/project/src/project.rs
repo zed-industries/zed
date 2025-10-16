@@ -3962,22 +3962,6 @@ impl Project {
         self.search_impl(query, cx).results(cx)
     }
 
-    fn find_search_candidate_buffers(
-        &mut self,
-        query: &SearchQuery,
-        limit: usize,
-        cx: &mut Context<Project>,
-    ) -> Receiver<Entity<Buffer>> {
-        if self.is_local() {
-            let fs = self.fs.clone();
-            self.buffer_store.update(cx, |buffer_store, cx| {
-                buffer_store.find_search_candidates(query, limit, fs, cx)
-            })
-        } else {
-            self.find_search_candidates_remote(query, limit, cx)
-        }
-    }
-
     fn find_search_candidates_remote(
         &mut self,
         query: &SearchQuery,
