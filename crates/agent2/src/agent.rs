@@ -679,7 +679,8 @@ impl NativeAgent {
                         .thread
                         .update(cx, |thread, cx| thread.summary(cx))
                 })?
-                .await?;
+                .await
+                .context("Failed to generate summary")?;
             drop(acp_thread);
             Ok(result)
         })

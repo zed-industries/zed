@@ -564,7 +564,7 @@ impl ThreadContextHandle {
         let task = self.thread.update(cx, |thread, cx| thread.summary(cx));
         let title = self.title(cx);
         cx.background_spawn(async move {
-            let text = task.await.log_err()?;
+            let text = task.await?;
             let context = AgentContext::Thread(ThreadContext {
                 title,
                 text,

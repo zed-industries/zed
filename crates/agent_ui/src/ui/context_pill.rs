@@ -466,7 +466,7 @@ impl AddedContext {
             parent: None,
             tooltip: None,
             icon_path: None,
-            status: if handle.thread.read(cx).is_generating_detailed_summary() {
+            status: if handle.thread.read(cx).is_generating_summary() {
                 ContextStatus::Loading {
                     message: "Summarizing…".into(),
                 }
@@ -476,7 +476,11 @@ impl AddedContext {
             render_hover: {
                 let thread = handle.thread.clone();
                 Some(Rc::new(move |_, cx| {
-                    let text = thread.read(cx).latest_detailed_summary_or_text();
+                    let text = thread
+                        .update(cx, |thread, cx| thread.summary(cx))
+                        .now_or_never()
+                        .flatten()
+                        .unwrap_or_else(|| SharedString::from(thread.read(cx).to_markdown()));
                     ContextPillHover::new_text(text, cx).into()
                 }))
             },

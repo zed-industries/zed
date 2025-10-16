@@ -585,6 +585,7 @@ pub struct Thread {
     updated_at: DateTime<Utc>,
     title: Option<SharedString>,
     pending_title_generation: Option<Task<()>>,
+    pending_summary_generation: Option<Shared<Task<Option<SharedString>>>>,
     summary: Option<SharedString>,
     messages: Vec<Message>,
     user_store: Entity<UserStore>,
@@ -642,6 +643,7 @@ impl Thread {
             updated_at: Utc::now(),
             title: None,
             pending_title_generation: None,
+            pending_summary_generation: None,
             summary: None,
             messages: Vec::new(),
             user_store: project.read(cx).user_store(),
@@ -822,6 +824,7 @@ impl Thread {
                 Some(db_thread.title.clone())
             },
             pending_title_generation: None,
+            pending_summary_generation: None,
             summary: db_thread.detailed_summary,
             messages: db_thread.messages,
             user_store: project.read(cx).user_store(),
@@ -1124,7 +1127,7 @@ impl Thread {
                 Message::Agent(_) | Message::Resume => {}
             }
         }
-        self.summary = None;
+        self.clear_summary();
         cx.notify();
         Ok(())
     }
@@ -1194,7 +1197,7 @@ impl Thread {
         let event_stream = ThreadEventStream(events_tx);
         let message_ix = self.messages.len().saturating_sub(1);
         self.tool_use_limit_reached = false;
-        self.summary = None;
+        self.clear_summary();
         self.running_turn = Some(RunningTurn {
             event_stream: event_stream.clone(),
             tools: self.enabled_tools(profile, &model, cx),
@@ -1654,12 +1657,20 @@ impl Thread {
         self.title.clone().unwrap_or("New Thread".into())
     }
 
-    pub fn summary(&mut self, cx: &mut Context<Self>) -> Task<Result<SharedString>> {
+    pub fn is_generating_summary(&self) -> bool {
+        self.pending_summary_generation.is_some()
+    }
+
+    pub fn summary(&mut self, cx: &mut Context<Self>) -> Shared<Task<Option<SharedString>>> {
         if let Some(summary) = self.summary.as_ref() {
-            return Task::ready(Ok(summary.clone()));
+            return Task::ready(Some(summary.clone())).shared();
+        }
+        if let Some(task) = self.pending_summary_generation.clone() {
+            return task;
         }
         let Some(model) = self.summarization_model.clone() else {
-            return Task::ready(Err(anyhow!("No summarization model available")));
+            log::error!("No summarization model available");
+            return Task::ready(None).shared();
         };
         let mut request = LanguageModelRequest {
             intent: Some(CompletionIntent::ThreadContextSummarization),
@@ -1676,38 +1687,45 @@ impl Thread {
             content: vec![SUMMARIZE_THREAD_DETAILED_PROMPT.into()],
             cache: false,
         });
-        cx.spawn(async move |this, cx| {
-            let mut summary = String::new();
-            let mut messages = model.stream_completion(request, cx).await?;
-            while let Some(event) = messages.next().await {
-                let event = event?;
-                let text = match event {
-                    LanguageModelCompletionEvent::Text(text) => text,
-                    LanguageModelCompletionEvent::StatusUpdate(
-                        CompletionRequestStatus::UsageUpdated { amount, limit },
-                    ) => {
-                        this.update(cx, |thread, cx| {
-                            thread.update_model_request_usage(amount, limit, cx);
-                        })?;
-                        continue;
-                    }
-                    _ => continue,
-                };
 
-                let mut lines = text.lines();
-                summary.extend(lines.next());
-            }
+        let task = cx
+            .spawn(async move |this, cx| {
+                let mut summary = String::new();
+                let mut messages = model.stream_completion(request, cx).await.log_err()?;
+                while let Some(event) = messages.next().await {
+                    let event = event.log_err()?;
+                    let text = match event {
+                        LanguageModelCompletionEvent::Text(text) => text,
+                        LanguageModelCompletionEvent::StatusUpdate(
+                            CompletionRequestStatus::UsageUpdated { amount, limit },
+                        ) => {
+                            this.update(cx, |thread, cx| {
+                                thread.update_model_request_usage(amount, limit, cx);
+                            })
+                            .ok()?;
+                            continue;
+                        }
+                        _ => continue,
+                    };
 
-            log::debug!("Setting summary: {}", summary);
-            let summary = SharedString::from(summary);
+                    let mut lines = text.lines();
+                    summary.extend(lines.next());
+                }
 
-            this.update(cx, |this, cx| {
-                this.summary = Some(summary.clone());
-                cx.notify()
-            })?;
+                log::debug!("Setting summary: {}", summary);
+                let summary = SharedString::from(summary);
 
-            Ok(summary)
-        })
+                this.update(cx, |this, cx| {
+                    this.summary = Some(summary.clone());
+                    cx.notify()
+                })
+                .ok()?;
+
+                Some(summary)
+            })
+            .shared();
+        self.pending_summary_generation = Some(task.clone());
+        task
     }
 
     fn generate_title(&mut self, cx: &mut Context<Self>) {
@@ -1781,6 +1799,11 @@ impl Thread {
         }
     }
 
+    fn clear_summary(&mut self) {
+        self.summary = None;
+        self.pending_summary_generation = None;
+    }
+
     fn last_user_message(&self) -> Option<&UserMessage> {
         self.messages
             .iter()
@@ -1826,7 +1849,7 @@ impl Thread {
 
         self.messages.push(Message::Agent(message));
         self.updated_at = Utc::now();
-        self.summary = None;
+        self.clear_summary();
         cx.notify()
     }
 
