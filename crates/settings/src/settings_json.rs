@@ -728,7 +728,6 @@ pub fn to_pretty_json(
     indent_prefix_len: usize,
 ) -> String {
     const SPACES: [u8; 32] = [b' '; 32];
-    dbg!(indent_size, indent_prefix_len);
 
     debug_assert!(indent_size <= SPACES.len());
     debug_assert!(indent_prefix_len <= SPACES.len());
