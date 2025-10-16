@@ -4004,21 +4004,14 @@ impl Project {
     }
 
     fn search_impl(&mut self, query: SearchQuery, cx: &mut Context<Self>) -> SearchResultsHandle {
-        let snapshots = self
-            .visible_worktrees(cx)
-            .filter_map(|tree| {
-                let tree = tree.read(cx);
-                Some((tree.snapshot(), tree.as_local()?.settings()))
-            })
-            .collect::<Vec<_>>();
-
         let searcher = project_search::Search {
             fs: self.fs.clone(),
             buffer_store: self.buffer_store.clone(),
-            snapshots,
+            worktrees: self.visible_worktrees(cx).collect::<Vec<_>>(),
         };
         searcher.into_results(query, cx)
     }
+
     pub fn search(&mut self, query: SearchQuery, cx: &mut Context<Self>) -> Receiver<SearchResult> {
         self.search_impl(query, cx).results(cx)
     }
