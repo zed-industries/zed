@@ -204,29 +204,27 @@ fn sanitize_file_path<T: EventListener>(
     };
 
     let mut file_path = file_path.as_str();
+    let mut end_trimmed = false;
 
     while file_path.ends_with([':', '.', ',']) {
         shrink_by(0, 1, &mut word_match, &mut file_path);
+        end_trimmed = true;
     }
 
-    let common_symbols = path_surrounded_by_common_symbols(file_path);
-    if let Some((left_byte_count, right_byte_count, _)) = common_symbols {
+    if let Some((left_byte_count, right_byte_count)) = path_surrounded_by_common_symbols(file_path)
+    {
         shrink_by(
             left_byte_count,
             right_byte_count,
             &mut word_match,
             &mut file_path,
         );
+        end_trimmed = right_byte_count > 0;
     }
 
-    let mut quotes_trimmed =
-        common_symbols.is_some_and(|(.., quotes_trimmed)| quotes_trimmed == QuotesTrimmed::Yes);
-
-    if !quotes_trimmed {
-        if is_path_surrounded_by_quotes(file_path) {
-            quotes_trimmed = true;
-            shrink_by(1, 1, &mut word_match, &mut file_path);
-        }
+    if is_path_surrounded_by_quotes(file_path) {
+        shrink_by(1, 1, &mut word_match, &mut file_path);
+        end_trimmed = true;
     }
 
     // strip trailing comment after colon in case of
@@ -235,8 +233,7 @@ fn sanitize_file_path<T: EventListener>(
     // or
     //   file/at/path.rs(row,column):description or error message
     //   so that the file path is `file/at/path.rs(row,column)`
-    if common_symbols.is_none()
-        && !quotes_trimmed
+    if !end_trimmed
         && let Some(last_colon_index) = file_path.rfind(':')
         && let PathWithPosition {
             row: Some(_),
@@ -269,18 +266,13 @@ fn is_path_surrounded_by_quotes(path: &str) -> bool {
     }
 }
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
-enum QuotesTrimmed {
-    Yes,
-    No,
-}
-
 /// Check if path is surrounded by brackets: `[]` or `()` or `{}` or `<>`.
 /// Supports one level of imbalance, e.g., `([]` or `<>]` or `(""` or `[:`
-fn path_surrounded_by_common_symbols(path: &str) -> Option<(usize, usize, QuotesTrimmed)> {
+fn path_surrounded_by_common_symbols(path: &str) -> Option<(usize, usize)> {
     enum Surrounded {
         Matched,
         Left,
+        Right,
         Mismatched,
     }
 
@@ -293,11 +285,12 @@ fn path_surrounded_by_common_symbols(path: &str) -> Option<(usize, usize, Quotes
             match (first_char, last_char) {
                 ('[', ']') | ('(', ')') | ('{', '}') | ('<', '>') => Some(Surrounded::Matched),
                 ('[', _) | ('(', _) | ('{', _) | ('<', _) => match last_char {
-                    ']' | ')' | '}' | '>' | '\'' | '"' | '`' => Some(Surrounded::Mismatched),
+                    ']' | ')' | '}' | '>' => Some(Surrounded::Mismatched),
                     _ => Some(Surrounded::Left),
                 },
                 (_, ']') | (_, ')') | (_, '}') | (_, '>') => match first_char {
-                    '[' | '(' | '{' | '<' | '\'' | '"' | '`' => Some(Surrounded::Mismatched),
+                    '[' | '(' | '{' | '<' => Some(Surrounded::Mismatched),
+                    '\'' | '"' | '`' => Some(Surrounded::Right),
                     _ => None,
                 },
                 _ => None,
@@ -308,19 +301,16 @@ fn path_surrounded_by_common_symbols(path: &str) -> Option<(usize, usize, Quotes
     }
 
     surrounded_by(path).and_then(|surrounded| match surrounded {
-        Surrounded::Matched => Some((1, 1, QuotesTrimmed::No)),
-        Surrounded::Left => Some((1, 0, QuotesTrimmed::No)),
+        Surrounded::Matched => Some((1, 1)),
+        Surrounded::Left => Some((1, 0)),
+        Surrounded::Right => Some((0, 1)),
         Surrounded::Mismatched => {
             let start_trimmed = &path[1..];
             let end_trimmed = &path[..path.len() - 1];
             if let Some(Surrounded::Matched) = surrounded_by(start_trimmed) {
-                Some((2, 1, QuotesTrimmed::No))
+                Some((2, 1))
             } else if let Some(Surrounded::Matched) = surrounded_by(end_trimmed) {
-                Some((1, 2, QuotesTrimmed::No))
-            } else if is_path_surrounded_by_quotes(start_trimmed) {
-                Some((2, 1, QuotesTrimmed::Yes))
-            } else if is_path_surrounded_by_quotes(end_trimmed) {
-                Some((1, 2, QuotesTrimmed::Yes))
+                Some((1, 2))
             } else {
                 None
             }
