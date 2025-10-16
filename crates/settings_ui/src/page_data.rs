@@ -1602,165 +1602,165 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
 
                 items.extend([
                     SettingsPageItem::SectionHeader("Diagnostics"),
-                                    SettingsPageItem::SettingItem(SettingItem {
-                                        title: "Max Severity",
-                                        description: "Which level to use to filter out diagnostics displayed in the editor",
-                                        field: Box::new(SettingField {
-                                            pick: |settings_content| settings_content.editor.diagnostics_max_severity.as_ref(),
-                                            pick_mut: |settings_content| {
-                                                &mut settings_content.editor.diagnostics_max_severity
-                                            },
-                                        }),
-                                        metadata: None,
-                                        files: USER,
-                                    }),
-                                    SettingsPageItem::SettingItem(SettingItem {
-                                        title: "Include Warnings",
-                                        description: "Whether to show warnings or not by default",
-                                        field: Box::new(SettingField {
-                                            pick: |settings_content| {
-                                                settings_content.diagnostics.as_ref()?.include_warnings.as_ref()
-                                            },
-                                            pick_mut: |settings_content| {
-                                                &mut settings_content
-                                                    .diagnostics
-                                                    .get_or_insert_default()
-                                                    .include_warnings
-                                            },
-                                        }),
-                                        metadata: None,
-                                        files: USER,
-                                    }),
-                                    SettingsPageItem::SectionHeader("Inline Diagnostics"),
-                                    SettingsPageItem::SettingItem(SettingItem {
-                                        title: "Enabled",
-                                        description: "Whether to show diagnostics inline or not",
-                                        field: Box::new(SettingField {
-                                            pick: |settings_content| {
-                                                settings_content.diagnostics.as_ref()?.inline.as_ref()?.enabled.as_ref()
-                                            },
-                                            pick_mut: |settings_content| {
-                                                &mut settings_content
-                                                    .diagnostics
-                                                    .get_or_insert_default()
-                                                    .inline
-                                                    .get_or_insert_default()
-                                                    .enabled
-                                            },
-                                        }),
-                                        metadata: None,
-                                        files: USER,
-                                    }),
-                                    SettingsPageItem::SettingItem(SettingItem {
-                                        title: "Update Debounce",
-                                        description: "The delay in milliseconds to show inline diagnostics after the last diagnostic update",
-                                        field: Box::new(SettingField {
-                                            pick: |settings_content| {
-                                                settings_content.diagnostics.as_ref()?.inline.as_ref()?.update_debounce_ms.as_ref()
-                                            },
-                                            pick_mut: |settings_content| {
-                                                &mut settings_content
-                                                    .diagnostics
-                                                    .get_or_insert_default()
-                                                    .inline
-                                                    .get_or_insert_default()
-                                                    .update_debounce_ms
-                                            },
-                                        }),
-                                        metadata: None,
-                                        files: USER,
-                                    }),
-                                    SettingsPageItem::SettingItem(SettingItem {
-                                        title: "Padding",
-                                        description: "The amount of padding between the end of the source line and the start of the inline diagnostic",
-                                        field: Box::new(SettingField {
-                                            pick: |settings_content| {
-                                                settings_content.diagnostics.as_ref()?.inline.as_ref()?.padding.as_ref()
-                                            },
-                                            pick_mut: |settings_content| {
-                                                &mut settings_content
-                                                    .diagnostics
-                                                    .get_or_insert_default()
-                                                    .inline
-                                                    .get_or_insert_default()
-                                                    .padding
-                                            },
-                                        }),
-                                        metadata: None,
-                                        files: USER,
-                                    }),
-                                    SettingsPageItem::SettingItem(SettingItem {
-                                        title: "Minimum Column",
-                                        description: "The minimum column at which to display inline diagnostics",
-                                        field: Box::new(SettingField {
-                                            pick: |settings_content| {
-                                                settings_content.diagnostics.as_ref()?.inline.as_ref()?.min_column.as_ref()
-                                            },
-                                            pick_mut: |settings_content| {
-                                                &mut settings_content
-                                                    .diagnostics
-                                                    .get_or_insert_default()
-                                                    .inline
-                                                    .get_or_insert_default()
-                                                    .min_column
-                                            },
-                                        }),
-                                        metadata: None,
-                                        files: USER,
-                                    }),
-                                    SettingsPageItem::SectionHeader("LSP Pull Diagnostics"),
-                                    SettingsPageItem::SettingItem(SettingItem {
-                                        title: "Enabled",
-                                        description: "Whether to pull for language server-powered diagnostics or not",
-                                        field: Box::new(SettingField {
-                                            pick: |settings_content| {
-                                                settings_content.diagnostics.as_ref()?.lsp_pull_diagnostics.as_ref()?.enabled.as_ref()
-                                            },
-                                            pick_mut: |settings_content| {
-                                                &mut settings_content
-                                                    .diagnostics
-                                                    .get_or_insert_default()
-                                                    .lsp_pull_diagnostics
-                                                    .get_or_insert_default()
-                                                    .enabled
-                                            },
-                                        }),
-                                        metadata: None,
-                                        files: USER,
-                                    }),
-                                    // todo(settings_ui): Needs unit
-                                    SettingsPageItem::SettingItem(SettingItem {
-                                        title: "Debounce",
-                                        description: "Minimum time to wait before pulling diagnostics from the language server(s)",
-                                        field: Box::new(SettingField {
-                                            pick: |settings_content| {
-                                                settings_content.diagnostics.as_ref()?.lsp_pull_diagnostics.as_ref()?.debounce_ms.as_ref()
-                                            },
-                                            pick_mut: |settings_content| {
-                                                &mut settings_content
-                                                    .diagnostics
-                                                    .get_or_insert_default()
-                                                    .lsp_pull_diagnostics
-                                                    .get_or_insert_default()
-                                                    .debounce_ms
-                                            },
-                                        }),
-                                        metadata: None,
-                                        files: USER,
-                                    }),
-                                    SettingsPageItem::SectionHeader("LSP Highlights"),
-                                    SettingsPageItem::SettingItem(SettingItem {
-                                        title: "Debounce",
-                                        description: "The debounce delay before querying highlights from the language",
-                                        field: Box::new(SettingField {
-                                            pick: |settings_content| settings_content.editor.lsp_highlight_debounce.as_ref(),
-                                            pick_mut: |settings_content| {
-                                                &mut settings_content.editor.lsp_highlight_debounce
-                                            },
-                                        }),
-                                        metadata: None,
-                                        files: USER,
-                                    }),
+                    SettingsPageItem::SettingItem(SettingItem {
+                        title: "Max Severity",
+                        description: "Which level to use to filter out diagnostics displayed in the editor",
+                        field: Box::new(SettingField {
+                            pick: |settings_content| settings_content.editor.diagnostics_max_severity.as_ref(),
+                            pick_mut: |settings_content| {
+                                &mut settings_content.editor.diagnostics_max_severity
+                            },
+                        }),
+                        metadata: None,
+                        files: USER,
+                    }),
+                    SettingsPageItem::SettingItem(SettingItem {
+                        title: "Include Warnings",
+                        description: "Whether to show warnings or not by default",
+                        field: Box::new(SettingField {
+                            pick: |settings_content| {
+                                settings_content.diagnostics.as_ref()?.include_warnings.as_ref()
+                            },
+                            pick_mut: |settings_content| {
+                                &mut settings_content
+                                    .diagnostics
+                                    .get_or_insert_default()
+                                    .include_warnings
+                            },
+                        }),
+                        metadata: None,
+                        files: USER,
+                    }),
+                    SettingsPageItem::SectionHeader("Inline Diagnostics"),
+                    SettingsPageItem::SettingItem(SettingItem {
+                        title: "Enabled",
+                        description: "Whether to show diagnostics inline or not",
+                        field: Box::new(SettingField {
+                            pick: |settings_content| {
+                                settings_content.diagnostics.as_ref()?.inline.as_ref()?.enabled.as_ref()
+                            },
+                            pick_mut: |settings_content| {
+                                &mut settings_content
+                                    .diagnostics
+                                    .get_or_insert_default()
+                                    .inline
+                                    .get_or_insert_default()
+                                    .enabled
+                            },
+                        }),
+                        metadata: None,
+                        files: USER,
+                    }),
+                    SettingsPageItem::SettingItem(SettingItem {
+                        title: "Update Debounce",
+                        description: "The delay in milliseconds to show inline diagnostics after the last diagnostic update",
+                        field: Box::new(SettingField {
+                            pick: |settings_content| {
+                                settings_content.diagnostics.as_ref()?.inline.as_ref()?.update_debounce_ms.as_ref()
+                            },
+                            pick_mut: |settings_content| {
+                                &mut settings_content
+                                    .diagnostics
+                                    .get_or_insert_default()
+                                    .inline
+                                    .get_or_insert_default()
+                                    .update_debounce_ms
+                            },
+                        }),
+                        metadata: None,
+                        files: USER,
+                    }),
+                    SettingsPageItem::SettingItem(SettingItem {
+                        title: "Padding",
+                        description: "The amount of padding between the end of the source line and the start of the inline diagnostic",
+                        field: Box::new(SettingField {
+                            pick: |settings_content| {
+                                settings_content.diagnostics.as_ref()?.inline.as_ref()?.padding.as_ref()
+                            },
+                            pick_mut: |settings_content| {
+                                &mut settings_content
+                                    .diagnostics
+                                    .get_or_insert_default()
+                                    .inline
+                                    .get_or_insert_default()
+                                    .padding
+                            },
+                        }),
+                        metadata: None,
+                        files: USER,
+                    }),
+                    SettingsPageItem::SettingItem(SettingItem {
+                        title: "Minimum Column",
+                        description: "The minimum column at which to display inline diagnostics",
+                        field: Box::new(SettingField {
+                            pick: |settings_content| {
+                                settings_content.diagnostics.as_ref()?.inline.as_ref()?.min_column.as_ref()
+                            },
+                            pick_mut: |settings_content| {
+                                &mut settings_content
+                                    .diagnostics
+                                    .get_or_insert_default()
+                                    .inline
+                                    .get_or_insert_default()
+                                    .min_column
+                            },
+                        }),
+                        metadata: None,
+                        files: USER,
+                    }),
+                    SettingsPageItem::SectionHeader("LSP Pull Diagnostics"),
+                    SettingsPageItem::SettingItem(SettingItem {
+                        title: "Enabled",
+                        description: "Whether to pull for language server-powered diagnostics or not",
+                        field: Box::new(SettingField {
+                            pick: |settings_content| {
+                                settings_content.diagnostics.as_ref()?.lsp_pull_diagnostics.as_ref()?.enabled.as_ref()
+                            },
+                            pick_mut: |settings_content| {
+                                &mut settings_content
+                                    .diagnostics
+                                    .get_or_insert_default()
+                                    .lsp_pull_diagnostics
+                                    .get_or_insert_default()
+                                    .enabled
+                            },
+                        }),
+                        metadata: None,
+                        files: USER,
+                    }),
+                    // todo(settings_ui): Needs unit
+                    SettingsPageItem::SettingItem(SettingItem {
+                        title: "Debounce",
+                        description: "Minimum time to wait before pulling diagnostics from the language server(s)",
+                        field: Box::new(SettingField {
+                            pick: |settings_content| {
+                                settings_content.diagnostics.as_ref()?.lsp_pull_diagnostics.as_ref()?.debounce_ms.as_ref()
+                            },
+                            pick_mut: |settings_content| {
+                                &mut settings_content
+                                    .diagnostics
+                                    .get_or_insert_default()
+                                    .lsp_pull_diagnostics
+                                    .get_or_insert_default()
+                                    .debounce_ms
+                            },
+                        }),
+                        metadata: None,
+                        files: USER,
+                    }),
+                    SettingsPageItem::SectionHeader("LSP Highlights"),
+                    SettingsPageItem::SettingItem(SettingItem {
+                        title: "Debounce",
+                        description: "The debounce delay before querying highlights from the language",
+                        field: Box::new(SettingField {
+                            pick: |settings_content| settings_content.editor.lsp_highlight_debounce.as_ref(),
+                            pick_mut: |settings_content| {
+                                &mut settings_content.editor.lsp_highlight_debounce
+                            },
+                        }),
+                        metadata: None,
+                        files: USER,
+                    }),
                 ]);
 
                 // todo(settings_ui): Refresh on extension (un)/installed
