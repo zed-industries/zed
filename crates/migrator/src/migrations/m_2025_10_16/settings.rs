@@ -51,7 +51,12 @@ fn restore_code_actions_on_format_inner(value: &mut Value, path: &[&str]) -> Res
         code_action_formatters.push(code_action_name.to_string());
     }
 
-    code_actions_map.extend(code_action_formatters.into_iter().rev().map(|code_action| (code_action, Value::Bool(true))));
+    code_actions_map.extend(
+        code_action_formatters
+            .into_iter()
+            .rev()
+            .map(|code_action| (code_action, Value::Bool(true))),
+    );
 
     obj.remove("formatter");
     obj.insert(
