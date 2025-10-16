@@ -66,10 +66,6 @@ actions!(
         HelixDelete,
         /// Collapse the current selection
         HelixCollapseSelection,
-        /// Copies all selections below Helix-style.
-        HelixDuplicateBelow,
-        /// Copies all selections above Helix-style.
-        HelixDuplicateAbove,
         /// Changes from cursor to end of line.
         ChangeToEndOfLine,
         /// Deletes from cursor to end of line.
@@ -168,15 +164,6 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
                 });
             });
         });
-    });
-
-    Vim::action(editor, cx, |vim, _: &HelixDuplicateBelow, window, cx| {
-        let times = Vim::take_count(cx);
-        vim.helix_duplicate_selections_below(times, window, cx);
-    });
-    Vim::action(editor, cx, |vim, _: &HelixDuplicateAbove, window, cx| {
-        let times = Vim::take_count(cx);
-        vim.helix_duplicate_selections_above(times, window, cx);
     });
 
     Vim::action(editor, cx, |vim, _: &ChangeToEndOfLine, window, cx| {

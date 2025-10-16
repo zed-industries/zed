@@ -10,7 +10,7 @@ use crate::Vim;
 impl Vim {
     /// Creates a duplicate of every selection below it in the first place that has both its start
     /// and end
-    pub fn helix_duplicate_selections_below(
+    pub(super) fn helix_duplicate_selections_below(
         &mut self,
         times: Option<usize>,
         window: &mut Window,
@@ -25,9 +25,10 @@ impl Vim {
             false,
         );
     }
+
     /// Creates a duplicate of every selection above it in the first place that has both its start
     /// and end
-    pub fn helix_duplicate_selections_above(
+    pub(super) fn helix_duplicate_selections_above(
         &mut self,
         times: Option<usize>,
         window: &mut Window,
@@ -42,6 +43,7 @@ impl Vim {
             true,
         );
     }
+
     fn duplicate_selections(
         &mut self,
         times: Option<usize>,

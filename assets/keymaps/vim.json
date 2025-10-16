@@ -500,7 +500,7 @@
       "c": "vim::Substitute",
       "shift-c": "vim::HelixDuplicateBelow",
       "alt-shift-c": "vim::HelixDuplicateAbove",
-      ",": "editor::KeepNewestSelection"
+      ",": "vim::HelixKeepNewestSelection"
     }
   },
   {

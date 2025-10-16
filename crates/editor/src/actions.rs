@@ -367,9 +367,6 @@ actions!(
         AddSelectionAbove,
         /// Adds a cursor below the current selection.
         AddSelectionBelow,
-        /// Removes all but the one selection that was created last.
-        /// For helix, `Newest` can eventually be `Primary`.
-        KeepNewestSelection,
         /// Applies all diff hunks in the editor.
         ApplyAllDiffHunks,
         /// Applies the diff hunk at the current position.

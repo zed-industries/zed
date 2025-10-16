@@ -1,5 +1,5 @@
 mod boundary;
-pub mod duplicate;
+mod duplicate;
 mod object;
 mod paste;
 mod select;
@@ -41,6 +41,13 @@ actions!(
         HelixSelectLine,
         /// Select all matches of a given pattern within the current selection.
         HelixSelectRegex,
+        /// Removes all but the one selection that was created last.
+        /// For helix, `Newest` can eventually be `Primary`.
+        HelixKeepNewestSelection,
+        /// Copies all selections below.
+        HelixDuplicateBelow,
+        /// Copies all selections above.
+        HelixDuplicateAbove,
     ]
 );
 
@@ -52,6 +59,15 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, Vim::helix_goto_last_modification);
     Vim::action(editor, cx, Vim::helix_paste);
     Vim::action(editor, cx, Vim::helix_select_regex);
+    Vim::action(editor, cx, Vim::helix_keep_newest_selection);
+    Vim::action(editor, cx, |vim, _: &HelixDuplicateBelow, window, cx| {
+        let times = Vim::take_count(cx);
+        vim.helix_duplicate_selections_below(times, window, cx);
+    });
+    Vim::action(editor, cx, |vim, _: &HelixDuplicateAbove, window, cx| {
+        let times = Vim::take_count(cx);
+        vim.helix_duplicate_selections_above(times, window, cx);
+    });
 }
 
 impl Vim {
@@ -574,6 +590,18 @@ impl Vim {
             editor.change_selections(Default::default(), window, cx, |s| {
                 s.select(selections);
             });
+        });
+    }
+
+    fn helix_keep_newest_selection(
+        &mut self,
+        _: &HelixKeepNewestSelection,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.update_editor(cx, |_, editor, cx| {
+            let newest = editor.selections.newest::<usize>(cx);
+            editor.change_selections(Default::default(), window, cx, |s| s.select(vec![newest]));
         });
     }
 }
