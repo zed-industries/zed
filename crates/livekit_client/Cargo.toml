@@ -35,7 +35,7 @@ log.workspace = true
 nanoid.workspace = true
 parking_lot.workspace = true
 postage.workspace = true
-rodio = { workspace = true, features = ["wav_output", "recording"] }
+rodio.workspace = true
 serde.workspace = true
 serde_urlencoded.workspace = true
 settings.workspace = true
