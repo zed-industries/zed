@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use buffer_diff::BufferDiff;
+use collections::HashSet;
 use futures::StreamExt;
 use git::{
     repository::RepoPath,
@@ -177,7 +178,10 @@ impl BranchDiff {
         let this = cx.weak_entity();
 
         self.project.update(cx, |_project, cx| {
+            let mut seen = HashSet::default();
+
             for item in repo.read(cx).cached_status() {
+                seen.insert(item.repo_path.clone());
                 let branch_diff = self
                     .tree_diff
                     .as_ref()
@@ -199,6 +203,14 @@ impl BranchDiff {
                     load: task,
                     file_status: item.status,
                 });
+            }
+            let Some(tree_diff) = self.tree_diff.as_ref() else {
+                return;
+            };
+            for (path, status) in tree_diff.entries.iter() {
+                if seen.contains(&path) {
+                    continue;
+                }
             }
         });
         output
