@@ -1,3 +1,5 @@
+#![allow(unreachable_code, unused)] // TODO(cameron)
+
 use gpui::App;
 use settings::{LanguageSettingsContent, SettingsContent};
 use std::sync::Arc;
@@ -8,6 +10,29 @@ use crate::{
     SubPageLink, USER, all_language_names, sub_page_stack,
 };
 
+/// Pulled out into a new macro because stringify doesn't guarantee the output representation
+#[doc(hidden)]
+macro_rules! _path_to_string {
+    ($(.)? $head:ident) => { stringify!($head) };
+    ($(.)? $head:ident $(. $tail:ident)* ) => {
+        concat!(_path_to_string!($head), ".", _path_to_string!($(. $tail)*))
+    };
+}
+
+/// Takes two parameters
+macro_rules! settings_field {
+    {
+        namespace: $namespace:ident,
+        path: $head:ident $(. $tail:ident)*,
+    } => {
+        Box::new(SettingField {
+            pick: |settings_content| &settings_content.$namespace.$head $(. $tail)*,
+            pick_mut: |settings_content| &mut settings_content.$namespace.$head $(. $tail)*,
+            json_path: _path_to_string!($head $(. $tail)*),
+        })
+    };
+}
+
 pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
     vec![
         SettingsPage {
@@ -17,62 +42,50 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Confirm Quit",
                     description: "Confirm before quitting Zed",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| &settings_content.workspace.confirm_quit,
-                        pick_mut: |settings_content| &mut settings_content.workspace.confirm_quit,
-                    }),
+                    field: settings_field!(
+                        namespace: workspace,
+                        path: confirm_quit,
+                    ),
                     metadata: None,
                     files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "When Closing With No Tabs",
                     description: "What to do when using the 'close active item' action with no tabs",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            &settings_content.workspace.when_closing_with_no_tabs
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content.workspace.when_closing_with_no_tabs
-                        },
-                    }),
+                    field: settings_field!(
+                       namespace: workspace,
+                       path: when_closing_with_no_tabs,
+                    ),
                     metadata: None,
                     files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "On Last Window Closed",
                     description: "What to do when the last window is closed",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| &settings_content.workspace.on_last_window_closed,
-                        pick_mut: |settings_content| {
-                            &mut settings_content.workspace.on_last_window_closed
-                        },
-                    }),
+                    field: settings_field!(
+                       namespace: workspace,
+                       path: on_last_window_closed,
+                    ),
                     metadata: None,
                     files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Use System Path Prompts",
                     description: "Use native OS dialogs for 'Open' and 'Save As'",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            &settings_content.workspace.use_system_path_prompts
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content.workspace.use_system_path_prompts
-                        },
-                    }),
+                    field: settings_field!(
+                       namespace: workspace,
+                       path: use_system_path_prompts,
+                    ),
                     metadata: None,
                     files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Use System Prompts",
                     description: "Use native OS dialogs for confirmations",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| &settings_content.workspace.use_system_prompts,
-                        pick_mut: |settings_content| {
-                            &mut settings_content.workspace.use_system_prompts
-                        },
-                    }),
+                    field: settings_field!(
+                        namespace: workspace,
+                        path: use_system_prompts,
+                    ),
                     metadata: None,
                     files: USER,
                 }),
@@ -80,6 +93,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Redact Private Values",
                     description: "Hide the values of variables in private files",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| &settings_content.editor.redact_private_values,
                         pick_mut: |settings_content| {
                             &mut settings_content.editor.redact_private_values
@@ -93,6 +107,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     description: "Globs to match against file paths to determine if a file is private",
                     field: Box::new(
                         SettingField {
+                            json_path: todo!("cameron"),
                             pick: |settings_content| {
                                 &settings_content.project.worktree.private_files
                             },
@@ -110,6 +125,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Restore Unsaved Buffers",
                     description: "Whether or not to restore unsaved buffers on restart",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| match settings_content.session.as_ref() {
                             Some(session) => &session.restore_unsaved_buffers,
                             None => &None,
@@ -128,6 +144,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Restore On Startup",
                     description: "What to restore from the previous session when opening Zed",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| &settings_content.workspace.restore_on_startup,
                         pick_mut: |settings_content| {
                             &mut settings_content.workspace.restore_on_startup
@@ -144,6 +161,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     description: "Which settings should be activated only in Preview build of Zed",
                     field: Box::new(
                         SettingField {
+                            json_path: todo!("cameron"),
                             pick: |settings_content| &settings_content.workspace.use_system_prompts,
                             pick_mut: |settings_content| {
                                 &mut settings_content.workspace.use_system_prompts
@@ -159,6 +177,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     description: "Any number of settings profiles that are temporarily applied on top of your existing user settings",
                     field: Box::new(
                         SettingField {
+                            json_path: todo!("cameron"),
                             pick: |settings_content| &settings_content.workspace.use_system_prompts,
                             pick_mut: |settings_content| {
                                 &mut settings_content.workspace.use_system_prompts
@@ -173,6 +192,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Telemetry Diagnostics",
                     description: "Send debug information like crash reports",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(telemetry) = &settings_content.telemetry {
                                 &telemetry.diagnostics
@@ -194,6 +214,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Telemetry Metrics",
                     description: "Send anonymized usage data like what languages you're using Zed with",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(telemetry) = &settings_content.telemetry {
                                 &telemetry.metrics
@@ -213,6 +234,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Auto Update",
                     description: "Whether or not to automatically check for updates",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| &settings_content.auto_update,
                         pick_mut: |settings_content| &mut settings_content.auto_update,
                     }),
@@ -232,6 +254,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     description: "How to select the theme",
                     field: Box::new(
                         SettingField {
+                            json_path: todo!("cameron"),
                             pick: |settings_content| &settings_content.theme.theme,
                             pick_mut: |settings_content| &mut settings_content.theme.theme,
                         }
@@ -247,6 +270,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     description: "Choose the icon theme for file explorer",
                     field: Box::new(
                         SettingField {
+                            json_path: todo!("cameron"),
                             pick: |settings_content| &settings_content.theme.icon_theme,
                             pick_mut: |settings_content| &mut settings_content.theme.icon_theme,
                         }
@@ -259,6 +283,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Buffer Font Family",
                     description: "Font family for editor text",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| &settings_content.theme.buffer_font_family,
                         pick_mut: |settings_content| &mut settings_content.theme.buffer_font_family,
                     }),
@@ -269,6 +294,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Buffer Font Size",
                     description: "Font size for editor text",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| &settings_content.theme.buffer_font_size,
                         pick_mut: |settings_content| &mut settings_content.theme.buffer_font_size,
                     }),
@@ -279,6 +305,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Buffer Font Weight",
                     description: "Font weight for editor text (100-900)",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| &settings_content.theme.buffer_font_weight,
                         pick_mut: |settings_content| &mut settings_content.theme.buffer_font_weight,
                     }),
@@ -292,6 +319,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     description: "Line height for editor text",
                     field: Box::new(
                         SettingField {
+                            json_path: todo!("cameron"),
                             pick: |settings_content| &settings_content.theme.buffer_line_height,
                             pick_mut: |settings_content| {
                                 &mut settings_content.theme.buffer_line_height
@@ -307,6 +335,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     description: "The OpenType features to enable for rendering in text buffers.",
                     field: Box::new(
                         SettingField {
+                            json_path: todo!("cameron"),
                             pick: |settings_content| &settings_content.theme.buffer_font_features,
                             pick_mut: |settings_content| {
                                 &mut settings_content.theme.buffer_font_features
@@ -322,6 +351,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     description: "The font fallbacks to use for rendering in text buffers.",
                     field: Box::new(
                         SettingField {
+                            json_path: todo!("cameron"),
                             pick: |settings_content| &settings_content.theme.buffer_font_fallbacks,
                             pick_mut: |settings_content| {
                                 &mut settings_content.theme.buffer_font_fallbacks
@@ -335,6 +365,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "UI Font Family",
                     description: "Font family for UI elements",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| &settings_content.theme.ui_font_family,
                         pick_mut: |settings_content| &mut settings_content.theme.ui_font_family,
                     }),
@@ -345,6 +376,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "UI Font Size",
                     description: "Font size for UI elements",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| &settings_content.theme.ui_font_size,
                         pick_mut: |settings_content| &mut settings_content.theme.ui_font_size,
                     }),
@@ -355,6 +387,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "UI Font Weight",
                     description: "Font weight for UI elements (100-900)",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| &settings_content.theme.ui_font_weight,
                         pick_mut: |settings_content| &mut settings_content.theme.ui_font_weight,
                     }),
@@ -367,6 +400,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     description: "The OpenType features to enable for rendering in UI elements.",
                     field: Box::new(
                         SettingField {
+                            json_path: todo!("cameron"),
                             pick: |settings_content| &settings_content.theme.ui_font_features,
                             pick_mut: |settings_content| {
                                 &mut settings_content.theme.ui_font_features
@@ -382,6 +416,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     description: "The font fallbacks to use for rendering in the UI.",
                     field: Box::new(
                         SettingField {
+                            json_path: todo!("cameron"),
                             pick: |settings_content| &settings_content.theme.ui_font_fallbacks,
                             pick_mut: |settings_content| {
                                 &mut settings_content.theme.ui_font_fallbacks
@@ -395,6 +430,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Agent Panel UI Font Size",
                     description: "Font size for agent response text in the agent panel. Falls back to the regular UI font size.",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if settings_content.theme.agent_ui_font_size.is_some() {
                                 &settings_content.theme.agent_ui_font_size
@@ -411,6 +447,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Agent Panel Buffer Font Size",
                     description: "Font size for user messages text in the agent panel",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| &settings_content.theme.agent_buffer_font_size,
                         pick_mut: |settings_content| {
                             &mut settings_content.theme.agent_buffer_font_size
@@ -423,6 +460,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Multi Cursor Modifier",
                     description: "Modifier key for adding multiple cursors",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| &settings_content.editor.multi_cursor_modifier,
                         pick_mut: |settings_content| {
                             &mut settings_content.editor.multi_cursor_modifier
@@ -436,6 +474,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Cursor Blink",
                     description: "Whether the cursor blinks in the editor",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| &settings_content.editor.cursor_blink,
                         pick_mut: |settings_content| &mut settings_content.editor.cursor_blink,
                     }),
@@ -446,6 +485,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Cursor Shape",
                     description: "Cursor shape for the editor",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| &settings_content.editor.cursor_shape,
                         pick_mut: |settings_content| &mut settings_content.editor.cursor_shape,
                     }),
@@ -456,6 +496,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Hide Mouse",
                     description: "When to hide the mouse cursor",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| &settings_content.editor.hide_mouse,
                         pick_mut: |settings_content| &mut settings_content.editor.hide_mouse,
                     }),
@@ -467,6 +508,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Unnecessary Code Fade",
                     description: "How much to fade out unused code (0.0 - 0.9)",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| &settings_content.theme.unnecessary_code_fade,
                         pick_mut: |settings_content| {
                             &mut settings_content.theme.unnecessary_code_fade
@@ -479,6 +521,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Current Line Highlight",
                     description: "How to highlight the current line",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| &settings_content.editor.current_line_highlight,
                         pick_mut: |settings_content| {
                             &mut settings_content.editor.current_line_highlight
@@ -491,6 +534,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Selection Highlight",
                     description: "Highlight all occurrences of selected text",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| &settings_content.editor.selection_highlight,
                         pick_mut: |settings_content| {
                             &mut settings_content.editor.selection_highlight
@@ -503,6 +547,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Rounded Selection",
                     description: "Whether the text selection should have rounded corners",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| &settings_content.editor.rounded_selection,
                         pick_mut: |settings_content| &mut settings_content.editor.rounded_selection,
                     }),
@@ -513,6 +558,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Minimum Contrast For Highlights",
                     description: "The minimum APCA perceptual contrast to maintain when rendering text over highlight backgrounds",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             &settings_content.editor.minimum_contrast_for_highlights
                         },
@@ -528,6 +574,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Show Wrap Guides",
                     description: "Show wrap guides (vertical rulers)",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             &settings_content
                                 .project
@@ -552,6 +599,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     description: "Character counts at which to show wrap guides",
                     field: Box::new(
                         SettingField {
+                            json_path: todo!("cameron"),
                             pick: |settings_content| {
                                 &settings_content.project.all_languages.defaults.wrap_guides
                             },
@@ -574,6 +622,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Base Keymap",
                     description: "The name of a base set of key bindings to use",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| &settings_content.base_keymap,
                         pick_mut: |settings_content| &mut settings_content.base_keymap,
                     }),
@@ -590,6 +639,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Vim Mode",
                     description: "Enable vim modes and key bindings",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| &settings_content.vim_mode,
                         pick_mut: |settings_content| &mut settings_content.vim_mode,
                     }),
@@ -600,6 +650,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Helix Mode",
                     description: "Enable helix modes and key bindings",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| &settings_content.helix_mode,
                         pick_mut: |settings_content| &mut settings_content.helix_mode,
                     }),
@@ -618,6 +669,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         description: "When to Auto Save Buffer Changes",
                         field: Box::new(
                             SettingField {
+                                json_path: todo!("cameron"),
                                 pick: |settings_content| &settings_content.workspace.autosave,
                                 pick_mut: |settings_content| {
                                     &mut settings_content.workspace.autosave
@@ -633,6 +685,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         title: "Double Click In Multibuffer",
                         description: "What to do when multibuffer is double-clicked in some of its excerpts",
                         field: Box::new(SettingField {
+                            json_path: todo!("cameron"),
                             pick: |settings_content| {
                                 &settings_content.editor.double_click_in_multibuffer
                             },
@@ -647,6 +700,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         title: "Expand Excerpt Lines",
                         description: "How many lines to expand the multibuffer excerpts by default",
                         field: Box::new(SettingField {
+                            json_path: todo!("cameron"),
                             pick: |settings_content| &settings_content.editor.expand_excerpt_lines,
                             pick_mut: |settings_content| {
                                 &mut settings_content.editor.expand_excerpt_lines
@@ -659,6 +713,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         title: "Excerpt Context Lines",
                         description: "How many lines of context to provide in multibuffer excerpts by default",
                         field: Box::new(SettingField {
+                            json_path: todo!("cameron"),
                             pick: |settings_content| &settings_content.editor.excerpt_context_lines,
                             pick_mut: |settings_content| {
                                 &mut settings_content.editor.excerpt_context_lines
@@ -671,6 +726,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         title: "Expand Outlines With Depth",
                         description: "Default depth to expand outline items in the current file",
                         field: Box::new(SettingField {
+                            json_path: todo!("cameron"),
                             pick: |settings_content| {
                                 if let Some(outline_panel) = &settings_content.outline_panel {
                                     &outline_panel.expand_outlines_with_depth
@@ -693,6 +749,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         title: "Scroll Beyond Last Line",
                         description: "Whether the editor will scroll beyond the last line",
                         field: Box::new(SettingField {
+                            json_path: todo!("cameron"),
                             pick: |settings_content| {
                                 &settings_content.editor.scroll_beyond_last_line
                             },
@@ -707,6 +764,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         title: "Vertical Scroll Margin",
                         description: "The number of lines to keep above/below the cursor when auto-scrolling",
                         field: Box::new(SettingField {
+                            json_path: todo!("cameron"),
                             pick: |settings_content| {
                                 &settings_content.editor.vertical_scroll_margin
                             },
@@ -721,6 +779,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         title: "Horizontal Scroll Margin",
                         description: "The number of characters to keep on either side when scrolling with the mouse",
                         field: Box::new(SettingField {
+                            json_path: todo!("cameron"),
                             pick: |settings_content| {
                                 &settings_content.editor.horizontal_scroll_margin
                             },
@@ -735,6 +794,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         title: "Scroll Sensitivity",
                         description: "Scroll sensitivity multiplier for both horizontal and vertical scrolling",
                         field: Box::new(SettingField {
+                            json_path: todo!("cameron"),
                             pick: |settings_content| &settings_content.editor.scroll_sensitivity,
                             pick_mut: |settings_content| {
                                 &mut settings_content.editor.scroll_sensitivity
@@ -747,6 +807,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         title: "Fast Scroll Sensitivity",
                         description: "Fast Scroll sensitivity multiplier for both horizontal and vertical scrolling",
                         field: Box::new(SettingField {
+                            json_path: todo!("cameron"),
                             pick: |settings_content| {
                                 &settings_content.editor.fast_scroll_sensitivity
                             },
@@ -761,6 +822,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         title: "Autoscroll On Clicks",
                         description: "Whether to scroll when clicking near the edge of the visible text area",
                         field: Box::new(SettingField {
+                            json_path: todo!("cameron"),
                             pick: |settings_content| &settings_content.editor.autoscroll_on_clicks,
                             pick_mut: |settings_content| {
                                 &mut settings_content.editor.autoscroll_on_clicks
@@ -774,6 +836,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         title: "Auto Signature Help",
                         description: "Automatically show a signature help pop-up",
                         field: Box::new(SettingField {
+                            json_path: todo!("cameron"),
                             pick: |settings_content| &settings_content.editor.auto_signature_help,
                             pick_mut: |settings_content| {
                                 &mut settings_content.editor.auto_signature_help
@@ -786,6 +849,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         title: "Show Signature Help After Edits",
                         description: "Show the signature help pop-up after completions or bracket pairs are inserted",
                         field: Box::new(SettingField {
+                            json_path: todo!("cameron"),
                             pick: |settings_content| {
                                 &settings_content.editor.show_signature_help_after_edits
                             },
@@ -800,6 +864,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         title: "Snippet Sort Order",
                         description: "Determines how snippets are sorted relative to other completion items",
                         field: Box::new(SettingField {
+                            json_path: todo!("cameron"),
                             pick: |settings_content| &settings_content.editor.snippet_sort_order,
                             pick_mut: |settings_content| {
                                 &mut settings_content.editor.snippet_sort_order
@@ -813,6 +878,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         title: "Hover Popover Enabled",
                         description: "Show the informational hover box when moving the mouse over symbols in the editor",
                         field: Box::new(SettingField {
+                            json_path: todo!("cameron"),
                             pick: |settings_content| &settings_content.editor.hover_popover_enabled,
                             pick_mut: |settings_content| {
                                 &mut settings_content.editor.hover_popover_enabled
@@ -826,6 +892,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         title: "Hover Popover Delay",
                         description: "Time to wait in milliseconds before showing the informational hover box",
                         field: Box::new(SettingField {
+                            json_path: todo!("cameron"),
                             pick: |settings_content| &settings_content.editor.hover_popover_delay,
                             pick_mut: |settings_content| {
                                 &mut settings_content.editor.hover_popover_delay
@@ -839,6 +906,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         title: "Inline Code Actions",
                         description: "Show code action button at start of buffer line",
                         field: Box::new(SettingField {
+                            json_path: todo!("cameron"),
                             pick: |settings_content| &settings_content.editor.inline_code_actions,
                             pick_mut: |settings_content| {
                                 &mut settings_content.editor.inline_code_actions
@@ -851,6 +919,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         title: "Drag And Drop Selection",
                         description: "Enable drag and drop selection",
                         field: Box::new(SettingField {
+                            json_path: todo!("cameron"),
                             pick: |settings_content| {
                                 if let Some(drag_and_drop) =
                                     &settings_content.editor.drag_and_drop_selection
@@ -875,6 +944,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         title: "Drag And Drop Selection Delay",
                         description: "Delay in milliseconds before drag and drop selection starts",
                         field: Box::new(SettingField {
+                            json_path: todo!("cameron"),
                             pick: |settings_content| {
                                 if let Some(drag_and_drop) =
                                     &settings_content.editor.drag_and_drop_selection
@@ -900,6 +970,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         title: "Show Line Numbers",
                         description: "Show line numbers in the gutter",
                         field: Box::new(SettingField {
+                            json_path: todo!("cameron"),
                             pick: |settings_content| {
                                 if let Some(gutter) = &settings_content.editor.gutter {
                                     &gutter.line_numbers
@@ -922,6 +993,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         title: "Relative Line Numbers",
                         description: "Whether the line numbers in the editor's gutter are relative or not",
                         field: Box::new(SettingField {
+                            json_path: todo!("cameron"),
                             pick: |settings_content| &settings_content.editor.relative_line_numbers,
                             pick_mut: |settings_content| {
                                 &mut settings_content.editor.relative_line_numbers
@@ -934,6 +1006,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         title: "Show Runnables",
                         description: "Show runnable buttons in the gutter",
                         field: Box::new(SettingField {
+                            json_path: todo!("cameron"),
                             pick: |settings_content| {
                                 if let Some(gutter) = &settings_content.editor.gutter {
                                     &gutter.runnables
@@ -956,6 +1029,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         title: "Show Breakpoints",
                         description: "Show breakpoints in the gutter",
                         field: Box::new(SettingField {
+                            json_path: todo!("cameron"),
                             pick: |settings_content| {
                                 if let Some(gutter) = &settings_content.editor.gutter {
                                     &gutter.breakpoints
@@ -978,6 +1052,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         title: "Show Folds",
                         description: "Show code folding controls in the gutter",
                         field: Box::new(SettingField {
+                            json_path: todo!("cameron"),
                             pick: |settings_content| {
                                 if let Some(gutter) = &settings_content.editor.gutter {
                                     &gutter.folds
@@ -996,6 +1071,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         title: "Min Line Number Digits",
                         description: "Minimum number of characters to reserve space for in the gutter",
                         field: Box::new(SettingField {
+                            json_path: todo!("cameron"),
                             pick: |settings_content| {
                                 if let Some(gutter) = &settings_content.editor.gutter {
                                     &gutter.min_line_number_digits
@@ -1019,6 +1095,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         title: "Show",
                         description: "When to show the scrollbar in the editor",
                         field: Box::new(SettingField {
+                            json_path: todo!("cameron"),
                             pick: |settings_content| {
                                 if let Some(scrollbar) = &settings_content.editor.scrollbar {
                                     &scrollbar.show
@@ -1041,6 +1118,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         title: "Cursors",
                         description: "Show cursor positions in the scrollbar",
                         field: Box::new(SettingField {
+                            json_path: todo!("cameron"),
                             pick: |settings_content| {
                                 if let Some(scrollbar) = &settings_content.editor.scrollbar {
                                     &scrollbar.cursors
@@ -1063,6 +1141,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         title: "Git Diff",
                         description: "Show git diff indicators in the scrollbar",
                         field: Box::new(SettingField {
+                            json_path: todo!("cameron"),
                             pick: |settings_content| {
                                 if let Some(scrollbar) = &settings_content.editor.scrollbar {
                                     &scrollbar.git_diff
@@ -1085,6 +1164,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         title: "Search Results",
                         description: "Show buffer search result indicators in the scrollbar",
                         field: Box::new(SettingField {
+                            json_path: todo!("cameron"),
                             pick: |settings_content| {
                                 if let Some(scrollbar) = &settings_content.editor.scrollbar {
                                     &scrollbar.search_results
@@ -1107,6 +1187,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         title: "Selected Text",
                         description: "Show selected text occurrences in the scrollbar",
                         field: Box::new(SettingField {
+                            json_path: todo!("cameron"),
                             pick: |settings_content| {
                                 if let Some(scrollbar) = &settings_content.editor.scrollbar {
                                     &scrollbar.selected_text
@@ -1129,6 +1210,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         title: "Selected Symbol",
                         description: "Show selected symbol occurrences in the scrollbar",
                         field: Box::new(SettingField {
+                            json_path: todo!("cameron"),
                             pick: |settings_content| {
                                 if let Some(scrollbar) = &settings_content.editor.scrollbar {
                                     &scrollbar.selected_symbol
@@ -1151,6 +1233,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         title: "Diagnostics",
                         description: "Which diagnostic indicators to show in the scrollbar",
                         field: Box::new(SettingField {
+                            json_path: todo!("cameron"),
                             pick: |settings_content| {
                                 if let Some(scrollbar) = &settings_content.editor.scrollbar {
                                     &scrollbar.diagnostics
@@ -1173,6 +1256,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         title: "Horizontal Scrollbar",
                         description: "When false, forcefully disables the horizontal scrollbar",
                         field: Box::new(SettingField {
+                            json_path: todo!("cameron"),
                             pick: |settings_content| {
                                 if let Some(scrollbar) = &settings_content.editor.scrollbar {
                                     if let Some(axes) = &scrollbar.axes {
@@ -1201,6 +1285,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         title: "Vertical Scrollbar",
                         description: "When false, forcefully disables the vertical scrollbar",
                         field: Box::new(SettingField {
+                            json_path: todo!("cameron"),
                             pick: |settings_content| {
                                 if let Some(scrollbar) = &settings_content.editor.scrollbar {
                                     if let Some(axes) = &scrollbar.axes {
@@ -1230,6 +1315,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         title: "Show",
                         description: "When to show the minimap in the editor",
                         field: Box::new(SettingField {
+                            json_path: todo!("cameron"),
                             pick: |settings_content| {
                                 if let Some(minimap) = &settings_content.editor.minimap {
                                     &minimap.show
@@ -1248,6 +1334,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         title: "Display In",
                         description: "Where to show the minimap in the editor",
                         field: Box::new(SettingField {
+                            json_path: todo!("cameron"),
                             pick: |settings_content| {
                                 if let Some(minimap) = &settings_content.editor.minimap {
                                     &minimap.display_in
@@ -1270,6 +1357,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         title: "Thumb",
                         description: "When to show the minimap thumb",
                         field: Box::new(SettingField {
+                            json_path: todo!("cameron"),
                             pick: |settings_content| {
                                 if let Some(minimap) = &settings_content.editor.minimap {
                                     &minimap.thumb
@@ -1292,6 +1380,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         title: "Thumb Border",
                         description: "Border style for the minimap's scrollbar thumb",
                         field: Box::new(SettingField {
+                            json_path: todo!("cameron"),
                             pick: |settings_content| {
                                 if let Some(minimap) = &settings_content.editor.minimap {
                                     &minimap.thumb_border
@@ -1314,6 +1403,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         title: "Current Line Highlight",
                         description: "How to highlight the current line in the minimap",
                         field: Box::new(SettingField {
+                            json_path: todo!("cameron"),
                             pick: |settings_content| {
                                 if let Some(minimap) = &settings_content.editor.minimap
                                     && minimap.current_line_highlight.is_some()
@@ -1338,6 +1428,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         title: "Max Width Columns",
                         description: "Maximum number of columns to display in the minimap",
                         field: Box::new(SettingField {
+                            json_path: todo!("cameron"),
                             pick: |settings_content| {
                                 if let Some(minimap) = &settings_content.editor.minimap {
                                     &minimap.max_width_columns
@@ -1361,6 +1452,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         title: "Breadcrumbs",
                         description: "Show breadcrumbs",
                         field: Box::new(SettingField {
+                            json_path: todo!("cameron"),
                             pick: |settings_content| {
                                 if let Some(toolbar) = &settings_content.editor.toolbar {
                                     &toolbar.breadcrumbs
@@ -1383,6 +1475,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         title: "Quick Actions",
                         description: "Show quick action buttons (e.g., search, selection, editor controls, etc.)",
                         field: Box::new(SettingField {
+                            json_path: todo!("cameron"),
                             pick: |settings_content| {
                                 if let Some(toolbar) = &settings_content.editor.toolbar {
                                     &toolbar.quick_actions
@@ -1405,6 +1498,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         title: "Selections Menu",
                         description: "Show the selections menu in the editor toolbar",
                         field: Box::new(SettingField {
+                            json_path: todo!("cameron"),
                             pick: |settings_content| {
                                 if let Some(toolbar) = &settings_content.editor.toolbar {
                                     &toolbar.selections_menu
@@ -1427,6 +1521,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         title: "Agent Review",
                         description: "Show agent review buttons in the editor toolbar",
                         field: Box::new(SettingField {
+                            json_path: todo!("cameron"),
                             pick: |settings_content| {
                                 if let Some(toolbar) = &settings_content.editor.toolbar {
                                     &toolbar.agent_review
@@ -1449,6 +1544,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         title: "Code Actions",
                         description: "Show code action buttons in the editor toolbar",
                         field: Box::new(SettingField {
+                            json_path: todo!("cameron"),
                             pick: |settings_content| {
                                 if let Some(toolbar) = &settings_content.editor.toolbar {
                                     &toolbar.code_actions
@@ -1484,6 +1580,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         description: "A Mapping from Languages to files and file extensions that should be treated as that language",
                         field: Box::new(
                             SettingField {
+                                json_path: todo!("cameron"),
                                 pick: |settings_content| {
                                     &settings_content.project.all_languages.file_types
                                 },
@@ -1504,6 +1601,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                         title: "Max Severity",
                                         description: "Which level to use to filter out diagnostics displayed in the editor",
                                         field: Box::new(SettingField {
+                                            json_path: todo!("cameron"),
                                             pick: |settings_content| &settings_content.editor.diagnostics_max_severity,
                                             pick_mut: |settings_content| {
                                                 &mut settings_content.editor.diagnostics_max_severity
@@ -1516,6 +1614,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                         title: "Include Warnings",
                                         description: "Whether to show warnings or not by default",
                                         field: Box::new(SettingField {
+                                            json_path: todo!("cameron"),
                                             pick: |settings_content| {
                                                 if let Some(diagnostics) = &settings_content.diagnostics {
                                                     &diagnostics.include_warnings
@@ -1538,6 +1637,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                         title: "Enabled",
                                         description: "Whether to show diagnostics inline or not",
                                         field: Box::new(SettingField {
+                                            json_path: todo!("cameron"),
                                             pick: |settings_content| {
                                                 if let Some(diagnostics) = &settings_content.diagnostics {
                                                     if let Some(inline) = &diagnostics.inline {
@@ -1565,6 +1665,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                         title: "Update Debounce",
                                         description: "The delay in milliseconds to show inline diagnostics after the last diagnostic update",
                                         field: Box::new(SettingField {
+                                            json_path: todo!("cameron"),
                                             pick: |settings_content| {
                                                 if let Some(diagnostics) = &settings_content.diagnostics {
                                                     if let Some(inline) = &diagnostics.inline {
@@ -1592,6 +1693,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                         title: "Padding",
                                         description: "The amount of padding between the end of the source line and the start of the inline diagnostic",
                                         field: Box::new(SettingField {
+                                            json_path: todo!("cameron"),
                                             pick: |settings_content| {
                                                 if let Some(diagnostics) = &settings_content.diagnostics {
                                                     if let Some(inline) = &diagnostics.inline {
@@ -1619,6 +1721,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                         title: "Minimum Column",
                                         description: "The minimum column at which to display inline diagnostics",
                                         field: Box::new(SettingField {
+                                            json_path: todo!("cameron"),
                                             pick: |settings_content| {
                                                 if let Some(diagnostics) = &settings_content.diagnostics {
                                                     if let Some(inline) = &diagnostics.inline {
@@ -1647,6 +1750,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                         title: "Enabled",
                                         description: "Whether to pull for language server-powered diagnostics or not",
                                         field: Box::new(SettingField {
+                                            json_path: todo!("cameron"),
                                             pick: |settings_content| {
                                                 if let Some(diagnostics) = &settings_content.diagnostics {
                                                     if let Some(lsp_pull) = &diagnostics.lsp_pull_diagnostics {
@@ -1675,6 +1779,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                         title: "Debounce",
                                         description: "Minimum time to wait before pulling diagnostics from the language server(s)",
                                         field: Box::new(SettingField {
+                                            json_path: todo!("cameron"),
                                             pick: |settings_content| {
                                                 if let Some(diagnostics) = &settings_content.diagnostics {
                                                     if let Some(lsp_pull) = &diagnostics.lsp_pull_diagnostics {
@@ -1703,6 +1808,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                         title: "Debounce",
                                         description: "The debounce delay before querying highlights from the language",
                                         field: Box::new(SettingField {
+                                            json_path: todo!("cameron"),
                                             pick: |settings_content| &settings_content.editor.lsp_highlight_debounce,
                                             pick_mut: |settings_content| {
                                                 &mut settings_content.editor.lsp_highlight_debounce
@@ -1745,6 +1851,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Whole Word",
                     description: "Search for whole words by default",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(search) = &settings_content.editor.search {
                                 &search.whole_word
@@ -1767,6 +1874,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Case Sensitive",
                     description: "Search case-sensitively by default",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(search) = &settings_content.editor.search {
                                 &search.case_sensitive
@@ -1789,6 +1897,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Use Smartcase Search",
                     description: "Whether to automatically enable case-sensitive search based on the search query",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| &settings_content.editor.use_smartcase_search,
                         pick_mut: |settings_content| {
                             &mut settings_content.editor.use_smartcase_search
@@ -1801,6 +1910,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Include Ignored",
                     description: "Include ignored files in search results by default",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(search) = &settings_content.editor.search {
                                 &search.include_ignored
@@ -1823,6 +1933,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Regex",
                     description: "Use regex search by default",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(search) = &settings_content.editor.search {
                                 &search.regex
@@ -1841,6 +1952,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Search Wrap",
                     description: "Whether the editor search results will loop",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| &settings_content.editor.search_wrap,
                         pick_mut: |settings_content| &mut settings_content.editor.search_wrap,
                     }),
@@ -1851,6 +1963,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Seed Search Query From Cursor",
                     description: "When to populate a new search's query based on the text under the cursor",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             &settings_content.editor.seed_search_query_from_cursor
                         },
@@ -1868,6 +1981,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     description: "Use gitignored files when searching",
                     field: Box::new(
                         SettingField {
+                            json_path: todo!("cameron"),
                             pick: |settings_content| {
                                 if let Some(file_finder) = &settings_content.file_finder {
                                     &file_finder.include_ignored
@@ -1891,6 +2005,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "File Icons",
                     description: "Show file icons in the file finder",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(file_finder) = &settings_content.file_finder {
                                 &file_finder.file_icons
@@ -1912,6 +2027,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Modal Max Width",
                     description: "Determines how much space the file finder can take up in relation to the available window width",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(file_finder) = &settings_content.file_finder {
                                 &file_finder.modal_max_width
@@ -1933,6 +2049,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Skip Focus For Active In Search",
                     description: "Whether the file finder should skip focus for the active file in search results",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(file_finder) = &settings_content.file_finder {
                                 &file_finder.skip_focus_for_active_in_search
@@ -1954,6 +2071,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Git Status",
                     description: "Show the git status in the file finder",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(file_finder) = &settings_content.file_finder {
                                 &file_finder.git_status
@@ -1977,6 +2095,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     description: "Files or globs of files that will be excluded by Zed entirely. They will be skipped during file scans, file searches, and not be displayed in the project file tree. Takes precedence over \"File Scan Inclusions\"",
                     field: Box::new(
                         SettingField {
+                            json_path: todo!("cameron"),
                             pick: |settings_content| {
                                 &settings_content.project.worktree.file_scan_exclusions
                             },
@@ -1994,6 +2113,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     description: "Files or globs of files that will be included by Zed, even when ignored by git. This is useful for files that are not tracked by git, but are still important to your project. Note that globs that are overly broad can slow down Zed's file scanning. \"File Scan Exclusions\" takes precedence over these inclusions",
                     field: Box::new(
                         SettingField {
+                            json_path: todo!("cameron"),
                             pick: |settings_content| {
                                 &settings_content.project.worktree.file_scan_exclusions
                             },
@@ -2010,6 +2130,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Restore File State",
                     description: "Restore previous file state when reopening",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| &settings_content.workspace.restore_on_file_reopen,
                         pick_mut: |settings_content| {
                             &mut settings_content.workspace.restore_on_file_reopen
@@ -2022,6 +2143,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Close on File Delete",
                     description: "Automatically close files that have been deleted",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| &settings_content.workspace.close_on_file_delete,
                         pick_mut: |settings_content| {
                             &mut settings_content.workspace.close_on_file_delete
@@ -2040,6 +2162,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Project Panel Button",
                     description: "Show the project panel button in the status bar",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(project_panel) = &settings_content.project_panel {
                                 &project_panel.button
@@ -2061,6 +2184,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Active Language Button",
                     description: "Show the active language button in the status bar",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(status_bar) = &settings_content.status_bar {
                                 &status_bar.active_language_button
@@ -2082,6 +2206,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Cursor Position Button",
                     description: "Show the cursor position button in the status bar",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(status_bar) = &settings_content.status_bar {
                                 &status_bar.cursor_position_button
@@ -2103,6 +2228,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Terminal Button",
                     description: "Show the terminal button in the status bar",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(terminal) = &settings_content.terminal {
                                 &terminal.button
@@ -2121,6 +2247,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Diagnostics Button",
                     description: "Show the project diagnostics button in the status bar",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(diagnostics) = &settings_content.diagnostics {
                                 &diagnostics.button
@@ -2139,6 +2266,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Project Search Button",
                     description: "Show the project search button in the status bar",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(search) = &settings_content.editor.search {
                                 &search.button
@@ -2161,6 +2289,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Debugger Button",
                     description: "Show the debugger button in the status bar",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(debugger) = &settings_content.debugger {
                                 &debugger.button
@@ -2180,6 +2309,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Show Branch Icon",
                     description: "Show the branch icon beside branch switcher in the titlebar",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(title_bar) = &settings_content.title_bar {
                                 &title_bar.show_branch_icon
@@ -2201,6 +2331,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Show Branch Name",
                     description: "Show the branch name button in the titlebar",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(title_bar) = &settings_content.title_bar {
                                 &title_bar.show_branch_name
@@ -2222,6 +2353,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Show Project Items",
                     description: "Show the project host and name in the titlebar",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(title_bar) = &settings_content.title_bar {
                                 &title_bar.show_project_items
@@ -2243,6 +2375,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Show Onboarding Banner",
                     description: "Show banners announcing new features in the titlebar",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(title_bar) = &settings_content.title_bar {
                                 &title_bar.show_onboarding_banner
@@ -2264,6 +2397,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Show User Picture",
                     description: "Show user picture in the titlebar",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(title_bar) = &settings_content.title_bar {
                                 &title_bar.show_user_picture
@@ -2285,6 +2419,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Show Sign In",
                     description: "Show the sign in button in the titlebar",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(title_bar) = &settings_content.title_bar {
                                 &title_bar.show_sign_in
@@ -2306,6 +2441,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Show Menus",
                     description: "Show the menus in the titlebar",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(title_bar) = &settings_content.title_bar {
                                 &title_bar.show_menus
@@ -2328,6 +2464,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Show Tab Bar",
                     description: "Show the tab bar in the editor",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(tab_bar) = &settings_content.tab_bar {
                                 &tab_bar.show
@@ -2346,6 +2483,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Show Git Status In Tabs",
                     description: "Show the Git file status on a tab item",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(tabs) = &settings_content.tabs {
                                 &tabs.git_status
@@ -2364,6 +2502,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Show File Icons In Tabs",
                     description: "Show the file icon for a tab",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(tabs) = &settings_content.tabs {
                                 &tabs.file_icons
@@ -2382,6 +2521,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Tab Close Position",
                     description: "Position of the close button in a tab",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(tabs) = &settings_content.tabs {
                                 &tabs.close_position
@@ -2404,6 +2544,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     // is complex, so I'm going to come back to this later
                     field: Box::new(
                         SettingField {
+                            json_path: todo!("cameron"),
                             pick: |settings_content| &settings_content.workspace.max_tabs,
                             pick_mut: |settings_content| &mut settings_content.workspace.max_tabs,
                         }
@@ -2415,6 +2556,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Show Navigation History Buttons",
                     description: "Show the navigation history buttons in the tab bar",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(tab_bar) = &settings_content.tab_bar {
                                 &tab_bar.show_nav_history_buttons
@@ -2437,6 +2579,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Activate On Close",
                     description: "What to do after closing the current tab",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(tabs) = &settings_content.tabs {
                                 &tabs.activate_on_close
@@ -2458,6 +2601,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Tab Show Diagnostics",
                     description: "Which files containing diagnostic errors/warnings to mark in the tabs",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(tabs) = &settings_content.tabs {
                                 &tabs.show_diagnostics
@@ -2479,6 +2623,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Show Close Button",
                     description: "Controls the appearance behavior of the tab's close button",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(tabs) = &settings_content.tabs {
                                 &tabs.show_close_button
@@ -2501,6 +2646,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Preview Tabs Enabled",
                     description: "Show opened editors as preview tabs",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(preview_tabs) = &settings_content.preview_tabs {
                                 &preview_tabs.enabled
@@ -2522,6 +2668,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Enable Preview From File Finder",
                     description: "Whether to open tabs in preview mode when selected from the file finder",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(preview_tabs) = &settings_content.preview_tabs {
                                 &preview_tabs.enable_preview_from_file_finder
@@ -2543,6 +2690,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Enable Preview From Code Navigation",
                     description: "Whether a preview tab gets replaced when code navigation is used to navigate away from the tab",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(preview_tabs) = &settings_content.preview_tabs {
                                 &preview_tabs.enable_preview_from_code_navigation
@@ -2565,6 +2713,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Bottom Dock Layout",
                     description: "Layout mode for the bottom dock",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| &settings_content.workspace.bottom_dock_layout,
                         pick_mut: |settings_content| {
                             &mut settings_content.workspace.bottom_dock_layout
@@ -2578,6 +2727,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Centered Layout Left Padding",
                     description: "Left padding for centered layout",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(centered_layout) =
                                 &settings_content.workspace.centered_layout
@@ -2602,6 +2752,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Centered Layout Right Padding",
                     description: "Right padding for centered layout",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(centered_layout) =
                                 &settings_content.workspace.centered_layout
@@ -2627,6 +2778,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Use System Window Tabs",
                     description: "(macOS only) Whether to allow windows to tab together",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| &settings_content.workspace.use_system_window_tabs,
                         pick_mut: |settings_content| {
                             &mut settings_content.workspace.use_system_window_tabs
@@ -2640,6 +2792,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Inactive Opacity",
                     description: "Opacity of inactive panels (0.0 - 1.0)",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| match settings_content
                             .workspace
                             .active_pane_modifiers
@@ -2663,6 +2816,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Border Size",
                     description: "Size of the border surrounding the active pane",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| match settings_content
                             .workspace
                             .active_pane_modifiers
@@ -2686,6 +2840,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Zoomed Padding",
                     description: "Show padding for zoomed panes",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| &settings_content.workspace.zoomed_padding,
                         pick_mut: |settings_content| &mut settings_content.workspace.zoomed_padding,
                     }),
@@ -2697,6 +2852,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Vertical Split Direction",
                     description: "Direction to split vertically",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             &settings_content.workspace.pane_split_direction_vertical
                         },
@@ -2711,6 +2867,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Horizontal Split Direction",
                     description: "Direction to split horizontally",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             &settings_content.workspace.pane_split_direction_horizontal
                         },
@@ -2731,6 +2888,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Project Panel Dock",
                     description: "Where to dock the project panel",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(project_panel) = &settings_content.project_panel {
                                 &project_panel.dock
@@ -2749,6 +2907,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Project Panel Default Width",
                     description: "Default width of the project panel in pixels",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(project_panel) = &settings_content.project_panel {
                                 &project_panel.default_width
@@ -2770,6 +2929,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Hide .gitignore",
                     description: "Whether to hide the gitignore entries in the project panel",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(project_panel) = &settings_content.project_panel {
                                 &project_panel.hide_gitignore
@@ -2791,6 +2951,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Entry Spacing",
                     description: "Spacing between worktree entries in the project panel",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(project_panel) = &settings_content.project_panel {
                                 &project_panel.entry_spacing
@@ -2812,6 +2973,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "File Icons",
                     description: "Show file icons in the project panel",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(project_panel) = &settings_content.project_panel {
                                 &project_panel.file_icons
@@ -2833,6 +2995,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Folder Icons",
                     description: "Whether to show folder icons or chevrons for directories in the project panel",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(project_panel) = &settings_content.project_panel {
                                 &project_panel.folder_icons
@@ -2854,6 +3017,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Git Status",
                     description: "Show the git status in the project panel",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(project_panel) = &settings_content.project_panel {
                                 &project_panel.git_status
@@ -2875,6 +3039,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Indent Size",
                     description: "Amount of indentation for nested items",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(project_panel) = &settings_content.project_panel {
                                 &project_panel.indent_size
@@ -2896,6 +3061,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Auto Reveal Entries",
                     description: "Whether to reveal entries in the project panel automatically when a corresponding project entry becomes active",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(project_panel) = &settings_content.project_panel {
                                 &project_panel.auto_reveal_entries
@@ -2917,6 +3083,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Starts Open",
                     description: "Whether the project panel should open on startup",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(project_panel) = &settings_content.project_panel {
                                 &project_panel.starts_open
@@ -2938,6 +3105,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Auto Fold Directories",
                     description: "Whether to fold directories automatically and show compact folders when a directory has only one subdirectory inside",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(project_panel) = &settings_content.project_panel {
                                 &project_panel.auto_fold_dirs
@@ -2959,6 +3127,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Scrollbar Show",
                     description: "Show the scrollbar in the project panel",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(project_panel) = &settings_content.project_panel
                                 && let Some(scrollbar) = &project_panel.scrollbar
@@ -2987,6 +3156,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Show Diagnostics",
                     description: "Which files containing diagnostic errors/warnings to mark in the project panel",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(project_panel) = &settings_content.project_panel {
                                 &project_panel.show_diagnostics
@@ -3008,6 +3178,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Sticky Scroll",
                     description: "Whether to stick parent directories at top of the project panel",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(project_panel) = &settings_content.project_panel {
                                 &project_panel.sticky_scroll
@@ -3031,6 +3202,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     description: "Show indent guides in the project panel",
                     field: Box::new(
                         SettingField {
+                            json_path: todo!("cameron"),
                             pick: |settings_content| {
                                 if let Some(project_panel) = &settings_content.project_panel {
                                     if let Some(indent_guides) = &project_panel.indent_guides {
@@ -3059,6 +3231,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Drag and Drop",
                     description: "Whether to enable drag-and-drop operations in the project panel",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(project_panel) = &settings_content.project_panel {
                                 &project_panel.drag_and_drop
@@ -3080,6 +3253,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Hide Root",
                     description: "Whether to hide the root entry when only one folder is open in the window",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(project_panel) = &settings_content.project_panel {
                                 &project_panel.hide_root
@@ -3101,6 +3275,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Hide Hidden",
                     description: "Whether to hide the hidden entries in the project panel",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(project_panel) = &settings_content.project_panel {
                                 &project_panel.hide_hidden
@@ -3123,6 +3298,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Terminal Dock",
                     description: "Where to dock the terminal panel",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(terminal) = &settings_content.terminal {
                                 &terminal.dock
@@ -3142,6 +3318,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Outline Panel Button",
                     description: "Show the outline panel button in the status bar",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(outline_panel) = &settings_content.outline_panel {
                                 &outline_panel.button
@@ -3163,6 +3340,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Outline Panel Dock",
                     description: "Where to dock the outline panel",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(outline_panel) = &settings_content.outline_panel {
                                 &outline_panel.dock
@@ -3181,6 +3359,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Outline Panel Default Width",
                     description: "Default width of the outline panel in pixels",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(outline_panel) = &settings_content.outline_panel {
                                 &outline_panel.default_width
@@ -3202,6 +3381,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "File Icons",
                     description: "Show file icons in the outline panel",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(outline_panel) = &settings_content.outline_panel {
                                 &outline_panel.file_icons
@@ -3223,6 +3403,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Folder Icons",
                     description: "Whether to show folder icons or chevrons for directories in the outline panel",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(outline_panel) = &settings_content.outline_panel {
                                 &outline_panel.folder_icons
@@ -3244,6 +3425,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Git Status",
                     description: "Show the git status in the outline panel",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(outline_panel) = &settings_content.outline_panel {
                                 &outline_panel.git_status
@@ -3265,6 +3447,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Indent Size",
                     description: "Amount of indentation for nested items",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(outline_panel) = &settings_content.outline_panel {
                                 &outline_panel.indent_size
@@ -3286,6 +3469,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Auto Reveal Entries",
                     description: "Whether to reveal when a corresponding outline entry becomes active",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(outline_panel) = &settings_content.outline_panel {
                                 &outline_panel.auto_reveal_entries
@@ -3307,6 +3491,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Auto Fold Directories",
                     description: "Whether to fold directories automatically when a directory contains only one subdirectory",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(outline_panel) = &settings_content.outline_panel {
                                 &outline_panel.auto_fold_dirs
@@ -3330,6 +3515,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     description: "When to show indent guides in the outline panel",
                     field: Box::new(
                         SettingField {
+                            json_path: todo!("cameron"),
                             pick: |settings_content| {
                                 if let Some(outline_panel) = &settings_content.outline_panel {
                                     if let Some(indent_guides) = &outline_panel.indent_guides {
@@ -3359,6 +3545,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Git Panel Button",
                     description: "Show the Git panel button in the status bar",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(git_panel) = &settings_content.git_panel {
                                 &git_panel.button
@@ -3377,6 +3564,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Git Panel Dock",
                     description: "Where to dock the Git panel",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(git_panel) = &settings_content.git_panel {
                                 &git_panel.dock
@@ -3395,6 +3583,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Git Panel Default Width",
                     description: "Default width of the Git panel in pixels",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(git_panel) = &settings_content.git_panel {
                                 &git_panel.default_width
@@ -3416,6 +3605,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Git Panel Status Style",
                     description: "How entry statuses are displayed",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(git_panel) = &settings_content.git_panel {
                                 &git_panel.status_style
@@ -3437,6 +3627,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Fallback Branch Name",
                     description: "Default branch name will be when init.defaultBranch is not set in git",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(git_panel) = &settings_content.git_panel {
                                 &git_panel.fallback_branch_name
@@ -3458,6 +3649,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Sort By Path",
                     description: "Enable to sort entries in the panel by path, disable to sort by status",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(git_panel) = &settings_content.git_panel {
                                 &git_panel.sort_by_path
@@ -3479,6 +3671,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Collapse Untracked Diff",
                     description: "Whether to collapse untracked files in the diff panel",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(git_panel) = &settings_content.git_panel {
                                 &git_panel.collapse_untracked_diff
@@ -3500,6 +3693,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Scroll Bar",
                     description: "How and when the scrollbar should be displayed",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| match &settings_content.git_panel {
                             Some(settings::GitPanelSettingsContent {
                                 scrollbar: Some(scrollbar),
@@ -3524,6 +3718,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Debugger Panel Dock",
                     description: "The dock position of the debug panel",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(debugger) = &settings_content.debugger {
                                 &debugger.dock
@@ -3543,6 +3738,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Notification Panel Button",
                     description: "Show the notification panel button in the status bar",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(notification_panel) = &settings_content.notification_panel {
                                 &notification_panel.button
@@ -3564,6 +3760,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Notification Panel Dock",
                     description: "Where to dock the notification panel",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(notification_panel) = &settings_content.notification_panel {
                                 &notification_panel.dock
@@ -3585,6 +3782,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Notification Panel Default Width",
                     description: "Default width of the notification panel in pixels",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(notification_panel) = &settings_content.notification_panel {
                                 &notification_panel.default_width
@@ -3607,6 +3805,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Collaboration Panel Button",
                     description: "Show the collaboration panel button in the status bar",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(collaboration_panel) = &settings_content.collaboration_panel
                             {
@@ -3629,6 +3828,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Collaboration Panel Dock",
                     description: "Where to dock the collaboration panel",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(collaboration_panel) = &settings_content.collaboration_panel
                             {
@@ -3651,6 +3851,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Collaboration Panel Default Width",
                     description: "Default width of the collaboration panel in pixels",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(collaboration_panel) = &settings_content.collaboration_panel
                             {
@@ -3674,6 +3875,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Agent Panel Button",
                     description: "Whether to show the agent panel button in the status bar",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(agent) = &settings_content.agent {
                                 &agent.button
@@ -3692,6 +3894,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Agent Panel Dock",
                     description: "Where to dock the agent panel.",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(agent) = &settings_content.agent {
                                 &agent.dock
@@ -3710,6 +3913,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Agent Panel Default Width",
                     description: "Default width when the agent panel is docked to the left or right",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(agent) = &settings_content.agent {
                                 &agent.default_width
@@ -3728,6 +3932,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Agent Panel Default Height",
                     description: "Default height when the agent panel is docked to the bottom",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(agent) = &settings_content.agent {
                                 &agent.default_height
@@ -3755,6 +3960,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Stepping Granularity",
                     description: "Determines the stepping granularity for debug operations",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(debugger) = &settings_content.debugger {
                                 &debugger.stepping_granularity
@@ -3776,6 +3982,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Save Breakpoints",
                     description: "Whether breakpoints should be reused across Zed sessions",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(debugger) = &settings_content.debugger {
                                 &debugger.save_breakpoints
@@ -3797,6 +4004,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Timeout",
                     description: "Time in milliseconds until timeout error when connecting to a TCP debug adapter",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(debugger) = &settings_content.debugger {
                                 &debugger.timeout
@@ -3815,6 +4023,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Log DAP Communications",
                     description: "Whether to log messages between active debug adapters and Zed",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(debugger) = &settings_content.debugger {
                                 &debugger.log_dap_communications
@@ -3836,6 +4045,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Format DAP Log Messages",
                     description: "Whether to format DAP messages when adding them to debug adapter logger",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(debugger) = &settings_content.debugger {
                                 &debugger.format_dap_log_messages
@@ -3864,6 +4074,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     description: "What shell to use when opening a terminal",
                     field: Box::new(
                         SettingField {
+                            json_path: todo!("cameron"),
                             pick: |settings_content| {
                                 if let Some(terminal) = &settings_content.terminal {
                                     &terminal.project.shell
@@ -3889,6 +4100,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     description: "What working directory to use when launching the terminal",
                     field: Box::new(
                         SettingField {
+                            json_path: todo!("cameron"),
                             pick: |settings_content| {
                                 if let Some(terminal) = &settings_content.terminal {
                                     &terminal.project.working_directory
@@ -3914,6 +4126,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     description: "Key-value pairs to add to the terminal's environment",
                     field: Box::new(
                         SettingField {
+                            json_path: todo!("cameron"),
                             pick: |settings_content| {
                                 if let Some(terminal) = &settings_content.terminal {
                                     &terminal.project.env
@@ -3939,6 +4152,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     description: "Activates the python virtual environment, if one is found, in the terminal's working directory",
                     field: Box::new(
                         SettingField {
+                            json_path: todo!("cameron"),
                             pick: |settings_content| {
                                 if let Some(terminal) = &settings_content.terminal {
                                     &terminal.project.detect_venv
@@ -3964,6 +4178,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Font Size",
                     description: "Font size for terminal text. If not set, defaults to buffer font size",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(terminal) = &settings_content.terminal
                                 && terminal.font_size.is_some()
@@ -3986,6 +4201,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Font Family",
                     description: "Font family for terminal text. If not set, defaults to buffer font family",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(terminal) = &settings_content.terminal
                                 && terminal.font_family.is_some()
@@ -4012,6 +4228,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     description: "Font fallbacks for terminal text. If not set, defaults to buffer font fallbacks",
                     field: Box::new(
                         SettingField {
+                            json_path: todo!("cameron"),
                             pick: |settings_content| {
                                 if let Some(terminal) = &settings_content.terminal {
                                     &terminal.font_fallbacks
@@ -4035,6 +4252,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Font Weight",
                     description: "Font weight for terminal text in CSS weight units (100-900)",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(terminal) = &settings_content.terminal {
                                 &terminal.font_weight
@@ -4057,6 +4275,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     description: "Font features for terminal text",
                     field: Box::new(
                         SettingField {
+                            json_path: todo!("cameron"),
                             pick: |settings_content| {
                                 if let Some(terminal) = &settings_content.terminal {
                                     &terminal.font_features
@@ -4082,6 +4301,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     description: "Line height for terminal text",
                     field: Box::new(
                         SettingField {
+                            json_path: todo!("cameron"),
                             pick: |settings_content| {
                                 if let Some(terminal) = &settings_content.terminal {
                                     &terminal.line_height
@@ -4105,6 +4325,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Cursor Shape",
                     description: "Default cursor shape for the terminal (bar, block, underline, or hollow)",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(terminal) = &settings_content.terminal {
                                 &terminal.cursor_shape
@@ -4126,6 +4347,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Cursor Blinking",
                     description: "Sets the cursor blinking behavior in the terminal",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(terminal) = &settings_content.terminal {
                                 &terminal.blinking
@@ -4144,6 +4366,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Alternate Scroll",
                     description: "Whether Alternate Scroll mode is active by default (converts mouse scroll to arrow keys in apps like vim)",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(terminal) = &settings_content.terminal {
                                 &terminal.alternate_scroll
@@ -4165,6 +4388,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Minimum Contrast",
                     description: "The minimum APCA perceptual contrast between foreground and background colors (0-106)",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(terminal) = &settings_content.terminal {
                                 &terminal.minimum_contrast
@@ -4187,6 +4411,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Option As Meta",
                     description: "Whether the option key behaves as the meta key",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(terminal) = &settings_content.terminal {
                                 &terminal.option_as_meta
@@ -4208,6 +4433,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Copy On Select",
                     description: "Whether selecting text in the terminal automatically copies to the system clipboard",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(terminal) = &settings_content.terminal {
                                 &terminal.copy_on_select
@@ -4229,6 +4455,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Keep Selection On Copy",
                     description: "Whether to keep the text selection after copying it to the clipboard",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(terminal) = &settings_content.terminal {
                                 &terminal.keep_selection_on_copy
@@ -4251,6 +4478,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Default Width",
                     description: "Default width when the terminal is docked to the left or right (in pixels)",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(terminal) = &settings_content.terminal {
                                 &terminal.default_width
@@ -4272,6 +4500,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Default Height",
                     description: "Default height when the terminal is docked to the bottom (in pixels)",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(terminal) = &settings_content.terminal {
                                 &terminal.default_height
@@ -4294,6 +4523,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Max Scroll History Lines",
                     description: "Maximum number of lines to keep in scrollback history (max: 100,000; 0 disables scrolling)",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(terminal) = &settings_content.terminal {
                                 &terminal.max_scroll_history_lines
@@ -4316,6 +4546,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Breadcrumbs",
                     description: "Display the terminal title in breadcrumbs inside the terminal pane",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(terminal) = &settings_content.terminal {
                                 if let Some(toolbar) = &terminal.toolbar {
@@ -4344,6 +4575,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Show Scrollbar",
                     description: "When to show the scrollbar in the terminal",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(terminal) = &settings_content.terminal
                                 && let Some(scrollbar) = &terminal.scrollbar
@@ -4378,6 +4610,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Visibilility",
                     description: "Control whether git status is shown in the editor's gutter",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(git) = &settings_content.git {
                                 &git.git_gutter
@@ -4397,6 +4630,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Debounce",
                     description: "Debounce threshold in milliseconds after which changes are reflected in the git gutter",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(git) = &settings_content.git {
                                 &git.gutter_debounce
@@ -4416,6 +4650,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Enabled",
                     description: "Whether or not to show git blame data inline in the currently focused line",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(git) = &settings_content.git {
                                 if let Some(inline_blame) = &git.inline_blame {
@@ -4443,6 +4678,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Delay",
                     description: "The delay after which the inline blame information is shown",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(git) = &settings_content.git {
                                 if let Some(inline_blame) = &git.inline_blame {
@@ -4470,6 +4706,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Padding",
                     description: "Padding between the end of the source line and the start of the inline blame in columns",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(git) = &settings_content.git {
                                 if let Some(inline_blame) = &git.inline_blame {
@@ -4497,6 +4734,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Minimum Column",
                     description: "The minimum column number at which to show the inline blame information",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| match &settings_content.git {
                             Some(settings::GitSettings {
                                 inline_blame: Some(inline_blame),
@@ -4520,6 +4758,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Show Commit Summary",
                     description: "Show commit summary as part of the inline blame",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(git) = &settings_content.git {
                                 if let Some(inline_blame) = &git.inline_blame {
@@ -4548,6 +4787,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Show Avatar",
                     description: "Show the avatar of the author of the commit",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(git) = &settings_content.git {
                                 if let Some(blame) = &git.blame {
@@ -4576,6 +4816,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Show Author Name",
                     description: "Show author name as part of the commit information in branch picker",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(git) = &settings_content.git {
                                 if let Some(branch_picker) = &git.branch_picker {
@@ -4604,6 +4845,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Hunk Style",
                     description: "How git hunks are displayed visually in the editor",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(git) = &settings_content.git {
                                 &git.hunk_style
@@ -4628,6 +4870,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Mute On Join",
                     description: "Whether the microphone should be muted when joining a channel or a call",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(calls) = &settings_content.calls {
                                 &calls.mute_on_join
@@ -4646,6 +4889,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Share On Join",
                     description: "Whether your current project should be shared when joining an empty channel",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(calls) = &settings_content.calls {
                                 &calls.share_on_join
@@ -4665,6 +4909,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Rodio Audio",
                     description: "Opt into the new audio system",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(audio) = &settings_content.audio {
                                 &audio.rodio_audio
@@ -4683,6 +4928,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Auto Microphone Volume",
                     description: "Automatically adjust microphone volume (requires Rodio Audio)",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(audio) = &settings_content.audio {
                                 &audio.auto_microphone_volume
@@ -4704,6 +4950,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Auto Speaker Volume",
                     description: "Automatically adjust volume of other call members (requires Rodio Audio)",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(audio) = &settings_content.audio {
                                 &audio.auto_speaker_volume
@@ -4725,6 +4972,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Denoise",
                     description: "Remove background noises (requires Rodio Audio)",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(audio) = &settings_content.audio {
                                 &audio.denoise
@@ -4743,6 +4991,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Legacy Audio Compatible",
                     description: "Use audio parameters compatible with previous versions (requires Rodio Audio)",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(audio) = &settings_content.audio {
                                 &audio.legacy_audio_compatible
@@ -4770,6 +5019,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Disable AI",
                     description: "Whether to disable all AI features in Zed",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| &settings_content.disable_ai,
                         pick_mut: |settings_content| &mut settings_content.disable_ai,
                     }),
@@ -4781,6 +5031,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Always Allow Tool Actions",
                     description: "When enabled, the agent can run potentially destructive actions without asking for your confirmation. This setting has no effect on external agents.",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(agent) = &settings_content.agent {
                                 &agent.always_allow_tool_actions
@@ -4802,6 +5053,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Single File Review",
                     description: "When enabled, agent edits will also be displayed in single-file buffers for review",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(agent) = &settings_content.agent {
                                 &agent.single_file_review
@@ -4823,6 +5075,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Enable Feedback",
                     description: "Show voting thumbs up/down icon buttons for feedback on agent edits",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(agent) = &settings_content.agent {
                                 &agent.enable_feedback
@@ -4844,6 +5097,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Notify When Agent Waiting",
                     description: "Where to show notifications when the agent has completed its response or needs confirmation before running a tool action",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(agent) = &settings_content.agent {
                                 &agent.notify_when_agent_waiting
@@ -4865,6 +5119,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Play Sound When Agent Done",
                     description: "Whether to play a sound when the agent has either completed its response, or needs user input",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(agent) = &settings_content.agent {
                                 &agent.play_sound_when_agent_done
@@ -4886,6 +5141,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Expand Edit Card",
                     description: "Whether to have edit cards in the agent panel expanded, showing a preview of the diff",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(agent) = &settings_content.agent {
                                 &agent.expand_edit_card
@@ -4907,6 +5163,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Expand Terminal Card",
                     description: "Whether to have terminal cards in the agent panel expanded, showing the whole command output",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(agent) = &settings_content.agent {
                                 &agent.expand_terminal_card
@@ -4928,6 +5185,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Use Modifier To Send",
                     description: "Whether to always use cmd-enter (or ctrl-enter on Linux or Windows) to send messages",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(agent) = &settings_content.agent {
                                 &agent.use_modifier_to_send
@@ -4949,6 +5207,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Message Editor Min Lines",
                     description: "Minimum number of lines to display in the agent message editor",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| {
                             if let Some(agent) = &settings_content.agent {
                                 &agent.message_editor_min_lines
@@ -4978,6 +5237,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     description: "The proxy to use for network requests",
                     field: Box::new(
                         SettingField {
+                            json_path: todo!("cameron"),
                             pick: |settings_content| &settings_content.proxy,
                             pick_mut: |settings_content| &mut settings_content.proxy,
                         }
@@ -4993,6 +5253,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Server URL",
                     description: "The URL of the Zed server to connect to",
                     field: Box::new(SettingField {
+                        json_path: todo!("cameron"),
                         pick: |settings_content| &settings_content.server_url,
                         pick_mut: |settings_content| &mut settings_content.server_url,
                     }),
@@ -5056,6 +5317,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             title: "Tab Size",
             description: "How many columns a tab should occupy",
             field: Box::new(SettingField {
+                json_path: todo!("cameron"),
                 pick: |settings_content| {
                     language_settings_field(settings_content, |language| &language.tab_size)
                 },
@@ -5070,6 +5332,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             title: "Hard Tabs",
             description: "Whether to indent lines using tab characters, as opposed to multiple spaces",
             field: Box::new(SettingField {
+                json_path: todo!("cameron"),
                 pick: |settings_content| {
                     language_settings_field(settings_content, |language| &language.hard_tabs)
                 },
@@ -5086,6 +5349,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             title: "Auto Indent",
             description: "Whether indentation should be adjusted based on the context whilst typing",
             field: Box::new(SettingField {
+                json_path: todo!("cameron"),
                 pick: |settings_content| {
                     language_settings_field(settings_content, |language| &language.auto_indent)
                 },
@@ -5102,6 +5366,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             title: "Auto Indent On Paste",
             description: "Whether indentation of pasted content should be adjusted based on the context",
             field: Box::new(SettingField {
+                json_path: todo!("cameron"),
                 pick: |settings_content| {
                     language_settings_field(settings_content, |language| {
                         &language.auto_indent_on_paste
@@ -5121,6 +5386,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             title: "Soft Wrap",
             description: "How to soft-wrap long lines of text",
             field: Box::new(SettingField {
+                json_path: todo!("cameron"),
                 pick: |settings_content| {
                     language_settings_field(settings_content, |language| &language.soft_wrap)
                 },
@@ -5137,6 +5403,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             title: "Show Wrap Guides",
             description: "Show wrap guides in the editor",
             field: Box::new(SettingField {
+                json_path: todo!("cameron"),
                 pick: |settings_content| {
                     language_settings_field(settings_content, |language| &language.show_wrap_guides)
                 },
@@ -5153,6 +5420,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             title: "Preferred Line Length",
             description: "The column at which to soft-wrap lines, for buffers where soft-wrap is enabled",
             field: Box::new(SettingField {
+                json_path: todo!("cameron"),
                 pick: |settings_content| {
                     language_settings_field(settings_content, |language| {
                         &language.preferred_line_length
@@ -5172,6 +5440,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             description: "Character counts at which to show wrap guides in the editor",
             field: Box::new(
                 SettingField {
+                    json_path: todo!("cameron"),
                     pick: |settings_content| {
                         language_settings_field(settings_content, |language| &language.wrap_guides)
                     },
@@ -5190,6 +5459,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             title: "Allow Rewrap",
             description: "Controls where the `editor::Rewrap` action is allowed for this language",
             field: Box::new(SettingField {
+                json_path: todo!("cameron"),
                 pick: |settings_content| {
                     language_settings_field(settings_content, |language| &language.allow_rewrap)
                 },
@@ -5207,6 +5477,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             title: "Enabled",
             description: "Display indent guides in the editor",
             field: Box::new(SettingField {
+                json_path: todo!("cameron"),
                 pick: |settings_content| {
                     language_settings_field(settings_content, |language| {
                         if let Some(indent_guides) = &language.indent_guides {
@@ -5229,6 +5500,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             title: "Line Width",
             description: "The width of the indent guides in pixels, between 1 and 10",
             field: Box::new(SettingField {
+                json_path: todo!("cameron"),
                 pick: |settings_content| {
                     language_settings_field(settings_content, |language| {
                         if let Some(indent_guides) = &language.indent_guides {
@@ -5251,6 +5523,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             title: "Active Line Width",
             description: "The width of the active indent guide in pixels, between 1 and 10",
             field: Box::new(SettingField {
+                json_path: todo!("cameron"),
                 pick: |settings_content| {
                     language_settings_field(settings_content, |language| {
                         if let Some(indent_guides) = &language.indent_guides {
@@ -5276,6 +5549,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             title: "Coloring",
             description: "Determines how indent guides are colored",
             field: Box::new(SettingField {
+                json_path: todo!("cameron"),
                 pick: |settings_content| {
                     language_settings_field(settings_content, |language| {
                         if let Some(indent_guides) = &language.indent_guides {
@@ -5298,6 +5572,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             title: "Background Coloring",
             description: "Determines how indent guide backgrounds are colored",
             field: Box::new(SettingField {
+                json_path: todo!("cameron"),
                 pick: |settings_content| {
                     language_settings_field(settings_content, |language| {
                         if let Some(indent_guides) = &language.indent_guides {
@@ -5326,6 +5601,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             field: Box::new(
                 // TODO(settings_ui): this setting should just be a bool
                 SettingField {
+                    json_path: todo!("cameron"),
                     pick: |settings_content| {
                         language_settings_field(settings_content, |language| {
                             &language.format_on_save
@@ -5345,6 +5621,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             title: "Remove Trailing Whitespace On Save",
             description: "Whether or not to remove any trailing whitespace from lines of a buffer before saving it",
             field: Box::new(SettingField {
+                json_path: todo!("cameron"),
                 pick: |settings_content| {
                     language_settings_field(settings_content, |language| {
                         &language.remove_trailing_whitespace_on_save
@@ -5363,6 +5640,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             title: "Ensure Final Newline On Save",
             description: "Whether or not to ensure there's a single newline at the end of a buffer when saving it",
             field: Box::new(SettingField {
+                json_path: todo!("cameron"),
                 pick: |settings_content| {
                     language_settings_field(settings_content, |language| {
                         &language.ensure_final_newline_on_save
@@ -5382,6 +5660,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             description: "How to perform a buffer format",
             field: Box::new(
                 SettingField {
+                    json_path: todo!("cameron"),
                     pick: |settings_content| {
                         language_settings_field(settings_content, |language| &language.formatter)
                     },
@@ -5400,6 +5679,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             title: "Use On Type Format",
             description: "Whether to use additional LSP queries to format (and amend) the code after every \"trigger\" symbol input, defined by LSP server capabilities",
             field: Box::new(SettingField {
+                json_path: todo!("cameron"),
                 pick: |settings_content| {
                     language_settings_field(settings_content, |language| {
                         &language.use_on_type_format
@@ -5419,6 +5699,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             title: "Use Autoclose",
             description: "Whether to automatically type closing characters for you. For example, when you type (, Zed will automatically add a closing ) at the correct position",
             field: Box::new(SettingField {
+                json_path: todo!("cameron"),
                 pick: |settings_content| {
                     language_settings_field(settings_content, |language| &language.use_autoclose)
                 },
@@ -5435,6 +5716,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             title: "Use Auto Surround",
             description: "Whether to automatically surround text with characters for you. For example, when you select text and type (, Zed will automatically surround text with ()",
             field: Box::new(SettingField {
+                json_path: todo!("cameron"),
                 pick: |settings_content| {
                     language_settings_field(settings_content, |language| {
                         &language.use_auto_surround
@@ -5453,6 +5735,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             title: "Always Treat Brackets As Autoclosed",
             description: "Controls whether the closing characters are always skipped over and auto-removed no matter how they were inserted",
             field: Box::new(SettingField {
+                json_path: todo!("cameron"),
                 pick: |settings_content| {
                     language_settings_field(settings_content, |language| {
                         &language.always_treat_brackets_as_autoclosed
@@ -5471,6 +5754,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             title: "Jsx Tag Auto Close",
             description: "Whether to automatically close JSX tags",
             field: Box::new(SettingField {
+                json_path: todo!("cameron"),
                 // TODO(settings_ui): this setting should just be a bool
                 pick: |settings_content| {
                     language_settings_field(settings_content, |language| {
@@ -5494,6 +5778,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             title: "Show Edit Predictions",
             description: "Controls whether edit predictions are shown immediately (true) or manually by triggering `editor::ShowEditPrediction` (false)",
             field: Box::new(SettingField {
+                json_path: todo!("cameron"),
                 pick: |settings_content| {
                     language_settings_field(settings_content, |language| {
                         &language.show_edit_predictions
@@ -5513,6 +5798,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             description: "Controls whether edit predictions are shown in the given language scopes",
             field: Box::new(
                 SettingField {
+                    json_path: todo!("cameron"),
                     pick: |settings_content| {
                         language_settings_field(settings_content, |language| {
                             &language.edit_predictions_disabled_in
@@ -5534,6 +5820,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             title: "Show Whitespaces",
             description: "Whether to show tabs and spaces in the editor",
             field: Box::new(SettingField {
+                json_path: todo!("cameron"),
                 pick: |settings_content| {
                     language_settings_field(settings_content, |language| &language.show_whitespaces)
                 },
@@ -5551,6 +5838,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             description: "Visible character used to render space characters when show_whitespaces is enabled (default: \"•\")",
             field: Box::new(
                 SettingField {
+                    json_path: todo!("cameron"),
                     pick: |settings_content| {
                         language_settings_field(settings_content, |language| {
                             if let Some(whitespace_map) = &language.whitespace_map {
@@ -5576,6 +5864,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             description: "Visible character used to render tab characters when show_whitespaces is enabled (default: \"→\")",
             field: Box::new(
                 SettingField {
+                    json_path: todo!("cameron"),
                     pick: |settings_content| {
                         language_settings_field(settings_content, |language| {
                             if let Some(whitespace_map) = &language.whitespace_map {
@@ -5601,6 +5890,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             title: "Show Completions On Input",
             description: "Whether to pop the completions menu while typing in an editor without explicitly requesting it",
             field: Box::new(SettingField {
+                json_path: todo!("cameron"),
                 pick: |settings_content| {
                     language_settings_field(settings_content, |language| {
                         &language.show_completions_on_input
@@ -5619,6 +5909,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             title: "Show Completion Documentation",
             description: "Whether to display inline and alongside documentation for items in the completions menu",
             field: Box::new(SettingField {
+                json_path: todo!("cameron"),
                 pick: |settings_content| {
                     language_settings_field(settings_content, |language| {
                         &language.show_completion_documentation
@@ -5637,6 +5928,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             title: "Words",
             description: "Controls how words are completed",
             field: Box::new(SettingField {
+                json_path: todo!("cameron"),
                 pick: |settings_content| {
                     language_settings_field(settings_content, |language| {
                         if let Some(completions) = &language.completions {
@@ -5659,6 +5951,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             title: "Words Min Length",
             description: "How many characters has to be in the completions query to automatically show the words-based completions",
             field: Box::new(SettingField {
+                json_path: todo!("cameron"),
                 pick: |settings_content| {
                     language_settings_field(settings_content, |language| {
                         if let Some(completions) = &language.completions {
@@ -5685,6 +5978,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             title: "Enabled",
             description: "Global switch to toggle hints on and off",
             field: Box::new(SettingField {
+                json_path: todo!("cameron"),
                 pick: |settings_content| {
                     language_settings_field(settings_content, |language| {
                         if let Some(inlay_hints) = &language.inlay_hints {
@@ -5707,6 +6001,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             title: "Show Value Hints",
             description: "Global switch to toggle inline values on and off when debugging",
             field: Box::new(SettingField {
+                json_path: todo!("cameron"),
                 pick: |settings_content| {
                     language_settings_field(settings_content, |language| {
                         if let Some(inlay_hints) = &language.inlay_hints {
@@ -5732,6 +6027,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             title: "Show Type Hints",
             description: "Whether type hints should be shown",
             field: Box::new(SettingField {
+                json_path: todo!("cameron"),
                 pick: |settings_content| {
                     language_settings_field(settings_content, |language| {
                         if let Some(inlay_hints) = &language.inlay_hints {
@@ -5754,6 +6050,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             title: "Show Parameter Hints",
             description: "Whether parameter hints should be shown",
             field: Box::new(SettingField {
+                json_path: todo!("cameron"),
                 pick: |settings_content| {
                     language_settings_field(settings_content, |language| {
                         if let Some(inlay_hints) = &language.inlay_hints {
@@ -5779,6 +6076,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             title: "Show Other Hints",
             description: "Whether other hints should be shown",
             field: Box::new(SettingField {
+                json_path: todo!("cameron"),
                 pick: |settings_content| {
                     language_settings_field(settings_content, |language| {
                         if let Some(inlay_hints) = &language.inlay_hints {
@@ -5804,6 +6102,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             title: "Show Background",
             description: "Show a background for inlay hints",
             field: Box::new(SettingField {
+                json_path: todo!("cameron"),
                 pick: |settings_content| {
                     language_settings_field(settings_content, |language| {
                         if let Some(inlay_hints) = &language.inlay_hints {
@@ -5826,6 +6125,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             title: "Edit Debounce Ms",
             description: "Whether or not to debounce inlay hints updates after buffer edits (set to 0 to disable debouncing)",
             field: Box::new(SettingField {
+                json_path: todo!("cameron"),
                 pick: |settings_content| {
                     language_settings_field(settings_content, |language| {
                         if let Some(inlay_hints) = &language.inlay_hints {
@@ -5851,6 +6151,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             title: "Scroll Debounce Ms",
             description: "Whether or not to debounce inlay hints updates after buffer scrolls (set to 0 to disable debouncing)",
             field: Box::new(SettingField {
+                json_path: todo!("cameron"),
                 pick: |settings_content| {
                     language_settings_field(settings_content, |language| {
                         if let Some(inlay_hints) = &language.inlay_hints {
@@ -5877,6 +6178,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             description: "Toggles inlay hints (hides or shows) when the user presses the modifiers specified",
             field: Box::new(
                 SettingField {
+                    json_path: todo!("cameron"),
                     pick: |settings_content| {
                         language_settings_field(settings_content, |language| {
                             if let Some(inlay_hints) = &language.inlay_hints {
@@ -5906,6 +6208,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             title: "LSP Document Colors",
             description: "How to render LSP color previews in the editor",
             field: Box::new(SettingField {
+                json_path: todo!("cameron"),
                 pick: |settings_content| &settings_content.editor.lsp_document_colors,
                 pick_mut: |settings_content| &mut settings_content.editor.lsp_document_colors,
             }),
@@ -5919,6 +6222,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             title: "Enabled",
             description: "Whether tasks are enabled for this language",
             field: Box::new(SettingField {
+                json_path: todo!("cameron"),
                 pick: |settings_content| {
                     language_settings_field(settings_content, |language| {
                         if let Some(tasks) = &language.tasks {
@@ -5942,6 +6246,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             description: "Extra task variables to set for a particular language",
             field: Box::new(
                 SettingField {
+                    json_path: todo!("cameron"),
                     pick: |settings_content| {
                         language_settings_field(settings_content, |language| {
                             if let Some(tasks) = &language.tasks {
@@ -5966,6 +6271,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             title: "Prefer LSP",
             description: "Use LSP tasks over Zed language extension tasks",
             field: Box::new(SettingField {
+                json_path: todo!("cameron"),
                 pick: |settings_content| {
                     language_settings_field(settings_content, |language| {
                         if let Some(tasks) = &language.tasks {
@@ -5990,6 +6296,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             description: "Preferred debuggers for this language",
             field: Box::new(
                 SettingField {
+                    json_path: todo!("cameron"),
                     pick: |settings_content| {
                         language_settings_field(settings_content, |language| &language.debuggers)
                     },
@@ -6008,6 +6315,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             title: "Middle Click Paste",
             description: "Enable middle-click paste on Linux",
             field: Box::new(SettingField {
+                json_path: todo!("cameron"),
                 pick: |settings_content| &settings_content.editor.middle_click_paste,
                 pick_mut: |settings_content| &mut settings_content.editor.middle_click_paste,
             }),
@@ -6018,6 +6326,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             title: "Extend Comment On Newline",
             description: "Whether to start a new line with a comment when a previous line is a comment as well",
             field: Box::new(SettingField {
+                json_path: todo!("cameron"),
                 pick: |settings_content| {
                     language_settings_field(settings_content, |language| {
                         &language.extend_comment_on_newline
@@ -6040,6 +6349,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 title: "Image Viewer",
                 description: "The unit for image file sizes",
                 field: Box::new(SettingField {
+                    json_path: todo!("cameron"),
                     pick: |settings_content| {
                         if let Some(image_viewer) = settings_content.image_viewer.as_ref() {
                             &image_viewer.unit
@@ -6058,6 +6368,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 title: "Auto Replace Emoji Shortcode",
                 description: "Whether to automatically replace emoji shortcodes with emoji characters",
                 field: Box::new(SettingField {
+                    json_path: todo!("cameron"),
                     pick: |settings_content| {
                         if let Some(message_editor) = settings_content.message_editor.as_ref() {
                             &message_editor.auto_replace_emoji_shortcode
@@ -6076,6 +6387,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 title: "Drop Size Target",
                 description: "Relative size of the drop target in the editor that will open dropped file as a split pane",
                 field: Box::new(SettingField {
+                    json_path: todo!("cameron"),
                     pick: |settings_content| {
                         &settings_content.workspace.drop_target_size
                     },
@@ -6100,6 +6412,7 @@ fn non_editor_language_settings_data() -> Vec<SettingsPageItem> {
             title: "Enable Language Server",
             description: "Whether to use language servers to provide code intelligence",
             field: Box::new(SettingField {
+                json_path: todo!("cameron"),
                 pick: |settings_content| {
                     language_settings_field(settings_content, |language| {
                         &language.enable_language_server
@@ -6119,6 +6432,7 @@ fn non_editor_language_settings_data() -> Vec<SettingsPageItem> {
             description: "The list of language servers to use (or disable) for this language",
             field: Box::new(
                 SettingField {
+                    json_path: todo!("cameron"),
                     pick: |settings_content| {
                         language_settings_field(settings_content, |language| {
                             &language.language_servers
@@ -6139,6 +6453,7 @@ fn non_editor_language_settings_data() -> Vec<SettingsPageItem> {
             title: "Linked Edits",
             description: "Whether to perform linked edits of associated ranges, if the LS supports it. For example, when editing opening <html> tag, the contents of the closing </html> tag will be edited as well",
             field: Box::new(SettingField {
+                json_path: todo!("cameron"),
                 pick: |settings_content| {
                     language_settings_field(settings_content, |language| &language.linked_edits)
                 },
@@ -6155,6 +6470,7 @@ fn non_editor_language_settings_data() -> Vec<SettingsPageItem> {
             title: "Go To Definition Fallback",
             description: "Whether to follow-up empty go to definition responses from the language server",
             field: Box::new(SettingField {
+                json_path: todo!("cameron"),
                 pick: |settings_content| &settings_content.editor.go_to_definition_fallback,
                 pick_mut: |settings_content| &mut settings_content.editor.go_to_definition_fallback,
             }),
@@ -6166,6 +6482,7 @@ fn non_editor_language_settings_data() -> Vec<SettingsPageItem> {
             title: "Enabled",
             description: "Whether to fetch LSP completions or not",
             field: Box::new(SettingField {
+                json_path: todo!("cameron"),
                 pick: |settings_content| {
                     language_settings_field(settings_content, |language| {
                         if let Some(completions) = &language.completions {
@@ -6188,6 +6505,7 @@ fn non_editor_language_settings_data() -> Vec<SettingsPageItem> {
             title: "Fetch Timeout (milliseconds)",
             description: "When fetching LSP completions, determines how long to wait for a response of a particular server (set to 0 to wait indefinitely)",
             field: Box::new(SettingField {
+                json_path: todo!("cameron"),
                 pick: |settings_content| {
                     language_settings_field(settings_content, |language| {
                         if let Some(completions) = &language.completions {
@@ -6213,6 +6531,7 @@ fn non_editor_language_settings_data() -> Vec<SettingsPageItem> {
             title: "Insert Mode",
             description: "Controls how LSP completions are inserted",
             field: Box::new(SettingField {
+                json_path: todo!("cameron"),
                 pick: |settings_content| {
                     language_settings_field(settings_content, |language| {
                         if let Some(completions) = &language.completions {
@@ -6237,6 +6556,7 @@ fn non_editor_language_settings_data() -> Vec<SettingsPageItem> {
             description: "Preferred debuggers for this language",
             field: Box::new(
                 SettingField {
+                    json_path: todo!("cameron"),
                     pick: |settings_content| {
                         language_settings_field(settings_content, |language| &language.debuggers)
                     },
@@ -6256,6 +6576,7 @@ fn non_editor_language_settings_data() -> Vec<SettingsPageItem> {
             title: "Allowed",
             description: "Enables or disables formatting with Prettier for a given language",
             field: Box::new(SettingField {
+                json_path: todo!("cameron"),
                 pick: |settings_content| {
                     language_settings_field(settings_content, |language| {
                         if let Some(prettier) = &language.prettier {
@@ -6278,6 +6599,7 @@ fn non_editor_language_settings_data() -> Vec<SettingsPageItem> {
             title: "Parser",
             description: "Forces Prettier integration to use a specific parser name when formatting files with the language",
             field: Box::new(SettingField {
+                json_path: todo!("cameron"),
                 pick: |settings_content| {
                     language_settings_field(settings_content, |language| {
                         if let Some(prettier) = &language.prettier {
@@ -6301,6 +6623,7 @@ fn non_editor_language_settings_data() -> Vec<SettingsPageItem> {
             description: "Forces Prettier integration to use specific plugins when formatting files with the language",
             field: Box::new(
                 SettingField {
+                    json_path: todo!("cameron"),
                     pick: |settings_content| {
                         language_settings_field(settings_content, |language| {
                             if let Some(prettier) = &language.prettier {
@@ -6326,6 +6649,7 @@ fn non_editor_language_settings_data() -> Vec<SettingsPageItem> {
             description: "Default Prettier options, in the format as in package.json section for Prettier",
             field: Box::new(
                 SettingField {
+                    json_path: todo!("cameron"),
                     pick: |settings_content| {
                         language_settings_field(settings_content, |language| {
                             if let Some(prettier) = &language.prettier {
@@ -6347,4 +6671,27 @@ fn non_editor_language_settings_data() -> Vec<SettingsPageItem> {
             files: USER | LOCAL,
         }),
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn path_macro_works() {
+        assert_eq!(_path_to_string!(foo), "foo");
+        assert_eq!(_path_to_string!(foo.bar.baz), "foo.bar.baz");
+    }
+
+    #[test]
+    fn settings_field_macro_works() {
+        let field: Box<SettingField<bool>> = settings_field!(
+            namespace: workspace,
+            path: confirm_quit,
+        );
+
+        assert_eq!(field.json_path, "confirm_quit");
+        assert_eq!(*(field.pick)(&SettingsContent::default()), None);
+        assert_eq!(*(field.pick_mut)(&mut SettingsContent::default()), None);
+    }
 }
