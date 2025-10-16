@@ -184,9 +184,13 @@ impl WslRemoteConnection {
             paths::remote_wsl_server_dir_relative().join(RelPath::unix(&binary_name).unwrap());
 
         if let Some(parent) = dst_path.parent() {
-            self.run_wsl_command("mkdir", &["-p", &parent.display(PathStyle::Posix)])
-                .await
-                .map_err(|e| anyhow!("Failed to create directory: {}", e))?;
+            let arch_str = if shell == ShellKind::Nushell {
+                self.run_wsl_command("mkdir", &[&parent.display(PathStyle::Posix)])
+            } else {
+                self.run_wsl_command("mkdir", &["-p", &parent.display(PathStyle::Posix)])
+            }
+            .await
+            .map_err(|e| anyhow!("Failed to create directory: {}", e))?;
         }
 
         #[cfg(debug_assertions)]
