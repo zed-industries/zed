@@ -2679,6 +2679,15 @@ impl Pixels {
         Self(self.0.floor())
     }
 
+    /// Rounds the `Pixels` value to the nearest pixel accounting for scaling.
+    ///
+    /// # Returns
+    ///
+    /// Returns a new `Pixels` instance with the rounded value.
+    pub fn round_pixel(&self, scale_factor: f32) -> Self {
+        Self((self.0 * scale_factor).round() / scale_factor)
+    }
+
     /// Rounds the `Pixels` value to the nearest whole number.
     ///
     /// # Returns

@@ -196,8 +196,9 @@ fn paint_line(
     window: &mut Window,
     cx: &mut App,
 ) -> Result<()> {
+    let scale_factor = window.scale_factor();
     let line_bounds = Bounds::new(
-        origin,
+        point(origin.x, origin.y.round_pixel(scale_factor)),
         size(
             layout.width,
             line_height * (wrap_boundaries.len() as f32 + 1.),
@@ -205,7 +206,6 @@ fn paint_line(
     );
     window.paint_layer(line_bounds, |window| {
         let padding_top = (line_height - layout.ascent - layout.descent) / 2.;
-        let baseline_offset = point(px(0.), padding_top + layout.ascent);
         let mut decoration_runs = decoration_runs.iter();
         let mut wraps = wrap_boundaries.iter().peekable();
         let mut run_end = 0;
@@ -213,6 +213,11 @@ fn paint_line(
         let mut current_underline: Option<(Point<Pixels>, UnderlineStyle)> = None;
         let mut current_strikethrough: Option<(Point<Pixels>, StrikethroughStyle)> = None;
         let text_system = cx.text_system().clone();
+        let scale_factor = window.scale_factor();
+        let baseline_offset = point(
+            px(0.),
+            (padding_top + layout.ascent).round_pixel(scale_factor),
+        );
         let mut glyph_origin = point(
             aligned_origin_x(
                 origin,
@@ -222,7 +227,7 @@ fn paint_line(
                 layout,
                 wraps.peek(),
             ),
-            origin.y,
+            origin.y.round_pixel(scale_factor),
         );
         let mut prev_glyph_position = Point::default();
         let mut max_glyph_size = size(px(0.), px(0.));
@@ -273,7 +278,7 @@ fn paint_line(
                         layout,
                         wraps.peek(),
                     );
-                    glyph_origin.y += line_height;
+                    glyph_origin.y = (glyph_origin.y + line_height).round_pixel(scale_factor);
                 }
                 prev_glyph_position = glyph.position;
 
