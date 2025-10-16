@@ -363,10 +363,6 @@ actions!(
         /// Accepts a partial edit prediction.
         #[action(deprecated_aliases = ["editor::AcceptPartialCopilotSuggestion"])]
         AcceptPartialEditPrediction,
-        /// Adds a cursor above the current selection.
-        AddSelectionAbove,
-        /// Adds a cursor below the current selection.
-        AddSelectionBelow,
         /// Applies all diff hunks in the editor.
         ApplyAllDiffHunks,
         /// Applies the diff hunk at the current position.
