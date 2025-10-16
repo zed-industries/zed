@@ -51,7 +51,6 @@ pub struct WindowsWindowState {
     pub renderer: DirectXRenderer,
 
     pub click_state: ClickState,
-    pub system_settings: WindowsSystemSettings,
     pub current_cursor: Option<HCURSOR>,
     pub nc_button_pressed: Option<u32>,
 
@@ -66,6 +65,7 @@ pub(crate) struct WindowsWindowInner {
     pub(super) this: Weak<Self>,
     drop_target_helper: IDropTargetHelper,
     pub(crate) state: RefCell<WindowsWindowState>,
+    pub(crate) system_settings: RefCell<WindowsSystemSettings>,
     pub(crate) handle: AnyWindowHandle,
     pub(crate) hide_title_bar: bool,
     pub(crate) is_movable: bool,
@@ -115,7 +115,6 @@ impl WindowsWindowState {
         let system_key_handled = false;
         let hovered = false;
         let click_state = ClickState::new();
-        let system_settings = WindowsSystemSettings::new(display);
         let nc_button_pressed = None;
         let fullscreen = None;
         let initial_placement = None;
@@ -138,7 +137,6 @@ impl WindowsWindowState {
             hovered,
             renderer,
             click_state,
-            system_settings,
             current_cursor,
             nc_button_pressed,
             display,
@@ -231,6 +229,7 @@ impl WindowsWindowInner {
             validation_number: context.validation_number,
             main_receiver: context.main_receiver.clone(),
             platform_window_handle: context.platform_window_handle,
+            system_settings: RefCell::new(WindowsSystemSettings::new(context.display)),
         }))
     }
 
