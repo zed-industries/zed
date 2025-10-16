@@ -336,6 +336,7 @@ impl Credentials {
     }
 }
 
+pub const CREDENTIAL_READ_TIMEOUT: Duration = Duration::from_secs(10);
 pub struct ClientCredentialsProvider {
     provider: Arc<dyn CredentialsProvider>,
 }
@@ -352,11 +353,15 @@ impl ClientCredentialsProvider {
     }
 
     /// Reads the credentials from the provider.
+    ///
+    /// Times out after [`CREDENTIAL_READ_TIMEOUT`] seconds returning None and
+    /// logging the timeout as error
     fn read_credentials<'a>(
         &'a self,
         cx: &'a AsyncApp,
     ) -> Pin<Box<dyn Future<Output = Option<Credentials>> + 'a>> {
         async move {
+            let executor = cx.background_executor();
             if IMPERSONATE_LOGIN.is_some() {
                 return None;
             }
@@ -365,7 +370,10 @@ impl ClientCredentialsProvider {
             let (user_id, access_token) = self
                 .provider
                 .read_credentials(&server_url, cx)
+                .with_timeout(CREDENTIAL_READ_TIMEOUT, executor)
                 .await
+                .map_err(|_| anyhow!("Timed out waiting for credentials from OS"))
+                .flatten()
                 .log_err()
                 .flatten()?;
 
@@ -883,7 +891,10 @@ impl Client {
             match self
                 .credentials_provider
                 .read_credentials(cx)
-                .with_timeout(Duration::from_secs(10), executor)
+                .with_timeout(
+                    CREDENTIAL_READ_TIMEOUT - Duration::from_millis(200),
+                    executor,
+                )
                 .await
             {
                 Ok(None) => (),
@@ -898,6 +909,8 @@ impl Client {
                     }
                 }
                 Err(Timeout) => {
+                    // Todo do not time out but show toast after 10s. Hide toast
+                    // when keyring unlocks.
                     return Err(anyhow!(
                         "Timed out waiting for credentials from OS, did you unlock the keyring?"
                     ));
