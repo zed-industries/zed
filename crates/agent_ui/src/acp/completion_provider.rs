@@ -12,7 +12,7 @@ use anyhow::Result;
 use editor::{CompletionProvider, Editor, ExcerptId};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{App, Entity, Task, WeakEntity};
-use language::{Buffer, CodeLabel, HighlightId};
+use language::{Buffer, CodeLabel, CodeLabelBuilder, HighlightId};
 use lsp::CompletionContext;
 use project::lsp_store::{CompletionDocumentation, SymbolLocation};
 use project::{
@@ -27,7 +27,7 @@ use util::rel_path::RelPath;
 use workspace::Workspace;
 
 use crate::AgentPanel;
-use crate::acp::message_editor::{MessageEditor, MessageEditorEvent};
+use crate::acp::message_editor::MessageEditor;
 use crate::context_picker::file_context_picker::{FileMatch, search_files};
 use crate::context_picker::rules_context_picker::{RulesContextEntry, search_rules};
 use crate::context_picker::symbol_context_picker::SymbolMatch;
@@ -673,7 +673,7 @@ impl ContextPickerCompletionProvider {
 
 fn build_code_label_for_full_path(file_name: &str, directory: Option<&str>, cx: &App) -> CodeLabel {
     let comment_id = cx.theme().syntax().highlight_id("comment").map(HighlightId);
-    let mut label = CodeLabel::default();
+    let mut label = CodeLabelBuilder::default();
 
     label.push_str(file_name, None);
     label.push_str(" ", None);
@@ -682,9 +682,7 @@ fn build_code_label_for_full_path(file_name: &str, directory: Option<&str>, cx: 
         label.push_str(directory, comment_id);
     }
 
-    label.filter_range = 0..label.text().len();
-
-    label
+    label.build()
 }
 
 impl CompletionProvider for ContextPickerCompletionProvider {
@@ -759,13 +757,13 @@ impl CompletionProvider for ContextPickerCompletionProvider {
                                                 let editor = editor.clone();
                                                 move |cx| {
                                                     editor
-                                                        .update(cx, |_editor, cx| {
+                                                        .update(cx, |editor, cx| {
                                                             match intent {
                                                                 CompletionIntent::Complete
                                                                 | CompletionIntent::CompleteWithInsert
                                                                 | CompletionIntent::CompleteWithReplace => {
                                                                     if !is_missing_argument {
-                                                                        cx.emit(MessageEditorEvent::Send);
+                                                                        editor.send(cx);
                                                                     }
                                                                 }
                                                                 CompletionIntent::Compose => {}
@@ -775,7 +773,7 @@ impl CompletionProvider for ContextPickerCompletionProvider {
                                                 }
                                             });
                                         }
-                                        is_missing_argument
+                                        false
                                     }
                                 })),
                             }
@@ -910,6 +908,17 @@ impl CompletionProvider for ContextPickerCompletionProvider {
                 offset_to_line,
                 self.prompt_capabilities.borrow().embedded_context,
             )
+            .filter(|completion| {
+                // Right now we don't support completing arguments of slash commands
+                let is_slash_command_with_argument = matches!(
+                    completion,
+                    ContextCompletion::SlashCommand(SlashCommandCompletion {
+                        argument: Some(_),
+                        ..
+                    })
+                );
+                !is_slash_command_with_argument
+            })
             .map(|completion| {
                 completion.source_range().start <= offset_to_line + position.column as usize
                     && completion.source_range().end >= offset_to_line + position.column as usize

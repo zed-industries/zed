@@ -161,24 +161,25 @@ impl MultiBufferDiffHunk {
 
 #[derive(PartialEq, Eq, Ord, PartialOrd, Clone, Hash, Debug)]
 pub struct PathKey {
-    namespace: Option<u64>,
+    // Used by the derived PartialOrd & Ord
+    sort_prefix: Option<u64>,
     path: Arc<RelPath>,
 }
 
 impl PathKey {
-    pub fn namespaced(namespace: u64, path: Arc<RelPath>) -> Self {
+    pub fn with_sort_prefix(sort_prefix: u64, path: Arc<RelPath>) -> Self {
         Self {
-            namespace: Some(namespace),
+            sort_prefix: Some(sort_prefix),
             path,
         }
     }
 
     pub fn for_buffer(buffer: &Entity<Buffer>, cx: &App) -> Self {
         if let Some(file) = buffer.read(cx).file() {
-            Self::namespaced(file.worktree_id(cx).to_proto(), file.path().clone())
+            Self::with_sort_prefix(file.worktree_id(cx).to_proto(), file.path().clone())
         } else {
             Self {
-                namespace: None,
+                sort_prefix: None,
                 path: RelPath::unix(&buffer.entity_id().to_string())
                     .unwrap()
                     .into_arc(),
@@ -6384,6 +6385,17 @@ impl MultiBufferSnapshot {
         text::debug::GlobalDebugRanges::with_locked(|debug_ranges| {
             debug_ranges.insert(key, text_ranges, format!("{value:?}").into())
         });
+    }
+
+    // used by line_mode selections and tries to match vim behavior
+    pub fn expand_to_line(&self, range: Range<Point>) -> Range<Point> {
+        let new_start = MultiBufferPoint::new(range.start.row, 0);
+        let new_end = if range.end.column > 0 {
+            MultiBufferPoint::new(range.end.row, self.line_len(MultiBufferRow(range.end.row)))
+        } else {
+            range.end
+        };
+        new_start..new_end
     }
 }
 

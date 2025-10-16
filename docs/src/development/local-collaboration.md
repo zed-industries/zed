@@ -106,7 +106,7 @@ cat crates/collab/seed.default.json
 
 To use a different set of admin users, you can create your own version of that json file and export the `SEED_PATH` environment variable. Note that the usernames listed in the admins list currently must correspond to valid GitHub users.
 
-```json
+```json [settings]
 {
   "admins": ["admin1", "admin2"],
   "channels": ["zed"]
@@ -196,7 +196,7 @@ By default Zed assumes that the DATABASE_URL is a Postgres database, but you can
 
 To authenticate you must first configure the server by creating a seed.json file that contains at a minimum your github handle. This will be used to create the user on demand.
 
-```json
+```json [settings]
 {
   "admins": ["nathansobo"]
 }

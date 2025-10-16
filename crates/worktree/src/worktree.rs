@@ -439,6 +439,10 @@ impl Worktree {
                         entry.is_private = !share_private_files && settings.is_path_private(path);
                     }
                 }
+                entry.is_hidden = abs_path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .map_or(false, |name| is_path_hidden(name));
                 snapshot.insert_entry(entry, fs.as_ref());
             }
 
@@ -2435,6 +2439,7 @@ impl LocalSnapshot {
     }
 
     fn insert_entry(&mut self, mut entry: Entry, fs: &dyn Fs) -> Entry {
+        log::trace!("insert entry {:?}", entry.path);
         if entry.is_file() && entry.path.file_name() == Some(&GITIGNORE) {
             let abs_path = self.absolutize(&entry.path);
             match smol::block_on(build_gitignore(&abs_path, fs)) {
@@ -2668,6 +2673,7 @@ impl BackgroundScannerState {
                     scan_queue: scan_job_tx.clone(),
                     ancestor_inodes,
                     is_external: entry.is_external,
+                    is_hidden: entry.is_hidden,
                 })
                 .unwrap();
         }
@@ -3177,6 +3183,11 @@ pub struct Entry {
     /// exclude them from searches.
     pub is_ignored: bool,
 
+    /// Whether this entry is hidden or inside hidden directory.
+    ///
+    /// We only scan hidden entries once the directory is expanded.
+    pub is_hidden: bool,
+
     /// Whether this entry is always included in searches.
     ///
     /// This is used for entries that are always included in searches, even
@@ -3351,6 +3362,7 @@ impl Entry {
             size: metadata.len,
             canonical_path,
             is_ignored: false,
+            is_hidden: false,
             is_always_included: false,
             is_external: false,
             is_private: false,
@@ -3758,6 +3770,7 @@ impl BackgroundScanner {
     }
 
     async fn process_events(&self, mut abs_paths: Vec<PathBuf>) {
+        log::trace!("process events: {abs_paths:?}");
         let root_path = self.state.lock().snapshot.abs_path.clone();
         let root_canonical_path = self.fs.canonicalize(root_path.as_path()).await;
         let root_canonical_path = match &root_canonical_path {
@@ -4219,6 +4232,11 @@ impl BackgroundScanner {
                 child_entry.canonical_path = Some(canonical_path.into());
             }
 
+            child_entry.is_hidden = job.is_hidden
+                || child_name
+                    .to_str()
+                    .map_or(false, |name| is_path_hidden(name));
+
             if child_entry.is_dir() {
                 child_entry.is_ignored = ignore_stack.is_abs_path_ignored(&child_abs_path, true);
                 child_entry.is_always_included = self.settings.is_path_always_included(&child_path);
@@ -4234,6 +4252,7 @@ impl BackgroundScanner {
                         abs_path: child_abs_path.clone(),
                         path: child_path,
                         is_external: child_entry.is_external,
+                        is_hidden: child_entry.is_hidden,
                         ignore_stack: if child_entry.is_ignored {
                             IgnoreStack::all()
                         } else {
@@ -4351,7 +4370,6 @@ impl BackgroundScanner {
         // detected regardless of the order of the paths.
         for (path, metadata) in relative_paths.iter().zip(metadata.iter()) {
             if matches!(metadata, Ok(None)) || doing_recursive_update {
-                log::trace!("remove path {:?}", path);
                 state.remove_path(path);
             }
         }
@@ -4383,6 +4401,13 @@ impl BackgroundScanner {
                     fs_entry.is_external = is_external;
                     fs_entry.is_private = self.is_path_private(path);
                     fs_entry.is_always_included = self.settings.is_path_always_included(path);
+
+                    let parent_is_hidden = path
+                        .parent()
+                        .and_then(|parent| state.snapshot.entry_for_path(parent))
+                        .map_or(false, |parent_entry| parent_entry.is_hidden);
+                    fs_entry.is_hidden = parent_is_hidden
+                        || path.file_name().map_or(false, |name| is_path_hidden(name));
 
                     if let (Some(scan_queue_tx), true) = (&scan_queue_tx, is_dir) {
                         if state.should_scan_directory(&fs_entry)
@@ -4945,6 +4970,10 @@ fn char_bag_for_path(root_char_bag: CharBag, path: &RelPath) -> CharBag {
     result
 }
 
+fn is_path_hidden(name: &str) -> bool {
+    name.starts_with('.')
+}
+
 #[derive(Debug)]
 struct ScanJob {
     abs_path: Arc<Path>,
@@ -4953,6 +4982,7 @@ struct ScanJob {
     scan_queue: Sender<ScanJob>,
     ancestor_inodes: TreeSet<u64>,
     is_external: bool,
+    is_hidden: bool,
 }
 
 struct UpdateIgnoreStatusJob {
@@ -5374,6 +5404,7 @@ impl<'a> From<&'a Entry> for proto::Entry {
             inode: entry.inode,
             mtime: entry.mtime.map(|time| time.into()),
             is_ignored: entry.is_ignored,
+            is_hidden: entry.is_hidden,
             is_external: entry.is_external,
             is_fifo: entry.is_fifo,
             size: Some(entry.size),
@@ -5412,6 +5443,7 @@ impl TryFrom<(&CharBag, &PathMatcher, proto::Entry)> for Entry {
                 .canonical_path
                 .map(|path_string| Arc::from(PathBuf::from(path_string))),
             is_ignored: entry.is_ignored,
+            is_hidden: entry.is_hidden,
             is_always_included,
             is_external: entry.is_external,
             is_private: false,

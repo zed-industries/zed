@@ -13,8 +13,8 @@ use ui::{App, Context, Window};
 use util::post_inc;
 
 use crate::{
-    DisplayPoint, Editor, EditorSettings, EditorSnapshot, InlayId, InlaySplice, RangeToAnchorExt,
-    display_map::Inlay, editor_settings::DocumentColorsRenderMode,
+    DisplayPoint, Editor, EditorSettings, EditorSnapshot, FETCH_COLORS_DEBOUNCE_TIMEOUT, InlayId,
+    InlaySplice, RangeToAnchorExt, display_map::Inlay, editor_settings::DocumentColorsRenderMode,
 };
 
 #[derive(Debug)]
@@ -193,7 +193,12 @@ impl Editor {
                 })
                 .collect::<Vec<_>>()
         });
-        cx.spawn(async move |editor, cx| {
+
+        self.refresh_colors_task = cx.spawn(async move |editor, cx| {
+            cx.background_executor()
+                .timer(FETCH_COLORS_DEBOUNCE_TIMEOUT)
+                .await;
+
             let all_colors = join_all(all_colors_task).await;
             if all_colors.is_empty() {
                 return;
@@ -420,7 +425,6 @@ impl Editor {
                     }
                 })
                 .ok();
-        })
-        .detach();
+        });
     }
 }

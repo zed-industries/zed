@@ -331,7 +331,7 @@ impl RemoteClient {
                 let ssh_connection = cx
                     .update(|cx| {
                         cx.update_default_global(|pool: &mut ConnectionPool, cx| {
-                            pool.connect(connection_options.clone(), &delegate, cx)
+                            pool.connect(connection_options.clone(), delegate.clone(), cx)
                         })
                     })?
                     .await
@@ -561,7 +561,7 @@ impl RemoteClient {
             let (ssh_connection, io_task) = match async {
                 let ssh_connection = cx
                     .update_global(|pool: &mut ConnectionPool, cx| {
-                        pool.connect(connection_options, &delegate, cx)
+                        pool.connect(connection_options, delegate.clone(), cx)
                     })?
                     .await
                     .map_err(|error| error.cloned())?;
@@ -836,6 +836,16 @@ impl RemoteClient {
         connection.build_command(program, args, env, working_dir, port_forward)
     }
 
+    pub fn build_forward_ports_command(
+        &self,
+        forwards: Vec<(u16, String, u16)>,
+    ) -> Result<CommandTemplate> {
+        let Some(connection) = self.remote_connection() else {
+            return Err(anyhow!("no ssh connection"));
+        };
+        connection.build_forward_ports_command(forwards)
+    }
+
     pub fn upload_directory(
         &self,
         src_path: PathBuf,
@@ -975,7 +985,7 @@ impl ConnectionPool {
     pub fn connect(
         &mut self,
         opts: RemoteConnectionOptions,
-        delegate: &Arc<dyn RemoteClientDelegate>,
+        delegate: Arc<dyn RemoteClientDelegate>,
         cx: &mut App,
     ) -> Shared<Task<Result<Arc<dyn RemoteConnection>, Arc<anyhow::Error>>>> {
         let connection = self.connections.get(&opts);
@@ -1103,6 +1113,10 @@ pub(crate) trait RemoteConnection: Send + Sync {
         env: &HashMap<String, String>,
         working_dir: Option<String>,
         port_forward: Option<(u16, String, u16)>,
+    ) -> Result<CommandTemplate>;
+    fn build_forward_ports_command(
+        &self,
+        forwards: Vec<(u16, String, u16)>,
     ) -> Result<CommandTemplate>;
     fn connection_options(&self) -> RemoteConnectionOptions;
     fn path_style(&self) -> PathStyle;
@@ -1530,6 +1544,21 @@ mod fake {
                 program: "ssh".into(),
                 args: ssh_args,
                 env: env.clone(),
+            })
+        }
+
+        fn build_forward_ports_command(
+            &self,
+            forwards: Vec<(u16, String, u16)>,
+        ) -> anyhow::Result<CommandTemplate> {
+            Ok(CommandTemplate {
+                program: "ssh".into(),
+                args: std::iter::once("-N".to_owned())
+                    .chain(forwards.into_iter().map(|(local_port, host, remote_port)| {
+                        format!("{local_port}:{host}:{remote_port}")
+                    }))
+                    .collect(),
+                env: Default::default(),
             })
         }
 

@@ -484,7 +484,7 @@ impl SettingsStore {
         files
     }
 
-    fn get_content_for_file(&self, file: SettingsFile) -> Option<&SettingsContent> {
+    pub fn get_content_for_file(&self, file: SettingsFile) -> Option<&SettingsContent> {
         match file {
             SettingsFile::User => self
                 .user_settings
@@ -539,6 +539,25 @@ impl SettingsStore {
         target_file: SettingsFile,
         pick: fn(&SettingsContent) -> &Option<T>,
     ) -> (SettingsFile, Option<&T>) {
+        self.get_value_from_file_inner(target_file, pick, true)
+    }
+
+    /// Same as `Self::get_value_from_file` except that it does not include the current file.
+    /// Therefore it returns the value that was potentially overloaded by the target file.
+    pub fn get_value_up_to_file<T>(
+        &self,
+        target_file: SettingsFile,
+        pick: fn(&SettingsContent) -> &Option<T>,
+    ) -> (SettingsFile, Option<&T>) {
+        self.get_value_from_file_inner(target_file, pick, false)
+    }
+
+    fn get_value_from_file_inner<T>(
+        &self,
+        target_file: SettingsFile,
+        pick: fn(&SettingsContent) -> &Option<T>,
+        include_target_file: bool,
+    ) -> (SettingsFile, Option<&T>) {
         // todo(settings_ui): Add a metadata field for overriding the "overrides" tag, for contextually different settings
         //  e.g. disable AI isn't overridden, or a vec that gets extended instead or some such
 
@@ -547,10 +566,15 @@ impl SettingsStore {
         let mut found_file = false;
 
         for file in all_files.into_iter() {
-            if !found_file && file != target_file && file != SettingsFile::Default {
-                continue;
+            if !found_file && file != SettingsFile::Default {
+                if file != target_file {
+                    continue;
+                }
+                found_file = true;
+                if !include_target_file {
+                    continue;
+                }
             }
-            found_file = true;
 
             if let SettingsFile::Project((worktree_id, ref path)) = file
                 && let SettingsFile::Project((target_worktree_id, ref target_path)) = target_file
@@ -1201,6 +1225,32 @@ mod tests {
         }
     }
 
+    #[derive(Debug, PartialEq)]
+    struct ThemeSettings {
+        buffer_font_family: FontFamilyName,
+        buffer_font_fallbacks: Vec<FontFamilyName>,
+    }
+
+    impl Settings for ThemeSettings {
+        fn from_settings(content: &SettingsContent) -> Self {
+            let content = content.theme.clone();
+            ThemeSettings {
+                buffer_font_family: content.buffer_font_family.unwrap(),
+                buffer_font_fallbacks: content.buffer_font_fallbacks.unwrap(),
+            }
+        }
+
+        fn import_from_vscode(vscode: &VsCodeSettings, content: &mut SettingsContent) {
+            let content = &mut content.theme;
+
+            vscode.font_family_setting(
+                "editor.fontFamily",
+                &mut content.buffer_font_family,
+                &mut content.buffer_font_fallbacks,
+            );
+        }
+    }
+
     #[gpui::test]
     fn test_settings_store_basic(cx: &mut App) {
         let mut store = SettingsStore::new(cx, &default_settings());
@@ -1523,6 +1573,7 @@ mod tests {
         store.register_setting::<DefaultLanguageSettings>();
         store.register_setting::<ItemSettings>();
         store.register_setting::<AutoUpdateSetting>();
+        store.register_setting::<ThemeSettings>();
 
         // create settings that werent present
         check_vscode_import(
@@ -1589,6 +1640,26 @@ mod tests {
                 "tabs": {
                     "git_status": true
                 }
+            }
+            "#
+            .unindent(),
+            cx,
+        );
+
+        // font-family
+        check_vscode_import(
+            &mut store,
+            r#"{
+            }
+            "#
+            .unindent(),
+            r#"{ "editor.fontFamily": "Cascadia Code, 'Consolas', Courier New" }"#.to_owned(),
+            r#"{
+                "buffer_font_fallbacks": [
+                    "Consolas",
+                    "Courier New"
+                ],
+                "buffer_font_family": "Cascadia Code"
             }
             "#
             .unindent(),

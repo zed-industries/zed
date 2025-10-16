@@ -755,7 +755,7 @@ impl PickerDelegate for OpenPathDelegate {
                                     .with_default_highlights(
                                         &window.text_style(),
                                         vec![(
-                                            delta..delta + label_len,
+                                            delta..label_len,
                                             HighlightStyle::color(Color::Conflict.color(cx)),
                                         )],
                                     )
@@ -765,7 +765,7 @@ impl PickerDelegate for OpenPathDelegate {
                                     .with_default_highlights(
                                         &window.text_style(),
                                         vec![(
-                                            delta..delta + label_len,
+                                            delta..label_len,
                                             HighlightStyle::color(Color::Created.color(cx)),
                                         )],
                                     )

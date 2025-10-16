@@ -95,8 +95,6 @@
       "g g": "vim::StartOfDocument",
       "g h": "editor::Hover",
       "g B": "editor::BlameHover",
-      "g t": "vim::GoToTab",
-      "g shift-t": "vim::GoToPreviousTab",
       "g d": "editor::GoToDefinition",
       "g shift-d": "editor::GoToDeclaration",
       "g y": "editor::GoToTypeDefinition",
@@ -500,8 +498,8 @@
       "ctrl-c": "editor::ToggleComments",
       "d": "vim::HelixDelete",
       "c": "vim::Substitute",
-      "shift-c": "editor::AddSelectionBelow",
-      "alt-shift-c": "editor::AddSelectionAbove"
+      "shift-c": ["editor::AddSelectionBelow", { "skip_soft_wrap": true }],
+      "alt-shift-c": ["editor::AddSelectionAbove", { "skip_soft_wrap": true }]
     }
   },
   {
@@ -580,18 +578,18 @@
       // "q": "vim::AnyQuotes",
       "q": "vim::MiniQuotes",
       "|": "vim::VerticalBars",
-      "(": "vim::Parentheses",
+      "(": ["vim::Parentheses", { "opening": true }],
       ")": "vim::Parentheses",
       "b": "vim::Parentheses",
       // "b": "vim::AnyBrackets",
       // "b": "vim::MiniBrackets",
-      "[": "vim::SquareBrackets",
+      "[": ["vim::SquareBrackets", { "opening": true }],
       "]": "vim::SquareBrackets",
       "r": "vim::SquareBrackets",
-      "{": "vim::CurlyBrackets",
+      "{": ["vim::CurlyBrackets", { "opening": true }],
       "}": "vim::CurlyBrackets",
       "shift-b": "vim::CurlyBrackets",
-      "<": "vim::AngleBrackets",
+      "<": ["vim::AngleBrackets", { "opening": true }],
       ">": "vim::AngleBrackets",
       "a": "vim::Argument",
       "i": "vim::IndentObj",
@@ -811,7 +809,7 @@
     }
   },
   {
-    "context": "VimControl || !Editor && !Terminal",
+    "context": "VimControl && !menu || !Editor && !Terminal",
     "bindings": {
       // window related commands (ctrl-w X)
       "ctrl-w": null,
@@ -865,7 +863,9 @@
       "ctrl-w ctrl-o": "workspace::CloseInactiveTabsAndPanes",
       "ctrl-w o": "workspace::CloseInactiveTabsAndPanes",
       "ctrl-w ctrl-n": "workspace::NewFileSplitHorizontal",
-      "ctrl-w n": "workspace::NewFileSplitHorizontal"
+      "ctrl-w n": "workspace::NewFileSplitHorizontal",
+      "g t": "vim::GoToTab",
+      "g shift-t": "vim::GoToPreviousTab"
     }
   },
   {
