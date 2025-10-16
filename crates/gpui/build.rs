@@ -49,7 +49,7 @@ fn check_wgsl_shaders() {
             // All clear
         }
         Err(e) => {
-            eprintln!("WGSL shader compilation failed:\n{}", e);
+            println!("cargo::error=WGSL shader compilation failed:\n{}", e);
             process::exit(1);
         }
     }
@@ -220,8 +220,8 @@ mod macos {
             .unwrap();
 
         if !output.status.success() {
-            eprintln!(
-                "metal shader compilation failed:\n{}",
+            println!(
+                "cargo::error=metal shader compilation failed:\n{}",
                 String::from_utf8_lossy(&output.stderr)
             );
             process::exit(1);
@@ -236,8 +236,8 @@ mod macos {
             .unwrap();
 
         if !output.status.success() {
-            eprintln!(
-                "metallib compilation failed:\n{}",
+            println!(
+                "cargo::error=metallib compilation failed:\n{}",
                 String::from_utf8_lossy(&output.stderr)
             );
             process::exit(1);
@@ -418,15 +418,15 @@ mod windows {
                 if result.status.success() {
                     return;
                 }
-                eprintln!(
-                    "Shader compilation failed for {}:\n{}",
+                println!(
+                    "cargo::error=Shader compilation failed for {}:\n{}",
                     entry_point,
                     String::from_utf8_lossy(&result.stderr)
                 );
                 process::exit(1);
             }
             Err(e) => {
-                eprintln!("Failed to run fxc for {}: {}", entry_point, e);
+                println!("cargo::error=Failed to run fxc for {}: {}", entry_point, e);
                 process::exit(1);
             }
         }
