@@ -1,7 +1,8 @@
 use crate::{
     remote_connections::{
         Connection, RemoteConnectionModal, RemoteConnectionPrompt, SshConnection,
-        SshConnectionHeader, SshSettings, connect, connect_over_ssh, open_remote_project,
+        SshConnectionHeader, SshSettings, connect, determine_paths_with_positions,
+        open_remote_project,
     },
     ssh_config::parse_ssh_config_hosts,
 };
@@ -278,11 +279,25 @@ impl ProjectPicker {
                         })
                         .log_err()?;
 
-                    open_remote_project_with_existing_connection(
+                    let remote_connection = project
+                        .read_with(cx, |project, cx| {
+                            project.remote_client()?.read(cx).connection()
+                        })
+                        .ok()??;
+
+                    let (paths, paths_with_positions) =
+                        determine_paths_with_positions(&remote_connection, paths).await;
+
+                    let items = open_remote_project_with_existing_connection(
                         connection, project, paths, app_state, window, cx,
                     )
                     .await
                     .log_err();
+
+                    if let Some(items) = items {
+
+                        // open the positions
+                    }
 
                     this.update(cx, |_, cx| {
                         cx.emit(DismissEvent);
@@ -671,9 +686,9 @@ impl RemoteServerProjects {
             )
         });
 
-        let connection = connect_over_ssh(
+        let connection = connect(
             ConnectionIdentifier::setup(),
-            connection_options.clone(),
+            RemoteConnectionOptions::Ssh(connection_options.clone()),
             ssh_prompt.clone(),
             window,
             cx,
