@@ -1,9 +1,7 @@
 //! Zeta2 prompt planning and generation code shared with cloud.
 
 use anyhow::{Context as _, Result, anyhow};
-use cloud_llm_client::predict_edits_v3::{
-    self, Event, Line, Point, PromptFormat, ReferencedDeclaration,
-};
+use cloud_llm_client::predict_edits_v3::{self, Line, Point, PromptFormat, ReferencedDeclaration};
 use indoc::indoc;
 use ordered_float::OrderedFloat;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -419,7 +417,7 @@ impl<'a> PlannedPrompt<'a> {
         };
 
         if self.request.events.is_empty() {
-            prompt.push_str("No edits yet.\n\n");
+            prompt.push_str("(No edit history)\n\n");
         } else {
             prompt.push_str(
                 "The following are the latest edits made by the user, from earlier to later.\n\n",
@@ -465,50 +463,15 @@ impl<'a> PlannedPrompt<'a> {
     }
 
     fn push_events(output: &mut String, events: &[predict_edits_v3::Event]) {
+        if events.is_empty() {
+            return;
+        };
+
+        writeln!(output, "`````diff").unwrap();
         for event in events {
-            match event {
-                Event::BufferChange {
-                    path,
-                    old_path,
-                    diff,
-                    predicted,
-                } => {
-                    if let Some(old_path) = &old_path
-                        && let Some(new_path) = &path
-                    {
-                        if old_path != new_path {
-                            writeln!(
-                                output,
-                                "User renamed {} to {}\n\n",
-                                old_path.display(),
-                                new_path.display()
-                            )
-                            .unwrap();
-                        }
-                    }
-
-                    let path = path
-                        .as_ref()
-                        .map_or_else(|| "untitled".to_string(), |path| path.display().to_string());
-
-                    if *predicted {
-                        writeln!(
-                            output,
-                            "User accepted prediction {:?}:\n`````diff\n{}\n`````\n",
-                            path, diff
-                        )
-                        .unwrap();
-                    } else {
-                        writeln!(
-                            output,
-                            "User edited {:?}:\n`````diff\n{}\n`````\n",
-                            path, diff
-                        )
-                        .unwrap();
-                    }
-                }
-            }
+            writeln!(output, "{}", event).unwrap();
         }
+        writeln!(output, "`````\n").unwrap();
     }
 
     fn push_file_snippets(

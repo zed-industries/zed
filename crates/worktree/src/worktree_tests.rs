@@ -734,6 +734,7 @@ async fn test_write_file(cx: &mut TestAppContext) {
         })
         .await
         .unwrap();
+
     worktree.read_with(cx, |tree, _| {
         let tracked = tree
             .entry_for_path(rel_path("tracked-dir/file.txt"))
@@ -1536,7 +1537,7 @@ async fn test_random_worktree_operations_during_initial_scan(
         assert_eq!(
             updated_snapshot.entries(true, 0).collect::<Vec<_>>(),
             final_snapshot.entries(true, 0).collect::<Vec<_>>(),
-            "wrong updates after snapshot {i}: {updates:#?}",
+            "wrong updates after snapshot {i}: {snapshot:#?} {updates:#?}",
         );
     }
 }

@@ -497,9 +497,11 @@
       "shift-u": "editor::Redo",
       "ctrl-c": "editor::ToggleComments",
       "d": "vim::HelixDelete",
-      "c": "vim::Substitute",
-      "shift-c": ["editor::AddSelectionBelow", { "skip_soft_wrap": true }],
-      "alt-shift-c": ["editor::AddSelectionAbove", { "skip_soft_wrap": true }]
+      "c": "vim::HelixSubstitute",
+      "alt-c": "vim::HelixSubstituteNoYank",
+      "shift-c": "vim::HelixDuplicateBelow",
+      "alt-shift-c": "vim::HelixDuplicateAbove",
+      ",": "vim::HelixKeepNewestSelection"
     }
   },
   {

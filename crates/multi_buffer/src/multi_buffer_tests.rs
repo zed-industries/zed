@@ -157,15 +157,12 @@ fn test_excerpt_boundaries_and_clipping(cx: &mut App) {
         events.read().as_slice(),
         &[
             Event::Edited {
-                singleton_buffer_edited: false,
                 edited_buffer: None,
             },
             Event::Edited {
-                singleton_buffer_edited: false,
                 edited_buffer: None,
             },
             Event::Edited {
-                singleton_buffer_edited: false,
                 edited_buffer: None,
             }
         ]
