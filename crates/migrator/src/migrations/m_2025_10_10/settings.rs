@@ -2,13 +2,6 @@ use anyhow::Result;
 use serde_json::Value;
 use settings::merge_from::MergeFrom;
 
-// todo! 1 - if formatter set at root, that is the new default formatter
-// todo! 2 - if no default formatter for language, use previous default
-// order:
-//  4. root from defaults
-//  3. language from defaults
-//  2. root from user
-//  1. language from user
 pub fn remove_code_actions_on_format(value: &mut Value) -> Result<()> {
     let defaults =
         settings::parse_json_with_comments::<Value>(settings::default_settings().as_ref()).unwrap();
@@ -34,6 +27,11 @@ pub fn remove_code_actions_on_format(value: &mut Value) -> Result<()> {
                 .and_then(|langs| langs.get(language_name))
                 .and_then(|lang| lang.get("formatter"));
 
+            // override order:
+            //  4. root from defaults
+            //  3. language from defaults
+            //  2. root from user
+            //  1. language from user
             let default_formatter_for_language = user_default_formatter
                 .as_ref()
                 .or(language_default_formatter)
@@ -49,7 +47,6 @@ pub fn remove_code_actions_on_format(value: &mut Value) -> Result<()> {
     Ok(())
 }
 
-// todo! include parent code_actions_on_format
 fn remove_code_actions_on_format_inner(
     value: &mut Value,
     default_formatters: Option<&Value>,
