@@ -3520,6 +3520,11 @@ impl BufferLspData {
 
         self.inlay_hints.remove_server_data(for_server);
     }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn inlay_hints(&self) -> &BufferInlayHints {
+        &self.inlay_hints
+    }
 }
 
 #[derive(Debug, Default, Clone)]
@@ -9720,11 +9725,7 @@ impl LspStore {
                         name: symbol.name,
                         kind: symbol.kind,
                         range: symbol.range,
-                        label: CodeLabel {
-                            text: Default::default(),
-                            runs: Default::default(),
-                            filter_range: Default::default(),
-                        },
+                        label: CodeLabel::default(),
                     },
                     cx,
                 )
@@ -9914,11 +9915,7 @@ impl LspStore {
                     new_text: completion.new_text,
                     source: completion.source,
                     documentation: None,
-                    label: CodeLabel {
-                        text: Default::default(),
-                        runs: Default::default(),
-                        filter_range: Default::default(),
-                    },
+                    label: CodeLabel::default(),
                     insert_text_mode: None,
                     icon_path: None,
                     confirm: None,
@@ -13209,7 +13206,6 @@ impl LspAdapterDelegate for LocalLspAdapterDelegate {
         return Ok(None);
     }
 
-    #[cfg(not(target_os = "windows"))]
     async fn which(&self, command: &OsStr) -> Option<PathBuf> {
         let mut worktree_abs_path = self.worktree_root_path().to_path_buf();
         if self.fs.is_file(&worktree_abs_path).await {
@@ -13217,14 +13213,6 @@ impl LspAdapterDelegate for LocalLspAdapterDelegate {
         }
         let shell_path = self.shell_env().await.get("PATH").cloned();
         which::which_in(command, shell_path.as_ref(), worktree_abs_path).ok()
-    }
-
-    #[cfg(target_os = "windows")]
-    async fn which(&self, command: &OsStr) -> Option<PathBuf> {
-        // todo(windows) Getting the shell env variables in a current directory on Windows is more complicated than other platforms
-        //               there isn't a 'default shell' necessarily. The closest would be the default profile on the windows terminal
-        //               SEE: https://learn.microsoft.com/en-us/windows/terminal/customize-settings/startup
-        which::which(command).ok()
     }
 
     async fn try_exec(&self, command: LanguageServerBinary) -> Result<()> {
@@ -13528,19 +13516,19 @@ mod tests {
 
     #[test]
     fn test_multi_len_chars_normalization() {
-        let mut label = CodeLabel {
-            text: "myElˇ (parameter) myElˇ: {\n    foo: string;\n}".to_string(),
-            runs: vec![(0..6, HighlightId(1))],
-            filter_range: 0..6,
-        };
+        let mut label = CodeLabel::new(
+            "myElˇ (parameter) myElˇ: {\n    foo: string;\n}".to_string(),
+            0..6,
+            vec![(0..6, HighlightId(1))],
+        );
         ensure_uniform_list_compatible_label(&mut label);
         assert_eq!(
             label,
-            CodeLabel {
-                text: "myElˇ (parameter) myElˇ: { foo: string; }".to_string(),
-                runs: vec![(0..6, HighlightId(1))],
-                filter_range: 0..6,
-            }
+            CodeLabel::new(
+                "myElˇ (parameter) myElˇ: { foo: string; }".to_string(),
+                0..6,
+                vec![(0..6, HighlightId(1))],
+            )
         );
     }
 }

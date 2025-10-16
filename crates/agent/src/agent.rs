@@ -2,7 +2,6 @@ pub mod agent_profile;
 pub mod context;
 pub mod context_server_tool;
 pub mod context_store;
-pub mod history_store;
 pub mod thread;
 pub mod thread_store;
 pub mod tool_use;

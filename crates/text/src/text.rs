@@ -2400,7 +2400,9 @@ impl BufferSnapshot {
         } else if bias == Bias::Right && offset == self.len() {
             Anchor::MAX
         } else {
-            if !self.visible_text.is_char_boundary(offset) {
+            if offset > self.visible_text.len() {
+                panic!("offset {} is out of bounds", offset)
+            } else if !self.visible_text.is_char_boundary(offset) {
                 // find the character
                 let char_start = self.visible_text.floor_char_boundary(offset);
                 // `char_start` must be less than len and a char boundary

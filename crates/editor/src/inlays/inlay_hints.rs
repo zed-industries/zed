@@ -821,6 +821,7 @@ pub mod tests {
     use std::ops::Range;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
+    use std::time::Duration;
     use text::{OffsetRangeExt, Point};
     use ui::App;
     use util::path;
@@ -1876,6 +1877,8 @@ pub mod tests {
                 editor.scroll_screen(&ScrollAmount::Page(1.0), window, cx);
             })
             .unwrap();
+        // Wait for the first hints request to fire off
+        cx.executor().advance_clock(Duration::from_millis(100));
         cx.executor().run_until_parked();
         editor
             .update(cx, |editor, window, cx| {
@@ -2205,6 +2208,23 @@ pub mod tests {
                     "main hint #3".to_string(),
                     "main hint #4".to_string(),
                     "main hint #5".to_string(),
+                ];
+                assert_eq!(expected_hints, sorted_cached_hint_labels(editor, cx),
+                    "New hints are not shown right after scrolling, we need to wait for the buffer to be registered");
+                assert_eq!(expected_hints, visible_hint_labels(editor, cx));
+            })
+            .unwrap();
+        cx.executor().advance_clock(Duration::from_millis(100));
+        cx.executor().run_until_parked();
+        editor
+            .update(cx, |editor, _window, cx| {
+                let expected_hints = vec![
+                    "main hint #0".to_string(),
+                    "main hint #1".to_string(),
+                    "main hint #2".to_string(),
+                    "main hint #3".to_string(),
+                    "main hint #4".to_string(),
+                    "main hint #5".to_string(),
                     "other hint #0".to_string(),
                     "other hint #1".to_string(),
                     "other hint #2".to_string(),
@@ -2213,7 +2233,7 @@ pub mod tests {
                 assert_eq!(
                     expected_hints,
                     sorted_cached_hint_labels(editor, cx),
-                    "With more scrolls of the multibuffer, more hints should be added into the cache and nothing invalidated without edits");
+                    "After scrolling to the new buffer and waiting for it to be registered, new hints should appear");
                 assert_eq!(
                     expected_hints,
                     visible_hint_labels(editor, cx),
@@ -2317,6 +2337,9 @@ pub mod tests {
                 editor.handle_input("++++more text++++", window, cx);
             })
             .unwrap();
+        cx.executor().run_until_parked();
+        // Wait again to trigger the inlay hints fetch on scroll
+        cx.executor().advance_clock(Duration::from_millis(100));
         cx.executor().run_until_parked();
         editor
             .update(cx, |editor, _window, cx| {
@@ -3316,7 +3339,7 @@ pub mod tests {
         let mut all_fetched_hints = Vec::new();
         for buffer in editor.buffer.read(cx).all_buffers() {
             lsp_store.update(cx, |lsp_store, cx| {
-                let hints = &lsp_store.latest_lsp_data(&buffer, cx).inlay_hints;
+                let hints = &lsp_store.latest_lsp_data(&buffer, cx).inlay_hints();
                 all_cached_labels.extend(hints.all_cached_hints().into_iter().map(|hint| {
                     let mut label = hint.text().to_string();
                     if hint.padding_left {
