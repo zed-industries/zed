@@ -2393,16 +2393,11 @@ impl Editor {
 
             if let Some(buffer) = multi_buffer.read(cx).as_singleton() {
                 editor.register_buffer(buffer.read(cx).remote_id(), cx);
-            } else {
-                editor.register_visible_buffers(cx);
             }
 
             editor.minimap =
                 editor.create_minimap(EditorSettings::get_global(cx).minimap, window, cx);
             editor.colors = Some(LspColorData::new(cx));
-        }
-
-        if editor.mode.is_full() {
             editor.report_editor_event(ReportEditorEvent::EditorOpened, None, cx);
         }
 
@@ -20909,12 +20904,12 @@ impl Editor {
                     .detach();
                 }
                 self.update_lsp_data(Some(buffer_id), window, cx);
+                self.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
                 cx.emit(EditorEvent::ExcerptsAdded {
                     buffer: buffer.clone(),
                     predecessor: *predecessor,
                     excerpts: excerpts.clone(),
                 });
-                self.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
             }
             multi_buffer::Event::ExcerptsRemoved {
                 ids,

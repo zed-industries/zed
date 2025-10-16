@@ -485,8 +485,26 @@ impl Editor {
         self.scroll_manager.visible_column_count
     }
 
-    pub(crate) fn set_visible_line_count(&mut self, lines: f64) {
+    pub(crate) fn set_visible_line_count(
+        &mut self,
+        lines: f64,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let opened_first_time = self.scroll_manager.visible_line_count.is_none();
         self.scroll_manager.visible_line_count = Some(lines);
+        if opened_first_time {
+            cx.spawn_in(window, async move |editor, cx| {
+                editor
+                    .update_in(cx, |editor, window, cx| {
+                        editor.register_visible_buffers(cx);
+                        editor.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
+                        editor.refresh_colors_for_visible_range(None, window, cx);
+                    })
+                    .ok()
+            })
+            .detach()
+        }
     }
 
     pub(crate) fn set_visible_column_count(&mut self, columns: f64) {
