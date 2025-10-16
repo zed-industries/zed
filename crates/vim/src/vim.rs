@@ -412,7 +412,7 @@ pub fn init(cx: &mut App) {
                 cx.defer_in(window, |vim, window, cx| vim.search_submit(window, cx))
             })
         });
-        workspace.register_action(|workspace, _: &GoToTab, window, cx| {
+        workspace.register_action(|_, _: &GoToTab, window, cx| {
             let count = Vim::take_count(cx);
             Vim::take_forced_motion(cx);
 
