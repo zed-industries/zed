@@ -112,7 +112,6 @@ pub const SETTINGS_DUPLICATED_AGENT_PATTERN: &str = r#"(document
 /// Migrate language settings,
 /// calls `migrate_fn` with the top level object as well as all language settings under the "languages" key
 /// Fails early if `migrate_fn` returns an error at any point
-// todo! use for other migrations
 pub fn migrate_language_setting(
     value: &mut serde_json::Value,
     migrate_fn: fn(&mut serde_json::Value, path: &[&str]) -> anyhow::Result<()>,
