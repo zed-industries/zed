@@ -442,6 +442,7 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::PaneSplitDirectionVertical>(render_dropdown)
         .add_basic_renderer::<settings::DocumentColorsRenderMode>(render_dropdown)
         .add_basic_renderer::<settings::ThemeSelectionDiscriminants>(render_dropdown)
+        .add_basic_renderer::<settings::ThemeName>(render_theme_picker)
         .add_renderer::<settings::ThemeSelection>(
             |_settings_window, _settings_item, settings_field, file, _metadata, _window, cx| {
                 // <settings::ThemeSelection as strum::IntoDiscriminant>::Discriminant
@@ -2908,6 +2909,57 @@ where
                         }
                         update_settings_file(file.clone(), cx, move |settings, _cx| {
                             (field.write)(settings, Some(value));
+                        })
+                        .log_err(); // todo(settings_ui) don't log err
+                    },
+                );
+            }
+            menu
+        }),
+    )
+    .trigger_size(ButtonSize::Medium)
+    .style(DropdownStyle::Outlined)
+    .offset(gpui::Point {
+        x: px(0.0),
+        y: px(2.0),
+    })
+    .tab_index(0)
+    .into_any_element()
+}
+
+fn render_theme_picker(
+    field: SettingField<settings::ThemeName>,
+    file: SettingsUiFile,
+    _metadata: Option<&SettingsFieldMetadata>,
+    window: &mut Window,
+    cx: &mut App,
+) -> AnyElement {
+    let (_, value) = SettingsStore::global(cx).get_value_from_file(file.to_settings(), field.pick);
+    let current_value = value
+        .cloned()
+        .map(|theme_name| theme_name.0.into())
+        .unwrap_or_else(|| cx.theme().name.clone());
+
+    DropdownMenu::new(
+        "font-picker",
+        current_value.clone(),
+        ContextMenu::build(window, cx, move |mut menu, _, cx| {
+            let all_theme_names = theme::ThemeRegistry::global(cx).list_names();
+            for theme_name in all_theme_names {
+                let file = file.clone();
+                let selected = theme_name.as_ref() == current_value.as_ref();
+                menu = menu.toggleable_entry(
+                    theme_name.clone(),
+                    selected,
+                    IconPosition::End,
+                    None,
+                    move |_, cx| {
+                        if selected {
+                            return;
+                        }
+                        let theme_name = theme_name.clone();
+                        update_settings_file(file.clone(), cx, move |settings, _cx| {
+                            (field.write)(settings, Some(settings::ThemeName(theme_name.into())));
                         })
                         .log_err(); // todo(settings_ui) don't log err
                     },
