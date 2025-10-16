@@ -2010,7 +2010,8 @@ mod tests {
                         },
                         {
                             "code_action": "source.fixAll"
-                        }
+                        },
+                        "auto"
                     ]
                 }
                 "#
@@ -2041,7 +2042,8 @@ mod tests {
             },
             {
               "code_action": "c"
-            }
+            },
+            "auto"
           ]
         }
         "#
@@ -2127,7 +2129,7 @@ mod tests {
                     "Go": {
                         "code_actions_on_format": {
                             "source.organizeImports": true
-                        }
+                        },
                     }
                 }
             }"#
@@ -2139,14 +2141,19 @@ mod tests {
                             "formatter": [
                                 {
                                     "code_action": "source.fixAll.eslint"
-                                }
+                                },
+                                "auto"
                             ]
                         },
                         "Go": {
                             "formatter": [
                                 {
                                     "code_action": "source.organizeImports"
-                                }
+                                },
+                                {
+                                    "code_action": "source.organizeImports"
+                                },
+                                "language_server"
                             ]
                         }
                     }
@@ -2233,6 +2240,9 @@ mod tests {
                         {
                           "code_action": "source.organizeImports"
                         },
+                        {
+                          "code_action": "source.fixAll"
+                        },
                         "rust-analyzer"
                       ]
                     },
@@ -2240,7 +2250,14 @@ mod tests {
                       "formatter": [
                         {
                           "code_action": "source.organizeImports"
-                        }
+                        },
+                        {
+                          "code_action": "source.fixAll"
+                        },
+                        {
+                          "code_action": "source.fixAll"
+                        },
+                        "prettier"
                       ]
                     }
                   }
@@ -2248,6 +2265,35 @@ mod tests {
                 .unindent(),
             ),
         );
+    }
+
+    #[test]
+    fn test_code_actions_on_format_inserts_default_formatters() {
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2025_10_10::remove_code_actions_on_format,
+            )],
+            &r#"{
+            "code_actions_on_format": {
+                "source.organizeImports": false,
+                "source.fixAll.eslint": true
+            }
+        }"#
+            .unindent(),
+            Some(
+                &r#"
+        {
+            "formatter": [
+                {
+                    "code_action": "source.fixAll.eslint"
+                },
+                "auto"
+            ]
+        }
+        "#
+                .unindent(),
+            ),
+        )
     }
 
     #[test]

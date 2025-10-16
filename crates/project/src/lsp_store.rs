@@ -1710,12 +1710,7 @@ impl LocalLspStore {
                                 formatting_transaction_id,
                                 cx,
                                 |buffer, cx| {
-                                    zlog::info!(
-                                        "Applying edits {edits:?}. Content: {:?}",
-                                        buffer.text()
-                                    );
                                     buffer.edit(edits, None, cx);
-                                    zlog::info!("Applied edits. New Content: {:?}", buffer.text());
                                 },
                             )?;
                         }

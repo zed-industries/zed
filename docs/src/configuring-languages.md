@@ -320,12 +320,17 @@ To run linter fixes automatically on save:
 ```json [settings]
 "languages": {
   "JavaScript": {
-    "formatter": {
-      "code_action": "source.fixAll.eslint"
-    }
+    "formatter": [
+      {
+        "code_action": "source.fixAll.eslint"
+      },
+      "auto"
+    ]
   }
 }
 ```
+
+This specifies that when a format is requested, Zed will first run the `source.fixAll.eslint` action, and then perform the actual format using the language-specific default formatter (for JavaScript this is Prettier, and for other languages it often corresponds to formatting using the default language server).
 
 ### Integrating Formatting and Linting
 
