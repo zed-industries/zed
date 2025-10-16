@@ -260,8 +260,8 @@ impl Search {
         .await;
     }
 
-    async fn grab_buffer_snapshots<'a>(
-        &'a self,
+    async fn grab_buffer_snapshots(
+        &self,
         rx: Receiver<Entity<Buffer>>,
         find_all_matches_tx: Sender<(Entity<Buffer>, BufferSnapshot)>,
         mut cx: AsyncApp,
