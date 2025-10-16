@@ -262,11 +262,14 @@ impl BackgroundExecutor {
         } else {
             usize::MAX
         };
+
         let parker = Parker::new();
         let unparker = parker.unparker();
+
         let awoken = Arc::new(AtomicBool::new(false));
         let waker = waker_fn({
             let awoken = awoken.clone();
+            let unparker = unparker.clone();
             move || {
                 awoken.store(true, SeqCst);
                 unparker.unpark();
@@ -305,6 +308,7 @@ impl BackgroundExecutor {
                                 "parked with nothing left to run{waiting_message}{backtrace_message}",
                             )
                         }
+                        dispatcher.set_unparker(unparker.clone());
                         parker.park();
                     }
                 }

@@ -2,6 +2,7 @@ use crate::{PlatformDispatcher, TaskLabel};
 use async_task::Runnable;
 use backtrace::Backtrace;
 use collections::{HashMap, HashSet, VecDeque};
+use parking::Unparker;
 use parking_lot::Mutex;
 use rand::prelude::*;
 use std::{
@@ -38,6 +39,7 @@ struct TestDispatcherState {
     waiting_backtrace: Option<Backtrace>,
     deprioritized_task_labels: HashSet<TaskLabel>,
     block_on_ticks: RangeInclusive<usize>,
+    last_parked: Option<Unparker>,
 }
 
 impl TestDispatcher {
@@ -57,6 +59,7 @@ impl TestDispatcher {
             waiting_backtrace: None,
             deprioritized_task_labels: Default::default(),
             block_on_ticks: 0..=1000,
+            last_parked: None,
         };
 
         TestDispatcher {
@@ -237,6 +240,21 @@ impl TestDispatcher {
         let block_on_ticks = lock.block_on_ticks.clone();
         lock.random.random_range(block_on_ticks)
     }
+    pub fn unpark_last(&self) {
+        self.state
+            .lock()
+            .last_parked
+            .take()
+            .as_ref()
+            .map(Unparker::unpark);
+    }
+
+    pub fn set_unparker(&self, unparker: Unparker) {
+        let last = { self.state.lock().last_parked.replace(unparker) };
+        if let Some(last) = last {
+            last.unpark();
+        }
+    }
 }
 
 impl Clone for TestDispatcher {
@@ -268,6 +286,7 @@ impl PlatformDispatcher for TestDispatcher {
                 state.background.push(runnable);
             }
         }
+        self.unpark_last();
     }
 
     fn dispatch_on_main_thread(&self, runnable: Runnable) {
@@ -277,6 +296,7 @@ impl PlatformDispatcher for TestDispatcher {
             .entry(self.id)
             .or_default()
             .push_back(runnable);
+        self.unpark_last();
     }
 
     fn dispatch_after(&self, duration: std::time::Duration, runnable: Runnable) {
