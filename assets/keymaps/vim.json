@@ -95,8 +95,6 @@
       "g g": "vim::StartOfDocument",
       "g h": "editor::Hover",
       "g B": "editor::BlameHover",
-      "g t": "vim::GoToTab",
-      "g shift-t": "vim::GoToPreviousTab",
       "g d": "editor::GoToDefinition",
       "g shift-d": "editor::GoToDeclaration",
       "g y": "editor::GoToTypeDefinition",
@@ -811,7 +809,7 @@
     }
   },
   {
-    "context": "VimControl || !Editor && !Terminal",
+    "context": "VimControl && !menu || !Editor && !Terminal",
     "bindings": {
       // window related commands (ctrl-w X)
       "ctrl-w": null,
@@ -865,7 +863,9 @@
       "ctrl-w ctrl-o": "workspace::CloseInactiveTabsAndPanes",
       "ctrl-w o": "workspace::CloseInactiveTabsAndPanes",
       "ctrl-w ctrl-n": "workspace::NewFileSplitHorizontal",
-      "ctrl-w n": "workspace::NewFileSplitHorizontal"
+      "ctrl-w n": "workspace::NewFileSplitHorizontal",
+      "g t": "vim::GoToTab",
+      "g shift-t": "vim::GoToPreviousTab"
     }
   },
   {
