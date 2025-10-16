@@ -1062,6 +1062,21 @@ impl SettingsWindow {
             return;
         };
 
+        cx.on_window_closed(|cx| {
+            if let Some(existing_window) = cx
+                .windows()
+                .into_iter()
+                .find_map(|window| window.downcast::<SettingsWindow>())
+                && cx.windows().iter().count() == 1
+            {
+                cx.update_window(*existing_window, |_, window, _| {
+                    window.remove_window();
+                })
+                .ok();
+            }
+        })
+        .detach();
+
         cx.observe_in(
             &app_state.workspace_store,
             window,
