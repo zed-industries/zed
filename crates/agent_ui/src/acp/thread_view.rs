@@ -5054,8 +5054,7 @@ impl AcpThreadView {
                             .on_click(cx.listener({
                                 move |_, _, window, cx| {
                                     window.dispatch_action(
-                                        zed_actions::wsl_actions::OpenFolderInWsl::default()
-                                            .boxed_clone(),
+                                        zed_actions::wsl_actions::OpenWsl::default().boxed_clone(),
                                         cx,
                                     );
                                     cx.notify();
