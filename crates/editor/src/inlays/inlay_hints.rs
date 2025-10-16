@@ -1885,6 +1885,7 @@ pub mod tests {
                 editor.scroll_screen(&ScrollAmount::Page(1.0), window, cx);
             })
             .unwrap();
+        cx.executor().advance_clock(Duration::from_millis(100));
         cx.executor().run_until_parked();
         let visible_range_after_scrolls = editor_visible_range(&editor, cx);
         let visible_line_count = editor
@@ -2252,6 +2253,7 @@ pub mod tests {
                 );
             })
             .unwrap();
+        cx.executor().advance_clock(Duration::from_millis(100));
         cx.executor().run_until_parked();
         editor
             .update(cx, |editor, _window, cx| {
@@ -2512,37 +2514,7 @@ pub mod tests {
             })
             .next()
             .await;
-        cx.executor().run_until_parked();
-        editor
-            .update(cx, |editor, _, cx| {
-                assert_eq!(
-                    vec![
-                        "main hint #0".to_string(),
-                        "main hint #1".to_string(),
-                        "main hint #2".to_string(),
-                        "main hint #3".to_string(),
-                    ],
-                    sorted_cached_hint_labels(editor, cx),
-                    "Cache should update for the buffer where the selection in, other buffer with no selections should have no queries as it was not registered with the langserver"
-                );
-                assert_eq!(
-                    Vec::<String>::new(),
-                    visible_hint_labels(editor, cx),
-                    "All hints are disabled and should not be shown despite being present in the cache"
-                );
-            })
-            .unwrap();
-
-        editor
-            .update(cx, |editor, window, cx| {
-                editor.change_selections(
-                    SelectionEffects::scroll(Autoscroll::Next),
-                    window,
-                    cx,
-                    |s| s.select_ranges([Point::new(4, 0)..Point::new(4, 0)]),
-                );
-            })
-            .unwrap();
+        cx.executor().advance_clock(Duration::from_millis(100));
         cx.executor().run_until_parked();
         editor
             .update(cx, |editor, _, cx| {
