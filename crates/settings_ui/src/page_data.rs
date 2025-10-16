@@ -5437,6 +5437,27 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             metadata: None,
             files: USER | LOCAL,
         }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Code Actions On Format",
+            description: "Additional Code Actions To Run When Formatting",
+            field: Box::new(
+                SettingField {
+                    pick: |settings_content| {
+                        language_settings_field(settings_content, |language| {
+                            &language.code_actions_on_format
+                        })
+                    },
+                    pick_mut: |settings_content| {
+                        language_settings_field_mut(settings_content, |language| {
+                            &mut language.code_actions_on_format
+                        })
+                    },
+                }
+                .unimplemented(),
+            ),
+            metadata: None,
+            files: USER | LOCAL,
+        }),
         SettingsPageItem::SectionHeader("Autoclose"),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Use Autoclose",

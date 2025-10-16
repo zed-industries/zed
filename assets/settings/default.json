@@ -1529,6 +1529,7 @@
     // A value of 45 preserves colorful themes while ensuring legibility.
     "minimum_contrast": 45
   },
+  "code_actions_on_format": {},
   // Settings related to running tasks.
   "tasks": {
     "variables": {},
@@ -1698,7 +1699,9 @@
       "preferred_line_length": 72
     },
     "Go": {
-      "formatter": [{ "code_action": "source.organizeImports" }, "language_server"],
+      "code_actions_on_format": {
+        "source.organizeImports": true
+      },
       "debuggers": ["Delve"]
     },
     "GraphQL": {
