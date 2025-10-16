@@ -1495,12 +1495,6 @@
       //    "never"
       "show": null
     },
-    /// E.g., Hyperlink paths with spaces in rust tools output:
-    /// cargo: "\\s+(Compiling|Checking|Documenting) [^(]+\\((?P<file>.+)\\)$"
-    /// rustc: "\\s+(-->|:::) (?<file>.+)$"
-    "path_hyperlink_regexes": ["File \"(?P<file>[^\"]+)\", line (?P<line>\\d+)"],
-    /// Timeout for hover and Cmd-click path hyperlink discovery in milliseconds.
-    "path_hyperlink_timeout": 100,
     // Set the terminal's font size. If this option is not included,
     // the terminal will default to matching the buffer's font size.
     // "font_size": 15,
@@ -1531,7 +1525,21 @@
     //
     // Most terminal themes have APCA values of 40-70.
     // A value of 45 preserves colorful themes while ensuring legibility.
-    "minimum_contrast": 45
+    "minimum_contrast": 45,
+    // Regexes used to identify paths for hyperlink navigation. Supports optional named capture
+    // groups `path`, `line`, and `column`. If none of these are present, the entire match is used.
+    // When either no capture groups are present, or only `path` is present, the default built-in
+    // line and column suffix processing is used. The default value handles python diagnostics. This
+    // can be extended or replaced to handle specific scenarios. For example, to enable support for
+    // hyperlinking paths containing spaces in rust tools output:
+    //
+    // "path_hyperlink_regexes": [
+    //   "\\s+(Compiling|Checking|Documenting) [^(]+\\((?<path>.+)\\)$",
+    //   "\\s+(-->|:::) (?<path>.+)$"
+    // ],
+    "path_hyperlink_regexes": ["File \"(?<path>[^\"]+)\", line (?<line>\\d+)"],
+    // Timeout for hover and Cmd-click path hyperlink discovery in milliseconds.
+    "path_hyperlink_timeout_ms": 10
   },
   // Settings related to running tasks.
   "tasks": {

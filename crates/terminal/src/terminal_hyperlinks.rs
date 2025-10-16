@@ -5,8 +5,12 @@ use alacritty_terminal::{
     index::{Boundary, Column, Direction as AlacDirection, Line, Point as AlacPoint},
     term::search::{Match, RegexIter, RegexSearch},
 };
+use log::{info, warn};
 use regex::Regex;
-use std::ops::{Index, Range};
+use std::{
+    ops::{Index, Range},
+    time::{Duration, Instant},
+};
 
 const URL_REGEX: &str = r#"(ipfs:|ipns:|magnet:|mailto:|gemini://|gopher://|https://|http://|news:|file://|git://|ssh:|ftp://)[^\u{0000}-\u{001F}\u{007F}-\u{009F}<>"\s{-}\^⟨⟩`']+"#;
 // Optional suffix matches MSBuild diagnostic suffixes for path parsing in PathLikeWithPosition
@@ -14,86 +18,115 @@ const URL_REGEX: &str = r#"(ipfs:|ipns:|magnet:|mailto:|gemini://|gopher://|http
 const WORD_REGEX: &str =
     r#"[\$\+\w.\[\]:/\\@\-~()]+(?:\((?:\d+|\d+,\d+)\))|[\$\+\w.\[\]:/\\@\-~()]+"#;
 
-fn regex_path_match<T>(
-    term: &Term<T>,
-    point: AlacPoint,
-    regexes: &Vec<Regex>,
-) -> Option<(String, Match)> {
-    let advance_point_by_str = |mut point: AlacPoint, s: &str| -> AlacPoint {
-        for _ in 0..s.chars().count() {
-            point = term
-                .expand_wide(point, AlacDirection::Right)
-                .add(term, Boundary::Grid, 1);
-        }
-        point
-    };
-
-    let (start, end) = (term.line_search_left(point), term.line_search_right(point));
-    let input = term.bounds_to_string(start, end);
-
-    let found_from_range = |file_range: Range<usize>,
-                            line: Option<u32>,
-                            column: Option<u32>|
-     -> Option<(String, Match)> {
-        let file_start = advance_point_by_str(start, &input[..file_range.start]);
-        let file_end = advance_point_by_str(file_start, &input[file_range.clone()]);
-        Some((
-            {
-                let mut file = input[file_range].to_string();
-                if let Some(line) = line {
-                    file += &format!(":{line}")
-                }
-                if let Some(column) = column {
-                    file += &format!(":{column}")
-                }
-                file
-            },
-            file_start..=file_end.sub(term, Boundary::Grid, 1),
-        ))
-    };
-
-    for regex in regexes {
-        if let Some(captures) = regex.captures(&input) {
-            let Some(path_capture) = captures.name("file") else {
-                return found_from_range(captures.get(0).unwrap().range(), None, None);
-            };
-
-            let Some(line) = captures
-                .name("line")
-                .and_then(|line_capture| line_capture.as_str().parse().ok())
-            else {
-                return found_from_range(path_capture.range(), None, None);
-            };
-
-            let Some(column) = captures
-                .name("column")
-                .and_then(|column_capture| column_capture.as_str().parse().ok())
-            else {
-                return found_from_range(path_capture.range(), Some(line), None);
-            };
-
-            return found_from_range(path_capture.range(), Some(line), Some(column));
-        }
-    }
-    None
-}
-
 pub(super) struct RegexSearches {
     url_regex: RegexSearch,
     word_regex: RegexSearch,
     path_hyperlink_regexes: Vec<Regex>,
+    path_hyperlink_timeout: Duration,
 }
 
+impl Default for RegexSearches {
+    fn default() -> Self {
+        Self {
+            url_regex: RegexSearch::new(URL_REGEX).unwrap(),
+            word_regex: RegexSearch::new(WORD_REGEX).unwrap(),
+            path_hyperlink_regexes: Vec::default(),
+            path_hyperlink_timeout: Duration::default(),
+        }
+    }
+}
 impl RegexSearches {
-    pub(super) fn new<'a>(path_hyperlink_regexes: impl IntoIterator<Item = &'a String>) -> Self {
+    pub(super) fn new<'a>(
+        path_hyperlink_regexes: impl IntoIterator<Item = &'a String>,
+        path_hyperlink_timeout_ms: u64,
+    ) -> Self {
         Self {
             url_regex: RegexSearch::new(URL_REGEX).unwrap(),
             word_regex: RegexSearch::new(WORD_REGEX).unwrap(),
             path_hyperlink_regexes: path_hyperlink_regexes
                 .into_iter()
-                .filter_map(|regex| Regex::new(&regex).ok())
+                .filter_map(|regex| {
+                    let Ok(regex) = Regex::new(&regex) else {
+                        warn!("Failed to load path hyperlink regex specified in settings: {regex}");
+                        return None;
+                    };
+
+                    Some(regex)
+                })
                 .collect(),
+            path_hyperlink_timeout: Duration::from_millis(path_hyperlink_timeout_ms),
         }
+    }
+
+    fn regex_path_match<T>(&self, term: &Term<T>, point: AlacPoint) -> Option<(String, Match)> {
+        let advance_point_by_str = |mut point: AlacPoint, s: &str| -> AlacPoint {
+            for _ in 0..s.chars().count() {
+                point = term
+                    .expand_wide(point, AlacDirection::Right)
+                    .add(term, Boundary::Grid, 1);
+            }
+            point
+        };
+
+        let (start, end) = (term.line_search_left(point), term.line_search_right(point));
+        let input = term.bounds_to_string(start, end);
+
+        let found_from_range = |path: Range<usize>,
+                                line: Option<u32>,
+                                column: Option<u32>|
+         -> Option<(String, Match)> {
+            let path_start = advance_point_by_str(start, &input[..path.start]);
+            let path_end = advance_point_by_str(path_start, &input[path.clone()]);
+            Some((
+                {
+                    let mut path = input[path].to_string();
+                    if let Some(line) = line {
+                        path += &format!(":{line}")
+                    }
+                    if let Some(column) = column {
+                        path += &format!(":{column}")
+                    }
+                    path
+                },
+                path_start..=path_end.sub(term, Boundary::Grid, 1),
+            ))
+        };
+
+        let search_start_time = Instant::now();
+        let timed_out = || {
+            Instant::now().saturating_duration_since(search_start_time)
+                > self.path_hyperlink_timeout
+        };
+
+        for regex in &self.path_hyperlink_regexes {
+            if let Some(captures) = regex.captures(&input) {
+                let Some(path_capture) = captures.name("path") else {
+                    return found_from_range(captures.get(0).unwrap().range(), None, None);
+                };
+
+                let Some(line) = captures
+                    .name("line")
+                    .and_then(|line_capture| line_capture.as_str().parse().ok())
+                else {
+                    return found_from_range(path_capture.range(), None, None);
+                };
+
+                let Some(column) = captures
+                    .name("column")
+                    .and_then(|column_capture| column_capture.as_str().parse().ok())
+                else {
+                    return found_from_range(path_capture.range(), Some(line), None);
+                };
+
+                return found_from_range(path_capture.range(), Some(line), Some(column));
+            }
+
+            if timed_out() {
+                info!("Timed out processing path hyperlink regexes specified in settings");
+                break;
+            }
+        }
+        None
     }
 }
 
@@ -134,8 +167,7 @@ pub(super) fn find_from_grid_point<T: EventListener>(
         let (sanitized_url, sanitized_match) = sanitize_url_punctuation(url, url_match, term);
         Some((sanitized_url, true, sanitized_match))
     } else if !regex_searches.path_hyperlink_regexes.is_empty()
-        && let Some((path, path_match)) =
-            regex_path_match(&term, point, &mut regex_searches.path_hyperlink_regexes)
+        && let Some((path, path_match)) = regex_searches.regex_path_match(&term, point)
     {
         Some((path, false, path_match))
     } else if let Some(word_match) = regex_match_at(term, point, &mut regex_searches.word_regex) {
@@ -558,9 +590,9 @@ mod tests {
             test_path!("‹«awe👉some.py»›");
 
             test_path!("    F👉ile \"‹«/awesome.py»›\", line «42»: Wat?");
-            test_path!("    File \"‹«/awe👉some.py»›\", line «42»: Wat?");
+            test_path!("    File \"‹«/awe👉some.py»›\", line «42»");
             test_path!("    File \"‹«/awesome.py»›👉\", line «42»: Wat?");
-            test_path!("    File \"‹«/awesome.py»›\", line «4👉2»: Wat?");
+            test_path!("    File \"‹«/awesome.py»›\", line «4👉2»");
         }
 
         #[test]
@@ -1362,18 +1394,19 @@ mod tests {
         hyperlink_kind: HyperlinkKind,
         source_location: &str,
     ) {
-        const PYTHON_FILE_LINE_REGEX: &str = r#"File "(?P<file>[^"]+)", line (?P<line>\d+)"#;
-        const CARGO_FILE_LINE_COLUMN_REGEX: &str =
-            r#"\s+(Compiling|Checking|Documenting) [^(]+\((?P<file>.+)\)$"#;
-        const RUSTC_FILE_LINE_COLUMN_REGEX: &str = r#"\s+(-->|:::) (?<file>.+)$"#;
+        const PYTHON_FILE_LINE_REGEX: &str = r#"File "(?<path>[^"]+)", line (?P<line>\d+)"#;
+        const CARGO_DIR_REGEX: &str =
+            r#"\s+(Compiling|Checking|Documenting) [^(]+\((?<path>.+)\)$"#;
+        const RUSTC_DIAGNOSTIC_REGEX: &str = r#"\s+(-->|:::) (?<path>.+)$"#;
+        const PATH_HYPERLINK_TIMEOUT_MS: u64 = 1000;
 
         thread_local! {
             static TEST_REGEX_SEARCHES: RefCell<RegexSearches> =
                 RefCell::new(RegexSearches::new(&vec![
                     PYTHON_FILE_LINE_REGEX.to_string(),
-                    CARGO_FILE_LINE_COLUMN_REGEX.to_string(),
-                    RUSTC_FILE_LINE_COLUMN_REGEX.to_string(),
-                ]));
+                    CARGO_DIR_REGEX.to_string(),
+                    RUSTC_DIAGNOSTIC_REGEX.to_string(),
+                ], PATH_HYPERLINK_TIMEOUT_MS));
         }
 
         let term_size = TermSize::new(columns, total_cells / columns + 2);
