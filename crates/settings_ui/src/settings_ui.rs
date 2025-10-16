@@ -441,6 +441,7 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::PaneSplitDirectionVertical>(render_dropdown)
         .add_basic_renderer::<settings::PaneSplitDirectionVertical>(render_dropdown)
         .add_basic_renderer::<settings::DocumentColorsRenderMode>(render_dropdown)
+        .add_basic_renderer::<settings::ThemeSelectionDiscriminants>(render_dropdown)
         .add_renderer::<settings::ThemeSelection>(
             |_settings_window, _settings_item, settings_field, file, _metadata, _window, cx| {
                 // <settings::ThemeSelection as strum::IntoDiscriminant>::Discriminant
@@ -451,16 +452,16 @@ fn init_renderers(cx: &mut App) {
                 //         None => &None,
                 //     }
                 // };
-                let discriminant_field = store
-                    .get_value_from_file(file.to_settings(), settings_field.pick)
-                    .1
-                    .map_or(
-                        settings::ThemeSelection::Static(settings::ThemeName(
-                            cx.theme().name.clone().into(),
-                        ))
-                        .discriminant(),
-                        strum::IntoDiscriminant::discriminant,
-                    );
+                // let discriminant_field = store
+                //     .get_value_from_file(file.to_settings(), settings_field.pick)
+                //     .1
+                //     .map_or(
+                //         settings::ThemeSelection::Static(settings::ThemeName(
+                //             cx.theme().name.clone().into(),
+                //         ))
+                //         .discriminant(),
+                //         strum::IntoDiscriminant::discriminant,
+                //     );
                 // render_dropdown(*settings_field, file, window, cx)
                 div().id("foo")
             },

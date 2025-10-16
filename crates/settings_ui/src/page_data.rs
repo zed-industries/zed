@@ -260,10 +260,12 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         description: "How to select the theme",
                         field: Box::new(SettingField {
                             pick: |settings_content| {
+                                Some(&<<settings::ThemeSelection as strum::IntoDiscriminant>::Discriminant as strum::VariantArray>::VARIANTS[
                                 settings_content
                                     .theme
                                     .theme
-                                    .as_ref()
+                                    .as_ref()?
+                                    .discriminant() as usize])
                             },
                             write: |_settings_content, _value| todo!(),
                         }),
@@ -277,8 +279,8 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             settings::ThemeSelectionDiscriminants::Static => vec![
                                 SettingItem {
                                         files: USER,
-                                        title: "Theme",
-                                        description: "Active Theme",
+                                        title: "Theme Name",
+                                        description: "The Name Of The Theme To Use",
                                         field: Box::new(SettingField {
                                             pick: |settings_content| {
                                                 match settings_content.theme.theme.as_ref() {
@@ -287,13 +289,13 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                                     }
                                             },
                                             write: |settings_content, value| {
-                                                let Some(name) = value else {
+                                                let Some(value) = value else {
                                                     return;
                                                 };
                                                 match settings_content
                                                     .theme
                                                     .theme.as_mut() {
-                                                        Some(settings::ThemeSelection::Static(theme_name)) => *theme_name = name,
+                                                        Some(settings::ThemeSelection::Static(theme_name)) => *theme_name = value,
                                                         _ => unreachable!("inactive field")
                                                     }
                                             },
@@ -301,7 +303,83 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                         metadata: None,
                                     }
                                     ],
-                            settings::ThemeSelectionDiscriminants::Dynamic => todo!(),
+                            settings::ThemeSelectionDiscriminants::Dynamic => vec![
+                                SettingItem {
+                                        files: USER,
+                                        title: "Mode",
+                                        description: "How To Determine Whether to Use a Light or Dark Theme",
+                                        field: Box::new(SettingField {
+                                            pick: |settings_content| {
+                                                match settings_content.theme.theme.as_ref() {
+                                                        Some(settings::ThemeSelection::Dynamic { mode, ..}) => Some(mode),
+                                                        _ => unreachable!("inactive field")
+                                                    }
+                                            },
+                                            write: |settings_content, value| {
+                                                let Some(value) = value else {
+                                                    return;
+                                                };
+                                                match settings_content
+                                                    .theme
+                                                    .theme.as_mut() {
+                                                        Some(settings::ThemeSelection::Dynamic{ mode, ..}) => *mode = value,
+                                                        _ => unreachable!("inactive field")
+                                                    }
+                                            },
+                                        }),
+                                        metadata: None,
+                                },
+                                    SettingItem {
+                                            files: USER,
+                                            title: "Light Theme",
+                                            description: "The Theme To Use When Mode Is Set To Light, Or When Mode Is Set To System And The System Is In Light Mode",
+                                            field: Box::new(SettingField {
+                                                pick: |settings_content| {
+                                                    match settings_content.theme.theme.as_ref() {
+                                                            Some(settings::ThemeSelection::Dynamic { light, ..}) => Some(light),
+                                                            _ => unreachable!("inactive field")
+                                                        }
+                                                },
+                                                write: |settings_content, value| {
+                                                    let Some(value) = value else {
+                                                        return;
+                                                    };
+                                                    match settings_content
+                                                        .theme
+                                                        .theme.as_mut() {
+                                                            Some(settings::ThemeSelection::Dynamic{ light, ..}) => *light = value,
+                                                            _ => unreachable!("inactive field")
+                                                        }
+                                                },
+                                            }),
+                                            metadata: None,
+                                    },
+                                        SettingItem {
+                                                files: USER,
+                                                title: "Dark Theme",
+                                                description: "The Theme To Use When Mode Is Set To Dark, Or When Mode Is Set To System And The System Is In Dark Mode",
+                                                field: Box::new(SettingField {
+                                                    pick: |settings_content| {
+                                                        match settings_content.theme.theme.as_ref() {
+                                                                Some(settings::ThemeSelection::Dynamic { dark, ..}) => Some(dark),
+                                                                _ => unreachable!("inactive field")
+                                                            }
+                                                    },
+                                                    write: |settings_content, value| {
+                                                        let Some(value) = value else {
+                                                            return;
+                                                        };
+                                                        match settings_content
+                                                            .theme
+                                                            .theme.as_mut() {
+                                                                Some(settings::ThemeSelection::Dynamic{ dark, ..}) => *dark = value,
+                                                                _ => unreachable!("inactive field")
+                                                            }
+                                                    },
+                                                }),
+                                                metadata: None,
+                                            }
+                            ],
                         }
                     }).collect(),
                 }),
