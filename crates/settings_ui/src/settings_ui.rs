@@ -33,7 +33,7 @@ use ui::{
 };
 use ui_input::{NumberField, NumberFieldType};
 use util::{ResultExt as _, paths::PathStyle, rel_path::RelPath};
-use workspace::{AppState, OpenOptions, OpenVisible, Workspace, client_side_decorations};
+use workspace::{OpenOptions, OpenVisible, Workspace, client_side_decorations};
 use zed_actions::OpenSettings;
 
 use crate::components::SettingsEditor;
