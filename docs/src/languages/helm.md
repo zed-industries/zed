@@ -9,7 +9,7 @@ Support for Helm in Zed is provided by the community-maintained [Helm extension]
 
 Enable Helm language for Helm files by editing your `.zed/settings.json` and adding:
 
-```json
+```json [settings]
   "file_types": {
     "Helm": [
       "**/templates/**/*.tpl",

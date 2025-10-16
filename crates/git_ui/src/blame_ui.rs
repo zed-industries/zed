@@ -8,8 +8,8 @@ use git::{
     repository::CommitSummary,
 };
 use gpui::{
-    ClipboardItem, Entity, Hsla, MouseButton, ScrollHandle, Subscription, TextStyle, WeakEntity,
-    prelude::*,
+    ClipboardItem, Entity, Hsla, MouseButton, ScrollHandle, Subscription, TextStyle,
+    TextStyleRefinement, UnderlineStyle, WeakEntity, prelude::*,
 };
 use markdown::{Markdown, MarkdownElement};
 use project::{git_store::Repository, project_settings::ProjectSettings};
@@ -17,7 +17,7 @@ use settings::Settings as _;
 use theme::ThemeSettings;
 use time::OffsetDateTime;
 use time_format::format_local_timestamp;
-use ui::{ContextMenu, Divider, IconButtonShape, prelude::*, tooltip_container};
+use ui::{ContextMenu, Divider, prelude::*, tooltip_container};
 use workspace::Workspace;
 
 const GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED: usize = 20;
@@ -61,16 +61,15 @@ impl BlameRenderer for GitBlameRenderer {
                 .mr_2()
                 .child(
                     h_flex()
+                        .id(("blame", ix))
                         .w_full()
+                        .gap_2()
                         .justify_between()
                         .font_family(style.font().family)
                         .line_height(style.line_height)
-                        .id(("blame", ix))
                         .text_color(cx.theme().status().hint)
-                        .gap_2()
                         .child(
                             h_flex()
-                                .items_center()
                                 .gap_2()
                                 .child(div().text_color(sha_color).child(short_commit_id))
                                 .children(avatar)
@@ -209,11 +208,21 @@ impl BlameRenderer for GitBlameRenderer {
             OffsetDateTime::now_utc(),
             time_format::TimestampFormat::MediumAbsolute,
         );
+        let link_color = cx.theme().colors().text_accent;
         let markdown_style = {
             let mut style = hover_markdown_style(window, cx);
             if let Some(code_block) = &style.code_block.text {
                 style.base_text_style.refine(code_block);
             }
+            style.link.refine(&TextStyleRefinement {
+                color: Some(link_color),
+                underline: Some(UnderlineStyle {
+                    color: Some(link_color.opacity(0.4)),
+                    thickness: px(1.0),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            });
             style
         };
 
@@ -250,20 +259,21 @@ impl BlameRenderer for GitBlameRenderer {
         };
 
         Some(
-            tooltip_container(cx, |d, cx| {
-                d.occlude()
+            tooltip_container(cx, |this, cx| {
+                this.occlude()
                     .on_mouse_move(|_, _, cx| cx.stop_propagation())
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .child(
                         v_flex()
                             .w(gpui::rems(30.))
-                            .gap_4()
                             .child(
                                 h_flex()
-                                    .pb_1p5()
-                                    .gap_x_2()
+                                    .pb_1()
+                                    .gap_2()
                                     .overflow_x_hidden()
                                     .flex_wrap()
+                                    .border_b_1()
+                                    .border_color(cx.theme().colors().border_variant)
                                     .children(avatar)
                                     .child(author)
                                     .when(!author_email.is_empty(), |this| {
@@ -272,30 +282,29 @@ impl BlameRenderer for GitBlameRenderer {
                                                 .text_color(cx.theme().colors().text_muted)
                                                 .child(author_email.to_owned()),
                                         )
-                                    })
-                                    .border_b_1()
-                                    .border_color(cx.theme().colors().border_variant),
+                                    }),
                             )
                             .child(
                                 div()
                                     .id("inline-blame-commit-message")
-                                    .child(message)
+                                    .track_scroll(&scroll_handle)
+                                    .py_1p5()
                                     .max_h(message_max_height)
                                     .overflow_y_scroll()
-                                    .track_scroll(&scroll_handle),
+                                    .child(message),
                             )
                             .child(
                                 h_flex()
                                     .text_color(cx.theme().colors().text_muted)
                                     .w_full()
                                     .justify_between()
-                                    .pt_1p5()
+                                    .pt_1()
                                     .border_t_1()
                                     .border_color(cx.theme().colors().border_variant)
                                     .child(absolute_timestamp)
                                     .child(
                                         h_flex()
-                                            .gap_1p5()
+                                            .gap_1()
                                             .when_some(pull_request, |this, pr| {
                                                 this.child(
                                                     Button::new(
@@ -306,24 +315,24 @@ impl BlameRenderer for GitBlameRenderer {
                                                     .icon(IconName::PullRequest)
                                                     .icon_color(Color::Muted)
                                                     .icon_position(IconPosition::Start)
-                                                    .style(ButtonStyle::Subtle)
+                                                    .icon_size(IconSize::Small)
                                                     .on_click(move |_, _, cx| {
                                                         cx.stop_propagation();
                                                         cx.open_url(pr.url.as_str())
                                                     }),
                                                 )
+                                                .child(Divider::vertical())
                                             })
-                                            .child(Divider::vertical())
                                             .child(
                                                 Button::new(
                                                     "commit-sha-button",
                                                     short_commit_id.clone(),
                                                 )
-                                                .style(ButtonStyle::Subtle)
                                                 .color(Color::Muted)
                                                 .icon(IconName::FileGit)
                                                 .icon_color(Color::Muted)
                                                 .icon_position(IconPosition::Start)
+                                                .icon_size(IconSize::Small)
                                                 .on_click(move |_, window, cx| {
                                                     CommitView::open(
                                                         commit_summary.clone(),
@@ -337,7 +346,6 @@ impl BlameRenderer for GitBlameRenderer {
                                             )
                                             .child(
                                                 IconButton::new("copy-sha-button", IconName::Copy)
-                                                    .shape(IconButtonShape::Square)
                                                     .icon_size(IconSize::Small)
                                                     .icon_color(Color::Muted)
                                                     .on_click(move |_, _, cx| {

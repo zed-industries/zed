@@ -29,8 +29,8 @@
       "ctrl-shift-=": ["zed::IncreaseBufferFontSize", { "persist": false }],
       "ctrl--": ["zed::DecreaseBufferFontSize", { "persist": false }],
       "ctrl-0": ["zed::ResetBufferFontSize", { "persist": false }],
-      "ctrl-,": "zed::OpenSettingsEditor",
-      "ctrl-alt-,": "zed::OpenSettings",
+      "ctrl-,": "zed::OpenSettings",
+      "ctrl-alt-,": "zed::OpenSettingsFile",
       "ctrl-q": "zed::Quit",
       "f4": "debugger::Start",
       "shift-f5": "debugger::Stop",
@@ -134,7 +134,7 @@
       "ctrl-k z": "editor::ToggleSoftWrap",
       "ctrl-f": "buffer_search::Deploy",
       "ctrl-h": "buffer_search::DeployReplace",
-      "ctrl-shift-.": "assistant::QuoteSelection",
+      "ctrl-shift-.": "agent::QuoteSelection",
       "ctrl-shift-,": "assistant::InsertIntoEditor",
       "shift-alt-e": "editor::SelectEnclosingSymbol",
       "ctrl-shift-backspace": "editor::GoToPreviousChange",
@@ -244,7 +244,7 @@
       "ctrl-shift-i": "agent::ToggleOptionsMenu",
       // "ctrl-shift-alt-n": "agent::ToggleNewThreadMenu",
       "shift-alt-escape": "agent::ExpandMessageEditor",
-      "ctrl-shift-.": "assistant::QuoteSelection",
+      "ctrl-shift-.": "agent::QuoteSelection",
       "shift-alt-e": "agent::RemoveAllContext",
       "ctrl-shift-e": "project_panel::ToggleFocus",
       "ctrl-shift-enter": "agent::ContinueThread",
@@ -500,8 +500,8 @@
     "bindings": {
       "ctrl-[": "editor::Outdent",
       "ctrl-]": "editor::Indent",
-      "ctrl-shift-alt-up": "editor::AddSelectionAbove", // Insert Cursor Above
-      "ctrl-shift-alt-down": "editor::AddSelectionBelow", // Insert Cursor Below
+      "ctrl-shift-alt-up": ["editor::AddSelectionAbove", { "skip_soft_wrap": true }], // Insert Cursor Above
+      "ctrl-shift-alt-down": ["editor::AddSelectionBelow", { "skip_soft_wrap": true }], // Insert Cursor Below
       "ctrl-shift-k": "editor::DeleteLine",
       "alt-up": "editor::MoveLineUp",
       "alt-down": "editor::MoveLineDown",
@@ -623,7 +623,7 @@
       "ctrl-shift-f": "pane::DeploySearch",
       "ctrl-shift-h": ["pane::DeploySearch", { "replace_enabled": true }],
       "ctrl-shift-t": "pane::ReopenClosedItem",
-      "ctrl-k ctrl-s": "zed::OpenKeymapEditor",
+      "ctrl-k ctrl-s": "zed::OpenKeymap",
       "ctrl-k ctrl-t": "theme_selector::Toggle",
       "ctrl-alt-super-p": "settings_profile_selector::Toggle",
       "ctrl-t": "project_symbols::Toggle",
@@ -1270,6 +1270,7 @@
       "escape": "workspace::CloseWindow",
       "ctrl-m": "settings_editor::Minimize",
       "ctrl-f": "search::FocusSearch",
+      "left": "settings_editor::ToggleFocusNav",
       "ctrl-shift-e": "settings_editor::ToggleFocusNav",
       // todo(settings_ui): cut this down based on the max files and overflow UI
       "ctrl-1": ["settings_editor::FocusFile", 0],
@@ -1290,6 +1291,8 @@
     "context": "SettingsWindow > NavigationMenu",
     "use_key_equivalents": true,
     "bindings": {
+      "up": "settings_editor::FocusPreviousNavEntry",
+      "down": "settings_editor::FocusNextNavEntry",
       "right": "settings_editor::ExpandNavEntry",
       "left": "settings_editor::CollapseNavEntry",
       "pageup": "settings_editor::FocusPreviousRootNavEntry",

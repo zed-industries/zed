@@ -19,6 +19,7 @@ use rpc::{
     },
 };
 use settings::WorktreeId;
+use task::Shell;
 use util::{ResultExt as _, rel_path::RelPath};
 
 use crate::{
@@ -521,7 +522,11 @@ impl LocalToolchainStore {
 
             let project_env = environment
                 .update(cx, |environment, cx| {
-                    environment.get_directory_environment(abs_path.as_path().into(), cx)
+                    environment.get_local_directory_environment(
+                        &Shell::System,
+                        abs_path.as_path().into(),
+                        cx,
+                    )
                 })
                 .ok()?
                 .await;
@@ -574,7 +579,11 @@ impl LocalToolchainStore {
 
             let project_env = environment
                 .update(cx, |environment, cx| {
-                    environment.get_directory_environment(path.as_path().into(), cx)
+                    environment.get_local_directory_environment(
+                        &Shell::System,
+                        path.as_path().into(),
+                        cx,
+                    )
                 })?
                 .await;
             cx.background_spawn(async move { toolchain_lister.resolve(path, project_env).await })

@@ -103,7 +103,7 @@ pub(crate) mod m_2025_07_08 {
 pub(crate) mod m_2025_10_01 {
     mod settings;
 
-    pub(crate) use settings::SETTINGS_PATTERNS;
+    pub(crate) use settings::flatten_code_actions_formatters;
 }
 
 pub(crate) mod m_2025_10_02 {
@@ -116,4 +116,10 @@ pub(crate) mod m_2025_10_03 {
     mod settings;
 
     pub(crate) use settings::SETTINGS_PATTERNS;
+}
+
+pub(crate) mod m_2025_10_10 {
+    mod settings;
+
+    pub(crate) use settings::remove_code_actions_on_format;
 }

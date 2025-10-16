@@ -278,7 +278,7 @@ pub struct AcpThreadView {
     thread_feedback: ThreadFeedbackState,
     list_state: ListState,
     auth_task: Option<Task<()>>,
-    expanded_tool_calls: HashSet<acp::ToolCallId>,
+    collapsed_tool_calls: HashSet<acp::ToolCallId>,
     expanded_thinking_blocks: HashSet<(usize, usize)>,
     edits_expanded: bool,
     plan_expanded: bool,
@@ -292,6 +292,8 @@ pub struct AcpThreadView {
     resume_thread_metadata: Option<DbThreadMetadata>,
     _cancel_task: Option<Task<()>>,
     _subscriptions: [Subscription; 5],
+    #[cfg(target_os = "windows")]
+    show_codex_windows_warning: bool,
 }
 
 enum ThreadState {
@@ -335,7 +337,10 @@ impl AcpThreadView {
 
         let placeholder = if agent.name() == "Zed Agent" {
             format!("Message the {} — @ to include context", agent.name())
-        } else if agent.name() == "Claude Code" || !available_commands.borrow().is_empty() {
+        } else if agent.name() == "Claude Code"
+            || agent.name() == "Codex"
+            || !available_commands.borrow().is_empty()
+        {
             format!(
                 "Message {} — @ to include context, / for commands",
                 agent.name()
@@ -394,6 +399,10 @@ impl AcpThreadView {
             ),
         ];
 
+        #[cfg(target_os = "windows")]
+        let show_codex_windows_warning = crate::ExternalAgent::parse_built_in(agent.as_ref())
+            == Some(crate::ExternalAgent::Codex);
+
         Self {
             agent: agent.clone(),
             workspace: workspace.clone(),
@@ -419,7 +428,7 @@ impl AcpThreadView {
             thread_error: None,
             thread_feedback: Default::default(),
             auth_task: None,
-            expanded_tool_calls: HashSet::default(),
+            collapsed_tool_calls: HashSet::default(),
             expanded_thinking_blocks: HashSet::default(),
             editing_message: None,
             edits_expanded: false,
@@ -436,6 +445,8 @@ impl AcpThreadView {
             focus_handle: cx.focus_handle(),
             new_server_version_available: None,
             resume_thread_metadata: resume_thread,
+            #[cfg(target_os = "windows")]
+            show_codex_windows_warning,
         }
     }
 
@@ -954,17 +965,17 @@ impl AcpThreadView {
     ) {
         match &event.view_event {
             ViewEvent::NewDiff(tool_call_id) => {
-                if AgentSettings::get_global(cx).expand_edit_card {
-                    self.expanded_tool_calls.insert(tool_call_id.clone());
+                if !AgentSettings::get_global(cx).expand_edit_card {
+                    self.collapsed_tool_calls.insert(tool_call_id.clone());
                 }
             }
             ViewEvent::NewTerminal(tool_call_id) => {
-                if AgentSettings::get_global(cx).expand_terminal_card {
-                    self.expanded_tool_calls.insert(tool_call_id.clone());
+                if !AgentSettings::get_global(cx).expand_terminal_card {
+                    self.collapsed_tool_calls.insert(tool_call_id.clone());
                 }
             }
             ViewEvent::TerminalMovedToBackground(tool_call_id) => {
-                self.expanded_tool_calls.remove(tool_call_id);
+                self.collapsed_tool_calls.insert(tool_call_id.clone());
             }
             ViewEvent::MessageEditorEvent(_editor, MessageEditorEvent::Focus) => {
                 if let Some(thread) = self.thread()
@@ -1055,6 +1066,9 @@ impl AcpThreadView {
                     .iter()
                     .any(|command| command.name == "logout");
             if can_login && !logout_supported {
+                self.message_editor
+                    .update(cx, |editor, cx| editor.clear(window, cx));
+
                 let this = cx.weak_entity();
                 let agent = self.agent.clone();
                 window.defer(cx, |window, cx| {
@@ -1249,12 +1263,6 @@ impl AcpThreadView {
             anyhow::Ok(())
         })
         .detach();
-    }
-
-    fn open_agent_diff(&mut self, _: &OpenAgentDiff, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(thread) = self.thread() {
-            AgentDiffPane::deploy(thread.clone(), self.workspace.clone(), window, cx).log_err();
-        }
     }
 
     fn open_edited_buffer(
@@ -2122,7 +2130,7 @@ impl AcpThreadView {
 
         let is_collapsible = !tool_call.content.is_empty() && !needs_confirmation;
 
-        let is_open = needs_confirmation || self.expanded_tool_calls.contains(&tool_call.id);
+        let is_open = needs_confirmation || !self.collapsed_tool_calls.contains(&tool_call.id);
 
         let tool_output_display =
             if is_open {
@@ -2272,9 +2280,9 @@ impl AcpThreadView {
                                                     let id = tool_call.id.clone();
                                                     move |this: &mut Self, _, _, cx: &mut Context<Self>| {
                                                         if is_open {
-                                                            this.expanded_tool_calls.remove(&id);
+                                                            this.collapsed_tool_calls.insert(id.clone());
                                                         } else {
-                                                            this.expanded_tool_calls.insert(id.clone());
+                                                            this.collapsed_tool_calls.remove(&id);
                                                         }
                                                         cx.notify();
                                                     }
@@ -2476,7 +2484,7 @@ impl AcpThreadView {
                         .icon_color(Color::Muted)
                         .on_click(cx.listener({
                             move |this: &mut Self, _, _, cx: &mut Context<Self>| {
-                                this.expanded_tool_calls.remove(&tool_call_id);
+                                this.collapsed_tool_calls.insert(tool_call_id.clone());
                                 cx.notify();
                             }
                         })),
@@ -2754,7 +2762,7 @@ impl AcpThreadView {
             .map(|path| path.display().to_string())
             .unwrap_or_else(|| "current directory".to_string());
 
-        let is_expanded = self.expanded_tool_calls.contains(&tool_call.id);
+        let is_expanded = !self.collapsed_tool_calls.contains(&tool_call.id);
 
         let header = h_flex()
             .id(header_id)
@@ -2889,9 +2897,9 @@ impl AcpThreadView {
                     let id = tool_call.id.clone();
                     move |this, _event, _window, _cx| {
                         if is_expanded {
-                            this.expanded_tool_calls.remove(&id);
+                            this.collapsed_tool_calls.insert(id.clone());
                         } else {
-                            this.expanded_tool_calls.insert(id.clone());
+                            this.collapsed_tool_calls.remove(&id);
                         }
                     }
                 })),
@@ -3283,6 +3291,12 @@ impl AcpThreadView {
                                                 this.style(ButtonStyle::Outlined)
                                             }
                                         })
+                                        .when_some(
+                                            method.description.clone(),
+                                            |this, description| {
+                                                this.tooltip(Tooltip::text(description))
+                                            },
+                                        )
                                         .on_click({
                                             cx.listener(move |this, _, window, cx| {
                                                 telemetry::event!(
@@ -4972,10 +4986,12 @@ impl AcpThreadView {
         })
     }
 
+    /// Inserts the selected text into the message editor or the message being
+    /// edited, if any.
     pub(crate) fn insert_selections(&self, window: &mut Window, cx: &mut Context<Self>) {
-        self.message_editor.update(cx, |message_editor, cx| {
-            message_editor.insert_selections(window, cx);
-        })
+        self.active_editor(cx).update(cx, |editor, cx| {
+            editor.insert_selections(window, cx);
+        });
     }
 
     fn render_thread_retry_status_callout(
@@ -5018,6 +5034,49 @@ impl AcpThreadView {
                 .title(state.last_error.clone())
                 .description(retry_message),
         )
+    }
+
+    #[cfg(target_os = "windows")]
+    fn render_codex_windows_warning(&self, cx: &mut Context<Self>) -> Option<Callout> {
+        if self.show_codex_windows_warning {
+            Some(
+                Callout::new()
+                    .icon(IconName::Warning)
+                    .severity(Severity::Warning)
+                    .title("Codex on Windows")
+                    .description(
+                        "For best performance, run Codex in Windows Subsystem for Linux (WSL2)",
+                    )
+                    .actions_slot(
+                        Button::new("open-wsl-modal", "Open in WSL")
+                            .icon_size(IconSize::Small)
+                            .icon_color(Color::Muted)
+                            .on_click(cx.listener({
+                                move |_, _, window, cx| {
+                                    window.dispatch_action(
+                                        zed_actions::wsl_actions::OpenWsl::default().boxed_clone(),
+                                        cx,
+                                    );
+                                    cx.notify();
+                                }
+                            })),
+                    )
+                    .dismiss_action(
+                        IconButton::new("dismiss", IconName::Close)
+                            .icon_size(IconSize::Small)
+                            .icon_color(Color::Muted)
+                            .tooltip(Tooltip::text("Dismiss Warning"))
+                            .on_click(cx.listener({
+                                move |this, _, _, cx| {
+                                    this.show_codex_windows_warning = false;
+                                    cx.notify();
+                                }
+                            })),
+                    ),
+            )
+        } else {
+            None
+        }
     }
 
     fn render_thread_error(&self, window: &mut Window, cx: &mut Context<Self>) -> Option<Div> {
@@ -5386,6 +5445,23 @@ impl AcpThreadView {
         };
         task.detach_and_log_err(cx);
     }
+
+    /// Returns the currently active editor, either for a message that is being
+    /// edited or the editor for a new message.
+    fn active_editor(&self, cx: &App) -> Entity<MessageEditor> {
+        if let Some(index) = self.editing_message
+            && let Some(editor) = self
+                .entry_view_state
+                .read(cx)
+                .entry(index)
+                .and_then(|e| e.message_editor())
+                .cloned()
+        {
+            editor
+        } else {
+            self.message_editor.clone()
+        }
+    }
 }
 
 fn loading_contents_spinner(size: IconSize) -> AnyElement {
@@ -5400,7 +5476,7 @@ impl Focusable for AcpThreadView {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
         match self.thread_state {
             ThreadState::Loading { .. } | ThreadState::Ready { .. } => {
-                self.message_editor.focus_handle(cx)
+                self.active_editor(cx).focus_handle(cx)
             }
             ThreadState::LoadError(_) | ThreadState::Unauthenticated { .. } => {
                 self.focus_handle.clone()
@@ -5417,7 +5493,6 @@ impl Render for AcpThreadView {
         v_flex()
             .size_full()
             .key_context("AcpThread")
-            .on_action(cx.listener(Self::open_agent_diff))
             .on_action(cx.listener(Self::toggle_burn_mode))
             .on_action(cx.listener(Self::keep_all))
             .on_action(cx.listener(Self::reject_all))
@@ -5491,6 +5566,16 @@ impl Render for AcpThreadView {
                 _ => this,
             })
             .children(self.render_thread_retry_status_callout(window, cx))
+            .children({
+                #[cfg(target_os = "windows")]
+                {
+                    self.render_codex_windows_warning(cx)
+                }
+                #[cfg(not(target_os = "windows"))]
+                {
+                    Vec::<Empty>::new()
+                }
+            })
             .children(self.render_thread_error(window, cx))
             .when_some(
                 self.new_server_version_available.as_ref().filter(|_| {
@@ -6660,5 +6745,147 @@ pub(crate) mod tests {
                 "}
             )
         });
+    }
+
+    #[gpui::test]
+    async fn test_message_editing_insert_selections(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let connection = StubAgentConnection::new();
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk {
+            content: acp::ContentBlock::Text(acp::TextContent {
+                text: "Response".into(),
+                annotations: None,
+                meta: None,
+            }),
+        }]);
+
+        let (thread_view, cx) = setup_thread_view(StubAgentServer::new(connection), cx).await;
+        add_to_workspace(thread_view.clone(), cx);
+
+        let message_editor = cx.read(|cx| thread_view.read(cx).message_editor.clone());
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Original message to edit", window, cx)
+        });
+        thread_view.update_in(cx, |thread_view, window, cx| thread_view.send(window, cx));
+        cx.run_until_parked();
+
+        let user_message_editor = thread_view.read_with(cx, |thread_view, cx| {
+            thread_view
+                .entry_view_state
+                .read(cx)
+                .entry(0)
+                .expect("Should have at least one entry")
+                .message_editor()
+                .expect("Should have message editor")
+                .clone()
+        });
+
+        cx.focus(&user_message_editor);
+        thread_view.read_with(cx, |thread_view, _cx| {
+            assert_eq!(thread_view.editing_message, Some(0));
+        });
+
+        // Ensure to edit the focused message before proceeding otherwise, since
+        // its content is not different from what was sent, focus will be lost.
+        user_message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Original message to edit with ", window, cx)
+        });
+
+        // Create a simple buffer with some text so we can create a selection
+        // that will then be added to the message being edited.
+        let (workspace, project) = thread_view.read_with(cx, |thread_view, _cx| {
+            (thread_view.workspace.clone(), thread_view.project.clone())
+        });
+        let buffer = project.update(cx, |project, cx| {
+            project.create_local_buffer("let a = 10 + 10;", None, false, cx)
+        });
+
+        workspace
+            .update_in(cx, |workspace, window, cx| {
+                let editor = cx.new(|cx| {
+                    let mut editor =
+                        Editor::for_buffer(buffer.clone(), Some(project.clone()), window, cx);
+
+                    editor.change_selections(Default::default(), window, cx, |selections| {
+                        selections.select_ranges([8..15]);
+                    });
+
+                    editor
+                });
+                workspace.add_item_to_active_pane(Box::new(editor), None, false, window, cx);
+            })
+            .unwrap();
+
+        thread_view.update_in(cx, |thread_view, window, cx| {
+            assert_eq!(thread_view.editing_message, Some(0));
+            thread_view.insert_selections(window, cx);
+        });
+
+        user_message_editor.read_with(cx, |editor, cx| {
+            let text = editor.editor().read(cx).text(cx);
+            let expected_text = String::from("Original message to edit with selection ");
+
+            assert_eq!(text, expected_text);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_insert_selections(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let connection = StubAgentConnection::new();
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk {
+            content: acp::ContentBlock::Text(acp::TextContent {
+                text: "Response".into(),
+                annotations: None,
+                meta: None,
+            }),
+        }]);
+
+        let (thread_view, cx) = setup_thread_view(StubAgentServer::new(connection), cx).await;
+        add_to_workspace(thread_view.clone(), cx);
+
+        let message_editor = cx.read(|cx| thread_view.read(cx).message_editor.clone());
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Can you review this snippet ", window, cx)
+        });
+
+        // Create a simple buffer with some text so we can create a selection
+        // that will then be added to the message being edited.
+        let (workspace, project) = thread_view.read_with(cx, |thread_view, _cx| {
+            (thread_view.workspace.clone(), thread_view.project.clone())
+        });
+        let buffer = project.update(cx, |project, cx| {
+            project.create_local_buffer("let a = 10 + 10;", None, false, cx)
+        });
+
+        workspace
+            .update_in(cx, |workspace, window, cx| {
+                let editor = cx.new(|cx| {
+                    let mut editor =
+                        Editor::for_buffer(buffer.clone(), Some(project.clone()), window, cx);
+
+                    editor.change_selections(Default::default(), window, cx, |selections| {
+                        selections.select_ranges([8..15]);
+                    });
+
+                    editor
+                });
+                workspace.add_item_to_active_pane(Box::new(editor), None, false, window, cx);
+            })
+            .unwrap();
+
+        thread_view.update_in(cx, |thread_view, window, cx| {
+            assert_eq!(thread_view.editing_message, None);
+            thread_view.insert_selections(window, cx);
+        });
+
+        thread_view.read_with(cx, |thread_view, cx| {
+            let text = thread_view.message_editor.read(cx).text(cx);
+            let expected_txt = String::from("Can you review this snippet selection ");
+
+            assert_eq!(text, expected_txt);
+        })
     }
 }

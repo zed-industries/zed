@@ -92,7 +92,10 @@ pub async fn init(crash_init: InitCrashHandler) {
                 #[cfg(target_os = "macos")]
                 suspend_all_other_threads();
 
-                client.ping().unwrap();
+                // on macos this "ping" is needed to ensure that all our
+                // `client.send_message` calls have been processed before we trigger the
+                // minidump request.
+                client.ping().ok();
                 client.request_dump(crash_context).is_ok()
             } else {
                 true

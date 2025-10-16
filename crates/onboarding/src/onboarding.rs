@@ -14,7 +14,7 @@ use serde::Deserialize;
 use settings::{SettingsStore, VsCodeSettingsSource};
 use std::sync::Arc;
 use ui::{
-    KeyBinding, ParentElement as _, StatefulInteractiveElement, Vector, VectorName,
+    Divider, KeyBinding, ParentElement as _, StatefulInteractiveElement, Vector, VectorName,
     WithScrollbar as _, prelude::*, rems_from_px,
 };
 pub use ui_input::font_picker;
@@ -294,44 +294,45 @@ impl Render for Onboarding {
             .child(
                 div()
                     .max_w(Rems(48.0))
-                    .w_full()
-                    .mx_auto()
                     .size_full()
-                    .gap_6()
+                    .mx_auto()
                     .child(
                         v_flex()
-                            .m_auto()
                             .id("page-content")
-                            .gap_6()
+                            .m_auto()
+                            .p_12()
                             .size_full()
                             .max_w_full()
                             .min_w_0()
-                            .p_12()
-                            .border_color(cx.theme().colors().border_variant.opacity(0.5))
+                            .gap_6()
                             .overflow_y_scroll()
                             .child(
                                 h_flex()
                                     .w_full()
                                     .gap_4()
-                                    .child(Vector::square(VectorName::ZedLogo, rems(2.5)))
+                                    .justify_between()
                                     .child(
-                                        v_flex()
+                                        h_flex()
+                                            .gap_4()
+                                            .child(Vector::square(VectorName::ZedLogo, rems(2.5)))
                                             .child(
-                                                Headline::new("Welcome to Zed")
-                                                    .size(HeadlineSize::Small),
-                                            )
-                                            .child(
-                                                Label::new("The editor for what's next")
-                                                    .color(Color::Muted)
-                                                    .size(LabelSize::Small)
-                                                    .italic(),
+                                                v_flex()
+                                                    .child(
+                                                        Headline::new("Welcome to Zed")
+                                                            .size(HeadlineSize::Small),
+                                                    )
+                                                    .child(
+                                                        Label::new("The editor for what's next")
+                                                            .color(Color::Muted)
+                                                            .size(LabelSize::Small)
+                                                            .italic(),
+                                                    ),
                                             ),
                                     )
-                                    .child(div().w_full())
                                     .child({
                                         Button::new("finish_setup", "Finish Setup")
                                             .style(ButtonStyle::Filled)
-                                            .size(ButtonSize::Large)
+                                            .size(ButtonSize::Medium)
                                             .width(Rems(12.0))
                                             .key_binding(
                                                 KeyBinding::for_action_in(
@@ -345,11 +346,9 @@ impl Render for Onboarding {
                                             .on_click(|_, window, cx| {
                                                 window.dispatch_action(Finish.boxed_clone(), cx);
                                             })
-                                    })
-                                    .pb_6()
-                                    .border_b_1()
-                                    .border_color(cx.theme().colors().border_variant.opacity(0.5)),
+                                    }),
                             )
+                            .child(Divider::horizontal().color(ui::DividerColor::BorderVariant))
                             .child(self.render_page(cx))
                             .track_scroll(&self.scroll_handle),
                     )

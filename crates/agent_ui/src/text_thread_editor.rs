@@ -1977,7 +1977,9 @@ impl TextThreadEditor {
             cx.entity().downgrade(),
             IconButton::new("trigger", IconName::Plus)
                 .icon_size(IconSize::Small)
-                .icon_color(Color::Muted),
+                .icon_color(Color::Muted)
+                .selected_icon_color(Color::Accent)
+                .selected_style(ButtonStyle::Filled),
             move |window, cx| {
                 Tooltip::with_meta(
                     "Add Context",
@@ -2052,30 +2054,27 @@ impl TextThreadEditor {
         };
 
         let focus_handle = self.editor().focus_handle(cx);
+        let (color, icon) = if self.language_model_selector_menu_handle.is_deployed() {
+            (Color::Accent, IconName::ChevronUp)
+        } else {
+            (Color::Muted, IconName::ChevronDown)
+        };
 
         PickerPopoverMenu::new(
             self.language_model_selector.clone(),
             ButtonLike::new("active-model")
-                .style(ButtonStyle::Subtle)
+                .selected_style(ButtonStyle::Tinted(TintColor::Accent))
                 .child(
                     h_flex()
                         .gap_0p5()
-                        .child(
-                            Icon::new(provider_icon)
-                                .color(Color::Muted)
-                                .size(IconSize::XSmall),
-                        )
+                        .child(Icon::new(provider_icon).color(color).size(IconSize::XSmall))
                         .child(
                             Label::new(model_name)
-                                .color(Color::Muted)
+                                .color(color)
                                 .size(LabelSize::Small)
                                 .ml_0p5(),
                         )
-                        .child(
-                            Icon::new(IconName::ChevronDown)
-                                .color(Color::Muted)
-                                .size(IconSize::XSmall),
-                        ),
+                        .child(Icon::new(icon).color(color).size(IconSize::XSmall)),
                 ),
             move |window, cx| {
                 Tooltip::for_action_in(
@@ -2086,7 +2085,7 @@ impl TextThreadEditor {
                     cx,
                 )
             },
-            gpui::Corner::BottomLeft,
+            gpui::Corner::BottomRight,
             cx,
         )
         .with_handle(self.language_model_selector_menu_handle.clone())
