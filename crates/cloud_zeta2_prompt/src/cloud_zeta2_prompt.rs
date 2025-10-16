@@ -28,6 +28,9 @@ const MARKED_EXCERPT_INSTRUCTIONS: &str = indoc! {"
     The excerpt to edit will be wrapped in markers <|editable_region_start|> and <|editable_region_end|>. The cursor position is marked with <|user_cursor|>.  Please respond with edited code for that region.
 
     Other code is provided for context, and `…` indicates when code has been skipped.
+
+    # Edit History:
+
 "};
 
 const LABELED_SECTIONS_INSTRUCTIONS: &str = indoc! {r#"
@@ -43,6 +46,9 @@ const LABELED_SECTIONS_INSTRUCTIONS: &str = indoc! {r#"
     for i in 0..16 {
         println!("{i}");
     }
+
+    # Edit History:
+
 "#};
 
 const NUMBERED_LINES_INSTRUCTIONS: &str = indoc! {r#"
@@ -81,8 +87,6 @@ const NUMBERED_LINES_INSTRUCTIONS: &str = indoc! {r#"
     ```
 
     # Edit History:
-
-    The following are the latest edits made by the user, from earlier to later.
 
 "#};
 
@@ -400,7 +404,7 @@ impl<'a> PlannedPrompt<'a> {
                 ),
             ],
             PromptFormat::LabeledSections => vec![(self.request.cursor_point, CURSOR_MARKER)],
-            PromptFormat::NumLines_UniDiff => {
+            PromptFormat::NumLinesUniDiff => {
                 vec![(self.request.cursor_point, CURSOR_MARKER)]
             }
             PromptFormat::OnlySnippets => vec![],
@@ -409,18 +413,21 @@ impl<'a> PlannedPrompt<'a> {
         let mut prompt = match self.request.prompt_format {
             PromptFormat::MarkedExcerpt => MARKED_EXCERPT_INSTRUCTIONS.to_string(),
             PromptFormat::LabeledSections => LABELED_SECTIONS_INSTRUCTIONS.to_string(),
-            PromptFormat::NumLines_UniDiff => NUMBERED_LINES_INSTRUCTIONS.to_string(),
+            PromptFormat::NumLinesUniDiff => NUMBERED_LINES_INSTRUCTIONS.to_string(),
             // only intended for use via zeta_cli
             PromptFormat::OnlySnippets => String::new(),
         };
 
         if self.request.events.is_empty() {
-            prompt.push_str("No edits yet.\n");
+            prompt.push_str("No edits yet.\n\n");
         } else {
+            prompt.push_str(
+                "The following are the latest edits made by the user, from earlier to later.\n\n",
+            );
             Self::push_events(&mut prompt, &self.request.events);
         }
 
-        if self.request.prompt_format == PromptFormat::NumLines_UniDiff {
+        if self.request.prompt_format == PromptFormat::NumLinesUniDiff {
             if self.request.referenced_declarations.is_empty() {
                 prompt.push_str(indoc! {"
                     # File under the cursor:
@@ -450,7 +457,7 @@ impl<'a> PlannedPrompt<'a> {
         let section_labels =
             self.push_file_snippets(&mut prompt, &mut excerpt_file_insertions, file_snippets)?;
 
-        if self.request.prompt_format == PromptFormat::NumLines_UniDiff {
+        if self.request.prompt_format == PromptFormat::NumLinesUniDiff {
             prompt.push_str(UNIFIED_DIFF_REMINDER);
         }
 
@@ -544,7 +551,7 @@ impl<'a> PlannedPrompt<'a> {
                 match self.request.prompt_format {
                     PromptFormat::MarkedExcerpt
                     | PromptFormat::OnlySnippets
-                    | PromptFormat::NumLines_UniDiff => {
+                    | PromptFormat::NumLinesUniDiff => {
                         if range.start.0 > 0 && !skipped_last_snippet {
                             output.push_str("…\n");
                         }
@@ -562,7 +569,7 @@ impl<'a> PlannedPrompt<'a> {
                 }
 
                 let push_full_snippet = |output: &mut String| {
-                    if self.request.prompt_format == PromptFormat::NumLines_UniDiff {
+                    if self.request.prompt_format == PromptFormat::NumLinesUniDiff {
                         for (i, line) in snippet.text.lines().enumerate() {
                             writeln!(output, "{}|{}", i as u32 + range.start.0 + 1, line)?;
                         }
@@ -585,7 +592,7 @@ impl<'a> PlannedPrompt<'a> {
                     } else if !excerpt_file_insertions.is_empty() {
                         let lines = snippet.text.lines().collect::<Vec<_>>();
                         let push_line = |output: &mut String, line_ix: usize| {
-                            if self.request.prompt_format == PromptFormat::NumLines_UniDiff {
+                            if self.request.prompt_format == PromptFormat::NumLinesUniDiff {
                                 write!(output, "{}|", line_ix as u32 + range.start.0 + 1)?;
                             }
                             anyhow::Ok(writeln!(output, "{}", lines[line_ix])?)
@@ -602,8 +609,7 @@ impl<'a> PlannedPrompt<'a> {
                                     push_line(output, line_ix)?;
                                 }
                                 if let Some(next_line) = lines.get(insertion_line_ix) {
-                                    if self.request.prompt_format == PromptFormat::NumLines_UniDiff
-                                    {
+                                    if self.request.prompt_format == PromptFormat::NumLinesUniDiff {
                                         write!(
                                             output,
                                             "{}|",
