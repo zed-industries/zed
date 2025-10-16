@@ -278,7 +278,7 @@ pub struct AcpThreadView {
     thread_feedback: ThreadFeedbackState,
     list_state: ListState,
     auth_task: Option<Task<()>>,
-    collapsed_tool_calls: HashSet<acp::ToolCallId>,
+    expanded_tool_calls: HashSet<acp::ToolCallId>,
     expanded_thinking_blocks: HashSet<(usize, usize)>,
     edits_expanded: bool,
     plan_expanded: bool,
@@ -425,7 +425,7 @@ impl AcpThreadView {
             thread_error: None,
             thread_feedback: Default::default(),
             auth_task: None,
-            collapsed_tool_calls: HashSet::default(),
+            expanded_tool_calls: HashSet::default(),
             expanded_thinking_blocks: HashSet::default(),
             editing_message: None,
             edits_expanded: false,
@@ -962,17 +962,17 @@ impl AcpThreadView {
     ) {
         match &event.view_event {
             ViewEvent::NewDiff(tool_call_id) => {
-                if !AgentSettings::get_global(cx).expand_edit_card {
-                    self.collapsed_tool_calls.insert(tool_call_id.clone());
+                if AgentSettings::get_global(cx).expand_edit_card {
+                    self.expanded_tool_calls.insert(tool_call_id.clone());
                 }
             }
             ViewEvent::NewTerminal(tool_call_id) => {
-                if !AgentSettings::get_global(cx).expand_terminal_card {
-                    self.collapsed_tool_calls.insert(tool_call_id.clone());
+                if AgentSettings::get_global(cx).expand_terminal_card {
+                    self.expanded_tool_calls.insert(tool_call_id.clone());
                 }
             }
             ViewEvent::TerminalMovedToBackground(tool_call_id) => {
-                self.collapsed_tool_calls.insert(tool_call_id.clone());
+                self.expanded_tool_calls.remove(tool_call_id);
             }
             ViewEvent::MessageEditorEvent(_editor, MessageEditorEvent::Focus) => {
                 if let Some(thread) = self.thread()
@@ -2127,7 +2127,7 @@ impl AcpThreadView {
 
         let is_collapsible = !tool_call.content.is_empty() && !needs_confirmation;
 
-        let is_open = needs_confirmation || !self.collapsed_tool_calls.contains(&tool_call.id);
+        let is_open = needs_confirmation || self.expanded_tool_calls.contains(&tool_call.id);
 
         let tool_output_display =
             if is_open {
@@ -2277,9 +2277,9 @@ impl AcpThreadView {
                                                     let id = tool_call.id.clone();
                                                     move |this: &mut Self, _, _, cx: &mut Context<Self>| {
                                                         if is_open {
-                                                            this.collapsed_tool_calls.insert(id.clone());
+                                                            this.expanded_tool_calls.remove(&id);
                                                         } else {
-                                                            this.collapsed_tool_calls.remove(&id);
+                                                            this.expanded_tool_calls.insert(id.clone());
                                                         }
                                                         cx.notify();
                                                     }
@@ -2481,7 +2481,7 @@ impl AcpThreadView {
                         .icon_color(Color::Muted)
                         .on_click(cx.listener({
                             move |this: &mut Self, _, _, cx: &mut Context<Self>| {
-                                this.collapsed_tool_calls.insert(tool_call_id.clone());
+                                this.expanded_tool_calls.remove(&tool_call_id);
                                 cx.notify();
                             }
                         })),
@@ -2759,7 +2759,7 @@ impl AcpThreadView {
             .map(|path| path.display().to_string())
             .unwrap_or_else(|| "current directory".to_string());
 
-        let is_expanded = !self.collapsed_tool_calls.contains(&tool_call.id);
+        let is_expanded = self.expanded_tool_calls.contains(&tool_call.id);
 
         let header = h_flex()
             .id(header_id)
@@ -2894,9 +2894,9 @@ impl AcpThreadView {
                     let id = tool_call.id.clone();
                     move |this, _event, _window, _cx| {
                         if is_expanded {
-                            this.collapsed_tool_calls.insert(id.clone());
+                            this.expanded_tool_calls.remove(&id);
                         } else {
-                            this.collapsed_tool_calls.remove(&id);
+                            this.expanded_tool_calls.insert(id.clone());
                         }
                     }
                 })),
