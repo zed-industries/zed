@@ -161,10 +161,9 @@ pub struct NewNativeAgentThreadFromSummary {
 }
 
 // TODO unify this with AgentType
-#[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
-enum ExternalAgent {
-    #[default]
+pub enum ExternalAgent {
     Gemini,
     ClaudeCode,
     Codex,
@@ -184,13 +183,13 @@ fn placeholder_command() -> AgentServerCommand {
 }
 
 impl ExternalAgent {
-    fn name(&self) -> &'static str {
-        match self {
-            Self::NativeAgent => "zed",
-            Self::Gemini => "gemini-cli",
-            Self::ClaudeCode => "claude-code",
-            Self::Codex => "codex",
-            Self::Custom { .. } => "custom",
+    pub fn parse_built_in(server: &dyn agent_servers::AgentServer) -> Option<Self> {
+        match server.telemetry_id() {
+            "gemini-cli" => Some(Self::Gemini),
+            "claude-code" => Some(Self::ClaudeCode),
+            "codex" => Some(Self::Codex),
+            "zed" => Some(Self::NativeAgent),
+            _ => None,
         }
     }
 

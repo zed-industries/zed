@@ -222,12 +222,11 @@ enum WhichFontSize {
 #[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
 pub enum AgentType {
     #[default]
-    Zed,
+    NativeAgent,
     TextThread,
     Gemini,
     ClaudeCode,
     Codex,
-    NativeAgent,
     Custom {
         name: SharedString,
         command: AgentServerCommand,
@@ -237,8 +236,7 @@ pub enum AgentType {
 impl AgentType {
     fn label(&self) -> SharedString {
         match self {
-            Self::Zed | Self::TextThread => "Zed Agent".into(),
-            Self::NativeAgent => "Agent 2".into(),
+            Self::NativeAgent | Self::TextThread => "Zed Agent".into(),
             Self::Gemini => "Gemini CLI".into(),
             Self::ClaudeCode => "Claude Code".into(),
             Self::Codex => "Codex".into(),
@@ -248,7 +246,7 @@ impl AgentType {
 
     fn icon(&self) -> Option<IconName> {
         match self {
-            Self::Zed | Self::NativeAgent | Self::TextThread => None,
+            Self::NativeAgent | Self::TextThread => None,
             Self::Gemini => Some(IconName::AiGemini),
             Self::ClaudeCode => Some(IconName::AiClaude),
             Self::Codex => Some(IconName::AiOpenAi),
@@ -813,7 +811,7 @@ impl AgentPanel {
 
         const LAST_USED_EXTERNAL_AGENT_KEY: &str = "agent_panel__last_used_external_agent";
 
-        #[derive(Default, Serialize, Deserialize)]
+        #[derive(Serialize, Deserialize)]
         struct LastUsedExternalAgent {
             agent: crate::ExternalAgent,
         }
@@ -854,17 +852,17 @@ impl AgentPanel {
                         .and_then(|value| {
                             serde_json::from_str::<LastUsedExternalAgent>(&value).log_err()
                         })
-                        .unwrap_or_default()
-                        .agent
+                        .map(|agent| agent.agent)
+                        .unwrap_or(ExternalAgent::NativeAgent)
                     }
                 }
             };
 
-            if !loading {
-                telemetry::event!("Agent Thread Started", agent = ext_agent.name());
-            }
-
             let server = ext_agent.server(fs, history);
+
+            if !loading {
+                telemetry::event!("Agent Thread Started", agent = server.telemetry_id());
+            }
 
             this.update_in(cx, |this, window, cx| {
                 let selected_agent = ext_agent.into();
@@ -1345,15 +1343,6 @@ impl AgentPanel {
         cx: &mut Context<Self>,
     ) {
         match agent {
-            AgentType::Zed => {
-                window.dispatch_action(
-                    NewThread {
-                        from_thread_id: None,
-                    }
-                    .boxed_clone(),
-                    cx,
-                );
-            }
             AgentType::TextThread => {
                 window.dispatch_action(NewTextThread.boxed_clone(), cx);
             }
