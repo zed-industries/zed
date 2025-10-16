@@ -2698,8 +2698,10 @@ impl ProjectPanel {
                             });
 
                             if item_count == 1 {
-                                // open entry if not dir, and only focus if rename is not pending
-                                if !entry.is_dir() {
+                                let should_open_files =
+                                    ProjectPanelSettings::get_global(cx).open_file_on_paste;
+                                // open entry if not dir, setting is enabled, and only focus if rename is not pending
+                                if !entry.is_dir() && should_open_files {
                                     project_panel.open_entry(
                                         entry.id,
                                         disambiguation_range.is_none(),
