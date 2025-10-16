@@ -1067,7 +1067,7 @@ impl SettingsWindow {
                 .windows()
                 .into_iter()
                 .find_map(|window| window.downcast::<SettingsWindow>())
-                && cx.windows().iter().count() == 1
+                && cx.windows().len() == 1
             {
                 cx.update_window(*existing_window, |_, window, _| {
                     window.remove_window();
