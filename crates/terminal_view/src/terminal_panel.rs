@@ -12,8 +12,8 @@ use db::kvp::KEY_VALUE_STORE;
 use futures::{channel::oneshot, future::join_all};
 use gpui::{
     Action, AnyView, App, AsyncApp, AsyncWindowContext, Context, Corner, Entity, EventEmitter,
-    ExternalPaths, FocusHandle, Focusable, IntoElement, ParentElement, Pixels, Render, Styled,
-    Task, WeakEntity, Window, actions,
+    ExternalPaths, FocusHandle, Focusable, IntoElement, Length, ParentElement, Pixels, Render,
+    Styled, Task, WeakEntity, Window, actions,
 };
 use itertools::Itertools;
 use project::{Fs, Project, ProjectEntryId};
@@ -22,8 +22,8 @@ use settings::{Settings, TerminalDockPosition};
 use task::{RevealStrategy, RevealTarget, Shell, ShellBuilder, SpawnInTerminal, TaskId};
 use terminal::{Terminal, terminal_settings::TerminalSettings};
 use ui::{
-    ButtonCommon, Clickable, ContextMenu, FluentBuilder, PopoverMenu, Toggleable, Tooltip,
-    prelude::*,
+    ButtonCommon, ButtonLike, Clickable, ContextMenu, FluentBuilder, PopoverMenu, SplitButton,
+    Toggleable, Tooltip, prelude::*,
 };
 use util::{ResultExt, TryFutureExt};
 use workspace::{
@@ -1308,14 +1308,6 @@ impl Focusable for FailedToSpawnTerminal {
 
 impl Render for FailedToSpawnTerminal {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let make_button = |id, text, action: &'static (dyn Action + 'static)| {
-            Button::new((id, cx.entity_id()), text)
-                .on_click(|_, window, cx| {
-                    window.dispatch_action(action.boxed_clone(), cx);
-                })
-                .style(ButtonStyle::Outlined)
-        };
-
         let error_message = h_flex()
             .justify_center()
             .child(Label::new("Failed to spawn terminal").color(Color::Error));
@@ -1332,24 +1324,24 @@ impl Render for FailedToSpawnTerminal {
                     .max_w_3_4(),
             );
 
-        let settings_ui_button = make_button(
-            "failed-to-spawn-terminal-edit-settings-ui-button",
-            "Edit settings (UI)",
-            &zed_actions::OpenSettings,
+        let popover_menu = self.render_button_popover_menu(
+            (
+                "failed-to-spawn-terminal-settings-button-popover-menu",
+                cx.entity_id(),
+            ),
+            Some(self.focus_handle.clone()),
+            &cx,
+        );
+        let button = SplitButton::new(
+            ButtonLike::new(("failed-to-spawn-terminal-settings-button", cx.entity_id()))
+                .child("Edit settings")
+                .on_click(|_, window, cx| {
+                    window.dispatch_action(zed_actions::OpenSettings.boxed_clone(), cx);
+                }),
+            popover_menu.into_any_element(),
         );
 
-        let settings_json_button = make_button(
-            "failed-to-spawn-terminal-edit-settings-file-button",
-            "Edit settings (JSON)",
-            &zed_actions::OpenSettingsFile,
-        );
-
-        let button_row = h_flex()
-            .w_full()
-            .justify_center()
-            .gap_4()
-            .child(settings_ui_button)
-            .child(settings_json_button);
+        let button = h_flex().child(button).justify_around();
 
         v_flex()
             .track_focus(&self.focus_handle)
@@ -1359,7 +1351,54 @@ impl Render for FailedToSpawnTerminal {
             .gap_4()
             .child(error_message)
             .child(detail_message)
-            .child(button_row)
+            .child(button)
+    }
+}
+
+impl FailedToSpawnTerminal {
+    fn render_button_popover_menu(
+        &self,
+        id: impl Into<ElementId>,
+        keybinding_target: Option<FocusHandle>,
+        cx: &Context<FailedToSpawnTerminal>,
+    ) -> impl IntoElement {
+        PopoverMenu::new(id.into())
+            .trigger(
+                ui::ButtonLike::new_rounded_right((
+                    "failed-to-spawn-terminal-settings-button-popover-menu",
+                    cx.entity_id(),
+                ))
+                .layer(ui::ElevationIndex::ModalSurface)
+                .size(ui::ButtonSize::None)
+                .child(
+                    div()
+                        .px_1()
+                        .child(Icon::new(IconName::ChevronDown).size(IconSize::XSmall)),
+                ),
+            )
+            .when(
+                true, // TODO(cameron): fix this?
+                |this| {
+                    this.menu(move |window, cx| {
+                        Some(ContextMenu::build(window, cx, |context_menu, _, _| {
+                            context_menu
+                                .when_some(keybinding_target.clone(), |el, keybinding_target| {
+                                    el.context(keybinding_target)
+                                })
+                                .action("Open settings", zed_actions::OpenSettings.boxed_clone())
+                                // TODO(cameron): do we need a second `when_some` call?
+                                .when_some(keybinding_target.clone(), |el, keybinding_target| {
+                                    el.context(keybinding_target)
+                                })
+                                .action(
+                                    "Edit settings.json",
+                                    zed_actions::OpenSettingsFile.boxed_clone(),
+                                )
+                        }))
+                    })
+                },
+            )
+            .anchor(Corner::TopRight)
     }
 }
 
