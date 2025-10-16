@@ -1912,13 +1912,17 @@ impl Editor {
                     project::Event::LanguageServerBufferRegistered { buffer_id, .. } => {
                         let buffer_id = *buffer_id;
                         if editor.buffer().read(cx).buffer(buffer_id).is_some() {
-                            editor.register_buffer(buffer_id, cx);
-                            editor.update_lsp_data(Some(buffer_id), window, cx);
-                            editor
-                                .refresh_inlay_hints(InlayHintRefreshReason::RefreshRequested, cx);
-                            refresh_linked_ranges(editor, window, cx);
-                            editor.refresh_code_actions(window, cx);
-                            editor.refresh_document_highlights(cx);
+                            let registered = editor.register_buffer(buffer_id, cx);
+                            if registered {
+                                editor.update_lsp_data(Some(buffer_id), window, cx);
+                                editor.refresh_inlay_hints(
+                                    InlayHintRefreshReason::RefreshRequested,
+                                    cx,
+                                );
+                                refresh_linked_ranges(editor, window, cx);
+                                editor.refresh_code_actions(window, cx);
+                                editor.refresh_document_highlights(cx);
+                            }
                         }
                     }
 
@@ -22021,21 +22025,24 @@ impl Editor {
         }
     }
 
-    fn register_buffer(&mut self, buffer_id: BufferId, cx: &mut Context<Self>) {
+    fn register_buffer(&mut self, buffer_id: BufferId, cx: &mut Context<Self>) -> bool {
         if !self.registered_buffers.contains_key(&buffer_id)
             && let Some(project) = self.project.as_ref()
         {
-            let Some(buffer) = self.buffer.read(cx).buffer(buffer_id) else {
+            if let Some(buffer) = self.buffer.read(cx).buffer(buffer_id) {
+                project.update(cx, |project, cx| {
+                    self.registered_buffers.insert(
+                        buffer_id,
+                        project.register_buffer_with_language_servers(&buffer, cx),
+                    );
+                });
+                return true;
+            } else {
                 self.registered_buffers.remove(&buffer_id);
-                return;
-            };
-            project.update(cx, |project, cx| {
-                self.registered_buffers.insert(
-                    buffer_id,
-                    project.register_buffer_with_language_servers(&buffer, cx),
-                );
-            })
+            }
         }
+
+        false
     }
 
     fn ignore_lsp_data(&self) -> bool {
