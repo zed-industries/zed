@@ -829,6 +829,29 @@ impl MinimapVisibility {
     }
 }
 
+/// Controls whether and how an editor's state should be serialized/persisted.
+/// This provides type-safe control over editor persistence behavior.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SerializationMode {
+    /// Editor state should be serialized and persisted across sessions.
+    /// This includes dirty buffer contents, selections, folds, etc.
+    Enabled,
+    /// Editor state should not be serialized.
+    /// Used for transient editors like bundled files (keymaps, settings)
+    /// or temporary views that shouldn't be restored on restart.
+    Disabled,
+}
+
+impl SerializationMode {
+    pub fn is_enabled(self) -> bool {
+        matches!(self, SerializationMode::Enabled)
+    }
+
+    pub fn is_disabled(self) -> bool {
+        matches!(self, SerializationMode::Disabled)
+    }
+}
+
 #[derive(Clone, Debug)]
 struct RunnableTasks {
     templates: Vec<(TaskSourceKind, TaskTemplate)>,
@@ -1144,7 +1167,7 @@ pub struct Editor {
     show_git_blame_inline_delay_task: Option<Task<()>>,
     git_blame_inline_enabled: bool,
     render_diff_hunk_controls: RenderDiffHunkControlsFn,
-    serialize_dirty_buffers: bool,
+    serialization_mode: SerializationMode,
     show_selection_menu: Option<bool>,
     blame: Option<Entity<GitBlame>>,
     blame_subscription: Option<Subscription>,
@@ -2206,10 +2229,15 @@ impl Editor {
             git_blame_inline_enabled: full_mode
                 && ProjectSettings::get_global(cx).git.inline_blame.enabled,
             render_diff_hunk_controls: Arc::new(render_diff_hunk_controls),
-            serialize_dirty_buffers: !is_minimap
+            serialization_mode: if !is_minimap
                 && ProjectSettings::get_global(cx)
                     .session
-                    .restore_unsaved_buffers,
+                    .restore_unsaved_buffers
+            {
+                SerializationMode::Enabled
+            } else {
+                SerializationMode::Disabled
+            },
             blame: None,
             blame_subscription: None,
             tasks: BTreeMap::default(),
@@ -2715,19 +2743,11 @@ impl Editor {
         self.workspace.as_ref()?.0.upgrade()
     }
 
-    fn workspace_id(&self, cx: &App) -> Option<WorkspaceId> {
-        let is_zed_file = self
-            .buffer
-            .read(cx)
-            .paths()
-            .next()
-            .map_or(false, |p| p.path().starts_with("zed://"));
-        if is_zed_file {
+    fn workspace_id(&self, _cx: &App) -> Option<WorkspaceId> {
+        if self.serialization_mode.is_disabled() {
             return None;
         }
-        self.serialize_dirty_buffers
-            .then(|| self.workspace.as_ref().and_then(|workspace| workspace.1))
-            .flatten()
+        self.workspace.as_ref().and_then(|workspace| workspace.1)
     }
 
     pub fn title<'a>(&self, cx: &'a App) -> Cow<'a, str> {
@@ -2992,8 +3012,12 @@ impl Editor {
         self.auto_replace_emoji_shortcode = auto_replace;
     }
 
-    pub fn set_serialize_dirty_buffers(&mut self, serialize: bool) {
-        self.serialize_dirty_buffers = serialize;
+    pub fn set_serialization_mode(&mut self, mode: SerializationMode) {
+        self.serialization_mode = mode;
+    }
+
+    pub fn snippet_stack_depth(&self) -> usize {
+        self.snippet_stack.len()
     }
 
     pub fn toggle_edit_predictions(
@@ -3221,8 +3245,7 @@ impl Editor {
                 data.selections = inmemory_selections;
             });
 
-            if WorkspaceSettings::get(None, cx).restore_on_startup
-                != RestoreOnStartupBehavior::None
+            if WorkspaceSettings::get(None, cx).restore_on_startup != RestoreOnStartupBehavior::None
                 && let Some(workspace_id) = self.workspace_id(cx)
             {
                 let snapshot = self.buffer().read(cx).snapshot(cx);
@@ -20927,8 +20950,12 @@ impl Editor {
         }
 
         let project_settings = ProjectSettings::get_global(cx);
-        self.serialize_dirty_buffers =
-            !self.mode.is_minimap() && project_settings.session.restore_unsaved_buffers;
+        self.serialization_mode =
+            if !self.mode.is_minimap() && project_settings.session.restore_unsaved_buffers {
+                SerializationMode::Enabled
+            } else {
+                SerializationMode::Disabled
+            };
 
         if self.mode.is_full() {
             let show_inline_diagnostics = project_settings.diagnostics.inline.enabled;

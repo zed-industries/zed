@@ -1261,16 +1261,21 @@ impl SerializableItem for Editor {
         if self.mode.is_minimap() {
             return None;
         }
-        let mut serialize_dirty_buffers = self.serialize_dirty_buffers;
+        // Check if serialization is disabled for this editor
+        if self.serialization_mode.is_disabled() {
+            return None;
+        }
+
+        let mut should_serialize_dirty = self.serialization_mode.is_enabled();
 
         let project = self.project.clone()?;
         if project.read(cx).visible_worktrees(cx).next().is_none() {
             // If we don't have a worktree, we don't serialize, because
             // projects without worktrees aren't deserialized.
-            serialize_dirty_buffers = false;
+            should_serialize_dirty = false;
         }
 
-        if closing && !serialize_dirty_buffers {
+        if closing && !should_serialize_dirty {
             return None;
         }
 
@@ -1302,7 +1307,7 @@ impl SerializableItem for Editor {
 
         Some(cx.spawn_in(window, async move |_this, cx| {
             cx.background_spawn(async move {
-                let (contents, language) = if serialize_dirty_buffers && is_dirty {
+                let (contents, language) = if should_serialize_dirty && is_dirty {
                     let contents = snapshot.text();
                     let language = snapshot.language().map(|lang| lang.name().to_string());
                     (Some(contents), language)
@@ -1329,6 +1334,11 @@ impl SerializableItem for Editor {
     }
 
     fn should_serialize(&self, event: &Self::Event) -> bool {
+        // Don't serialize events if serialization is disabled for this editor
+        if self.serialization_mode.is_disabled() {
+            return false;
+        }
+
         matches!(
             event,
             EditorEvent::Saved | EditorEvent::DirtyChanged | EditorEvent::BufferEdited
