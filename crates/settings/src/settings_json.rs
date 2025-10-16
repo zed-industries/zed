@@ -2618,10 +2618,10 @@ mod tests {
         assert_eq!(infer_json_indent_size(json_8_spaces), 8);
 
         let json_single_line = r#"{"key": "value", "nested": {"inner": "data"}}"#;
-        assert_eq!(infer_json_indent_size(json_single_line), 4);
+        assert_eq!(infer_json_indent_size(json_single_line), 2);
 
         let json_empty = r#"{}"#;
-        assert_eq!(infer_json_indent_size(json_empty), 4);
+        assert_eq!(infer_json_indent_size(json_empty), 2);
 
         let json_array = r#"[
   {
