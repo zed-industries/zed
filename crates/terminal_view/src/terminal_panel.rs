@@ -12,7 +12,7 @@ use db::kvp::KEY_VALUE_STORE;
 use futures::{channel::oneshot, future::join_all};
 use gpui::{
     Action, AnyView, App, AsyncApp, AsyncWindowContext, Context, Corner, Entity, EventEmitter,
-    ExternalPaths, FocusHandle, Focusable, IntoElement, Length, ParentElement, Pixels, Render,
+    ExternalPaths, FocusHandle, Focusable, IntoElement, ParentElement, Pixels, Render,
     Styled, Task, WeakEntity, Window, actions,
 };
 use itertools::Itertools;
@@ -1334,7 +1334,7 @@ impl Render for FailedToSpawnTerminal {
         );
         let button = SplitButton::new(
             ButtonLike::new(("failed-to-spawn-terminal-settings-button", cx.entity_id()))
-                .child("Edit settings")
+                .child(Label::new("Edit settings").size(LabelSize::Small))
                 .on_click(|_, window, cx| {
                     window.dispatch_action(zed_actions::OpenSettings.boxed_clone(), cx);
                 }),
