@@ -122,7 +122,15 @@ impl RegexSearches {
             }
 
             if timed_out() {
-                info!("Timed out processing path hyperlink regexes specified in settings");
+                info!(
+                    concat!(
+                        "Timed out after {}ms processing path hyperlink regexes. ",
+                        "Time out specified in settings: `terminal.path_hyperlink_timeout_ms`"
+                    ),
+                    Instant::now()
+                        .saturating_duration_since(search_start_time)
+                        .as_millis()
+                );
                 break;
             }
         }
