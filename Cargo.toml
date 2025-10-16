@@ -480,10 +480,10 @@ chrono = { version = "0.4", features = ["serde"] }
 ciborium = "0.2"
 circular-buffer = "1.0"
 clap = { version = "4.4", features = ["derive"] }
-cocoa = "0.26"
-cocoa-foundation = "0.2.0"
+cocoa = "=0.26.0"
+cocoa-foundation = "=0.2.0"
 convert_case = "0.8.0"
-core-foundation = "0.10.0"
+core-foundation = "=0.10.0"
 core-foundation-sys = "0.8.6"
 core-video = { version = "0.4.3", features = ["metal"] }
 cpal = "0.16"
@@ -546,7 +546,7 @@ nix = "0.29"
 num-format = "0.4.4"
 num-traits = "0.2"
 objc = "0.2"
-objc2-foundation = { version = "0.3", default-features = false, features = [
+objc2-foundation = { version = "=0.3.1", default-features = false, features = [
     "NSArray",
     "NSAttributedString",
     "NSBundle",
