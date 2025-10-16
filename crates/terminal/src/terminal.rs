@@ -67,7 +67,7 @@ use thiserror::Error;
 use gpui::{
     App, AppContext as _, Bounds, ClipboardItem, Context, EventEmitter, Hsla, Keystroke, Modifiers,
     MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, Rgba,
-    ScrollWheelEvent, SharedString, Size, Task, TouchPhase, Window, actions, black, px,
+    ScrollWheelEvent, Size, Task, TouchPhase, Window, actions, black, px,
 };
 
 use crate::mappings::{colors::to_alac_rgb, keys::to_esc_str};
@@ -277,7 +277,7 @@ pub struct TerminalError {
     pub directory: Option<PathBuf>,
     pub program: Option<String>,
     pub args: Option<Vec<String>>,
-    pub title_override: Option<SharedString>,
+    pub title_override: Option<String>,
     pub source: std::io::Error,
 }
 
@@ -452,7 +452,7 @@ impl TerminalBuilder {
                 fn new(
                     program: String,
                     args: Option<Vec<String>>,
-                    title_override: Option<SharedString>,
+                    title_override: Option<String>,
                 ) -> Self {
                     log::debug!("Using {program} as shell");
                     Self {
@@ -493,6 +493,7 @@ impl TerminalBuilder {
                     .log_err()
                     .unwrap_or(params.program.clone())
             });
+            dbg!(&alac_shell);
 
             // Note: when remoting, this shell_kind will scrutinize `ssh` or
             // `wsl.exe` as a shell and fall back to posix or powershell based on
@@ -824,7 +825,7 @@ pub struct Terminal {
     pub last_content: TerminalContent,
     pub selection_head: Option<AlacPoint>,
     pub breadcrumb_text: String,
-    title_override: Option<SharedString>,
+    title_override: Option<String>,
     scroll_px: Pixels,
     next_link_id: usize,
     selection_phase: SelectionPhase,
