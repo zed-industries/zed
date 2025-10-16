@@ -1,7 +1,12 @@
-use crate::{Oid, status::StatusCode};
+use crate::{
+    BuildCommitPermalinkParams, GitHostingProviderRegistry, GitRemote, Oid, SHORT_SHA_LENGTH,
+    parse_git_remote_url, status::StatusCode,
+};
 use anyhow::{Context as _, Result};
 use collections::HashMap;
-use std::path::Path;
+use gpui::SharedString;
+use std::{hash::Hash, path::Path, sync::Arc};
+use time::OffsetDateTime;
 
 pub async fn get_messages(working_directory: &Path, shas: &[Oid]) -> Result<HashMap<Oid, String>> {
     if shas.is_empty() {
@@ -73,6 +78,107 @@ pub fn parse_git_diff_name_status(content: &str) -> impl Iterator<Item = (&str, 
             return Some((path, status));
         }
     })
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct ParsedCommitMessage {
+    pub message: SharedString,
+    pub permalink: Option<url::Url>,
+    pub pull_request: Option<crate::hosting_provider::PullRequest>,
+    pub remote: Option<GitRemote>,
+}
+
+impl ParsedCommitMessage {
+    pub fn new(
+        sha: String,
+        message: String,
+        remote_url: Option<&str>,
+        provider_registry: Option<Arc<GitHostingProviderRegistry>>,
+    ) -> Self {
+        if let Some((hosting_provider, remote)) = provider_registry
+            .and_then(|reg| remote_url.and_then(|url| parse_git_remote_url(reg, url)))
+        {
+            let pull_request = hosting_provider.extract_pull_request(&remote, &message);
+            Self {
+                message: message.into(),
+                permalink: Some(
+                    hosting_provider
+                        .build_commit_permalink(&remote, BuildCommitPermalinkParams { sha: &sha }),
+                ),
+                pull_request,
+                remote: Some(GitRemote {
+                    host: hosting_provider,
+                    owner: remote.owner.into(),
+                    repo: remote.repo.into(),
+                }),
+            }
+        } else {
+            Self::from_message(message)
+        }
+    }
+    pub fn from_message(message: String) -> Self {
+        Self {
+            message: message.into(),
+            ..Default::default()
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct CommitSummary {
+    pub sha: SharedString,
+    pub subject: SharedString,
+    /// This is a unix timestamp
+    pub commit_timestamp: i64,
+    pub author_name: SharedString,
+    pub has_parent: bool,
+}
+
+impl PartialEq for CommitSummary {
+    fn eq(&self, other: &Self) -> bool {
+        self.sha == other.sha
+    }
+}
+impl Eq for CommitSummary {}
+impl Hash for CommitSummary {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.sha.hash(state);
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct CommitDetails {
+    pub sha: SharedString,
+    pub author_name: SharedString,
+    pub author_email: SharedString,
+    pub commit_time: OffsetDateTime,
+    pub message: Option<ParsedCommitMessage>,
+}
+
+impl Default for CommitDetails {
+    fn default() -> Self {
+        Self {
+            sha: Default::default(),
+            author_name: Default::default(),
+            author_email: Default::default(),
+            commit_time: OffsetDateTime::now_utc(),
+            message: Default::default(),
+        }
+    }
+}
+
+impl PartialEq for CommitDetails {
+    fn eq(&self, other: &Self) -> bool {
+        self.sha == other.sha
+    }
+}
+
+impl Eq for CommitDetails {}
+
+impl CommitDetails {
+    pub fn short_sha(&self) -> SharedString {
+        self.sha[..SHORT_SHA_LENGTH].to_string().into()
+    }
 }
 
 #[cfg(test)]
