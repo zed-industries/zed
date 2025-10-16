@@ -111,7 +111,7 @@ impl Into<predict_edits_v3::PromptFormat> for PromptFormat {
             Self::MarkedExcerpt => predict_edits_v3::PromptFormat::MarkedExcerpt,
             Self::LabeledSections => predict_edits_v3::PromptFormat::LabeledSections,
             Self::OnlySnippets => predict_edits_v3::PromptFormat::OnlySnippets,
-            Self::NumberedLines => predict_edits_v3::PromptFormat::NumberedLines,
+            Self::NumberedLines => predict_edits_v3::PromptFormat::NumLines_UniDiff,
         }
     }
 }
