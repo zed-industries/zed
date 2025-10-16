@@ -1164,7 +1164,7 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
             save_intent: Some(SaveIntent::Overwrite),
         }),
         VimCommand::new(("cq", "uit"), zed_actions::Quit),
-        VimCommand::new(("sp", "lit"), workspace::SplitHorizontal).args(|_, args| {
+        VimCommand::new(("sp", "lit"), workspace::SplitHorizontal::default()).args(|_, args| {
             Some(
                 VimSplit {
                     vertical: false,
@@ -1173,7 +1173,7 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
                 .boxed_clone(),
             )
         }),
-        VimCommand::new(("vs", "plit"), workspace::SplitVertical).args(|_, args| {
+        VimCommand::new(("vs", "plit"), workspace::SplitVertical::default()).args(|_, args| {
             Some(
                 VimSplit {
                     vertical: true,

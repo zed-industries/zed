@@ -3964,15 +3964,18 @@ impl Workspace {
                     item: item.boxed_clone(),
                 });
             }
-            pane::Event::Split {
-                direction,
-                clone_active_item,
-            } => {
-                if *clone_active_item {
-                    self.split_and_clone(pane.clone(), *direction, window, cx);
-                } else {
-                    self.split_and_move(pane.clone(), *direction, window, cx);
-                }
+            pane::Event::Split { direction, behavior } => {
+                match behavior {
+                    SplitBehavior::Clone => {
+                        self.split_and_clone(pane.clone(), *direction, window, cx);
+                    }
+                    SplitBehavior::Empty => {
+                        self.split_pane(pane.clone(), *direction, window, cx);
+                    }
+                    SplitBehavior::Move => {
+                        self.split_and_move(pane.clone(), *direction, window, cx);
+                    }
+                };
             }
             pane::Event::JoinIntoNext => {
                 self.join_pane_into_next(pane.clone(), window, cx);
