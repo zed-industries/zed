@@ -1,9 +1,9 @@
 use crash_handler::{CrashEventResult, CrashHandler};
-use log::info;
+use log::{error, info, warn};
 use minidumper::{Client, LoopAction, MinidumpBinary};
 use release_channel::{RELEASE_CHANNEL, ReleaseChannel};
 use serde::{Deserialize, Serialize};
-use smol::process::Command;
+use smol::{lock::Mutex, process::Command};
 
 #[cfg(target_os = "macos")]
 use std::sync::atomic::AtomicU32;
@@ -23,7 +23,7 @@ use std::{
 };
 
 // set once the crash handler has initialized and the client has connected to it
-pub static CRASH_HANDLER: OnceLock<Arc<Client>> = OnceLock::new();
+pub static CRASH_HANDLER: OnceLock<Mutex<Client>> = OnceLock::new();
 // set when the first minidump request is made to avoid generating duplicate crash reports
 pub static REQUESTED_MINIDUMP: AtomicBool = AtomicBool::new(false);
 const CRASH_HANDLER_PING_TIMEOUT: Duration = Duration::from_secs(60);
@@ -49,7 +49,6 @@ pub async fn spawn_sidecar(crash_init: InitCrashHandler) -> Client {
 
     let server_pid = crash_handler.id();
     info!("spawned crash handler process with pid: {server_pid}");
-    server_pid
 
     let mut elapsed = Duration::ZERO;
     let retry_frequency = Duration::from_millis(100);
@@ -98,15 +97,24 @@ pub async fn init(crash_init: InitCrashHandler) {
         }
     }
 
-    let client = Arc::new(spawn_sidecar(crash_init.clone()).await);
+    CRASH_HANDLER
+        .set(Mutex::new(spawn_sidecar(crash_init.clone()).await))
+        .ok();
+
     let handler = CrashHandler::attach(unsafe {
-        let client = client.clone();
         crash_handler::make_crash_event(move |crash_context: &crash_handler::CrashContext| {
             // only request a minidump once
             let res = if REQUESTED_MINIDUMP
                 .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
                 .is_ok()
             {
+                let Some(mutex) = CRASH_HANDLER.get() else {
+                    return false.into();
+                };
+                let Some(client) = mutex.try_lock() else {
+                    return false.into();
+                };
+
                 #[cfg(target_os = "macos")]
                 suspend_all_other_threads();
 
@@ -127,12 +135,20 @@ pub async fn init(crash_init: InitCrashHandler) {
     {
         handler.set_ptracer(Some(server_pid));
     }
-    CRASH_HANDLER.set(client.clone()).ok();
     std::mem::forget(handler);
     info!("crash handler registered");
 
+    // This loop keeps the crash handler process alive by repeatedly messaging it, if the
+    // ping ever fails we assume the crash handler has somehow been killed and attempt to
+    // restart it.
     loop {
-        client.ping().ok();
+        if let Some(client) = CRASH_HANDLER.get() {
+            let mut client = client.lock().await;
+            if client.ping().is_err() {
+                warn!("failed to ping crash handler process, relaunching it now.");
+                *client = spawn_sidecar(crash_init.clone()).await;
+            }
+        }
         smol::Timer::after(Duration::from_secs(10)).await;
     }
 }
@@ -226,7 +242,7 @@ impl minidumper::ServerHandler for CrashServer {
         let gpus = match system_specs::read_gpu_info_from_sys_class_drm() {
             Ok(gpus) => gpus,
             Err(err) => {
-                log::warn!("Failed to collect GPU information for crash report: {err}");
+                warn!("Failed to collect GPU information for crash report: {err}");
                 vec![]
             }
         };
@@ -311,14 +327,14 @@ pub fn panic_hook(info: &PanicHookInfo) {
     // if it's still not there just write panic info and no minidump
     let retry_frequency = Duration::from_millis(100);
     for _ in 0..5 {
-        if let Some(client) = CRASH_HANDLER.get() {
+        if let Some(client) = CRASH_HANDLER.get().map(|c| c.try_lock()).flatten() {
             client
                 .send_message(
                     2,
                     serde_json::to_vec(&CrashPanic { message, span }).unwrap(),
                 )
                 .ok();
-            log::error!("triggering a crash to generate a minidump...");
+            error!("triggering a crash to generate a minidump...");
 
             #[cfg(target_os = "macos")]
             PANIC_THREAD_ID.store(
@@ -342,7 +358,7 @@ pub fn panic_hook(info: &PanicHookInfo) {
 
 pub fn crash_server(socket: &Path) {
     let Ok(mut server) = minidumper::Server::with_name(socket) else {
-        log::info!("Couldn't create socket, there may already be a running crash server");
+        info!("couldn't create socket, there may already be a running crash server");
         return;
     };
 
