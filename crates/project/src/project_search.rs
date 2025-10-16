@@ -90,11 +90,14 @@ impl Search {
                 let matches_count = AtomicUsize::new(0);
                 let matched_buffer_count = AtomicUsize::new(0);
                 let worker_pool = executor.scoped(|scope| {
-                    let (input_paths_tx, input_paths_rx) = bounded(64);
+                    let (input_paths_tx, input_paths_rx) = unbounded();
                     let (confirm_contents_will_match_tx, confirm_contents_will_match_rx) =
                         bounded(64);
-                    let (sorted_search_results_tx, sorted_search_results_rx) = bounded(64);
-                    for _ in 0..executor.num_cpus() {
+                    let (sorted_search_results_tx, sorted_search_results_rx) = unbounded();
+                    let num_cpus = executor.num_cpus();
+
+                    assert!(num_cpus > 0);
+                    for _ in 0..executor.num_cpus() - 1 {
                         let worker = Worker {
                             query: &query,
                             open_buffers: &open_buffers,
@@ -110,6 +113,7 @@ impl Search {
                         };
                         scope.spawn(worker.run());
                     }
+                    drop(tx);
                     scope.spawn(self.provide_search_paths(
                         &query,
                         input_paths_tx,
@@ -131,13 +135,6 @@ impl Search {
                     cx.clone(),
                 );
                 futures::future::join3(worker_pool, buffer_snapshots, open_buffers).await;
-
-                let limit_reached = matches_count.load(Ordering::Acquire)
-                    > MAX_SEARCH_RESULT_RANGES
-                    || matched_buffer_count.load(Ordering::Acquire) > MAX_SEARCH_RESULT_FILES;
-                if limit_reached {
-                    _ = tx.send(SearchResult::LimitReached).await;
-                }
             })
         });
         SearchResultsHandle {
@@ -282,14 +279,18 @@ impl Worker<'_> {
             // That way, we'll only ever close a next-stage channel when ALL workers do so.
             select_biased! {
                 find_all_matches = find_all_matches.next() => {
+                    if self.publish_matches.is_closed() {
+                        break;
+                    }
                     let Some(matches) = find_all_matches else {
                         self.publish_matches = bounded(1).0;
                         continue;
                     };
                     let result = handler.handle_find_all_matches(matches).await;
                     if let Some(_should_bail) = result {
+
                         self.publish_matches = bounded(1).0;
-                        break;
+                        continue;
                     }
                 },
                 find_first_match = find_first_match.next() => {
