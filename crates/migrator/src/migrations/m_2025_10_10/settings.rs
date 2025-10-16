@@ -1,6 +1,5 @@
 use anyhow::Result;
 use serde_json::Value;
-use settings::merge_from::MergeFrom;
 
 pub fn remove_code_actions_on_format(value: &mut Value) -> Result<()> {
     let defaults =
