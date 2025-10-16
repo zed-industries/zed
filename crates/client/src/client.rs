@@ -21,7 +21,7 @@ use futures::{
     AsyncReadExt, FutureExt, SinkExt, Stream, StreamExt, TryFutureExt as _, TryStreamExt,
     channel::oneshot, future::BoxFuture,
 };
-use gpui::{App, AsyncApp, Entity, Global, Task, WeakEntity, actions};
+use gpui::{App, AsyncApp, Entity, FutureExt as _, Global, Task, Timeout, WeakEntity, actions};
 use http_client::{HttpClient, HttpClientWithUrl, http, read_proxy_from_env};
 use parking_lot::RwLock;
 use postage::watch;
@@ -878,17 +878,30 @@ impl Client {
             credentials = Some(old_credentials);
         }
 
-        if credentials.is_none()
-            && try_provider
-            && let Some(stored_credentials) = self.credentials_provider.read_credentials(cx).await
-        {
-            if self.validate_credentials(&stored_credentials, cx).await? {
-                credentials = Some(stored_credentials);
-            } else {
-                self.credentials_provider
-                    .delete_credentials(cx)
-                    .await
-                    .log_err();
+        let executor = cx.background_executor();
+        if credentials.is_none() && try_provider {
+            match self
+                .credentials_provider
+                .read_credentials(cx)
+                .with_timeout(Duration::from_secs(10), executor)
+                .await
+            {
+                Ok(None) => (),
+                Ok(Some(stored_credentials)) => {
+                    if self.validate_credentials(&stored_credentials, cx).await? {
+                        credentials = Some(stored_credentials);
+                    } else {
+                        self.credentials_provider
+                            .delete_credentials(cx)
+                            .await
+                            .log_err();
+                    }
+                }
+                Err(Timeout) => {
+                    return Err(anyhow!(
+                        "Timed out waiting for credentials from OS, did you unlock the keyring?"
+                    ));
+                }
             }
         }
 
