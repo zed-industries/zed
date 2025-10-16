@@ -50,7 +50,9 @@ You can configure Zed to format code using `eslint --fix` by running the ESLint 
   "languages": {
     "JavaScript": {
       "formatter": {
-        "code_action": "source.fixAll.eslint"
+        "code_actions": {
+          "source.fixAll.eslint": true
+        }
       }
     }
   }
@@ -64,7 +66,9 @@ You can also only execute a single ESLint rule when using `fixAll`:
   "languages": {
     "JavaScript": {
       "formatter": {
-        "code_action": "source.fixAll.eslint"
+        "code_actions": {
+          "source.fixAll.eslint": true
+        }
       }
     }
   },
@@ -93,7 +97,9 @@ the formatter:
   "languages": {
     "JavaScript": {
       "formatter": {
-        "code_action": "source.fixAll.eslint"
+        "code_actions": {
+          "source.fixAll.eslint": true
+        }
       }
     }
   }
