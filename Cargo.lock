@@ -137,62 +137,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "agent"
-version = "0.1.0"
-dependencies = [
- "action_log",
- "agent_settings",
- "anyhow",
- "assistant_context",
- "assistant_tool",
- "assistant_tools",
- "chrono",
- "client",
- "cloud_llm_client",
- "collections",
- "component",
- "context_server",
- "convert_case 0.8.0",
- "fs",
- "futures 0.3.31",
- "git",
- "gpui",
- "heed",
- "http_client",
- "icons",
- "indoc",
- "language",
- "language_model",
- "log",
- "parking_lot",
- "paths",
- "postage",
- "pretty_assertions",
- "project",
- "prompt_store",
- "rand 0.9.1",
- "ref-cast",
- "rope",
- "schemars 1.0.1",
- "serde",
- "serde_json",
- "settings",
- "smol",
- "sqlez",
- "telemetry",
- "text",
- "theme",
- "thiserror 2.0.12",
- "time",
- "util",
- "uuid",
- "workspace",
- "workspace-hack",
- "zed_env_vars",
- "zstd",
-]
-
-[[package]]
 name = "agent-client-protocol"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -215,7 +159,6 @@ version = "0.1.0"
 dependencies = [
  "acp_thread",
  "action_log",
- "agent",
  "agent-client-protocol",
  "agent_servers",
  "agent_settings",
@@ -354,7 +297,6 @@ version = "0.1.0"
 dependencies = [
  "acp_thread",
  "action_log",
- "agent",
  "agent-client-protocol",
  "agent2",
  "agent_servers",
@@ -411,6 +353,7 @@ dependencies = [
  "prompt_store",
  "proto",
  "rand 0.9.1",
+ "ref-cast",
  "release_channel",
  "rope",
  "rules_library",
@@ -5608,63 +5551,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ad9cdb4b747e485a12abb0e6566612956c7a1bafa3bdb8d682c5b6d403589e48"
 dependencies = [
  "num-traits",
-]
-
-[[package]]
-name = "eval"
-version = "0.1.0"
-dependencies = [
- "agent",
- "agent_settings",
- "agent_ui",
- "anyhow",
- "assistant_tool",
- "assistant_tools",
- "async-trait",
- "buffer_diff",
- "chrono",
- "clap",
- "client",
- "cloud_llm_client",
- "collections",
- "debug_adapter_extension",
- "dirs 4.0.0",
- "dotenvy",
- "env_logger 0.11.8",
- "extension",
- "fs",
- "futures 0.3.31",
- "gpui",
- "gpui_tokio",
- "handlebars 4.5.0",
- "language",
- "language_extension",
- "language_model",
- "language_models",
- "languages",
- "markdown",
- "node_runtime",
- "pathdiff",
- "paths",
- "pretty_assertions",
- "project",
- "prompt_store",
- "regex",
- "release_channel",
- "reqwest_client",
- "serde",
- "serde_json",
- "settings",
- "shellexpand 2.1.2",
- "smol",
- "telemetry",
- "terminal_view",
- "toml 0.8.20",
- "unindent",
- "util",
- "uuid",
- "watch",
- "workspace-hack",
 ]
 
 [[package]]
@@ -20219,7 +20105,6 @@ version = "0.209.0"
 dependencies = [
  "acp_tools",
  "activity_indicator",
- "agent",
  "agent_settings",
  "agent_ui",
  "anyhow",

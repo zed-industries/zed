@@ -637,8 +637,8 @@ impl MessageEditor {
         path: PathBuf,
         cx: &mut Context<Self>,
     ) -> Task<Result<Mention>> {
-        let context = self.history_store.update(cx, |text_thread_store, cx| {
-            text_thread_store.load_text_thread(path.as_path().into(), cx)
+        let context = self.history_store.update(cx, |store, cx| {
+            store.load_text_thread(path.as_path().into(), cx)
         });
         cx.spawn(async move |_, cx| {
             let context = context.await?;

@@ -1,4 +1,4 @@
-use crate::{DbThreadMetadata, ThreadsDatabase};
+use crate::{DbThread, DbThreadMetadata, ThreadsDatabase};
 use acp_thread::MentionUri;
 use agent_client_protocol as acp;
 use anyhow::{Context as _, Result, anyhow};
@@ -55,8 +55,13 @@ impl HistoryEntry {
 
     pub fn title(&self) -> &SharedString {
         match self {
-            HistoryEntry::AcpThread(thread) if thread.title.is_empty() => DEFAULT_TITLE,
-            HistoryEntry::AcpThread(thread) => &thread.title,
+            HistoryEntry::AcpThread(thread) => {
+                if thread.title.is_empty() {
+                    DEFAULT_TITLE
+                } else {
+                    &thread.title
+                }
+            }
             HistoryEntry::TextThread(context) => &context.title,
         }
     }
@@ -87,7 +92,7 @@ enum SerializedRecentOpen {
 pub struct HistoryStore {
     threads: Vec<DbThreadMetadata>,
     entries: Vec<HistoryEntry>,
-    context_store: Entity<assistant_context::ContextStore>,
+    text_thread_store: Entity<assistant_context::ContextStore>,
     recently_opened_entries: VecDeque<HistoryEntryId>,
     _subscriptions: Vec<gpui::Subscription>,
     _save_recently_opened_entries_task: Task<()>,
@@ -95,10 +100,11 @@ pub struct HistoryStore {
 
 impl HistoryStore {
     pub fn new(
-        context_store: Entity<assistant_context::ContextStore>,
+        text_thread_store: Entity<assistant_context::ContextStore>,
         cx: &mut Context<Self>,
     ) -> Self {
-        let subscriptions = vec![cx.observe(&context_store, |this, _, cx| this.update_entries(cx))];
+        let subscriptions =
+            vec![cx.observe(&text_thread_store, |this, _, cx| this.update_entries(cx))];
 
         cx.spawn(async move |this, cx| {
             let entries = Self::load_recently_opened_entries(cx).await;
@@ -114,7 +120,7 @@ impl HistoryStore {
         .detach();
 
         Self {
-            context_store,
+            text_thread_store,
             recently_opened_entries: VecDeque::default(),
             threads: Vec::default(),
             entries: Vec::default(),
@@ -125,6 +131,18 @@ impl HistoryStore {
 
     pub fn thread_from_session_id(&self, session_id: &acp::SessionId) -> Option<&DbThreadMetadata> {
         self.threads.iter().find(|thread| &thread.id == session_id)
+    }
+
+    pub fn load_thread(
+        &mut self,
+        id: acp::SessionId,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Option<DbThread>>> {
+        let database_future = ThreadsDatabase::connect(cx);
+        cx.background_spawn(async move {
+            let database = database_future.await.map_err(|err| anyhow!(err))?;
+            database.load_thread(id).await
+        })
     }
 
     pub fn delete_thread(
@@ -145,9 +163,8 @@ impl HistoryStore {
         path: Arc<Path>,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
-        self.context_store.update(cx, |context_store, cx| {
-            context_store.delete_local_context(path, cx)
-        })
+        self.text_thread_store
+            .update(cx, |store, cx| store.delete_local_context(path, cx))
     }
 
     pub fn load_text_thread(
@@ -155,9 +172,8 @@ impl HistoryStore {
         path: Arc<Path>,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<AssistantContext>>> {
-        self.context_store.update(cx, |context_store, cx| {
-            context_store.open_local_context(path, cx)
-        })
+        self.text_thread_store
+            .update(cx, |store, cx| store.open_local_context(path, cx))
     }
 
     pub fn reload(&self, cx: &mut Context<Self>) {
@@ -197,7 +213,7 @@ impl HistoryStore {
         let mut history_entries = Vec::new();
         history_entries.extend(self.threads.iter().cloned().map(HistoryEntry::AcpThread));
         history_entries.extend(
-            self.context_store
+            self.text_thread_store
                 .read(cx)
                 .unordered_contexts()
                 .cloned()
@@ -231,21 +247,21 @@ impl HistoryStore {
                 })
         });
 
-        let context_entries =
-            self.context_store
-                .read(cx)
-                .unordered_contexts()
-                .flat_map(|context| {
-                    self.recently_opened_entries
-                        .iter()
-                        .enumerate()
-                        .flat_map(|(index, entry)| match entry {
-                            HistoryEntryId::TextThread(path) if &context.path == path => {
-                                Some((index, HistoryEntry::TextThread(context.clone())))
-                            }
-                            _ => None,
-                        })
-                });
+        let context_entries = self
+            .text_thread_store
+            .read(cx)
+            .unordered_contexts()
+            .flat_map(|context| {
+                self.recently_opened_entries
+                    .iter()
+                    .enumerate()
+                    .flat_map(|(index, entry)| match entry {
+                        HistoryEntryId::TextThread(path) if &context.path == path => {
+                            Some((index, HistoryEntry::TextThread(context.clone())))
+                        }
+                        _ => None,
+                    })
+            });
 
         thread_entries
             .chain(context_entries)

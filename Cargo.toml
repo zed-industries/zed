@@ -5,7 +5,6 @@ members = [
     "crates/acp_thread",
     "crates/action_log",
     "crates/activity_indicator",
-    "crates/agent",
     "crates/agent2",
     "crates/agent_servers",
     "crates/agent_settings",
@@ -61,7 +60,7 @@ members = [
     "crates/edit_prediction_context",
     "crates/zeta2_tools",
     "crates/editor",
-    "crates/eval",
+    # "crates/eval",
     "crates/explorer_command_injector",
     "crates/extension",
     "crates/extension_api",
@@ -239,7 +238,6 @@ edition = "2024"
 acp_tools = { path = "crates/acp_tools" }
 acp_thread = { path = "crates/acp_thread" }
 action_log = { path = "crates/action_log" }
-agent = { path = "crates/agent" }
 agent2 = { path = "crates/agent2" }
 activity_indicator = { path = "crates/activity_indicator" }
 agent_ui = { path = "crates/agent_ui" }

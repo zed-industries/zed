@@ -4393,7 +4393,7 @@ impl AcpThreadView {
                     if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                         panel.update(cx, |panel, cx| {
                             panel
-                                .open_saved_prompt_editor(path.as_path().into(), window, cx)
+                                .open_saved_text_thread(path.as_path().into(), window, cx)
                                 .detach_and_log_err(cx);
                         });
                     }

@@ -1,16 +1,16 @@
 use std::ops::Range;
 
-use agent::{
-    context::{AgentContextHandle, AgentContextKey},
-    context_store::{ContextStore, ContextStoreEvent},
-};
 use collections::HashMap;
 use editor::display_map::CreaseId;
 use editor::{Addon, AnchorRangeExt, Editor};
 use gpui::{Entity, Subscription};
 use ui::prelude::*;
 
-use crate::context_picker::crease_for_mention;
+use crate::{
+    context::{AgentContextHandle, AgentContextKey},
+    context_picker::crease_for_mention,
+    context_store::{ContextStore, ContextStoreEvent},
+};
 
 /// Stored information that can be used to resurrect a context crease when creating an editor for a past message.
 #[derive(Clone, Debug)]

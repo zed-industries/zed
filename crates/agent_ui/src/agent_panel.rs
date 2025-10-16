@@ -4,7 +4,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use acp_thread::AcpThread;
-use agent2::{DbThreadMetadata, HistoryEntry};
+use agent2::{DbThreadMetadata, HistoryEntry, HistoryStore};
 use db::kvp::{Dismissable, KEY_VALUE_STORE};
 use project::agent_server_store::{
     AgentServerCommand, AllAgentServersSettings, CLAUDE_CODE_NAME, CODEX_NAME, GEMINI_NAME,
@@ -17,6 +17,7 @@ use zed_actions::OpenBrowser;
 use zed_actions::agent::{OpenClaudeCodeOnboardingModal, ReauthenticateAgent};
 
 use crate::acp::{AcpThreadHistory, ThreadHistoryEvent};
+use crate::context_store::ContextStore;
 use crate::ui::{AcpOnboardingModal, ClaudeCodeOnboardingModal};
 use crate::{
     AddContextServer, AgentDiffPane, DeleteRecentlyOpenThread, Follow, InlineAssistant,
@@ -32,16 +33,11 @@ use crate::{
 use crate::{
     ExternalAgent, NewExternalAgentThread, NewNativeAgentThreadFromSummary, placeholder_command,
 };
-use agent::{
-    context_store::ContextStore,
-    thread_store::{TextThreadStore, ThreadStore},
-};
 use agent_settings::AgentSettings;
 use ai_onboarding::AgentPanelOnboarding;
 use anyhow::{Result, anyhow};
 use assistant_context::{AssistantContext, ContextEvent, ContextSummary};
 use assistant_slash_command::SlashCommandWorkingSet;
-use assistant_tool::ToolWorkingSet;
 use client::{UserStore, zed_urls};
 use cloud_llm_client::{Plan, PlanV1, PlanV2, UsageLimit};
 use editor::{Anchor, AnchorRangeExt as _, Editor, EditorEvent, MultiBuffer};
@@ -118,7 +114,7 @@ pub fn init(cx: &mut App) {
                 .register_action(|workspace, _: &NewTextThread, window, cx| {
                     if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                         workspace.focus_panel::<AgentPanel>(window, cx);
-                        panel.update(cx, |panel, cx| panel.new_prompt_editor(window, cx));
+                        panel.update(cx, |panel, cx| panel.new_text_thread(window, cx));
                     }
                 })
                 .register_action(|workspace, action: &NewExternalAgentThread, window, cx| {
@@ -306,7 +302,7 @@ impl ActiveView {
         Self::ExternalAgentThread { thread_view }
     }
 
-    pub fn prompt_editor(
+    pub fn text_thread(
         context_editor: Entity<TextThreadEditor>,
         acp_history_store: Entity<agent2::HistoryStore>,
         language_registry: Arc<LanguageRegistry>,
@@ -414,10 +410,9 @@ pub struct AgentPanel {
     project: Entity<Project>,
     fs: Arc<dyn Fs>,
     language_registry: Arc<LanguageRegistry>,
-    thread_store: Entity<ThreadStore>,
     acp_history: Entity<AcpThreadHistory>,
     history_store: Entity<agent2::HistoryStore>,
-    context_store: Entity<TextThreadStore>,
+    text_thread_store: Entity<assistant_context::ContextStore>,
     prompt_store: Option<Entity<PromptStore>>,
     inline_assist_context_store: Entity<ContextStore>,
     configuration: Option<Entity<AgentConfiguration>>,
@@ -426,8 +421,8 @@ pub struct AgentPanel {
     previous_view: Option<ActiveView>,
     new_thread_menu_handle: PopoverMenuHandle<ContextMenu>,
     agent_panel_menu_handle: PopoverMenuHandle<ContextMenu>,
-    assistant_navigation_menu_handle: PopoverMenuHandle<ContextMenu>,
-    assistant_navigation_menu: Option<Entity<ContextMenu>>,
+    agent_navigation_menu_handle: PopoverMenuHandle<ContextMenu>,
+    agent_navigation_menu: Option<Entity<ContextMenu>>,
     width: Option<Pixels>,
     height: Option<Pixels>,
     zoomed: bool,
@@ -465,23 +460,6 @@ impl AgentPanel {
                 Ok(prompt_store) => prompt_store.await.ok(),
                 Err(_) => None,
             };
-            let tools = cx.new(|_| ToolWorkingSet::default())?;
-            let thread_store =
-                cx.new(|cx| ThreadStore::new(tools.clone(), prompt_store.clone(), cx))?;
-
-            let slash_commands = Arc::new(SlashCommandWorkingSet::default());
-            let context_store = workspace
-                .update(cx, |workspace, cx| {
-                    let project = workspace.project().clone();
-                    assistant_context::ContextStore::new(
-                        project,
-                        prompt_builder.clone(),
-                        slash_commands,
-                        cx,
-                    )
-                })?
-                .await?;
-
             let serialized_panel = if let Some(panel) = cx
                 .background_spawn(async move { KEY_VALUE_STORE.read_kvp(AGENT_PANEL_KEY) })
                 .await
@@ -493,17 +471,22 @@ impl AgentPanel {
                 None
             };
 
-            let panel = workspace.update_in(cx, |workspace, window, cx| {
-                let panel = cx.new(|cx| {
-                    Self::new(
-                        workspace,
-                        thread_store,
-                        context_store,
-                        prompt_store,
-                        window,
+            let slash_commands = Arc::new(SlashCommandWorkingSet::default());
+            let text_thread_store = workspace
+                .update(cx, |workspace, cx| {
+                    let project = workspace.project().clone();
+                    assistant_context::ContextStore::new(
+                        project,
+                        prompt_builder,
+                        slash_commands,
                         cx,
                     )
-                });
+                })?
+                .await?;
+
+            let panel = workspace.update_in(cx, |workspace, window, cx| {
+                let panel =
+                    cx.new(|cx| Self::new(workspace, text_thread_store, prompt_store, window, cx));
 
                 panel.as_mut(cx).loading = true;
                 if let Some(serialized_panel) = serialized_panel {
@@ -530,8 +513,7 @@ impl AgentPanel {
 
     fn new(
         workspace: &Workspace,
-        thread_store: Entity<ThreadStore>,
-        context_store: Entity<TextThreadStore>,
+        text_thread_store: Entity<assistant_context::ContextStore>,
         prompt_store: Option<Entity<PromptStore>>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -545,7 +527,7 @@ impl AgentPanel {
 
         let inline_assist_context_store = cx.new(|_cx| ContextStore::new(project.downgrade()));
 
-        let history_store = cx.new(|cx| agent2::HistoryStore::new(context_store.clone(), cx));
+        let history_store = cx.new(|cx| agent2::HistoryStore::new(text_thread_store.clone(), cx));
         let acp_history = cx.new(|cx| AcpThreadHistory::new(history_store.clone(), window, cx));
         cx.subscribe_in(
             &acp_history,
@@ -561,7 +543,7 @@ impl AgentPanel {
                     );
                 }
                 ThreadHistoryEvent::Open(HistoryEntry::TextThread(thread)) => {
-                    this.open_saved_prompt_editor(thread.path.clone(), window, cx)
+                    this.open_saved_text_thread(thread.path.clone(), window, cx)
                         .detach_and_log_err(cx);
                 }
             },
@@ -580,8 +562,7 @@ impl AgentPanel {
                 cx,
             ),
             DefaultView::TextThread => {
-                let context =
-                    context_store.update(cx, |context_store, cx| context_store.create(cx));
+                let context = text_thread_store.update(cx, |store, cx| store.create(cx));
                 let lsp_adapter_delegate = make_lsp_adapter_delegate(&project.clone(), cx).unwrap();
                 let context_editor = cx.new(|cx| {
                     let mut editor = TextThreadEditor::for_context(
@@ -596,7 +577,7 @@ impl AgentPanel {
                     editor.insert_default_prompt(window, cx);
                     editor
                 });
-                ActiveView::prompt_editor(
+                ActiveView::text_thread(
                     context_editor,
                     history_store.clone(),
                     language_registry.clone(),
@@ -610,7 +591,7 @@ impl AgentPanel {
 
         window.defer(cx, move |window, cx| {
             let panel = weak_panel.clone();
-            let assistant_navigation_menu =
+            let agent_navigation_menu =
                 ContextMenu::build_persistent(window, cx, move |mut menu, _window, cx| {
                     if let Some(panel) = panel.upgrade() {
                         menu = Self::populate_recently_opened_menu_section(menu, panel, cx);
@@ -624,7 +605,7 @@ impl AgentPanel {
             weak_panel
                 .update(cx, |panel, cx| {
                     cx.subscribe_in(
-                        &assistant_navigation_menu,
+                        &agent_navigation_menu,
                         window,
                         |_, menu, _: &DismissEvent, window, cx| {
                             menu.update(cx, |menu, _| {
@@ -634,7 +615,7 @@ impl AgentPanel {
                         },
                     )
                     .detach();
-                    panel.assistant_navigation_menu = Some(assistant_navigation_menu);
+                    panel.agent_navigation_menu = Some(agent_navigation_menu);
                 })
                 .ok();
         });
@@ -657,8 +638,7 @@ impl AgentPanel {
             project: project.clone(),
             fs: fs.clone(),
             language_registry,
-            thread_store: thread_store.clone(),
-            context_store,
+            text_thread_store,
             prompt_store,
             configuration: None,
             configuration_subscription: None,
@@ -666,8 +646,8 @@ impl AgentPanel {
             previous_view: None,
             new_thread_menu_handle: PopoverMenuHandle::default(),
             agent_panel_menu_handle: PopoverMenuHandle::default(),
-            assistant_navigation_menu_handle: PopoverMenuHandle::default(),
-            assistant_navigation_menu: None,
+            agent_navigation_menu_handle: PopoverMenuHandle::default(),
+            agent_navigation_menu: None,
             width: None,
             height: None,
             zoomed: false,
@@ -702,12 +682,8 @@ impl AgentPanel {
         &self.inline_assist_context_store
     }
 
-    pub(crate) fn thread_store(&self) -> &Entity<ThreadStore> {
-        &self.thread_store
-    }
-
-    pub(crate) fn text_thread_store(&self) -> &Entity<TextThreadStore> {
-        &self.context_store
+    pub(crate) fn thread_store(&self) -> &Entity<HistoryStore> {
+        &self.history_store
     }
 
     fn active_thread_view(&self) -> Option<&Entity<AcpThreadView>> {
@@ -744,11 +720,11 @@ impl AgentPanel {
         );
     }
 
-    fn new_prompt_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn new_text_thread(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         telemetry::event!("Agent Thread Started", agent = "zed-text");
 
         let context = self
-            .context_store
+            .text_thread_store
             .update(cx, |context_store, cx| context_store.create(cx));
         let lsp_adapter_delegate = make_lsp_adapter_delegate(&self.project, cx)
             .log_err()
@@ -774,7 +750,7 @@ impl AgentPanel {
         }
 
         self.set_active_view(
-            ActiveView::prompt_editor(
+            ActiveView::text_thread(
                 context_editor.clone(),
                 self.history_store.clone(),
                 self.language_registry.clone(),
@@ -917,24 +893,24 @@ impl AgentPanel {
         cx.notify();
     }
 
-    pub(crate) fn open_saved_prompt_editor(
+    pub(crate) fn open_saved_text_thread(
         &mut self,
         path: Arc<Path>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let context = self
-            .context_store
-            .update(cx, |store, cx| store.open_local_context(path, cx));
+            .history_store
+            .update(cx, |store, cx| store.load_text_thread(path, cx));
         cx.spawn_in(window, async move |this, cx| {
             let context = context.await?;
             this.update_in(cx, |this, window, cx| {
-                this.open_prompt_editor(context, window, cx);
+                this.open_text_thread(context, window, cx);
             })
         })
     }
 
-    pub(crate) fn open_prompt_editor(
+    pub(crate) fn open_text_thread(
         &mut self,
         context: Entity<AssistantContext>,
         window: &mut Window,
@@ -961,7 +937,7 @@ impl AgentPanel {
         }
 
         self.set_active_view(
-            ActiveView::prompt_editor(
+            ActiveView::text_thread(
                 editor,
                 self.history_store.clone(),
                 self.language_registry.clone(),
@@ -1001,7 +977,7 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.assistant_navigation_menu_handle.toggle(window, cx);
+        self.agent_navigation_menu_handle.toggle(window, cx);
     }
 
     pub fn toggle_options_menu(
@@ -1291,7 +1267,7 @@ impl AgentPanel {
                                     cx,
                                 ),
                                 agent2::HistoryEntry::TextThread(entry) => this
-                                    .open_saved_prompt_editor(entry.path.clone(), window, cx)
+                                    .open_saved_text_thread(entry.path.clone(), window, cx)
                                     .detach_and_log_err(cx),
                             })
                             .ok();
@@ -1332,13 +1308,7 @@ impl AgentPanel {
     ) {
         match agent {
             AgentType::Zed => {
-                window.dispatch_action(
-                    NewThread {
-                        from_thread_id: None,
-                    }
-                    .boxed_clone(),
-                    cx,
-                );
+                window.dispatch_action(NewThread.boxed_clone(), cx);
             }
             AgentType::TextThread => {
                 window.dispatch_action(NewTextThread.boxed_clone(), cx);
@@ -1727,9 +1697,9 @@ impl AgentPanel {
                 },
             )
             .anchor(corner)
-            .with_handle(self.assistant_navigation_menu_handle.clone())
+            .with_handle(self.agent_navigation_menu_handle.clone())
             .menu({
-                let menu = self.assistant_navigation_menu.clone();
+                let menu = self.agent_navigation_menu.clone();
                 move |window, cx| {
                     telemetry::event!("View Thread History Clicked");
 
@@ -2275,7 +2245,7 @@ impl AgentPanel {
         }
     }
 
-    fn render_prompt_editor(
+    fn render_text_thread(
         &self,
         context_editor: &Entity<TextThreadEditor>,
         buffer_search_bar: &Entity<BufferSearchBar>,
@@ -2406,8 +2376,8 @@ impl AgentPanel {
         let mut key_context = KeyContext::new_with_defaults();
         key_context.add("AgentPanel");
         match &self.active_view {
-            ActiveView::ExternalAgentThread { .. } => key_context.add("external_agent_thread"),
-            ActiveView::TextThread { .. } => key_context.add("prompt_editor"),
+            ActiveView::ExternalAgentThread { .. } => key_context.add("acp_thread"),
+            ActiveView::TextThread { .. } => key_context.add("text_thread"),
             ActiveView::History | ActiveView::Configuration => {}
         }
         key_context
@@ -2484,7 +2454,7 @@ impl Render for AgentPanel {
                                 this
                             }
                         })
-                        .child(self.render_prompt_editor(
+                        .child(self.render_text_thread(
                             context_editor,
                             buffer_search_bar,
                             window,
@@ -2535,7 +2505,6 @@ impl rules_library::InlineAssistDelegate for PromptLibraryInlineAssist {
             };
             let prompt_store = None;
             let thread_store = None;
-            let text_thread_store = None;
             let context_store = cx.new(|_| ContextStore::new(project.clone()));
             assistant.assist(
                 prompt_editor,
@@ -2544,7 +2513,6 @@ impl rules_library::InlineAssistDelegate for PromptLibraryInlineAssist {
                 project,
                 prompt_store,
                 thread_store,
-                text_thread_store,
                 initial_prompt,
                 window,
                 cx,
@@ -2587,7 +2555,7 @@ impl AgentPanelDelegate for ConcreteAssistantPanelDelegate {
         };
 
         panel.update(cx, |panel, cx| {
-            panel.open_saved_prompt_editor(path, window, cx)
+            panel.open_saved_text_thread(path, window, cx)
         })
     }
 

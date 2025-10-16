@@ -23,11 +23,8 @@ pub struct AcpThreadHistory {
     hovered_index: Option<usize>,
     search_editor: Entity<Editor>,
     search_query: SharedString,
-
     visible_items: Vec<ListItemType>,
-
     local_timezone: UtcOffset,
-
     _update_task: Task<()>,
     _subscriptions: Vec<gpui::Subscription>,
 }
@@ -642,7 +639,7 @@ impl RenderOnce for AcpHistoryEntryElement {
                                 if let Some(panel) = workspace.read(cx).panel::<AgentPanel>(cx) {
                                     panel.update(cx, |panel, cx| {
                                         panel
-                                            .open_saved_prompt_editor(
+                                            .open_saved_text_thread(
                                                 context.path.clone(),
                                                 window,
                                                 cx,

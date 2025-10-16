@@ -1,7 +1,7 @@
-use crate::inline_prompt_editor::CodegenStatus;
-use agent::{
-    ContextStore,
+use crate::{
     context::{ContextLoadResult, load_context},
+    context_store::ContextStore,
+    inline_prompt_editor::CodegenStatus,
 };
 use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result};

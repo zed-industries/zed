@@ -1,13 +1,13 @@
-use crate::inline_prompt_editor::{
-    CodegenStatus, PromptEditor, PromptEditorEvent, TerminalInlineAssistId,
-};
-use crate::terminal_codegen::{CLEAR_INPUT, CodegenEvent, TerminalCodegen};
-use agent::{
+use crate::{
     context::load_context,
     context_store::ContextStore,
-    thread_store::{TextThreadStore, ThreadStore},
+    inline_prompt_editor::{
+        CodegenStatus, PromptEditor, PromptEditorEvent, TerminalInlineAssistId,
+    },
+    terminal_codegen::{CLEAR_INPUT, CodegenEvent, TerminalCodegen},
 };
 use agent_settings::AgentSettings;
+use agent2::HistoryStore;
 use anyhow::{Context as _, Result};
 use client::telemetry::Telemetry;
 use cloud_llm_client::CompletionIntent;
@@ -74,8 +74,7 @@ impl TerminalInlineAssistant {
         workspace: WeakEntity<Workspace>,
         project: WeakEntity<Project>,
         prompt_store: Option<Entity<PromptStore>>,
-        thread_store: Option<WeakEntity<ThreadStore>>,
-        text_thread_store: Option<WeakEntity<TextThreadStore>>,
+        thread_store: Option<WeakEntity<HistoryStore>>,
         initial_prompt: Option<String>,
         window: &mut Window,
         cx: &mut App,
@@ -101,7 +100,7 @@ impl TerminalInlineAssistant {
                 context_store.clone(),
                 workspace.clone(),
                 thread_store.clone(),
-                text_thread_store.clone(),
+                prompt_store.as_ref().map(|s| s.downgrade()),
                 window,
                 cx,
             )

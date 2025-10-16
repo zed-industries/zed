@@ -4,8 +4,10 @@ mod agent_diff;
 mod agent_model_selector;
 mod agent_panel;
 mod buffer_codegen;
+mod context;
 mod context_picker;
 mod context_server_configuration;
+mod context_store;
 mod context_strip;
 mod inline_assistant;
 mod inline_prompt_editor;
@@ -22,7 +24,6 @@ mod ui;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use agent::ThreadId;
 use agent_settings::{AgentProfileId, AgentSettings};
 use assistant_slash_command::SlashCommandRegistry;
 use client::Client;
@@ -139,10 +140,7 @@ pub struct QuoteSelection;
 #[derive(Default, Clone, PartialEq, Deserialize, JsonSchema, Action)]
 #[action(namespace = agent)]
 #[serde(deny_unknown_fields)]
-pub struct NewThread {
-    #[serde(default)]
-    from_thread_id: Option<ThreadId>,
-}
+pub struct NewThread;
 
 /// Creates a new external agent conversation thread.
 #[derive(Default, Clone, PartialEq, Deserialize, JsonSchema, Action)]
@@ -267,7 +265,6 @@ pub fn init(
         init_language_model_settings(cx);
     }
     assistant_slash_command::init(cx);
-    agent::init(fs.clone(), cx);
     agent_panel::init(cx);
     context_server_configuration::init(language_registry.clone(), fs.clone(), cx);
     TextThreadEditor::init(cx);

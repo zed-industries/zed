@@ -1,6 +1,5 @@
 use crate::{AgentMessage, AgentMessageContent, UserMessage, UserMessageContent};
 use acp_thread::UserMessageId;
-use agent::{DetailedSummaryState, thread_store};
 use agent_client_protocol as acp;
 use agent_settings::{AgentProfileId, CompletionMode};
 use anyhow::{Result, anyhow};
@@ -21,8 +20,8 @@ use ui::{App, SharedString};
 use zed_env_vars::ZED_STATELESS;
 
 pub type DbMessage = crate::Message;
-pub type DbSummary = DetailedSummaryState;
-pub type DbLanguageModel = thread_store::SerializedLanguageModel;
+pub type DbSummary = crate::legacy_thread::DetailedSummaryState;
+pub type DbLanguageModel = crate::legacy_thread::SerializedLanguageModel;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DbThreadMetadata {
@@ -40,7 +39,7 @@ pub struct DbThread {
     #[serde(default)]
     pub detailed_summary: Option<SharedString>,
     #[serde(default)]
-    pub initial_project_snapshot: Option<Arc<agent::ProjectSnapshot>>,
+    pub initial_project_snapshot: Option<Arc<crate::ProjectSnapshot>>,
     #[serde(default)]
     pub cumulative_token_usage: language_model::TokenUsage,
     #[serde(default)]
@@ -61,13 +60,17 @@ impl DbThread {
         match saved_thread_json.get("version") {
             Some(serde_json::Value::String(version)) => match version.as_str() {
                 Self::VERSION => Ok(serde_json::from_value(saved_thread_json)?),
-                _ => Self::upgrade_from_agent_1(agent::SerializedThread::from_json(json)?),
+                _ => Self::upgrade_from_agent_1(crate::legacy_thread::SerializedThread::from_json(
+                    json,
+                )?),
             },
-            _ => Self::upgrade_from_agent_1(agent::SerializedThread::from_json(json)?),
+            _ => {
+                Self::upgrade_from_agent_1(crate::legacy_thread::SerializedThread::from_json(json)?)
+            }
         }
     }
 
-    fn upgrade_from_agent_1(thread: agent::SerializedThread) -> Result<Self> {
+    fn upgrade_from_agent_1(thread: crate::legacy_thread::SerializedThread) -> Result<Self> {
         let mut messages = Vec::new();
         let mut request_token_usage = HashMap::default();
 
@@ -80,14 +83,19 @@ impl DbThread {
                     // Convert segments to content
                     for segment in msg.segments {
                         match segment {
-                            thread_store::SerializedMessageSegment::Text { text } => {
+                            crate::legacy_thread::SerializedMessageSegment::Text { text } => {
                                 content.push(UserMessageContent::Text(text));
                             }
-                            thread_store::SerializedMessageSegment::Thinking { text, .. } => {
+                            crate::legacy_thread::SerializedMessageSegment::Thinking {
+                                text,
+                                ..
+                            } => {
                                 // User messages don't have thinking segments, but handle gracefully
                                 content.push(UserMessageContent::Text(text));
                             }
-                            thread_store::SerializedMessageSegment::RedactedThinking { .. } => {
+                            crate::legacy_thread::SerializedMessageSegment::RedactedThinking {
+                                ..
+                            } => {
                                 // User messages don't have redacted thinking, skip.
                             }
                         }
@@ -113,16 +121,18 @@ impl DbThread {
                     // Convert segments to content
                     for segment in msg.segments {
                         match segment {
-                            thread_store::SerializedMessageSegment::Text { text } => {
+                            crate::legacy_thread::SerializedMessageSegment::Text { text } => {
                                 content.push(AgentMessageContent::Text(text));
                             }
-                            thread_store::SerializedMessageSegment::Thinking {
+                            crate::legacy_thread::SerializedMessageSegment::Thinking {
                                 text,
                                 signature,
                             } => {
                                 content.push(AgentMessageContent::Thinking { text, signature });
                             }
-                            thread_store::SerializedMessageSegment::RedactedThinking { data } => {
+                            crate::legacy_thread::SerializedMessageSegment::RedactedThinking {
+                                data,
+                            } => {
                                 content.push(AgentMessageContent::RedactedThinking(data));
                             }
                         }
@@ -187,10 +197,9 @@ impl DbThread {
             messages,
             updated_at: thread.updated_at,
             detailed_summary: match thread.detailed_summary_state {
-                DetailedSummaryState::NotGenerated | DetailedSummaryState::Generating { .. } => {
-                    None
-                }
-                DetailedSummaryState::Generated { text, .. } => Some(text),
+                crate::legacy_thread::DetailedSummaryState::NotGenerated
+                | crate::legacy_thread::DetailedSummaryState::Generating => None,
+                crate::legacy_thread::DetailedSummaryState::Generated { text, .. } => Some(text),
             },
             initial_project_snapshot: thread.initial_project_snapshot,
             cumulative_token_usage: thread.cumulative_token_usage,

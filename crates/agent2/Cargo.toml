@@ -18,7 +18,6 @@ workspace = true
 [dependencies]
 acp_thread.workspace = true
 action_log.workspace = true
-agent.workspace = true
 agent-client-protocol.workspace = true
 agent_servers.workspace = true
 agent_settings.workspace = true
@@ -72,7 +71,6 @@ zed_env_vars.workspace = true
 zstd.workspace = true
 
 [dev-dependencies]
-agent = { workspace = true, "features" = ["test-support"] }
 agent_servers = { workspace = true, "features" = ["test-support"] }
 assistant_context = { workspace = true, "features" = ["test-support"] }
 ctor.workspace = true

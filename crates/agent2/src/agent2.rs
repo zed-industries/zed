@@ -1,6 +1,7 @@
 mod agent;
 mod db;
 mod history_store;
+mod legacy_thread;
 mod native_agent_server;
 mod templates;
 mod thread;

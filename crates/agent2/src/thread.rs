@@ -1,12 +1,13 @@
 use crate::{
     ContextServerRegistry, CopyPathTool, CreateDirectoryTool, DbLanguageModel, DbThread,
-    DeletePathTool, DiagnosticsTool, EditFileTool, FetchTool, FindPathTool, GrepTool,
-    ListDirectoryTool, MovePathTool, NowTool, OpenTool, ReadFileTool, SystemPromptTemplate,
-    Template, Templates, TerminalTool, ThinkingTool, WebSearchTool,
+    DeletePathTool, DiagnosticsTool, EditFileTool, FetchTool, FindPathTool, GitState, GrepTool,
+    ListDirectoryTool, MovePathTool, NowTool, OpenTool, ProjectSnapshot, ReadFileTool,
+    SystemPromptTemplate, Template, Templates, TerminalTool, ThinkingTool, WebSearchTool,
+    WorktreeSnapshot,
 };
 use acp_thread::{MentionUri, UserMessageId};
 use action_log::ActionLog;
-use agent::{GitState, ProjectSnapshot, WorktreeSnapshot};
+
 use agent_client_protocol as acp;
 use agent_settings::{
     AgentProfileId, AgentProfileSettings, AgentSettings, CompletionMode,
@@ -875,7 +876,7 @@ impl Thread {
     fn project_snapshot(
         project: Entity<Project>,
         cx: &mut Context<Self>,
-    ) -> Task<Arc<agent::ProjectSnapshot>> {
+    ) -> Task<Arc<ProjectSnapshot>> {
         let git_store = project.read(cx).git_store().clone();
         let worktree_snapshots: Vec<_> = project
             .read(cx)
@@ -897,7 +898,7 @@ impl Thread {
         worktree: Entity<project::Worktree>,
         git_store: Entity<GitStore>,
         cx: &App,
-    ) -> Task<agent::WorktreeSnapshot> {
+    ) -> Task<WorktreeSnapshot> {
         cx.spawn(async move |cx| {
             // Get worktree path and snapshot
             let worktree_info = cx.update(|app_cx| {

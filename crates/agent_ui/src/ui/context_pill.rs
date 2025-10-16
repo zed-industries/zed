@@ -11,13 +11,13 @@ use project::Project;
 use prompt_store::PromptStore;
 use rope::Point;
 use ui::{IconButtonShape, Tooltip, prelude::*, tooltip_container};
+use util::paths::PathStyle;
 
-use agent::context::{
+use crate::context::{
     AgentContextHandle, ContextId, ContextKind, DirectoryContextHandle, FetchedUrlContext,
     FileContextHandle, ImageContext, ImageStatus, RulesContextHandle, SelectionContextHandle,
-    SymbolContextHandle, TextThreadContextHandle,
+    SymbolContextHandle, TextThreadContextHandle, ThreadContextHandle,
 };
-use util::paths::PathStyle;
 
 #[derive(IntoElement)]
 pub enum ContextPill {
@@ -315,7 +315,7 @@ impl AddedContext {
                 Self::pending_selection(handle, project.path_style(cx), cx)
             }
             AgentContextHandle::FetchedUrl(handle) => Some(Self::fetched_url(handle)),
-            // AgentContextHandle::Thread(handle) => Some(Self::pending_thread(handle, cx)),
+            AgentContextHandle::Thread(handle) => Some(Self::pending_thread(handle, cx)),
             AgentContextHandle::TextThread(handle) => Some(Self::pending_text_thread(handle, cx)),
             AgentContextHandle::Rules(handle) => Self::pending_rules(handle, prompt_store, cx),
             AgentContextHandle::Image(handle) => {
@@ -459,30 +459,30 @@ impl AddedContext {
         }
     }
 
-    // fn pending_thread(handle: ThreadContextHandle, cx: &App) -> AddedContext {
-    //     AddedContext {
-    //         kind: ContextKind::Thread,
-    //         name: handle.title(cx),
-    //         parent: None,
-    //         tooltip: None,
-    //         icon_path: None,
-    //         status: if handle.thread.read(cx).is_generating_detailed_summary() {
-    //             ContextStatus::Loading {
-    //                 message: "Summarizing…".into(),
-    //             }
-    //         } else {
-    //             ContextStatus::Ready
-    //         },
-    //         render_hover: {
-    //             let thread = handle.thread.clone();
-    //             Some(Rc::new(move |_, cx| {
-    //                 let text = thread.read(cx).latest_detailed_summary_or_text();
-    //                 ContextPillHover::new_text(text, cx).into()
-    //             }))
-    //         },
-    //         handle: AgentContextHandle::Thread(handle),
-    //     }
-    // }
+    fn pending_thread(handle: ThreadContextHandle, cx: &App) -> AddedContext {
+        AddedContext {
+            kind: ContextKind::Thread,
+            name: handle.title(cx),
+            parent: None,
+            tooltip: None,
+            icon_path: None,
+            status: if handle.thread.read(cx).is_generating_detailed_summary() {
+                ContextStatus::Loading {
+                    message: "Summarizing…".into(),
+                }
+            } else {
+                ContextStatus::Ready
+            },
+            render_hover: {
+                let thread = handle.thread.clone();
+                Some(Rc::new(move |_, cx| {
+                    let text = thread.read(cx).latest_detailed_summary_or_text();
+                    ContextPillHover::new_text(text, cx).into()
+                }))
+            },
+            handle: AgentContextHandle::Thread(handle),
+        }
+    }
 
     fn pending_text_thread(handle: TextThreadContextHandle, cx: &App) -> AddedContext {
         AddedContext {

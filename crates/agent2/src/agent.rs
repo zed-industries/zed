@@ -7,6 +7,7 @@ use acp_thread::{AcpThread, AgentModelSelector};
 use action_log::ActionLog;
 use agent_client_protocol as acp;
 use anyhow::{Context as _, Result, anyhow};
+use chrono::{DateTime, Utc};
 use collections::{HashSet, IndexMap};
 use fs::Fs;
 use futures::channel::{mpsc, oneshot};
@@ -20,6 +21,7 @@ use project::{Project, ProjectItem, ProjectPath, Worktree};
 use prompt_store::{
     ProjectContext, PromptId, PromptStore, RulesFileContext, UserRulesContext, WorktreeContext,
 };
+use serde::{Deserialize, Serialize};
 use settings::{LanguageModelSelection, update_settings_file};
 use std::any::Any;
 use std::collections::HashMap;
@@ -28,6 +30,26 @@ use std::rc::Rc;
 use std::sync::Arc;
 use util::ResultExt;
 use util::rel_path::RelPath;
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ProjectSnapshot {
+    pub worktree_snapshots: Vec<WorktreeSnapshot>,
+    pub timestamp: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct WorktreeSnapshot {
+    pub worktree_path: String,
+    pub git_state: Option<GitState>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct GitState {
+    pub remote_url: Option<String>,
+    pub head_sha: Option<String>,
+    pub current_branch: Option<String>,
+    pub diff: Option<String>,
+}
 
 const RULES_FILE_NAMES: [&str; 9] = [
     ".rules",

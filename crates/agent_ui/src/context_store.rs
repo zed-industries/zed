@@ -1,11 +1,9 @@
-use crate::{
-    ThreadId,
-    context::{
-        AgentContextHandle, AgentContextKey, ContextId, ContextKind, DirectoryContextHandle,
-        FetchedUrlContext, FileContextHandle, ImageContext, RulesContextHandle,
-        SelectionContextHandle, SymbolContextHandle, TextThreadContextHandle,
-    },
+use crate::context::{
+    AgentContextHandle, AgentContextKey, ContextId, ContextKind, DirectoryContextHandle,
+    FetchedUrlContext, FileContextHandle, ImageContext, RulesContextHandle, SelectionContextHandle,
+    SymbolContextHandle, TextThreadContextHandle, ThreadContextHandle,
 };
+use agent_client_protocol as acp;
 use anyhow::{Context as _, Result, anyhow};
 use assistant_context::AssistantContext;
 use collections::{HashSet, IndexSet};
@@ -30,7 +28,7 @@ pub struct ContextStore {
     project: WeakEntity<Project>,
     next_context_id: ContextId,
     context_set: IndexSet<AgentContextKey>,
-    context_thread_ids: HashSet<ThreadId>,
+    context_thread_ids: HashSet<acp::SessionId>,
     context_text_thread_paths: HashSet<Arc<Path>>,
 }
 
@@ -178,27 +176,27 @@ impl ContextStore {
         (Some(context), included)
     }
 
-    // pub fn add_thread(
-    //     &mut self,
-    //     thread: Entity<Thread>,
-    //     remove_if_exists: bool,
-    //     cx: &mut Context<Self>,
-    // ) -> Option<AgentContextHandle> {
-    //     let context_id = self.next_context_id.post_inc();
-    //     let context = AgentContextHandle::Thread(ThreadContextHandle { thread, context_id });
+    pub fn add_thread(
+        &mut self,
+        thread: Entity<agent2::Thread>,
+        remove_if_exists: bool,
+        cx: &mut Context<Self>,
+    ) -> Option<AgentContextHandle> {
+        let context_id = self.next_context_id.post_inc();
+        let context = AgentContextHandle::Thread(ThreadContextHandle { thread, context_id });
 
-    //     if let Some(existing) = self.context_set.get(AgentContextKey::ref_cast(&context)) {
-    //         if remove_if_exists {
-    //             self.remove_context(&context, cx);
-    //             None
-    //         } else {
-    //             Some(existing.as_ref().clone())
-    //         }
-    //     } else {
-    //         self.insert_context(context.clone(), cx);
-    //         Some(context)
-    //     }
-    // }
+        if let Some(existing) = self.context_set.get(AgentContextKey::ref_cast(&context)) {
+            if remove_if_exists {
+                self.remove_context(&context, cx);
+                None
+            } else {
+                Some(existing.as_ref().clone())
+            }
+        } else {
+            self.insert_context(context.clone(), cx);
+            Some(context)
+        }
+    }
 
     pub fn add_text_thread(
         &mut self,
@@ -411,10 +409,10 @@ impl ContextStore {
             .shift_remove_full(AgentContextKey::ref_cast(context))
         {
             match context {
-                // AgentContextHandle::Thread(thread_context) => {
-                //     self.context_thread_ids
-                //         .remove(thread_context.thread.read(cx).id());
-                // }
+                AgentContextHandle::Thread(thread_context) => {
+                    self.context_thread_ids
+                        .remove(thread_context.thread.read(cx).id());
+                }
                 AgentContextHandle::TextThread(text_thread_context) => {
                     if let Some(path) = text_thread_context.context.read(cx).path() {
                         self.context_text_thread_paths.remove(path);
@@ -485,7 +483,7 @@ impl ContextStore {
         })
     }
 
-    pub fn includes_thread(&self, thread_id: &ThreadId) -> bool {
+    pub fn includes_thread(&self, thread_id: &acp::SessionId) -> bool {
         self.context_thread_ids.contains(thread_id)
     }
 
@@ -518,6 +516,7 @@ impl ContextStore {
                 }
                 AgentContextHandle::Directory(_)
                 | AgentContextHandle::Symbol(_)
+                | AgentContextHandle::Thread(_)
                 | AgentContextHandle::Selection(_)
                 | AgentContextHandle::FetchedUrl(_)
                 | AgentContextHandle::TextThread(_)
@@ -527,7 +526,7 @@ impl ContextStore {
             .collect()
     }
 
-    pub fn thread_ids(&self) -> &HashSet<ThreadId> {
+    pub fn thread_ids(&self) -> &HashSet<acp::SessionId> {
         &self.context_thread_ids
     }
 }
