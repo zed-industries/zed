@@ -2,7 +2,6 @@ use crate::{PlatformDispatcher, TaskLabel};
 use async_task::Runnable;
 use backtrace::Backtrace;
 use collections::{HashMap, HashSet, VecDeque};
-use parking::{Parker, Unparker};
 use parking_lot::Mutex;
 use rand::prelude::*;
 use std::{
@@ -22,8 +21,6 @@ struct TestDispatcherId(usize);
 pub struct TestDispatcher {
     id: TestDispatcherId,
     state: Arc<Mutex<TestDispatcherState>>,
-    parker: Arc<Mutex<Parker>>,
-    unparker: Unparker,
 }
 
 struct TestDispatcherState {
@@ -45,7 +42,6 @@ struct TestDispatcherState {
 
 impl TestDispatcher {
     pub fn new(random: StdRng) -> Self {
-        let (parker, unparker) = parking::pair();
         let state = TestDispatcherState {
             random,
             foreground: HashMap::default(),
@@ -66,8 +62,6 @@ impl TestDispatcher {
         TestDispatcher {
             id: TestDispatcherId(0),
             state: Arc::new(Mutex::new(state)),
-            parker: Arc::new(Mutex::new(parker)),
-            unparker,
         }
     }
 
@@ -251,8 +245,6 @@ impl Clone for TestDispatcher {
         Self {
             id: TestDispatcherId(id),
             state: self.state.clone(),
-            parker: self.parker.clone(),
-            unparker: self.unparker.clone(),
         }
     }
 }
@@ -276,7 +268,6 @@ impl PlatformDispatcher for TestDispatcher {
                 state.background.push(runnable);
             }
         }
-        self.unparker.unpark();
     }
 
     fn dispatch_on_main_thread(&self, runnable: Runnable) {
@@ -286,7 +277,6 @@ impl PlatformDispatcher for TestDispatcher {
             .entry(self.id)
             .or_default()
             .push_back(runnable);
-        self.unparker.unpark();
     }
 
     fn dispatch_after(&self, duration: std::time::Duration, runnable: Runnable) {
@@ -296,14 +286,6 @@ impl PlatformDispatcher for TestDispatcher {
             Ok(ix) | Err(ix) => ix,
         };
         state.delayed.insert(ix, (next_time, runnable));
-    }
-    fn park(&self, _: Option<std::time::Duration>) -> bool {
-        self.parker.lock().park();
-        true
-    }
-
-    fn unparker(&self) -> Unparker {
-        self.unparker.clone()
     }
 
     fn as_test(&self) -> Option<&TestDispatcher> {
