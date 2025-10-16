@@ -4456,6 +4456,7 @@ mod tests {
                     | "workspace::ActivatePane"
                     | "workspace::MoveItemToPane"
                     | "workspace::MoveItemToPaneInDirection"
+                    | "workspace::NewFileSplit"
                     | "workspace::OpenTerminal"
                     | "workspace::SendKeystrokes"
                     | "agent::NewNativeAgentThreadFromSummary"
