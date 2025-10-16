@@ -1,6 +1,6 @@
 use std::{num::NonZero, time::Duration};
 
-use denoise::{Denoiser, DenoiserError};
+use denoise::DenoiserError;
 use log::warn;
 use rodio::{
     ChannelCount, Sample, SampleRate, Source, buffer::SamplesBuffer,
@@ -12,6 +12,7 @@ pub use replayable::{Replay, ReplayDurationTooShort, Replayable};
 
 mod replayable;
 mod resample;
+mod resampling_denoise;
 
 const MAX_CHANNELS: usize = 8;
 
@@ -30,7 +31,7 @@ pub trait RodioExt: Source + Sized {
         duration: Duration,
     ) -> Result<(Replay, Replayable<Self>), ReplayDurationTooShort>;
     fn take_samples(self, n: usize) -> TakeSamples<Self>;
-    fn denoise(self) -> Result<Denoiser<Self>, DenoiserError>;
+    fn denoise(self) -> Result<resampling_denoise::ResamplingDenoiser<Self>, DenoiserError>;
     fn constant_params(
         self,
         channel_count: ChannelCount,
@@ -84,9 +85,8 @@ impl<S: Source> RodioExt for S {
             left_to_take: n,
         }
     }
-    fn denoise(self) -> Result<Denoiser<Self>, DenoiserError> {
-        let res = Denoiser::try_new(self);
-        res
+    fn denoise(self) -> Result<resampling_denoise::ResamplingDenoiser<Self>, DenoiserError> {
+        resampling_denoise::ResamplingDenoiser::new(self)
     }
     fn constant_params(
         self,

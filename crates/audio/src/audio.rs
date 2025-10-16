@@ -40,9 +40,9 @@ use crate::audio_settings::LIVE_SETTINGS;
 // once we are reasonably sure most users have upgraded we will
 // remove the LEGACY parameters.
 //
-// We migrate to 16kHz because it is sufficient for speech and required
+// We migrate to 44100 because if its good for cd's its good enough for us
 // by the denoiser and future Speech to Text layers.
-pub const SAMPLE_RATE: NonZero<u32> = nz!(16000);
+pub const SAMPLE_RATE: NonZero<u32> = nz!(44100);
 pub const CHANNEL_COUNT: NonZero<u16> = nz!(1);
 pub const BUFFER_SIZE: usize = // echo canceller and livekit want 10ms of audio
     (SAMPLE_RATE.get() as usize / 100) * CHANNEL_COUNT.get() as usize;
@@ -214,7 +214,8 @@ impl Audio {
                 agc_source
                     .set_enabled(LIVE_SETTINGS.auto_microphone_volume.load(Ordering::Relaxed));
                 let denoise = agc_source.inner_mut();
-                denoise.set_enabled(LIVE_SETTINGS.denoise.load(Ordering::Relaxed));
+                denoise.set_enabled(LIVE_SETTINGS.denoise.load(Ordering::Relaxed)).unwrap(); // todo make this log?
+                agc_source.set_enabled(LIVE_SETTINGS.denoise.load(Ordering::Relaxed));
             });
 
         let stream = if voip_parts.legacy_audio_compatible {
@@ -239,8 +240,6 @@ impl Audio {
             .prefer_sample_rates([
                 SAMPLE_RATE, // sample rates trivially resamplable to `SAMPLE_RATE`
                 SAMPLE_RATE.saturating_mul(nz!(2)),
-                SAMPLE_RATE.saturating_mul(nz!(3)),
-                SAMPLE_RATE.saturating_mul(nz!(4)),
             ])
             .prefer_channel_counts([nz!(1), nz!(2), nz!(3), nz!(4)])
             .prefer_buffer_sizes(512..)

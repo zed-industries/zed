@@ -28,17 +28,16 @@ fn test_input_pipeline(cx: &mut gpui::TestAppContext) {
     let voip_parts = VoipParts::new(&cx.to_async()).unwrap();
     let input = Audio::input_pipeline(voip_parts, test_signal.clone()).unwrap();
 
-    let pipeline = input
+    let input_pipeline = input
         .take_duration(test_signal_duration)
         .into_samples_buffer();
-    rodio::wav_to_file(test_signal.clone(), "test_signal.wav").unwrap();
-    let expected = test_signal
-        .constant_params(LEGACY_CHANNEL_COUNT, LEGACY_SAMPLE_RATE)
-        .into_samples_buffer();
     // expected says its 48khz but its 16khz
-    rodio::wav_to_file(expected.clone(), "expected.wav").unwrap();
-    rodio::wav_to_file(pipeline.clone(), "pipeline.wav").unwrap();
-    assert_similar_voice_spectra(expected, pipeline);
+
+    let expected_output =
+        recording_of_davids_voice(input_pipeline.channels(), input_pipeline.sample_rate());
+    rodio::wav_to_file(input_pipeline.clone(), "input_pipeline_output.wav").unwrap();
+    rodio::wav_to_file(expected_output.clone(), "input_pipeline_expect.wav").unwrap();
+    assert_similar_voice_spectra(expected_output, input_pipeline);
 }
 
 #[gpui::test]
@@ -55,17 +54,17 @@ fn test_output_pipeline(cx: &mut gpui::TestAppContext) {
         Audio::play_voip_stream(test_signal.clone(), "test".to_string(), true, cx).unwrap()
     });
 
-    let audio_output = audio_output
+    let output_pipeline = audio_output
         .take_duration(test_signal_duration)
         .into_samples_buffer();
 
     // dont care about the channel count and sample rate, as long as the voice
     // signal matches
-    let expected_output = test_signal
-        .constant_params(audio_output.channels(), audio_output.sample_rate())
-        .into_samples_buffer();
-    // rodio::wav_to_file(audio_output, "audio_pipeline_output.wav").unwrap();
-    assert_similar_voice_spectra(expected_output, audio_output);
+    let expected_output =
+        recording_of_davids_voice(output_pipeline.channels(), output_pipeline.sample_rate());
+    rodio::wav_to_file(output_pipeline.clone(), "output_pipeline_output.wav").unwrap();
+    rodio::wav_to_file(expected_output.clone(), "output_pipeline_expect.wav").unwrap();
+    assert_similar_voice_spectra(expected_output, output_pipeline);
 }
 
 // TODO make a perf variant
@@ -83,17 +82,17 @@ fn test_full_audio_pipeline(cx: &mut gpui::TestAppContext) {
     let input = Audio::input_pipeline(voip_parts, test_signal).unwrap();
     cx.update(|cx| Audio::play_voip_stream(input, "test".to_string(), true, cx).unwrap());
 
-    let audio_output = audio_output
+    let full_pipeline = audio_output
         .take_duration(test_signal_duration)
         .into_samples_buffer();
 
     // dont care about the channel count and sample rate, as long as the voice
     // signal matches
     let expected_output =
-        recording_of_davids_voice(audio_output.channels(), audio_output.sample_rate());
-    rodio::wav_to_file(audio_output.clone(), "audio_output.wav").unwrap();
-    rodio::wav_to_file(audio_output.clone(), "expected_output.wav").unwrap();
-    assert_similar_voice_spectra(expected_output, audio_output);
+        recording_of_davids_voice(full_pipeline.channels(), full_pipeline.sample_rate());
+    rodio::wav_to_file(full_pipeline.clone(), "full_pipeline_output.wav").unwrap();
+    rodio::wav_to_file(expected_output.clone(), "full_pipeline_expected_output.wav").unwrap();
+    assert_similar_voice_spectra(expected_output, full_pipeline);
 }
 
 fn energy_of_spectrum(spectrum: &FrequencySpectrum) -> f32 {
@@ -280,7 +279,7 @@ fn same_ratio_between_harmonics(
 }
 
 fn less_than_10percent_diff((a, b): (f32, f32)) -> bool {
-    dbg!(a,b);
+    dbg!(a, b);
     (a - b).abs() < a.max(b) * 0.1
 }
 

@@ -42,6 +42,10 @@ impl<S: Source> FixedResampler<S> {
         this
     }
 
+    pub fn into_inner(self) -> S {
+        self.input
+    }
+
     fn bootstrap(&mut self) -> Option<()> {
         for _ in 0..self.resampler.input_frames_next() {
             for input_channel in &mut self.input_buffer {

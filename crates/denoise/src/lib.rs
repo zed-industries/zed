@@ -8,8 +8,8 @@ use rodio::{ChannelCount, Sample, SampleRate, Source, nz};
 
 use crate::engine::BLOCK_SHIFT;
 
-const SUPPORTED_SAMPLE_RATE: SampleRate = nz!(16_000);
-const SUPPORTED_CHANNEL_COUNT: ChannelCount = nz!(1);
+pub const SUPPORTED_SAMPLE_RATE: SampleRate = nz!(16_000);
+pub const SUPPORTED_CHANNEL_COUNT: ChannelCount = nz!(1);
 
 pub struct Denoiser<S: Source> {
     inner: S,
@@ -97,6 +97,10 @@ impl<S: Source> Denoiser<S> {
             queued: Queue::new(),
             exhausted: false,
         })
+    }
+
+    pub fn into_inner(self) -> S {
+        self.inner
     }
 
     pub fn set_enabled(&mut self, enabled: bool) {
