@@ -42,7 +42,7 @@ actions!(
         /// Select all matches of a given pattern within the current selection.
         HelixSelectRegex,
         /// Removes all but the one selection that was created last.
-        /// For helix, `Newest` can eventually be `Primary`.
+        /// `Newest` can eventually be `Primary`.
         HelixKeepNewestSelection,
         /// Copies all selections below.
         HelixDuplicateBelow,
