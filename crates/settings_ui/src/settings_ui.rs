@@ -86,7 +86,7 @@ struct FocusFile(pub u32);
 
 struct SettingField<T: 'static> {
     pick: fn(&SettingsContent) -> Option<&T>,
-    pick_mut: fn(&mut SettingsContent) -> &mut Option<T>,
+    write: fn(&mut SettingsContent, Option<T>),
 }
 
 impl<T: 'static> Clone for SettingField<T> {
@@ -99,7 +99,7 @@ impl<T: 'static> Clone for SettingField<T> {
 impl<T: 'static> Copy for SettingField<T> {}
 
 /// Helper for unimplemented settings, used in combination with `SettingField::unimplemented`
-/// to keep the setting around in the UI with valid pick and pick_mut implementations, but don't actually try to render it.
+/// to keep the setting around in the UI with valid pick and write implementations, but don't actually try to render it.
 /// TODO(settings_ui): In non-dev builds (`#[cfg(not(debug_assertions))]`) make this render as edit-in-json
 #[derive(Clone, Copy)]
 struct UnimplementedSettingField;
@@ -116,7 +116,7 @@ impl<T: 'static> SettingField<T> {
     fn unimplemented(self) -> SettingField<UnimplementedSettingField> {
         SettingField {
             pick: |_| Some(&UnimplementedSettingField),
-            pick_mut: |_| unreachable!(),
+            write: |_, _| unreachable!(),
         }
     }
 }
@@ -192,7 +192,7 @@ impl<T: PartialEq + Clone + Send + Sync + 'static> AnySettingField for SettingFi
                 None
             };
             update_settings_file(current_file.clone(), cx, move |settings, _| {
-                *(this.pick_mut)(settings) = value_to_set;
+                (this.write)(settings, value_to_set);
             })
             // todo(settings_ui): Don't log err
             .log_err();
@@ -442,7 +442,7 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::PaneSplitDirectionVertical>(render_dropdown)
         .add_basic_renderer::<settings::DocumentColorsRenderMode>(render_dropdown)
         .add_renderer::<settings::ThemeSelection>(
-            |settings_window, settings_item, settings_field, file, metadata, window, cx| {
+            |_settings_window, _settings_item, settings_field, file, _metadata, _window, cx| {
                 // <settings::ThemeSelection as strum::IntoDiscriminant>::Discriminant
                 let store = SettingsStore::global(cx);
                 // let pick_discriminant = |content: &SettingsContent| -> &Option<usize> {
@@ -525,7 +525,7 @@ pub fn open_settings_editor(
 /// If this is empty the selected page is rendered,
 /// otherwise the last sub page gets rendered.
 ///
-/// Global so that `pick` and `pick_mut` callbacks can access it
+/// Global so that `pick` and `write` callbacks can access it
 /// and use it to dynamically render sub pages (e.g. for language settings)
 static SUB_PAGE_STACK: LazyLock<RwLock<Vec<SubPage>>> = LazyLock::new(|| RwLock::new(Vec::new()));
 
@@ -2750,7 +2750,7 @@ fn render_text_field<T: From<String> + Into<String> + AsRef<str> + Clone>(
         .on_confirm({
             move |new_text, cx| {
                 update_settings_file(file.clone(), cx, move |settings, _cx| {
-                    *(field.pick_mut)(settings) = new_text.map(Into::into);
+                    (field.write)(settings, new_text.map(Into::into));
                 })
                 .log_err(); // todo(settings_ui) don't log err
             }
@@ -2779,7 +2779,7 @@ fn render_toggle_button<B: Into<bool> + From<bool> + Copy>(
             move |state, _window, cx| {
                 let state = *state == ui::ToggleState::Selected;
                 update_settings_file(file.clone(), cx, move |settings, _cx| {
-                    *(field.pick_mut)(settings) = Some(state.into());
+                    (field.write)(settings, Some(state.into()));
                 })
                 .log_err(); // todo(settings_ui) don't log err
             }
@@ -2807,7 +2807,7 @@ fn render_font_picker(
             current_value.clone().into(),
             move |font_name, cx| {
                 update_settings_file(file.clone(), cx, move |settings, _cx| {
-                    *(field.pick_mut)(settings) = Some(font_name.into());
+                    (field.write)(settings, Some(font_name.into()));
                 })
                 .log_err(); // todo(settings_ui) don't log err
             },
@@ -2851,7 +2851,7 @@ fn render_number_field<T: NumberFieldType + Send + Sync>(
             move |value, _window, cx| {
                 let value = *value;
                 update_settings_file(file.clone(), cx, move |settings, _cx| {
-                    *(field.pick_mut)(settings) = Some(value);
+                    (field.write)(settings, Some(value));
                 })
                 .log_err(); // todo(settings_ui) don't log err
             }
@@ -2906,7 +2906,7 @@ where
                             return;
                         }
                         update_settings_file(file.clone(), cx, move |settings, _cx| {
-                            *(field.pick_mut)(settings) = Some(value);
+                            (field.write)(settings, Some(value));
                         })
                         .log_err(); // todo(settings_ui) don't log err
                     },

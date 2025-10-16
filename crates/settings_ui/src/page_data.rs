@@ -20,7 +20,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     description: "Confirm before quitting Zed",
                     field: Box::new(SettingField {
                         pick: |settings_content| settings_content.workspace.confirm_quit.as_ref(),
-                        pick_mut: |settings_content| &mut settings_content.workspace.confirm_quit,
+                        write: |settings_content| &mut settings_content.workspace.confirm_quit,
                     }),
                     metadata: None,
                     files: USER,
@@ -35,7 +35,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .when_closing_with_no_tabs
                                 .as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content.workspace.when_closing_with_no_tabs
                         },
                     }),
@@ -49,7 +49,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         pick: |settings_content| {
                             settings_content.workspace.on_last_window_closed.as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content.workspace.on_last_window_closed
                         },
                     }),
@@ -63,7 +63,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         pick: |settings_content| {
                             settings_content.workspace.use_system_path_prompts.as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content.workspace.use_system_path_prompts
                         },
                     }),
@@ -77,7 +77,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         pick: |settings_content| {
                             settings_content.workspace.use_system_prompts.as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content.workspace.use_system_prompts
                         },
                     }),
@@ -91,7 +91,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         pick: |settings_content| {
                             settings_content.editor.redact_private_values.as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content.editor.redact_private_values
                         },
                     }),
@@ -106,7 +106,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             pick: |settings_content| {
                                 settings_content.project.worktree.private_files.as_ref()
                             },
-                            pick_mut: |settings_content| {
+                            write: |settings_content| {
                                 &mut settings_content.project.worktree.private_files
                             },
                         }
@@ -126,7 +126,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .as_ref()
                                 .and_then(|session| session.restore_unsaved_buffers.as_ref())
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .session
                                 .get_or_insert_default()
@@ -143,7 +143,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         pick: |settings_content| {
                             settings_content.workspace.restore_on_startup.as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content.workspace.restore_on_startup
                         },
                     }),
@@ -161,7 +161,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             pick: |settings_content| {
                                 settings_content.workspace.use_system_prompts.as_ref()
                             },
-                            pick_mut: |settings_content| {
+                            write: |settings_content| {
                                 &mut settings_content.workspace.use_system_prompts
                             },
                         }
@@ -178,7 +178,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             pick: |settings_content| {
                                 settings_content.workspace.use_system_prompts.as_ref()
                             },
-                            pick_mut: |settings_content| {
+                            write: |settings_content| {
                                 &mut settings_content.workspace.use_system_prompts
                             },
                         }
@@ -197,7 +197,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .as_ref()
                                 .and_then(|telemetry| telemetry.diagnostics.as_ref())
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .telemetry
                                 .get_or_insert_default()
@@ -217,7 +217,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .as_ref()
                                 .and_then(|telemetry| telemetry.metrics.as_ref())
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content.telemetry.get_or_insert_default().metrics
                         },
                     }),
@@ -230,7 +230,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     description: "Whether or not to automatically check for updates",
                     field: Box::new(SettingField {
                         pick: |settings_content| settings_content.auto_update.as_ref(),
-                        pick_mut: |settings_content| &mut settings_content.auto_update,
+                        write: |settings_content| &mut settings_content.auto_update,
                     }),
                     metadata: None,
                     files: USER,
@@ -254,7 +254,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                     .as_ref()
                                     .map(|theme| &theme.discriminant())
                             },
-                            pick_mut: |settings_content| todo!(),
+                            write: |settings_content| todo!(),
                         }),
                         metadata: None,
                     },
@@ -275,7 +275,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                                         _ => unreachable!("inactive field")
                                                     }
                                             },
-                                            pick_mut: |settings_content| {
+                                            write: |settings_content| {
                                                 match settings_content
                                                     .theme
                                                     .theme.as_mut() {
@@ -300,7 +300,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     field: Box::new(
                         SettingField {
                             pick: |settings_content| settings_content.theme.icon_theme.as_ref(),
-                            pick_mut: |settings_content| &mut settings_content.theme.icon_theme,
+                            write: |settings_content| &mut settings_content.theme.icon_theme,
                         }
                         .unimplemented(),
                     ),
@@ -312,7 +312,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     description: "Font family for editor text",
                     field: Box::new(SettingField {
                         pick: |settings_content| settings_content.theme.buffer_font_family.as_ref(),
-                        pick_mut: |settings_content| &mut settings_content.theme.buffer_font_family,
+                        write: |settings_content| &mut settings_content.theme.buffer_font_family,
                     }),
                     metadata: None,
                     files: USER,
@@ -322,7 +322,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     description: "Font size for editor text",
                     field: Box::new(SettingField {
                         pick: |settings_content| settings_content.theme.buffer_font_size.as_ref(),
-                        pick_mut: |settings_content| &mut settings_content.theme.buffer_font_size,
+                        write: |settings_content| &mut settings_content.theme.buffer_font_size,
                     }),
                     metadata: None,
                     files: USER,
@@ -332,7 +332,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     description: "Font weight for editor text (100-900)",
                     field: Box::new(SettingField {
                         pick: |settings_content| settings_content.theme.buffer_font_weight.as_ref(),
-                        pick_mut: |settings_content| &mut settings_content.theme.buffer_font_weight,
+                        write: |settings_content| &mut settings_content.theme.buffer_font_weight,
                     }),
                     metadata: None,
                     files: USER,
@@ -347,7 +347,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             pick: |settings_content| {
                                 settings_content.theme.buffer_line_height.as_ref()
                             },
-                            pick_mut: |settings_content| {
+                            write: |settings_content| {
                                 &mut settings_content.theme.buffer_line_height
                             },
                         }
@@ -364,7 +364,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             pick: |settings_content| {
                                 settings_content.theme.buffer_font_features.as_ref()
                             },
-                            pick_mut: |settings_content| {
+                            write: |settings_content| {
                                 &mut settings_content.theme.buffer_font_features
                             },
                         }
@@ -381,7 +381,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             pick: |settings_content| {
                                 settings_content.theme.buffer_font_fallbacks.as_ref()
                             },
-                            pick_mut: |settings_content| {
+                            write: |settings_content| {
                                 &mut settings_content.theme.buffer_font_fallbacks
                             },
                         }
@@ -395,7 +395,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     description: "Font family for UI elements",
                     field: Box::new(SettingField {
                         pick: |settings_content| settings_content.theme.ui_font_family.as_ref(),
-                        pick_mut: |settings_content| &mut settings_content.theme.ui_font_family,
+                        write: |settings_content| &mut settings_content.theme.ui_font_family,
                     }),
                     metadata: None,
                     files: USER,
@@ -405,7 +405,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     description: "Font size for UI elements",
                     field: Box::new(SettingField {
                         pick: |settings_content| settings_content.theme.ui_font_size.as_ref(),
-                        pick_mut: |settings_content| &mut settings_content.theme.ui_font_size,
+                        write: |settings_content| &mut settings_content.theme.ui_font_size,
                     }),
                     metadata: None,
                     files: USER,
@@ -415,7 +415,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     description: "Font weight for UI elements (100-900)",
                     field: Box::new(SettingField {
                         pick: |settings_content| settings_content.theme.ui_font_weight.as_ref(),
-                        pick_mut: |settings_content| &mut settings_content.theme.ui_font_weight,
+                        write: |settings_content| &mut settings_content.theme.ui_font_weight,
                     }),
                     metadata: None,
                     files: USER,
@@ -429,7 +429,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             pick: |settings_content| {
                                 settings_content.theme.ui_font_features.as_ref()
                             },
-                            pick_mut: |settings_content| {
+                            write: |settings_content| {
                                 &mut settings_content.theme.ui_font_features
                             },
                         }
@@ -446,7 +446,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             pick: |settings_content| {
                                 settings_content.theme.ui_font_fallbacks.as_ref()
                             },
-                            pick_mut: |settings_content| {
+                            write: |settings_content| {
                                 &mut settings_content.theme.ui_font_fallbacks
                             },
                         }
@@ -466,7 +466,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .as_ref()
                                 .or(settings_content.theme.ui_font_size.as_ref())
                         },
-                        pick_mut: |settings_content| &mut settings_content.theme.agent_ui_font_size,
+                        write: |settings_content| &mut settings_content.theme.agent_ui_font_size,
                     }),
                     metadata: None,
                     files: USER,
@@ -482,7 +482,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .as_ref()
                                 .or(settings_content.theme.buffer_font_size.as_ref())
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content.theme.agent_buffer_font_size
                         },
                     }),
@@ -497,7 +497,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         pick: |settings_content| {
                             settings_content.editor.multi_cursor_modifier.as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content.editor.multi_cursor_modifier
                         },
                     }),
@@ -509,7 +509,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     description: "Whether the cursor blinks in the editor",
                     field: Box::new(SettingField {
                         pick: |settings_content| settings_content.editor.cursor_blink.as_ref(),
-                        pick_mut: |settings_content| &mut settings_content.editor.cursor_blink,
+                        write: |settings_content| &mut settings_content.editor.cursor_blink,
                     }),
                     metadata: None,
                     files: USER,
@@ -519,7 +519,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     description: "Cursor shape for the editor",
                     field: Box::new(SettingField {
                         pick: |settings_content| settings_content.editor.cursor_shape.as_ref(),
-                        pick_mut: |settings_content| &mut settings_content.editor.cursor_shape,
+                        write: |settings_content| &mut settings_content.editor.cursor_shape,
                     }),
                     metadata: None,
                     files: USER,
@@ -529,7 +529,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     description: "When to hide the mouse cursor",
                     field: Box::new(SettingField {
                         pick: |settings_content| settings_content.editor.hide_mouse.as_ref(),
-                        pick_mut: |settings_content| &mut settings_content.editor.hide_mouse,
+                        write: |settings_content| &mut settings_content.editor.hide_mouse,
                     }),
                     metadata: None,
                     files: USER,
@@ -542,7 +542,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         pick: |settings_content| {
                             settings_content.theme.unnecessary_code_fade.as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content.theme.unnecessary_code_fade
                         },
                     }),
@@ -556,7 +556,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         pick: |settings_content| {
                             settings_content.editor.current_line_highlight.as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content.editor.current_line_highlight
                         },
                     }),
@@ -570,7 +570,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         pick: |settings_content| {
                             settings_content.editor.selection_highlight.as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content.editor.selection_highlight
                         },
                     }),
@@ -582,7 +582,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     description: "Whether the text selection should have rounded corners",
                     field: Box::new(SettingField {
                         pick: |settings_content| settings_content.editor.rounded_selection.as_ref(),
-                        pick_mut: |settings_content| &mut settings_content.editor.rounded_selection,
+                        write: |settings_content| &mut settings_content.editor.rounded_selection,
                     }),
                     metadata: None,
                     files: USER,
@@ -597,7 +597,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .minimum_contrast_for_highlights
                                 .as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content.editor.minimum_contrast_for_highlights
                         },
                     }),
@@ -617,7 +617,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .show_wrap_guides
                                 .as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .project
                                 .all_languages
@@ -642,7 +642,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                     .wrap_guides
                                     .as_ref()
                             },
-                            pick_mut: |settings_content| {
+                            write: |settings_content| {
                                 &mut settings_content.project.all_languages.defaults.wrap_guides
                             },
                         }
@@ -662,7 +662,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     description: "The name of a base set of key bindings to use",
                     field: Box::new(SettingField {
                         pick: |settings_content| settings_content.base_keymap.as_ref(),
-                        pick_mut: |settings_content| &mut settings_content.base_keymap,
+                        write: |settings_content| &mut settings_content.base_keymap,
                     }),
                     metadata: Some(Box::new(SettingsFieldMetadata {
                         should_do_titlecase: Some(false),
@@ -678,7 +678,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     description: "Enable vim modes and key bindings",
                     field: Box::new(SettingField {
                         pick: |settings_content| settings_content.vim_mode.as_ref(),
-                        pick_mut: |settings_content| &mut settings_content.vim_mode,
+                        write: |settings_content| &mut settings_content.vim_mode,
                     }),
                     metadata: None,
                     files: USER,
@@ -688,7 +688,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     description: "Enable helix modes and key bindings",
                     field: Box::new(SettingField {
                         pick: |settings_content| settings_content.helix_mode.as_ref(),
-                        pick_mut: |settings_content| &mut settings_content.helix_mode,
+                        write: |settings_content| &mut settings_content.helix_mode,
                     }),
                     metadata: None,
                     files: USER,
@@ -708,7 +708,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 pick: |settings_content| {
                                     settings_content.workspace.autosave.as_ref()
                                 },
-                                pick_mut: |settings_content| {
+                                write: |settings_content| {
                                     &mut settings_content.workspace.autosave
                                 },
                             }
@@ -725,7 +725,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             pick: |settings_content| {
                                 settings_content.editor.double_click_in_multibuffer.as_ref()
                             },
-                            pick_mut: |settings_content| {
+                            write: |settings_content| {
                                 &mut settings_content.editor.double_click_in_multibuffer
                             },
                         }),
@@ -739,7 +739,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             pick: |settings_content| {
                                 settings_content.editor.expand_excerpt_lines.as_ref()
                             },
-                            pick_mut: |settings_content| {
+                            write: |settings_content| {
                                 &mut settings_content.editor.expand_excerpt_lines
                             },
                         }),
@@ -753,7 +753,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             pick: |settings_content| {
                                 settings_content.editor.excerpt_context_lines.as_ref()
                             },
-                            pick_mut: |settings_content| {
+                            write: |settings_content| {
                                 &mut settings_content.editor.excerpt_context_lines
                             },
                         }),
@@ -772,7 +772,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                         outline_panel.expand_outlines_with_depth.as_ref()
                                     })
                             },
-                            pick_mut: |settings_content| {
+                            write: |settings_content| {
                                 &mut settings_content
                                     .outline_panel
                                     .get_or_insert_default()
@@ -790,7 +790,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             pick: |settings_content| {
                                 settings_content.editor.scroll_beyond_last_line.as_ref()
                             },
-                            pick_mut: |settings_content| {
+                            write: |settings_content| {
                                 &mut settings_content.editor.scroll_beyond_last_line
                             },
                         }),
@@ -804,7 +804,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             pick: |settings_content| {
                                 settings_content.editor.vertical_scroll_margin.as_ref()
                             },
-                            pick_mut: |settings_content| {
+                            write: |settings_content| {
                                 &mut settings_content.editor.vertical_scroll_margin
                             },
                         }),
@@ -818,7 +818,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             pick: |settings_content| {
                                 settings_content.editor.horizontal_scroll_margin.as_ref()
                             },
-                            pick_mut: |settings_content| {
+                            write: |settings_content| {
                                 &mut settings_content.editor.horizontal_scroll_margin
                             },
                         }),
@@ -832,7 +832,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             pick: |settings_content| {
                                 settings_content.editor.scroll_sensitivity.as_ref()
                             },
-                            pick_mut: |settings_content| {
+                            write: |settings_content| {
                                 &mut settings_content.editor.scroll_sensitivity
                             },
                         }),
@@ -846,7 +846,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             pick: |settings_content| {
                                 settings_content.editor.fast_scroll_sensitivity.as_ref()
                             },
-                            pick_mut: |settings_content| {
+                            write: |settings_content| {
                                 &mut settings_content.editor.fast_scroll_sensitivity
                             },
                         }),
@@ -860,7 +860,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             pick: |settings_content| {
                                 settings_content.editor.autoscroll_on_clicks.as_ref()
                             },
-                            pick_mut: |settings_content| {
+                            write: |settings_content| {
                                 &mut settings_content.editor.autoscroll_on_clicks
                             },
                         }),
@@ -875,7 +875,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             pick: |settings_content| {
                                 settings_content.editor.auto_signature_help.as_ref()
                             },
-                            pick_mut: |settings_content| {
+                            write: |settings_content| {
                                 &mut settings_content.editor.auto_signature_help
                             },
                         }),
@@ -892,7 +892,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                     .show_signature_help_after_edits
                                     .as_ref()
                             },
-                            pick_mut: |settings_content| {
+                            write: |settings_content| {
                                 &mut settings_content.editor.show_signature_help_after_edits
                             },
                         }),
@@ -906,7 +906,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             pick: |settings_content| {
                                 settings_content.editor.snippet_sort_order.as_ref()
                             },
-                            pick_mut: |settings_content| {
+                            write: |settings_content| {
                                 &mut settings_content.editor.snippet_sort_order
                             },
                         }),
@@ -921,7 +921,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             pick: |settings_content| {
                                 settings_content.editor.hover_popover_enabled.as_ref()
                             },
-                            pick_mut: |settings_content| {
+                            write: |settings_content| {
                                 &mut settings_content.editor.hover_popover_enabled
                             },
                         }),
@@ -936,7 +936,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             pick: |settings_content| {
                                 settings_content.editor.hover_popover_delay.as_ref()
                             },
-                            pick_mut: |settings_content| {
+                            write: |settings_content| {
                                 &mut settings_content.editor.hover_popover_delay
                             },
                         }),
@@ -955,7 +955,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                     .as_ref()
                                     .and_then(|drag_and_drop| drag_and_drop.enabled.as_ref())
                             },
-                            pick_mut: |settings_content| {
+                            write: |settings_content| {
                                 &mut settings_content
                                     .editor
                                     .drag_and_drop_selection
@@ -977,7 +977,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                     .as_ref()
                                     .and_then(|drag_and_drop| drag_and_drop.delay.as_ref())
                             },
-                            pick_mut: |settings_content| {
+                            write: |settings_content| {
                                 &mut settings_content
                                     .editor
                                     .drag_and_drop_selection
@@ -1000,7 +1000,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                     .as_ref()
                                     .and_then(|gutter| gutter.line_numbers.as_ref())
                             },
-                            pick_mut: |settings_content| {
+                            write: |settings_content| {
                                 &mut settings_content
                                     .editor
                                     .gutter
@@ -1018,7 +1018,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             pick: |settings_content| {
                                 settings_content.editor.relative_line_numbers.as_ref()
                             },
-                            pick_mut: |settings_content| {
+                            write: |settings_content| {
                                 &mut settings_content.editor.relative_line_numbers
                             },
                         }),
@@ -1036,7 +1036,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                     .as_ref()
                                     .and_then(|gutter| gutter.runnables.as_ref())
                             },
-                            pick_mut: |settings_content| {
+                            write: |settings_content| {
                                 &mut settings_content
                                     .editor
                                     .gutter
@@ -1058,7 +1058,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                     .as_ref()
                                     .and_then(|gutter| gutter.breakpoints.as_ref())
                             },
-                            pick_mut: |settings_content| {
+                            write: |settings_content| {
                                 &mut settings_content
                                     .editor
                                     .gutter
@@ -1080,7 +1080,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                     .as_ref()
                                     .and_then(|gutter| gutter.folds.as_ref())
                             },
-                            pick_mut: |settings_content| {
+                            write: |settings_content| {
                                 &mut settings_content.editor.gutter.get_or_insert_default().folds
                             },
                         }),
@@ -1098,7 +1098,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                     .as_ref()
                                     .and_then(|gutter| gutter.min_line_number_digits.as_ref())
                             },
-                            pick_mut: |settings_content| {
+                            write: |settings_content| {
                                 &mut settings_content
                                     .editor
                                     .gutter
@@ -1116,7 +1116,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             pick: |settings_content| {
                                 settings_content.editor.inline_code_actions.as_ref()
                             },
-                            pick_mut: |settings_content| {
+                            write: |settings_content| {
                                 &mut settings_content.editor.inline_code_actions
                             },
                         }),
@@ -1131,7 +1131,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             pick: |settings_content| {
                                 settings_content.editor.scrollbar.as_ref()?.show.as_ref()
                             },
-                            pick_mut: |settings_content| {
+                            write: |settings_content| {
                                 &mut settings_content
                                     .editor
                                     .scrollbar
@@ -1149,7 +1149,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             pick: |settings_content| {
                                 settings_content.editor.scrollbar.as_ref()?.cursors.as_ref()
                             },
-                            pick_mut: |settings_content| {
+                            write: |settings_content| {
                                 &mut settings_content
                                     .editor
                                     .scrollbar
@@ -1172,7 +1172,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                     .git_diff
                                     .as_ref()
                             },
-                            pick_mut: |settings_content| {
+                            write: |settings_content| {
                                 &mut settings_content
                                     .editor
                                     .scrollbar
@@ -1195,7 +1195,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                     .search_results
                                     .as_ref()
                             },
-                            pick_mut: |settings_content| {
+                            write: |settings_content| {
                                 &mut settings_content
                                     .editor
                                     .scrollbar
@@ -1218,7 +1218,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                     .selected_text
                                     .as_ref()
                             },
-                            pick_mut: |settings_content| {
+                            write: |settings_content| {
                                 &mut settings_content
                                     .editor
                                     .scrollbar
@@ -1241,7 +1241,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                     .selected_symbol
                                     .as_ref()
                             },
-                            pick_mut: |settings_content| {
+                            write: |settings_content| {
                                 &mut settings_content
                                     .editor
                                     .scrollbar
@@ -1264,7 +1264,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                     .diagnostics
                                     .as_ref()
                             },
-                            pick_mut: |settings_content| {
+                            write: |settings_content| {
                                 &mut settings_content
                                     .editor
                                     .scrollbar
@@ -1289,7 +1289,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                     .horizontal
                                     .as_ref()
                             },
-                            pick_mut: |settings_content| {
+                            write: |settings_content| {
                                 &mut settings_content
                                     .editor
                                     .scrollbar
@@ -1316,7 +1316,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                     .vertical
                                     .as_ref()
                             },
-                            pick_mut: |settings_content| {
+                            write: |settings_content| {
                                 &mut settings_content
                                     .editor
                                     .scrollbar
@@ -1337,7 +1337,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             pick: |settings_content| {
                                 settings_content.editor.minimap.as_ref()?.show.as_ref()
                             },
-                            pick_mut: |settings_content| {
+                            write: |settings_content| {
                                 &mut settings_content.editor.minimap.get_or_insert_default().show
                             },
                         }),
@@ -1356,7 +1356,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                     .display_in
                                     .as_ref()
                             },
-                            pick_mut: |settings_content| {
+                            write: |settings_content| {
                                 &mut settings_content
                                     .editor
                                     .minimap
@@ -1374,7 +1374,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             pick: |settings_content| {
                                 settings_content.editor.minimap.as_ref()?.thumb.as_ref()
                             },
-                            pick_mut: |settings_content| {
+                            write: |settings_content| {
                                 &mut settings_content
                                     .editor
                                     .minimap
@@ -1397,7 +1397,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                     .thumb_border
                                     .as_ref()
                             },
-                            pick_mut: |settings_content| {
+                            write: |settings_content| {
                                 &mut settings_content
                                     .editor
                                     .minimap
@@ -1420,7 +1420,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                     .and_then(|minimap| minimap.current_line_highlight.as_ref())
                                     .or(settings_content.editor.current_line_highlight.as_ref())
                             },
-                            pick_mut: |settings_content| {
+                            write: |settings_content| {
                                 &mut settings_content
                                     .editor
                                     .minimap
@@ -1443,7 +1443,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                     .max_width_columns
                                     .as_ref()
                             },
-                            pick_mut: |settings_content| {
+                            write: |settings_content| {
                                 &mut settings_content
                                     .editor
                                     .minimap
@@ -1467,7 +1467,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                     .breadcrumbs
                                     .as_ref()
                             },
-                            pick_mut: |settings_content| {
+                            write: |settings_content| {
                                 &mut settings_content
                                     .editor
                                     .toolbar
@@ -1490,7 +1490,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                     .quick_actions
                                     .as_ref()
                             },
-                            pick_mut: |settings_content| {
+                            write: |settings_content| {
                                 &mut settings_content
                                     .editor
                                     .toolbar
@@ -1513,7 +1513,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                     .selections_menu
                                     .as_ref()
                             },
-                            pick_mut: |settings_content| {
+                            write: |settings_content| {
                                 &mut settings_content
                                     .editor
                                     .toolbar
@@ -1536,7 +1536,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                     .agent_review
                                     .as_ref()
                             },
-                            pick_mut: |settings_content| {
+                            write: |settings_content| {
                                 &mut settings_content
                                     .editor
                                     .toolbar
@@ -1559,7 +1559,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                     .code_actions
                                     .as_ref()
                             },
-                            pick_mut: |settings_content| {
+                            write: |settings_content| {
                                 &mut settings_content
                                     .editor
                                     .toolbar
@@ -1590,7 +1590,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 pick: |settings_content| {
                                     settings_content.project.all_languages.file_types.as_ref()
                                 },
-                                pick_mut: |settings_content| {
+                                write: |settings_content| {
                                     &mut settings_content.project.all_languages.file_types
                                 },
                             }
@@ -1608,7 +1608,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         description: "Which level to use to filter out diagnostics displayed in the editor",
                         field: Box::new(SettingField {
                             pick: |settings_content| settings_content.editor.diagnostics_max_severity.as_ref(),
-                            pick_mut: |settings_content| {
+                            write: |settings_content| {
                                 &mut settings_content.editor.diagnostics_max_severity
                             },
                         }),
@@ -1622,7 +1622,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             pick: |settings_content| {
                                 settings_content.diagnostics.as_ref()?.include_warnings.as_ref()
                             },
-                            pick_mut: |settings_content| {
+                            write: |settings_content| {
                                 &mut settings_content
                                     .diagnostics
                                     .get_or_insert_default()
@@ -1640,7 +1640,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             pick: |settings_content| {
                                 settings_content.diagnostics.as_ref()?.inline.as_ref()?.enabled.as_ref()
                             },
-                            pick_mut: |settings_content| {
+                            write: |settings_content| {
                                 &mut settings_content
                                     .diagnostics
                                     .get_or_insert_default()
@@ -1659,7 +1659,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             pick: |settings_content| {
                                 settings_content.diagnostics.as_ref()?.inline.as_ref()?.update_debounce_ms.as_ref()
                             },
-                            pick_mut: |settings_content| {
+                            write: |settings_content| {
                                 &mut settings_content
                                     .diagnostics
                                     .get_or_insert_default()
@@ -1678,7 +1678,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             pick: |settings_content| {
                                 settings_content.diagnostics.as_ref()?.inline.as_ref()?.padding.as_ref()
                             },
-                            pick_mut: |settings_content| {
+                            write: |settings_content| {
                                 &mut settings_content
                                     .diagnostics
                                     .get_or_insert_default()
@@ -1697,7 +1697,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             pick: |settings_content| {
                                 settings_content.diagnostics.as_ref()?.inline.as_ref()?.min_column.as_ref()
                             },
-                            pick_mut: |settings_content| {
+                            write: |settings_content| {
                                 &mut settings_content
                                     .diagnostics
                                     .get_or_insert_default()
@@ -1717,7 +1717,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             pick: |settings_content| {
                                 settings_content.diagnostics.as_ref()?.lsp_pull_diagnostics.as_ref()?.enabled.as_ref()
                             },
-                            pick_mut: |settings_content| {
+                            write: |settings_content| {
                                 &mut settings_content
                                     .diagnostics
                                     .get_or_insert_default()
@@ -1737,7 +1737,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             pick: |settings_content| {
                                 settings_content.diagnostics.as_ref()?.lsp_pull_diagnostics.as_ref()?.debounce_ms.as_ref()
                             },
-                            pick_mut: |settings_content| {
+                            write: |settings_content| {
                                 &mut settings_content
                                     .diagnostics
                                     .get_or_insert_default()
@@ -1755,7 +1755,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         description: "The debounce delay before querying highlights from the language",
                         field: Box::new(SettingField {
                             pick: |settings_content| settings_content.editor.lsp_highlight_debounce.as_ref(),
-                            pick_mut: |settings_content| {
+                            write: |settings_content| {
                                 &mut settings_content.editor.lsp_highlight_debounce
                             },
                         }),
@@ -1799,7 +1799,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         pick: |settings_content| {
                             settings_content.editor.search.as_ref()?.whole_word.as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .editor
                                 .search
@@ -1822,7 +1822,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .case_sensitive
                                 .as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .editor
                                 .search
@@ -1840,7 +1840,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         pick: |settings_content| {
                             settings_content.editor.use_smartcase_search.as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content.editor.use_smartcase_search
                         },
                     }),
@@ -1859,7 +1859,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .include_ignored
                                 .as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .editor
                                 .search
@@ -1877,7 +1877,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         pick: |settings_content| {
                             settings_content.editor.search.as_ref()?.regex.as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content.editor.search.get_or_insert_default().regex
                         },
                     }),
@@ -1889,7 +1889,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     description: "Whether the editor search results will loop",
                     field: Box::new(SettingField {
                         pick: |settings_content| settings_content.editor.search_wrap.as_ref(),
-                        pick_mut: |settings_content| &mut settings_content.editor.search_wrap,
+                        write: |settings_content| &mut settings_content.editor.search_wrap,
                     }),
                     metadata: None,
                     files: USER,
@@ -1904,7 +1904,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .seed_search_query_from_cursor
                                 .as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content.editor.seed_search_query_from_cursor
                         },
                     }),
@@ -1925,7 +1925,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                     .include_ignored
                                     .as_ref()
                             },
-                            pick_mut: |settings_content| {
+                            write: |settings_content| {
                                 &mut settings_content
                                     .file_finder
                                     .get_or_insert_default()
@@ -1944,7 +1944,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         pick: |settings_content| {
                             settings_content.file_finder.as_ref()?.file_icons.as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .file_finder
                                 .get_or_insert_default()
@@ -1965,7 +1965,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .modal_max_width
                                 .as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .file_finder
                                 .get_or_insert_default()
@@ -1986,7 +1986,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .skip_focus_for_active_in_search
                                 .as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .file_finder
                                 .get_or_insert_default()
@@ -2003,7 +2003,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         pick: |settings_content| {
                             settings_content.file_finder.as_ref()?.git_status.as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .file_finder
                                 .get_or_insert_default()
@@ -2026,7 +2026,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                     .file_scan_exclusions
                                     .as_ref()
                             },
-                            pick_mut: |settings_content| {
+                            write: |settings_content| {
                                 &mut settings_content.project.worktree.file_scan_exclusions
                             },
                         }
@@ -2047,7 +2047,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                     .file_scan_exclusions
                                     .as_ref()
                             },
-                            pick_mut: |settings_content| {
+                            write: |settings_content| {
                                 &mut settings_content.project.worktree.file_scan_exclusions
                             },
                         }
@@ -2063,7 +2063,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         pick: |settings_content| {
                             settings_content.workspace.restore_on_file_reopen.as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content.workspace.restore_on_file_reopen
                         },
                     }),
@@ -2077,7 +2077,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         pick: |settings_content| {
                             settings_content.workspace.close_on_file_delete.as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content.workspace.close_on_file_delete
                         },
                     }),
@@ -2097,7 +2097,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         pick: |settings_content| {
                             settings_content.project_panel.as_ref()?.button.as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .project_panel
                                 .get_or_insert_default()
@@ -2118,7 +2118,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .active_language_button
                                 .as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .status_bar
                                 .get_or_insert_default()
@@ -2139,7 +2139,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .cursor_position_button
                                 .as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .status_bar
                                 .get_or_insert_default()
@@ -2156,7 +2156,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         pick: |settings_content| {
                             settings_content.terminal.as_ref()?.button.as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content.terminal.get_or_insert_default().button
                         },
                     }),
@@ -2170,7 +2170,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         pick: |settings_content| {
                             settings_content.diagnostics.as_ref()?.button.as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content.diagnostics.get_or_insert_default().button
                         },
                     }),
@@ -2184,7 +2184,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         pick: |settings_content| {
                             settings_content.editor.search.as_ref()?.button.as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .editor
                                 .search
@@ -2202,7 +2202,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         pick: |settings_content| {
                             settings_content.debugger.as_ref()?.button.as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content.debugger.get_or_insert_default().button
                         },
                     }),
@@ -2221,7 +2221,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .show_branch_icon
                                 .as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .title_bar
                                 .get_or_insert_default()
@@ -2242,7 +2242,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .show_branch_name
                                 .as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .title_bar
                                 .get_or_insert_default()
@@ -2263,7 +2263,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .show_project_items
                                 .as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .title_bar
                                 .get_or_insert_default()
@@ -2284,7 +2284,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .show_onboarding_banner
                                 .as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .title_bar
                                 .get_or_insert_default()
@@ -2305,7 +2305,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .show_user_picture
                                 .as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .title_bar
                                 .get_or_insert_default()
@@ -2322,7 +2322,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         pick: |settings_content| {
                             settings_content.title_bar.as_ref()?.show_sign_in.as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .title_bar
                                 .get_or_insert_default()
@@ -2339,7 +2339,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         pick: |settings_content| {
                             settings_content.title_bar.as_ref()?.show_menus.as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .title_bar
                                 .get_or_insert_default()
@@ -2355,7 +2355,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     description: "Show the tab bar in the editor",
                     field: Box::new(SettingField {
                         pick: |settings_content| settings_content.tab_bar.as_ref()?.show.as_ref(),
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content.tab_bar.get_or_insert_default().show
                         },
                     }),
@@ -2369,7 +2369,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         pick: |settings_content| {
                             settings_content.tabs.as_ref()?.git_status.as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content.tabs.get_or_insert_default().git_status
                         },
                     }),
@@ -2383,7 +2383,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         pick: |settings_content| {
                             settings_content.tabs.as_ref()?.file_icons.as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content.tabs.get_or_insert_default().file_icons
                         },
                     }),
@@ -2397,7 +2397,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         pick: |settings_content| {
                             settings_content.tabs.as_ref()?.close_position.as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content.tabs.get_or_insert_default().close_position
                         },
                     }),
@@ -2413,7 +2413,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     field: Box::new(
                         SettingField {
                             pick: |settings_content| settings_content.workspace.max_tabs.as_ref(),
-                            pick_mut: |settings_content| &mut settings_content.workspace.max_tabs,
+                            write: |settings_content| &mut settings_content.workspace.max_tabs,
                         }
                         .unimplemented(),
                     ),
@@ -2430,7 +2430,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .show_nav_history_buttons
                                 .as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .tab_bar
                                 .get_or_insert_default()
@@ -2448,7 +2448,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         pick: |settings_content| {
                             settings_content.tabs.as_ref()?.activate_on_close.as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .tabs
                                 .get_or_insert_default()
@@ -2465,7 +2465,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         pick: |settings_content| {
                             settings_content.tabs.as_ref()?.show_diagnostics.as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .tabs
                                 .get_or_insert_default()
@@ -2482,7 +2482,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         pick: |settings_content| {
                             settings_content.tabs.as_ref()?.show_close_button.as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .tabs
                                 .get_or_insert_default()
@@ -2500,7 +2500,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         pick: |settings_content| {
                             settings_content.preview_tabs.as_ref()?.enabled.as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .preview_tabs
                                 .get_or_insert_default()
@@ -2521,7 +2521,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .enable_preview_from_file_finder
                                 .as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .preview_tabs
                                 .get_or_insert_default()
@@ -2542,7 +2542,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .enable_preview_from_code_navigation
                                 .as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .preview_tabs
                                 .get_or_insert_default()
@@ -2560,7 +2560,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         pick: |settings_content| {
                             settings_content.workspace.bottom_dock_layout.as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content.workspace.bottom_dock_layout
                         },
                     }),
@@ -2580,7 +2580,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .left_padding
                                 .as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .workspace
                                 .centered_layout
@@ -2603,7 +2603,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .right_padding
                                 .as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .workspace
                                 .centered_layout
@@ -2622,7 +2622,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         pick: |settings_content| {
                             settings_content.workspace.use_system_window_tabs.as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content.workspace.use_system_window_tabs
                         },
                     }),
@@ -2642,7 +2642,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .inactive_opacity
                                 .as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .workspace
                                 .active_pane_modifiers
@@ -2665,7 +2665,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .border_size
                                 .as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .workspace
                                 .active_pane_modifiers
@@ -2681,7 +2681,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     description: "Show padding for zoomed panes",
                     field: Box::new(SettingField {
                         pick: |settings_content| settings_content.workspace.zoomed_padding.as_ref(),
-                        pick_mut: |settings_content| &mut settings_content.workspace.zoomed_padding,
+                        write: |settings_content| &mut settings_content.workspace.zoomed_padding,
                     }),
                     metadata: None,
                     files: USER,
@@ -2697,7 +2697,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .pane_split_direction_vertical
                                 .as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content.workspace.pane_split_direction_vertical
                         },
                     }),
@@ -2714,7 +2714,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .pane_split_direction_horizontal
                                 .as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content.workspace.pane_split_direction_horizontal
                         },
                     }),
@@ -2734,7 +2734,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         pick: |settings_content| {
                             settings_content.project_panel.as_ref()?.dock.as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content.project_panel.get_or_insert_default().dock
                         },
                     }),
@@ -2752,7 +2752,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .default_width
                                 .as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .project_panel
                                 .get_or_insert_default()
@@ -2773,7 +2773,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .hide_gitignore
                                 .as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .project_panel
                                 .get_or_insert_default()
@@ -2794,7 +2794,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .entry_spacing
                                 .as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .project_panel
                                 .get_or_insert_default()
@@ -2811,7 +2811,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         pick: |settings_content| {
                             settings_content.project_panel.as_ref()?.file_icons.as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .project_panel
                                 .get_or_insert_default()
@@ -2832,7 +2832,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .folder_icons
                                 .as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .project_panel
                                 .get_or_insert_default()
@@ -2849,7 +2849,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         pick: |settings_content| {
                             settings_content.project_panel.as_ref()?.git_status.as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .project_panel
                                 .get_or_insert_default()
@@ -2870,7 +2870,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .indent_size
                                 .as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .project_panel
                                 .get_or_insert_default()
@@ -2891,7 +2891,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .auto_reveal_entries
                                 .as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .project_panel
                                 .get_or_insert_default()
@@ -2912,7 +2912,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .starts_open
                                 .as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .project_panel
                                 .get_or_insert_default()
@@ -2933,7 +2933,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .auto_fold_dirs
                                 .as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .project_panel
                                 .get_or_insert_default()
@@ -2958,7 +2958,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                     .as_ref()
                             })
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .project_panel
                                 .get_or_insert_default()
@@ -2981,7 +2981,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .show_diagnostics
                                 .as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .project_panel
                                 .get_or_insert_default()
@@ -3002,7 +3002,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .sticky_scroll
                                 .as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .project_panel
                                 .get_or_insert_default()
@@ -3027,7 +3027,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                     .show
                                     .as_ref()
                             },
-                            pick_mut: |settings_content| {
+                            write: |settings_content| {
                                 &mut settings_content
                                     .project_panel
                                     .get_or_insert_default()
@@ -3051,7 +3051,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .drag_and_drop
                                 .as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .project_panel
                                 .get_or_insert_default()
@@ -3068,7 +3068,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         pick: |settings_content| {
                             settings_content.project_panel.as_ref()?.hide_root.as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .project_panel
                                 .get_or_insert_default()
@@ -3089,7 +3089,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .hide_hidden
                                 .as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .project_panel
                                 .get_or_insert_default()
@@ -3110,7 +3110,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .open_file_on_paste
                                 .as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .project_panel
                                 .get_or_insert_default()
@@ -3126,7 +3126,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     description: "Where to dock the terminal panel",
                     field: Box::new(SettingField {
                         pick: |settings_content| settings_content.terminal.as_ref()?.dock.as_ref(),
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content.terminal.get_or_insert_default().dock
                         },
                     }),
@@ -3141,7 +3141,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         pick: |settings_content| {
                             settings_content.outline_panel.as_ref()?.button.as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .outline_panel
                                 .get_or_insert_default()
@@ -3158,7 +3158,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         pick: |settings_content| {
                             settings_content.outline_panel.as_ref()?.dock.as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content.outline_panel.get_or_insert_default().dock
                         },
                     }),
@@ -3176,7 +3176,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .default_width
                                 .as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .outline_panel
                                 .get_or_insert_default()
@@ -3193,7 +3193,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         pick: |settings_content| {
                             settings_content.outline_panel.as_ref()?.file_icons.as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .outline_panel
                                 .get_or_insert_default()
@@ -3214,7 +3214,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .folder_icons
                                 .as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .outline_panel
                                 .get_or_insert_default()
@@ -3231,7 +3231,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         pick: |settings_content| {
                             settings_content.outline_panel.as_ref()?.git_status.as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .outline_panel
                                 .get_or_insert_default()
@@ -3252,7 +3252,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .indent_size
                                 .as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .outline_panel
                                 .get_or_insert_default()
@@ -3273,7 +3273,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .auto_reveal_entries
                                 .as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .outline_panel
                                 .get_or_insert_default()
@@ -3294,7 +3294,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .auto_fold_dirs
                                 .as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .outline_panel
                                 .get_or_insert_default()
@@ -3319,7 +3319,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                     .show
                                     .as_ref()
                             },
-                            pick_mut: |settings_content| {
+                            write: |settings_content| {
                                 &mut settings_content
                                     .outline_panel
                                     .get_or_insert_default()
@@ -3340,7 +3340,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         pick: |settings_content| {
                             settings_content.git_panel.as_ref()?.button.as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content.git_panel.get_or_insert_default().button
                         },
                     }),
@@ -3352,7 +3352,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     description: "Where to dock the Git panel",
                     field: Box::new(SettingField {
                         pick: |settings_content| settings_content.git_panel.as_ref()?.dock.as_ref(),
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content.git_panel.get_or_insert_default().dock
                         },
                     }),
@@ -3366,7 +3366,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         pick: |settings_content| {
                             settings_content.git_panel.as_ref()?.default_width.as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .git_panel
                                 .get_or_insert_default()
@@ -3383,7 +3383,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         pick: |settings_content| {
                             settings_content.git_panel.as_ref()?.status_style.as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .git_panel
                                 .get_or_insert_default()
@@ -3404,7 +3404,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .fallback_branch_name
                                 .as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .git_panel
                                 .get_or_insert_default()
@@ -3421,7 +3421,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         pick: |settings_content| {
                             settings_content.git_panel.as_ref()?.sort_by_path.as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .git_panel
                                 .get_or_insert_default()
@@ -3442,7 +3442,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .collapse_untracked_diff
                                 .as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .git_panel
                                 .get_or_insert_default()
@@ -3467,7 +3467,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                     .as_ref()
                             })
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .git_panel
                                 .get_or_insert_default()
@@ -3485,7 +3485,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     description: "The dock position of the debug panel",
                     field: Box::new(SettingField {
                         pick: |settings_content| settings_content.debugger.as_ref()?.dock.as_ref(),
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content.debugger.get_or_insert_default().dock
                         },
                     }),
@@ -3504,7 +3504,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .button
                                 .as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .notification_panel
                                 .get_or_insert_default()
@@ -3521,7 +3521,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         pick: |settings_content| {
                             settings_content.notification_panel.as_ref()?.dock.as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .notification_panel
                                 .get_or_insert_default()
@@ -3542,7 +3542,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .default_width
                                 .as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .notification_panel
                                 .get_or_insert_default()
@@ -3564,7 +3564,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .button
                                 .as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .collaboration_panel
                                 .get_or_insert_default()
@@ -3581,7 +3581,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         pick: |settings_content| {
                             settings_content.collaboration_panel.as_ref()?.dock.as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .collaboration_panel
                                 .get_or_insert_default()
@@ -3602,7 +3602,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .default_width
                                 .as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .collaboration_panel
                                 .get_or_insert_default()
@@ -3618,7 +3618,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     description: "Whether to show the agent panel button in the status bar",
                     field: Box::new(SettingField {
                         pick: |settings_content| settings_content.agent.as_ref()?.button.as_ref(),
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content.agent.get_or_insert_default().button
                         },
                     }),
@@ -3630,7 +3630,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     description: "Where to dock the agent panel.",
                     field: Box::new(SettingField {
                         pick: |settings_content| settings_content.agent.as_ref()?.dock.as_ref(),
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content.agent.get_or_insert_default().dock
                         },
                     }),
@@ -3644,7 +3644,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         pick: |settings_content| {
                             settings_content.agent.as_ref()?.default_width.as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content.agent.get_or_insert_default().default_width
                         },
                     }),
@@ -3658,7 +3658,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         pick: |settings_content| {
                             settings_content.agent.as_ref()?.default_height.as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .agent
                                 .get_or_insert_default()
@@ -3685,7 +3685,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .stepping_granularity
                                 .as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .debugger
                                 .get_or_insert_default()
@@ -3706,7 +3706,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .save_breakpoints
                                 .as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .debugger
                                 .get_or_insert_default()
@@ -3723,7 +3723,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         pick: |settings_content| {
                             settings_content.debugger.as_ref()?.timeout.as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content.debugger.get_or_insert_default().timeout
                         },
                     }),
@@ -3741,7 +3741,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .log_dap_communications
                                 .as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .debugger
                                 .get_or_insert_default()
@@ -3762,7 +3762,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .format_dap_log_messages
                                 .as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .debugger
                                 .get_or_insert_default()
@@ -3786,7 +3786,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             pick: |settings_content| {
                                 settings_content.terminal.as_ref()?.project.shell.as_ref()
                             },
-                            pick_mut: |settings_content| {
+                            write: |settings_content| {
                                 &mut settings_content
                                     .terminal
                                     .get_or_insert_default()
@@ -3812,7 +3812,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                     .working_directory
                                     .as_ref()
                             },
-                            pick_mut: |settings_content| {
+                            write: |settings_content| {
                                 &mut settings_content
                                     .terminal
                                     .get_or_insert_default()
@@ -3833,7 +3833,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             pick: |settings_content| {
                                 settings_content.terminal.as_ref()?.project.env.as_ref()
                             },
-                            pick_mut: |settings_content| {
+                            write: |settings_content| {
                                 &mut settings_content
                                     .terminal
                                     .get_or_insert_default()
@@ -3859,7 +3859,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                     .detect_venv
                                     .as_ref()
                             },
-                            pick_mut: |settings_content| {
+                            write: |settings_content| {
                                 &mut settings_content
                                     .terminal
                                     .get_or_insert_default()
@@ -3884,7 +3884,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .and_then(|terminal| terminal.font_size.as_ref())
                                 .or(settings_content.theme.buffer_font_size.as_ref())
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content.terminal.get_or_insert_default().font_size
                         },
                     }),
@@ -3902,7 +3902,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .and_then(|terminal| terminal.font_family.as_ref())
                                 .or(settings_content.theme.buffer_font_family.as_ref())
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .terminal
                                 .get_or_insert_default()
@@ -3924,7 +3924,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                     .and_then(|terminal| terminal.font_fallbacks.as_ref())
                                     .or(settings_content.theme.buffer_font_fallbacks.as_ref())
                             },
-                            pick_mut: |settings_content| {
+                            write: |settings_content| {
                                 &mut settings_content
                                     .terminal
                                     .get_or_insert_default()
@@ -3943,7 +3943,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         pick: |settings_content| {
                             settings_content.terminal.as_ref()?.font_weight.as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .terminal
                                 .get_or_insert_default()
@@ -3965,7 +3965,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                     .and_then(|terminal| terminal.font_features.as_ref())
                                     .or(settings_content.theme.buffer_font_features.as_ref())
                             },
-                            pick_mut: |settings_content| {
+                            write: |settings_content| {
                                 &mut settings_content
                                     .terminal
                                     .get_or_insert_default()
@@ -3986,7 +3986,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             pick: |settings_content| {
                                 settings_content.terminal.as_ref()?.line_height.as_ref()
                             },
-                            pick_mut: |settings_content| {
+                            write: |settings_content| {
                                 &mut settings_content
                                     .terminal
                                     .get_or_insert_default()
@@ -4005,7 +4005,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         pick: |settings_content| {
                             settings_content.terminal.as_ref()?.cursor_shape.as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .terminal
                                 .get_or_insert_default()
@@ -4022,7 +4022,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         pick: |settings_content| {
                             settings_content.terminal.as_ref()?.blinking.as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content.terminal.get_or_insert_default().blinking
                         },
                     }),
@@ -4040,7 +4040,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .alternate_scroll
                                 .as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .terminal
                                 .get_or_insert_default()
@@ -4061,7 +4061,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .minimum_contrast
                                 .as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .terminal
                                 .get_or_insert_default()
@@ -4079,7 +4079,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         pick: |settings_content| {
                             settings_content.terminal.as_ref()?.option_as_meta.as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .terminal
                                 .get_or_insert_default()
@@ -4096,7 +4096,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         pick: |settings_content| {
                             settings_content.terminal.as_ref()?.copy_on_select.as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .terminal
                                 .get_or_insert_default()
@@ -4117,7 +4117,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .keep_selection_on_copy
                                 .as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .terminal
                                 .get_or_insert_default()
@@ -4135,7 +4135,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         pick: |settings_content| {
                             settings_content.terminal.as_ref()?.default_width.as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .terminal
                                 .get_or_insert_default()
@@ -4152,7 +4152,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         pick: |settings_content| {
                             settings_content.terminal.as_ref()?.default_height.as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .terminal
                                 .get_or_insert_default()
@@ -4174,7 +4174,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .max_scroll_history_lines
                                 .as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .terminal
                                 .get_or_insert_default()
@@ -4198,7 +4198,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .breadcrumbs
                                 .as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .terminal
                                 .get_or_insert_default()
@@ -4226,7 +4226,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                     .as_ref()
                             })
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .terminal
                                 .get_or_insert_default()
@@ -4249,7 +4249,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     description: "Control whether git status is shown in the editor's gutter",
                     field: Box::new(SettingField {
                         pick: |settings_content| settings_content.git.as_ref()?.git_gutter.as_ref(),
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content.git.get_or_insert_default().git_gutter
                         },
                     }),
@@ -4264,7 +4264,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         pick: |settings_content| {
                             settings_content.git.as_ref()?.gutter_debounce.as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content.git.get_or_insert_default().gutter_debounce
                         },
                     }),
@@ -4285,7 +4285,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .enabled
                                 .as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .git
                                 .get_or_insert_default()
@@ -4310,7 +4310,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .delay_ms
                                 .as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .git
                                 .get_or_insert_default()
@@ -4335,7 +4335,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .padding
                                 .as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .git
                                 .get_or_insert_default()
@@ -4360,7 +4360,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .min_column
                                 .as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .git
                                 .get_or_insert_default()
@@ -4385,7 +4385,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .show_commit_summary
                                 .as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .git
                                 .get_or_insert_default()
@@ -4411,7 +4411,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .show_avatar
                                 .as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .git
                                 .get_or_insert_default()
@@ -4437,7 +4437,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .show_author_name
                                 .as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .git
                                 .get_or_insert_default()
@@ -4455,7 +4455,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     description: "How git hunks are displayed visually in the editor",
                     field: Box::new(SettingField {
                         pick: |settings_content| settings_content.git.as_ref()?.hunk_style.as_ref(),
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content.git.get_or_insert_default().hunk_style
                         },
                     }),
@@ -4475,7 +4475,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         pick: |settings_content| {
                             settings_content.calls.as_ref()?.mute_on_join.as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content.calls.get_or_insert_default().mute_on_join
                         },
                     }),
@@ -4489,7 +4489,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         pick: |settings_content| {
                             settings_content.calls.as_ref()?.share_on_join.as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content.calls.get_or_insert_default().share_on_join
                         },
                     }),
@@ -4504,7 +4504,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         pick: |settings_content| {
                             settings_content.audio.as_ref()?.rodio_audio.as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content.audio.get_or_insert_default().rodio_audio
                         },
                     }),
@@ -4522,7 +4522,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .auto_microphone_volume
                                 .as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .audio
                                 .get_or_insert_default()
@@ -4543,7 +4543,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .auto_speaker_volume
                                 .as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .audio
                                 .get_or_insert_default()
@@ -4558,7 +4558,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     description: "Remove background noises (requires Rodio Audio)",
                     field: Box::new(SettingField {
                         pick: |settings_content| settings_content.audio.as_ref()?.denoise.as_ref(),
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content.audio.get_or_insert_default().denoise
                         },
                     }),
@@ -4576,7 +4576,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .legacy_audio_compatible
                                 .as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .audio
                                 .get_or_insert_default()
@@ -4597,7 +4597,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     description: "Whether to disable all AI features in Zed",
                     field: Box::new(SettingField {
                         pick: |settings_content| settings_content.disable_ai.as_ref(),
-                        pick_mut: |settings_content| &mut settings_content.disable_ai,
+                        write: |settings_content| &mut settings_content.disable_ai,
                     }),
                     metadata: None,
                     files: USER,
@@ -4614,7 +4614,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .always_allow_tool_actions
                                 .as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .agent
                                 .get_or_insert_default()
@@ -4631,7 +4631,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         pick: |settings_content| {
                             settings_content.agent.as_ref()?.single_file_review.as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .agent
                                 .get_or_insert_default()
@@ -4648,7 +4648,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         pick: |settings_content| {
                             settings_content.agent.as_ref()?.enable_feedback.as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .agent
                                 .get_or_insert_default()
@@ -4669,7 +4669,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .notify_when_agent_waiting
                                 .as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .agent
                                 .get_or_insert_default()
@@ -4690,7 +4690,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .play_sound_when_agent_done
                                 .as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .agent
                                 .get_or_insert_default()
@@ -4707,7 +4707,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         pick: |settings_content| {
                             settings_content.agent.as_ref()?.expand_edit_card.as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .agent
                                 .get_or_insert_default()
@@ -4728,7 +4728,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .expand_terminal_card
                                 .as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .agent
                                 .get_or_insert_default()
@@ -4749,7 +4749,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .use_modifier_to_send
                                 .as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .agent
                                 .get_or_insert_default()
@@ -4770,7 +4770,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .message_editor_min_lines
                                 .as_ref()
                         },
-                        pick_mut: |settings_content| {
+                        write: |settings_content| {
                             &mut settings_content
                                 .agent
                                 .get_or_insert_default()
@@ -4793,7 +4793,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     field: Box::new(
                         SettingField {
                             pick: |settings_content| settings_content.proxy.as_ref(),
-                            pick_mut: |settings_content| &mut settings_content.proxy,
+                            write: |settings_content| &mut settings_content.proxy,
                         }
                         .unimplemented(),
                     ),
@@ -4808,7 +4808,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     description: "The URL of the Zed server to connect to",
                     field: Box::new(SettingField {
                         pick: |settings_content| settings_content.server_url.as_ref(),
-                        pick_mut: |settings_content| &mut settings_content.server_url,
+                        write: |settings_content| &mut settings_content.server_url,
                     }),
                     metadata: Some(Box::new(SettingsFieldMetadata {
                         placeholder: Some("https://zed.dev"),
@@ -4873,7 +4873,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 pick: |settings_content| {
                     language_settings_field(settings_content, |language| language.tab_size.as_ref())
                 },
-                pick_mut: |settings_content| {
+                write: |settings_content| {
                     language_settings_field_mut(settings_content, |language| &mut language.tab_size)
                 },
             }),
@@ -4889,7 +4889,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                         language.hard_tabs.as_ref()
                     })
                 },
-                pick_mut: |settings_content| {
+                write: |settings_content| {
                     language_settings_field_mut(settings_content, |language| {
                         &mut language.hard_tabs
                     })
@@ -4907,7 +4907,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                         language.auto_indent.as_ref()
                     })
                 },
-                pick_mut: |settings_content| {
+                write: |settings_content| {
                     language_settings_field_mut(settings_content, |language| {
                         &mut language.auto_indent
                     })
@@ -4925,7 +4925,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                         language.auto_indent_on_paste.as_ref()
                     })
                 },
-                pick_mut: |settings_content| {
+                write: |settings_content| {
                     language_settings_field_mut(settings_content, |language| {
                         &mut language.auto_indent_on_paste
                     })
@@ -4944,7 +4944,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                         language.soft_wrap.as_ref()
                     })
                 },
-                pick_mut: |settings_content| {
+                write: |settings_content| {
                     language_settings_field_mut(settings_content, |language| {
                         &mut language.soft_wrap
                     })
@@ -4962,7 +4962,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                         language.show_wrap_guides.as_ref()
                     })
                 },
-                pick_mut: |settings_content| {
+                write: |settings_content| {
                     language_settings_field_mut(settings_content, |language| {
                         &mut language.show_wrap_guides
                     })
@@ -4980,7 +4980,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                         language.preferred_line_length.as_ref()
                     })
                 },
-                pick_mut: |settings_content| {
+                write: |settings_content| {
                     language_settings_field_mut(settings_content, |language| {
                         &mut language.preferred_line_length
                     })
@@ -4999,7 +4999,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                             language.wrap_guides.as_ref()
                         })
                     },
-                    pick_mut: |settings_content| {
+                    write: |settings_content| {
                         language_settings_field_mut(settings_content, |language| {
                             &mut language.wrap_guides
                         })
@@ -5019,7 +5019,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                         language.allow_rewrap.as_ref()
                     })
                 },
-                pick_mut: |settings_content| {
+                write: |settings_content| {
                     language_settings_field_mut(settings_content, |language| {
                         &mut language.allow_rewrap
                     })
@@ -5041,7 +5041,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                             .and_then(|indent_guides| indent_guides.enabled.as_ref())
                     })
                 },
-                pick_mut: |settings_content| {
+                write: |settings_content| {
                     language_settings_field_mut(settings_content, |language| {
                         &mut language.indent_guides.get_or_insert_default().enabled
                     })
@@ -5062,7 +5062,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                             .and_then(|indent_guides| indent_guides.line_width.as_ref())
                     })
                 },
-                pick_mut: |settings_content| {
+                write: |settings_content| {
                     language_settings_field_mut(settings_content, |language| {
                         &mut language.indent_guides.get_or_insert_default().line_width
                     })
@@ -5083,7 +5083,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                             .and_then(|indent_guides| indent_guides.active_line_width.as_ref())
                     })
                 },
-                pick_mut: |settings_content| {
+                write: |settings_content| {
                     language_settings_field_mut(settings_content, |language| {
                         &mut language
                             .indent_guides
@@ -5107,7 +5107,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                             .and_then(|indent_guides| indent_guides.coloring.as_ref())
                     })
                 },
-                pick_mut: |settings_content| {
+                write: |settings_content| {
                     language_settings_field_mut(settings_content, |language| {
                         &mut language.indent_guides.get_or_insert_default().coloring
                     })
@@ -5128,7 +5128,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                             .and_then(|indent_guides| indent_guides.background_coloring.as_ref())
                     })
                 },
-                pick_mut: |settings_content| {
+                write: |settings_content| {
                     language_settings_field_mut(settings_content, |language| {
                         &mut language
                             .indent_guides
@@ -5152,7 +5152,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                             language.format_on_save.as_ref()
                         })
                     },
-                    pick_mut: |settings_content| {
+                    write: |settings_content| {
                         language_settings_field_mut(settings_content, |language| {
                             &mut language.format_on_save
                         })
@@ -5171,7 +5171,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                         language.remove_trailing_whitespace_on_save.as_ref()
                     })
                 },
-                pick_mut: |settings_content| {
+                write: |settings_content| {
                     language_settings_field_mut(settings_content, |language| {
                         &mut language.remove_trailing_whitespace_on_save
                     })
@@ -5189,7 +5189,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                         language.ensure_final_newline_on_save.as_ref()
                     })
                 },
-                pick_mut: |settings_content| {
+                write: |settings_content| {
                     language_settings_field_mut(settings_content, |language| {
                         &mut language.ensure_final_newline_on_save
                     })
@@ -5208,7 +5208,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                             language.formatter.as_ref()
                         })
                     },
-                    pick_mut: |settings_content| {
+                    write: |settings_content| {
                         language_settings_field_mut(settings_content, |language| {
                             &mut language.formatter
                         })
@@ -5228,7 +5228,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                         language.use_on_type_format.as_ref()
                     })
                 },
-                pick_mut: |settings_content| {
+                write: |settings_content| {
                     language_settings_field_mut(settings_content, |language| {
                         &mut language.use_on_type_format
                     })
@@ -5247,7 +5247,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                         language.use_autoclose.as_ref()
                     })
                 },
-                pick_mut: |settings_content| {
+                write: |settings_content| {
                     language_settings_field_mut(settings_content, |language| {
                         &mut language.use_autoclose
                     })
@@ -5265,7 +5265,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                         language.use_auto_surround.as_ref()
                     })
                 },
-                pick_mut: |settings_content| {
+                write: |settings_content| {
                     language_settings_field_mut(settings_content, |language| {
                         &mut language.use_auto_surround
                     })
@@ -5283,7 +5283,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                         language.always_treat_brackets_as_autoclosed.as_ref()
                     })
                 },
-                pick_mut: |settings_content| {
+                write: |settings_content| {
                     language_settings_field_mut(settings_content, |language| {
                         &mut language.always_treat_brackets_as_autoclosed
                     })
@@ -5302,7 +5302,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                         language.jsx_tag_auto_close.as_ref()?.enabled.as_ref()
                     })
                 },
-                pick_mut: |settings_content| {
+                write: |settings_content| {
                     language_settings_field_mut(settings_content, |language| {
                         &mut language.jsx_tag_auto_close.get_or_insert_default().enabled
                     })
@@ -5321,7 +5321,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                         language.show_edit_predictions.as_ref()
                     })
                 },
-                pick_mut: |settings_content| {
+                write: |settings_content| {
                     language_settings_field_mut(settings_content, |language| {
                         &mut language.show_edit_predictions
                     })
@@ -5340,7 +5340,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                             language.edit_predictions_disabled_in.as_ref()
                         })
                     },
-                    pick_mut: |settings_content| {
+                    write: |settings_content| {
                         language_settings_field_mut(settings_content, |language| {
                             &mut language.edit_predictions_disabled_in
                         })
@@ -5361,7 +5361,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                         language.show_whitespaces.as_ref()
                     })
                 },
-                pick_mut: |settings_content| {
+                write: |settings_content| {
                     language_settings_field_mut(settings_content, |language| {
                         &mut language.show_whitespaces
                     })
@@ -5380,7 +5380,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                             language.whitespace_map.as_ref()?.space.as_ref()
                         })
                     },
-                    pick_mut: |settings_content| {
+                    write: |settings_content| {
                         language_settings_field_mut(settings_content, |language| {
                             &mut language.whitespace_map.get_or_insert_default().space
                         })
@@ -5401,7 +5401,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                             language.whitespace_map.as_ref()?.tab.as_ref()
                         })
                     },
-                    pick_mut: |settings_content| {
+                    write: |settings_content| {
                         language_settings_field_mut(settings_content, |language| {
                             &mut language.whitespace_map.get_or_insert_default().tab
                         })
@@ -5422,7 +5422,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                         language.show_completions_on_input.as_ref()
                     })
                 },
-                pick_mut: |settings_content| {
+                write: |settings_content| {
                     language_settings_field_mut(settings_content, |language| {
                         &mut language.show_completions_on_input
                     })
@@ -5440,7 +5440,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                         language.show_completion_documentation.as_ref()
                     })
                 },
-                pick_mut: |settings_content| {
+                write: |settings_content| {
                     language_settings_field_mut(settings_content, |language| {
                         &mut language.show_completion_documentation
                     })
@@ -5458,7 +5458,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                         language.completions.as_ref()?.words.as_ref()
                     })
                 },
-                pick_mut: |settings_content| {
+                write: |settings_content| {
                     language_settings_field_mut(settings_content, |language| {
                         &mut language.completions.get_or_insert_default().words
                     })
@@ -5476,7 +5476,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                         language.completions.as_ref()?.words_min_length.as_ref()
                     })
                 },
-                pick_mut: |settings_content| {
+                write: |settings_content| {
                     language_settings_field_mut(settings_content, |language| {
                         &mut language
                             .completions
@@ -5498,7 +5498,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                         language.inlay_hints.as_ref()?.enabled.as_ref()
                     })
                 },
-                pick_mut: |settings_content| {
+                write: |settings_content| {
                     language_settings_field_mut(settings_content, |language| {
                         &mut language.inlay_hints.get_or_insert_default().enabled
                     })
@@ -5516,7 +5516,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                         language.inlay_hints.as_ref()?.show_value_hints.as_ref()
                     })
                 },
-                pick_mut: |settings_content| {
+                write: |settings_content| {
                     language_settings_field_mut(settings_content, |language| {
                         &mut language
                             .inlay_hints
@@ -5537,7 +5537,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                         language.inlay_hints.as_ref()?.show_type_hints.as_ref()
                     })
                 },
-                pick_mut: |settings_content| {
+                write: |settings_content| {
                     language_settings_field_mut(settings_content, |language| {
                         &mut language.inlay_hints.get_or_insert_default().show_type_hints
                     })
@@ -5555,7 +5555,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                         language.inlay_hints.as_ref()?.show_parameter_hints.as_ref()
                     })
                 },
-                pick_mut: |settings_content| {
+                write: |settings_content| {
                     language_settings_field_mut(settings_content, |language| {
                         &mut language
                             .inlay_hints
@@ -5576,7 +5576,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                         language.inlay_hints.as_ref()?.show_other_hints.as_ref()
                     })
                 },
-                pick_mut: |settings_content| {
+                write: |settings_content| {
                     language_settings_field_mut(settings_content, |language| {
                         &mut language
                             .inlay_hints
@@ -5597,7 +5597,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                         language.inlay_hints.as_ref()?.show_background.as_ref()
                     })
                 },
-                pick_mut: |settings_content| {
+                write: |settings_content| {
                     language_settings_field_mut(settings_content, |language| {
                         &mut language.inlay_hints.get_or_insert_default().show_background
                     })
@@ -5615,7 +5615,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                         language.inlay_hints.as_ref()?.edit_debounce_ms.as_ref()
                     })
                 },
-                pick_mut: |settings_content| {
+                write: |settings_content| {
                     language_settings_field_mut(settings_content, |language| {
                         &mut language
                             .inlay_hints
@@ -5636,7 +5636,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                         language.inlay_hints.as_ref()?.scroll_debounce_ms.as_ref()
                     })
                 },
-                pick_mut: |settings_content| {
+                write: |settings_content| {
                     language_settings_field_mut(settings_content, |language| {
                         &mut language
                             .inlay_hints
@@ -5662,7 +5662,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                                 .as_ref()
                         })
                     },
-                    pick_mut: |settings_content| {
+                    write: |settings_content| {
                         language_settings_field_mut(settings_content, |language| {
                             &mut language
                                 .inlay_hints
@@ -5683,7 +5683,9 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             description: "How to render LSP color previews in the editor",
             field: Box::new(SettingField {
                 pick: |settings_content| settings_content.editor.lsp_document_colors.as_ref(),
-                pick_mut: |settings_content| &mut settings_content.editor.lsp_document_colors,
+                write: |settings_content, value| {
+                    settings_content.editor.lsp_document_colors = value;
+                },
             }),
             metadata: None,
             files: USER,
@@ -5700,7 +5702,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                         language.tasks.as_ref()?.enabled.as_ref()
                     })
                 },
-                pick_mut: |settings_content| {
+                write: |settings_content| {
                     language_settings_field_mut(settings_content, |language| {
                         &mut language.tasks.get_or_insert_default().enabled
                     })
@@ -5719,7 +5721,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                             language.tasks.as_ref()?.variables.as_ref()
                         })
                     },
-                    pick_mut: |settings_content| {
+                    write: |settings_content| {
                         language_settings_field_mut(settings_content, |language| {
                             &mut language.tasks.get_or_insert_default().variables
                         })
@@ -5739,7 +5741,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                         language.tasks.as_ref()?.prefer_lsp.as_ref()
                     })
                 },
-                pick_mut: |settings_content| {
+                write: |settings_content| {
                     language_settings_field_mut(settings_content, |language| {
                         &mut language.tasks.get_or_insert_default().prefer_lsp
                     })
@@ -5757,7 +5759,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                     pick: |settings_content| {
                         language_settings_field(settings_content, |language| language.debuggers.as_ref())
                     },
-                    pick_mut: |settings_content| {
+                    write: |settings_content| {
                         language_settings_field_mut(settings_content, |language| {
                             &mut language.debuggers
                         })
@@ -5773,7 +5775,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             description: "Enable middle-click paste on Linux",
             field: Box::new(SettingField {
                 pick: |settings_content| settings_content.editor.middle_click_paste.as_ref(),
-                pick_mut: |settings_content| &mut settings_content.editor.middle_click_paste,
+                write: |settings_content, value| {settings_content.editor.middle_click_paste = value;},
             }),
             metadata: None,
             files: USER,
@@ -5787,7 +5789,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                         language.extend_comment_on_newline.as_ref()
                     })
                 },
-                pick_mut: |settings_content| {
+                write: |settings_content| {
                     language_settings_field_mut(settings_content, |language| {
                         &mut language.extend_comment_on_newline
                     })
@@ -5807,7 +5809,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                     pick: |settings_content| {
                         settings_content.image_viewer.as_ref().and_then(|image_viewer| image_viewer.unit.as_ref())
                     },
-                    pick_mut: |settings_content| {
+                    write: |settings_content| {
                         &mut settings_content.image_viewer.get_or_insert_default().unit
                     },
                 }),
@@ -5821,7 +5823,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                     pick: |settings_content| {
                         settings_content.message_editor.as_ref().and_then(|message_editor| message_editor.auto_replace_emoji_shortcode.as_ref())
                     },
-                    pick_mut: |settings_content| {
+                    write: |settings_content| {
                         &mut settings_content.message_editor.get_or_insert_default().auto_replace_emoji_shortcode
                     },
                 }),
@@ -5835,7 +5837,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                     pick: |settings_content| {
                         settings_content.workspace.drop_target_size.as_ref()
                     },
-                    pick_mut: |settings_content| {
+                    write: |settings_content| {
                         &mut settings_content.workspace.drop_target_size
                     },
                 }),
@@ -5861,7 +5863,7 @@ fn non_editor_language_settings_data() -> Vec<SettingsPageItem> {
                         language.enable_language_server.as_ref()
                     })
                 },
-                pick_mut: |settings_content| {
+                write: |settings_content| {
                     language_settings_field_mut(settings_content, |language| {
                         &mut language.enable_language_server
                     })
@@ -5880,7 +5882,7 @@ fn non_editor_language_settings_data() -> Vec<SettingsPageItem> {
                             language.language_servers.as_ref()
                         })
                     },
-                    pick_mut: |settings_content| {
+                    write: |settings_content| {
                         language_settings_field_mut(settings_content, |language| {
                             &mut language.language_servers
                         })
@@ -5900,7 +5902,7 @@ fn non_editor_language_settings_data() -> Vec<SettingsPageItem> {
                         language.linked_edits.as_ref()
                     })
                 },
-                pick_mut: |settings_content| {
+                write: |settings_content| {
                     language_settings_field_mut(settings_content, |language| {
                         &mut language.linked_edits
                     })
@@ -5914,7 +5916,7 @@ fn non_editor_language_settings_data() -> Vec<SettingsPageItem> {
             description: "Whether to follow-up empty go to definition responses from the language server",
             field: Box::new(SettingField {
                 pick: |settings_content| settings_content.editor.go_to_definition_fallback.as_ref(),
-                pick_mut: |settings_content| &mut settings_content.editor.go_to_definition_fallback,
+                write: |settings_content| &mut settings_content.editor.go_to_definition_fallback,
             }),
             metadata: None,
             files: USER,
@@ -5929,7 +5931,7 @@ fn non_editor_language_settings_data() -> Vec<SettingsPageItem> {
                         language.completions.as_ref()?.lsp.as_ref()
                     })
                 },
-                pick_mut: |settings_content| {
+                write: |settings_content| {
                     language_settings_field_mut(settings_content, |language| {
                         &mut language.completions.get_or_insert_default().lsp
                     })
@@ -5947,7 +5949,7 @@ fn non_editor_language_settings_data() -> Vec<SettingsPageItem> {
                         language.completions.as_ref()?.lsp_fetch_timeout_ms.as_ref()
                     })
                 },
-                pick_mut: |settings_content| {
+                write: |settings_content| {
                     language_settings_field_mut(settings_content, |language| {
                         &mut language
                             .completions
@@ -5968,7 +5970,7 @@ fn non_editor_language_settings_data() -> Vec<SettingsPageItem> {
                         language.completions.as_ref()?.lsp_insert_mode.as_ref()
                     })
                 },
-                pick_mut: |settings_content| {
+                write: |settings_content| {
                     language_settings_field_mut(settings_content, |language| {
                         &mut language.completions.get_or_insert_default().lsp_insert_mode
                     })
@@ -5988,7 +5990,7 @@ fn non_editor_language_settings_data() -> Vec<SettingsPageItem> {
                             language.debuggers.as_ref()
                         })
                     },
-                    pick_mut: |settings_content| {
+                    write: |settings_content| {
                         language_settings_field_mut(settings_content, |language| {
                             &mut language.debuggers
                         })
@@ -6009,7 +6011,7 @@ fn non_editor_language_settings_data() -> Vec<SettingsPageItem> {
                         language.prettier.as_ref()?.allowed.as_ref()
                     })
                 },
-                pick_mut: |settings_content| {
+                write: |settings_content| {
                     language_settings_field_mut(settings_content, |language| {
                         &mut language.prettier.get_or_insert_default().allowed
                     })
@@ -6027,7 +6029,7 @@ fn non_editor_language_settings_data() -> Vec<SettingsPageItem> {
                         language.prettier.as_ref()?.parser.as_ref()
                     })
                 },
-                pick_mut: |settings_content| {
+                write: |settings_content| {
                     language_settings_field_mut(settings_content, |language| {
                         &mut language.prettier.get_or_insert_default().parser
                     })
@@ -6046,7 +6048,7 @@ fn non_editor_language_settings_data() -> Vec<SettingsPageItem> {
                             language.prettier.as_ref()?.plugins.as_ref()
                         })
                     },
-                    pick_mut: |settings_content| {
+                    write: |settings_content| {
                         language_settings_field_mut(settings_content, |language| {
                             &mut language.prettier.get_or_insert_default().plugins
                         })
@@ -6067,7 +6069,7 @@ fn non_editor_language_settings_data() -> Vec<SettingsPageItem> {
                             language.prettier.as_ref()?.options.as_ref()
                         })
                     },
-                    pick_mut: |settings_content| {
+                    write: |settings_content| {
                         language_settings_field_mut(settings_content, |language| {
                             &mut language.prettier.get_or_insert_default().options
                         })
