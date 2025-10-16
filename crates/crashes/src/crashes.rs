@@ -327,7 +327,7 @@ pub fn panic_hook(info: &PanicHookInfo) {
     // if it's still not there just write panic info and no minidump
     let retry_frequency = Duration::from_millis(100);
     for _ in 0..5 {
-        if let Some(client) = CRASH_HANDLER.get().map(|c| c.try_lock()).flatten() {
+        if let Some(client) = CRASH_HANDLER.get().and_then(|c| c.try_lock()) {
             client
                 .send_message(
                     2,
