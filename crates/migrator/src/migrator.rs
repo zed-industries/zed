@@ -211,6 +211,7 @@ pub fn migrate_settings(text: &str) -> Result<Option<String>> {
             migrations::m_2025_10_03::SETTINGS_PATTERNS,
             &SETTINGS_QUERY_2025_10_03,
         ),
+        MigrationType::Json(migrations::m_2025_10_16::restore_code_actions_on_format),
     ];
     run_migrations(text, migrations)
 }
@@ -361,6 +362,7 @@ mod tests {
         pretty_assertions::assert_eq!(migrated.as_deref(), output);
     }
 
+    #[track_caller]
     fn assert_migrate_settings(input: &str, output: Option<&str>) {
         let migrated = migrate_settings(input).unwrap();
         assert_migrated_correctly(migrated, output);
@@ -1336,7 +1338,10 @@ mod tests {
 
     #[test]
     fn test_flatten_code_action_formatters_basic_array() {
-        assert_migrate_settings(
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2025_10_01::flatten_code_actions_formatters,
+            )],
             &r#"{
         "formatter": [
           {
@@ -1367,7 +1372,10 @@ mod tests {
 
     #[test]
     fn test_flatten_code_action_formatters_basic_object() {
-        assert_migrate_settings(
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2025_10_01::flatten_code_actions_formatters,
+            )],
             &r#"{
         "formatter": {
           "code_actions": {
@@ -1521,7 +1529,10 @@ mod tests {
     #[test]
     fn test_flatten_code_action_formatters_array_with_multiple_action_blocks_in_defaults_and_multiple_languages()
      {
-        assert_migrate_settings(
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2025_10_01::flatten_code_actions_formatters,
+            )],
             &r#"{
         "formatter": {
           "code_actions": {
@@ -1985,6 +1996,98 @@ mod tests {
             }"#
             .unindent(),
             None,
+        );
+    }
+
+    #[test]
+    fn test_restore_code_actions_on_format() {
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2025_10_16::restore_code_actions_on_format,
+            )],
+            &r#"{
+                "formatter": {
+                    "code_action": "foo"
+                }
+            }"#
+            .unindent(),
+            Some(
+                &r#"{
+                    "code_actions_on_format": {
+                        "foo": true
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2025_10_16::restore_code_actions_on_format,
+            )],
+            &r#"{
+                "formatter": [
+                    { "code_action": "foo" },
+                    "auto"
+                ]
+            }"#
+            .unindent(),
+            None,
+        );
+
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2025_10_16::restore_code_actions_on_format,
+            )],
+            &r#"{
+                "formatter": {
+                    "code_action": "foo"
+                },
+                "code_actions_on_format": {
+                    "bar": true,
+                    "baz": false
+                }
+            }"#
+            .unindent(),
+            Some(
+                &r#"{
+                    "code_actions_on_format": {
+                        "foo": true,
+                        "bar": true,
+                        "baz": false
+                    }
+                }"#
+                .unindent(),
+            ),
+        );
+
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2025_10_16::restore_code_actions_on_format,
+            )],
+            &r#"{
+                "formatter": [
+                    { "code_action": "foo" },
+                    { "code_action": "qux" },
+                ],
+                "code_actions_on_format": {
+                    "bar": true,
+                    "baz": false
+                }
+            }"#
+            .unindent(),
+            Some(
+                &r#"{
+                    "code_actions_on_format": {
+                        "foo": true,
+                        "qux": true,
+                        "bar": true,
+                        "baz": false
+                    }
+                }"#
+                .unindent(),
+            ),
         );
     }
 }
