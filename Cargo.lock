@@ -3375,6 +3375,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "chrono",
+ "indoc",
  "pretty_assertions",
  "serde",
  "serde_json",

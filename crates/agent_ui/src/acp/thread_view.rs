@@ -278,7 +278,7 @@ pub struct AcpThreadView {
     thread_feedback: ThreadFeedbackState,
     list_state: ListState,
     auth_task: Option<Task<()>>,
-    collapsed_tool_calls: HashSet<acp::ToolCallId>,
+    expanded_tool_calls: HashSet<acp::ToolCallId>,
     expanded_thinking_blocks: HashSet<(usize, usize)>,
     edits_expanded: bool,
     plan_expanded: bool,
@@ -292,6 +292,8 @@ pub struct AcpThreadView {
     resume_thread_metadata: Option<DbThreadMetadata>,
     _cancel_task: Option<Task<()>>,
     _subscriptions: [Subscription; 5],
+    #[cfg(target_os = "windows")]
+    show_codex_windows_warning: bool,
 }
 
 enum ThreadState {
@@ -335,7 +337,10 @@ impl AcpThreadView {
 
         let placeholder = if agent.name() == "Zed Agent" {
             format!("Message the {} — @ to include context", agent.name())
-        } else if agent.name() == "Claude Code" || !available_commands.borrow().is_empty() {
+        } else if agent.name() == "Claude Code"
+            || agent.name() == "Codex"
+            || !available_commands.borrow().is_empty()
+        {
             format!(
                 "Message {} — @ to include context, / for commands",
                 agent.name()
@@ -394,6 +399,10 @@ impl AcpThreadView {
             ),
         ];
 
+        #[cfg(target_os = "windows")]
+        let show_codex_windows_warning = crate::ExternalAgent::parse_built_in(agent.as_ref())
+            == Some(crate::ExternalAgent::Codex);
+
         Self {
             agent: agent.clone(),
             workspace: workspace.clone(),
@@ -419,7 +428,7 @@ impl AcpThreadView {
             thread_error: None,
             thread_feedback: Default::default(),
             auth_task: None,
-            collapsed_tool_calls: HashSet::default(),
+            expanded_tool_calls: HashSet::default(),
             expanded_thinking_blocks: HashSet::default(),
             editing_message: None,
             edits_expanded: false,
@@ -436,6 +445,8 @@ impl AcpThreadView {
             focus_handle: cx.focus_handle(),
             new_server_version_available: None,
             resume_thread_metadata: resume_thread,
+            #[cfg(target_os = "windows")]
+            show_codex_windows_warning,
         }
     }
 
@@ -954,17 +965,17 @@ impl AcpThreadView {
     ) {
         match &event.view_event {
             ViewEvent::NewDiff(tool_call_id) => {
-                if !AgentSettings::get_global(cx).expand_edit_card {
-                    self.collapsed_tool_calls.insert(tool_call_id.clone());
+                if AgentSettings::get_global(cx).expand_edit_card {
+                    self.expanded_tool_calls.insert(tool_call_id.clone());
                 }
             }
             ViewEvent::NewTerminal(tool_call_id) => {
-                if !AgentSettings::get_global(cx).expand_terminal_card {
-                    self.collapsed_tool_calls.insert(tool_call_id.clone());
+                if AgentSettings::get_global(cx).expand_terminal_card {
+                    self.expanded_tool_calls.insert(tool_call_id.clone());
                 }
             }
             ViewEvent::TerminalMovedToBackground(tool_call_id) => {
-                self.collapsed_tool_calls.insert(tool_call_id.clone());
+                self.expanded_tool_calls.remove(tool_call_id);
             }
             ViewEvent::MessageEditorEvent(_editor, MessageEditorEvent::Focus) => {
                 if let Some(thread) = self.thread()
@@ -2119,7 +2130,7 @@ impl AcpThreadView {
 
         let is_collapsible = !tool_call.content.is_empty() && !needs_confirmation;
 
-        let is_open = needs_confirmation || !self.collapsed_tool_calls.contains(&tool_call.id);
+        let is_open = needs_confirmation || self.expanded_tool_calls.contains(&tool_call.id);
 
         let tool_output_display =
             if is_open {
@@ -2269,9 +2280,9 @@ impl AcpThreadView {
                                                     let id = tool_call.id.clone();
                                                     move |this: &mut Self, _, _, cx: &mut Context<Self>| {
                                                         if is_open {
-                                                            this.collapsed_tool_calls.insert(id.clone());
+                                                            this.expanded_tool_calls.remove(&id);
                                                         } else {
-                                                            this.collapsed_tool_calls.remove(&id);
+                                                            this.expanded_tool_calls.insert(id.clone());
                                                         }
                                                         cx.notify();
                                                     }
@@ -2473,7 +2484,7 @@ impl AcpThreadView {
                         .icon_color(Color::Muted)
                         .on_click(cx.listener({
                             move |this: &mut Self, _, _, cx: &mut Context<Self>| {
-                                this.collapsed_tool_calls.insert(tool_call_id.clone());
+                                this.expanded_tool_calls.remove(&tool_call_id);
                                 cx.notify();
                             }
                         })),
@@ -2751,7 +2762,7 @@ impl AcpThreadView {
             .map(|path| path.display().to_string())
             .unwrap_or_else(|| "current directory".to_string());
 
-        let is_expanded = !self.collapsed_tool_calls.contains(&tool_call.id);
+        let is_expanded = self.expanded_tool_calls.contains(&tool_call.id);
 
         let header = h_flex()
             .id(header_id)
@@ -2886,9 +2897,9 @@ impl AcpThreadView {
                     let id = tool_call.id.clone();
                     move |this, _event, _window, _cx| {
                         if is_expanded {
-                            this.collapsed_tool_calls.insert(id.clone());
+                            this.expanded_tool_calls.remove(&id);
                         } else {
-                            this.collapsed_tool_calls.remove(&id);
+                            this.expanded_tool_calls.insert(id.clone());
                         }
                     }
                 })),
@@ -5025,6 +5036,49 @@ impl AcpThreadView {
         )
     }
 
+    #[cfg(target_os = "windows")]
+    fn render_codex_windows_warning(&self, cx: &mut Context<Self>) -> Option<Callout> {
+        if self.show_codex_windows_warning {
+            Some(
+                Callout::new()
+                    .icon(IconName::Warning)
+                    .severity(Severity::Warning)
+                    .title("Codex on Windows")
+                    .description(
+                        "For best performance, run Codex in Windows Subsystem for Linux (WSL2)",
+                    )
+                    .actions_slot(
+                        Button::new("open-wsl-modal", "Open in WSL")
+                            .icon_size(IconSize::Small)
+                            .icon_color(Color::Muted)
+                            .on_click(cx.listener({
+                                move |_, _, window, cx| {
+                                    window.dispatch_action(
+                                        zed_actions::wsl_actions::OpenWsl::default().boxed_clone(),
+                                        cx,
+                                    );
+                                    cx.notify();
+                                }
+                            })),
+                    )
+                    .dismiss_action(
+                        IconButton::new("dismiss", IconName::Close)
+                            .icon_size(IconSize::Small)
+                            .icon_color(Color::Muted)
+                            .tooltip(Tooltip::text("Dismiss Warning"))
+                            .on_click(cx.listener({
+                                move |this, _, _, cx| {
+                                    this.show_codex_windows_warning = false;
+                                    cx.notify();
+                                }
+                            })),
+                    ),
+            )
+        } else {
+            None
+        }
+    }
+
     fn render_thread_error(&self, window: &mut Window, cx: &mut Context<Self>) -> Option<Div> {
         let content = match self.thread_error.as_ref()? {
             ThreadError::Other(error) => self.render_any_thread_error(error.clone(), cx),
@@ -5512,6 +5566,16 @@ impl Render for AcpThreadView {
                 _ => this,
             })
             .children(self.render_thread_retry_status_callout(window, cx))
+            .children({
+                #[cfg(target_os = "windows")]
+                {
+                    self.render_codex_windows_warning(cx)
+                }
+                #[cfg(not(target_os = "windows"))]
+                {
+                    Vec::<Empty>::new()
+                }
+            })
             .children(self.render_thread_error(window, cx))
             .when_some(
                 self.new_server_version_available.as_ref().filter(|_| {
