@@ -262,11 +262,15 @@ impl TransportDelegate {
                     break;
                 }
             }
+
+            // Clean up logs by trimming unnecessary whitespace/newlines before inserting into log.
+            let line = line.trim();
+
             log::debug!("stderr: {line}");
 
             for (kind, handler) in log_handlers.lock().iter_mut() {
                 if matches!(kind, LogKind::Adapter) {
-                    handler(iokind, None, line.as_str());
+                    handler(iokind, None, line);
                 }
             }
         }
