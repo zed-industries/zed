@@ -46,12 +46,17 @@ impl RegexSearches {
             path_hyperlink_regexes: path_hyperlink_regexes
                 .into_iter()
                 .filter_map(|regex| {
-                    let Ok(regex) = Regex::new(&regex) else {
-                        warn!("Failed to load path hyperlink regex specified in settings: {regex}");
-                        return None;
-                    };
-
-                    Some(regex)
+                    Regex::new(&regex)
+                        .inspect_err(|error| {
+                            warn!(
+                                concat!(
+                                    "Ignoring path hyperlink regex specified in ",
+                                    "`terminal.path_hyperlink_regexes` due to:\n{}"
+                                ),
+                                error
+                            )
+                        })
+                        .ok()
                 })
                 .collect(),
             path_hyperlink_timeout: Duration::from_millis(path_hyperlink_timeout_ms),
@@ -93,9 +98,13 @@ impl RegexSearches {
         };
 
         let search_start_time = Instant::now();
-        let timed_out = || {
-            Instant::now().saturating_duration_since(search_start_time)
-                > self.path_hyperlink_timeout
+
+        let timed_out = || -> Option<(_, _)> {
+            let elapsed_time = Instant::now().saturating_duration_since(search_start_time);
+            (elapsed_time > self.path_hyperlink_timeout).then_some((
+                elapsed_time.as_millis(),
+                self.path_hyperlink_timeout.as_millis(),
+            ))
         };
 
         for regex in &self.path_hyperlink_regexes {
@@ -121,16 +130,9 @@ impl RegexSearches {
                 return found_from_range(path_capture.range(), Some(line), Some(column));
             }
 
-            if timed_out() {
-                info!(
-                    concat!(
-                        "Timed out after {}ms processing path hyperlink regexes. ",
-                        "Time out specified in settings: `terminal.path_hyperlink_timeout_ms`"
-                    ),
-                    Instant::now()
-                        .saturating_duration_since(search_start_time)
-                        .as_millis()
-                );
+            if let Some((timed_out_ms, timeout_ms)) = timed_out() {
+                warn!("Timed out processing path hyperlink regexes after {timed_out_ms}ms");
+                info!("{timeout_ms}ms time out specified in `terminal.path_hyperlink_timeout_ms`");
                 break;
             }
         }
