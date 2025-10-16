@@ -193,8 +193,8 @@ impl Search {
     }
 
     /// Background workers cannot open buffers by themselves, hence main thread will do it on their behalf.
-    async fn open_buffers<'a>(
-        &'a self,
+    async fn open_buffers(
+        &self,
         rx: Receiver<ProjectPath>,
         find_all_matches_tx: Sender<Entity<Buffer>>,
         mut cx: AsyncApp,
