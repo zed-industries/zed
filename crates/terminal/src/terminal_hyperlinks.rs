@@ -276,11 +276,12 @@ enum QuotesTrimmed {
 }
 
 /// Check if path is surrounded by brackets: `[]` or `()` or `{}` or `<>`.
-/// Supports one level of imbalance, e.g., `([]` or `<>]` or `(""`
+/// Supports one level of imbalance, e.g., `([]` or `<>]` or `(""` or `[:`
 fn path_surrounded_by_common_symbols(path: &str) -> Option<(usize, usize, QuotesTrimmed)> {
     enum Surrounded {
         Matched,
-        Unmatched,
+        Left,
+        Mismatched,
     }
 
     fn surrounded_by(path: &str) -> Option<Surrounded> {
@@ -292,11 +293,11 @@ fn path_surrounded_by_common_symbols(path: &str) -> Option<(usize, usize, Quotes
             match (first_char, last_char) {
                 ('[', ']') | ('(', ')') | ('{', '}') | ('<', '>') => Some(Surrounded::Matched),
                 ('[', _) | ('(', _) | ('{', _) | ('<', _) => match last_char {
-                    ']' | ')' | '}' | '>' | '\'' | '"' | '`' => Some(Surrounded::Unmatched),
-                    _ => None,
+                    ']' | ')' | '}' | '>' | '\'' | '"' | '`' => Some(Surrounded::Mismatched),
+                    _ => Some(Surrounded::Left),
                 },
                 (_, ']') | (_, ')') | (_, '}') | (_, '>') => match first_char {
-                    '[' | '(' | '{' | '<' | '\'' | '"' | '`' => Some(Surrounded::Unmatched),
+                    '[' | '(' | '{' | '<' | '\'' | '"' | '`' => Some(Surrounded::Mismatched),
                     _ => None,
                 },
                 _ => None,
@@ -308,7 +309,8 @@ fn path_surrounded_by_common_symbols(path: &str) -> Option<(usize, usize, Quotes
 
     surrounded_by(path).and_then(|surrounded| match surrounded {
         Surrounded::Matched => Some((1, 1, QuotesTrimmed::No)),
-        Surrounded::Unmatched => {
+        Surrounded::Left => Some((1, 0, QuotesTrimmed::No)),
+        Surrounded::Mismatched => {
             let start_trimmed = &path[1..];
             let end_trimmed = &path[..path.len() - 1];
             if let Some(Surrounded::Matched) = surrounded_by(start_trimmed) {
@@ -787,6 +789,14 @@ mod tests {
                 test_path!("‹«/awesome.🔥👈»› is some good Mojo!");
                 test_path!("    ‹File \"«/👉🏃wesome.🔥»\", line «42»›: Wat?");
                 test_path!("    ‹File \"«/🏃👈wesome.🔥»\", line «42»›: Wat?");
+            }
+
+            #[test]
+            // <https://github.com/zed-industries/zed/issues/40202>
+            fn issue_40202() {
+                // Elixir
+                test_path!("[‹«lib/blitz_apex_👉server/stats/aggregate_rank_stats.ex»:«35»›: BlitzApexServer.Stats.AggregateRankStats.update/2]
+                1 #=> 1");
             }
 
             #[test]
