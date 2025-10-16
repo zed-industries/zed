@@ -187,7 +187,7 @@ impl Default for MacPlatform {
 
 impl MacPlatform {
     pub(crate) fn new(headless: bool) -> Self {
-        let dispatcher = Arc::new(MacDispatcher::new());
+        let dispatcher = Arc::new(MacDispatcher);
 
         #[cfg(feature = "font-kit")]
         let text_system = Arc::new(crate::MacTextSystem::new());

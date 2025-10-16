@@ -5,8 +5,6 @@ use calloop::{
     channel::{self, Sender},
     timer::TimeoutAction,
 };
-use parking::{Parker, Unparker};
-use parking_lot::Mutex;
 use std::{
     thread,
     time::{Duration, Instant},
@@ -19,7 +17,6 @@ struct TimerAfter {
 }
 
 pub(crate) struct LinuxDispatcher {
-    parker: Mutex<Parker>,
     main_sender: Sender<Runnable>,
     timer_sender: Sender<TimerAfter>,
     background_sender: flume::Sender<Runnable>,
@@ -92,7 +89,6 @@ impl LinuxDispatcher {
         background_threads.push(timer_thread);
 
         Self {
-            parker: Mutex::new(Parker::new()),
             main_sender,
             timer_sender,
             background_sender,
@@ -129,18 +125,5 @@ impl PlatformDispatcher for LinuxDispatcher {
         self.timer_sender
             .send(TimerAfter { duration, runnable })
             .ok();
-    }
-
-    fn park(&self, timeout: Option<Duration>) -> bool {
-        if let Some(timeout) = timeout {
-            self.parker.lock().park_timeout(timeout)
-        } else {
-            self.parker.lock().park();
-            true
-        }
-    }
-
-    fn unparker(&self) -> Unparker {
-        self.parker.lock().unparker()
     }
 }

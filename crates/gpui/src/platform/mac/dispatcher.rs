@@ -9,12 +9,9 @@ use objc::{
     runtime::{BOOL, YES},
     sel, sel_impl,
 };
-use parking::{Parker, Unparker};
-use parking_lot::Mutex;
 use std::{
     ffi::c_void,
     ptr::{NonNull, addr_of},
-    sync::Arc,
     time::Duration,
 };
 
@@ -29,23 +26,7 @@ pub(crate) fn dispatch_get_main_queue() -> dispatch_queue_t {
     addr_of!(_dispatch_main_q) as *const _ as dispatch_queue_t
 }
 
-pub(crate) struct MacDispatcher {
-    parker: Arc<Mutex<Parker>>,
-}
-
-impl Default for MacDispatcher {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl MacDispatcher {
-    pub fn new() -> Self {
-        MacDispatcher {
-            parker: Arc::new(Mutex::new(Parker::new())),
-        }
-    }
-}
+pub(crate) struct MacDispatcher;
 
 impl PlatformDispatcher for MacDispatcher {
     fn is_main_thread(&self) -> bool {
@@ -85,19 +66,6 @@ impl PlatformDispatcher for MacDispatcher {
                 Some(trampoline),
             );
         }
-    }
-
-    fn park(&self, timeout: Option<Duration>) -> bool {
-        if let Some(timeout) = timeout {
-            self.parker.lock().park_timeout(timeout)
-        } else {
-            self.parker.lock().park();
-            true
-        }
-    }
-
-    fn unparker(&self) -> Unparker {
-        self.parker.lock().unparker()
     }
 }
 
