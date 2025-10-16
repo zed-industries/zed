@@ -263,7 +263,7 @@ async fn load_shell_environment(
             .into_iter()
             .collect();
         (Some(fake_env), None)
-    } else if cfg!(target_os = "windows",) {
+    } else if cfg!(target_os = "windows") {
         let (shell, args) = shell.program_and_args();
         let envs = match shell_env::capture(shell, args, dir).await {
             Ok(envs) => envs,
