@@ -58,16 +58,19 @@ Zed will also load debug configurations from `.vscode/launch.json`, and show the
 
 ### Global Debug Configurations
 
-Debug configurations can be defined globally and will be available across all your projects. Global configurations are stored in `~/.config/zed/debug.json` (or `%APPDATA%\Zed\debug.json` on Windows) and follow the same format as project-specific configurations.
+Debug configurations can be defined globally and will be available across all your projects. Global configurations are stored in:
+- `~/.config/zed/debug.json` on Linux and macOS
+- `%APPDATA%\Zed\debug.json` on Windows
+and follow the same format as project-specific configurations.
 
 Global configurations are loaded alongside project-specific ones, allowing you to:
-- Define common debug setups that work across multiple projects
+- Define common debug setups that work across all projects
 - Share debug configurations with your team  
 - Set up language-specific debuggers that apply everywhere
 
-To open the global debug configuration file, use the {#action OpenDebugTasks} action from the command palette.
+To open the global debug configuration file, use the {#action zed::OpenDebugTasks} action from the command palette.
 
-**Configuration Precedence**: When both global and project-specific configurations exist, both are available in the debug modal. Project-specific configurations don't override global ones, they're merged together, giving you access to all configured debug scenarios.
+**Configuration Precedence**: When both global and project-specific configurations exist, both are available in the debug modal. Project-specific configurations don't override global ones - they are shown alongside them, giving you access to all configured debug scenarios.
 
 ### Launching & Attaching
 
