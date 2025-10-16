@@ -566,6 +566,10 @@ pub struct ProjectPanelSettingsContent {
     ///
     /// Default: true
     pub drag_and_drop: Option<bool>,
+    /// Whether to automatically open files when pasting them in the project panel.
+    ///
+    /// Default: true
+    pub open_file_on_paste: Option<bool>,
 }
 
 #[derive(
