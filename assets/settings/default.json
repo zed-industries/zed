@@ -1495,16 +1495,10 @@
       //    "never"
       "show": null
     },
-    /// Regexes for path hyperlink navigation. A 'path' capture groups must be present, 'line' and
-    /// 'column' capture groups of may also be present. The default value includes regexes which
-    /// support rustc and MSBuild style line and column suffixes, as well as Python build errors.
-    /// Each includes an optional description following a final colon.
-    // TODO(davewa): Update to the new default regexes
-    "path_hyperlink_regexes": [
-      "(?<path>[^:]+)((?<suffix>(:(?<line>[0-9]+))(:(?<column>[0-9]+))?)(:(?=[^0-9])(?<desc>.*)$|$))?",
-      "(?<path>[^\\(]+)((?<suffix>(\\((?<line>[0-9]+))([,:](?<column>[0-9]+))?\\))(:(?=[^0-9])(?<desc>.*)$|$))?",
-      "\"(?<path>[^\"]+)\"((?<suffix>(, line (?<line>[0-9]+))))?"
-    ],
+    /// E.g., Hyperlink paths with spaces in rust tools output:
+    /// cargo: "\\s+(Compiling|Checking|Documenting) [^(]+\\((?P<file>.+)\\)$"
+    /// rustc: "\\s+(-->|:::) (?<file>.+)$"
+    "path_hyperlink_regexes": ["File \"(?P<file>[^\"]+)\", line (?P<line>\\d+)"],
     /// Timeout for hover and Cmd-click path hyperlink discovery in milliseconds.
     "path_hyperlink_timeout": 100,
     // Set the terminal's font size. If this option is not included,
