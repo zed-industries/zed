@@ -457,7 +457,7 @@ pub fn open_settings_editor(
         existing_window
             .update(cx, |settings_window, window, cx| {
                 settings_window.original_window = Some(workspace_handle);
-                settings_window.observe_workspace_release(window, cx);
+                settings_window.observe_workspace_release(cx);
                 window.activate_window();
             })
             .ok();
@@ -1044,7 +1044,7 @@ impl SettingsWindow {
             list_state,
         };
 
-        this.observe_workspace_release(window, cx);
+        this.observe_workspace_release(cx);
 
         this.fetch_files(window, cx);
         this.build_ui(window, cx);
@@ -1057,11 +1057,7 @@ impl SettingsWindow {
         this
     }
 
-    fn observe_workspace_release(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(app_state) = workspace::AppState::global(cx).upgrade() else {
-            return;
-        };
-
+    fn observe_workspace_release(&mut self, cx: &mut Context<Self>) {
         cx.on_window_closed(|cx| {
             if let Some(existing_window) = cx
                 .windows()
@@ -1075,17 +1071,6 @@ impl SettingsWindow {
                 .ok();
             }
         })
-        .detach();
-
-        cx.observe_in(
-            &app_state.workspace_store,
-            window,
-            |_, workspace_store, window, cx| {
-                if workspace_store.read(cx).workspaces().is_empty() {
-                    window.remove_window();
-                }
-            },
-        )
         .detach();
     }
 
