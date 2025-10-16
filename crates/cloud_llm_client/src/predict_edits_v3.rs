@@ -47,13 +47,13 @@ pub struct PredictEditsRequest {
 pub enum PromptFormat {
     MarkedExcerpt,
     LabeledSections,
-    NumberedLines,
+    NumLinesUniDiff,
     /// Prompt format intended for use via zeta_cli
     OnlySnippets,
 }
 
 impl PromptFormat {
-    pub const DEFAULT: PromptFormat = PromptFormat::NumberedLines;
+    pub const DEFAULT: PromptFormat = PromptFormat::NumLinesUniDiff;
 }
 
 impl Default for PromptFormat {
@@ -74,7 +74,7 @@ impl std::fmt::Display for PromptFormat {
             PromptFormat::MarkedExcerpt => write!(f, "Marked Excerpt"),
             PromptFormat::LabeledSections => write!(f, "Labeled Sections"),
             PromptFormat::OnlySnippets => write!(f, "Only Snippets"),
-            PromptFormat::NumberedLines => write!(f, "Numbered Lines"),
+            PromptFormat::NumLinesUniDiff => write!(f, "Numbered Lines / Unified Diff"),
         }
     }
 }

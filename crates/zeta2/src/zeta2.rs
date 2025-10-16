@@ -45,6 +45,7 @@ const MAX_EVENT_COUNT: usize = 16;
 
 pub const DEFAULT_CONTEXT_OPTIONS: EditPredictionContextOptions = EditPredictionContextOptions {
     use_imports: true,
+    use_references: false,
     excerpt: EditPredictionExcerptOptions {
         max_bytes: 512,
         min_bytes: 128,
