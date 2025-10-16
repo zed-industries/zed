@@ -638,7 +638,6 @@ impl NativeAgent {
                 .with_context(|| format!("no thread found with ID: {id:?}"))?;
 
             let thread = this.update(cx, |this, cx| {
-                let action_log = cx.new(|_cx| ActionLog::new(this.project.clone()));
                 cx.new(|cx| {
                     Thread::from_db(
                         id.clone(),
@@ -646,7 +645,6 @@ impl NativeAgent {
                         this.project.clone(),
                         this.project_context.clone(),
                         this.context_server_registry.clone(),
-                        action_log.clone(),
                         this.templates.clone(),
                         cx,
                     )

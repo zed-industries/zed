@@ -792,7 +792,6 @@ impl Thread {
         project: Entity<Project>,
         project_context: Entity<ProjectContext>,
         context_server_registry: Entity<ContextServerRegistry>,
-        action_log: Entity<ActionLog>,
         templates: Arc<Templates>,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -814,6 +813,8 @@ impl Thread {
         });
         let (prompt_capabilities_tx, prompt_capabilities_rx) =
             watch::channel(Self::prompt_capabilities(model.as_deref()));
+
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
 
         Self {
             id,

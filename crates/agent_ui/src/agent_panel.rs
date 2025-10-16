@@ -279,7 +279,7 @@ impl ActiveView {
     pub fn native_agent(
         fs: Arc<dyn Fs>,
         prompt_store: Option<Entity<PromptStore>>,
-        acp_history_store: Entity<agent2::HistoryStore>,
+        history_store: Entity<agent2::HistoryStore>,
         project: Entity<Project>,
         workspace: WeakEntity<Workspace>,
         window: &mut Window,
@@ -287,12 +287,12 @@ impl ActiveView {
     ) -> Self {
         let thread_view = cx.new(|cx| {
             crate::acp::AcpThreadView::new(
-                ExternalAgent::NativeAgent.server(fs, acp_history_store.clone()),
+                ExternalAgent::NativeAgent.server(fs, history_store.clone()),
                 None,
                 None,
                 workspace,
                 project,
-                acp_history_store,
+                history_store,
                 prompt_store,
                 window,
                 cx,
