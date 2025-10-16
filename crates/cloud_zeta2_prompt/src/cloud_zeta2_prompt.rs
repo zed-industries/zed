@@ -417,7 +417,7 @@ impl<'a> PlannedPrompt<'a> {
         };
 
         if self.request.events.is_empty() {
-            prompt.push_str("No edits yet.\n\n");
+            prompt.push_str("(No edit history)\n\n");
         } else {
             prompt.push_str(
                 "The following are the latest edits made by the user, from earlier to later.\n\n",
