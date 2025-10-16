@@ -2393,6 +2393,8 @@ impl Editor {
 
             if let Some(buffer) = multi_buffer.read(cx).as_singleton() {
                 editor.register_buffer(buffer.read(cx).remote_id(), cx);
+            } else {
+                editor.register_visible_buffers(cx);
             }
 
             editor.minimap =

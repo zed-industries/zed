@@ -598,7 +598,7 @@ impl Editor {
 
         self.post_scroll_update = cx.spawn_in(window, async move |editor, cx| {
             cx.background_executor()
-                .timer(Duration::from_millis(100))
+                .timer(Duration::from_millis(50))
                 .await;
             editor
                 .update_in(cx, |editor, window, cx| {
