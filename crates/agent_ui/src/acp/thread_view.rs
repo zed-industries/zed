@@ -5037,11 +5037,7 @@ impl AcpThreadView {
     }
 
     #[cfg(target_os = "windows")]
-    fn render_codex_windows_warning(
-        &self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Option<Callout> {
+    fn render_codex_windows_warning(&self, cx: &mut Context<Self>) -> Option<Callout> {
         if self.show_codex_windows_warning {
             Some(
                 Callout::new()
@@ -5051,6 +5047,21 @@ impl AcpThreadView {
                     .description(
                         "For best performance, run Codex in Windows Subsystem for Linux (WSL2)",
                     )
+                    .actions_slot(
+                        Button::new("open-wsl-modal", "Open in WSL")
+                            .icon_size(IconSize::Small)
+                            .icon_color(Color::Muted)
+                            .on_click(cx.listener({
+                                move |_, _, window, cx| {
+                                    window.dispatch_action(
+                                        zed_actions::wsl_actions::OpenFolderInWsl::default()
+                                            .boxed_clone(),
+                                        cx,
+                                    );
+                                    cx.notify();
+                                }
+                            })),
+                    )
                     .dismiss_action(
                         IconButton::new("dismiss", IconName::Close)
                             .icon_size(IconSize::Small)
@@ -5059,11 +5070,6 @@ impl AcpThreadView {
                             .on_click(cx.listener({
                                 move |this, _, _, cx| {
                                     this.show_codex_windows_warning = false;
-                                    window.dispatch_action(
-                                        zed_actions::wsl_actions::OpenFolderInWsl::default()
-                                            .boxed_clone(),
-                                        cx,
-                                    );
                                     cx.notify();
                                 }
                             })),
@@ -5564,7 +5570,7 @@ impl Render for AcpThreadView {
             .children({
                 #[cfg(target_os = "windows")]
                 {
-                    self.render_codex_windows_warning(window, cx)
+                    self.render_codex_windows_warning(cx)
                 }
                 #[cfg(not(target_os = "windows"))]
                 {
