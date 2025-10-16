@@ -1291,6 +1291,7 @@ pub struct Editor {
     pub lookup_key: Option<Box<dyn Any + Send + Sync>>,
     pub(crate) update_semantic_tokens_task: Task<()>,
     semantic_tokens_debounce_task: Option<Task<()>>,
+    syntax_tokens_debounce_task: Option<Task<()>>,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
@@ -2305,6 +2306,7 @@ impl Editor {
             lookup_key: None,
             update_semantic_tokens_task: Task::ready(()),
             semantic_tokens_debounce_task: None,
+            syntax_tokens_debounce_task: None,
         };
 
         if is_minimap {
@@ -6409,6 +6411,22 @@ impl Editor {
         );
     }
 
+    pub(crate) fn refresh_syntax_tokens_debounced(&mut self, buffer_id: BufferId, cx: &mut Context<Self>) {
+        const DEBOUNCE_DELAY_MS: u64 = 250;
+
+        self.syntax_tokens_debounce_task = Some(
+            cx.spawn(async move |editor, cx| {
+                cx.background_executor().timer(Duration::from_millis(DEBOUNCE_DELAY_MS)).await;
+
+                editor
+                    .update(cx, |editor, cx| {
+                        editor.refresh_syntax_tokens(buffer_id, cx);
+                    })
+                    .log_err();
+            })
+        );
+    }
+
     /// Internal immediate update (for initial load and non-debounced cases)
     pub(crate) fn update_semantic_tokens(
         &mut self,
@@ -6573,8 +6591,7 @@ impl Editor {
                     }
                 })
                 .log_err();
-        })
-        .detach();
+        }).detach();
     }
 
     fn request_semantic_tokens_if_capable(
@@ -6667,6 +6684,8 @@ impl Editor {
     }
 
     fn refresh_syntax_tokens(&mut self, buffer_id: BufferId, cx: &mut Context<Self>) {
+        self.syntax_tokens_debounce_task = None;
+
         let Some((cache, theme, buffer_snapshot)) = self.display_map.update(cx, |display_map, cx| {
             let cache = display_map.get_variable_color_cache()?;
             let theme = cx.theme().syntax().clone();
@@ -6678,22 +6697,19 @@ impl Editor {
         };
 
         cx.spawn(async move |editor, cx| {
-            let view = cx.background_executor().spawn(async move {
-                crate::display_map::SyntaxTokenView::new_on_background(
-                    buffer_id,
-                    buffer_snapshot,
-                    &cache,
-                    &theme,
-                )
-            }).await;
+            let view = cx
+                .background_executor()
+                .spawn(async move { crate::display_map::SyntaxTokenView::new(buffer_snapshot, &cache, &theme) }).await;
 
             if let Some(view) = view {
-                editor.update(cx, |editor, cx| {
-                    editor.display_map.update(cx, |display_map, _| {
-                        display_map.syntax_tokens.insert(buffer_id, Arc::new(view));
-                    });
-                    cx.notify();
-                }).log_err();
+                editor
+                    .update(cx, |editor, cx| {
+                        editor.display_map.update(cx, |display_map, _| {
+                            display_map.syntax_tokens.insert(buffer_id, Arc::new(view));
+                        });
+                        cx.notify();
+                    })
+                    .log_err();
             }
         }).detach();
     }
@@ -18928,6 +18944,8 @@ impl Editor {
                     self.update_visible_edit_prediction(window, cx);
                 }
                 if let Some(edited_buffer) = edited_buffer {
+                    let buffer_id = edited_buffer.read(cx).remote_id();
+                    self.refresh_syntax_tokens_debounced(buffer_id, cx);
                     // Use debounced version during typing to prevent performance issues
                     self.update_semantic_tokens_debounced(edited_buffer, window, cx);
                 }
