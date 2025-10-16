@@ -47,6 +47,8 @@ mod code_completion_tests;
 mod edit_prediction_tests;
 #[cfg(test)]
 mod editor_tests;
+#[cfg(test)]
+mod display_map_tests;
 mod signature_help;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;

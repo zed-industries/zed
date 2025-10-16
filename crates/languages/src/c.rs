@@ -12,6 +12,37 @@ use smol::fs;
 use std::{env::consts, path::PathBuf, sync::Arc};
 use util::{ResultExt, fs::remove_matching, maybe, merge_json_value_into};
 
+/// Returns C/C++-specific variable capture names and parent kinds for rainbow highlighting.
+pub fn variable_config() -> (Option<Vec<String>>, Option<Vec<String>>) {
+    let capture_names = vec![
+        "variable".to_string(),
+        "variable.parameter".to_string(),
+        "constant".to_string(),
+    ];
+
+    let parent_kinds = vec![
+        "declaration".to_string(),
+        "init_declarator".to_string(),
+        "parameter_declaration".to_string(),
+        "parameter_list".to_string(),
+        "pointer_declarator".to_string(),
+        "array_declarator".to_string(),
+        "function_declarator".to_string(),
+        "assignment_expression".to_string(),
+        "binary_expression".to_string(),
+        "unary_expression".to_string(),
+        "update_expression".to_string(),
+        "for_statement".to_string(),
+        "init_declarator".to_string(),
+        "argument_list".to_string(),
+        "initializer_list".to_string(),
+        "field_declaration".to_string(),
+        "enumerator".to_string(),
+    ];
+
+    (Some(capture_names), Some(parent_kinds))
+}
+
 pub struct CLspAdapter;
 
 impl CLspAdapter {
@@ -435,5 +466,50 @@ mod tests {
 
             buffer
         });
+    }
+
+    #[test]
+    fn test_c_variable_config() {
+        let (capture_names, parent_kinds) = super::variable_config();
+        assert!(capture_names.is_some() && parent_kinds.is_some());
+    }
+
+    #[test]
+    fn test_c_captures_essential_types() {
+        let (capture_names, parent_kinds) = super::variable_config();
+        let captures = capture_names.unwrap();
+        let kinds = parent_kinds.unwrap();
+        
+        // Verify we have essential C/C++ variable types
+        // Variables and parameters
+        assert!(captures.contains(&"variable".to_string()), "Should capture variables");
+        assert!(captures.contains(&"variable.parameter".to_string()), "Should capture parameters");
+        assert!(captures.contains(&"constant".to_string()), "Should capture constants");
+        
+        // Declarations
+        assert!(kinds.contains(&"declaration".to_string()), "Should include declarations");
+        assert!(kinds.contains(&"init_declarator".to_string()), "Should include initialized declarations");
+        
+        // Parameters
+        assert!(kinds.contains(&"parameter_declaration".to_string()), "Should include parameter declarations");
+        assert!(kinds.contains(&"parameter_list".to_string()), "Should include parameter lists");
+        
+        // Pointers and arrays
+        assert!(kinds.contains(&"pointer_declarator".to_string()), "Should include pointers");
+        assert!(kinds.contains(&"array_declarator".to_string()), "Should include arrays");
+        
+        // Functions
+        assert!(kinds.contains(&"function_declarator".to_string()), "Should include function declarations");
+        
+        // Expressions
+        assert!(kinds.contains(&"assignment_expression".to_string()), "Should include assignments");
+        assert!(kinds.contains(&"binary_expression".to_string()), "Should include binary expressions");
+        
+        // Control flow
+        assert!(kinds.contains(&"for_statement".to_string()), "Should include for loops");
+        
+        // Struct/enum members
+        assert!(kinds.contains(&"field_declaration".to_string()), "Should include field declarations");
+        assert!(kinds.contains(&"enumerator".to_string()), "Should include enum members");
     }
 }

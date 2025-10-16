@@ -1169,6 +1169,26 @@ pub struct Grammar {
 pub struct HighlightsConfig {
     pub query: Query,
     pub identifier_capture_indices: Vec<u32>,
+    /// Capture indices for variable-like identifiers used in rainbow highlighting.
+    /// Follows the same pattern as identifier_capture_indices.
+    pub variable_capture_indices: Vec<u32>,
+    /// Parent node kinds that indicate variable contexts when captures are not available.
+    /// Examples: "let_declaration", "assignment_expression", "binary_expression"
+    pub variable_parent_kinds: Vec<String>,
+}
+
+impl HighlightsConfig {
+    /// Checks if a capture index represents a variable-like identifier.
+    pub fn is_variable_capture(&self, capture_index: u32) -> bool {
+        self.variable_capture_indices.contains(&capture_index)
+    }
+    
+    /// Checks if a parent node kind indicates a variable context.
+    pub fn is_variable_parent_kind(&self, parent_kind: &str) -> bool {
+        self.variable_parent_kinds.iter().any(|kind| {
+            parent_kind == kind || parent_kind.contains(kind)
+        })
+    }
 }
 
 struct IndentConfig {
@@ -1451,12 +1471,73 @@ impl Language {
             identifier_capture_indices.extend(query.capture_index_for_name(name));
         }
 
+        // By default, variable captures are a subset of identifier captures
+        let mut variable_capture_indices = Vec::new();
+        for name in Self::default_variable_capture_names() {
+            if let Some(index) = query.capture_index_for_name(name) {
+                variable_capture_indices.push(index);
+            }
+        }
+
         grammar.highlights_config = Some(HighlightsConfig {
             query,
             identifier_capture_indices,
+            variable_capture_indices,
+            variable_parent_kinds: Self::default_variable_parent_kinds(),
         });
 
         Ok(self)
+    }
+
+    pub fn with_variable_capture_names(mut self, names: &[&str]) -> Result<Self> {
+        let grammar = self.grammar_mut()?;
+        if let Some(highlights_config) = &mut grammar.highlights_config {
+            let mut variable_capture_indices = Vec::new();
+            for name in names {
+                if let Some(index) = highlights_config.query.capture_index_for_name(name) {
+                    variable_capture_indices.push(index);
+                }
+            }
+            highlights_config.variable_capture_indices = variable_capture_indices;
+        }
+        Ok(self)
+    }
+
+    pub fn with_variable_parent_kinds(mut self, kinds: Vec<String>) -> Result<Self> {
+        let grammar = self.grammar_mut()?;
+        if let Some(highlights_config) = &mut grammar.highlights_config {
+            highlights_config.variable_parent_kinds = kinds;
+        }
+        Ok(self)
+    }
+
+    fn default_variable_capture_names() -> &'static [&'static str] {
+        &[
+            "variable",
+            "variable.parameter",
+            "variable.builtin",
+            "parameter",
+            "constant",
+            "constant.builtin",
+            "constructor",
+        ]
+    }
+
+    fn default_variable_parent_kinds() -> Vec<String> {
+        vec![
+            "let_declaration".to_string(),
+            "var_declaration".to_string(),
+            "const_declaration".to_string(),
+            "assignment_expression".to_string(),
+            "assignment_statement".to_string(),
+            "binary_expression".to_string(),
+            "unary_expression".to_string(),
+            "call_expression".to_string(),
+            "argument_list".to_string(),
+            "block".to_string(),
+            "return_statement".to_string(),
+            "token_tree".to_string(),
+        ]
     }
 
     pub fn with_runnable_query(mut self, source: &str) -> Result<Self> {

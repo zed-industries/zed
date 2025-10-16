@@ -170,6 +170,8 @@ impl SyntaxTokenView {
         theme: &theme::SyntaxTheme,
     ) -> Option<Self> {
         let mut tokens = Vec::new();
+
+        // Walk the syntax tree to find ALL identifiers
         for layer in snapshot.syntax_layers() {
             let root = layer.node();
             Self::extract_identifiers_recursive(root, &snapshot, cache, theme, &mut tokens);
@@ -178,6 +180,7 @@ impl SyntaxTokenView {
         if tokens.is_empty() {
             return None;
         }
+
         tokens.sort_by_key(|token| token.range.start);
         tokens.dedup_by(|a, b| {
             let overlaps = a.range.start < b.range.end && b.range.start < a.range.end;
@@ -204,17 +207,25 @@ impl SyntaxTokenView {
         theme: &theme::SyntaxTheme,
         tokens: &mut Vec<SyntaxToken>,
     ) {
-        if node.kind() == "identifier" {
-            let start = node.start_byte();
+        // Process identifier nodes and metavariables (Rust macro parameters like $name)
+        if node.kind() == "identifier" || node.kind() == "metavariable" {
+            let mut start = node.start_byte();
             let end = node.end_byte();
-            let identifier: String = snapshot.text_for_range(start..end).collect();
+            let mut identifier: String = snapshot.text_for_range(start..end).collect();
 
-            if Self::is_variable_context(&node, &identifier) {
+            // Strip leading $ from metavariables (Rust macro parameters)
+            // Also adjust start position to exclude the $ from the token range
+            if node.kind() == "metavariable" && identifier.starts_with('$') {
+                identifier = identifier[1..].to_string();
+                start += 1; // Skip the $ character in the token range
+            }
+
+            // Check if this identifier has a variable-like capture
+            if Self::is_variable_context(&node, &snapshot) {
                 if let Some(validated) =
                     crate::rainbow::validate_identifier_for_rainbow(&identifier)
                 {
                     let style = cache.get_or_insert(validated, theme);
-
                     tokens.push(SyntaxToken {
                         range: start..end,
                         style,
@@ -222,43 +233,76 @@ impl SyntaxTokenView {
                 }
             }
         }
+
+        // Recursively process children
         let mut cursor = node.walk();
         for child in node.children(&mut cursor) {
             Self::extract_identifiers_recursive(child, snapshot, cache, theme, tokens);
         }
     }
 
-    fn is_variable_context(node: &language::Node, _identifier: &str) -> bool {
-        let Some(parent) = node.parent() else {
+    /// Language-configurable variable detection using HighlightsConfig.
+    ///
+    /// Delegates to the language's HighlightsConfig for both:
+    /// 1. Capture index matching (primary detection) - uses variable_capture_indices
+    /// 2. Parent node kind checking (fallback when captures unavailable)
+    ///
+    /// Each language can customize via:
+    /// - .with_variable_capture_names(&["variable", "parameter", ...])
+    /// - .with_variable_parent_kinds(vec!["let_declaration", ...])
+    fn is_variable_context(node: &language::Node, snapshot: &language::BufferSnapshot) -> bool {
+        let start = node.start_byte();
+        let end = node.end_byte();
+
+        // Find which syntax layer contains this node
+        let Some(layer) = snapshot
+            .syntax
+            .layers_for_range(start..end, &snapshot.text, false)
+            .find(|layer| layer.language.grammar().is_some())
+        else {
             return false;
         };
 
-        matches!(
-            parent.kind(),
-            "let_declaration"
-                | "parameter"
-                | "closure_parameters"
-                | "for_expression"
-                | "field_expression"
-                | "call_expression"
-                | "arguments"
-                | "binary_expression"
-                | "unary_expression"
-                | "reference_expression"
-                | "index_expression"
-                | "array_expression"
-                | "tuple_expression"
-                | "match_arm"
-                | "if_expression"
-                | "while_expression"
-                | "loop_expression"
-                | "assignment_expression"
-                | "compound_assignment_expr"
-                | "identifier_pattern"
-                | "shorthand_field_identifier"
-                | "field_initializer"
-                | "token_tree"
-        )
+        let Some(grammar) = layer.language.grammar() else {
+            return false;
+        };
+
+        let Some(highlights_config) = &grammar.highlights_config else {
+            return false;
+        };
+
+        // First try: Check highlight captures using language's configuration
+        // Query captures in a wider range to ensure we get all relevant captures
+        let query_start = node.parent().map(|p| p.start_byte()).unwrap_or(start);
+        let query_end = node.parent().map(|p| p.end_byte()).unwrap_or(end);
+
+        let mut captures = snapshot
+            .syntax
+            .captures(query_start..query_end, &snapshot.text, |g| {
+                g.highlights_config.as_ref().map(|c| &c.query)
+            });
+
+        while let Some(capture) = captures.next() {
+            let capture_start = capture.node.start_byte();
+            let capture_end = capture.node.end_byte();
+
+            // The capture must cover our identifier
+            if !(capture_start <= start && capture_end >= end) {
+                continue;
+            }
+
+            // Check if this capture index is configured as a variable capture
+            if highlights_config.is_variable_capture(capture.index) {
+                return true;
+            }
+        }
+
+        // Fallback: Check parent node kind using language's configuration
+        if let Some(parent) = node.parent() {
+            return highlights_config.is_variable_parent_kind(parent.kind());
+        }
+
+        false
     }
 
     pub fn tokens_in_range(&self, range: Range<usize>) -> &[SyntaxToken] {

@@ -29,6 +29,39 @@ use util::{ResultExt, maybe};
 
 use crate::language_settings::language_settings;
 
+/// Returns Rust-specific variable capture names and parent kinds for rainbow highlighting.
+/// These patterns identify variables, parameters, constants, and macro parameters in Rust code.
+pub fn variable_config() -> (Option<Vec<String>>, Option<Vec<String>>) {
+    let capture_names = vec![
+        "variable".to_string(),
+        "variable.parameter".to_string(),
+        "variable.special".to_string(),  // for `self`
+        "constant".to_string(),
+        "constant.builtin".to_string(),
+    ];
+
+    let parent_kinds = vec![
+        "let_declaration".to_string(),
+        "const_item".to_string(),
+        "static_item".to_string(),
+        "parameter".to_string(),
+        "closure_parameters".to_string(),
+        "token_tree".to_string(),  // for macro parameters
+        "arguments".to_string(),
+        "field_initializer".to_string(),
+        "binary_expression".to_string(),
+        "assignment_expression".to_string(),
+        "call_expression".to_string(),
+        "return_expression".to_string(),
+        "match_arm".to_string(),
+        "for_expression".to_string(),
+        "if_expression".to_string(),
+        "while_expression".to_string(),
+    ];
+
+    (Some(capture_names), Some(parent_kinds))
+}
+
 pub struct RustLspAdapter;
 
 #[cfg(target_os = "macos")]
@@ -1572,5 +1605,88 @@ mod tests {
             "--bin=x",
         );
         check([], "/project/src/main.rs", "--");
+    }
+
+    #[gpui::test]
+    fn test_variable_capture_configuration() {
+        let language = crate::language("rust", tree_sitter_rust::LANGUAGE.into());
+        
+        let highlights_config = language.grammar().unwrap().highlights_config.as_ref().unwrap();
+        
+        // Verify that variable captures are configured
+        assert!(
+            highlights_config.query.capture_index_for_name("variable").is_some(),
+            "variable capture should be present in the query"
+        );
+        assert!(
+            highlights_config.query.capture_index_for_name("variable.parameter").is_some() 
+                || highlights_config.query.capture_index_for_name("parameter").is_some(),
+            "parameter captures should be present in the query"
+        );
+        
+        // Verify the captures are marked as variable captures (they should be by default)
+        if let Some(var_idx) = highlights_config.query.capture_index_for_name("variable") {
+            assert!(
+                highlights_config.is_variable_capture(var_idx),
+                "variable capture should be recognized as a variable capture"
+            );
+        }
+        
+        if let Some(const_idx) = highlights_config.query.capture_index_for_name("constant") {
+            assert!(
+                highlights_config.is_variable_capture(const_idx),
+                "constant capture should be recognized as a variable capture"
+            );
+        }
+    }
+
+    #[gpui::test]
+    fn test_parent_kind_configuration() {
+        let (_capture_names, parent_kinds) = variable_config();
+        
+        // Verify essential Rust parent kinds are in the configuration
+        let kinds = parent_kinds.unwrap();
+        let expected_parent_kinds = [
+            "let_declaration",
+            "const_item",
+            "static_item",
+            "parameter",
+            "closure_parameters",
+            "token_tree",
+            "arguments",
+            "field_initializer",
+            "for_expression",
+            "match_arm",
+        ];
+        
+        for kind in &expected_parent_kinds {
+            assert!(
+                kinds.contains(&kind.to_string()),
+                "{} should be in variable parent kinds configuration",
+                kind
+            );
+        }
+    }
+
+    #[gpui::test]
+    fn test_variable_config_values() {
+        let (capture_names, parent_kinds) = variable_config();
+        
+        // Verify capture names are configured
+        let captures = capture_names.unwrap();
+        assert!(captures.contains(&"variable".to_string()));
+        assert!(captures.contains(&"variable.parameter".to_string()));
+        assert!(captures.contains(&"variable.special".to_string()));
+        assert!(captures.contains(&"constant".to_string()));
+        assert!(captures.contains(&"constant.builtin".to_string()));
+        
+        // Verify parent kinds are configured
+        let kinds = parent_kinds.unwrap();
+        assert!(kinds.contains(&"let_declaration".to_string()));
+        assert!(kinds.contains(&"const_item".to_string()));
+        assert!(kinds.contains(&"static_item".to_string()));
+        assert!(kinds.contains(&"parameter".to_string()));
+        assert!(kinds.contains(&"closure_parameters".to_string()));
+        assert!(kinds.contains(&"token_tree".to_string()));
     }
 }

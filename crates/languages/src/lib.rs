@@ -363,12 +363,23 @@ fn register_language(
         config.hidden,
         manifest_name.clone(),
         Arc::new(move || {
+            let (variable_capture_names, variable_parent_kinds) = match name {
+                "rust" => rust::variable_config(),
+                "typescript" | "tsx" | "javascript" => typescript::variable_config(),
+                "python" => python::variable_config(),
+                "go" => go::variable_config(),
+                "c" | "cpp" => c::variable_config(),
+                "bash" => bash::variable_config(),
+                _ => (None, None),
+            };
             Ok(LoadedLanguage {
                 config: config.clone(),
                 queries: load_queries(name),
                 context_provider: context.clone(),
                 toolchain_provider: toolchain.clone(),
                 manifest_name: manifest_name.clone(),
+                variable_capture_names,
+                variable_parent_kinds,
             })
         }),
     );

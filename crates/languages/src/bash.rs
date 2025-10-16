@@ -1,6 +1,29 @@
 use project::ContextProviderWithTasks;
 use task::{TaskTemplate, TaskTemplates, VariableName};
 
+/// Returns Bash-specific variable capture names and parent kinds for rainbow highlighting.
+pub fn variable_config() -> (Option<Vec<String>>, Option<Vec<String>>) {
+    let capture_names = vec![
+        "variable".to_string(),
+    ];
+
+    let parent_kinds = vec![
+        "variable_assignment".to_string(),
+        "declaration_command".to_string(),
+        "for_statement".to_string(),
+        "while_statement".to_string(),
+        "if_statement".to_string(),
+        "case_statement".to_string(),
+        "function_definition".to_string(),
+        "command".to_string(),
+        "pipeline".to_string(),
+        "list".to_string(),
+        "compound_statement".to_string(),
+    ];
+
+    (Some(capture_names), Some(parent_kinds))
+}
+
 pub(super) fn bash_task_context() -> ContextProviderWithTasks {
     ContextProviderWithTasks::new(TaskTemplates(vec![
         TaskTemplate {
@@ -157,5 +180,43 @@ mod tests {
 
             buffer
         });
+    }
+
+    #[test]
+    fn test_bash_variable_config() {
+        let (capture_names, parent_kinds) = super::variable_config();
+        assert!(capture_names.is_some() && parent_kinds.is_some());
+    }
+
+    #[test]
+    fn test_bash_captures_essential_types() {
+        let (capture_names, parent_kinds) = super::variable_config();
+        let captures = capture_names.unwrap();
+        let kinds = parent_kinds.unwrap();
+        
+        // Verify we have essential Bash variable types
+        // Variables (Bash uses variable in our config)
+        assert!(captures.contains(&"variable".to_string()), "Should capture variables");
+        
+        // Assignments
+        assert!(kinds.contains(&"variable_assignment".to_string()), "Should include variable assignments");
+        
+        // Declarations (local, declare, etc.)
+        assert!(kinds.contains(&"declaration_command".to_string()), "Should include declaration commands");
+        
+        // Loops
+        assert!(kinds.contains(&"for_statement".to_string()), "Should include for loops");
+        assert!(kinds.contains(&"while_statement".to_string()), "Should include while loops");
+        
+        // Control flow
+        assert!(kinds.contains(&"if_statement".to_string()), "Should include if statements");
+        assert!(kinds.contains(&"case_statement".to_string()), "Should include case statements");
+        
+        // Functions
+        assert!(kinds.contains(&"function_definition".to_string()), "Should include function definitions");
+        
+        // Commands and pipelines
+        assert!(kinds.contains(&"command".to_string()), "Should include commands");
+        assert!(kinds.contains(&"pipeline".to_string()), "Should include pipelines");
     }
 }
