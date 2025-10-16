@@ -56,7 +56,7 @@ impl Into<BaseKeymapContent> for BaseKeymap {
 impl Display for BaseKeymap {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            BaseKeymap::VSCode => write!(f, "VSCode"),
+            BaseKeymap::VSCode => write!(f, "VS Code"),
             BaseKeymap::JetBrains => write!(f, "JetBrains"),
             BaseKeymap::SublimeText => write!(f, "Sublime Text"),
             BaseKeymap::Atom => write!(f, "Atom"),
@@ -71,7 +71,7 @@ impl Display for BaseKeymap {
 impl BaseKeymap {
     #[cfg(target_os = "macos")]
     pub const OPTIONS: [(&'static str, Self); 7] = [
-        ("VSCode (Default)", Self::VSCode),
+        ("VS Code (Default)", Self::VSCode),
         ("Atom", Self::Atom),
         ("JetBrains", Self::JetBrains),
         ("Sublime Text", Self::SublimeText),
@@ -82,7 +82,7 @@ impl BaseKeymap {
 
     #[cfg(not(target_os = "macos"))]
     pub const OPTIONS: [(&'static str, Self); 6] = [
-        ("VSCode (Default)", Self::VSCode),
+        ("VS Code (Default)", Self::VSCode),
         ("Atom", Self::Atom),
         ("JetBrains", Self::JetBrains),
         ("Sublime Text", Self::SublimeText),

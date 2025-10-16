@@ -138,6 +138,15 @@ impl WorktreeStore {
             .filter(|worktree| worktree.read(cx).is_visible())
     }
 
+    /// Iterates through all user-visible worktrees (directories and files that appear in the project panel) and other, invisible single files that could appear e.g. due to drag and drop.
+    pub fn visible_worktrees_and_single_files<'a>(
+        &'a self,
+        cx: &'a App,
+    ) -> impl 'a + DoubleEndedIterator<Item = Entity<Worktree>> {
+        self.worktrees()
+            .filter(|worktree| worktree.read(cx).is_visible() || worktree.read(cx).is_single_file())
+    }
+
     pub fn worktree_for_id(&self, id: WorktreeId, cx: &App) -> Option<Entity<Worktree>> {
         self.worktrees()
             .find(|worktree| worktree.read(cx).id() == id)

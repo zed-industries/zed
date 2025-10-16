@@ -28,8 +28,8 @@
   {
     "context": "Editor",
     "bindings": {
-      "ctrl-shift-up": "editor::AddSelectionAbove",
-      "ctrl-shift-down": "editor::AddSelectionBelow",
+      "ctrl-shift-up": ["editor::AddSelectionAbove", { "skip_soft_wrap": false }],
+      "ctrl-shift-down": ["editor::AddSelectionBelow", { "skip_soft_wrap": false }],
       "cmd-ctrl-up": "editor::MoveLineUp",
       "cmd-ctrl-down": "editor::MoveLineDown",
       "cmd-shift-space": "editor::SelectAll",

@@ -27,8 +27,7 @@ pub struct AllLanguageSettingsContent {
     pub languages: LanguageToSettingsMap,
     /// Settings for associating file extensions and filenames
     /// with languages.
-    #[serde(default)]
-    pub file_types: HashMap<Arc<str>, ExtendingVec<String>>,
+    pub file_types: Option<HashMap<Arc<str>, ExtendingVec<String>>>,
 }
 
 impl merge_from::MergeFrom for AllLanguageSettingsContent {

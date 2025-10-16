@@ -269,7 +269,7 @@ async fn test_first_line_pattern(cx: &mut TestAppContext) {
 async fn test_language_for_file_with_custom_file_types(cx: &mut TestAppContext) {
     cx.update(|cx| {
         init_settings(cx, |settings| {
-            settings.file_types.extend([
+            settings.file_types.get_or_insert_default().extend([
                 ("TypeScript".into(), vec!["js".into()].into()),
                 (
                     "JavaScript".into(),
