@@ -1149,6 +1149,7 @@ pub struct Workspace {
     active_call: Option<(Entity<ActiveCall>, Vec<Subscription>)>,
     leader_updates_tx: mpsc::UnboundedSender<(PeerId, proto::UpdateFollowers)>,
     database_id: Option<WorkspaceId>,
+    active_workspace_profile_name: Option<String>,
     app_state: Arc<AppState>,
     dispatching_keystrokes: Rc<RefCell<DispatchingKeystrokes>>,
     _subscriptions: Vec<Subscription>,
@@ -1458,6 +1459,7 @@ impl Workspace {
         ];
 
         cx.defer_in(window, |this, window, cx| {
+            this.resolve_active_workspace_profile(cx);
             this.update_window_title(window, cx);
             this.show_initial_notifications(cx);
         });
@@ -1490,6 +1492,7 @@ impl Workspace {
             dirty_items: Default::default(),
             active_call,
             database_id: workspace_id,
+            active_workspace_profile_name: None,
             app_state,
             _observe_current_user,
             _apply_leader_updates,
@@ -5232,6 +5235,16 @@ impl Workspace {
         None
     }
 
+    fn resolve_active_workspace_profile(&mut self, cx: &mut Context<Self>) {
+        self.active_workspace_profile_name = self.database_id.and_then(|_| {
+            let store = cx.global::<settings::SettingsStore>();
+            let user_settings = store.raw_user_settings()?;
+
+            self.winning_workspace_profile(&user_settings.workspace_profiles, cx)
+                .map(|(name, _)| name.to_string())
+        });
+    }
+
     fn remove_panes(&mut self, member: Member, window: &mut Window, cx: &mut Context<Workspace>) {
         match member {
             Member::Axis(PaneAxis { members, .. }) => {
@@ -6385,6 +6398,15 @@ impl Render for DraggedDock {
 
 impl Render for Workspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Register this window's active workspace profile for settings resolution
+        let window_id = window.window_handle().window_id();
+        if let Some(ref profile_name) = self.active_workspace_profile_name {
+            cx.update_global::<theme::WorkspaceProfileMap, _>(|map, _| {
+                map.profile_by_window
+                    .insert(window_id, profile_name.clone());
+            });
+        }
+
         let mut context = KeyContext::new_with_defaults();
         context.add("Workspace");
         context.set("keyboard_layout", cx.keyboard_layout().name().to_string());
