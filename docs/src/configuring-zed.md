@@ -4155,7 +4155,8 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
     },
     "hide_root": false,
     "hide_hidden": false,
-    "starts_open": true
+    "starts_open": true,
+    "open_file_on_paste": true
   }
 }
 ```
