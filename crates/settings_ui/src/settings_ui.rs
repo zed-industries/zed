@@ -6,19 +6,16 @@ use editor::{Editor, EditorEvent};
 use feature_flags::FeatureFlag;
 use fuzzy::StringMatchCandidate;
 use gpui::{
-    Action, App, Div, Entity, FocusHandle, Focusable, FontWeight, Global, ListState,
-    ReadGlobal as _, ScrollHandle, Stateful, Subscription, Task, TitlebarOptions,
-    UniformListScrollHandle, Window, WindowBounds, WindowHandle, WindowOptions, actions, div, list,
-    point, prelude::*, px, size, uniform_list,
+    Action, App, Div, Entity, FocusHandle, Focusable, Global, ListState, ReadGlobal as _,
+    ScrollHandle, Stateful, Subscription, Task, TitlebarOptions, UniformListScrollHandle, Window,
+    WindowBounds, WindowHandle, WindowOptions, actions, div, list, point, prelude::*, px, size,
+    uniform_list,
 };
 use heck::ToTitleCase as _;
 use project::WorktreeId;
 use schemars::JsonSchema;
 use serde::Deserialize;
-use settings::{
-    BottomDockLayout, CloseWindowWhenNoItems, CodeFade, CursorShape, OnLastWindowClosed,
-    RestoreOnStartupBehavior, SaturatingBool, Settings, SettingsContent, SettingsStore,
-};
+use settings::{Settings, SettingsContent, SettingsStore};
 use std::{
     any::{Any, TypeId, type_name},
     cell::RefCell,
@@ -88,7 +85,7 @@ actions!(
 struct FocusFile(pub u32);
 
 struct SettingField<T: 'static> {
-    pick: fn(&SettingsContent) -> &Option<T>,
+    pick: fn(&SettingsContent) -> Option<&T>,
     pick_mut: fn(&mut SettingsContent) -> &mut Option<T>,
 }
 
@@ -118,7 +115,7 @@ impl<T: 'static> SettingField<T> {
     #[allow(unused)]
     fn unimplemented(self) -> SettingField<UnimplementedSettingField> {
         SettingField {
-            pick: |_| &Some(UnimplementedSettingField),
+            pick: |_| Some(&UnimplementedSettingField),
             pick_mut: |_| unreachable!(),
         }
     }
@@ -175,7 +172,7 @@ impl<T: PartialEq + Clone + Send + Sync + 'static> AnySettingField for SettingFi
         let default_value = (this.pick)(store.raw_default_settings());
         let is_default = store
             .get_content_for_file(file_set_in.clone())
-            .map_or(&None, this.pick)
+            .map_or(None, this.pick)
             == default_value;
         if is_default {
             return None;
@@ -190,7 +187,7 @@ impl<T: PartialEq + Clone + Send + Sync + 'static> AnySettingField for SettingFi
                 .0
                 != settings::SettingsFile::Default;
             let value_to_set = if is_set_somewhere_other_than_default {
-                default_value.clone()
+                default_value.cloned()
             } else {
                 None
             };

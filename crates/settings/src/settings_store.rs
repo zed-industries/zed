@@ -535,30 +535,30 @@ impl SettingsStore {
     /// Returns the first file found that contains the value.
     /// The value will only be None if no file contains the value.
     /// I.e. if no file contains the value, returns `(File::Default, None)`
-    pub fn get_value_from_file<T>(
-        &self,
+    pub fn get_value_from_file<'a, T: 'a>(
+        &'a self,
         target_file: SettingsFile,
-        pick: fn(&SettingsContent) -> &Option<T>,
-    ) -> (SettingsFile, Option<&T>) {
+        pick: fn(&'a SettingsContent) -> Option<T>,
+    ) -> (SettingsFile, Option<T>) {
         self.get_value_from_file_inner(target_file, pick, true)
     }
 
     /// Same as `Self::get_value_from_file` except that it does not include the current file.
     /// Therefore it returns the value that was potentially overloaded by the target file.
-    pub fn get_value_up_to_file<T>(
-        &self,
+    pub fn get_value_up_to_file<'a, T: 'a>(
+        &'a self,
         target_file: SettingsFile,
-        pick: fn(&SettingsContent) -> &Option<T>,
-    ) -> (SettingsFile, Option<&T>) {
+        pick: fn(&'a SettingsContent) -> Option<T>,
+    ) -> (SettingsFile, Option<T>) {
         self.get_value_from_file_inner(target_file, pick, false)
     }
 
-    fn get_value_from_file_inner<T>(
-        &self,
+    fn get_value_from_file_inner<'a, T: 'a>(
+        &'a self,
         target_file: SettingsFile,
-        pick: fn(&SettingsContent) -> &Option<T>,
+        pick: fn(&'a SettingsContent) -> Option<T>,
         include_target_file: bool,
-    ) -> (SettingsFile, Option<&T>) {
+    ) -> (SettingsFile, Option<T>) {
         // todo(settings_ui): Add a metadata field for overriding the "overrides" tag, for contextually different settings
         //  e.g. disable AI isn't overridden, or a vec that gets extended instead or some such
 
@@ -588,7 +588,7 @@ impl SettingsStore {
             let Some(content) = self.get_content_for_file(file.clone()) else {
                 continue;
             };
-            if let Some(value) = pick(content).as_ref() {
+            if let Some(value) = pick(content) {
                 return (file, Some(value));
             }
         }
@@ -1814,11 +1814,16 @@ mod tests {
             )
             .unwrap();
 
-        fn get(content: &SettingsContent) -> &Option<u32> {
-            &content.project.all_languages.defaults.preferred_line_length
+        fn get(content: &SettingsContent) -> Option<&u32> {
+            content
+                .project
+                .all_languages
+                .defaults
+                .preferred_line_length
+                .as_ref()
         }
 
-        let default_value = get(&store.default_settings).unwrap();
+        let default_value = *get(&store.default_settings).unwrap();
 
         assert_eq!(
             store.get_value_from_file(SettingsFile::Project(local.clone()), get),
@@ -1881,8 +1886,13 @@ mod tests {
             .into_arc(),
         );
 
-        fn get(content: &SettingsContent) -> &Option<u32> {
-            &content.project.all_languages.defaults.preferred_line_length
+        fn get(content: &SettingsContent) -> Option<&u32> {
+            content
+                .project
+                .all_languages
+                .defaults
+                .preferred_line_length
+                .as_ref()
         }
 
         store
