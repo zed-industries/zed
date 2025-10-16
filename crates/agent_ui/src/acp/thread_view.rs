@@ -292,6 +292,8 @@ pub struct AcpThreadView {
     resume_thread_metadata: Option<DbThreadMetadata>,
     _cancel_task: Option<Task<()>>,
     _subscriptions: [Subscription; 5],
+
+    show_codex_windows_warning: bool,
 }
 
 enum ThreadState {
@@ -397,6 +399,10 @@ impl AcpThreadView {
             ),
         ];
 
+        let show_codex_windows_warning = cfg!(target_os = "windows")
+            && crate::ExternalAgent::parse_built_in(agent.as_ref())
+                == Some(crate::ExternalAgent::Codex);
+
         Self {
             agent: agent.clone(),
             workspace: workspace.clone(),
@@ -439,6 +445,7 @@ impl AcpThreadView {
             focus_handle: cx.focus_handle(),
             new_server_version_available: None,
             resume_thread_metadata: resume_thread,
+            show_codex_windows_warning,
         }
     }
 
@@ -5028,6 +5035,38 @@ impl AcpThreadView {
         )
     }
 
+    fn render_codex_windows_warning(
+        &self,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Callout> {
+        if self.show_codex_windows_warning {
+            Some(
+                Callout::new()
+                    .icon(IconName::Warning)
+                    .severity(Severity::Warning)
+                    .title("Codex on Windows")
+                    .description(
+                        "For best performance, run Codex in Windows Subsystem for Linux (WSL2)",
+                    )
+                    .dismiss_action(
+                        IconButton::new("dismiss", IconName::Close)
+                            .icon_size(IconSize::Small)
+                            .icon_color(Color::Muted)
+                            .tooltip(Tooltip::text("Dismiss Warning"))
+                            .on_click(cx.listener({
+                                move |this, _, _, cx| {
+                                    this.show_codex_windows_warning = false;
+                                    cx.notify();
+                                }
+                            })),
+                    ),
+            )
+        } else {
+            None
+        }
+    }
+
     fn render_thread_error(&self, window: &mut Window, cx: &mut Context<Self>) -> Option<Div> {
         let content = match self.thread_error.as_ref()? {
             ThreadError::Other(error) => self.render_any_thread_error(error.clone(), cx),
@@ -5515,6 +5554,7 @@ impl Render for AcpThreadView {
                 _ => this,
             })
             .children(self.render_thread_retry_status_callout(window, cx))
+            .children(self.render_codex_windows_warning(window, cx))
             .children(self.render_thread_error(window, cx))
             .when_some(
                 self.new_server_version_available.as_ref().filter(|_| {
