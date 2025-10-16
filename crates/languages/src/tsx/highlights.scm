@@ -232,6 +232,7 @@
 
 [ "abstract"
   "declare"
+  "defer"
   "enum"
   "export"
   "implements"
