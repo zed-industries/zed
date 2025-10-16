@@ -539,10 +539,10 @@
     "bindings": {
       "cmd-[": "editor::Outdent",
       "cmd-]": "editor::Indent",
-      "cmd-ctrl-p": "editor::AddSelectionAbove", // Insert cursor above
-      "cmd-alt-up": "editor::AddSelectionAbove",
-      "cmd-ctrl-n": "editor::AddSelectionBelow", // Insert cursor below
-      "cmd-alt-down": "editor::AddSelectionBelow",
+      "cmd-ctrl-p": ["editor::AddSelectionAbove", { "skip_soft_wrap": false }], // Insert cursor above
+      "cmd-alt-up": ["editor::AddSelectionAbove", { "skip_soft_wrap": true }],
+      "cmd-ctrl-n": ["editor::AddSelectionBelow", { "skip_soft_wrap": false }], // Insert cursor below
+      "cmd-alt-down": ["editor::AddSelectionBelow", { "skip_soft_wrap": true }],
       "cmd-shift-k": "editor::DeleteLine",
       "alt-up": "editor::MoveLineUp",
       "alt-down": "editor::MoveLineDown",
