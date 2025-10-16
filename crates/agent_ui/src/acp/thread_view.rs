@@ -292,6 +292,8 @@ pub struct AcpThreadView {
     resume_thread_metadata: Option<DbThreadMetadata>,
     _cancel_task: Option<Task<()>>,
     _subscriptions: [Subscription; 5],
+    #[cfg(target_os = "windows")]
+    show_codex_windows_warning: bool,
 }
 
 enum ThreadState {
@@ -335,7 +337,10 @@ impl AcpThreadView {
 
         let placeholder = if agent.name() == "Zed Agent" {
             format!("Message the {} — @ to include context", agent.name())
-        } else if agent.name() == "Claude Code" || !available_commands.borrow().is_empty() {
+        } else if agent.name() == "Claude Code"
+            || agent.name() == "Codex"
+            || !available_commands.borrow().is_empty()
+        {
             format!(
                 "Message {} — @ to include context, / for commands",
                 agent.name()
@@ -394,6 +399,10 @@ impl AcpThreadView {
             ),
         ];
 
+        #[cfg(target_os = "windows")]
+        let show_codex_windows_warning = crate::ExternalAgent::parse_built_in(agent.as_ref())
+            == Some(crate::ExternalAgent::Codex);
+
         Self {
             agent: agent.clone(),
             workspace: workspace.clone(),
@@ -436,6 +445,8 @@ impl AcpThreadView {
             focus_handle: cx.focus_handle(),
             new_server_version_available: None,
             resume_thread_metadata: resume_thread,
+            #[cfg(target_os = "windows")]
+            show_codex_windows_warning,
         }
     }
 
@@ -1055,6 +1066,9 @@ impl AcpThreadView {
                     .iter()
                     .any(|command| command.name == "logout");
             if can_login && !logout_supported {
+                self.message_editor
+                    .update(cx, |editor, cx| editor.clear(window, cx));
+
                 let this = cx.weak_entity();
                 let agent = self.agent.clone();
                 window.defer(cx, |window, cx| {
@@ -1249,12 +1263,6 @@ impl AcpThreadView {
             anyhow::Ok(())
         })
         .detach();
-    }
-
-    fn open_agent_diff(&mut self, _: &OpenAgentDiff, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(thread) = self.thread() {
-            AgentDiffPane::deploy(thread.clone(), self.workspace.clone(), window, cx).log_err();
-        }
     }
 
     fn open_edited_buffer(
@@ -3283,6 +3291,12 @@ impl AcpThreadView {
                                                 this.style(ButtonStyle::Outlined)
                                             }
                                         })
+                                        .when_some(
+                                            method.description.clone(),
+                                            |this, description| {
+                                                this.tooltip(Tooltip::text(description))
+                                            },
+                                        )
                                         .on_click({
                                             cx.listener(move |this, _, window, cx| {
                                                 telemetry::event!(
@@ -5022,6 +5036,49 @@ impl AcpThreadView {
         )
     }
 
+    #[cfg(target_os = "windows")]
+    fn render_codex_windows_warning(&self, cx: &mut Context<Self>) -> Option<Callout> {
+        if self.show_codex_windows_warning {
+            Some(
+                Callout::new()
+                    .icon(IconName::Warning)
+                    .severity(Severity::Warning)
+                    .title("Codex on Windows")
+                    .description(
+                        "For best performance, run Codex in Windows Subsystem for Linux (WSL2)",
+                    )
+                    .actions_slot(
+                        Button::new("open-wsl-modal", "Open in WSL")
+                            .icon_size(IconSize::Small)
+                            .icon_color(Color::Muted)
+                            .on_click(cx.listener({
+                                move |_, _, window, cx| {
+                                    window.dispatch_action(
+                                        zed_actions::wsl_actions::OpenWsl::default().boxed_clone(),
+                                        cx,
+                                    );
+                                    cx.notify();
+                                }
+                            })),
+                    )
+                    .dismiss_action(
+                        IconButton::new("dismiss", IconName::Close)
+                            .icon_size(IconSize::Small)
+                            .icon_color(Color::Muted)
+                            .tooltip(Tooltip::text("Dismiss Warning"))
+                            .on_click(cx.listener({
+                                move |this, _, _, cx| {
+                                    this.show_codex_windows_warning = false;
+                                    cx.notify();
+                                }
+                            })),
+                    ),
+            )
+        } else {
+            None
+        }
+    }
+
     fn render_thread_error(&self, window: &mut Window, cx: &mut Context<Self>) -> Option<Div> {
         let content = match self.thread_error.as_ref()? {
             ThreadError::Other(error) => self.render_any_thread_error(error.clone(), cx),
@@ -5436,7 +5493,6 @@ impl Render for AcpThreadView {
         v_flex()
             .size_full()
             .key_context("AcpThread")
-            .on_action(cx.listener(Self::open_agent_diff))
             .on_action(cx.listener(Self::toggle_burn_mode))
             .on_action(cx.listener(Self::keep_all))
             .on_action(cx.listener(Self::reject_all))
@@ -5510,6 +5566,16 @@ impl Render for AcpThreadView {
                 _ => this,
             })
             .children(self.render_thread_retry_status_callout(window, cx))
+            .children({
+                #[cfg(target_os = "windows")]
+                {
+                    self.render_codex_windows_warning(cx)
+                }
+                #[cfg(not(target_os = "windows"))]
+                {
+                    Vec::<Empty>::new()
+                }
+            })
             .children(self.render_thread_error(window, cx))
             .when_some(
                 self.new_server_version_available.as_ref().filter(|_| {

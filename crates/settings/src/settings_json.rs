@@ -262,8 +262,8 @@ pub fn replace_value_in_json_text<T: AsRef<str>>(
         } else {
             // We don't have the key, construct the nested objects
             let new_value = construct_json_value(&key_path[depth..], new_value);
-            let indent_prefix_len = 4 * depth;
-            let mut new_val = to_pretty_json(&new_value, 4, indent_prefix_len);
+            let indent_prefix_len = tab_size * depth;
+            let mut new_val = to_pretty_json(&new_value, tab_size, indent_prefix_len);
             if depth == 0 {
                 new_val.push('\n');
             }
@@ -626,6 +626,100 @@ pub fn append_top_level_array_value_in_json_text(
         cursor.goto_descendant(descendant_index);
         res
     }
+}
+
+/// Infers the indentation size used in JSON text by analyzing the tree structure.
+/// Returns the detected indent size, or a default of 2 if no indentation is found.
+pub fn infer_json_indent_size(text: &str) -> usize {
+    const MAX_INDENT_SIZE: usize = 64;
+
+    let mut parser = tree_sitter::Parser::new();
+    parser
+        .set_language(&tree_sitter_json::LANGUAGE.into())
+        .unwrap();
+
+    let Some(syntax_tree) = parser.parse(text, None) else {
+        return 4;
+    };
+
+    let mut cursor = syntax_tree.walk();
+    let mut indent_counts = [0u32; MAX_INDENT_SIZE];
+
+    // Traverse the tree to find indentation patterns
+    fn visit_node(
+        cursor: &mut tree_sitter::TreeCursor,
+        indent_counts: &mut [u32; MAX_INDENT_SIZE],
+        depth: usize,
+    ) {
+        if depth >= 3 {
+            return;
+        }
+        let node = cursor.node();
+        let node_kind = node.kind();
+
+        // For objects and arrays, check the indentation of their first content child
+        if matches!(node_kind, "object" | "array") {
+            let container_column = node.start_position().column;
+            let container_row = node.start_position().row;
+
+            if cursor.goto_first_child() {
+                // Skip the opening bracket
+                loop {
+                    let child = cursor.node();
+                    let child_kind = child.kind();
+
+                    // Look for the first actual content (pair for objects, value for arrays)
+                    if (node_kind == "object" && child_kind == "pair")
+                        || (node_kind == "array"
+                            && !matches!(child_kind, "[" | "]" | "," | "comment"))
+                    {
+                        let child_column = child.start_position().column;
+                        let child_row = child.start_position().row;
+
+                        // Only count if the child is on a different line
+                        if child_row > container_row && child_column > container_column {
+                            let indent = child_column - container_column;
+                            if indent > 0 && indent < MAX_INDENT_SIZE {
+                                indent_counts[indent] += 1;
+                            }
+                        }
+                        break;
+                    }
+
+                    if !cursor.goto_next_sibling() {
+                        break;
+                    }
+                }
+                cursor.goto_parent();
+            }
+        }
+
+        // Recurse to children
+        if cursor.goto_first_child() {
+            loop {
+                visit_node(cursor, indent_counts, depth + 1);
+                if !cursor.goto_next_sibling() {
+                    break;
+                }
+            }
+            cursor.goto_parent();
+        }
+    }
+
+    visit_node(&mut cursor, &mut indent_counts, 0);
+
+    // Find the indent size with the highest count
+    let mut max_count = 0;
+    let mut max_indent = 4;
+
+    for (indent, &count) in indent_counts.iter().enumerate() {
+        if count > max_count {
+            max_count = count;
+            max_indent = indent;
+        }
+    }
+
+    if max_count == 0 { 2 } else { max_indent }
 }
 
 pub fn to_pretty_json(
@@ -2485,5 +2579,70 @@ mod tests {
             ]"#
             .unindent(),
         )
+    }
+
+    #[test]
+    fn test_infer_json_indent_size() {
+        let json_2_spaces = r#"{
+  "key1": "value1",
+  "nested": {
+    "key2": "value2",
+    "array": [
+      1,
+      2,
+      3
+    ]
+  }
+}"#;
+        assert_eq!(infer_json_indent_size(json_2_spaces), 2);
+
+        let json_4_spaces = r#"{
+    "key1": "value1",
+    "nested": {
+        "key2": "value2",
+        "array": [
+            1,
+            2,
+            3
+        ]
+    }
+}"#;
+        assert_eq!(infer_json_indent_size(json_4_spaces), 4);
+
+        let json_8_spaces = r#"{
+        "key1": "value1",
+        "nested": {
+                "key2": "value2"
+        }
+}"#;
+        assert_eq!(infer_json_indent_size(json_8_spaces), 8);
+
+        let json_single_line = r#"{"key": "value", "nested": {"inner": "data"}}"#;
+        assert_eq!(infer_json_indent_size(json_single_line), 2);
+
+        let json_empty = r#"{}"#;
+        assert_eq!(infer_json_indent_size(json_empty), 2);
+
+        let json_array = r#"[
+  {
+    "id": 1,
+    "name": "first"
+  },
+  {
+    "id": 2,
+    "name": "second"
+  }
+]"#;
+        assert_eq!(infer_json_indent_size(json_array), 2);
+
+        let json_mixed = r#"{
+  "a": {
+    "b": {
+        "c": "value"
+    }
+  },
+  "d": "value2"
+}"#;
+        assert_eq!(infer_json_indent_size(json_mixed), 2);
     }
 }

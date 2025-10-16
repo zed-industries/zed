@@ -142,7 +142,7 @@
       "cmd-\"": "editor::ExpandAllDiffHunks",
       "cmd-alt-g b": "git::Blame",
       "cmd-alt-g m": "git::OpenModifiedFiles",
-      "cmd-i": "editor::ShowSignatureHelp",
+      "cmd-shift-space": "editor::ShowSignatureHelp",
       "f9": "editor::ToggleBreakpoint",
       "shift-f9": "editor::EditLogBreakpoint",
       "ctrl-f12": "editor::GoToDeclaration",
@@ -539,10 +539,10 @@
     "bindings": {
       "cmd-[": "editor::Outdent",
       "cmd-]": "editor::Indent",
-      "cmd-ctrl-p": "editor::AddSelectionAbove", // Insert cursor above
-      "cmd-alt-up": "editor::AddSelectionAbove",
-      "cmd-ctrl-n": "editor::AddSelectionBelow", // Insert cursor below
-      "cmd-alt-down": "editor::AddSelectionBelow",
+      "cmd-ctrl-p": ["editor::AddSelectionAbove", { "skip_soft_wrap": false }], // Insert cursor above
+      "cmd-alt-up": ["editor::AddSelectionAbove", { "skip_soft_wrap": true }],
+      "cmd-ctrl-n": ["editor::AddSelectionBelow", { "skip_soft_wrap": false }], // Insert cursor below
+      "cmd-alt-down": ["editor::AddSelectionBelow", { "skip_soft_wrap": true }],
       "cmd-shift-k": "editor::DeleteLine",
       "alt-up": "editor::MoveLineUp",
       "alt-down": "editor::MoveLineDown",
@@ -864,7 +864,7 @@
       "cmd-shift-e": "pane::RevealInProjectPanel",
       "cmd-f8": "editor::GoToHunk",
       "cmd-shift-f8": "editor::GoToPreviousHunk",
-      "ctrl-enter": "assistant::InlineAssist",
+      "cmd-i": "assistant::InlineAssist",
       "ctrl-:": "editor::ToggleInlayHints"
     }
   },
@@ -1167,7 +1167,7 @@
       "cmd-a": "editor::SelectAll",
       "cmd-k": "terminal::Clear",
       "cmd-n": "workspace::NewTerminal",
-      "ctrl-enter": "assistant::InlineAssist",
+      "cmd-i": "assistant::InlineAssist",
       "ctrl-_": null, // emacs undo
       // Some nice conveniences
       "cmd-backspace": ["terminal::SendText", "\u0015"], // ctrl-u: clear line
@@ -1354,6 +1354,7 @@
       "escape": "workspace::CloseWindow",
       "cmd-m": "settings_editor::Minimize",
       "cmd-f": "search::FocusSearch",
+      "left": "settings_editor::ToggleFocusNav",
       "cmd-shift-e": "settings_editor::ToggleFocusNav",
       // todo(settings_ui): cut this down based on the max files and overflow UI
       "ctrl-1": ["settings_editor::FocusFile", 0],
@@ -1374,6 +1375,8 @@
     "context": "SettingsWindow > NavigationMenu",
     "use_key_equivalents": true,
     "bindings": {
+      "up": "settings_editor::FocusPreviousNavEntry",
+      "down": "settings_editor::FocusNextNavEntry",
       "right": "settings_editor::ExpandNavEntry",
       "left": "settings_editor::CollapseNavEntry",
       "pageup": "settings_editor::FocusPreviousRootNavEntry",

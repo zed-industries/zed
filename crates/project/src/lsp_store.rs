@@ -61,9 +61,7 @@ use language::{
     LanguageRegistry, LocalFile, LspAdapter, LspAdapterDelegate, LspInstaller, ManifestDelegate,
     ManifestName, Patch, PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16, Toolchain,
     Transaction, Unclipped,
-    language_settings::{
-        FormatOnSave, Formatter, LanguageSettings, SelectedFormatter, language_settings,
-    },
+    language_settings::{FormatOnSave, Formatter, LanguageSettings, language_settings},
     point_to_lsp,
     proto::{
         deserialize_anchor, deserialize_lsp_edit, deserialize_version, serialize_anchor,
@@ -1338,23 +1336,24 @@ impl LocalLspStore {
         let formatters = match (trigger, &settings.format_on_save) {
             (FormatTrigger::Save, FormatOnSave::Off) => &[],
             (FormatTrigger::Manual, _) | (FormatTrigger::Save, FormatOnSave::On) => {
-                match &settings.formatter {
-                    SelectedFormatter::Auto => {
-                        if settings.prettier.allowed {
-                            zlog::trace!(logger => "Formatter set to auto: defaulting to prettier");
-                            std::slice::from_ref(&Formatter::Prettier)
-                        } else {
-                            zlog::trace!(logger => "Formatter set to auto: defaulting to primary language server");
-                            std::slice::from_ref(&Formatter::LanguageServer { name: None })
-                        }
-                    }
-                    SelectedFormatter::List(formatter_list) => formatter_list.as_ref(),
-                }
+                settings.formatter.as_ref()
             }
         };
 
         for formatter in formatters {
+            let formatter = if formatter == &Formatter::Auto {
+                if settings.prettier.allowed {
+                    zlog::trace!(logger => "Formatter set to auto: defaulting to prettier");
+                    &Formatter::Prettier
+                } else {
+                    zlog::trace!(logger => "Formatter set to auto: defaulting to primary language server");
+                    &Formatter::LanguageServer(settings::LanguageServerFormatterSpecifier::Current)
+                }
+            } else {
+                formatter
+            };
             match formatter {
+                Formatter::Auto => unreachable!("Auto resolved above"),
                 Formatter::Prettier => {
                     let logger = zlog::scoped!(logger => "prettier");
                     zlog::trace!(logger => "formatting");
@@ -1409,7 +1408,7 @@ impl LocalLspStore {
                         },
                     )?;
                 }
-                Formatter::LanguageServer { name } => {
+                Formatter::LanguageServer(specifier) => {
                     let logger = zlog::scoped!(logger => "language-server");
                     zlog::trace!(logger => "formatting");
                     let _timer = zlog::time!(logger => "Formatting buffer using language server");
@@ -1419,16 +1418,19 @@ impl LocalLspStore {
                         continue;
                     };
 
-                    let language_server = if let Some(name) = name.as_deref() {
-                        adapters_and_servers.iter().find_map(|(adapter, server)| {
-                            if adapter.name.0.as_ref() == name {
-                                Some(server.clone())
-                            } else {
-                                None
-                            }
-                        })
-                    } else {
-                        adapters_and_servers.first().map(|e| e.1.clone())
+                    let language_server = match specifier {
+                        settings::LanguageServerFormatterSpecifier::Specific { name } => {
+                            adapters_and_servers.iter().find_map(|(adapter, server)| {
+                                if adapter.name.0.as_ref() == name {
+                                    Some(server.clone())
+                                } else {
+                                    None
+                                }
+                            })
+                        }
+                        settings::LanguageServerFormatterSpecifier::Current => {
+                            adapters_and_servers.first().map(|e| e.1.clone())
+                        }
                     };
 
                     let Some(language_server) = language_server else {
@@ -3491,12 +3493,6 @@ struct CodeLensData {
     lens_for_version: Global,
     lens: HashMap<LanguageServerId, Vec<CodeAction>>,
     update: Option<(Global, CodeLensTask)>,
-}
-
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub enum LspFetchStrategy {
-    IgnoreCache,
-    UseCache { known_cache_version: Option<usize> },
 }
 
 #[derive(Debug)]
@@ -6496,47 +6492,35 @@ impl LspStore {
 
     pub fn document_colors(
         &mut self,
-        fetch_strategy: LspFetchStrategy,
+        known_cache_version: Option<usize>,
         buffer: Entity<Buffer>,
         cx: &mut Context<Self>,
     ) -> Option<DocumentColorTask> {
         let version_queried_for = buffer.read(cx).version();
         let buffer_id = buffer.read(cx).remote_id();
 
-        match fetch_strategy {
-            LspFetchStrategy::IgnoreCache => {}
-            LspFetchStrategy::UseCache {
-                known_cache_version,
-            } => {
-                if let Some(cached_data) = self.lsp_document_colors.get(&buffer_id)
-                    && !version_queried_for.changed_since(&cached_data.colors_for_version)
-                {
-                    let has_different_servers = self.as_local().is_some_and(|local| {
-                        local
-                            .buffers_opened_in_servers
-                            .get(&buffer_id)
-                            .cloned()
-                            .unwrap_or_default()
-                            != cached_data.colors.keys().copied().collect()
-                    });
-                    if !has_different_servers {
-                        if Some(cached_data.cache_version) == known_cache_version {
-                            return None;
-                        } else {
-                            return Some(
-                                Task::ready(Ok(DocumentColors {
-                                    colors: cached_data
-                                        .colors
-                                        .values()
-                                        .flatten()
-                                        .cloned()
-                                        .collect(),
-                                    cache_version: Some(cached_data.cache_version),
-                                }))
-                                .shared(),
-                            );
-                        }
-                    }
+        if let Some(cached_data) = self.lsp_document_colors.get(&buffer_id)
+            && !version_queried_for.changed_since(&cached_data.colors_for_version)
+        {
+            let has_different_servers = self.as_local().is_some_and(|local| {
+                local
+                    .buffers_opened_in_servers
+                    .get(&buffer_id)
+                    .cloned()
+                    .unwrap_or_default()
+                    != cached_data.colors.keys().copied().collect()
+            });
+            if !has_different_servers {
+                if Some(cached_data.cache_version) == known_cache_version {
+                    return None;
+                } else {
+                    return Some(
+                        Task::ready(Ok(DocumentColors {
+                            colors: cached_data.colors.values().flatten().cloned().collect(),
+                            cache_version: Some(cached_data.cache_version),
+                        }))
+                        .shared(),
+                    );
                 }
             }
         }
@@ -6562,13 +6546,12 @@ impl LspStore {
                     .map_err(Arc::new);
                 let fetched_colors = match fetched_colors {
                     Ok(fetched_colors) => {
-                        if fetch_strategy != LspFetchStrategy::IgnoreCache
-                            && Some(true)
-                                == buffer
-                                    .update(cx, |buffer, _| {
-                                        buffer.version() != query_version_queried_for
-                                    })
-                                    .ok()
+                        if Some(true)
+                            == buffer
+                                .update(cx, |buffer, _| {
+                                    buffer.version() != query_version_queried_for
+                                })
+                                .ok()
                         {
                             return Ok(DocumentColors::default());
                         }
@@ -9363,11 +9346,7 @@ impl LspStore {
                         name: symbol.name,
                         kind: symbol.kind,
                         range: symbol.range,
-                        label: CodeLabel {
-                            text: Default::default(),
-                            runs: Default::default(),
-                            filter_range: Default::default(),
-                        },
+                        label: CodeLabel::default(),
                     },
                     cx,
                 )
@@ -9557,11 +9536,7 @@ impl LspStore {
                     new_text: completion.new_text,
                     source: completion.source,
                     documentation: None,
-                    label: CodeLabel {
-                        text: Default::default(),
-                        runs: Default::default(),
-                        filter_range: Default::default(),
-                    },
+                    label: CodeLabel::default(),
                     insert_text_mode: None,
                     icon_path: None,
                     confirm: None,
@@ -11444,9 +11419,25 @@ impl LspStore {
                         .map(serde_json::from_value)
                         .transpose()?
                     {
+                        let state = self
+                            .as_local_mut()
+                            .context("Expected LSP Store to be local")?
+                            .language_servers
+                            .get_mut(&server_id)
+                            .context("Could not obtain Language Servers state")?;
                         server.update_capabilities(|capabilities| {
                             capabilities.diagnostic_provider = Some(caps);
                         });
+                        if let LanguageServerState::Running {
+                            workspace_refresh_task,
+                            ..
+                        } = state
+                            && workspace_refresh_task.is_none()
+                        {
+                            *workspace_refresh_task =
+                                lsp_workspace_diagnostics_refresh(server.clone(), cx)
+                        }
+
                         notify_server_capabilities_updated(&server, cx);
                     }
                 }
@@ -11610,6 +11601,19 @@ impl LspStore {
                     server.update_capabilities(|capabilities| {
                         capabilities.diagnostic_provider = None;
                     });
+                    let state = self
+                        .as_local_mut()
+                        .context("Expected LSP Store to be local")?
+                        .language_servers
+                        .get_mut(&server_id)
+                        .context("Could not obtain Language Servers state")?;
+                    if let LanguageServerState::Running {
+                        workspace_refresh_task,
+                        ..
+                    } = state
+                    {
+                        _ = workspace_refresh_task.take();
+                    }
                     notify_server_capabilities_updated(&server, cx);
                 }
                 "textDocument/documentColor" => {
@@ -12719,7 +12723,6 @@ impl LspAdapterDelegate for LocalLspAdapterDelegate {
         return Ok(None);
     }
 
-    #[cfg(not(target_os = "windows"))]
     async fn which(&self, command: &OsStr) -> Option<PathBuf> {
         let mut worktree_abs_path = self.worktree_root_path().to_path_buf();
         if self.fs.is_file(&worktree_abs_path).await {
@@ -12727,14 +12730,6 @@ impl LspAdapterDelegate for LocalLspAdapterDelegate {
         }
         let shell_path = self.shell_env().await.get("PATH").cloned();
         which::which_in(command, shell_path.as_ref(), worktree_abs_path).ok()
-    }
-
-    #[cfg(target_os = "windows")]
-    async fn which(&self, command: &OsStr) -> Option<PathBuf> {
-        // todo(windows) Getting the shell env variables in a current directory on Windows is more complicated than other platforms
-        //               there isn't a 'default shell' necessarily. The closest would be the default profile on the windows terminal
-        //               SEE: https://learn.microsoft.com/en-us/windows/terminal/customize-settings/startup
-        which::which(command).ok()
     }
 
     async fn try_exec(&self, command: LanguageServerBinary) -> Result<()> {
@@ -13038,19 +13033,19 @@ mod tests {
 
     #[test]
     fn test_multi_len_chars_normalization() {
-        let mut label = CodeLabel {
-            text: "myElˇ (parameter) myElˇ: {\n    foo: string;\n}".to_string(),
-            runs: vec![(0..6, HighlightId(1))],
-            filter_range: 0..6,
-        };
+        let mut label = CodeLabel::new(
+            "myElˇ (parameter) myElˇ: {\n    foo: string;\n}".to_string(),
+            0..6,
+            vec![(0..6, HighlightId(1))],
+        );
         ensure_uniform_list_compatible_label(&mut label);
         assert_eq!(
             label,
-            CodeLabel {
-                text: "myElˇ (parameter) myElˇ: { foo: string; }".to_string(),
-                runs: vec![(0..6, HighlightId(1))],
-                filter_range: 0..6,
-            }
+            CodeLabel::new(
+                "myElˇ (parameter) myElˇ: { foo: string; }".to_string(),
+                0..6,
+                vec![(0..6, HighlightId(1))],
+            )
         );
     }
 }
