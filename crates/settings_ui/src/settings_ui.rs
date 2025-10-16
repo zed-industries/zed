@@ -455,8 +455,9 @@ pub fn open_settings_editor(
 
     if let Some(existing_window) = existing_window {
         existing_window
-            .update(cx, |settings_window, window, _| {
+            .update(cx, |settings_window, window, cx| {
                 settings_window.original_window = Some(workspace_handle);
+                settings_window.observe_last_window_close(cx);
                 window.activate_window();
             })
             .ok();
@@ -1005,6 +1006,7 @@ impl SettingsWindow {
         let mut this = Self {
             title_bar,
             original_window,
+
             worktree_root_dirs: HashMap::default(),
             files: vec![],
             drop_down_file: None,
@@ -1042,6 +1044,8 @@ impl SettingsWindow {
             list_state,
         };
 
+        this.observe_last_window_close(cx);
+
         this.fetch_files(window, cx);
         this.build_ui(window, cx);
         this.build_search_index();
@@ -1051,6 +1055,23 @@ impl SettingsWindow {
         });
 
         this
+    }
+
+    fn observe_last_window_close(&mut self, cx: &mut App) {
+        cx.on_window_closed(|cx| {
+            if let Some(existing_window) = cx
+                .windows()
+                .into_iter()
+                .find_map(|window| window.downcast::<SettingsWindow>())
+                && cx.windows().len() == 1
+            {
+                cx.update_window(*existing_window, |_, window, _| {
+                    window.remove_window();
+                })
+                .ok();
+            }
+        })
+        .detach();
     }
 
     fn toggle_navbar_entry(&mut self, nav_entry_index: usize) {
