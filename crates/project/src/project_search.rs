@@ -11,7 +11,7 @@ use std::{
 use collections::HashSet;
 use fs::Fs;
 use futures::{SinkExt, StreamExt, select_biased};
-use gpui::{App, AsyncApp, Entity, Task};
+use gpui::{App, AppContext, AsyncApp, Entity, Task};
 use language::{Buffer, BufferSnapshot};
 use postage::oneshot;
 use smol::channel::{Receiver, Sender, bounded, unbounded};
@@ -76,11 +76,14 @@ impl Search {
         }
         let executor = cx.background_executor().clone();
         let (tx, rx) = unbounded();
-        let (grab_buffer_snapshot_tx, grab_buffer_snapshot_rx) =
-            bounded(MAX_CONCURRENT_BUFFER_OPENS);
+        let (grab_buffer_snapshot_tx, grab_buffer_snapshot_rx) = unbounded();
         let matching_buffers = grab_buffer_snapshot_rx.clone();
         let trigger_search = Box::new(|cx: &mut App| {
             cx.spawn(async move |cx| {
+                for buffer in unnamed_buffers {
+                    _ = grab_buffer_snapshot_tx.send(buffer).await;
+                }
+
                 let (find_all_matches_tx, find_all_matches_rx) =
                     bounded(MAX_CONCURRENT_BUFFER_OPENS);
 
