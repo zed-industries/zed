@@ -1,109 +1,74 @@
-use std::ops::Range;
-use tree_sitter::{Query, QueryMatch};
+use crate::patterns::migrate_language_setting;
+use anyhow::Result;
+use serde_json::Value;
 
-use crate::MigrationPatterns;
-
-pub const SETTINGS_PATTERNS: MigrationPatterns =
-    &[(FORMATTER_PATTERN, migrate_code_action_formatters)];
-
-const FORMATTER_PATTERN: &str = r#"
-        (object
-            (pair
-                key: (string (string_content) @formatter) (#any-of? @formatter "formatter" "format_on_save")
-                value: [
-                    (array
-                        (object
-                            (pair
-                                key: (string (string_content) @code-actions-key) (#eq? @code-actions-key "code_actions")
-                                value: (object
-                                    ((pair) @code-action ","?)*
-                                )
-                            )
-                        ) @code-actions-obj
-                    ) @formatter-array
-                    (object
-                        (pair
-                            key: (string (string_content) @code-actions-key) (#eq? @code-actions-key "code_actions")
-                            value: (object
-                                ((pair) @code-action ","?)*
-                            )
-                        )
-                    ) @code-actions-obj
-                ]
-            )
-        )
-"#;
-
-pub fn migrate_code_action_formatters(
-    contents: &str,
-    mat: &QueryMatch,
-    query: &Query,
-) -> Option<(Range<usize>, String)> {
-    let code_actions_obj_ix = query.capture_index_for_name("code-actions-obj")?;
-    let code_actions_obj_node = mat.nodes_for_capture_index(code_actions_obj_ix).next()?;
-
-    let mut code_actions = vec![];
-
-    let code_actions_ix = query.capture_index_for_name("code-action")?;
-    for code_action_node in mat.nodes_for_capture_index(code_actions_ix) {
-        let Some(enabled) = code_action_node
-            .child_by_field_name("value")
-            .map(|n| n.kind() != "false")
-        else {
-            continue;
+pub fn flatten_code_actions_formatters(value: &mut Value) -> Result<()> {
+    migrate_language_setting(value, |value, _path| {
+        let Some(obj) = value.as_object_mut() else {
+            return Ok(());
         };
-        if !enabled {
-            continue;
-        }
-        let Some(name) = code_action_node
-            .child_by_field_name("key")
-            .and_then(|n| n.child(1))
-            .map(|n| &contents[n.byte_range()])
-        else {
-            continue;
-        };
-        code_actions.push(name);
-    }
+        for key in ["formatter", "format_on_save"] {
+            let Some(formatter) = obj.get_mut(key) else {
+                continue;
+            };
+            let new_formatter = match formatter {
+                Value::Array(arr) => {
+                    let mut new_arr = Vec::new();
+                    let mut found_code_actions = false;
+                    for item in arr {
+                        let Some(obj) = item.as_object() else {
+                            new_arr.push(item.clone());
+                            continue;
+                        };
+                        let code_actions_obj = obj
+                            .get("code_actions")
+                            .and_then(|code_actions| code_actions.as_object());
+                        let Some(code_actions) = code_actions_obj else {
+                            new_arr.push(item.clone());
+                            continue;
+                        };
+                        found_code_actions = true;
+                        for (name, enabled) in code_actions {
+                            if !enabled.as_bool().unwrap_or(true) {
+                                continue;
+                            }
+                            new_arr.push(serde_json::json!({
+                                "code_action": name
+                            }));
+                        }
+                    }
+                    if !found_code_actions {
+                        continue;
+                    }
+                    Value::Array(new_arr)
+                }
+                Value::Object(obj) => {
+                    let mut new_arr = Vec::new();
+                    let code_actions_obj = obj
+                        .get("code_actions")
+                        .and_then(|code_actions| code_actions.as_object());
+                    let Some(code_actions) = code_actions_obj else {
+                        continue;
+                    };
+                    for (name, enabled) in code_actions {
+                        if !enabled.as_bool().unwrap_or(true) {
+                            continue;
+                        }
+                        new_arr.push(serde_json::json!({
+                            "code_action": name
+                        }));
+                    }
+                    if new_arr.len() == 1 {
+                        new_arr.pop().unwrap()
+                    } else {
+                        Value::Array(new_arr)
+                    }
+                }
+                _ => continue,
+            };
 
-    let indent = query
-        .capture_index_for_name("formatter")
-        .and_then(|ix| mat.nodes_for_capture_index(ix).next())
-        .map(|node| node.start_position().column + 1)
-        .unwrap_or(2);
-
-    let mut code_actions_str = code_actions
-        .into_iter()
-        .map(|code_action| format!(r#"{{ "code_action": "{}" }}"#, code_action))
-        .collect::<Vec<_>>()
-        .join(&format!(",\n{}", " ".repeat(indent)));
-    let is_array = query
-        .capture_index_for_name("formatter-array")
-        .map(|ix| mat.nodes_for_capture_index(ix).count() > 0)
-        .unwrap_or(false);
-    if !is_array {
-        code_actions_str.insert_str(0, &" ".repeat(indent));
-        code_actions_str.insert_str(0, "[\n");
-        code_actions_str.push('\n');
-        code_actions_str.push_str(&" ".repeat(indent.saturating_sub(2)));
-        code_actions_str.push_str("]");
-    }
-    let mut replace_range = code_actions_obj_node.byte_range();
-    if is_array && code_actions_str.is_empty() {
-        let mut cursor = code_actions_obj_node.parent().unwrap().walk();
-        cursor.goto_first_child();
-        while cursor.node().id() != code_actions_obj_node.id() && cursor.goto_next_sibling() {}
-        while cursor.goto_next_sibling()
-            && (cursor.node().is_extra()
-                || cursor.node().is_missing()
-                || cursor.node().kind() == "comment")
-        {}
-        if cursor.node().kind() == "," {
-            // found comma, delete up to next node
-            while cursor.goto_next_sibling()
-                && (cursor.node().is_extra() || cursor.node().is_missing())
-            {}
-            replace_range.end = cursor.node().range().start_byte;
+            obj.insert(key.to_string(), new_formatter);
         }
-    }
-    Some((replace_range, code_actions_str))
+        return Ok(());
+    })
 }

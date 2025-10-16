@@ -1,19 +1,10 @@
 use anyhow::Result;
 use serde_json::Value;
 
+use crate::patterns::migrate_language_setting;
+
 pub fn remove_code_actions_on_format(value: &mut Value) -> Result<()> {
-    remove_code_actions_on_format_inner(value, &[])?;
-    let languages = value
-        .as_object_mut()
-        .and_then(|obj| obj.get_mut("languages"))
-        .and_then(|languages| languages.as_object_mut());
-    if let Some(languages) = languages {
-        for (language_name, language) in languages.iter_mut() {
-            let path = vec!["languages", language_name];
-            remove_code_actions_on_format_inner(language, &path)?;
-        }
-    }
-    Ok(())
+    migrate_language_setting(value, remove_code_actions_on_format_inner)
 }
 
 fn remove_code_actions_on_format_inner(value: &mut Value, path: &[&str]) -> Result<()> {
