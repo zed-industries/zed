@@ -1005,15 +1005,13 @@ impl EditorElement {
         cx: &mut Context<Editor>,
     ) {
         let text_hitbox = &position_map.text_hitbox;
-        let pending_nonempty_selections = editor.has_pending_nonempty_selection();
-
         let force_click_possible =
             matches!(editor.prev_pressure_stage, Some(PressureStage::Normal))
                 && event.stage == PressureStage::Force;
 
         editor.prev_pressure_stage = Some(event.stage);
 
-        if force_click_possible && pending_nonempty_selections && text_hitbox.is_hovered(window) {
+        if force_click_possible && text_hitbox.is_hovered(window) {
             let point = position_map.point_for_position(event.position);
             editor.handle_click_hovered_link(point, event.modifiers, window, cx);
             editor.selection_drag_state = SelectionDragState::None;
