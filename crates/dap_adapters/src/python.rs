@@ -239,8 +239,6 @@ impl PythonDebugAdapter {
                     })?
                 };
 
-                // 1. Does this and directory exist (the current working directory here)
-                // 2. If it does, what's the output of the command
                 let output = util::command::new_smol_command(base_python)
                     .args(["-m", "venv", "zed_base_venv"])
                     .current_dir(
