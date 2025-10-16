@@ -13104,6 +13104,7 @@ dependencies = [
  "project",
  "settings",
  "watch",
+ "workspace-hack",
 ]
 
 [[package]]

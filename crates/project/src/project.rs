@@ -3946,6 +3946,7 @@ impl Project {
             fs: self.fs.clone(),
             buffer_store: self.buffer_store.clone(),
             worktrees: self.visible_worktrees(cx).collect::<Vec<_>>(),
+            limit: project_search::Search::MAX_SEARCH_RESULT_FILES + 1,
         };
         searcher.into_results(query, cx)
     }
