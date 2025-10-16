@@ -99,7 +99,6 @@ pub enum Event {
     },
     DiffHunksToggled,
     Edited {
-        singleton_buffer_edited: bool,
         edited_buffer: Option<Entity<Buffer>>,
     },
     TransactionUndone {
@@ -2033,7 +2032,6 @@ impl MultiBuffer {
             DiffChangeKind::BufferEdited,
         );
         cx.emit(Event::Edited {
-            singleton_buffer_edited: false,
             edited_buffer: None,
         });
         cx.emit(Event::ExcerptsAdded {
@@ -2074,7 +2072,6 @@ impl MultiBuffer {
             DiffChangeKind::BufferEdited,
         );
         cx.emit(Event::Edited {
-            singleton_buffer_edited: false,
             edited_buffer: None,
         });
         cx.emit(Event::ExcerptsRemoved {
@@ -2361,7 +2358,6 @@ impl MultiBuffer {
         self.sync_diff_transforms(&mut snapshot, edits, DiffChangeKind::BufferEdited);
         self.buffer_changed_since_sync.replace(true);
         cx.emit(Event::Edited {
-            singleton_buffer_edited: false,
             edited_buffer: None,
         });
         cx.emit(Event::ExcerptsRemoved {
@@ -2429,7 +2425,6 @@ impl MultiBuffer {
         use language::BufferEvent;
         cx.emit(match event {
             BufferEvent::Edited => Event::Edited {
-                singleton_buffer_edited: true,
                 edited_buffer: Some(buffer),
             },
             BufferEvent::DirtyChanged => Event::DirtyChanged,
@@ -2528,7 +2523,6 @@ impl MultiBuffer {
             },
         );
         cx.emit(Event::Edited {
-            singleton_buffer_edited: false,
             edited_buffer: None,
         });
     }
@@ -2808,7 +2802,6 @@ impl MultiBuffer {
         );
         cx.emit(Event::DiffHunksToggled);
         cx.emit(Event::Edited {
-            singleton_buffer_edited: false,
             edited_buffer: None,
         });
     }
@@ -2892,7 +2885,6 @@ impl MultiBuffer {
 
         self.sync_diff_transforms(&mut snapshot, edits, DiffChangeKind::BufferEdited);
         cx.emit(Event::Edited {
-            singleton_buffer_edited: false,
             edited_buffer: None,
         });
         cx.emit(Event::ExcerptsExpanded { ids: vec![id] });
@@ -2997,7 +2989,6 @@ impl MultiBuffer {
 
         self.sync_diff_transforms(&mut snapshot, edits, DiffChangeKind::BufferEdited);
         cx.emit(Event::Edited {
-            singleton_buffer_edited: false,
             edited_buffer: None,
         });
         cx.emit(Event::ExcerptsExpanded { ids });
