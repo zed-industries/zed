@@ -153,7 +153,7 @@ pub fn init(cx: &mut App) {
 
         // Both on present and dismissed search, we need to unconditionally handle those actions to focus from the editor.
         workspace.register_action(move |workspace, action: &DeploySearch, window, cx| {
-            if workspace.has_active_modal(window, cx) {
+            if workspace.has_active_modal(window, cx) && !workspace.hide_modal(window, cx) {
                 cx.propagate();
                 return;
             }
@@ -161,7 +161,7 @@ pub fn init(cx: &mut App) {
             cx.notify();
         });
         workspace.register_action(move |workspace, action: &NewSearch, window, cx| {
-            if workspace.has_active_modal(window, cx) {
+            if workspace.has_active_modal(window, cx) && !workspace.hide_modal(window, cx) {
                 cx.propagate();
                 return;
             }
@@ -2281,7 +2281,7 @@ fn register_workspace_action<A: Action>(
     callback: fn(&mut ProjectSearchBar, &A, &mut Window, &mut Context<ProjectSearchBar>),
 ) {
     workspace.register_action(move |workspace, action: &A, window, cx| {
-        if workspace.has_active_modal(window, cx) {
+        if workspace.has_active_modal(window, cx) && !workspace.hide_modal(window, cx) {
             cx.propagate();
             return;
         }
@@ -2308,7 +2308,7 @@ fn register_workspace_action_for_present_search<A: Action>(
     callback: fn(&mut Workspace, &A, &mut Window, &mut Context<Workspace>),
 ) {
     workspace.register_action(move |workspace, action: &A, window, cx| {
-        if workspace.has_active_modal(window, cx) {
+        if workspace.has_active_modal(window, cx) && !workspace.hide_modal(window, cx) {
             cx.propagate();
             return;
         }
@@ -4146,6 +4146,67 @@ pub mod tests {
                 "Project search should take the query from the buffer search bar since it got focused and had a query inside"
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_search_dismisses_modal(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/dir"),
+            json!({
+                "one.rs": "const ONE: usize = 1;",
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let window = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        struct EmptyModalView {
+            focus_handle: gpui::FocusHandle,
+        }
+        impl EventEmitter<gpui::DismissEvent> for EmptyModalView {}
+        impl Render for EmptyModalView {
+            fn render(&mut self, _: &mut Window, _: &mut Context<'_, Self>) -> impl IntoElement {
+                div()
+            }
+        }
+        impl Focusable for EmptyModalView {
+            fn focus_handle(&self, _cx: &App) -> gpui::FocusHandle {
+                self.focus_handle.clone()
+            }
+        }
+        impl workspace::ModalView for EmptyModalView {}
+
+        window
+            .update(cx, |workspace, window, cx| {
+                workspace.toggle_modal(window, cx, |_, cx| EmptyModalView {
+                    focus_handle: cx.focus_handle(),
+                });
+                assert!(workspace.has_active_modal(window, cx));
+            })
+            .unwrap();
+
+        cx.dispatch_action(window.into(), Deploy::find());
+
+        window
+            .update(cx, |workspace, window, cx| {
+                assert!(!workspace.has_active_modal(window, cx));
+                workspace.toggle_modal(window, cx, |_, cx| EmptyModalView {
+                    focus_handle: cx.focus_handle(),
+                });
+                assert!(workspace.has_active_modal(window, cx));
+            })
+            .unwrap();
+
+        cx.dispatch_action(window.into(), DeploySearch::find());
+
+        window
+            .update(cx, |workspace, window, cx| {
+                assert!(!workspace.has_active_modal(window, cx));
+            })
+            .unwrap();
     }
 
     fn init_test(cx: &mut TestAppContext) {
