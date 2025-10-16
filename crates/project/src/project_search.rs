@@ -29,7 +29,6 @@ pub(crate) struct Search {
     pub(crate) fs: Arc<dyn Fs>,
     pub(crate) buffer_store: Entity<BufferStore>,
     pub(crate) snapshots: Vec<(Snapshot, WorktreeSettings)>,
-    pub(crate) open_buffers: HashSet<ProjectEntryId>,
 }
 
 const MAX_SEARCH_RESULT_FILES: usize = 5_000;
@@ -98,7 +97,7 @@ impl Search {
                     for _ in 0..executor.num_cpus() {
                         let worker = Worker {
                             query: &query,
-                            open_buffers: &self.open_buffers,
+                            open_buffers: &open_buffers,
                             matched_buffer_count: &matched_buffer_count,
                             matches_count: &matches_count,
                             fs: &*self.fs,
@@ -286,7 +285,7 @@ impl Worker<'_> {
                     let Some(matches) = find_all_matches else {
                         self.publish_matches = bounded(1).0;
                         continue;
-                        };
+                    };
                     let result = handler.handle_find_all_matches(matches).await;
                     if let Some(_should_bail) = result {
                         self.publish_matches = bounded(1).0;
