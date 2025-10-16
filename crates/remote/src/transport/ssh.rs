@@ -198,7 +198,7 @@ impl RemoteConnection for SshRemoteConnection {
                 output.status.success(),
                 "failed to upload directory {} -> {}: {}",
                 src_path.display(),
-                dest_path.to_string(),
+                dest_path,
                 String::from_utf8_lossy(&output.stderr)
             );
 

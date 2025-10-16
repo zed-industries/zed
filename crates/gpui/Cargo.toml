@@ -139,6 +139,7 @@ pin-project = "1.1.10"
 [target.'cfg(target_os = "macos")'.dependencies]
 block = "0.1"
 cocoa.workspace = true
+cocoa-foundation.workspace = true
 core-foundation.workspace = true
 core-foundation-sys.workspace = true
 core-graphics = "0.24"
