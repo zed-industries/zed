@@ -25682,6 +25682,83 @@ async fn test_add_selection_after_moving_with_multiple_cursors(cx: &mut TestAppC
     );
 }
 
+#[gpui::test]
+async fn test_add_selection_skip_soft_wrap_option(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state(indoc!(
+        r#"ˇThis is a very long line that will be wrapped when soft wrapping is enabled
+           Second line here"#
+    ));
+
+    cx.update_editor(|editor, window, cx| {
+        // Enable soft wrapping with a narrow width to force soft wrapping and
+        // confirm that more than 2 rows are being displayed.
+        editor.set_wrap_width(Some(100.0.into()), cx);
+        assert!(editor.display_text(cx).lines().count() > 2);
+
+        editor.add_selection_below(
+            &AddSelectionBelow {
+                skip_soft_wrap: true,
+            },
+            window,
+            cx,
+        );
+
+        assert_eq!(
+            editor.selections.display_ranges(cx),
+            &[
+                DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 0),
+                DisplayPoint::new(DisplayRow(8), 0)..DisplayPoint::new(DisplayRow(8), 0),
+            ]
+        );
+
+        editor.add_selection_above(
+            &AddSelectionAbove {
+                skip_soft_wrap: true,
+            },
+            window,
+            cx,
+        );
+
+        assert_eq!(
+            editor.selections.display_ranges(cx),
+            &[DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 0)]
+        );
+
+        editor.add_selection_below(
+            &AddSelectionBelow {
+                skip_soft_wrap: false,
+            },
+            window,
+            cx,
+        );
+
+        assert_eq!(
+            editor.selections.display_ranges(cx),
+            &[
+                DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 0),
+                DisplayPoint::new(DisplayRow(1), 0)..DisplayPoint::new(DisplayRow(1), 0),
+            ]
+        );
+
+        editor.add_selection_above(
+            &AddSelectionAbove {
+                skip_soft_wrap: false,
+            },
+            window,
+            cx,
+        );
+
+        assert_eq!(
+            editor.selections.display_ranges(cx),
+            &[DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 0)]
+        );
+    });
+}
+
 #[gpui::test(iterations = 10)]
 async fn test_document_colors(cx: &mut TestAppContext) {
     let expected_color = Rgba {

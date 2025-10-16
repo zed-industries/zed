@@ -403,6 +403,9 @@ impl<'a> MarkdownParser<'a> {
                         if let Some(mut image) = image.take() {
                             if !text.is_empty() {
                                 image.set_alt_text(std::mem::take(&mut text).into());
+                                mem::take(&mut highlights);
+                                mem::take(&mut region_ranges);
+                                mem::take(&mut regions);
                             }
                             markdown_text_like.push(MarkdownParagraphChunk::Image(image));
                         }
@@ -1271,17 +1274,40 @@ mod tests {
             panic!("Expected a paragraph");
         };
         assert_eq!(
-            paragraph[0],
-            MarkdownParagraphChunk::Image(Image {
-                source_range: 0..111,
-                link: Link::Web {
-                    url: "https://blog.logrocket.com/wp-content/uploads/2024/04/exploring-zed-open-source-code-editor-rust-2.png".to_string(),
-                },
-                alt_text: Some("test".into()),
-                height: None,
-                width: None,
-            },)
-        );
+                paragraph[0],
+                MarkdownParagraphChunk::Image(Image {
+                    source_range: 0..111,
+                    link: Link::Web {
+                        url: "https://blog.logrocket.com/wp-content/uploads/2024/04/exploring-zed-open-source-code-editor-rust-2.png".to_string(),
+                    },
+                    alt_text: Some("test".into()),
+                    height: None,
+                    width: None,
+                },)
+            );
+    }
+
+    #[gpui::test]
+    async fn test_image_alt_text() {
+        let parsed = parse("[![Zed](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/zed-industries/zed/main/assets/badge/v0.json)](https://zed.dev)\n ").await;
+
+        let paragraph = if let ParsedMarkdownElement::Paragraph(text) = &parsed.children[0] {
+            text
+        } else {
+            panic!("Expected a paragraph");
+        };
+        assert_eq!(
+                    paragraph[0],
+                    MarkdownParagraphChunk::Image(Image {
+                        source_range: 0..142,
+                        link: Link::Web {
+                            url: "https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/zed-industries/zed/main/assets/badge/v0.json".to_string(),
+                        },
+                        alt_text: Some("Zed".into()),
+                        height: None,
+                        width: None,
+                    },)
+                );
     }
 
     #[gpui::test]

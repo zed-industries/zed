@@ -33,13 +33,13 @@ pub trait NumberFieldType: Display + Copy + Clone + Sized + PartialOrd + FromStr
 
 impl NumberFieldType for gpui::FontWeight {
     fn default_step() -> Self {
-        FontWeight(10.0)
-    }
-    fn large_step() -> Self {
         FontWeight(50.0)
     }
+    fn large_step() -> Self {
+        FontWeight(100.0)
+    }
     fn small_step() -> Self {
-        FontWeight(5.0)
+        FontWeight(10.0)
     }
     fn min_value() -> Self {
         gpui::FontWeight::THIN
