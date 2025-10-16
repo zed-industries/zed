@@ -40,7 +40,7 @@ use crate::{
     agent_server_store::AllAgentServersSettings,
     git_store::GitStore,
     lsp_store::{SymbolLocation, log_store::LogKind},
-    project_search::ProjectSearcher,
+    project_search::SearchResultsHandle,
 };
 pub use agent_server_store::{AgentServerStore, AgentServersUpdated};
 pub use git_store::{
@@ -3941,7 +3941,7 @@ impl Project {
         })
     }
 
-    pub fn search(&mut self, query: SearchQuery, cx: &mut Context<Self>) -> Receiver<SearchResult> {
+    fn search_impl(&mut self, query: SearchQuery, cx: &mut Context<Self>) -> SearchResultsHandle {
         let snapshots = self
             .visible_worktrees(cx)
             .filter_map(|tree| {
@@ -3950,13 +3950,16 @@ impl Project {
             })
             .collect::<Vec<_>>();
 
-        let searcher = ProjectSearcher {
+        let searcher = project_search::Search {
             fs: self.fs.clone(),
             buffer_store: self.buffer_store.clone(),
             snapshots,
             open_buffers: Default::default(),
         };
-        searcher.run(query, cx)
+        searcher.into_results(query, cx)
+    }
+    pub fn search(&mut self, query: SearchQuery, cx: &mut Context<Self>) -> Receiver<SearchResult> {
+        self.search_impl(query, cx).results(cx)
     }
 
     fn find_search_candidate_buffers(
@@ -4823,7 +4826,7 @@ impl Project {
         let query =
             SearchQuery::from_proto(message.query.context("missing query field")?, path_style)?;
         let results = this.update(&mut cx, |this, cx| {
-            this.find_search_candidate_buffers(&query, message.limit as _, cx)
+            this.search_impl(query, cx).matching_buffers(cx)
         })?;
 
         let mut response = proto::FindSearchCandidatesResponse {
