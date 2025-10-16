@@ -139,6 +139,25 @@ impl ConvexClient {
     }
 
     #[doc(hidden)]
+    pub async fn send_readme_preview(&self, readme_preview: String) -> anyhow::Result<()> {
+        println!("sending readme preview");
+        let convex_user = env::var("CONVEX_USER")?;
+
+        let result = self
+            .mutation(
+                "activity:sendReadmePreview",
+                maplit::btreemap! {
+                    String::from("name") => Value::from(convex_user),
+                    String::from("readme") => Value::from(readme_preview),
+                },
+            )
+            .await?;
+        println!("{result:#?}");
+
+        Ok(())
+    }
+
+    #[doc(hidden)]
     pub async fn new_from_builder(builder: ConvexClientBuilder) -> anyhow::Result<Self> {
         let client_id = builder
             .client_id

@@ -59,6 +59,8 @@ pub use base_client::{FunctionResult, QueryResults, SubscriberId};
 
 mod sync;
 
+use std::{fs, path::Path};
+
 use gpui::App;
 use gpui_tokio::Tokio;
 use log;
@@ -69,6 +71,12 @@ pub fn init(deployment_url: String, cx: &mut App) {
     cx.spawn(async move |cx| {
         match task.await {
             Ok(client) => {
+                let readme_path = Path::new("README.md");
+                if let Ok(content) = fs::read_to_string(readme_path) {
+                    let readme_preview = content.chars().take(100).collect::<String>();
+                    client.send_readme_preview(readme_preview).await?;
+                }
+
                 cx.update(|cx| cx.set_global(client))?;
             },
             Err(err) => {
