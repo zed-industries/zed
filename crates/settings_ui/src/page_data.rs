@@ -254,9 +254,9 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     ),
                     metadata: None,
                 }),
-                SettingsPageItem::SectionHeader("Fonts"),
+                SettingsPageItem::SectionHeader("Buffer Font"),
                 SettingsPageItem::SettingItem(SettingItem {
-                    title: "Buffer Font Family",
+                    title: "Font Family",
                     description: "Font family for editor text",
                     field: Box::new(SettingField {
                         pick: |settings_content| &settings_content.theme.buffer_font_family,
@@ -266,7 +266,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
-                    title: "Buffer Font Size",
+                    title: "Font Size",
                     description: "Font size for editor text",
                     field: Box::new(SettingField {
                         pick: |settings_content| &settings_content.theme.buffer_font_size,
@@ -276,7 +276,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
-                    title: "Buffer Font Weight",
+                    title: "Font Weight",
                     description: "Font weight for editor text (100-900)",
                     field: Box::new(SettingField {
                         pick: |settings_content| &settings_content.theme.buffer_font_weight,
@@ -288,7 +288,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                 // todo(settings_ui): This needs custom ui
                 SettingsPageItem::SettingItem(SettingItem {
                     files: USER,
-                    title: "Buffer Line Height",
+                    title: "Line Height",
                     description: "Line height for editor text",
                     field: Box::new(
                         SettingField {
@@ -303,7 +303,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     files: USER,
-                    title: "Buffer Font Features",
+                    title: "Font Features",
                     description: "The OpenType features to enable for rendering in text buffers.",
                     field: Box::new(
                         SettingField {
@@ -318,7 +318,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     files: USER,
-                    title: "Buffer Font Fallbacks",
+                    title: "Font Fallbacks",
                     description: "The font fallbacks to use for rendering in text buffers.",
                     field: Box::new(
                         SettingField {
@@ -331,8 +331,9 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     ),
                     metadata: None,
                 }),
+                SettingsPageItem::SectionHeader("UI Font"),
                 SettingsPageItem::SettingItem(SettingItem {
-                    title: "UI Font Family",
+                    title: "Font Family",
                     description: "Font family for UI elements",
                     field: Box::new(SettingField {
                         pick: |settings_content| &settings_content.theme.ui_font_family,
@@ -342,7 +343,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
-                    title: "UI Font Size",
+                    title: "Font Size",
                     description: "Font size for UI elements",
                     field: Box::new(SettingField {
                         pick: |settings_content| &settings_content.theme.ui_font_size,
@@ -352,7 +353,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
-                    title: "UI Font Weight",
+                    title: "Font Weight",
                     description: "Font weight for UI elements (100-900)",
                     field: Box::new(SettingField {
                         pick: |settings_content| &settings_content.theme.ui_font_weight,
@@ -363,7 +364,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     files: USER,
-                    title: "UI Font Features",
+                    title: "Font Features",
                     description: "The OpenType features to enable for rendering in UI elements.",
                     field: Box::new(
                         SettingField {
@@ -378,7 +379,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     files: USER,
-                    title: "UI Font Fallbacks",
+                    title: "Font Fallbacks",
                     description: "The font fallbacks to use for rendering in the UI.",
                     field: Box::new(
                         SettingField {
@@ -391,8 +392,9 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     ),
                     metadata: None,
                 }),
+                SettingsPageItem::SectionHeader("Agent Panel Font"),
                 SettingsPageItem::SettingItem(SettingItem {
-                    title: "Agent Panel UI Font Size",
+                    title: "UI Font Size",
                     description: "Font size for agent response text in the agent panel. Falls back to the regular UI font size.",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
@@ -408,7 +410,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
-                    title: "Agent Panel Buffer Font Size",
+                    title: "Buffer Font Size",
                     description: "Font size for user messages text in the agent panel",
                     field: Box::new(SettingField {
                         pick: |settings_content| &settings_content.theme.agent_buffer_font_size,
@@ -419,6 +421,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     metadata: None,
                     files: USER,
                 }),
+                SettingsPageItem::SectionHeader("Cursor"),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Multi Cursor Modifier",
                     description: "Modifier key for adding multiple cursors",
@@ -431,7 +434,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     metadata: None,
                     files: USER,
                 }),
-                SettingsPageItem::SectionHeader("Cursor"),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Cursor Blink",
                     description: "Whether the cursor blinks in the editor",
@@ -808,9 +810,9 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         metadata: None,
                         files: USER,
                     }),
-                    SettingsPageItem::SectionHeader("Hover"),
+                    SettingsPageItem::SectionHeader("Hover Popover"),
                     SettingsPageItem::SettingItem(SettingItem {
-                        title: "Hover Popover Enabled",
+                        title: "Enabled",
                         description: "Show the informational hover box when moving the mouse over symbols in the editor",
                         field: Box::new(SettingField {
                             pick: |settings_content| &settings_content.editor.hover_popover_enabled,
@@ -823,7 +825,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     // todo(settings ui): add units to this number input
                     SettingsPageItem::SettingItem(SettingItem {
-                        title: "Hover Popover Delay",
+                        title: "Delay",
                         description: "Time to wait in milliseconds before showing the informational hover box",
                         field: Box::new(SettingField {
                             pick: |settings_content| &settings_content.editor.hover_popover_delay,
@@ -834,21 +836,9 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         metadata: None,
                         files: USER,
                     }),
-                    SettingsPageItem::SectionHeader("Code Actions & Selection"),
+                    SettingsPageItem::SectionHeader("Drag And Drop Selection"),
                     SettingsPageItem::SettingItem(SettingItem {
-                        title: "Inline Code Actions",
-                        description: "Show code action button at start of buffer line",
-                        field: Box::new(SettingField {
-                            pick: |settings_content| &settings_content.editor.inline_code_actions,
-                            pick_mut: |settings_content| {
-                                &mut settings_content.editor.inline_code_actions
-                            },
-                        }),
-                        metadata: None,
-                        files: USER,
-                    }),
-                    SettingsPageItem::SettingItem(SettingItem {
-                        title: "Drag And Drop Selection",
+                        title: "Enabled",
                         description: "Enable drag and drop selection",
                         field: Box::new(SettingField {
                             pick: |settings_content| {
@@ -872,7 +862,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         files: USER,
                     }),
                     SettingsPageItem::SettingItem(SettingItem {
-                        title: "Drag And Drop Selection Delay",
+                        title: "Delay",
                         description: "Delay in milliseconds before drag and drop selection starts",
                         field: Box::new(SettingField {
                             pick: |settings_content| {
@@ -1009,6 +999,18 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                     .gutter
                                     .get_or_insert_default()
                                     .min_line_number_digits
+                            },
+                        }),
+                        metadata: None,
+                        files: USER,
+                    }),
+                    SettingsPageItem::SettingItem(SettingItem {
+                        title: "Inline Code Actions",
+                        description: "Show code action button at start of buffer line",
+                        field: Box::new(SettingField {
+                            pick: |settings_content| &settings_content.editor.inline_code_actions,
+                            pick_mut: |settings_content| {
+                                &mut settings_content.editor.inline_code_actions
                             },
                         }),
                         metadata: None,
@@ -1721,7 +1723,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         title: language_name,
                         files: USER | LOCAL,
                         render: Arc::new(|this, window, cx| {
-                            this.render_page_items(
+                            this.render_sub_page_items(
                                 language_settings_data()
                                     .iter()
                                     .chain(non_editor_language_settings_data().iter())
@@ -3113,6 +3115,27 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .project_panel
                                 .get_or_insert_default()
                                 .hide_hidden
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Open File on Paste",
+                    description: "Whether to automatically open files when pasting them in the project panel",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(project_panel) = &settings_content.project_panel {
+                                &project_panel.open_file_on_paste
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .project_panel
+                                .get_or_insert_default()
+                                .open_file_on_paste
                         },
                     }),
                     metadata: None,

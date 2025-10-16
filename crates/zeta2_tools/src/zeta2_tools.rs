@@ -20,9 +20,11 @@ use ui::{ContextMenu, ContextMenuEntry, DropdownMenu, prelude::*};
 use ui_input::SingleLineInput;
 use util::{ResultExt, paths::PathStyle, rel_path::RelPath};
 use workspace::{Item, SplitDirection, Workspace};
-use zeta2::{DEFAULT_CONTEXT_OPTIONS, PredictionDebugInfo, Zeta, ZetaOptions};
+use zeta2::{PredictionDebugInfo, Zeta, ZetaOptions};
 
-use edit_prediction_context::{DeclarationStyle, EditPredictionExcerptOptions};
+use edit_prediction_context::{
+    DeclarationStyle, EditPredictionContextOptions, EditPredictionExcerptOptions,
+};
 
 actions!(
     dev,
@@ -232,17 +234,20 @@ impl Zeta2Inspector {
                         .unwrap_or_default()
                 }
 
-                let mut context_options = DEFAULT_CONTEXT_OPTIONS.clone();
-                context_options.excerpt = EditPredictionExcerptOptions {
-                    max_bytes: number_input_value(&this.max_excerpt_bytes_input, cx),
-                    min_bytes: number_input_value(&this.min_excerpt_bytes_input, cx),
-                    target_before_cursor_over_total_bytes: number_input_value(
-                        &this.cursor_context_ratio_input,
-                        cx,
-                    ),
+                let zeta_options = this.zeta.read(cx).options().clone();
+
+                let context_options = EditPredictionContextOptions {
+                    excerpt: EditPredictionExcerptOptions {
+                        max_bytes: number_input_value(&this.max_excerpt_bytes_input, cx),
+                        min_bytes: number_input_value(&this.min_excerpt_bytes_input, cx),
+                        target_before_cursor_over_total_bytes: number_input_value(
+                            &this.cursor_context_ratio_input,
+                            cx,
+                        ),
+                    },
+                    ..zeta_options.context
                 };
 
-                let zeta_options = this.zeta.read(cx).options();
                 this.set_options(
                     ZetaOptions {
                         context: context_options,
