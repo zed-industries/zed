@@ -1,10 +1,17 @@
-use crate::markdown_elements::*;
+use crate::{
+    markdown_elements::*,
+    markdown_minifier::{Minifier, MinifierOptions},
+};
 use async_recursion::async_recursion;
 use collections::FxHashMap;
-use gpui::FontWeight;
+use gpui::{DefiniteLength, FontWeight, px, relative};
+use html5ever::{ParseOpts, local_name, parse_document, tendril::TendrilSink};
 use language::LanguageRegistry;
+use markup5ever_rcdom::RcDom;
 use pulldown_cmark::{Alignment, Event, Options, Parser, Tag, TagEnd};
-use std::{ops::Range, path::PathBuf, sync::Arc, vec};
+use std::{
+    cell::RefCell, collections::HashMap, mem, ops::Range, path::PathBuf, rc::Rc, sync::Arc, vec,
+};
 
 pub async fn parse_markdown(
     markdown_input: &str,
@@ -23,6 +30,24 @@ pub async fn parse_markdown(
     let renderer = parser.parse_document().await;
     ParsedMarkdown {
         children: renderer.parsed,
+    }
+}
+
+fn cleanup_html(source: &str) -> Vec<u8> {
+    let mut writer = std::io::Cursor::new(Vec::new());
+    let mut reader = std::io::Cursor::new(source);
+    let mut minify = Minifier::new(
+        &mut writer,
+        MinifierOptions {
+            omit_doctype: true,
+            collapse_whitespace: true,
+            ..Default::default()
+        },
+    );
+    if let Ok(()) = minify.minify(&mut reader) {
+        writer.into_inner()
+    } else {
+        source.bytes().collect()
     }
 }
 
@@ -76,22 +101,22 @@ impl<'a> MarkdownParser<'a> {
         if self.eof() || (steps + self.cursor) >= self.tokens.len() {
             return self.tokens.last();
         }
-        return self.tokens.get(self.cursor + steps);
+        self.tokens.get(self.cursor + steps)
     }
 
     fn previous(&self) -> Option<&(Event<'_>, Range<usize>)> {
         if self.cursor == 0 || self.cursor > self.tokens.len() {
             return None;
         }
-        return self.tokens.get(self.cursor - 1);
+        self.tokens.get(self.cursor - 1)
     }
 
     fn current(&self) -> Option<&(Event<'_>, Range<usize>)> {
-        return self.peek(0);
+        self.peek(0)
     }
 
     fn current_event(&self) -> Option<&Event<'_>> {
-        return self.current().map(|(event, _)| event);
+        self.current().map(|(event, _)| event)
     }
 
     fn is_text_like(event: &Event) -> bool {
@@ -172,13 +197,17 @@ impl<'a> MarkdownParser<'a> {
 
                     self.cursor += 1;
 
-                    let code_block = self.parse_code_block(language).await;
+                    let code_block = self.parse_code_block(language).await?;
                     Some(vec![ParsedMarkdownElement::CodeBlock(code_block)])
+                }
+                Tag::HtmlBlock => {
+                    self.cursor += 1;
+
+                    Some(self.parse_html_block().await)
                 }
                 _ => None,
             },
             Event::Rule => {
-                let source_range = source_range.clone();
                 self.cursor += 1;
                 Some(vec![ParsedMarkdownElement::HorizontalRule(source_range)])
             }
@@ -255,7 +284,7 @@ impl<'a> MarkdownParser<'a> {
                             code: false,
                             link: Some(link),
                         });
-                        style.underline = true;
+                        style.link = true;
                         prev_len
                     } else {
                         // Manually scan for links
@@ -263,18 +292,16 @@ impl<'a> MarkdownParser<'a> {
                         finder.kinds(&[linkify::LinkKind::Url]);
                         let mut last_link_len = prev_len;
                         for link in finder.links(t) {
-                            let start = link.start();
-                            let end = link.end();
-                            let range = (prev_len + start)..(prev_len + end);
+                            let start = prev_len + link.start();
+                            let end = prev_len + link.end();
+                            let range = start..end;
                             link_ranges.push(range.clone());
                             link_urls.push(link.as_str().to_string());
 
                             // If there is a style before we match a link, we have to add this to the highlighted ranges
-                            if style != MarkdownHighlightStyle::default()
-                                && last_link_len < link.start()
-                            {
+                            if style != MarkdownHighlightStyle::default() && last_link_len < start {
                                 highlights.push((
-                                    last_link_len..link.start(),
+                                    last_link_len..start,
                                     MarkdownHighlight::Style(style.clone()),
                                 ));
                             }
@@ -300,13 +327,12 @@ impl<'a> MarkdownParser<'a> {
 
                     if style != MarkdownHighlightStyle::default() && last_run_len < text.len() {
                         let mut new_highlight = true;
-                        if let Some((last_range, last_style)) = highlights.last_mut() {
-                            if last_range.end == last_run_len
-                                && last_style == &MarkdownHighlight::Style(style.clone())
-                            {
-                                last_range.end = text.len();
-                                new_highlight = false;
-                            }
+                        if let Some((last_range, last_style)) = highlights.last_mut()
+                            && last_range.end == last_run_len
+                            && last_style == &MarkdownHighlight::Style(style.clone())
+                        {
+                            last_range.end = text.len();
+                            new_highlight = false;
                         }
                         if new_highlight {
                             highlights.push((
@@ -324,7 +350,7 @@ impl<'a> MarkdownParser<'a> {
                         highlights.push((
                             prev_len..text.len(),
                             MarkdownHighlight::Style(MarkdownHighlightStyle {
-                                underline: true,
+                                link: true,
                                 ..Default::default()
                             }),
                         ));
@@ -348,15 +374,11 @@ impl<'a> MarkdownParser<'a> {
                         if !text.is_empty() {
                             let parsed_regions = MarkdownParagraphChunk::Text(ParsedMarkdownText {
                                 source_range: source_range.clone(),
-                                contents: text.clone(),
-                                highlights: highlights.clone(),
-                                region_ranges: region_ranges.clone(),
-                                regions: regions.clone(),
+                                contents: mem::take(&mut text).into(),
+                                highlights: mem::take(&mut highlights),
+                                region_ranges: mem::take(&mut region_ranges),
+                                regions: mem::take(&mut regions),
                             });
-                            text = String::new();
-                            highlights = vec![];
-                            region_ranges = vec![];
-                            regions = vec![];
                             markdown_text_like.push(parsed_regions);
                         }
                         image = Image::identify(
@@ -380,7 +402,7 @@ impl<'a> MarkdownParser<'a> {
                     TagEnd::Image => {
                         if let Some(mut image) = image.take() {
                             if !text.is_empty() {
-                                image.alt_text = Some(std::mem::take(&mut text).into());
+                                image.set_alt_text(std::mem::take(&mut text).into());
                             }
                             markdown_text_like.push(MarkdownParagraphChunk::Image(image));
                         }
@@ -402,8 +424,8 @@ impl<'a> MarkdownParser<'a> {
         }
         if !text.is_empty() {
             markdown_text_like.push(MarkdownParagraphChunk::Text(ParsedMarkdownText {
-                source_range: source_range.clone(),
-                contents: text,
+                source_range,
+                contents: text.into(),
                 highlights,
                 regions,
                 region_ranges,
@@ -421,7 +443,7 @@ impl<'a> MarkdownParser<'a> {
         self.cursor += 1;
 
         ParsedMarkdownHeading {
-            source_range: source_range.clone(),
+            source_range,
             level: match level {
                 pulldown_cmark::HeadingLevel::H1 => HeadingLevel::H1,
                 pulldown_cmark::HeadingLevel::H2 => HeadingLevel::H2,
@@ -579,10 +601,10 @@ impl<'a> MarkdownParser<'a> {
                             }
                         } else {
                             let block = self.parse_block().await;
-                            if let Some(block) = block {
-                                if let Some(list_item) = items_stack.last_mut() {
-                                    list_item.content.extend(block);
-                                }
+                            if let Some(block) = block
+                                && let Some(list_item) = items_stack.last_mut()
+                            {
+                                list_item.content.extend(block);
                             }
                         }
                     }
@@ -697,13 +719,22 @@ impl<'a> MarkdownParser<'a> {
         }
     }
 
-    async fn parse_code_block(&mut self, language: Option<String>) -> ParsedMarkdownCodeBlock {
-        let (_event, source_range) = self.previous().unwrap();
+    async fn parse_code_block(
+        &mut self,
+        language: Option<String>,
+    ) -> Option<ParsedMarkdownCodeBlock> {
+        let Some((_event, source_range)) = self.previous() else {
+            return None;
+        };
+
         let source_range = source_range.clone();
         let mut code = String::new();
 
         while !self.eof() {
-            let (current, _source_range) = self.current().unwrap();
+            let Some((current, _source_range)) = self.current() else {
+                break;
+            };
+
             match current {
                 Event::Text(text) => {
                     code.push_str(text);
@@ -736,23 +767,343 @@ impl<'a> MarkdownParser<'a> {
             None
         };
 
-        ParsedMarkdownCodeBlock {
+        Some(ParsedMarkdownCodeBlock {
             source_range,
             contents: code.into(),
             language,
             highlights,
+        })
+    }
+
+    async fn parse_html_block(&mut self) -> Vec<ParsedMarkdownElement> {
+        let mut elements = Vec::new();
+        let Some((_event, _source_range)) = self.previous() else {
+            return elements;
+        };
+
+        let mut html_source_range_start = None;
+        let mut html_source_range_end = None;
+        let mut html_buffer = String::new();
+
+        while !self.eof() {
+            let Some((current, source_range)) = self.current() else {
+                break;
+            };
+            let source_range = source_range.clone();
+            match current {
+                Event::Html(html) => {
+                    html_source_range_start.get_or_insert(source_range.start);
+                    html_source_range_end = Some(source_range.end);
+                    html_buffer.push_str(html);
+                    self.cursor += 1;
+                }
+                Event::End(TagEnd::CodeBlock) => {
+                    self.cursor += 1;
+                    break;
+                }
+                _ => {
+                    break;
+                }
+            }
+        }
+
+        let bytes = cleanup_html(&html_buffer);
+
+        let mut cursor = std::io::Cursor::new(bytes);
+        if let Ok(dom) = parse_document(RcDom::default(), ParseOpts::default())
+            .from_utf8()
+            .read_from(&mut cursor)
+            && let Some((start, end)) = html_source_range_start.zip(html_source_range_end)
+        {
+            self.parse_html_node(start..end, &dom.document, &mut elements);
+        }
+
+        elements
+    }
+
+    fn parse_html_node(
+        &self,
+        source_range: Range<usize>,
+        node: &Rc<markup5ever_rcdom::Node>,
+        elements: &mut Vec<ParsedMarkdownElement>,
+    ) {
+        match &node.data {
+            markup5ever_rcdom::NodeData::Document => {
+                self.consume_children(source_range, node, elements);
+            }
+            markup5ever_rcdom::NodeData::Text { contents } => {
+                elements.push(ParsedMarkdownElement::Paragraph(vec![
+                    MarkdownParagraphChunk::Text(ParsedMarkdownText {
+                        source_range,
+                        regions: Vec::default(),
+                        region_ranges: Vec::default(),
+                        highlights: Vec::default(),
+                        contents: contents.borrow().to_string().into(),
+                    }),
+                ]));
+            }
+            markup5ever_rcdom::NodeData::Comment { .. } => {}
+            markup5ever_rcdom::NodeData::Element { name, attrs, .. } => {
+                if local_name!("img") == name.local {
+                    if let Some(image) = self.extract_image(source_range, attrs) {
+                        elements.push(ParsedMarkdownElement::Image(image));
+                    }
+                } else if local_name!("p") == name.local {
+                    let mut paragraph = MarkdownParagraph::new();
+                    self.parse_paragraph(source_range, node, &mut paragraph);
+
+                    if !paragraph.is_empty() {
+                        elements.push(ParsedMarkdownElement::Paragraph(paragraph));
+                    }
+                } else if matches!(
+                    name.local,
+                    local_name!("h1")
+                        | local_name!("h2")
+                        | local_name!("h3")
+                        | local_name!("h4")
+                        | local_name!("h5")
+                        | local_name!("h6")
+                ) {
+                    let mut paragraph = MarkdownParagraph::new();
+                    self.consume_paragraph(source_range.clone(), node, &mut paragraph);
+
+                    if !paragraph.is_empty() {
+                        elements.push(ParsedMarkdownElement::Heading(ParsedMarkdownHeading {
+                            source_range,
+                            level: match name.local {
+                                local_name!("h1") => HeadingLevel::H1,
+                                local_name!("h2") => HeadingLevel::H2,
+                                local_name!("h3") => HeadingLevel::H3,
+                                local_name!("h4") => HeadingLevel::H4,
+                                local_name!("h5") => HeadingLevel::H5,
+                                local_name!("h6") => HeadingLevel::H6,
+                                _ => unreachable!(),
+                            },
+                            contents: paragraph,
+                        }));
+                    }
+                } else if local_name!("blockquote") == name.local {
+                    if let Some(blockquote) = self.extract_html_blockquote(node, source_range) {
+                        elements.push(ParsedMarkdownElement::BlockQuote(blockquote));
+                    }
+                } else if local_name!("table") == name.local {
+                    if let Some(table) = self.extract_html_table(node, source_range) {
+                        elements.push(ParsedMarkdownElement::Table(table));
+                    }
+                } else {
+                    self.consume_children(source_range, node, elements);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn parse_paragraph(
+        &self,
+        source_range: Range<usize>,
+        node: &Rc<markup5ever_rcdom::Node>,
+        paragraph: &mut MarkdownParagraph,
+    ) {
+        match &node.data {
+            markup5ever_rcdom::NodeData::Text { contents } => {
+                paragraph.push(MarkdownParagraphChunk::Text(ParsedMarkdownText {
+                    source_range,
+                    regions: Vec::default(),
+                    region_ranges: Vec::default(),
+                    highlights: Vec::default(),
+                    contents: contents.borrow().to_string().into(),
+                }));
+            }
+            markup5ever_rcdom::NodeData::Element { name, attrs, .. } => {
+                if local_name!("img") == name.local {
+                    if let Some(image) = self.extract_image(source_range, attrs) {
+                        paragraph.push(MarkdownParagraphChunk::Image(image));
+                    }
+                } else {
+                    self.consume_paragraph(source_range, node, paragraph);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn consume_paragraph(
+        &self,
+        source_range: Range<usize>,
+        node: &Rc<markup5ever_rcdom::Node>,
+        paragraph: &mut MarkdownParagraph,
+    ) {
+        for node in node.children.borrow().iter() {
+            self.parse_paragraph(source_range.clone(), node, paragraph);
+        }
+    }
+
+    fn consume_children(
+        &self,
+        source_range: Range<usize>,
+        node: &Rc<markup5ever_rcdom::Node>,
+        elements: &mut Vec<ParsedMarkdownElement>,
+    ) {
+        for node in node.children.borrow().iter() {
+            self.parse_html_node(source_range.clone(), node, elements);
+        }
+    }
+
+    fn attr_value(
+        attrs: &RefCell<Vec<html5ever::Attribute>>,
+        name: html5ever::LocalName,
+    ) -> Option<String> {
+        attrs.borrow().iter().find_map(|attr| {
+            if attr.name.local == name {
+                Some(attr.value.to_string())
+            } else {
+                None
+            }
+        })
+    }
+
+    fn extract_styles_from_attributes(
+        attrs: &RefCell<Vec<html5ever::Attribute>>,
+    ) -> HashMap<String, String> {
+        let mut styles = HashMap::new();
+
+        if let Some(style) = Self::attr_value(attrs, local_name!("style")) {
+            for decl in style.split(';') {
+                let mut parts = decl.splitn(2, ':');
+                if let Some((key, value)) = parts.next().zip(parts.next()) {
+                    styles.insert(
+                        key.trim().to_lowercase().to_string(),
+                        value.trim().to_string(),
+                    );
+                }
+            }
+        }
+
+        styles
+    }
+
+    fn extract_image(
+        &self,
+        source_range: Range<usize>,
+        attrs: &RefCell<Vec<html5ever::Attribute>>,
+    ) -> Option<Image> {
+        let src = Self::attr_value(attrs, local_name!("src"))?;
+
+        let mut image = Image::identify(src, source_range, self.file_location_directory.clone())?;
+
+        if let Some(alt) = Self::attr_value(attrs, local_name!("alt")) {
+            image.set_alt_text(alt.into());
+        }
+
+        let styles = Self::extract_styles_from_attributes(attrs);
+
+        if let Some(width) = Self::attr_value(attrs, local_name!("width"))
+            .or_else(|| styles.get("width").cloned())
+            .and_then(|width| Self::parse_html_element_dimension(&width))
+        {
+            image.set_width(width);
+        }
+
+        if let Some(height) = Self::attr_value(attrs, local_name!("height"))
+            .or_else(|| styles.get("height").cloned())
+            .and_then(|height| Self::parse_html_element_dimension(&height))
+        {
+            image.set_height(height);
+        }
+
+        Some(image)
+    }
+
+    fn parse_html_element_dimension(value: &str) -> Option<DefiniteLength> {
+        if value.ends_with("%") {
+            value
+                .trim_end_matches("%")
+                .parse::<f32>()
+                .ok()
+                .map(|value| relative(value / 100.))
+        } else {
+            value
+                .trim_end_matches("px")
+                .parse()
+                .ok()
+                .map(|value| px(value).into())
+        }
+    }
+
+    fn extract_html_blockquote(
+        &self,
+        node: &Rc<markup5ever_rcdom::Node>,
+        source_range: Range<usize>,
+    ) -> Option<ParsedMarkdownBlockQuote> {
+        let mut children = Vec::new();
+        self.consume_children(source_range.clone(), node, &mut children);
+
+        if children.is_empty() {
+            None
+        } else {
+            Some(ParsedMarkdownBlockQuote {
+                children,
+                source_range,
+            })
+        }
+    }
+
+    fn extract_html_table(
+        &self,
+        node: &Rc<markup5ever_rcdom::Node>,
+        source_range: Range<usize>,
+    ) -> Option<ParsedMarkdownTable> {
+        let mut header_columns = Vec::new();
+        let mut body_rows = Vec::new();
+
+        // node should be a thead or tbody element
+        for node in node.children.borrow().iter() {
+            match &node.data {
+                markup5ever_rcdom::NodeData::Element { name, .. } => {
+                    if local_name!("thead") == name.local {
+                        // node should be a tr element
+                        for node in node.children.borrow().iter() {
+                            let mut paragraph = MarkdownParagraph::new();
+                            self.consume_paragraph(source_range.clone(), node, &mut paragraph);
+
+                            for paragraph in paragraph.into_iter() {
+                                header_columns.push(vec![paragraph]);
+                            }
+                        }
+                    } else if local_name!("tbody") == name.local {
+                        // node should be a tr element
+                        for node in node.children.borrow().iter() {
+                            let mut row = MarkdownParagraph::new();
+                            self.consume_paragraph(source_range.clone(), node, &mut row);
+                            body_rows.push(ParsedMarkdownTableRow::with_children(
+                                row.into_iter().map(|column| vec![column]).collect(),
+                            ));
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        if !header_columns.is_empty() || !body_rows.is_empty() {
+            Some(ParsedMarkdownTable {
+                source_range,
+                body: body_rows,
+                column_alignments: Vec::default(),
+                header: ParsedMarkdownTableRow::with_children(header_columns),
+            })
+        } else {
+            None
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use core::panic;
-
     use super::*;
-
     use ParsedMarkdownListItemType::*;
-    use gpui::BackgroundExecutor;
+    use core::panic;
+    use gpui::{AbsoluteLength, BackgroundExecutor, DefiniteLength};
     use language::{
         HighlightId, Language, LanguageConfig, LanguageMatcher, LanguageRegistry, tree_sitter_rust,
     };
@@ -829,7 +1180,7 @@ mod tests {
             ParsedMarkdownElement::Paragraph(vec![MarkdownParagraphChunk::Text(
                 ParsedMarkdownText {
                     source_range: 0..35,
-                    contents: "Some bostrikethroughld text".to_string(),
+                    contents: "Some bostrikethroughld text".into(),
                     highlights: Vec::new(),
                     region_ranges: Vec::new(),
                     regions: Vec::new(),
@@ -927,6 +1278,8 @@ mod tests {
                     url: "https://blog.logrocket.com/wp-content/uploads/2024/04/exploring-zed-open-source-code-editor-rust-2.png".to_string(),
                 },
                 alt_text: Some("test".into()),
+                height: None,
+                width: None,
             },)
         );
     }
@@ -948,6 +1301,8 @@ mod tests {
                     url: "http://example.com/foo.png".to_string(),
                 },
                 alt_text: None,
+                height: None,
+                width: None,
             },)
         );
     }
@@ -967,6 +1322,8 @@ mod tests {
                     url: "http://example.com/foo.png".to_string(),
                 },
                 alt_text: Some("foo bar baz".into()),
+                height: None,
+                width: None,
             }),],
         );
     }
@@ -992,10 +1349,12 @@ mod tests {
                         url: "http://example.com/foo.png".to_string(),
                     },
                     alt_text: Some("foo".into()),
+                    height: None,
+                    width: None,
                 }),
                 MarkdownParagraphChunk::Text(ParsedMarkdownText {
                     source_range: 0..81,
-                    contents: " Lorem Ipsum ".to_string(),
+                    contents: " Lorem Ipsum ".into(),
                     highlights: Vec::new(),
                     region_ranges: Vec::new(),
                     regions: Vec::new(),
@@ -1006,8 +1365,434 @@ mod tests {
                         url: "http://example.com/bar.png".to_string(),
                     },
                     alt_text: Some("bar".into()),
+                    height: None,
+                    width: None,
                 })
             ]
+        );
+    }
+
+    #[test]
+    fn test_parse_html_element_dimension() {
+        // Test percentage values
+        assert_eq!(
+            MarkdownParser::parse_html_element_dimension("50%"),
+            Some(DefiniteLength::Fraction(0.5))
+        );
+        assert_eq!(
+            MarkdownParser::parse_html_element_dimension("100%"),
+            Some(DefiniteLength::Fraction(1.0))
+        );
+        assert_eq!(
+            MarkdownParser::parse_html_element_dimension("25%"),
+            Some(DefiniteLength::Fraction(0.25))
+        );
+        assert_eq!(
+            MarkdownParser::parse_html_element_dimension("0%"),
+            Some(DefiniteLength::Fraction(0.0))
+        );
+
+        // Test pixel values
+        assert_eq!(
+            MarkdownParser::parse_html_element_dimension("100px"),
+            Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(px(100.0))))
+        );
+        assert_eq!(
+            MarkdownParser::parse_html_element_dimension("50px"),
+            Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(px(50.0))))
+        );
+        assert_eq!(
+            MarkdownParser::parse_html_element_dimension("0px"),
+            Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(px(0.0))))
+        );
+
+        // Test values without units (should be treated as pixels)
+        assert_eq!(
+            MarkdownParser::parse_html_element_dimension("100"),
+            Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(px(100.0))))
+        );
+        assert_eq!(
+            MarkdownParser::parse_html_element_dimension("42"),
+            Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(px(42.0))))
+        );
+
+        // Test invalid values
+        assert_eq!(
+            MarkdownParser::parse_html_element_dimension("invalid"),
+            None
+        );
+        assert_eq!(MarkdownParser::parse_html_element_dimension("px"), None);
+        assert_eq!(MarkdownParser::parse_html_element_dimension("%"), None);
+        assert_eq!(MarkdownParser::parse_html_element_dimension(""), None);
+        assert_eq!(MarkdownParser::parse_html_element_dimension("abc%"), None);
+        assert_eq!(MarkdownParser::parse_html_element_dimension("abcpx"), None);
+
+        // Test decimal values
+        assert_eq!(
+            MarkdownParser::parse_html_element_dimension("50.5%"),
+            Some(DefiniteLength::Fraction(0.505))
+        );
+        assert_eq!(
+            MarkdownParser::parse_html_element_dimension("100.25px"),
+            Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(px(100.25))))
+        );
+        assert_eq!(
+            MarkdownParser::parse_html_element_dimension("42.0"),
+            Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(px(42.0))))
+        );
+    }
+
+    #[gpui::test]
+    async fn test_inline_html_image_tag() {
+        let parsed =
+            parse("<p>Some text<img src=\"http://example.com/foo.png\" /> some more text</p>")
+                .await;
+
+        assert_eq!(
+            ParsedMarkdown {
+                children: vec![ParsedMarkdownElement::Paragraph(vec![
+                    MarkdownParagraphChunk::Text(ParsedMarkdownText {
+                        source_range: 0..71,
+                        contents: "Some text".into(),
+                        highlights: Default::default(),
+                        region_ranges: Default::default(),
+                        regions: Default::default()
+                    }),
+                    MarkdownParagraphChunk::Image(Image {
+                        source_range: 0..71,
+                        link: Link::Web {
+                            url: "http://example.com/foo.png".to_string(),
+                        },
+                        alt_text: None,
+                        height: None,
+                        width: None,
+                    }),
+                    MarkdownParagraphChunk::Text(ParsedMarkdownText {
+                        source_range: 0..71,
+                        contents: " some more text".into(),
+                        highlights: Default::default(),
+                        region_ranges: Default::default(),
+                        regions: Default::default()
+                    }),
+                ])]
+            },
+            parsed
+        );
+    }
+
+    #[gpui::test]
+    async fn test_html_block_quote() {
+        let parsed = parse(
+            "<blockquote>
+              <p>some description</p>
+            </blockquote>",
+        )
+        .await;
+
+        assert_eq!(
+            ParsedMarkdown {
+                children: vec![block_quote(
+                    vec![ParsedMarkdownElement::Paragraph(text(
+                        "some description",
+                        0..76
+                    ))],
+                    0..76,
+                )]
+            },
+            parsed
+        );
+    }
+
+    #[gpui::test]
+    async fn test_html_nested_block_quote() {
+        let parsed = parse(
+            "<blockquote>
+              <p>some description</p>
+              <blockquote>
+                <p>second description</p>
+              </blockquote>
+            </blockquote>",
+        )
+        .await;
+
+        assert_eq!(
+            ParsedMarkdown {
+                children: vec![block_quote(
+                    vec![
+                        ParsedMarkdownElement::Paragraph(text("some description", 0..173)),
+                        block_quote(
+                            vec![ParsedMarkdownElement::Paragraph(text(
+                                "second description",
+                                0..173
+                            ))],
+                            0..173,
+                        )
+                    ],
+                    0..173,
+                )]
+            },
+            parsed
+        );
+    }
+
+    #[gpui::test]
+    async fn test_html_table() {
+        let parsed = parse(
+            "<table>
+          <thead>
+            <tr>
+              <th>Id</th>
+              <th>Name</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>1</td>
+              <td>Chris</td>
+            </tr>
+            <tr>
+              <td>2</td>
+              <td>Dennis</td>
+            </tr>
+          </tbody>
+        </table>",
+        )
+        .await;
+
+        assert_eq!(
+            ParsedMarkdown {
+                children: vec![ParsedMarkdownElement::Table(table(
+                    0..366,
+                    row(vec![text("Id", 0..366), text("Name ", 0..366)]),
+                    vec![
+                        row(vec![text("1", 0..366), text("Chris", 0..366)]),
+                        row(vec![text("2", 0..366), text("Dennis", 0..366)]),
+                    ],
+                ))],
+            },
+            parsed
+        );
+    }
+
+    #[gpui::test]
+    async fn test_html_table_without_headings() {
+        let parsed = parse(
+            "<table>
+          <tbody>
+            <tr>
+              <td>1</td>
+              <td>Chris</td>
+            </tr>
+            <tr>
+              <td>2</td>
+              <td>Dennis</td>
+            </tr>
+          </tbody>
+        </table>",
+        )
+        .await;
+
+        assert_eq!(
+            ParsedMarkdown {
+                children: vec![ParsedMarkdownElement::Table(table(
+                    0..240,
+                    row(vec![]),
+                    vec![
+                        row(vec![text("1", 0..240), text("Chris", 0..240)]),
+                        row(vec![text("2", 0..240), text("Dennis", 0..240)]),
+                    ],
+                ))],
+            },
+            parsed
+        );
+    }
+
+    #[gpui::test]
+    async fn test_html_table_without_body() {
+        let parsed = parse(
+            "<table>
+          <thead>
+            <tr>
+              <th>Id</th>
+              <th>Name</th>
+            </tr>
+          </thead>
+        </table>",
+        )
+        .await;
+
+        assert_eq!(
+            ParsedMarkdown {
+                children: vec![ParsedMarkdownElement::Table(table(
+                    0..150,
+                    row(vec![text("Id", 0..150), text("Name", 0..150)]),
+                    vec![],
+                ))],
+            },
+            parsed
+        );
+    }
+
+    #[gpui::test]
+    async fn test_html_heading_tags() {
+        let parsed = parse("<h1>Heading</h1><h2>Heading</h2><h3>Heading</h3><h4>Heading</h4><h5>Heading</h5><h6>Heading</h6>").await;
+
+        assert_eq!(
+            ParsedMarkdown {
+                children: vec![
+                    ParsedMarkdownElement::Heading(ParsedMarkdownHeading {
+                        level: HeadingLevel::H1,
+                        source_range: 0..96,
+                        contents: vec![MarkdownParagraphChunk::Text(ParsedMarkdownText {
+                            source_range: 0..96,
+                            contents: "Heading".into(),
+                            highlights: Vec::default(),
+                            region_ranges: Vec::default(),
+                            regions: Vec::default()
+                        })],
+                    }),
+                    ParsedMarkdownElement::Heading(ParsedMarkdownHeading {
+                        level: HeadingLevel::H2,
+                        source_range: 0..96,
+                        contents: vec![MarkdownParagraphChunk::Text(ParsedMarkdownText {
+                            source_range: 0..96,
+                            contents: "Heading".into(),
+                            highlights: Vec::default(),
+                            region_ranges: Vec::default(),
+                            regions: Vec::default()
+                        })],
+                    }),
+                    ParsedMarkdownElement::Heading(ParsedMarkdownHeading {
+                        level: HeadingLevel::H3,
+                        source_range: 0..96,
+                        contents: vec![MarkdownParagraphChunk::Text(ParsedMarkdownText {
+                            source_range: 0..96,
+                            contents: "Heading".into(),
+                            highlights: Vec::default(),
+                            region_ranges: Vec::default(),
+                            regions: Vec::default()
+                        })],
+                    }),
+                    ParsedMarkdownElement::Heading(ParsedMarkdownHeading {
+                        level: HeadingLevel::H4,
+                        source_range: 0..96,
+                        contents: vec![MarkdownParagraphChunk::Text(ParsedMarkdownText {
+                            source_range: 0..96,
+                            contents: "Heading".into(),
+                            highlights: Vec::default(),
+                            region_ranges: Vec::default(),
+                            regions: Vec::default()
+                        })],
+                    }),
+                    ParsedMarkdownElement::Heading(ParsedMarkdownHeading {
+                        level: HeadingLevel::H5,
+                        source_range: 0..96,
+                        contents: vec![MarkdownParagraphChunk::Text(ParsedMarkdownText {
+                            source_range: 0..96,
+                            contents: "Heading".into(),
+                            highlights: Vec::default(),
+                            region_ranges: Vec::default(),
+                            regions: Vec::default()
+                        })],
+                    }),
+                    ParsedMarkdownElement::Heading(ParsedMarkdownHeading {
+                        level: HeadingLevel::H6,
+                        source_range: 0..96,
+                        contents: vec![MarkdownParagraphChunk::Text(ParsedMarkdownText {
+                            source_range: 0..96,
+                            contents: "Heading".into(),
+                            highlights: Vec::default(),
+                            region_ranges: Vec::default(),
+                            regions: Vec::default()
+                        })],
+                    }),
+                ],
+            },
+            parsed
+        );
+    }
+
+    #[gpui::test]
+    async fn test_html_image_tag() {
+        let parsed = parse("<img src=\"http://example.com/foo.png\" />").await;
+
+        assert_eq!(
+            ParsedMarkdown {
+                children: vec![ParsedMarkdownElement::Image(Image {
+                    source_range: 0..40,
+                    link: Link::Web {
+                        url: "http://example.com/foo.png".to_string(),
+                    },
+                    alt_text: None,
+                    height: None,
+                    width: None,
+                })]
+            },
+            parsed
+        );
+    }
+
+    #[gpui::test]
+    async fn test_html_image_tag_with_alt_text() {
+        let parsed = parse("<img src=\"http://example.com/foo.png\" alt=\"Foo\" />").await;
+
+        assert_eq!(
+            ParsedMarkdown {
+                children: vec![ParsedMarkdownElement::Image(Image {
+                    source_range: 0..50,
+                    link: Link::Web {
+                        url: "http://example.com/foo.png".to_string(),
+                    },
+                    alt_text: Some("Foo".into()),
+                    height: None,
+                    width: None,
+                })]
+            },
+            parsed
+        );
+    }
+
+    #[gpui::test]
+    async fn test_html_image_tag_with_height_and_width() {
+        let parsed =
+            parse("<img src=\"http://example.com/foo.png\" height=\"100\" width=\"200\" />").await;
+
+        assert_eq!(
+            ParsedMarkdown {
+                children: vec![ParsedMarkdownElement::Image(Image {
+                    source_range: 0..65,
+                    link: Link::Web {
+                        url: "http://example.com/foo.png".to_string(),
+                    },
+                    alt_text: None,
+                    height: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(px(100.)))),
+                    width: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(px(200.)))),
+                })]
+            },
+            parsed
+        );
+    }
+
+    #[gpui::test]
+    async fn test_html_image_style_tag_with_height_and_width() {
+        let parsed = parse(
+            "<img src=\"http://example.com/foo.png\" style=\"height:100px; width:200px;\" />",
+        )
+        .await;
+
+        assert_eq!(
+            ParsedMarkdown {
+                children: vec![ParsedMarkdownElement::Image(Image {
+                    source_range: 0..75,
+                    link: Link::Web {
+                        url: "http://example.com/foo.png".to_string(),
+                    },
+                    alt_text: None,
+                    height: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(px(100.)))),
+                    width: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(px(200.)))),
+                })]
+            },
+            parsed
         );
     }
 
@@ -1458,7 +2243,7 @@ fn main() {
             region_ranges: Vec::new(),
             regions: Vec::new(),
             source_range,
-            contents: contents.to_string(),
+            contents: contents.to_string().into(),
         })]
     }
 

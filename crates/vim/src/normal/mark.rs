@@ -19,10 +19,10 @@ use crate::{
 
 impl Vim {
     pub fn create_mark(&mut self, text: Arc<str>, window: &mut Window, cx: &mut Context<Self>) {
-        self.update_editor(window, cx, |vim, editor, window, cx| {
+        self.update_editor(cx, |vim, editor, cx| {
             let anchors = editor
                 .selections
-                .disjoint_anchors()
+                .disjoint_anchors_arc()
                 .iter()
                 .map(|s| s.head())
                 .collect::<Vec<_>>();
@@ -49,16 +49,16 @@ impl Vim {
         let mut ends = vec![];
         let mut reversed = vec![];
 
-        self.update_editor(window, cx, |vim, editor, window, cx| {
+        self.update_editor(cx, |vim, editor, cx| {
             let (map, selections) = editor.selections.all_display(cx);
             for selection in selections {
                 let end = movement::saturating_left(&map, selection.end);
                 ends.push(
-                    map.buffer_snapshot
+                    map.buffer_snapshot()
                         .anchor_before(end.to_offset(&map, Bias::Left)),
                 );
                 starts.push(
-                    map.buffer_snapshot
+                    map.buffer_snapshot()
                         .anchor_before(selection.start.to_offset(&map, Bias::Left)),
                 );
                 reversed.push(selection.reversed)
@@ -106,7 +106,7 @@ impl Vim {
                         point = motion::first_non_whitespace(&map.display_snapshot, false, point);
                         anchor = map
                             .display_snapshot
-                            .buffer_snapshot
+                            .buffer_snapshot()
                             .anchor_before(point.to_point(&map.display_snapshot));
                     }
 
@@ -120,7 +120,6 @@ impl Vim {
                 });
             })
         });
-        return;
     }
 
     fn open_path_mark(
@@ -190,7 +189,7 @@ impl Vim {
             self.pop_operator(window, cx);
         }
         let mark = self
-            .update_editor(window, cx, |vim, editor, window, cx| {
+            .update_editor(cx, |vim, editor, cx| {
                 vim.get_mark(&text, editor, window, cx)
             })
             .flatten();
@@ -209,7 +208,7 @@ impl Vim {
 
         let Some(mut anchors) = anchors else { return };
 
-        self.update_editor(window, cx, |_, editor, _, cx| {
+        self.update_editor(cx, |_, editor, cx| {
             editor.create_nav_history_entry(cx);
         });
         let is_active_operator = self.active_operator().is_some();
@@ -231,7 +230,7 @@ impl Vim {
                 || self.mode == Mode::VisualLine
                 || self.mode == Mode::VisualBlock;
 
-            self.update_editor(window, cx, |_, editor, window, cx| {
+            self.update_editor(cx, |_, editor, cx| {
                 let map = editor.snapshot(window, cx);
                 let mut ranges: Vec<Range<Anchor>> = Vec::new();
                 for mut anchor in anchors {
@@ -240,7 +239,7 @@ impl Vim {
                         point = motion::first_non_whitespace(&map.display_snapshot, false, point);
                         anchor = map
                             .display_snapshot
-                            .buffer_snapshot
+                            .buffer_snapshot()
                             .anchor_before(point.to_point(&map.display_snapshot));
                     }
 
@@ -256,10 +255,8 @@ impl Vim {
                 }
             });
 
-            if should_jump {
-                if let Some(anchor) = anchor {
-                    self.motion(Motion::Jump { anchor, line }, window, cx)
-                }
+            if should_jump && let Some(anchor) = anchor {
+                self.motion(Motion::Jump { anchor, line }, window, cx)
             }
         }
     }
@@ -315,7 +312,7 @@ impl Vim {
                         ")" => motion::sentence_forwards(&map, selection.head(), 1),
                         _ => unreachable!(),
                     };
-                    map.buffer_snapshot
+                    map.buffer_snapshot()
                         .anchor_before(point.to_offset(&map, Bias::Left))
                 })
                 .collect::<Vec<Anchor>>();

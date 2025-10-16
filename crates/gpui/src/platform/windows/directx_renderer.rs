@@ -1,14 +1,18 @@
-use std::{mem::ManuallyDrop, sync::Arc};
+use std::{
+    mem::ManuallyDrop,
+    sync::{Arc, OnceLock},
+};
 
 use ::util::ResultExt;
 use anyhow::{Context, Result};
 use windows::{
     Win32::{
-        Foundation::{HMODULE, HWND},
+        Foundation::HWND,
         Graphics::{
             Direct3D::*,
             Direct3D11::*,
             DirectComposition::*,
+            DirectWrite::*,
             Dxgi::{Common::*, *},
         },
     },
@@ -27,21 +31,27 @@ const RENDER_TARGET_FORMAT: DXGI_FORMAT = DXGI_FORMAT_B8G8R8A8_UNORM;
 // This configuration is used for MSAA rendering on paths only, and it's guaranteed to be supported by DirectX 11.
 const PATH_MULTISAMPLE_COUNT: u32 = 4;
 
+pub(crate) struct FontInfo {
+    pub gamma_ratios: [f32; 4],
+    pub grayscale_enhanced_contrast: f32,
+}
+
 pub(crate) struct DirectXRenderer {
     hwnd: HWND,
     atlas: Arc<DirectXAtlas>,
-    devices: ManuallyDrop<DirectXDevices>,
+    devices: ManuallyDrop<DirectXRendererDevices>,
     resources: ManuallyDrop<DirectXResources>,
     globals: DirectXGlobalElements,
     pipelines: DirectXRenderPipelines,
     direct_composition: Option<DirectComposition>,
+    font_info: &'static FontInfo,
 }
 
 /// Direct3D objects
 #[derive(Clone)]
-pub(crate) struct DirectXDevices {
-    adapter: IDXGIAdapter1,
-    dxgi_factory: IDXGIFactory6,
+pub(crate) struct DirectXRendererDevices {
+    pub(crate) adapter: IDXGIAdapter1,
+    pub(crate) dxgi_factory: IDXGIFactory6,
     pub(crate) device: ID3D11Device,
     pub(crate) device_context: ID3D11DeviceContext,
     dxgi_device: Option<IDXGIDevice>,
@@ -86,39 +96,17 @@ struct DirectComposition {
     comp_visual: IDCompositionVisual,
 }
 
-impl DirectXDevices {
-    pub(crate) fn new(disable_direct_composition: bool) -> Result<ManuallyDrop<Self>> {
-        let debug_layer_available = check_debug_layer_available();
-        let dxgi_factory =
-            get_dxgi_factory(debug_layer_available).context("Creating DXGI factory")?;
-        let adapter =
-            get_adapter(&dxgi_factory, debug_layer_available).context("Getting DXGI adapter")?;
-        let (device, device_context) = {
-            let mut device: Option<ID3D11Device> = None;
-            let mut context: Option<ID3D11DeviceContext> = None;
-            let mut feature_level = D3D_FEATURE_LEVEL::default();
-            get_device(
-                &adapter,
-                Some(&mut device),
-                Some(&mut context),
-                Some(&mut feature_level),
-                debug_layer_available,
-            )
-            .context("Creating Direct3D device")?;
-            match feature_level {
-                D3D_FEATURE_LEVEL_11_1 => {
-                    log::info!("Created device with Direct3D 11.1 feature level.")
-                }
-                D3D_FEATURE_LEVEL_11_0 => {
-                    log::info!("Created device with Direct3D 11.0 feature level.")
-                }
-                D3D_FEATURE_LEVEL_10_1 => {
-                    log::info!("Created device with Direct3D 10.1 feature level.")
-                }
-                _ => unreachable!(),
-            }
-            (device.unwrap(), context.unwrap())
-        };
+impl DirectXRendererDevices {
+    pub(crate) fn new(
+        directx_devices: &DirectXDevices,
+        disable_direct_composition: bool,
+    ) -> Result<ManuallyDrop<Self>> {
+        let DirectXDevices {
+            adapter,
+            dxgi_factory,
+            device,
+            device_context,
+        } = directx_devices;
         let dxgi_device = if disable_direct_composition {
             None
         } else {
@@ -126,23 +114,27 @@ impl DirectXDevices {
         };
 
         Ok(ManuallyDrop::new(Self {
-            adapter,
-            dxgi_factory,
+            adapter: adapter.clone(),
+            dxgi_factory: dxgi_factory.clone(),
+            device: device.clone(),
+            device_context: device_context.clone(),
             dxgi_device,
-            device,
-            device_context,
         }))
     }
 }
 
 impl DirectXRenderer {
-    pub(crate) fn new(hwnd: HWND, disable_direct_composition: bool) -> Result<Self> {
+    pub(crate) fn new(
+        hwnd: HWND,
+        directx_devices: &DirectXDevices,
+        disable_direct_composition: bool,
+    ) -> Result<Self> {
         if disable_direct_composition {
             log::info!("Direct Composition is disabled.");
         }
 
-        let devices =
-            DirectXDevices::new(disable_direct_composition).context("Creating DirectX devices")?;
+        let devices = DirectXRendererDevices::new(directx_devices, disable_direct_composition)
+            .context("Creating DirectX devices")?;
         let atlas = Arc::new(DirectXAtlas::new(&devices.device, &devices.device_context));
 
         let resources = DirectXResources::new(&devices, 1, 1, hwnd, disable_direct_composition)
@@ -171,6 +163,7 @@ impl DirectXRenderer {
             globals,
             pipelines,
             direct_composition,
+            font_info: Self::get_font_info(),
         })
     }
 
@@ -183,10 +176,12 @@ impl DirectXRenderer {
             &self.devices.device_context,
             self.globals.global_params_buffer[0].as_ref().unwrap(),
             &[GlobalParams {
+                gamma_ratios: self.font_info.gamma_ratios,
                 viewport_size: [
                     self.resources.viewport[0].Width,
                     self.resources.viewport[0].Height,
                 ],
+                grayscale_enhanced_contrast: self.font_info.grayscale_enhanced_contrast,
                 _pad: 0,
             }],
         )?;
@@ -205,28 +200,30 @@ impl DirectXRenderer {
         Ok(())
     }
 
+    #[inline]
     fn present(&mut self) -> Result<()> {
-        unsafe {
-            let result = self.resources.swap_chain.Present(1, DXGI_PRESENT(0));
-            // Presenting the swap chain can fail if the DirectX device was removed or reset.
-            if result == DXGI_ERROR_DEVICE_REMOVED || result == DXGI_ERROR_DEVICE_RESET {
-                let reason = self.devices.device.GetDeviceRemovedReason();
-                log::error!(
-                    "DirectX device removed or reset when drawing. Reason: {:?}",
-                    reason
-                );
-                self.handle_device_lost()?;
-            } else {
-                result.ok()?;
-            }
-        }
-        Ok(())
+        let result = unsafe { self.resources.swap_chain.Present(0, DXGI_PRESENT(0)) };
+        result.ok().context("Presenting swap chain failed")
     }
 
-    fn handle_device_lost(&mut self) -> Result<()> {
-        // Here we wait a bit to ensure the the system has time to recover from the device lost state.
-        // If we don't wait, the final drawing result will be blank.
-        std::thread::sleep(std::time::Duration::from_millis(300));
+    pub(crate) fn handle_device_lost(&mut self, directx_devices: &DirectXDevices) {
+        try_to_recover_from_device_lost(
+            || {
+                self.handle_device_lost_impl(directx_devices)
+                    .context("DirectXRenderer handling device lost")
+            },
+            |_| {},
+            || {
+                log::error!(
+                    "DirectXRenderer failed to recover from device lost after multiple attempts"
+                );
+                // Do something here?
+                // At this point, the device loss is considered unrecoverable.
+            },
+        );
+    }
+
+    fn handle_device_lost_impl(&mut self, directx_devices: &DirectXDevices) -> Result<()> {
         let disable_direct_composition = self.direct_composition.is_none();
 
         unsafe {
@@ -249,7 +246,7 @@ impl DirectXRenderer {
             ManuallyDrop::drop(&mut self.devices);
         }
 
-        let devices = DirectXDevices::new(disable_direct_composition)
+        let devices = DirectXRendererDevices::new(directx_devices, disable_direct_composition)
             .context("Recreating DirectX devices")?;
         let resources = DirectXResources::new(
             &devices,
@@ -324,49 +321,39 @@ impl DirectXRenderer {
         if self.resources.width == width && self.resources.height == height {
             return Ok(());
         }
+        self.resources.width = width;
+        self.resources.height = height;
+
+        // Clear the render target before resizing
+        unsafe { self.devices.device_context.OMSetRenderTargets(None, None) };
+        unsafe { ManuallyDrop::drop(&mut self.resources.render_target) };
+        drop(self.resources.render_target_view[0].take().unwrap());
+
+        // Resizing the swap chain requires a call to the underlying DXGI adapter, which can return the device removed error.
+        // The app might have moved to a monitor that's attached to a different graphics device.
+        // When a graphics device is removed or reset, the desktop resolution often changes, resulting in a window size change.
+        // But here we just return the error, because we are handling device lost scenarios elsewhere.
         unsafe {
-            // Clear the render target before resizing
-            self.devices.device_context.OMSetRenderTargets(None, None);
-            ManuallyDrop::drop(&mut self.resources.render_target);
-            drop(self.resources.render_target_view[0].take().unwrap());
-
-            let result = self.resources.swap_chain.ResizeBuffers(
-                BUFFER_COUNT as u32,
-                width,
-                height,
-                RENDER_TARGET_FORMAT,
-                DXGI_SWAP_CHAIN_FLAG(0),
-            );
-            // Resizing the swap chain requires a call to the underlying DXGI adapter, which can return the device removed error.
-            // The app might have moved to a monitor that's attached to a different graphics device.
-            // When a graphics device is removed or reset, the desktop resolution often changes, resulting in a window size change.
-            match result {
-                Ok(_) => {}
-                Err(e) => {
-                    if e.code() == DXGI_ERROR_DEVICE_REMOVED || e.code() == DXGI_ERROR_DEVICE_RESET
-                    {
-                        let reason = self.devices.device.GetDeviceRemovedReason();
-                        log::error!(
-                            "DirectX device removed or reset when resizing. Reason: {:?}",
-                            reason
-                        );
-                        self.resources.width = width;
-                        self.resources.height = height;
-                        self.handle_device_lost()?;
-                        return Ok(());
-                    } else {
-                        log::error!("Failed to resize swap chain: {:?}", e);
-                        return Err(e.into());
-                    }
-                }
-            }
-
             self.resources
-                .recreate_resources(&self.devices, width, height)?;
+                .swap_chain
+                .ResizeBuffers(
+                    BUFFER_COUNT as u32,
+                    width,
+                    height,
+                    RENDER_TARGET_FORMAT,
+                    DXGI_SWAP_CHAIN_FLAG(0),
+                )
+                .context("Failed to resize swap chain")?;
+        }
+
+        self.resources
+            .recreate_resources(&self.devices, width, height)?;
+        unsafe {
             self.devices
                 .device_context
                 .OMSetRenderTargets(Some(&self.resources.render_target_view), None);
         }
+
         Ok(())
     }
 
@@ -617,11 +604,57 @@ impl DirectXRenderer {
             driver_info: driver_version,
         })
     }
+
+    pub(crate) fn get_font_info() -> &'static FontInfo {
+        static CACHED_FONT_INFO: OnceLock<FontInfo> = OnceLock::new();
+        CACHED_FONT_INFO.get_or_init(|| unsafe {
+            let factory: IDWriteFactory5 = DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED).unwrap();
+            let render_params: IDWriteRenderingParams1 =
+                factory.CreateRenderingParams().unwrap().cast().unwrap();
+            FontInfo {
+                gamma_ratios: Self::get_gamma_ratios(render_params.GetGamma()),
+                grayscale_enhanced_contrast: render_params.GetGrayscaleEnhancedContrast(),
+            }
+        })
+    }
+
+    // Gamma ratios for brightening/darkening edges for better contrast
+    // https://github.com/microsoft/terminal/blob/1283c0f5b99a2961673249fa77c6b986efb5086c/src/renderer/atlas/dwrite.cpp#L50
+    fn get_gamma_ratios(gamma: f32) -> [f32; 4] {
+        const GAMMA_INCORRECT_TARGET_RATIOS: [[f32; 4]; 13] = [
+            [0.0000 / 4.0, 0.0000 / 4.0, 0.0000 / 4.0, 0.0000 / 4.0], // gamma = 1.0
+            [0.0166 / 4.0, -0.0807 / 4.0, 0.2227 / 4.0, -0.0751 / 4.0], // gamma = 1.1
+            [0.0350 / 4.0, -0.1760 / 4.0, 0.4325 / 4.0, -0.1370 / 4.0], // gamma = 1.2
+            [0.0543 / 4.0, -0.2821 / 4.0, 0.6302 / 4.0, -0.1876 / 4.0], // gamma = 1.3
+            [0.0739 / 4.0, -0.3963 / 4.0, 0.8167 / 4.0, -0.2287 / 4.0], // gamma = 1.4
+            [0.0933 / 4.0, -0.5161 / 4.0, 0.9926 / 4.0, -0.2616 / 4.0], // gamma = 1.5
+            [0.1121 / 4.0, -0.6395 / 4.0, 1.1588 / 4.0, -0.2877 / 4.0], // gamma = 1.6
+            [0.1300 / 4.0, -0.7649 / 4.0, 1.3159 / 4.0, -0.3080 / 4.0], // gamma = 1.7
+            [0.1469 / 4.0, -0.8911 / 4.0, 1.4644 / 4.0, -0.3234 / 4.0], // gamma = 1.8
+            [0.1627 / 4.0, -1.0170 / 4.0, 1.6051 / 4.0, -0.3347 / 4.0], // gamma = 1.9
+            [0.1773 / 4.0, -1.1420 / 4.0, 1.7385 / 4.0, -0.3426 / 4.0], // gamma = 2.0
+            [0.1908 / 4.0, -1.2652 / 4.0, 1.8650 / 4.0, -0.3476 / 4.0], // gamma = 2.1
+            [0.2031 / 4.0, -1.3864 / 4.0, 1.9851 / 4.0, -0.3501 / 4.0], // gamma = 2.2
+        ];
+
+        const NORM13: f32 = ((0x10000 as f64) / (255.0 * 255.0) * 4.0) as f32;
+        const NORM24: f32 = ((0x100 as f64) / (255.0) * 4.0) as f32;
+
+        let index = ((gamma * 10.0).round() as usize).clamp(10, 22) - 10;
+        let ratios = GAMMA_INCORRECT_TARGET_RATIOS[index];
+
+        [
+            ratios[0] * NORM13,
+            ratios[1] * NORM24,
+            ratios[2] * NORM13,
+            ratios[3] * NORM24,
+        ]
+    }
 }
 
 impl DirectXResources {
     pub fn new(
-        devices: &DirectXDevices,
+        devices: &DirectXRendererDevices,
         width: u32,
         height: u32,
         hwnd: HWND,
@@ -666,7 +699,7 @@ impl DirectXResources {
     #[inline]
     fn recreate_resources(
         &mut self,
-        devices: &DirectXDevices,
+        devices: &DirectXRendererDevices,
         width: u32,
         height: u32,
     ) -> Result<()> {
@@ -686,8 +719,6 @@ impl DirectXResources {
         self.path_intermediate_msaa_view = path_intermediate_msaa_view;
         self.path_intermediate_srv = path_intermediate_srv;
         self.viewport = viewport;
-        self.width = width;
-        self.height = height;
         Ok(())
     }
 }
@@ -758,7 +789,7 @@ impl DirectXRenderPipelines {
 
 impl DirectComposition {
     pub fn new(dxgi_device: &IDXGIDevice, hwnd: HWND) -> Result<Self> {
-        let comp_device = get_comp_device(&dxgi_device)?;
+        let comp_device = get_comp_device(dxgi_device)?;
         let comp_target = unsafe { comp_device.CreateTargetForHwnd(hwnd, true) }?;
         let comp_visual = unsafe { comp_device.CreateVisual() }?;
 
@@ -822,8 +853,10 @@ impl DirectXGlobalElements {
 #[derive(Debug, Default)]
 #[repr(C)]
 struct GlobalParams {
+    gamma_ratios: [f32; 4],
     viewport_size: [f32; 2],
-    _pad: u64,
+    grayscale_enhanced_contrast: f32,
+    _pad: u32,
 }
 
 struct PipelineState<T> {
@@ -981,92 +1014,6 @@ impl Drop for DirectXResources {
 }
 
 #[inline]
-fn check_debug_layer_available() -> bool {
-    #[cfg(debug_assertions)]
-    {
-        unsafe { DXGIGetDebugInterface1::<IDXGIInfoQueue>(0) }
-            .log_err()
-            .is_some()
-    }
-    #[cfg(not(debug_assertions))]
-    {
-        false
-    }
-}
-
-#[inline]
-fn get_dxgi_factory(debug_layer_available: bool) -> Result<IDXGIFactory6> {
-    let factory_flag = if debug_layer_available {
-        DXGI_CREATE_FACTORY_DEBUG
-    } else {
-        #[cfg(debug_assertions)]
-        log::warn!(
-            "Failed to get DXGI debug interface. DirectX debugging features will be disabled."
-        );
-        DXGI_CREATE_FACTORY_FLAGS::default()
-    };
-    unsafe { Ok(CreateDXGIFactory2(factory_flag)?) }
-}
-
-fn get_adapter(dxgi_factory: &IDXGIFactory6, debug_layer_available: bool) -> Result<IDXGIAdapter1> {
-    for adapter_index in 0.. {
-        let adapter: IDXGIAdapter1 = unsafe {
-            dxgi_factory
-                .EnumAdapterByGpuPreference(adapter_index, DXGI_GPU_PREFERENCE_MINIMUM_POWER)
-        }?;
-        if let Ok(desc) = unsafe { adapter.GetDesc1() } {
-            let gpu_name = String::from_utf16_lossy(&desc.Description)
-                .trim_matches(char::from(0))
-                .to_string();
-            log::info!("Using GPU: {}", gpu_name);
-        }
-        // Check to see whether the adapter supports Direct3D 11, but don't
-        // create the actual device yet.
-        if get_device(&adapter, None, None, None, debug_layer_available)
-            .log_err()
-            .is_some()
-        {
-            return Ok(adapter);
-        }
-    }
-
-    unreachable!()
-}
-
-fn get_device(
-    adapter: &IDXGIAdapter1,
-    device: Option<*mut Option<ID3D11Device>>,
-    context: Option<*mut Option<ID3D11DeviceContext>>,
-    feature_level: Option<*mut D3D_FEATURE_LEVEL>,
-    debug_layer_available: bool,
-) -> Result<()> {
-    let device_flags = if debug_layer_available {
-        D3D11_CREATE_DEVICE_BGRA_SUPPORT | D3D11_CREATE_DEVICE_DEBUG
-    } else {
-        D3D11_CREATE_DEVICE_BGRA_SUPPORT
-    };
-    unsafe {
-        D3D11CreateDevice(
-            adapter,
-            D3D_DRIVER_TYPE_UNKNOWN,
-            HMODULE::default(),
-            device_flags,
-            // 4x MSAA is required for Direct3D Feature Level 10.1 or better
-            Some(&[
-                D3D_FEATURE_LEVEL_11_1,
-                D3D_FEATURE_LEVEL_11_0,
-                D3D_FEATURE_LEVEL_10_1,
-            ]),
-            D3D11_SDK_VERSION,
-            device,
-            feature_level,
-            context,
-        )?;
-    }
-    Ok(())
-}
-
-#[inline]
 fn get_comp_device(dxgi_device: &IDXGIDevice) -> Result<IDCompositionDevice> {
     Ok(unsafe { DCompositionCreateDevice(dxgi_device)? })
 }
@@ -1130,7 +1077,7 @@ fn create_swap_chain(
 
 #[inline]
 fn create_resources(
-    devices: &DirectXDevices,
+    devices: &DirectXRendererDevices,
     swap_chain: &IDXGISwapChain1,
     width: u32,
     height: u32,
@@ -1144,7 +1091,7 @@ fn create_resources(
     [D3D11_VIEWPORT; 1],
 )> {
     let (render_target, render_target_view) =
-        create_render_target_and_its_view(&swap_chain, &devices.device)?;
+        create_render_target_and_its_view(swap_chain, &devices.device)?;
     let (path_intermediate_texture, path_intermediate_srv) =
         create_path_intermediate_texture(&devices.device, width, height)?;
     let (path_intermediate_msaa_texture, path_intermediate_msaa_view) =
@@ -1544,6 +1491,10 @@ pub(crate) mod shader_resources {
     #[cfg(debug_assertions)]
     pub(super) fn build_shader_blob(entry: ShaderModule, target: ShaderTarget) -> Result<ID3DBlob> {
         unsafe {
+            use windows::Win32::Graphics::{
+                Direct3D::ID3DInclude, Hlsl::D3D_COMPILE_STANDARD_FILE_INCLUDE,
+            };
+
             let shader_name = if matches!(entry, ShaderModule::EmojiRasterization) {
                 "color_text_raster.hlsl"
             } else {
@@ -1572,10 +1523,15 @@ pub(crate) mod shader_resources {
             let entry_point = PCSTR::from_raw(entry.as_ptr());
             let target_cstr = PCSTR::from_raw(target.as_ptr());
 
+            // really dirty trick because winapi bindings are unhappy otherwise
+            let include_handler = &std::mem::transmute::<usize, ID3DInclude>(
+                D3D_COMPILE_STANDARD_FILE_INCLUDE as usize,
+            );
+
             let ret = D3DCompileFromFile(
                 &HSTRING::from(shader_path.to_str().unwrap()),
                 None,
-                None,
+                include_handler,
                 entry_point,
                 target_cstr,
                 D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION,
@@ -1624,11 +1580,10 @@ mod nvidia {
         os::raw::{c_char, c_int, c_uint},
     };
 
-    use anyhow::{Context, Result};
-    use windows::{
-        Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryA},
-        core::s,
-    };
+    use anyhow::Result;
+    use windows::{Win32::System::LibraryLoader::GetProcAddress, core::s};
+
+    use crate::with_dll_library;
 
     // https://github.com/NVIDIA/nvapi/blob/7cb76fce2f52de818b3da497af646af1ec16ce27/nvapi_lite_common.h#L180
     const NVAPI_SHORT_STRING_MAX: usize = 64;
@@ -1645,13 +1600,12 @@ mod nvidia {
     ) -> c_int;
 
     pub(super) fn get_driver_version() -> Result<String> {
-        unsafe {
-            // Try to load the NVIDIA driver DLL
-            #[cfg(target_pointer_width = "64")]
-            let nvidia_dll = LoadLibraryA(s!("nvapi64.dll")).context("Can't load nvapi64.dll")?;
-            #[cfg(target_pointer_width = "32")]
-            let nvidia_dll = LoadLibraryA(s!("nvapi.dll")).context("Can't load nvapi.dll")?;
+        #[cfg(target_pointer_width = "64")]
+        let nvidia_dll_name = s!("nvapi64.dll");
+        #[cfg(target_pointer_width = "32")]
+        let nvidia_dll_name = s!("nvapi.dll");
 
+        with_dll_library(nvidia_dll_name, |nvidia_dll| unsafe {
             let nvapi_query_addr = GetProcAddress(nvidia_dll, s!("nvapi_QueryInterface"))
                 .ok_or_else(|| anyhow::anyhow!("Failed to get nvapi_QueryInterface address"))?;
             let nvapi_query: extern "C" fn(u32) -> *mut () = std::mem::transmute(nvapi_query_addr);
@@ -1686,18 +1640,17 @@ mod nvidia {
                 minor,
                 branch_string.to_string_lossy()
             ))
-        }
+        })
     }
 }
 
 mod amd {
     use std::os::raw::{c_char, c_int, c_void};
 
-    use anyhow::{Context, Result};
-    use windows::{
-        Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryA},
-        core::s,
-    };
+    use anyhow::Result;
+    use windows::{Win32::System::LibraryLoader::GetProcAddress, core::s};
+
+    use crate::with_dll_library;
 
     // https://github.com/GPUOpen-LibrariesAndSDKs/AGS_SDK/blob/5d8812d703d0335741b6f7ffc37838eeb8b967f7/ags_lib/inc/amd_ags.h#L145
     const AGS_CURRENT_VERSION: i32 = (6 << 22) | (3 << 12);
@@ -1731,14 +1684,12 @@ mod amd {
     type agsDeInitialize_t = unsafe extern "C" fn(context: *mut AGSContext) -> c_int;
 
     pub(super) fn get_driver_version() -> Result<String> {
-        unsafe {
-            #[cfg(target_pointer_width = "64")]
-            let amd_dll =
-                LoadLibraryA(s!("amd_ags_x64.dll")).context("Failed to load AMD AGS library")?;
-            #[cfg(target_pointer_width = "32")]
-            let amd_dll =
-                LoadLibraryA(s!("amd_ags_x86.dll")).context("Failed to load AMD AGS library")?;
+        #[cfg(target_pointer_width = "64")]
+        let amd_dll_name = s!("amd_ags_x64.dll");
+        #[cfg(target_pointer_width = "32")]
+        let amd_dll_name = s!("amd_ags_x86.dll");
 
+        with_dll_library(amd_dll_name, |amd_dll| unsafe {
             let ags_initialize_addr = GetProcAddress(amd_dll, s!("agsInitialize"))
                 .ok_or_else(|| anyhow::anyhow!("Failed to get agsInitialize address"))?;
             let ags_deinitialize_addr = GetProcAddress(amd_dll, s!("agsDeInitialize"))
@@ -1765,7 +1716,7 @@ mod amd {
                 anyhow::bail!("Failed to initialize AMD AGS, error code: {}", result);
             }
 
-            // Vulkan acctually returns this as the driver version
+            // Vulkan actually returns this as the driver version
             let software_version = if !gpu_info.radeon_software_version.is_null() {
                 std::ffi::CStr::from_ptr(gpu_info.radeon_software_version)
                     .to_string_lossy()
@@ -1784,7 +1735,7 @@ mod amd {
 
             ags_deinitialize(context);
             Ok(format!("{} ({})", software_version, driver_version))
-        }
+        })
     }
 }
 

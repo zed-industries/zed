@@ -26,7 +26,6 @@ use std::{
     time::Duration,
     time::Instant,
 };
-use tracing::instrument;
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Serialize)]
 pub struct ConnectionId {
@@ -109,7 +108,6 @@ impl Peer {
         self.epoch.load(SeqCst)
     }
 
-    #[instrument(skip_all)]
     pub fn add_connection<F, Fut, Out>(
         self: &Arc<Self>,
         connection: Connection,
@@ -380,7 +378,6 @@ impl Peer {
         impl Future<Output = anyhow::Result<()>> + Send + use<>,
         BoxStream<'static, Box<dyn AnyTypedEnvelope>>,
     ) {
-        let executor = executor.clone();
         self.add_connection(connection, move |duration| executor.timer(duration))
     }
 
@@ -422,23 +419,8 @@ impl Peer {
         receiver_id: ConnectionId,
         request: T,
     ) -> impl Future<Output = Result<T::Response>> {
-        let request_start_time = Instant::now();
-        let elapsed_time = move || request_start_time.elapsed().as_millis();
-        tracing::info!("start forwarding request");
         self.request_internal(Some(sender_id), receiver_id, request)
             .map_ok(|envelope| envelope.payload)
-            .inspect_err(move |_| {
-                tracing::error!(
-                    waiting_for_host_ms = elapsed_time(),
-                    "error forwarding request"
-                )
-            })
-            .inspect_ok(move |_| {
-                tracing::info!(
-                    waiting_for_host_ms = elapsed_time(),
-                    "finished forwarding request"
-                )
-            })
     }
 
     fn request_internal<T: RequestMessage>(
@@ -535,10 +517,10 @@ impl Peer {
                             &response.payload
                         {
                             // Remove the transmitting end of the response channel to end the stream.
-                            if let Some(channels) = stream_response_channels.upgrade() {
-                                if let Some(channels) = channels.lock().as_mut() {
-                                    channels.remove(&message_id);
-                                }
+                            if let Some(channels) = stream_response_channels.upgrade()
+                                && let Some(channels) = channels.lock().as_mut()
+                            {
+                                channels.remove(&message_id);
                             }
                             None
                         } else {

@@ -228,21 +228,38 @@ pub struct ShowCompletions {
 pub struct HandleInput(pub String);
 
 /// Deletes from the cursor to the end of the next word.
+/// Stops before the end of the next word, if whitespace sequences of length >= 2 are encountered.
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
 #[action(namespace = editor)]
 #[serde(deny_unknown_fields)]
 pub struct DeleteToNextWordEnd {
     #[serde(default)]
     pub ignore_newlines: bool,
+    // Whether to stop before the end of the next word, if language-defined bracket is encountered.
+    #[serde(default)]
+    pub ignore_brackets: bool,
 }
 
 /// Deletes from the cursor to the start of the previous word.
+/// Stops before the start of the previous word, if whitespace sequences of length >= 2 are encountered.
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
 #[action(namespace = editor)]
 #[serde(deny_unknown_fields)]
 pub struct DeleteToPreviousWordStart {
     #[serde(default)]
     pub ignore_newlines: bool,
+    // Whether to stop before the start of the previous word, if language-defined bracket is encountered.
+    #[serde(default)]
+    pub ignore_brackets: bool,
+}
+
+/// Cuts from cursor to end of line.
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
+#[action(namespace = editor)]
+#[serde(deny_unknown_fields)]
+pub struct CutToEndOfLine {
+    #[serde(default)]
+    pub stop_at_newlines: bool,
 }
 
 /// Folds all code blocks at the specified indentation level.
@@ -271,6 +288,16 @@ pub enum UuidVersion {
     #[default]
     V4,
     V7,
+}
+
+/// Splits selection into individual lines.
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
+#[action(namespace = editor)]
+#[serde(deny_unknown_fields)]
+pub struct SplitSelectionIntoLines {
+    /// Keep the text selected after splitting instead of collapsing to cursors.
+    #[serde(default)]
+    pub keep_selections: bool,
 }
 
 /// Goes to the next diagnostic in the file.
@@ -394,8 +421,6 @@ actions!(
         CopyPermalinkToLine,
         /// Cuts selected text to the clipboard.
         Cut,
-        /// Cuts from cursor to end of line.
-        CutToEndOfLine,
         /// Deletes the character after the cursor.
         Delete,
         /// Deletes the current line.
@@ -431,6 +456,33 @@ actions!(
         Fold,
         /// Folds all foldable regions in the editor.
         FoldAll,
+        /// Folds all code blocks at indentation level 1.
+        #[action(name = "FoldAtLevel_1")]
+        FoldAtLevel1,
+        /// Folds all code blocks at indentation level 2.
+        #[action(name = "FoldAtLevel_2")]
+        FoldAtLevel2,
+        /// Folds all code blocks at indentation level 3.
+        #[action(name = "FoldAtLevel_3")]
+        FoldAtLevel3,
+        /// Folds all code blocks at indentation level 4.
+        #[action(name = "FoldAtLevel_4")]
+        FoldAtLevel4,
+        /// Folds all code blocks at indentation level 5.
+        #[action(name = "FoldAtLevel_5")]
+        FoldAtLevel5,
+        /// Folds all code blocks at indentation level 6.
+        #[action(name = "FoldAtLevel_6")]
+        FoldAtLevel6,
+        /// Folds all code blocks at indentation level 7.
+        #[action(name = "FoldAtLevel_7")]
+        FoldAtLevel7,
+        /// Folds all code blocks at indentation level 8.
+        #[action(name = "FoldAtLevel_8")]
+        FoldAtLevel8,
+        /// Folds all code blocks at indentation level 9.
+        #[action(name = "FoldAtLevel_9")]
+        FoldAtLevel9,
         /// Folds all function bodies in the editor.
         FoldFunctionBodies,
         /// Folds the current code block and all its children.
@@ -475,6 +527,10 @@ actions!(
         GoToTypeDefinition,
         /// Goes to type definition in a split pane.
         GoToTypeDefinitionSplit,
+        /// Goes to the next document highlight.
+        GoToNextDocumentHighlight,
+        /// Goes to the previous document highlight.
+        GoToPreviousDocumentHighlight,
         /// Scrolls down by half a page.
         HalfPageDown,
         /// Scrolls up by half a page.
@@ -622,6 +678,10 @@ actions!(
         SelectEnclosingSymbol,
         /// Selects the next larger syntax node.
         SelectLargerSyntaxNode,
+        /// Selects the next syntax node sibling.
+        SelectNextSyntaxNode,
+        /// Selects the previous syntax node sibling.
+        SelectPreviousSyntaxNode,
         /// Extends selection left.
         SelectLeft,
         /// Selects the current line.
@@ -672,8 +732,6 @@ actions!(
         SortLinesCaseInsensitive,
         /// Sorts selected lines case-sensitively.
         SortLinesCaseSensitive,
-        /// Splits selection into individual lines.
-        SplitSelectionIntoLines,
         /// Stops the language server for the current file.
         StopLanguageServer,
         /// Switches between source and header files.
@@ -745,5 +803,10 @@ actions!(
         UniqueLinesCaseInsensitive,
         /// Removes duplicate lines (case-sensitive).
         UniqueLinesCaseSensitive,
+        /// Removes the surrounding syntax node (for example brackets, or closures)
+        /// from the current selections.
+        UnwrapSyntaxNode,
+        /// Wraps selections in tag specified by language.
+        WrapSelectionsInTag
     ]
 );

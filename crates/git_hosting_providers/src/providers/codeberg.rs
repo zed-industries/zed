@@ -16,25 +16,53 @@ use git::{
 
 #[derive(Debug, Deserialize)]
 struct CommitDetails {
+    #[expect(
+        unused,
+        reason = "This field was found to be unused with serde library bump; it's left as is due to insufficient context on PO's side, but it *may* be fine to remove"
+    )]
     commit: Commit,
     author: Option<User>,
 }
 
 #[derive(Debug, Deserialize)]
 struct Commit {
+    #[expect(
+        unused,
+        reason = "This field was found to be unused with serde library bump; it's left as is due to insufficient context on PO's side, but it *may* be fine to remove"
+    )]
     author: Author,
 }
 
 #[derive(Debug, Deserialize)]
 struct Author {
+    #[expect(
+        unused,
+        reason = "This field was found to be unused with serde library bump; it's left as is due to insufficient context on PO's side, but it *may* be fine to remove"
+    )]
     name: String,
+    #[expect(
+        unused,
+        reason = "This field was found to be unused with serde library bump; it's left as is due to insufficient context on PO's side, but it *may* be fine to remove"
+    )]
     email: String,
+    #[expect(
+        unused,
+        reason = "This field was found to be unused with serde library bump; it's left as is due to insufficient context on PO's side, but it *may* be fine to remove"
+    )]
     date: String,
 }
 
 #[derive(Debug, Deserialize)]
 struct User {
+    #[expect(
+        unused,
+        reason = "This field was found to be unused with serde library bump; it's left as is due to insufficient context on PO's side, but it *may* be fine to remove"
+    )]
     pub login: String,
+    #[expect(
+        unused,
+        reason = "This field was found to be unused with serde library bump; it's left as is due to insufficient context on PO's side, but it *may* be fine to remove"
+    )]
     pub id: u64,
     pub avatar_url: String,
 }
@@ -176,6 +204,7 @@ impl GitHostingProvider for Codeberg {
 
 #[cfg(test)]
 mod tests {
+    use git::repository::repo_path;
     use pretty_assertions::assert_eq;
 
     use super::*;
@@ -217,11 +246,11 @@ mod tests {
                 owner: "zed-industries".into(),
                 repo: "zed".into(),
             },
-            BuildPermalinkParams {
-                sha: "faa6f979be417239b2e070dbbf6392b909224e0b",
-                path: "crates/editor/src/git/permalink.rs",
-                selection: None,
-            },
+            BuildPermalinkParams::new(
+                "faa6f979be417239b2e070dbbf6392b909224e0b",
+                &repo_path("crates/editor/src/git/permalink.rs"),
+                None,
+            ),
         );
 
         let expected_url = "https://codeberg.org/zed-industries/zed/src/commit/faa6f979be417239b2e070dbbf6392b909224e0b/crates/editor/src/git/permalink.rs";
@@ -235,11 +264,11 @@ mod tests {
                 owner: "zed-industries".into(),
                 repo: "zed".into(),
             },
-            BuildPermalinkParams {
-                sha: "faa6f979be417239b2e070dbbf6392b909224e0b",
-                path: "crates/editor/src/git/permalink.rs",
-                selection: Some(6..6),
-            },
+            BuildPermalinkParams::new(
+                "faa6f979be417239b2e070dbbf6392b909224e0b",
+                &repo_path("crates/editor/src/git/permalink.rs"),
+                Some(6..6),
+            ),
         );
 
         let expected_url = "https://codeberg.org/zed-industries/zed/src/commit/faa6f979be417239b2e070dbbf6392b909224e0b/crates/editor/src/git/permalink.rs#L7";
@@ -253,11 +282,11 @@ mod tests {
                 owner: "zed-industries".into(),
                 repo: "zed".into(),
             },
-            BuildPermalinkParams {
-                sha: "faa6f979be417239b2e070dbbf6392b909224e0b",
-                path: "crates/editor/src/git/permalink.rs",
-                selection: Some(23..47),
-            },
+            BuildPermalinkParams::new(
+                "faa6f979be417239b2e070dbbf6392b909224e0b",
+                &repo_path("crates/editor/src/git/permalink.rs"),
+                Some(23..47),
+            ),
         );
 
         let expected_url = "https://codeberg.org/zed-industries/zed/src/commit/faa6f979be417239b2e070dbbf6392b909224e0b/crates/editor/src/git/permalink.rs#L24-L48";

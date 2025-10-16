@@ -7,7 +7,10 @@ use gpui::{
 use picker::{Picker, PickerDelegate};
 use settings::{Settings as _, SettingsStore, update_settings_file};
 use std::sync::Arc;
-use theme::{Appearance, IconTheme, ThemeMeta, ThemeRegistry, ThemeSettings};
+use theme::{
+    Appearance, IconThemeName, IconThemeSelection, SystemAppearance, ThemeMeta, ThemeRegistry,
+    ThemeSettings,
+};
 use ui::{ListItem, ListItemSpacing, prelude::*, v_flex};
 use util::ResultExt;
 use workspace::{ModalView, ui::HighlightedLabel};
@@ -40,7 +43,10 @@ impl IconThemeSelector {
 
 impl Render for IconThemeSelector {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        v_flex().w(rems(34.)).child(self.picker.clone())
+        v_flex()
+            .key_context("IconThemeSelector")
+            .w(rems(34.))
+            .child(self.picker.clone())
     }
 }
 
@@ -48,9 +54,9 @@ pub(crate) struct IconThemeSelectorDelegate {
     fs: Arc<dyn Fs>,
     themes: Vec<ThemeMeta>,
     matches: Vec<StringMatch>,
-    original_theme: Arc<IconTheme>,
+    original_theme: IconThemeName,
     selection_completed: bool,
-    selected_theme: Option<Arc<IconTheme>>,
+    selected_theme: Option<IconThemeName>,
     selected_index: usize,
     selector: WeakEntity<IconThemeSelector>,
 }
@@ -63,7 +69,9 @@ impl IconThemeSelectorDelegate {
         cx: &mut Context<IconThemeSelector>,
     ) -> Self {
         let theme_settings = ThemeSettings::get_global(cx);
-        let original_theme = theme_settings.active_icon_theme.clone();
+        let original_theme = theme_settings
+            .icon_theme
+            .name(SystemAppearance::global(cx).0);
 
         let registry = ThemeRegistry::global(cx);
         let mut themes = registry
@@ -104,29 +112,18 @@ impl IconThemeSelectorDelegate {
             selector,
         };
 
-        this.select_if_matching(&original_theme.name);
+        this.select_if_matching(&original_theme.0);
         this
     }
 
     fn show_selected_theme(
         &mut self,
         cx: &mut Context<Picker<IconThemeSelectorDelegate>>,
-    ) -> Option<Arc<IconTheme>> {
-        if let Some(mat) = self.matches.get(self.selected_index) {
-            let registry = ThemeRegistry::global(cx);
-            match registry.get_icon_theme(&mat.string) {
-                Ok(theme) => {
-                    Self::set_icon_theme(theme.clone(), cx);
-                    Some(theme)
-                }
-                Err(err) => {
-                    log::error!("error loading icon theme {}: {err}", mat.string);
-                    None
-                }
-            }
-        } else {
-            None
-        }
+    ) -> Option<IconThemeName> {
+        let mat = self.matches.get(self.selected_index)?;
+        let name = IconThemeName(mat.string.clone().into());
+        Self::set_icon_theme(name.clone(), cx);
+        Some(name)
     }
 
     fn select_if_matching(&mut self, theme_name: &str) {
@@ -137,12 +134,11 @@ impl IconThemeSelectorDelegate {
             .unwrap_or(self.selected_index);
     }
 
-    fn set_icon_theme(theme: Arc<IconTheme>, cx: &mut App) {
-        SettingsStore::update_global(cx, |store, cx| {
+    fn set_icon_theme(name: IconThemeName, cx: &mut App) {
+        SettingsStore::update_global(cx, |store, _| {
             let mut theme_settings = store.get::<ThemeSettings>(None).clone();
-            theme_settings.active_icon_theme = theme;
+            theme_settings.icon_theme = IconThemeSelection::Static(name);
             store.override_global(theme_settings);
-            cx.refresh_windows();
         });
     }
 }
@@ -167,7 +163,9 @@ impl PickerDelegate for IconThemeSelectorDelegate {
         self.selection_completed = true;
 
         let theme_settings = ThemeSettings::get_global(cx);
-        let theme_name = theme_settings.active_icon_theme.name.clone();
+        let theme_name = theme_settings
+            .icon_theme
+            .name(SystemAppearance::global(cx).0);
 
         telemetry::event!(
             "Settings Changed",
@@ -177,8 +175,8 @@ impl PickerDelegate for IconThemeSelectorDelegate {
 
         let appearance = Appearance::from(window.appearance());
 
-        update_settings_file::<ThemeSettings>(self.fs.clone(), cx, move |settings, _| {
-            settings.set_icon_theme(theme_name.to_string(), appearance);
+        update_settings_file(self.fs.clone(), cx, move |settings, _| {
+            theme::set_icon_theme(settings, theme_name, appearance);
         });
 
         self.selector
@@ -265,7 +263,7 @@ impl PickerDelegate for IconThemeSelectorDelegate {
                         .matches
                         .iter()
                         .enumerate()
-                        .find(|(_, mtch)| mtch.string == selected.name)
+                        .find(|(_, mtch)| mtch.string.as_str() == selected.0.as_ref())
                         .map(|(ix, _)| ix)
                         .unwrap_or_default();
                 } else {
@@ -284,7 +282,7 @@ impl PickerDelegate for IconThemeSelectorDelegate {
         _window: &mut Window,
         _cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
-        let theme_match = &self.matches[ix];
+        let theme_match = &self.matches.get(ix)?;
 
         Some(
             ListItem::new(ix)
@@ -315,7 +313,7 @@ impl PickerDelegate for IconThemeSelectorDelegate {
                     Button::new("docs", "View Icon Theme Docs")
                         .icon(IconName::ArrowUpRight)
                         .icon_position(IconPosition::End)
-                        .icon_size(IconSize::XSmall)
+                        .icon_size(IconSize::Small)
                         .icon_color(Color::Muted)
                         .on_click(|_event, _window, cx| {
                             cx.open_url("https://zed.dev/docs/icon-themes");

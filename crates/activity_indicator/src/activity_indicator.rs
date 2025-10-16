@@ -1,11 +1,10 @@
-use auto_update::{AutoUpdateStatus, AutoUpdater, DismissErrorMessage, VersionCheckType};
+use auto_update::{AutoUpdateStatus, AutoUpdater, DismissMessage, VersionCheckType};
 use editor::Editor;
-use extension_host::ExtensionStore;
+use extension_host::{ExtensionOperation, ExtensionStore};
 use futures::StreamExt;
 use gpui::{
-    Animation, AnimationExt as _, App, Context, CursorStyle, Entity, EventEmitter,
-    InteractiveElement as _, ParentElement as _, Render, SharedString, StatefulInteractiveElement,
-    Styled, Transformation, Window, actions, percentage,
+    App, Context, CursorStyle, Entity, EventEmitter, InteractiveElement as _, ParentElement as _,
+    Render, SharedString, StatefulInteractiveElement, Styled, Window, actions,
 };
 use language::{
     BinaryStatus, LanguageRegistry, LanguageServerId, LanguageServerName,
@@ -21,11 +20,13 @@ use std::{
     cmp::Reverse,
     collections::HashSet,
     fmt::Write,
-    path::Path,
     sync::Arc,
     time::{Duration, Instant},
 };
-use ui::{ButtonLike, ContextMenu, PopoverMenu, PopoverMenuHandle, Tooltip, prelude::*};
+use ui::{
+    ButtonLike, CommonAnimationExt, ContextMenu, PopoverMenu, PopoverMenuHandle, Tooltip,
+    prelude::*,
+};
 use util::truncate_and_trailoff;
 use workspace::{StatusItemView, Workspace, item::ItemHandle};
 
@@ -82,7 +83,6 @@ impl ActivityIndicator {
     ) -> Entity<ActivityIndicator> {
         let project = workspace.project().clone();
         let auto_updater = AutoUpdater::get(cx);
-        let workspace_handle = cx.entity();
         let this = cx.new(|cx| {
             let mut status_events = languages.language_server_binary_statuses();
             cx.spawn(async move |this, cx| {
@@ -100,29 +100,10 @@ impl ActivityIndicator {
             })
             .detach();
 
-            cx.subscribe_in(
-                &workspace_handle,
-                window,
-                |activity_indicator, _, event, window, cx| match event {
-                    workspace::Event::ClearActivityIndicator { .. } => {
-                        if activity_indicator.statuses.pop().is_some() {
-                            activity_indicator.dismiss_error_message(
-                                &DismissErrorMessage,
-                                window,
-                                cx,
-                            );
-                            cx.notify();
-                        }
-                    }
-                    _ => {}
-                },
-            )
-            .detach();
-
             cx.subscribe(
                 &project.read(cx).lsp_store(),
-                |activity_indicator, _, event, cx| match event {
-                    LspStoreEvent::LanguageServerUpdate { name, message, .. } => {
+                |activity_indicator, _, event, cx| {
+                    if let LspStoreEvent::LanguageServerUpdate { name, message, .. } = event {
                         if let proto::update_language_server::Variant::StatusUpdate(status_update) =
                             message
                         {
@@ -191,7 +172,6 @@ impl ActivityIndicator {
                         }
                         cx.notify()
                     }
-                    _ => {}
                 },
             )
             .detach();
@@ -206,9 +186,10 @@ impl ActivityIndicator {
 
             cx.subscribe(
                 &project.read(cx).git_store().clone(),
-                |_, _, event: &GitStoreEvent, cx| match event {
-                    project::git_store::GitStoreEvent::JobsUpdated => cx.notify(),
-                    _ => {}
+                |_, _, event: &GitStoreEvent, cx| {
+                    if let project::git_store::GitStoreEvent::JobsUpdated = event {
+                        cx.notify()
+                    }
                 },
             )
             .detach();
@@ -230,7 +211,8 @@ impl ActivityIndicator {
                 server_name,
                 status,
             } => {
-                let create_buffer = project.update(cx, |project, cx| project.create_buffer(cx));
+                let create_buffer =
+                    project.update(cx, |project, cx| project.create_buffer(false, cx));
                 let status = status.clone();
                 let server_name = server_name.clone();
                 cx.spawn_in(window, async move |workspace, cx| {
@@ -297,18 +279,13 @@ impl ActivityIndicator {
         });
     }
 
-    fn dismiss_error_message(
-        &mut self,
-        _: &DismissErrorMessage,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let error_dismissed = if let Some(updater) = &self.auto_updater {
-            updater.update(cx, |updater, cx| updater.dismiss_error(cx))
+    fn dismiss_message(&mut self, _: &DismissMessage, _: &mut Window, cx: &mut Context<Self>) {
+        let dismissed = if let Some(updater) = &self.auto_updater {
+            updater.update(cx, |updater, cx| updater.dismiss(cx))
         } else {
             false
         };
-        if error_dismissed {
+        if dismissed {
             return;
         }
 
@@ -350,17 +327,13 @@ impl ActivityIndicator {
             .flatten()
     }
 
-    fn pending_environment_errors<'a>(
-        &'a self,
-        cx: &'a App,
-    ) -> impl Iterator<Item = (&'a Arc<Path>, &'a EnvironmentErrorMessage)> {
-        self.project.read(cx).shell_environment_errors(cx)
+    fn pending_environment_error<'a>(&'a self, cx: &'a App) -> Option<&'a EnvironmentErrorMessage> {
+        self.project.read(cx).peek_environment_error(cx)
     }
 
     fn content_to_render(&mut self, cx: &mut Context<Self>) -> Option<Content> {
         // Show if any direnv calls failed
-        if let Some((abs_path, error)) = self.pending_environment_errors(cx).next() {
-            let abs_path = abs_path.clone();
+        if let Some(error) = self.pending_environment_error(cx) {
             return Some(Content {
                 icon: Some(
                     Icon::new(IconName::Warning)
@@ -370,7 +343,7 @@ impl ActivityIndicator {
                 message: error.0.clone(),
                 on_click: Some(Arc::new(move |this, window, cx| {
                     this.project.update(cx, |project, cx| {
-                        project.remove_environment_error(&abs_path, cx);
+                        project.pop_environment_error(cx);
                     });
                     window.dispatch_action(Box::new(workspace::OpenLog), cx);
                 })),
@@ -410,13 +383,7 @@ impl ActivityIndicator {
                     icon: Some(
                         Icon::new(IconName::ArrowCircle)
                             .size(IconSize::Small)
-                            .with_animation(
-                                "arrow-circle",
-                                Animation::new(Duration::from_secs(2)).repeat(),
-                                |icon, delta| {
-                                    icon.transform(Transformation::rotate(percentage(delta)))
-                                },
-                            )
+                            .with_rotate_animation(2)
                             .into_any_element(),
                     ),
                     message,
@@ -438,11 +405,7 @@ impl ActivityIndicator {
                 icon: Some(
                     Icon::new(IconName::ArrowCircle)
                         .size(IconSize::Small)
-                        .with_animation(
-                            "arrow-circle",
-                            Animation::new(Duration::from_secs(2)).repeat(),
-                            |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
-                        )
+                        .with_rotate_animation(2)
                         .into_any_element(),
                 ),
                 message: format!("Debug: {}", session.read(cx).adapter()),
@@ -458,26 +421,20 @@ impl ActivityIndicator {
             .map(|r| r.read(cx))
             .and_then(Repository::current_job);
         // Show any long-running git command
-        if let Some(job_info) = current_job {
-            if Instant::now() - job_info.start >= GIT_OPERATION_DELAY {
-                return Some(Content {
-                    icon: Some(
-                        Icon::new(IconName::ArrowCircle)
-                            .size(IconSize::Small)
-                            .with_animation(
-                                "arrow-circle",
-                                Animation::new(Duration::from_secs(2)).repeat(),
-                                |icon, delta| {
-                                    icon.transform(Transformation::rotate(percentage(delta)))
-                                },
-                            )
-                            .into_any_element(),
-                    ),
-                    message: job_info.message.into(),
-                    on_click: None,
-                    tooltip_message: None,
-                });
-            }
+        if let Some(job_info) = current_job
+            && Instant::now() - job_info.start >= GIT_OPERATION_DELAY
+        {
+            return Some(Content {
+                icon: Some(
+                    Icon::new(IconName::ArrowCircle)
+                        .size(IconSize::Small)
+                        .with_rotate_animation(2)
+                        .into_any_element(),
+                ),
+                message: job_info.message.into(),
+                on_click: None,
+                tooltip_message: None,
+            });
         }
 
         // Show any language server installation info.
@@ -546,7 +503,7 @@ impl ActivityIndicator {
                 on_click: Some(Arc::new(move |this, window, cx| {
                     this.statuses
                         .retain(|status| !downloading.contains(&status.name));
-                    this.dismiss_error_message(&DismissErrorMessage, window, cx)
+                    this.dismiss_message(&DismissMessage, window, cx)
                 })),
                 tooltip_message: None,
             });
@@ -575,7 +532,7 @@ impl ActivityIndicator {
                 on_click: Some(Arc::new(move |this, window, cx| {
                     this.statuses
                         .retain(|status| !checking_for_update.contains(&status.name));
-                    this.dismiss_error_message(&DismissErrorMessage, window, cx)
+                    this.dismiss_message(&DismissMessage, window, cx)
                 })),
                 tooltip_message: None,
             });
@@ -678,17 +635,19 @@ impl ActivityIndicator {
         }
 
         // Show any application auto-update info.
-        if let Some(updater) = &self.auto_updater {
-            return match &updater.read(cx).status() {
+        self.auto_updater
+            .as_ref()
+            .and_then(|updater| match &updater.read(cx).status() {
                 AutoUpdateStatus::Checking => Some(Content {
                     icon: Some(
-                        Icon::new(IconName::Download)
+                        Icon::new(IconName::LoadCircle)
                             .size(IconSize::Small)
+                            .with_rotate_animation(3)
                             .into_any_element(),
                     ),
                     message: "Checking for Zed updates…".to_string(),
                     on_click: Some(Arc::new(|this, window, cx| {
-                        this.dismiss_error_message(&DismissErrorMessage, window, cx)
+                        this.dismiss_message(&DismissMessage, window, cx)
                     })),
                     tooltip_message: None,
                 }),
@@ -700,72 +659,86 @@ impl ActivityIndicator {
                     ),
                     message: "Downloading Zed update…".to_string(),
                     on_click: Some(Arc::new(|this, window, cx| {
-                        this.dismiss_error_message(&DismissErrorMessage, window, cx)
+                        this.dismiss_message(&DismissMessage, window, cx)
                     })),
-                    tooltip_message: Some(Self::version_tooltip_message(&version)),
+                    tooltip_message: Some(Self::version_tooltip_message(version)),
                 }),
                 AutoUpdateStatus::Installing { version } => Some(Content {
                     icon: Some(
-                        Icon::new(IconName::Download)
+                        Icon::new(IconName::LoadCircle)
                             .size(IconSize::Small)
+                            .with_rotate_animation(3)
                             .into_any_element(),
                     ),
                     message: "Installing Zed update…".to_string(),
                     on_click: Some(Arc::new(|this, window, cx| {
-                        this.dismiss_error_message(&DismissErrorMessage, window, cx)
+                        this.dismiss_message(&DismissMessage, window, cx)
                     })),
-                    tooltip_message: Some(Self::version_tooltip_message(&version)),
+                    tooltip_message: Some(Self::version_tooltip_message(version)),
                 }),
-                AutoUpdateStatus::Updated {
-                    binary_path,
-                    version,
-                } => Some(Content {
+                AutoUpdateStatus::Updated { version } => Some(Content {
                     icon: None,
                     message: "Click to restart and update Zed".to_string(),
-                    on_click: Some(Arc::new({
-                        let reload = workspace::Reload {
-                            binary_path: Some(binary_path.clone()),
-                        };
-                        move |_, _, cx| workspace::reload(&reload, cx)
-                    })),
-                    tooltip_message: Some(Self::version_tooltip_message(&version)),
+                    on_click: Some(Arc::new(move |_, _, cx| workspace::reload(cx))),
+                    tooltip_message: Some(Self::version_tooltip_message(version)),
                 }),
-                AutoUpdateStatus::Errored => Some(Content {
+                AutoUpdateStatus::Errored { error } => Some(Content {
                     icon: Some(
                         Icon::new(IconName::Warning)
                             .size(IconSize::Small)
                             .into_any_element(),
                     ),
-                    message: "Auto update failed".to_string(),
+                    message: "Failed to update Zed".to_string(),
                     on_click: Some(Arc::new(|this, window, cx| {
-                        this.dismiss_error_message(&DismissErrorMessage, window, cx)
+                        window.dispatch_action(Box::new(workspace::OpenLog), cx);
+                        this.dismiss_message(&DismissMessage, window, cx);
                     })),
-                    tooltip_message: None,
+                    tooltip_message: Some(format!("{error}")),
                 }),
                 AutoUpdateStatus::Idle => None,
-            };
-        }
+            })
+            .or_else(|| {
+                if let Some(extension_store) =
+                    ExtensionStore::try_global(cx).map(|extension_store| extension_store.read(cx))
+                    && let Some((extension_id, operation)) =
+                        extension_store.outstanding_operations().iter().next()
+                {
+                    let (message, icon, rotate) = match operation {
+                        ExtensionOperation::Install => (
+                            format!("Installing {extension_id} extension…"),
+                            IconName::LoadCircle,
+                            true,
+                        ),
+                        ExtensionOperation::Upgrade => (
+                            format!("Updating {extension_id} extension…"),
+                            IconName::Download,
+                            false,
+                        ),
+                        ExtensionOperation::Remove => (
+                            format!("Removing {extension_id} extension…"),
+                            IconName::LoadCircle,
+                            true,
+                        ),
+                    };
 
-        if let Some(extension_store) =
-            ExtensionStore::try_global(cx).map(|extension_store| extension_store.read(cx))
-        {
-            if let Some(extension_id) = extension_store.outstanding_operations().keys().next() {
-                return Some(Content {
-                    icon: Some(
-                        Icon::new(IconName::Download)
-                            .size(IconSize::Small)
-                            .into_any_element(),
-                    ),
-                    message: format!("Updating {extension_id} extension…"),
-                    on_click: Some(Arc::new(|this, window, cx| {
-                        this.dismiss_error_message(&DismissErrorMessage, window, cx)
-                    })),
-                    tooltip_message: None,
-                });
-            }
-        }
-
-        None
+                    Some(Content {
+                        icon: Some(Icon::new(icon).size(IconSize::Small).map(|this| {
+                            if rotate {
+                                this.with_rotate_animation(3).into_any_element()
+                            } else {
+                                this.into_any_element()
+                            }
+                        })),
+                        message,
+                        on_click: Some(Arc::new(|this, window, cx| {
+                            this.dismiss_message(&Default::default(), window, cx)
+                        })),
+                        tooltip_message: None,
+                    })
+                } else {
+                    None
+                }
+            })
     }
 
     fn version_tooltip_message(version: &VersionCheckType) -> String {
@@ -797,7 +770,7 @@ impl Render for ActivityIndicator {
         let result = h_flex()
             .id("activity-indicator")
             .on_action(cx.listener(Self::show_error_message))
-            .on_action(cx.listener(Self::dismiss_error_message));
+            .on_action(cx.listener(Self::dismiss_message));
         let Some(content) = self.content_to_render(cx) else {
             return result;
         };

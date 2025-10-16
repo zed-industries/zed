@@ -82,11 +82,12 @@ impl Render for Breadcrumbs {
             }
             text_style.color = Color::Muted.color(cx);
 
-            if index == 0 && !TabBarSettings::get_global(cx).show && active_item.is_dirty(cx) {
-                if let Some(styled_element) = apply_dirty_filename_style(&segment, &text_style, cx)
-                {
-                    return styled_element;
-                }
+            if index == 0
+                && !TabBarSettings::get_global(cx).show
+                && active_item.is_dirty(cx)
+                && let Some(styled_element) = apply_dirty_filename_style(&segment, &text_style, cx)
+            {
+                return styled_element;
             }
 
             StyledText::new(segment.text.replace('\n', "⏎"))
@@ -231,7 +232,7 @@ fn apply_dirty_filename_style(
     let highlight = vec![(filename_position..text.len(), highlight_style)];
     Some(
         StyledText::new(text)
-            .with_default_highlights(&text_style, highlight)
+            .with_default_highlights(text_style, highlight)
             .into_any(),
     )
 }

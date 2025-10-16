@@ -5,7 +5,7 @@ function export_vars_for_environment {
     echo "Invalid environment name '${environment}'" >&2
     exit 1
   fi
-  export $(cat $env_file)
+  export $(grep -v '^#' $env_file | grep -v '^[[:space:]]*$')
 }
 
 function target_zed_kube_cluster {

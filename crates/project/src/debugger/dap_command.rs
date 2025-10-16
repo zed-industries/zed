@@ -1454,7 +1454,7 @@ impl DapCommand for EvaluateCommand {
             variables_reference: message.variable_reference,
             named_variables: message.named_variables,
             indexed_variables: message.indexed_variables,
-            memory_reference: message.memory_reference.clone(),
+            memory_reference: message.memory_reference,
             value_location_reference: None, //TODO
         })
     }

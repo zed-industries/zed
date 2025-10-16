@@ -9,6 +9,7 @@ use anyhow::Result;
 use futures::StreamExt;
 use futures::stream::{self, BoxStream};
 use gpui::{App, SharedString, Task, WeakEntity, Window};
+use language::CodeLabelBuilder;
 use language::HighlightId;
 use language::{BufferSnapshot, CodeLabel, LspAdapterDelegate, OffsetRangeExt};
 pub use language_model::Role;
@@ -161,7 +162,7 @@ impl SlashCommandOutput {
     }
 
     /// Returns this [`SlashCommandOutput`] as a stream of [`SlashCommandEvent`]s.
-    pub fn to_event_stream(mut self) -> BoxStream<'static, Result<SlashCommandEvent>> {
+    pub fn into_event_stream(mut self) -> BoxStream<'static, Result<SlashCommandEvent>> {
         self.ensure_valid_section_ranges();
 
         let mut events = Vec::new();
@@ -328,15 +329,15 @@ impl SlashCommandLine {
 }
 
 pub fn create_label_for_command(command_name: &str, arguments: &[&str], cx: &App) -> CodeLabel {
-    let mut label = CodeLabel::default();
+    let mut label = CodeLabelBuilder::default();
     label.push_str(command_name, None);
+    label.respan_filter_range(None);
     label.push_str(" ", None);
     label.push_str(
         &arguments.join(" "),
         cx.theme().syntax().highlight_id("comment").map(HighlightId),
     );
-    label.filter_range = 0..command_name.len();
-    label
+    label.build()
 }
 
 #[cfg(test)]
@@ -363,7 +364,7 @@ mod tests {
                 run_commands_in_text: false,
             };
 
-            let events = output.clone().to_event_stream().collect::<Vec<_>>().await;
+            let events = output.clone().into_event_stream().collect::<Vec<_>>().await;
             let events = events
                 .into_iter()
                 .filter_map(|event| event.ok())
@@ -386,7 +387,7 @@ mod tests {
             );
 
             let new_output =
-                SlashCommandOutput::from_event_stream(output.clone().to_event_stream())
+                SlashCommandOutput::from_event_stream(output.clone().into_event_stream())
                     .await
                     .unwrap();
 
@@ -415,7 +416,7 @@ mod tests {
                 run_commands_in_text: false,
             };
 
-            let events = output.clone().to_event_stream().collect::<Vec<_>>().await;
+            let events = output.clone().into_event_stream().collect::<Vec<_>>().await;
             let events = events
                 .into_iter()
                 .filter_map(|event| event.ok())
@@ -452,7 +453,7 @@ mod tests {
             );
 
             let new_output =
-                SlashCommandOutput::from_event_stream(output.clone().to_event_stream())
+                SlashCommandOutput::from_event_stream(output.clone().into_event_stream())
                     .await
                     .unwrap();
 
@@ -493,7 +494,7 @@ mod tests {
                 run_commands_in_text: false,
             };
 
-            let events = output.clone().to_event_stream().collect::<Vec<_>>().await;
+            let events = output.clone().into_event_stream().collect::<Vec<_>>().await;
             let events = events
                 .into_iter()
                 .filter_map(|event| event.ok())
@@ -562,7 +563,7 @@ mod tests {
             );
 
             let new_output =
-                SlashCommandOutput::from_event_stream(output.clone().to_event_stream())
+                SlashCommandOutput::from_event_stream(output.clone().into_event_stream())
                     .await
                     .unwrap();
 

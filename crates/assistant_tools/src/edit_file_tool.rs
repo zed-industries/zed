@@ -4,18 +4,20 @@ use crate::{
     schema::json_schema_for,
     ui::{COLLAPSED_LINES, ToolOutputPreview},
 };
+use action_log::ActionLog;
 use agent_settings;
 use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::{
-    ActionLog, AnyToolCard, Tool, ToolCard, ToolResult, ToolResultContent, ToolResultOutput,
-    ToolUseStatus,
+    AnyToolCard, Tool, ToolCard, ToolResult, ToolResultContent, ToolResultOutput, ToolUseStatus,
 };
 use buffer_diff::{BufferDiff, BufferDiffSnapshot};
-use editor::{Editor, EditorMode, MinimapVisibility, MultiBuffer, PathKey};
+use editor::{
+    Editor, EditorMode, MinimapVisibility, MultiBuffer, PathKey, multibuffer_context_lines,
+};
 use futures::StreamExt;
 use gpui::{
     Animation, AnimationExt, AnyWindowHandle, App, AppContext, AsyncApp, Entity, Task,
-    TextStyleRefinement, Transformation, WeakEntity, percentage, pulsating_between, px,
+    TextStyleRefinement, WeakEntity, pulsating_between,
 };
 use indoc::formatdoc;
 use language::{
@@ -36,14 +38,15 @@ use settings::Settings;
 use std::{
     cmp::Reverse,
     collections::HashSet,
+    ffi::OsStr,
     ops::Range,
     path::{Path, PathBuf},
     sync::Arc,
     time::Duration,
 };
 use theme::ThemeSettings;
-use ui::{Disclosure, Tooltip, prelude::*};
-use util::ResultExt;
+use ui::{CommonAnimationExt, Disclosure, Tooltip, prelude::*};
+use util::{ResultExt, rel_path::RelPath};
 use workspace::Workspace;
 
 pub struct EditFileTool;
@@ -144,21 +147,21 @@ impl Tool for EditFileTool {
 
         // If any path component matches the local settings folder, then this could affect
         // the editor in ways beyond the project source, so prompt.
-        let local_settings_folder = paths::local_settings_folder_relative_path();
+        let local_settings_folder = paths::local_settings_folder_name();
         let path = Path::new(&input.path);
         if path
             .components()
-            .any(|component| component.as_os_str() == local_settings_folder.as_os_str())
+            .any(|c| c.as_os_str() == <str as AsRef<OsStr>>::as_ref(local_settings_folder))
         {
             return true;
         }
 
         // It's also possible that the global config dir is configured to be inside the project,
         // so check for that edge case too.
-        if let Ok(canonical_path) = std::fs::canonicalize(&input.path) {
-            if canonical_path.starts_with(paths::config_dir()) {
-                return true;
-            }
+        if let Ok(canonical_path) = std::fs::canonicalize(&input.path)
+            && canonical_path.starts_with(paths::config_dir())
+        {
+            return true;
         }
 
         // Check if path is inside the global config directory
@@ -193,16 +196,16 @@ impl Tool for EditFileTool {
                 let mut description = input.display_description.clone();
 
                 // Add context about why confirmation may be needed
-                let local_settings_folder = paths::local_settings_folder_relative_path();
+                let local_settings_folder = paths::local_settings_folder_name();
                 if path
                     .components()
-                    .any(|c| c.as_os_str() == local_settings_folder.as_os_str())
+                    .any(|c| c.as_os_str() == <str as AsRef<OsStr>>::as_ref(local_settings_folder))
                 {
                     description.push_str(" (local settings)");
-                } else if let Ok(canonical_path) = std::fs::canonicalize(&input.path) {
-                    if canonical_path.starts_with(paths::config_dir()) {
-                        description.push_str(" (global settings)");
-                    }
+                } else if let Ok(canonical_path) = std::fs::canonicalize(&input.path)
+                    && canonical_path.starts_with(paths::config_dir())
+                {
+                    description.push_str(" (global settings)");
                 }
 
                 description
@@ -307,7 +310,7 @@ impl Tool for EditFileTool {
             let mut ambiguous_ranges = Vec::new();
             while let Some(event) = events.next().await {
                 match event {
-                    EditAgentOutputEvent::Edited => {
+                    EditAgentOutputEvent::Edited { .. } => {
                         if let Some(card) = card_clone.as_ref() {
                             card.update(cx, |card, cx| card.update_diff(cx))?;
                         }
@@ -375,8 +378,8 @@ impl Tool for EditFileTool {
                 .await;
 
             let output = EditFileToolOutput {
-                original_path: project_path.path.to_path_buf(),
-                new_text: new_text.clone(),
+                original_path: project_path.path.as_std_path().to_owned(),
+                new_text,
                 old_text,
                 raw_output: Some(agent_output),
             };
@@ -474,7 +477,7 @@ impl Tool for EditFileTool {
                             PathKey::for_buffer(&buffer, cx),
                             buffer,
                             diff_hunk_ranges,
-                            editor::DEFAULT_MULTIBUFFER_CONTEXT,
+                            multibuffer_context_lines(cx),
                             cx,
                         );
                         multibuffer.add_diff(buffer_diff, cx);
@@ -536,7 +539,7 @@ fn resolve_path(
 
             let parent_entry = parent_project_path
                 .as_ref()
-                .and_then(|path| project.entry_for_path(&path, cx))
+                .and_then(|path| project.entry_for_path(path, cx))
                 .context("Can't create file: parent directory doesn't exist")?;
 
             anyhow::ensure!(
@@ -547,10 +550,11 @@ fn resolve_path(
             let file_name = input
                 .path
                 .file_name()
+                .and_then(|file_name| file_name.to_str())
                 .context("Can't create file: invalid filename")?;
 
             let new_file_path = parent_project_path.map(|parent| ProjectPath {
-                path: Arc::from(parent.path.join(file_name)),
+                path: parent.path.join(RelPath::unix(file_name).unwrap()),
                 ..parent
             });
 
@@ -643,7 +647,7 @@ impl EditFileToolCard {
             diff
         });
 
-        self.buffer = Some(buffer.clone());
+        self.buffer = Some(buffer);
         self.base_text = Some(base_text.into());
         self.buffer_diff = Some(buffer_diff.clone());
 
@@ -703,7 +707,7 @@ impl EditFileToolCard {
                 PathKey::for_buffer(buffer, cx),
                 buffer.clone(),
                 ranges,
-                editor::DEFAULT_MULTIBUFFER_CONTEXT,
+                multibuffer_context_lines(cx),
                 cx,
             );
             let end = multibuffer.len(cx);
@@ -723,13 +727,13 @@ impl EditFileToolCard {
         let buffer = buffer.read(cx);
         let diff = diff.read(cx);
         let mut ranges = diff
-            .hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &buffer, cx)
-            .map(|diff_hunk| diff_hunk.buffer_range.to_point(&buffer))
+            .hunks_intersecting_range(Anchor::MIN..Anchor::MAX, buffer, cx)
+            .map(|diff_hunk| diff_hunk.buffer_range.to_point(buffer))
             .collect::<Vec<_>>();
         ranges.extend(
             self.revealed_ranges
                 .iter()
-                .map(|range| range.to_point(&buffer)),
+                .map(|range| range.to_point(buffer)),
         );
         ranges.sort_unstable_by_key(|range| (range.start, Reverse(range.end)));
 
@@ -776,7 +780,6 @@ impl EditFileToolCard {
 
         let buffer_diff = cx.spawn({
             let buffer = buffer.clone();
-            let language_registry = language_registry.clone();
             async move |_this, cx| {
                 build_buffer_diff(base_text, &buffer, &language_registry, cx).await
             }
@@ -792,7 +795,7 @@ impl EditFileToolCard {
                         path_key,
                         buffer,
                         ranges,
-                        editor::DEFAULT_MULTIBUFFER_CONTEXT,
+                        multibuffer_context_lines(cx),
                         cx,
                     );
                     multibuffer.add_diff(buffer_diff.clone(), cx);
@@ -857,13 +860,12 @@ impl ToolCard for EditFileToolCard {
                     )
                     .child(
                         Icon::new(IconName::ArrowUpRight)
-                            .size(IconSize::XSmall)
+                            .size(IconSize::Small)
                             .color(Color::Ignored),
                     ),
             )
             .on_click({
                 let path = self.path.clone();
-                let workspace = workspace.clone();
                 move |_, window, cx| {
                     workspace
                         .update(cx, {
@@ -939,11 +941,7 @@ impl ToolCard for EditFileToolCard {
                     Icon::new(IconName::ArrowCircle)
                         .size(IconSize::XSmall)
                         .color(Color::Info)
-                        .with_animation(
-                            "arrow-circle",
-                            Animation::new(Duration::from_secs(2)).repeat(),
-                            |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
-                        ),
+                        .with_rotate_animation(2),
                 )
             })
             .when_some(error_message, |header, error_message| {
@@ -1005,7 +1003,7 @@ impl ToolCard for EditFileToolCard {
                 font_size: Some(
                     TextSize::Small
                         .rems(cx)
-                        .to_pixels(ThemeSettings::get_global(cx).agent_font_size(cx))
+                        .to_pixels(ThemeSettings::get_global(cx).agent_ui_font_size(cx))
                         .into(),
                 ),
                 ..TextStyleRefinement::default()
@@ -1104,7 +1102,7 @@ impl ToolCard for EditFileToolCard {
                     .relative()
                     .h_full()
                     .when(!self.full_height_expanded, |editor_container| {
-                        editor_container.max_h(px(COLLAPSED_LINES as f32 * editor_line_height.0))
+                        editor_container.max_h(COLLAPSED_LINES as f32 * editor_line_height)
                     })
                     .overflow_hidden()
                     .border_t_1()
@@ -1163,7 +1161,7 @@ async fn build_buffer(
     LineEnding::normalize(&mut text);
     let text = Rope::from(text);
     let language = cx
-        .update(|_cx| language_registry.language_for_file_path(&path))?
+        .update(|_cx| language_registry.load_language_for_file_path(&path))?
         .await
         .ok();
     let buffer = cx.new(|cx| {
@@ -1240,7 +1238,7 @@ mod tests {
     use serde_json::json;
     use settings::SettingsStore;
     use std::fs;
-    use util::path;
+    use util::{path, rel_path::rel_path};
 
     #[gpui::test]
     async fn test_edit_nonexistent_file(cx: &mut TestAppContext) {
@@ -1356,18 +1354,13 @@ mod tests {
             mode: mode.clone(),
         };
 
-        let result = cx.update(|cx| resolve_path(&input, project, cx));
-        result
+        cx.update(|cx| resolve_path(&input, project, cx))
     }
 
+    #[track_caller]
     fn assert_resolved_path_eq(path: anyhow::Result<ProjectPath>, expected: &str) {
-        let actual = path
-            .expect("Should return valid path")
-            .path
-            .to_str()
-            .unwrap()
-            .replace("\\", "/"); // Naive Windows paths normalization
-        assert_eq!(actual, expected);
+        let actual = path.expect("Should return valid path").path;
+        assert_eq!(actual.as_ref(), rel_path(expected));
     }
 
     #[test]
@@ -1450,8 +1443,8 @@ mod tests {
 
     fn init_test_with_config(cx: &mut TestAppContext, data_dir: &Path) {
         cx.update(|cx| {
-            // Set custom data directory (config will be under data_dir/config)
             paths::set_custom_data_dir(data_dir.to_str().unwrap());
+            // Set custom data directory (config will be under data_dir/config)
 
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
@@ -1542,14 +1535,11 @@ mod tests {
         // First, test with format_on_save enabled
         cx.update(|cx| {
             SettingsStore::update_global(cx, |store, cx| {
-                store.update_user_settings::<language::language_settings::AllLanguageSettings>(
-                    cx,
-                    |settings| {
-                        settings.defaults.format_on_save = Some(FormatOnSave::On);
-                        settings.defaults.formatter =
-                            Some(language::language_settings::SelectedFormatter::Auto);
-                    },
-                );
+                store.update_user_settings(cx, |settings| {
+                    settings.project.all_languages.defaults.format_on_save = Some(FormatOnSave::On);
+                    settings.project.all_languages.defaults.formatter =
+                        Some(language::language_settings::FormatterList::default());
+                });
             });
         });
 
@@ -1608,12 +1598,10 @@ mod tests {
         // Next, test with format_on_save disabled
         cx.update(|cx| {
             SettingsStore::update_global(cx, |store, cx| {
-                store.update_user_settings::<language::language_settings::AllLanguageSettings>(
-                    cx,
-                    |settings| {
-                        settings.defaults.format_on_save = Some(FormatOnSave::Off);
-                    },
-                );
+                store.update_user_settings(cx, |settings| {
+                    settings.project.all_languages.defaults.format_on_save =
+                        Some(FormatOnSave::Off);
+                });
             });
         });
 
@@ -1684,12 +1672,13 @@ mod tests {
         // First, test with remove_trailing_whitespace_on_save enabled
         cx.update(|cx| {
             SettingsStore::update_global(cx, |store, cx| {
-                store.update_user_settings::<language::language_settings::AllLanguageSettings>(
-                    cx,
-                    |settings| {
-                        settings.defaults.remove_trailing_whitespace_on_save = Some(true);
-                    },
-                );
+                store.update_user_settings(cx, |settings| {
+                    settings
+                        .project
+                        .all_languages
+                        .defaults
+                        .remove_trailing_whitespace_on_save = Some(true);
+                });
             });
         });
 
@@ -1746,12 +1735,13 @@ mod tests {
         // Next, test with remove_trailing_whitespace_on_save disabled
         cx.update(|cx| {
             SettingsStore::update_global(cx, |store, cx| {
-                store.update_user_settings::<language::language_settings::AllLanguageSettings>(
-                    cx,
-                    |settings| {
-                        settings.defaults.remove_trailing_whitespace_on_save = Some(false);
-                    },
-                );
+                store.update_user_settings(cx, |settings| {
+                    settings
+                        .project
+                        .all_languages
+                        .defaults
+                        .remove_trailing_whitespace_on_save = Some(false);
+                });
             });
         });
 
@@ -1984,25 +1974,22 @@ mod tests {
         let project = Project::test(fs.clone(), [path!("/home/user/myproject").as_ref()], cx).await;
 
         // Get the actual local settings folder name
-        let local_settings_folder = paths::local_settings_folder_relative_path();
+        let local_settings_folder = paths::local_settings_folder_name();
 
         // Test various config path patterns
         let test_cases = vec![
             (
-                format!("{}/settings.json", local_settings_folder.display()),
+                format!("{local_settings_folder}/settings.json"),
                 true,
                 "Top-level local settings file".to_string(),
             ),
             (
-                format!(
-                    "myproject/{}/settings.json",
-                    local_settings_folder.display()
-                ),
+                format!("myproject/{local_settings_folder}/settings.json"),
                 true,
                 "Local settings in project path".to_string(),
             ),
             (
-                format!("src/{}/config.toml", local_settings_folder.display()),
+                format!("src/{local_settings_folder}/config.toml"),
                 true,
                 "Local settings in subdirectory".to_string(),
             ),
@@ -2213,12 +2200,7 @@ mod tests {
             ("", false, "Empty path is treated as project root"),
             // Root directory
             ("/", true, "Root directory should be outside project"),
-            // Parent directory references - find_project_path resolves these
-            (
-                "project/../other",
-                false,
-                "Path with .. is resolved by find_project_path",
-            ),
+            ("project/../other", true, "Path with .. is outside project"),
             (
                 "project/./src/file.rs",
                 false,

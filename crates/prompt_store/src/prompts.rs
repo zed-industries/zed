@@ -14,11 +14,13 @@ use std::{
     time::Duration,
 };
 use text::LineEnding;
-use util::{ResultExt, get_system_shell};
+use util::{
+    ResultExt, get_default_system_shell_preferring_bash, rel_path::RelPath, shell::ShellKind,
+};
 
 use crate::UserPromptId;
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Default, Debug, Clone, Serialize)]
 pub struct ProjectContext {
     pub worktrees: Vec<WorktreeContext>,
     /// Whether any worktree has a rules_file. Provided as a field because handlebars can't do this.
@@ -43,7 +45,8 @@ impl ProjectContext {
             user_rules: default_user_rules,
             os: std::env::consts::OS.to_string(),
             arch: std::env::consts::ARCH.to_string(),
-            shell: get_system_shell(),
+            shell: ShellKind::new(&get_default_system_shell_preferring_bash(), cfg!(windows))
+                .to_string(),
         }
     }
 }
@@ -71,16 +74,16 @@ pub struct UserRulesContext {
     pub contents: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Eq, PartialEq, Serialize)]
 pub struct WorktreeContext {
     pub root_name: String,
     pub abs_path: Arc<Path>,
     pub rules_file: Option<RulesFileContext>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Eq, PartialEq, Serialize)]
 pub struct RulesFileContext {
-    pub path_in_worktree: Arc<Path>,
+    pub path_in_worktree: Arc<RelPath>,
     pub text: String,
     // This used for opening rules files. TODO: Since it isn't related to prompt templating, this
     // should be moved elsewhere.
@@ -229,12 +232,12 @@ impl PromptBuilder {
                         log_message.push_str(" -> ");
                         log_message.push_str(&target.display().to_string());
                     }
-                    log::info!("{}.", log_message);
+                    log::trace!("{}.", log_message);
                 } else {
                     if !found_dir_once {
-                        log::info!("No prompt template overrides directory found at {}. Using built-in prompts.", templates_dir.display());
+                        log::trace!("No prompt template overrides directory found at {}. Using built-in prompts.", templates_dir.display());
                         if let Some(target) = symlink_status {
-                            log::info!("Symlink found pointing to {}, but target is invalid.", target.display());
+                            log::trace!("Symlink found pointing to {}, but target is invalid.", target.display());
                         }
                     }
 
@@ -247,7 +250,7 @@ impl PromptBuilder {
                                     log_message.push_str(" -> ");
                                     log_message.push_str(&target.display().to_string());
                                 }
-                                log::info!("{}.", log_message);
+                                log::trace!("{}.", log_message);
                                 break;
                             }
                         }
@@ -261,13 +264,12 @@ impl PromptBuilder {
                 // Initial scan of the prompt overrides directory
                 if let Ok(mut entries) = params.fs.read_dir(&templates_dir).await {
                     while let Some(Ok(file_path)) = entries.next().await {
-                        if file_path.to_string_lossy().ends_with(".hbs") {
-                            if let Ok(content) = params.fs.load(&file_path).await {
+                        if file_path.to_string_lossy().ends_with(".hbs")
+                            && let Ok(content) = params.fs.load(&file_path).await {
                                 let file_name = file_path.file_stem().unwrap().to_string_lossy();
                                 log::debug!("Registering prompt template override: {}", file_name);
                                 handlebars.lock().register_template_string(&file_name, content).log_err();
                             }
-                        }
                     }
                 }
 
@@ -280,15 +282,14 @@ impl PromptBuilder {
                 let mut combined_changes = futures::stream::select(changes, parent_changes);
 
                 while let Some(changed_paths) = combined_changes.next().await {
-                    if changed_paths.iter().any(|p| &p.path == &templates_dir) {
-                        if !params.fs.is_dir(&templates_dir).await {
+                    if changed_paths.iter().any(|p| &p.path == &templates_dir)
+                        && !params.fs.is_dir(&templates_dir).await {
                             log::info!("Prompt template overrides directory removed. Restoring built-in prompt templates.");
                             Self::register_built_in_templates(&mut handlebars.lock()).log_err();
                             break;
                         }
-                    }
                     for event in changed_paths {
-                        if event.path.starts_with(&templates_dir) && event.path.extension().map_or(false, |ext| ext == "hbs") {
+                        if event.path.starts_with(&templates_dir) && event.path.extension().is_some_and(|ext| ext == "hbs") {
                             log::info!("Reloading prompt template override: {}", event.path.display());
                             if let Some(content) = params.fs.load(&event.path).await.log_err() {
                                 let file_name = event.path.file_stem().unwrap().to_string_lossy();
@@ -311,12 +312,11 @@ impl PromptBuilder {
                 .split('/')
                 .next_back()
                 .and_then(|s| s.strip_suffix(".hbs"))
+                && let Some(prompt) = Assets.load(path.as_ref()).log_err().flatten()
             {
-                if let Some(prompt) = Assets.load(path.as_ref()).log_err().flatten() {
-                    log::debug!("Registering built-in prompt template: {}", id);
-                    let prompt = String::from_utf8_lossy(prompt.as_ref());
-                    handlebars.register_template_string(id, LineEnding::normalize_cow(prompt))?
-                }
+                log::debug!("Registering built-in prompt template: {}", id);
+                let prompt = String::from_utf8_lossy(prompt.as_ref());
+                handlebars.register_template_string(id, LineEnding::normalize_cow(prompt))?
             }
         }
 
@@ -406,7 +406,7 @@ impl PromptBuilder {
                 ContentPromptDiagnosticContext {
                     line_number: (start.row + 1) as usize,
                     error_message: entry.diagnostic.message.clone(),
-                    code_content: buffer.text_for_range(entry.range.clone()).collect(),
+                    code_content: buffer.text_for_range(entry.range).collect(),
                 }
             })
             .collect();
@@ -450,6 +450,7 @@ impl PromptBuilder {
 mod test {
     use super::*;
     use serde_json;
+    use util::rel_path::rel_path;
     use uuid::Uuid;
 
     #[test]
@@ -458,7 +459,7 @@ mod test {
             root_name: "path".into(),
             abs_path: Path::new("/path/to/root").into(),
             rules_file: Some(RulesFileContext {
-                path_in_worktree: Path::new(".rules").into(),
+                path_in_worktree: rel_path(".rules").into(),
                 text: "".into(),
                 project_entry_id: 0,
             }),

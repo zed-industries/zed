@@ -1,12 +1,16 @@
 use anyhow::Result;
-use db::sqlez::bindable::{Bind, Column, StaticColumnCount};
-use db::sqlez::statement::Statement;
+use db::{
+    query,
+    sqlez::{
+        bindable::{Bind, Column, StaticColumnCount},
+        domain::Domain,
+        statement::Statement,
+    },
+    sqlez_macros::sql,
+};
 use fs::MTime;
 use itertools::Itertools as _;
 use std::path::PathBuf;
-
-use db::sqlez_macros::sql;
-use db::{define_connection, query};
 
 use workspace::{ItemId, WorkspaceDb, WorkspaceId};
 
@@ -31,7 +35,7 @@ impl Bind for SerializedEditor {
             &self
                 .abs_path
                 .as_ref()
-                .map(|p| p.to_string_lossy().to_string()),
+                .map(|p| p.to_string_lossy().into_owned()),
             start_index,
         )?;
         let start_index = statement.bind(&self.contents, start_index)?;
@@ -83,7 +87,11 @@ impl Column for SerializedEditor {
     }
 }
 
-define_connection!(
+pub struct EditorDb(db::sqlez::thread_safe_connection::ThreadSafeConnection);
+
+impl Domain for EditorDb {
+    const NAME: &str = stringify!(EditorDb);
+
     // Current schema shape using pseudo-rust syntax:
     // editors(
     //   item_id: usize,
@@ -113,7 +121,8 @@ define_connection!(
     //   start: usize,
     //   end: usize,
     // )
-    pub static ref DB: EditorDb<WorkspaceDb> = &[
+
+    const MIGRATIONS: &[&str] = &[
         sql! (
             CREATE TABLE editors(
                 item_id INTEGER NOT NULL,
@@ -189,7 +198,9 @@ define_connection!(
             ) STRICT;
         ),
     ];
-);
+}
+
+db::static_connection!(DB, EditorDb, [WorkspaceDb]);
 
 // https://www.sqlite.org/limits.html
 // > <..> the maximum value of a host parameter number is SQLITE_MAX_VARIABLE_NUMBER,
@@ -224,7 +235,7 @@ impl EditorDb {
 
     // Returns the scroll top row, and offset
     query! {
-        pub fn get_scroll_position(item_id: ItemId, workspace_id: WorkspaceId) -> Result<Option<(u32, f32, f32)>> {
+        pub fn get_scroll_position(item_id: ItemId, workspace_id: WorkspaceId) -> Result<Option<(u32, f64, f64)>> {
             SELECT scroll_top_row, scroll_horizontal_offset, scroll_vertical_offset
             FROM editors
             WHERE item_id = ? AND workspace_id = ?
@@ -236,8 +247,8 @@ impl EditorDb {
             item_id: ItemId,
             workspace_id: WorkspaceId,
             top_row: u32,
-            vertical_offset: f32,
-            horizontal_offset: f32
+            vertical_offset: f64,
+            horizontal_offset: f64
         ) -> Result<()> {
             UPDATE OR IGNORE editors
             SET

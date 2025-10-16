@@ -1,4 +1,4 @@
-use anyhow::{Context as _, Result, bail};
+use anyhow::{Context as _, Result, anyhow, bail};
 use collections::{BTreeMap, HashMap};
 use fs::Fs;
 use language::LanguageName;
@@ -83,8 +83,6 @@ pub struct ExtensionManifest {
     pub context_servers: BTreeMap<Arc<str>, ContextServerManifestEntry>,
     #[serde(default)]
     pub slash_commands: BTreeMap<Arc<str>, SlashCommandManifestEntry>,
-    #[serde(default)]
-    pub indexed_docs_providers: BTreeMap<Arc<str>, IndexedDocsProviderEntry>,
     #[serde(default)]
     pub snippets: Option<PathBuf>,
     #[serde(default)]
@@ -196,9 +194,6 @@ pub struct SlashCommandManifestEntry {
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
-pub struct IndexedDocsProviderEntry {}
-
-#[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
 pub struct DebugAdapterManifestEntry {
     pub schema_path: Option<PathBuf>,
 }
@@ -231,8 +226,9 @@ impl ExtensionManifest {
                 .load(&extension_manifest_path)
                 .await
                 .with_context(|| format!("failed to load {extension_name} extension.toml"))?;
-            toml::from_str(&manifest_content)
-                .with_context(|| format!("invalid extension.toml for extension {extension_name}"))
+            toml::from_str(&manifest_content).map_err(|err| {
+                anyhow!("Invalid extension.toml for extension {extension_name}:\n{err}")
+            })
         }
     }
 }
@@ -271,7 +267,6 @@ fn manifest_from_old_manifest(
         language_servers: Default::default(),
         context_servers: BTreeMap::default(),
         slash_commands: BTreeMap::default(),
-        indexed_docs_providers: BTreeMap::default(),
         snippets: None,
         capabilities: Vec::new(),
         debug_adapters: Default::default(),
@@ -304,7 +299,6 @@ mod tests {
             language_servers: BTreeMap::default(),
             context_servers: BTreeMap::default(),
             slash_commands: BTreeMap::default(),
-            indexed_docs_providers: BTreeMap::default(),
             snippets: None,
             capabilities: vec![],
             debug_adapters: Default::default(),

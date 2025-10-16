@@ -167,6 +167,7 @@
   "&&="
   "||="
   "??="
+  "..."
 ] @operator
 
 (regex "/" @string.regex)
@@ -247,6 +248,7 @@
   "is"
   "keyof"
   "let"
+  "module"
   "namespace"
   "new"
   "of"

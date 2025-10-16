@@ -14,10 +14,7 @@ use gpui::{
 use http_client::BlockedHttpClient;
 use language::{
     FakeLspAdapter, Language, LanguageConfig, LanguageMatcher, LanguageRegistry,
-    language_settings::{
-        AllLanguageSettings, Formatter, FormatterList, PrettierSettings, SelectedFormatter,
-        language_settings,
-    },
+    language_settings::{Formatter, FormatterList, language_settings},
     tree_sitter_typescript,
 };
 use node_runtime::NodeRuntime;
@@ -26,17 +23,17 @@ use project::{
     debugger::session::ThreadId,
     lsp_store::{FormatTrigger, LspFormatTarget},
 };
-use remote::SshRemoteClient;
+use remote::RemoteClient;
 use remote_server::{HeadlessAppState, HeadlessProject};
 use rpc::proto;
 use serde_json::json;
-use settings::SettingsStore;
+use settings::{LanguageServerFormatterSpecifier, PrettierSettingsContent, SettingsStore};
 use std::{
     path::Path,
     sync::{Arc, atomic::AtomicUsize},
 };
 use task::TcpArgumentsTemplate;
-use util::path;
+use util::{path, rel_path::rel_path};
 
 #[gpui::test(iterations = 10)]
 async fn test_sharing_an_ssh_remote_project(
@@ -59,7 +56,7 @@ async fn test_sharing_an_ssh_remote_project(
         .await;
 
     // Set up project on remote FS
-    let (opts, server_ssh) = SshRemoteClient::fake_server(cx_a, server_cx);
+    let (opts, server_ssh) = RemoteClient::fake_server(cx_a, server_cx);
     let remote_fs = FakeFs::new(server_cx.executor());
     remote_fs
         .insert_tree(
@@ -101,7 +98,7 @@ async fn test_sharing_an_ssh_remote_project(
         )
     });
 
-    let client_ssh = SshRemoteClient::fake_client(opts, cx_a).await;
+    let client_ssh = RemoteClient::fake_client(opts, cx_a).await;
     let (project_a, worktree_id) = client_a
         .build_ssh_project(path!("/code/project1"), client_ssh, cx_a)
         .await;
@@ -127,26 +124,26 @@ async fn test_sharing_an_ssh_remote_project(
 
     worktree_a.update(cx_a, |worktree, _cx| {
         assert_eq!(
-            worktree.paths().map(Arc::as_ref).collect::<Vec<_>>(),
+            worktree.paths().collect::<Vec<_>>(),
             vec![
-                Path::new(".zed"),
-                Path::new(".zed/settings.json"),
-                Path::new("README.md"),
-                Path::new("src"),
-                Path::new("src/lib.rs"),
+                rel_path(".zed"),
+                rel_path(".zed/settings.json"),
+                rel_path("README.md"),
+                rel_path("src"),
+                rel_path("src/lib.rs"),
             ]
         );
     });
 
     worktree_b.update(cx_b, |worktree, _cx| {
         assert_eq!(
-            worktree.paths().map(Arc::as_ref).collect::<Vec<_>>(),
+            worktree.paths().collect::<Vec<_>>(),
             vec![
-                Path::new(".zed"),
-                Path::new(".zed/settings.json"),
-                Path::new("README.md"),
-                Path::new("src"),
-                Path::new("src/lib.rs"),
+                rel_path(".zed"),
+                rel_path(".zed/settings.json"),
+                rel_path("README.md"),
+                rel_path("src"),
+                rel_path("src/lib.rs"),
             ]
         );
     });
@@ -154,7 +151,7 @@ async fn test_sharing_an_ssh_remote_project(
     // User B can open buffers in the remote project.
     let buffer_b = project_b
         .update(cx_b, |project, cx| {
-            project.open_buffer((worktree_id, "src/lib.rs"), cx)
+            project.open_buffer((worktree_id, rel_path("src/lib.rs")), cx)
         })
         .await
         .unwrap();
@@ -180,7 +177,7 @@ async fn test_sharing_an_ssh_remote_project(
                 buffer_b.clone(),
                 ProjectPath {
                     worktree_id: worktree_id.to_owned(),
-                    path: Arc::from(Path::new("src/renamed.rs")),
+                    path: rel_path("src/renamed.rs").into(),
                 },
                 cx,
             )
@@ -197,14 +194,8 @@ async fn test_sharing_an_ssh_remote_project(
     cx_b.run_until_parked();
     cx_b.update(|cx| {
         assert_eq!(
-            buffer_b
-                .read(cx)
-                .file()
-                .unwrap()
-                .path()
-                .to_string_lossy()
-                .to_string(),
-            path!("src/renamed.rs").to_string()
+            buffer_b.read(cx).file().unwrap().path().as_ref(),
+            rel_path("src/renamed.rs")
         );
     });
 }
@@ -235,7 +226,7 @@ async fn test_ssh_collaboration_git_branches(
         .await;
 
     // Set up project on remote FS
-    let (opts, server_ssh) = SshRemoteClient::fake_server(cx_a, server_cx);
+    let (opts, server_ssh) = RemoteClient::fake_server(cx_a, server_cx);
     let remote_fs = FakeFs::new(server_cx.executor());
     remote_fs
         .insert_tree("/project", serde_json::json!({ ".git":{} }))
@@ -268,7 +259,7 @@ async fn test_ssh_collaboration_git_branches(
         )
     });
 
-    let client_ssh = SshRemoteClient::fake_client(opts, cx_a).await;
+    let client_ssh = RemoteClient::fake_client(opts, cx_a).await;
     let (project_a, _) = client_a
         .build_ssh_project("/project", client_ssh, cx_a)
         .await;
@@ -420,7 +411,7 @@ async fn test_ssh_collaboration_formatting_with_prettier(
         .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
         .await;
 
-    let (opts, server_ssh) = SshRemoteClient::fake_server(cx_a, server_cx);
+    let (opts, server_ssh) = RemoteClient::fake_server(cx_a, server_cx);
     let remote_fs = FakeFs::new(server_cx.executor());
     let buffer_text = "let one = \"two\"";
     let prettier_format_suffix = project::TEST_PRETTIER_FORMAT_SUFFIX;
@@ -473,7 +464,7 @@ async fn test_ssh_collaboration_formatting_with_prettier(
         )
     });
 
-    let client_ssh = SshRemoteClient::fake_client(opts, cx_a).await;
+    let client_ssh = RemoteClient::fake_client(opts, cx_a).await;
     let (project_a, worktree_id) = client_a
         .build_ssh_project(path!("/project"), client_ssh, cx_a)
         .await;
@@ -492,31 +483,31 @@ async fn test_ssh_collaboration_formatting_with_prettier(
     // Opens the buffer and formats it
     let (buffer_b, _handle) = project_b
         .update(cx_b, |p, cx| {
-            p.open_buffer_with_lsp((worktree_id, "a.ts"), cx)
+            p.open_buffer_with_lsp((worktree_id, rel_path("a.ts")), cx)
         })
         .await
         .expect("user B opens buffer for formatting");
 
     cx_a.update(|cx| {
         SettingsStore::update_global(cx, |store, cx| {
-            store.update_user_settings::<AllLanguageSettings>(cx, |file| {
-                file.defaults.formatter = Some(SelectedFormatter::Auto);
-                file.defaults.prettier = Some(PrettierSettings {
-                    allowed: true,
-                    ..PrettierSettings::default()
+            store.update_user_settings(cx, |file| {
+                file.project.all_languages.defaults.formatter = Some(FormatterList::default());
+                file.project.all_languages.defaults.prettier = Some(PrettierSettingsContent {
+                    allowed: Some(true),
+                    ..Default::default()
                 });
             });
         });
     });
     cx_b.update(|cx| {
         SettingsStore::update_global(cx, |store, cx| {
-            store.update_user_settings::<AllLanguageSettings>(cx, |file| {
-                file.defaults.formatter = Some(SelectedFormatter::List(FormatterList::Single(
-                    Formatter::LanguageServer { name: None },
-                )));
-                file.defaults.prettier = Some(PrettierSettings {
-                    allowed: true,
-                    ..PrettierSettings::default()
+            store.update_user_settings(cx, |file| {
+                file.project.all_languages.defaults.formatter = Some(FormatterList::Single(
+                    Formatter::LanguageServer(LanguageServerFormatterSpecifier::Current),
+                ));
+                file.project.all_languages.defaults.prettier = Some(PrettierSettingsContent {
+                    allowed: Some(true),
+                    ..Default::default()
                 });
             });
         });
@@ -550,17 +541,19 @@ async fn test_ssh_collaboration_formatting_with_prettier(
 
     // User A opens and formats the same buffer too
     let buffer_a = project_a
-        .update(cx_a, |p, cx| p.open_buffer((worktree_id, "a.ts"), cx))
+        .update(cx_a, |p, cx| {
+            p.open_buffer((worktree_id, rel_path("a.ts")), cx)
+        })
         .await
         .expect("user A opens buffer for formatting");
 
     cx_a.update(|cx| {
         SettingsStore::update_global(cx, |store, cx| {
-            store.update_user_settings::<AllLanguageSettings>(cx, |file| {
-                file.defaults.formatter = Some(SelectedFormatter::Auto);
-                file.defaults.prettier = Some(PrettierSettings {
-                    allowed: true,
-                    ..PrettierSettings::default()
+            store.update_user_settings(cx, |file| {
+                file.project.all_languages.defaults.formatter = Some(FormatterList::default());
+                file.project.all_languages.defaults.prettier = Some(PrettierSettingsContent {
+                    allowed: Some(true),
+                    ..Default::default()
                 });
             });
         });
@@ -602,7 +595,7 @@ async fn test_remote_server_debugger(
         release_channel::init(SemanticVersion::default(), cx);
         dap_adapters::init(cx);
     });
-    let (opts, server_ssh) = SshRemoteClient::fake_server(cx_a, server_cx);
+    let (opts, server_ssh) = RemoteClient::fake_server(cx_a, server_cx);
     let remote_fs = FakeFs::new(server_cx.executor());
     remote_fs
         .insert_tree(
@@ -633,7 +626,7 @@ async fn test_remote_server_debugger(
         )
     });
 
-    let client_ssh = SshRemoteClient::fake_client(opts, cx_a).await;
+    let client_ssh = RemoteClient::fake_client(opts, cx_a).await;
     let mut server = TestServer::start(server_cx.executor()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     cx_a.update(|cx| {
@@ -711,7 +704,7 @@ async fn test_slow_adapter_startup_retries(
         release_channel::init(SemanticVersion::default(), cx);
         dap_adapters::init(cx);
     });
-    let (opts, server_ssh) = SshRemoteClient::fake_server(cx_a, server_cx);
+    let (opts, server_ssh) = RemoteClient::fake_server(cx_a, server_cx);
     let remote_fs = FakeFs::new(server_cx.executor());
     remote_fs
         .insert_tree(
@@ -742,7 +735,7 @@ async fn test_slow_adapter_startup_retries(
         )
     });
 
-    let client_ssh = SshRemoteClient::fake_client(opts, cx_a).await;
+    let client_ssh = RemoteClient::fake_client(opts, cx_a).await;
     let mut server = TestServer::start(server_cx.executor()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     cx_a.update(|cx| {

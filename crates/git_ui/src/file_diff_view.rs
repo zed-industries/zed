@@ -123,7 +123,7 @@ impl FileDiffView {
             old_buffer,
             new_buffer,
             _recalculate_diff_task: cx.spawn(async move |this, cx| {
-                while let Ok(_) = buffer_changes_rx.recv().await {
+                while buffer_changes_rx.recv().await.is_ok() {
                     loop {
                         let mut timer = cx
                             .background_executor()
@@ -241,7 +241,7 @@ impl Item for FileDiffView {
             buffer
                 .read(cx)
                 .file()
-                .map(|file| file.full_path(cx).compact().to_string_lossy().to_string())
+                .map(|file| file.full_path(cx).compact().to_string_lossy().into_owned())
                 .unwrap_or_else(|| "untitled".into())
         };
         let old_path = path(&self.old_buffer);
@@ -261,10 +261,6 @@ impl Item for FileDiffView {
     fn deactivated(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.editor
             .update(cx, |editor, cx| editor.deactivated(window, cx));
-    }
-
-    fn is_singleton(&self, _: &App) -> bool {
-        false
     }
 
     fn act_as_type<'a>(
@@ -364,7 +360,7 @@ mod tests {
     use editor::test::editor_test_context::assert_state_with_diff;
     use gpui::TestAppContext;
     use project::{FakeFs, Fs, Project};
-    use settings::{Settings, SettingsStore};
+    use settings::SettingsStore;
     use std::path::PathBuf;
     use unindent::unindent;
     use util::path;
@@ -378,7 +374,7 @@ mod tests {
             Project::init_settings(cx);
             workspace::init_settings(cx);
             editor::init_settings(cx);
-            theme::ThemeSettings::register(cx)
+            theme::init(theme::LoadThemes::JustBase, cx);
         });
     }
 
@@ -398,7 +394,7 @@ mod tests {
 
         let project = Project::test(fs.clone(), [path!("/test").as_ref()], cx).await;
 
-        let (workspace, mut cx) =
+        let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
         let diff_view = workspace
@@ -417,7 +413,7 @@ mod tests {
         // Verify initial diff
         assert_state_with_diff(
             &diff_view.read_with(cx, |diff_view, _| diff_view.editor.clone()),
-            &mut cx,
+            cx,
             &unindent(
                 "
                 - old line 1
@@ -452,7 +448,7 @@ mod tests {
         cx.executor().advance_clock(RECALCULATE_DIFF_DEBOUNCE);
         assert_state_with_diff(
             &diff_view.read_with(cx, |diff_view, _| diff_view.editor.clone()),
-            &mut cx,
+            cx,
             &unindent(
                 "
                 - old line 1
@@ -487,7 +483,7 @@ mod tests {
         cx.executor().advance_clock(RECALCULATE_DIFF_DEBOUNCE);
         assert_state_with_diff(
             &diff_view.read_with(cx, |diff_view, _| diff_view.editor.clone()),
-            &mut cx,
+            cx,
             &unindent(
                 "
                   ˇnew line 1

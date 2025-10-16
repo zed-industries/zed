@@ -1,6 +1,10 @@
+#include "alpha_correction.hlsl"
+
 cbuffer GlobalParams: register(b0) {
+    float4 gamma_ratios;
     float2 global_viewport_size;
-    uint2 _pad;
+    float grayscale_enhanced_contrast;
+    uint _pad;
 };
 
 Texture2D<float4> t_sprite: register(t0);
@@ -101,6 +105,12 @@ float4 distance_from_clip_rect_impl(float2 position, Bounds clip_bounds) {
 float4 distance_from_clip_rect(float2 unit_vertex, Bounds bounds, Bounds clip_bounds) {
     float2 position = unit_vertex * bounds.size + bounds.origin;
     return distance_from_clip_rect_impl(position, clip_bounds);
+}
+
+float4 distance_from_clip_rect_transformed(float2 unit_vertex, Bounds bounds, Bounds clip_bounds, TransformationMatrix transformation) {
+    float2 position = unit_vertex * bounds.size + bounds.origin;
+    float2 transformed = mul(position, transformation.rotation_scale) + transformation.translation;
+    return distance_from_clip_rect_impl(transformed, clip_bounds);
 }
 
 // Convert linear RGB to sRGB
@@ -380,7 +390,7 @@ float4 gradient_color(Background background,
             float pattern_period = pattern_height * sin(stripe_angle);
             float2x2 rotation = rotate2d(stripe_angle);
             float2 relative_position = position - bounds.origin;
-            float2 rotated_point = mul(rotation, relative_position);
+            float2 rotated_point = mul(relative_position, rotation);
             float pattern = fmod(rotated_point.x, pattern_period);
             float distance = min(pattern, pattern_period - pattern) - pattern_period * (pattern_width / pattern_height) /  2.0f;
             color = solid_color;
@@ -650,7 +660,14 @@ float4 quad_fragment(QuadFragmentInput input): SV_Target {
                 // out on each straight line, rather than around the whole
                 // perimeter. This way each line starts and ends with a dash.
                 bool is_horizontal = corner_center_to_point.x < corner_center_to_point.y;
-                float border_width = is_horizontal ? border.x : border.y;
+                // Choosing the right border width for dashed borders.
+                // TODO: A better solution exists taking a look at the whole file.
+                // this does not fix single dashed borders at the corners
+                float2 dashed_border = float2(
+                    max(quad.border_widths.bottom, quad.border_widths.top),
+                    max(quad.border_widths.right, quad.border_widths.left)
+                );
+                float border_width = is_horizontal ? dashed_border.x : dashed_border.y;
                 dash_velocity = dv_numerator / border_width;
                 t = is_horizontal ? the_point.x : the_point.y;
                 t *= dash_velocity;
@@ -914,7 +931,7 @@ float4 path_rasterization_fragment(PathFragmentInput input): SV_Target {
     float2 dx = ddx(input.st_position);
     float2 dy = ddy(input.st_position);
     PathRasterizationSprite sprite = path_rasterization_sprites[input.vertex_id];
-    
+
     Background background = sprite.color;
     Bounds bounds = sprite.bounds;
 
@@ -1021,13 +1038,18 @@ UnderlineVertexOutput underline_vertex(uint vertex_id: SV_VertexID, uint underli
 }
 
 float4 underline_fragment(UnderlineFragmentInput input): SV_Target {
+    const float WAVE_FREQUENCY = 2.0;
+    const float WAVE_HEIGHT_RATIO = 0.8;
+
     Underline underline = underlines[input.underline_id];
     if (underline.wavy) {
         float half_thickness = underline.thickness * 0.5;
         float2 origin = underline.bounds.origin;
+
         float2 st = ((input.position.xy - origin) / underline.bounds.size.y) - float2(0., 0.5);
-        float frequency = (M_PI_F * (3. * underline.thickness)) / 8.;
-        float amplitude = 1. / (2. * underline.thickness);
+        float frequency = (M_PI_F * WAVE_FREQUENCY * underline.thickness) / underline.bounds.size.y;
+        float amplitude = (underline.thickness * WAVE_HEIGHT_RATIO) / underline.bounds.size.y;
+
         float sine = sin(st.x * frequency) * amplitude;
         float dSine = cos(st.x * frequency) * amplitude * frequency;
         float distance = (st.y - sine) / sqrt(1. + dSine * dSine);
@@ -1079,7 +1101,7 @@ MonochromeSpriteVertexOutput monochrome_sprite_vertex(uint vertex_id: SV_VertexI
     MonochromeSprite sprite = mono_sprites[sprite_id];
     float4 device_position =
         to_device_position_transformed(unit_vertex, sprite.bounds, sprite.transformation);
-    float4 clip_distance = distance_from_clip_rect(unit_vertex, sprite.bounds, sprite.content_mask);
+    float4 clip_distance = distance_from_clip_rect_transformed(unit_vertex, sprite.bounds, sprite.content_mask, sprite.transformation);
     float2 tile_position = to_tile_position(unit_vertex, sprite.tile);
     float4 color = hsla_to_rgba(sprite.color);
 
@@ -1093,7 +1115,8 @@ MonochromeSpriteVertexOutput monochrome_sprite_vertex(uint vertex_id: SV_VertexI
 
 float4 monochrome_sprite_fragment(MonochromeSpriteFragmentInput input): SV_Target {
     float sample = t_sprite.Sample(s_sprite, input.tile_position).r;
-    return float4(input.color.rgb, input.color.a * sample);
+    float alpha_corrected = apply_contrast_and_gamma_correction(sample, input.color.rgb, grayscale_enhanced_contrast, gamma_ratios);
+    return float4(input.color.rgb, input.color.a * alpha_corrected);
 }
 
 /*

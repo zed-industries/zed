@@ -6,19 +6,19 @@ use assistant_slash_command::{
 use fuzzy::{PathMatch, StringMatchCandidate};
 use gpui::{App, Entity, Task, WeakEntity};
 use language::{
-    Anchor, BufferSnapshot, DiagnosticEntry, DiagnosticSeverity, LspAdapterDelegate,
+    Anchor, BufferSnapshot, DiagnosticEntryRef, DiagnosticSeverity, LspAdapterDelegate,
     OffsetRangeExt, ToOffset,
 };
 use project::{DiagnosticSummary, PathMatchCandidateSet, Project};
 use rope::Point;
 use std::{
     fmt::Write,
-    path::{Path, PathBuf},
+    path::Path,
     sync::{Arc, atomic::AtomicBool},
 };
 use ui::prelude::*;
-use util::ResultExt;
-use util::paths::PathMatcher;
+use util::paths::{PathMatcher, PathStyle};
+use util::{ResultExt, rel_path::RelPath};
 use workspace::Workspace;
 
 use crate::create_label_for_command;
@@ -36,7 +36,7 @@ impl DiagnosticsSlashCommand {
         if query.is_empty() {
             let workspace = workspace.read(cx);
             let entries = workspace.recent_navigation_history(Some(10), cx);
-            let path_prefix: Arc<str> = Arc::default();
+            let path_prefix: Arc<RelPath> = RelPath::empty().into();
             Task::ready(
                 entries
                     .into_iter()
@@ -44,7 +44,7 @@ impl DiagnosticsSlashCommand {
                         score: 0.,
                         positions: Vec::new(),
                         worktree_id: entry.worktree_id.to_usize(),
-                        path: entry.path.clone(),
+                        path: entry.path,
                         path_prefix: path_prefix.clone(),
                         is_dir: false, // Diagnostics can't be produced for directories
                         distance_to_relative_ancestor: 0,
@@ -61,7 +61,7 @@ impl DiagnosticsSlashCommand {
                         snapshot: worktree.snapshot(),
                         include_ignored: worktree
                             .root_entry()
-                            .map_or(false, |entry| entry.is_ignored),
+                            .is_some_and(|entry| entry.is_ignored),
                         include_root_name: true,
                         candidates: project::Candidates::Entries,
                     }
@@ -73,7 +73,7 @@ impl DiagnosticsSlashCommand {
                 fuzzy::match_path_sets(
                     candidate_sets.as_slice(),
                     query.as_str(),
-                    None,
+                    &None,
                     false,
                     100,
                     &cancellation_flag,
@@ -125,6 +125,7 @@ impl SlashCommand for DiagnosticsSlashCommand {
         let Some(workspace) = workspace.and_then(|workspace| workspace.upgrade()) else {
             return Task::ready(Err(anyhow!("workspace was dropped")));
         };
+        let path_style = workspace.read(cx).project().read(cx).path_style(cx);
         let query = arguments.last().cloned().unwrap_or_default();
 
         let paths = self.search_paths(query.clone(), cancellation_flag.clone(), &workspace, cx);
@@ -134,11 +135,11 @@ impl SlashCommand for DiagnosticsSlashCommand {
                 .await
                 .into_iter()
                 .map(|path_match| {
-                    format!(
-                        "{}{}",
-                        path_match.path_prefix,
-                        path_match.path.to_string_lossy()
-                    )
+                    path_match
+                        .path_prefix
+                        .join(&path_match.path)
+                        .display(path_style)
+                        .to_string()
                 })
                 .collect();
 
@@ -183,13 +184,15 @@ impl SlashCommand for DiagnosticsSlashCommand {
             return Task::ready(Err(anyhow!("workspace was dropped")));
         };
 
-        let options = Options::parse(arguments);
+        let project = workspace.read(cx).project();
+        let path_style = project.read(cx).path_style(cx);
+        let options = Options::parse(arguments, path_style);
 
-        let task = collect_diagnostics(workspace.read(cx).project().clone(), options, cx);
+        let task = collect_diagnostics(project.clone(), options, cx);
 
         window.spawn(cx, async move |_| {
             task.await?
-                .map(|output| output.to_event_stream())
+                .map(|output| output.into_event_stream())
                 .context("No diagnostics found")
         })
     }
@@ -204,14 +207,14 @@ struct Options {
 const INCLUDE_WARNINGS_ARGUMENT: &str = "--include-warnings";
 
 impl Options {
-    fn parse(arguments: &[String]) -> Self {
+    fn parse(arguments: &[String], path_style: PathStyle) -> Self {
         let mut include_warnings = false;
         let mut path_matcher = None;
         for arg in arguments {
             if arg == INCLUDE_WARNINGS_ARGUMENT {
                 include_warnings = true;
             } else {
-                path_matcher = PathMatcher::new(&[arg.to_owned()]).log_err();
+                path_matcher = PathMatcher::new(&[arg.to_owned()], path_style).log_err();
             }
         }
         Self {
@@ -237,21 +240,15 @@ fn collect_diagnostics(
         None
     };
 
+    let path_style = project.read(cx).path_style(cx);
     let glob_is_exact_file_match = if let Some(path) = options
         .path_matcher
         .as_ref()
         .and_then(|pm| pm.sources().first())
     {
-        PathBuf::try_from(path)
-            .ok()
-            .and_then(|path| {
-                project.read(cx).worktrees(cx).find_map(|worktree| {
-                    let worktree = worktree.read(cx);
-                    let worktree_root_path = Path::new(worktree.root_name());
-                    let relative_path = path.strip_prefix(worktree_root_path).ok()?;
-                    worktree.absolutize(&relative_path).ok()
-                })
-            })
+        project
+            .read(cx)
+            .find_project_path(Path::new(path), cx)
             .is_some()
     } else {
         false
@@ -263,9 +260,8 @@ fn collect_diagnostics(
         .diagnostic_summaries(false, cx)
         .flat_map(|(path, _, summary)| {
             let worktree = project.read(cx).worktree_for_id(path.worktree_id, cx)?;
-            let mut path_buf = PathBuf::from(worktree.read(cx).root_name());
-            path_buf.push(&path.path);
-            Some((path, path_buf, summary))
+            let full_path = worktree.read(cx).root_name().join(&path.path);
+            Some((path, full_path, summary))
         })
         .collect();
 
@@ -280,10 +276,10 @@ fn collect_diagnostics(
 
         let mut project_summary = DiagnosticSummary::default();
         for (project_path, path, summary) in diagnostic_summaries {
-            if let Some(path_matcher) = &options.path_matcher {
-                if !path_matcher.is_match(&path) {
-                    continue;
-                }
+            if let Some(path_matcher) = &options.path_matcher
+                && !path_matcher.is_match(&path.as_std_path())
+            {
+                continue;
             }
 
             project_summary.error_count += summary.error_count;
@@ -294,7 +290,7 @@ fn collect_diagnostics(
             }
 
             let last_end = output.text.len();
-            let file_path = path.to_string_lossy().to_string();
+            let file_path = path.display(path_style).to_string();
             if !glob_is_exact_file_match {
                 writeln!(&mut output.text, "{file_path}").unwrap();
             }
@@ -365,13 +361,13 @@ pub fn collect_buffer_diagnostics(
 ) {
     for (_, group) in snapshot.diagnostic_groups(None) {
         let entry = &group.entries[group.primary_ix];
-        collect_diagnostic(output, entry, &snapshot, include_warnings)
+        collect_diagnostic(output, entry, snapshot, include_warnings)
     }
 }
 
 fn collect_diagnostic(
     output: &mut SlashCommandOutput,
-    entry: &DiagnosticEntry<Anchor>,
+    entry: &DiagnosticEntryRef<'_, Anchor>,
     snapshot: &BufferSnapshot,
     include_warnings: bool,
 ) {
@@ -396,7 +392,7 @@ fn collect_diagnostic(
     let start_row = range.start.row.saturating_sub(EXCERPT_EXPANSION_SIZE);
     let end_row = (range.end.row + EXCERPT_EXPANSION_SIZE).min(snapshot.max_point().row) + 1;
     let excerpt_range =
-        Point::new(start_row, 0).to_offset(&snapshot)..Point::new(end_row, 0).to_offset(&snapshot);
+        Point::new(start_row, 0).to_offset(snapshot)..Point::new(end_row, 0).to_offset(snapshot);
 
     output.text.push_str("```");
     if let Some(language_name) = snapshot.language().map(|l| l.code_fence_block_name()) {

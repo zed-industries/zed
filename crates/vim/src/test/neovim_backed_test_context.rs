@@ -6,7 +6,7 @@ use std::{
     panic, thread,
 };
 
-use language::language_settings::{AllLanguageSettings, SoftWrap};
+use language::language_settings::SoftWrap;
 use util::test::marked_text_offsets;
 
 use super::{VimTestContext, neovim_connection::NeovimConnection};
@@ -207,6 +207,26 @@ impl NeovimBackedTestContext {
         }
     }
 
+    pub async fn new_tsx(cx: &mut gpui::TestAppContext) -> NeovimBackedTestContext {
+        #[cfg(feature = "neovim")]
+        cx.executor().allow_parking();
+        let thread = thread::current();
+        let test_name = thread
+            .name()
+            .expect("thread is not named")
+            .split(':')
+            .next_back()
+            .unwrap()
+            .to_string();
+        Self {
+            cx: VimTestContext::new_tsx(cx).await,
+            neovim: NeovimConnection::new(test_name).await,
+
+            last_set_state: None,
+            recent_keystrokes: Default::default(),
+        }
+    }
+
     pub async fn set_shared_state(&mut self, marked_text: &str) {
         let mode = if marked_text.contains('»') {
             Mode::Visual
@@ -245,9 +265,14 @@ impl NeovimBackedTestContext {
 
         self.update(|_, cx| {
             SettingsStore::update_global(cx, |settings, cx| {
-                settings.update_user_settings::<AllLanguageSettings>(cx, |settings| {
-                    settings.defaults.soft_wrap = Some(SoftWrap::PreferredLineLength);
-                    settings.defaults.preferred_line_length = Some(columns);
+                settings.update_user_settings(cx, |settings| {
+                    settings.project.all_languages.defaults.soft_wrap =
+                        Some(SoftWrap::PreferredLineLength);
+                    settings
+                        .project
+                        .all_languages
+                        .defaults
+                        .preferred_line_length = Some(columns);
                 });
             })
         })
@@ -272,7 +297,7 @@ impl NeovimBackedTestContext {
         let window = self.window;
         let margin = self
             .update_window(window, |_, window, _cx| {
-                window.viewport_size().height - line_height * visible_line_count
+                window.viewport_size().height - line_height * (visible_line_count as f32)
             })
             .unwrap();
 
@@ -292,12 +317,7 @@ impl NeovimBackedTestContext {
             register: '"',
             state: self.shared_state().await,
             neovim: self.neovim.read_register('"').await,
-            editor: self
-                .read_from_clipboard()
-                .unwrap()
-                .text()
-                .unwrap()
-                .to_owned(),
+            editor: self.read_from_clipboard().unwrap().text().unwrap(),
         }
     }
 

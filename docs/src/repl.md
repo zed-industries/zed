@@ -114,7 +114,7 @@ ark --install
 TBD: Improve R REPL (Ark Kernel) instructions
 -->
 
-### Typescript: Deno {#typescript-deno}
+### TypeScript: Deno {#typescript-deno}
 
 - [Install Deno](https://docs.deno.com/runtime/manual/getting_started/installation/) and then install the Deno jupyter kernel:
 
@@ -149,7 +149,7 @@ TBD: Improve Julia REPL instructions
 Zed automatically detects the available kernels on your system. If you need to configure a different default kernel for a
 language, you can assign a kernel for any supported language in your `settings.json`.
 
-```json
+```json [settings]
 {
   "jupyter": {
     "kernel_selections": {

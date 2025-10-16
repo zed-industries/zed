@@ -86,7 +86,10 @@ impl LanguageSelector {
 
 impl Render for LanguageSelector {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        v_flex().w(rems(34.)).child(self.picker.clone())
+        v_flex()
+            .key_context("LanguageSelector")
+            .w(rems(34.))
+            .child(self.picker.clone())
     }
 }
 
@@ -280,7 +283,7 @@ impl PickerDelegate for LanguageSelectorDelegate {
         _: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
-        let mat = &self.matches[ix];
+        let mat = &self.matches.get(ix)?;
         let (label, language_icon) = self.language_data_for_match(mat, cx);
         Some(
             ListItem::new(ix)

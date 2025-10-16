@@ -42,7 +42,6 @@ impl<T: 'static> SearchActionsRegistrar for DivRegistrar<'_, '_, T> {
         self.div = self.div.take().map(|div| {
             div.on_action(self.cx.listener(move |this, action, window, cx| {
                 let should_notify = (getter)(this, window, cx)
-                    .clone()
                     .map(|search_bar| {
                         search_bar.update(cx, |search_bar, cx| {
                             callback.execute(search_bar, action, window, cx)
@@ -63,7 +62,7 @@ impl<T: 'static> SearchActionsRegistrar for DivRegistrar<'_, '_, T> {
 impl SearchActionsRegistrar for Workspace {
     fn register_handler<A: Action>(&mut self, callback: impl ActionExecutor<A>) {
         self.register_action(move |workspace, action: &A, window, cx| {
-            if workspace.has_active_modal(window, cx) {
+            if workspace.has_active_modal(window, cx) && !workspace.hide_modal(window, cx) {
                 cx.propagate();
                 return;
             }

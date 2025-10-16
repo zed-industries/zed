@@ -5,6 +5,9 @@ use smallvec::SmallVec;
 
 use crate::prelude::*;
 
+const START_TAB_SLOT_SIZE: Pixels = px(12.);
+const END_TAB_SLOT_SIZE: Pixels = px(14.);
+
 /// The position of a [`Tab`] within a list of tabs.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum TabPosition {
@@ -123,12 +126,12 @@ impl RenderOnce for Tab {
 
         let (start_slot, end_slot) = {
             let start_slot = h_flex()
-                .size(px(12.)) // use px over rem from size_3
+                .size(START_TAB_SLOT_SIZE)
                 .justify_center()
                 .children(self.start_slot);
 
             let end_slot = h_flex()
-                .size(px(12.)) // use px over rem from size_3
+                .size(END_TAB_SLOT_SIZE)
                 .justify_center()
                 .children(self.end_slot);
 

@@ -1,6 +1,6 @@
 use anyhow::{Context as _, Result};
 use buffer_diff::{BufferDiff, BufferDiffSnapshot};
-use editor::{Editor, EditorEvent, MultiBuffer, SelectionEffects};
+use editor::{Editor, EditorEvent, MultiBuffer, SelectionEffects, multibuffer_context_lines};
 use git::repository::{CommitDetails, CommitDiff, CommitSummary, RepoPath};
 use gpui::{
     AnyElement, AnyView, App, AppContext as _, AsyncApp, Context, Entity, EventEmitter,
@@ -14,13 +14,12 @@ use multi_buffer::PathKey;
 use project::{Project, WorktreeId, git_store::Repository};
 use std::{
     any::{Any, TypeId},
-    ffi::OsStr,
     fmt::Write as _,
-    path::{Path, PathBuf},
+    path::PathBuf,
     sync::Arc,
 };
 use ui::{Color, Icon, IconName, Label, LabelCommon as _, SharedString};
-use util::{ResultExt, truncate_and_trailoff};
+use util::{ResultExt, paths::PathStyle, rel_path::RelPath, truncate_and_trailoff};
 use workspace::{
     Item, ItemHandle as _, ItemNavHistory, ToolbarItemLocation, Workspace,
     item::{BreadcrumbText, ItemEvent, TabContentParams},
@@ -40,12 +39,12 @@ struct GitBlob {
 }
 
 struct CommitMetadataFile {
-    title: Arc<Path>,
+    title: Arc<RelPath>,
     worktree_id: WorktreeId,
 }
 
-const COMMIT_METADATA_NAMESPACE: u32 = 0;
-const FILE_NAMESPACE: u32 = 1;
+const COMMIT_METADATA_SORT_PREFIX: u64 = 0;
+const FILE_NAMESPACE_SORT_PREFIX: u64 = 1;
 
 impl CommitView {
     pub fn open(
@@ -88,11 +87,10 @@ impl CommitView {
                             let ix = pane.items().position(|item| {
                                 let commit_view = item.downcast::<CommitView>();
                                 commit_view
-                                    .map_or(false, |view| view.read(cx).commit.sha == commit.sha)
+                                    .is_some_and(|view| view.read(cx).commit.sha == commit.sha)
                             });
                             if let Some(ix) = ix {
                                 pane.activate_item(ix, true, true, window, cx);
-                                return;
                             } else {
                                 pane.add_item(Box::new(commit_view), true, true, None, window, cx);
                             }
@@ -130,7 +128,9 @@ impl CommitView {
         let mut metadata_buffer_id = None;
         if let Some(worktree_id) = first_worktree_id {
             let file = Arc::new(CommitMetadataFile {
-                title: PathBuf::from(format!("commit {}", commit.sha)).into(),
+                title: RelPath::unix(&format!("commit {}", commit.sha))
+                    .unwrap()
+                    .into(),
                 worktree_id,
             });
             let buffer = cx.new(|cx| {
@@ -145,7 +145,7 @@ impl CommitView {
             });
             multibuffer.update(cx, |multibuffer, cx| {
                 multibuffer.set_excerpts_for_path(
-                    PathKey::namespaced(COMMIT_METADATA_NAMESPACE, file.title.clone()),
+                    PathKey::with_sort_prefix(COMMIT_METADATA_SORT_PREFIX, file.title.clone()),
                     buffer.clone(),
                     vec![Point::zero()..buffer.read(cx).max_point()],
                     0,
@@ -160,7 +160,7 @@ impl CommitView {
             });
         }
 
-        cx.spawn(async move |this, mut cx| {
+        cx.spawn(async move |this, cx| {
             for file in commit_diff.files {
                 let is_deleted = file.new_text.is_none();
                 let new_text = file.new_text.unwrap_or_default();
@@ -179,9 +179,9 @@ impl CommitView {
                     worktree_id,
                 }) as Arc<dyn language::File>;
 
-                let buffer = build_buffer(new_text, file, &language_registry, &mut cx).await?;
+                let buffer = build_buffer(new_text, file, &language_registry, cx).await?;
                 let buffer_diff =
-                    build_buffer_diff(old_text, &buffer, &language_registry, &mut cx).await?;
+                    build_buffer_diff(old_text, &buffer, &language_registry, cx).await?;
 
                 this.update(cx, |this, cx| {
                     this.multibuffer.update(cx, |multibuffer, cx| {
@@ -193,10 +193,10 @@ impl CommitView {
                             .collect::<Vec<_>>();
                         let path = snapshot.file().unwrap().path().clone();
                         let _is_newly_added = multibuffer.set_excerpts_for_path(
-                            PathKey::namespaced(FILE_NAMESPACE, path),
+                            PathKey::with_sort_prefix(FILE_NAMESPACE_SORT_PREFIX, path),
                             buffer,
                             diff_hunk_ranges,
-                            editor::DEFAULT_MULTIBUFFER_CONTEXT,
+                            multibuffer_context_lines(cx),
                             cx,
                         );
                         multibuffer.add_diff(buffer_diff, cx);
@@ -228,15 +228,19 @@ impl language::File for GitBlob {
         }
     }
 
-    fn path(&self) -> &Arc<Path> {
+    fn path_style(&self, _: &App) -> PathStyle {
+        PathStyle::Posix
+    }
+
+    fn path(&self) -> &Arc<RelPath> {
         &self.path.0
     }
 
     fn full_path(&self, _: &App) -> PathBuf {
-        self.path.to_path_buf()
+        self.path.as_std_path().to_path_buf()
     }
 
-    fn file_name<'a>(&'a self, _: &'a App) -> &'a OsStr {
+    fn file_name<'a>(&'a self, _: &'a App) -> &'a str {
         self.path.file_name().unwrap()
     }
 
@@ -262,15 +266,19 @@ impl language::File for CommitMetadataFile {
         DiskState::New
     }
 
-    fn path(&self) -> &Arc<Path> {
+    fn path_style(&self, _: &App) -> PathStyle {
+        PathStyle::Posix
+    }
+
+    fn path(&self) -> &Arc<RelPath> {
         &self.title
     }
 
     fn full_path(&self, _: &App) -> PathBuf {
-        self.title.as_ref().into()
+        PathBuf::from(self.title.as_unix_str().to_owned())
     }
 
-    fn file_name<'a>(&'a self, _: &'a App) -> &'a OsStr {
+    fn file_name<'a>(&'a self, _: &'a App) -> &'a str {
         self.title.file_name().unwrap()
     }
 
@@ -444,10 +452,6 @@ impl Item for CommitView {
             .update(cx, |editor, cx| editor.deactivated(window, cx));
     }
 
-    fn is_singleton(&self, _: &App) -> bool {
-        false
-    }
-
     fn act_as_type<'a>(
         &'a self,
         type_id: TypeId,
@@ -513,6 +517,29 @@ impl Item for CommitView {
         self.editor.update(cx, |editor, cx| {
             editor.added_to_workspace(workspace, window, cx)
         });
+    }
+
+    fn clone_on_split(
+        &self,
+        _workspace_id: Option<workspace::WorkspaceId>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Entity<Self>>
+    where
+        Self: Sized,
+    {
+        Some(cx.new(|cx| {
+            let editor = cx.new(|cx| {
+                self.editor
+                    .update(cx, |editor, cx| editor.clone(window, cx))
+            });
+            let multibuffer = editor.read(cx).buffer().clone();
+            Self {
+                editor,
+                multibuffer,
+                commit: self.commit.clone(),
+            }
+        }))
     }
 }
 

@@ -214,17 +214,6 @@ spec:
                 secretKeyRef:
                   name: blob-store
                   key: bucket
-            - name: SLACK_PANICS_WEBHOOK
-              valueFrom:
-                secretKeyRef:
-                  name: slack
-                  key: panics_webhook
-            - name: STRIPE_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: stripe
-                  key: api_key
-                  optional: true
             - name: COMPLETE_WITH_LANGUAGE_MODEL_RATE_LIMIT_PER_HOUR
               value: "1000"
             - name: SUPERMAVEN_ADMIN_API_KEY
@@ -232,12 +221,6 @@ spec:
                 secretKeyRef:
                   name: supermaven
                   key: api_key
-            - name: USER_BACKFILLER_GITHUB_ACCESS_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: user-backfiller
-                  key: github_access_token
-                  optional: true
             - name: INVITE_LINK_PREFIX
               value: ${INVITE_LINK_PREFIX}
             - name: RUST_BACKTRACE

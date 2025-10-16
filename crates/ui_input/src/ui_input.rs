@@ -4,11 +4,16 @@
 //!
 //! It can't be located in the `ui` crate because it depends on `editor`.
 //!
+mod font_picker;
+mod number_field;
 
 use component::{example_group, single_example};
 use editor::{Editor, EditorElement, EditorStyle};
-use gpui::{App, Entity, FocusHandle, Focusable, FontStyle, Hsla, TextStyle};
+pub use font_picker::*;
+use gpui::{App, Entity, FocusHandle, Focusable, FontStyle, Hsla, Length, TextStyle};
+pub use number_field::*;
 use settings::Settings;
+use std::sync::Arc;
 use theme::ThemeSettings;
 use ui::prelude::*;
 
@@ -41,6 +46,8 @@ pub struct SingleLineInput {
     start_icon: Option<IconName>,
     /// Whether the text field is disabled.
     disabled: bool,
+    /// The minimum width of for the input
+    min_width: Length,
 }
 
 impl Focusable for SingleLineInput {
@@ -55,7 +62,7 @@ impl SingleLineInput {
 
         let editor = cx.new(|cx| {
             let mut input = Editor::single_line(window, cx);
-            input.set_placeholder_text(placeholder_text.clone(), cx);
+            input.set_placeholder_text(&placeholder_text, window, cx);
             input
         });
 
@@ -66,6 +73,7 @@ impl SingleLineInput {
             editor,
             start_icon: None,
             disabled: false,
+            min_width: px(192.).into(),
         }
     }
 
@@ -81,6 +89,11 @@ impl SingleLineInput {
 
     pub fn label_size(mut self, size: LabelSize) -> Self {
         self.label_size = size;
+        self
+    }
+
+    pub fn label_min_width(mut self, width: impl Into<Length>) -> Self {
+        self.min_width = width.into();
         self
     }
 
@@ -100,6 +113,11 @@ impl SingleLineInput {
 
     pub fn text(&self, cx: &App) -> String {
         self.editor().read(cx).text(cx)
+    }
+
+    pub fn set_text(&self, text: impl Into<Arc<str>>, window: &mut Window, cx: &mut App) {
+        self.editor()
+            .update(cx, |editor, cx| editor.set_text(text, window, cx))
     }
 }
 
@@ -161,14 +179,14 @@ impl Render for SingleLineInput {
             })
             .child(
                 h_flex()
-                    .min_w_48()
+                    .min_w(self.min_width)
                     .min_h_8()
                     .w_full()
                     .px_2()
                     .py_1p5()
                     .flex_grow()
                     .text_color(style.text_color)
-                    .rounded_lg()
+                    .rounded_md()
                     .bg(style.background_color)
                     .border_1()
                     .border_color(style.border_color)
@@ -202,11 +220,11 @@ impl Component for SingleLineInput {
                 .children(vec![example_group(vec![
                     single_example(
                         "Small Label (Default)",
-                        div().child(input_small.clone()).into_any_element(),
+                        div().child(input_small).into_any_element(),
                     ),
                     single_example(
                         "Regular Label",
-                        div().child(input_regular.clone()).into_any_element(),
+                        div().child(input_regular).into_any_element(),
                     ),
                 ])])
                 .into_any_element(),

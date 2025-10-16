@@ -34,12 +34,16 @@
 (export_statement
     (lexical_declaration
         ["let" "const"] @context
+        ; Multiple names may be exported - @item is on the declarator to keep
+        ; ranges distinct.
         (variable_declarator
             name: (_) @name) @item))
 
 (program
     (lexical_declaration
         ["let" "const"] @context
+        ; Multiple names may be defined - @item is on the declarator to keep
+        ; ranges distinct.
         (variable_declarator
             name: (_) @name) @item))
 

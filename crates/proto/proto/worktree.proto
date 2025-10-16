@@ -27,6 +27,7 @@ message Entry {
     bool is_fifo = 10;
     optional uint64 size = 11;
     optional string canonical_path = 12;
+    bool is_hidden = 13;
 }
 
 message AddWorktree {
@@ -98,13 +99,15 @@ message RenameProjectEntry {
     uint64 project_id = 1;
     uint64 entry_id = 2;
     string new_path = 3;
+    uint64 new_worktree_id = 4;
 }
 
 message CopyProjectEntry {
     uint64 project_id = 1;
     uint64 entry_id = 2;
     string new_path = 3;
-    optional string relative_worktree_source_path = 4;
+    uint64 new_worktree_id = 5;
+    reserved 4;
 }
 
 message DeleteProjectEntry {
@@ -149,4 +152,9 @@ enum LocalSettingsKind {
     Tasks = 1;
     Editorconfig = 2;
     Debug = 3;
+}
+
+message UpdateUserSettings {
+    uint64 project_id = 1;
+    string contents = 2;
 }

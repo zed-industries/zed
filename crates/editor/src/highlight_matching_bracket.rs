@@ -1,46 +1,55 @@
 use crate::{Editor, RangeToAnchorExt};
-use gpui::{Context, Window};
+use gpui::{Context, HighlightStyle};
 use language::CursorShape;
+use multi_buffer::ToOffset;
+use theme::ActiveTheme;
 
 enum MatchingBracketHighlight {}
 
-pub fn refresh_matching_bracket_highlights(
-    editor: &mut Editor,
-    window: &mut Window,
-    cx: &mut Context<Editor>,
-) {
-    editor.clear_background_highlights::<MatchingBracketHighlight>(cx);
+pub fn refresh_matching_bracket_highlights(editor: &mut Editor, cx: &mut Context<Editor>) {
+    editor.clear_highlights::<MatchingBracketHighlight>(cx);
 
-    let newest_selection = editor.selections.newest::<usize>(cx);
+    let buffer_snapshot = editor.buffer.read(cx).snapshot(cx);
+    let newest_selection = editor
+        .selections
+        .newest_anchor()
+        .map(|anchor| anchor.to_offset(&buffer_snapshot));
     // Don't highlight brackets if the selection isn't empty
     if !newest_selection.is_empty() {
         return;
     }
 
-    let snapshot = editor.snapshot(window, cx);
     let head = newest_selection.head();
-    if head > snapshot.buffer_snapshot.len() {
+    if head > buffer_snapshot.len() {
         log::error!("bug: cursor offset is out of range while refreshing bracket highlights");
         return;
     }
 
     let mut tail = head;
     if (editor.cursor_shape == CursorShape::Block || editor.cursor_shape == CursorShape::Hollow)
-        && head < snapshot.buffer_snapshot.len()
+        && head < buffer_snapshot.len()
     {
-        tail += 1;
+        if let Some(tail_ch) = buffer_snapshot.chars_at(tail).next() {
+            tail += tail_ch.len_utf8();
+        }
     }
 
-    if let Some((opening_range, closing_range)) = snapshot
-        .buffer_snapshot
-        .innermost_enclosing_bracket_ranges(head..tail, None)
+    if let Some((opening_range, closing_range)) =
+        buffer_snapshot.innermost_enclosing_bracket_ranges(head..tail, None)
     {
-        editor.highlight_background::<MatchingBracketHighlight>(
-            &[
-                opening_range.to_anchors(&snapshot.buffer_snapshot),
-                closing_range.to_anchors(&snapshot.buffer_snapshot),
+        editor.highlight_text::<MatchingBracketHighlight>(
+            vec![
+                opening_range.to_anchors(&buffer_snapshot),
+                closing_range.to_anchors(&buffer_snapshot),
             ],
-            |theme| theme.colors().editor_document_highlight_bracket_background,
+            HighlightStyle {
+                background_color: Some(
+                    cx.theme()
+                        .colors()
+                        .editor_document_highlight_bracket_background,
+                ),
+                ..Default::default()
+            },
             cx,
         )
     }
@@ -104,7 +113,7 @@ mod tests {
                 another_test(1, 2, 3);
             }
         "#});
-        cx.assert_editor_background_highlights::<MatchingBracketHighlight>(indoc! {r#"
+        cx.assert_editor_text_highlights::<MatchingBracketHighlight>(indoc! {r#"
             pub fn test«(»"Test argument"«)» {
                 another_test(1, 2, 3);
             }
@@ -115,7 +124,7 @@ mod tests {
                 another_test(1, ˇ2, 3);
             }
         "#});
-        cx.assert_editor_background_highlights::<MatchingBracketHighlight>(indoc! {r#"
+        cx.assert_editor_text_highlights::<MatchingBracketHighlight>(indoc! {r#"
             pub fn test("Test argument") {
                 another_test«(»1, 2, 3«)»;
             }
@@ -126,7 +135,7 @@ mod tests {
                 anotherˇ_test(1, 2, 3);
             }
         "#});
-        cx.assert_editor_background_highlights::<MatchingBracketHighlight>(indoc! {r#"
+        cx.assert_editor_text_highlights::<MatchingBracketHighlight>(indoc! {r#"
             pub fn test("Test argument") «{»
                 another_test(1, 2, 3);
             «}»
@@ -138,7 +147,7 @@ mod tests {
                 another_test(1, 2, 3);
             }
         "#});
-        cx.assert_editor_background_highlights::<MatchingBracketHighlight>(indoc! {r#"
+        cx.assert_editor_text_highlights::<MatchingBracketHighlight>(indoc! {r#"
             pub fn test("Test argument") {
                 another_test(1, 2, 3);
             }
@@ -150,8 +159,8 @@ mod tests {
                 another_test(1, 2, 3);
             }
         "#});
-        cx.assert_editor_background_highlights::<MatchingBracketHighlight>(indoc! {r#"
-            pub fn test("Test argument") {
+        cx.assert_editor_text_highlights::<MatchingBracketHighlight>(indoc! {r#"
+            pub fn test«("Test argument") {
                 another_test(1, 2, 3);
             }
         "#});

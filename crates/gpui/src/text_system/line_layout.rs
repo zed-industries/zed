@@ -185,10 +185,10 @@ impl LineLayout {
 
             if width > wrap_width && boundary > last_boundary {
                 // When used line_clamp, we should limit the number of lines.
-                if let Some(max_lines) = max_lines {
-                    if boundaries.len() >= max_lines - 1 {
-                        break;
-                    }
+                if let Some(max_lines) = max_lines
+                    && boundaries.len() >= max_lines - 1
+                {
+                    break;
                 }
 
                 if let Some(last_candidate_ix) = last_candidate_ix.take() {
@@ -501,7 +501,7 @@ impl LineLayoutCache {
         } else {
             drop(current_frame);
             let text = SharedString::from(text);
-            let unwrapped_layout = self.layout_line::<&SharedString>(&text, font_size, runs);
+            let unwrapped_layout = self.layout_line::<&SharedString>(&text, font_size, runs, None);
             let wrap_boundaries = if let Some(wrap_width) = wrap_width {
                 unwrapped_layout.compute_wrap_boundaries(text.as_ref(), wrap_width, max_lines)
             } else {
@@ -531,19 +531,6 @@ impl LineLayoutCache {
     }
 
     pub fn layout_line<Text>(
-        &self,
-        text: Text,
-        font_size: Pixels,
-        runs: &[FontRun],
-    ) -> Arc<LineLayout>
-    where
-        Text: AsRef<str>,
-        SharedString: From<Text>,
-    {
-        self.layout_line_internal(text, font_size, runs, None)
-    }
-
-    pub fn layout_line_internal<Text>(
         &self,
         text: Text,
         font_size: Pixels,
@@ -634,15 +621,15 @@ struct CacheKeyRef<'a> {
     force_width: Option<Pixels>,
 }
 
-impl PartialEq for (dyn AsCacheKeyRef + '_) {
+impl PartialEq for dyn AsCacheKeyRef + '_ {
     fn eq(&self, other: &dyn AsCacheKeyRef) -> bool {
         self.as_cache_key_ref() == other.as_cache_key_ref()
     }
 }
 
-impl Eq for (dyn AsCacheKeyRef + '_) {}
+impl Eq for dyn AsCacheKeyRef + '_ {}
 
-impl Hash for (dyn AsCacheKeyRef + '_) {
+impl Hash for dyn AsCacheKeyRef + '_ {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.as_cache_key_ref().hash(state)
     }

@@ -1,3 +1,6 @@
+# IF YOU UPDATE THE NAME OF ANY GITHUB SECRET, YOU MUST CHERRY PICK THE COMMIT
+# TO BOTH STABLE AND PREVIEW CHANNELS
+
 name: Release Actions
 
 on:
@@ -13,9 +16,9 @@ jobs:
         id: get-release-url
         run: |
           if [ "${{ github.event.release.prerelease }}" == "true" ]; then
-              URL="https://zed.dev/releases/preview/latest"
+              URL="https://zed.dev/releases/preview"
           else
-              URL="https://zed.dev/releases/stable/latest"
+              URL="https://zed.dev/releases/stable"
           fi
 
           echo "URL=$URL" >> "$GITHUB_OUTPUT"
@@ -32,11 +35,11 @@ jobs:
       - name: Discord Webhook Action
         uses: tsickert/discord-webhook@c840d45a03a323fbc3f7507ac7769dbd91bfb164 # v5.3.0
         with:
-          webhook-url: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          webhook-url: ${{ secrets.DISCORD_WEBHOOK_RELEASE_NOTES }}
           content: ${{ steps.get-content.outputs.string }}
 
   send_release_notes_email:
-    if: github.repository_owner == 'zed-industries' && !github.event.release.prerelease
+    if: false && github.repository_owner == 'zed-industries' && !github.event.release.prerelease
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4

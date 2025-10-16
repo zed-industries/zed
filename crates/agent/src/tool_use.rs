@@ -112,19 +112,13 @@ impl ToolUseState {
                                 },
                             );
 
-                            if let Some(window) = &mut window {
-                                if let Some(tool) = this.tools.read(cx).tool(tool_use, cx) {
-                                    if let Some(output) = tool_result.output.clone() {
-                                        if let Some(card) = tool.deserialize_card(
-                                            output,
-                                            project.clone(),
-                                            window,
-                                            cx,
-                                        ) {
-                                            this.tool_result_cards.insert(tool_use_id, card);
-                                        }
-                                    }
-                                }
+                            if let Some(window) = &mut window
+                                && let Some(tool) = this.tools.read(cx).tool(tool_use, cx)
+                                && let Some(output) = tool_result.output.clone()
+                                && let Some(card) =
+                                    tool.deserialize_card(output, project.clone(), window, cx)
+                            {
+                                this.tool_result_cards.insert(tool_use_id, card);
                             }
                         }
                     }
@@ -137,7 +131,7 @@ impl ToolUseState {
     }
 
     pub fn cancel_pending(&mut self) -> Vec<PendingToolUse> {
-        let mut cancelled_tool_uses = Vec::new();
+        let mut canceled_tool_uses = Vec::new();
         self.pending_tool_uses_by_id
             .retain(|tool_use_id, tool_use| {
                 if matches!(tool_use.status, PendingToolUseStatus::Error { .. }) {
@@ -155,10 +149,10 @@ impl ToolUseState {
                         is_error: true,
                     },
                 );
-                cancelled_tool_uses.push(tool_use.clone());
+                canceled_tool_uses.push(tool_use.clone());
                 false
             });
-        cancelled_tool_uses
+        canceled_tool_uses
     }
 
     pub fn pending_tool_uses(&self) -> Vec<&PendingToolUse> {
@@ -281,7 +275,7 @@ impl ToolUseState {
     pub fn message_has_tool_results(&self, assistant_message_id: MessageId) -> bool {
         self.tool_uses_by_assistant_message
             .get(&assistant_message_id)
-            .map_or(false, |results| !results.is_empty())
+            .is_some_and(|results| !results.is_empty())
     }
 
     pub fn tool_result(

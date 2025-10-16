@@ -1,14 +1,18 @@
 use std::sync::OnceLock;
 
 use ::util::ResultExt;
+use anyhow::Context;
 use windows::{
     UI::{
         Color,
         ViewManagement::{UIColorType, UISettings},
     },
     Wdk::System::SystemServices::RtlGetVersion,
-    Win32::{Foundation::*, Graphics::Dwm::*, UI::WindowsAndMessaging::*},
-    core::{BOOL, HSTRING},
+    Win32::{
+        Foundation::*, Graphics::Dwm::*, System::LibraryLoader::LoadLibraryA,
+        UI::WindowsAndMessaging::*,
+    },
+    core::{BOOL, HSTRING, PCSTR},
 };
 
 use crate::*;
@@ -196,4 +200,20 @@ pub(crate) fn show_error(title: &str, content: String) {
             MB_ICONERROR | MB_SYSTEMMODAL,
         )
     };
+}
+
+pub(crate) fn with_dll_library<R, F>(dll_name: PCSTR, f: F) -> Result<R>
+where
+    F: FnOnce(HMODULE) -> Result<R>,
+{
+    let library = unsafe {
+        LoadLibraryA(dll_name).with_context(|| format!("Loading dll: {}", dll_name.display()))?
+    };
+    let result = f(library);
+    unsafe {
+        FreeLibrary(library)
+            .with_context(|| format!("Freeing dll: {}", dll_name.display()))
+            .log_err();
+    }
+    result
 }

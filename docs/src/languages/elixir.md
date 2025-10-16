@@ -6,38 +6,60 @@ Elixir support is available through the [Elixir extension](https://github.com/ze
   - [elixir-lang/tree-sitter-elixir](https://github.com/elixir-lang/tree-sitter-elixir)
   - [phoenixframework/tree-sitter-heex](https://github.com/phoenixframework/tree-sitter-heex)
 - Language servers:
+  - [elixir-lang/expert](https://github.com/elixir-lang/expert)
   - [elixir-lsp/elixir-ls](https://github.com/elixir-lsp/elixir-ls)
   - [elixir-tools/next-ls](https://github.com/elixir-tools/next-ls)
   - [lexical-lsp/lexical](https://github.com/lexical-lsp/lexical)
 
 ## Choosing a language server
 
-The Elixir extension offers language server support for `elixir-ls`, `next-ls`, and `lexical`.
+The Elixir extension offers language server support for `expert`, `elixir-ls`, `next-ls`, and `lexical`.
 
 `elixir-ls` is enabled by default.
 
-To switch to `next-ls`, add the following to your `settings.json`:
+### Expert
 
-```json
-{
+To switch to `expert`, add the following to your `settings.json`:
+
+```json [settings]
   "languages": {
     "Elixir": {
-      "language_servers": ["next-ls", "!elixir-ls", "..."]
+      "language_servers": ["expert", "!elixir-ls", "!next-ls", "!lexical", "..."]
+    },
+    "HEEX": {
+      "language_servers": ["expert", "!elixir-ls", "!next-ls", "!lexical", "..."]
     }
   }
-}
 ```
+
+### Next LS
+
+To switch to `next-ls`, add the following to your `settings.json`:
+
+```json [settings]
+  "languages": {
+    "Elixir": {
+      "language_servers": ["next-ls", "!expert", "!elixir-ls", "!lexical", "..."]
+    },
+    "HEEX": {
+      "language_servers": ["next-ls", "!expert", "!elixir-ls", "!lexical", "..."]
+    }
+  }
+```
+
+### Lexical
 
 To switch to `lexical`, add the following to your `settings.json`:
 
-```json
-{
+```json [settings]
   "languages": {
     "Elixir": {
-      "language_servers": ["lexical", "!elixir-ls", "..."]
+      "language_servers": ["lexical", "!expert", "!elixir-ls", "!next-ls", "..."]
+    },
+    "HEEX": {
+      "language_servers": ["lexical", "!expert", "!elixir-ls", "!next-ls", "..."]
     }
   }
-}
 ```
 
 ## Setting up `elixir-ls`
@@ -62,11 +84,12 @@ brew install elixir-ls
 
 If you prefer to format your code with [Mix](https://hexdocs.pm/mix/Mix.html), use the following snippet in your `settings.json` file to configure it as an external formatter. Formatting will occur on file save.
 
-```json
+```json [settings]
 {
   "languages": {
     "Elixir": {
-      "format_on_save": {
+      "format_on_save": "on",
+      "formatter": {
         "external": {
           "command": "mix",
           "arguments": ["format", "--stdin-filename", "{buffer_path}", "-"]
@@ -83,14 +106,14 @@ You can pass additional elixir-ls workspace configuration options via lsp settin
 
 The following example disables dialyzer:
 
-```json
-"lsp": {
-  "elixir-ls": {
-    "settings": {
-      "dialyzerEnabled": false
+```json [settings]
+  "lsp": {
+    "elixir-ls": {
+      "settings": {
+        "dialyzerEnabled": false
+      }
     }
   }
-}
 ```
 
 See [ElixirLS configuration settings](https://github.com/elixir-lsp/elixir-ls#elixirls-configuration-settings) for more options.

@@ -1,6 +1,6 @@
 use anyhow::Context as _;
 use collections::HashMap;
-use futures::{Stream, StreamExt as _, lock::Mutex};
+use futures::{FutureExt, Stream, StreamExt as _, future::BoxFuture, lock::Mutex};
 use gpui::BackgroundExecutor;
 use std::{pin::Pin, sync::Arc};
 
@@ -14,9 +14,12 @@ pub fn create_fake_transport(
     executor: BackgroundExecutor,
 ) -> FakeTransport {
     let name = name.into();
-    FakeTransport::new(executor).on_request::<crate::types::requests::Initialize>(move |_params| {
-        create_initialize_response(name.clone())
-    })
+    FakeTransport::new(executor).on_request::<crate::types::requests::Initialize, _>(
+        move |_params| {
+            let name = name.clone();
+            async move { create_initialize_response(name.clone()) }
+        },
+    )
 }
 
 fn create_initialize_response(server_name: String) -> InitializeResponse {
@@ -32,8 +35,10 @@ fn create_initialize_response(server_name: String) -> InitializeResponse {
 }
 
 pub struct FakeTransport {
-    request_handlers:
-        HashMap<&'static str, Arc<dyn Fn(serde_json::Value) -> serde_json::Value + Send + Sync>>,
+    request_handlers: HashMap<
+        &'static str,
+        Arc<dyn Send + Sync + Fn(serde_json::Value) -> BoxFuture<'static, serde_json::Value>>,
+    >,
     tx: futures::channel::mpsc::UnboundedSender<String>,
     rx: Arc<Mutex<futures::channel::mpsc::UnboundedReceiver<String>>>,
     executor: BackgroundExecutor,
@@ -50,18 +55,25 @@ impl FakeTransport {
         }
     }
 
-    pub fn on_request<T: crate::types::Request>(
+    pub fn on_request<T, Fut>(
         mut self,
-        handler: impl Fn(T::Params) -> T::Response + Send + Sync + 'static,
-    ) -> Self {
+        handler: impl 'static + Send + Sync + Fn(T::Params) -> Fut,
+    ) -> Self
+    where
+        T: crate::types::Request,
+        Fut: 'static + Send + Future<Output = T::Response>,
+    {
         self.request_handlers.insert(
             T::METHOD,
             Arc::new(move |value| {
-                let params = value.get("params").expect("Missing parameters").clone();
+                let params = value
+                    .get("params")
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Null);
                 let params: T::Params =
                     serde_json::from_value(params).expect("Invalid parameters received");
                 let response = handler(params);
-                serde_json::to_value(response).unwrap()
+                async move { serde_json::to_value(response.await).unwrap() }.boxed()
             }),
         );
         self
@@ -77,7 +89,7 @@ impl Transport for FakeTransport {
             if let Some(method) = msg.get("method") {
                 let method = method.as_str().expect("Invalid method received");
                 if let Some(handler) = self.request_handlers.get(method) {
-                    let payload = handler(msg);
+                    let payload = handler(msg).await;
                     let response = serde_json::json!({
                         "jsonrpc": "2.0",
                         "id": id,

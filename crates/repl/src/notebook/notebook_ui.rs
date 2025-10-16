@@ -295,7 +295,7 @@ impl NotebookEditor {
         _cx: &mut Context<Self>,
     ) -> IconButton {
         let id: ElementId = ElementId::Name(id.into());
-        IconButton::new(id, icon).width(px(CONTROL_SIZE).into())
+        IconButton::new(id, icon).width(px(CONTROL_SIZE))
     }
 
     fn render_notebook_controls(
@@ -321,7 +321,7 @@ impl NotebookEditor {
                             .child(
                                 Self::render_notebook_control(
                                     "run-all-cells",
-                                    IconName::PlayOutlined,
+                                    IconName::PlayFilled,
                                     window,
                                     cx,
                                 )
@@ -575,7 +575,7 @@ impl project::ProjectItem for NotebookItem {
                     .with_context(|| format!("finding the absolute path of {path:?}"))?;
 
                 // todo: watch for changes to the file
-                let file_content = fs.load(&abs_path.as_path()).await?;
+                let file_content = fs.load(abs_path.as_path()).await?;
                 let notebook = nbformat::parse_notebook(&file_content);
 
                 let notebook = match notebook {
@@ -584,8 +584,8 @@ impl project::ProjectItem for NotebookItem {
                     Ok(nbformat::Notebook::Legacy(legacy_notebook)) => {
                         // TODO: Decide if we want to mutate the notebook by including Cell IDs
                         // and any other conversions
-                        let notebook = nbformat::upgrade_legacy_notebook(legacy_notebook)?;
-                        notebook
+
+                        nbformat::upgrade_legacy_notebook(legacy_notebook)?
                     }
                     // Bad notebooks and notebooks v4.0 and below are not supported
                     Err(e) => {
@@ -594,9 +594,10 @@ impl project::ProjectItem for NotebookItem {
                 };
 
                 let id = project
-                    .update(cx, |project, cx| project.entry_for_path(&path, cx))?
-                    .context("Entry not found")?
-                    .id;
+                    .update(cx, |project, cx| {
+                        project.entry_for_path(&path, cx).map(|entry| entry.id)
+                    })?
+                    .context("Entry not found")?;
 
                 cx.new(|_| NotebookItem {
                     path: abs_path,
@@ -715,16 +716,16 @@ impl Item for NotebookEditor {
         Some(cx.new(|cx| Self::new(self.project.clone(), self.notebook_item.clone(), window, cx)))
     }
 
+    fn buffer_kind(&self, _: &App) -> workspace::item::ItemBufferKind {
+        workspace::item::ItemBufferKind::Singleton
+    }
+
     fn for_each_project_item(
         &self,
         cx: &App,
         f: &mut dyn FnMut(gpui::EntityId, &dyn project::ProjectItem),
     ) {
         f(self.notebook_item.entity_id(), self.notebook_item.read(cx))
-    }
-
-    fn is_singleton(&self, _cx: &App) -> bool {
-        true
     }
 
     fn tab_content(&self, params: TabContentParams, window: &Window, cx: &App) -> AnyElement {

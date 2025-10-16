@@ -32,7 +32,7 @@ use std::{
 };
 use terminal_view::terminal_panel::TerminalPanel;
 use tests::{active_debug_session_panel, init_test, init_test_workspace};
-use util::path;
+use util::{path, rel_path::rel_path};
 use workspace::item::SaveOptions;
 use workspace::{Item, dock::Panel};
 
@@ -351,7 +351,7 @@ async fn test_handle_successful_run_in_terminal_reverse_request(
         .fake_reverse_request::<RunInTerminal>(RunInTerminalRequestArguments {
             kind: None,
             title: None,
-            cwd: std::env::temp_dir().to_string_lossy().to_string(),
+            cwd: std::env::temp_dir().to_string_lossy().into_owned(),
             args: vec![],
             env: None,
             args_can_be_interpreted_by_shell: None,
@@ -1114,7 +1114,7 @@ async fn test_send_breakpoints_when_editor_has_been_saved(
 
     let buffer = project
         .update(cx, |project, cx| {
-            project.open_buffer((worktree_id, "main.rs"), cx)
+            project.open_buffer((worktree_id, rel_path("main.rs")), cx)
         })
         .await
         .unwrap();
@@ -1276,14 +1276,14 @@ async fn test_unsetting_breakpoints_on_clear_breakpoint_action(
 
     let first = project
         .update(cx, |project, cx| {
-            project.open_buffer((worktree_id, "main.rs"), cx)
+            project.open_buffer((worktree_id, rel_path("main.rs")), cx)
         })
         .await
         .unwrap();
 
     let second = project
         .update(cx, |project, cx| {
-            project.open_buffer((worktree_id, "second.rs"), cx)
+            project.open_buffer((worktree_id, rel_path("second.rs")), cx)
         })
         .await
         .unwrap();
@@ -1330,7 +1330,6 @@ async fn test_unsetting_breakpoints_on_clear_breakpoint_action(
     let called_set_breakpoints = Arc::new(AtomicBool::new(false));
 
     client.on_request::<SetBreakpoints, _>({
-        let called_set_breakpoints = called_set_breakpoints.clone();
         move |_, args| {
             assert!(
                 args.breakpoints.is_none_or(|bps| bps.is_empty()),
@@ -1445,7 +1444,6 @@ async fn test_we_send_arguments_from_user_config(
     let launch_handler_called = Arc::new(AtomicBool::new(false));
 
     start_debug_session_with(&workspace, cx, debug_definition.clone(), {
-        let debug_definition = debug_definition.clone();
         let launch_handler_called = launch_handler_called.clone();
 
         move |client| {
@@ -1501,14 +1499,14 @@ async fn test_active_debug_line_setting(executor: BackgroundExecutor, cx: &mut T
 
     let main_buffer = project
         .update(cx, |project, cx| {
-            project.open_buffer((worktree_id, "main.rs"), cx)
+            project.open_buffer((worktree_id, rel_path("main.rs")), cx)
         })
         .await
         .unwrap();
 
     let second_buffer = project
         .update(cx, |project, cx| {
-            project.open_buffer((worktree_id, "second.rs"), cx)
+            project.open_buffer((worktree_id, rel_path("second.rs")), cx)
         })
         .await
         .unwrap();
@@ -1606,7 +1604,7 @@ async fn test_active_debug_line_setting(executor: BackgroundExecutor, cx: &mut T
 
         let point = editor
             .snapshot(window, cx)
-            .buffer_snapshot
+            .buffer_snapshot()
             .summary_for_anchor::<language::Point>(&active_debug_lines.first().unwrap().0.start);
 
         assert_eq!(point.row, 1);
@@ -1681,7 +1679,7 @@ async fn test_active_debug_line_setting(executor: BackgroundExecutor, cx: &mut T
 
         let point = editor
             .snapshot(window, cx)
-            .buffer_snapshot
+            .buffer_snapshot()
             .summary_for_anchor::<language::Point>(&active_debug_lines.first().unwrap().0.start);
 
         assert_eq!(point.row, 2);
@@ -1783,9 +1781,8 @@ async fn test_debug_adapters_shutdown_on_app_quit(
     let disconnect_request_received = Arc::new(AtomicBool::new(false));
     let disconnect_clone = disconnect_request_received.clone();
 
-    let disconnect_clone_for_handler = disconnect_clone.clone();
     client.on_request::<Disconnect, _>(move |_, _| {
-        disconnect_clone_for_handler.store(true, Ordering::SeqCst);
+        disconnect_clone.store(true, Ordering::SeqCst);
         Ok(())
     });
 

@@ -4,6 +4,7 @@ use std::{
     sync::Arc,
 };
 
+use editor::scroll::ScrollOffset;
 use editor::{Anchor, AnchorRangeExt, Editor, scroll::Autoscroll};
 use editor::{RowHighlightOptions, SelectionEffects};
 use fuzzy::StringMatch;
@@ -19,7 +20,7 @@ use settings::Settings;
 use theme::{ActiveTheme, ThemeSettings};
 use ui::{ListItem, ListItemSpacing, prelude::*};
 use util::ResultExt;
-use workspace::{DismissDecision, ModalView};
+use workspace::{DismissDecision, ModalView, Workspace};
 
 pub fn init(cx: &mut App) {
     cx.observe_new(OutlineView::register).detach();
@@ -47,7 +48,8 @@ pub fn toggle(
         .snapshot(cx)
         .outline(Some(cx.theme().syntax()));
 
-    if let Some((workspace, outline)) = editor.read(cx).workspace().zip(outline) {
+    let workspace = window.root::<Workspace>().flatten();
+    if let Some((workspace, outline)) = workspace.zip(outline) {
         workspace.update(cx, |workspace, cx| {
             workspace.toggle_modal(window, cx, |window, cx| {
                 OutlineView::new(outline, editor, window, cx)
@@ -81,8 +83,19 @@ impl ModalView for OutlineView {
 }
 
 impl Render for OutlineView {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        v_flex().w(rems(34.)).child(self.picker.clone())
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        v_flex()
+            .w(rems(34.))
+            .on_action(cx.listener(
+                |_this: &mut OutlineView,
+                 _: &zed_actions::outline::ToggleOutline,
+                 _window: &mut Window,
+                 cx: &mut Context<OutlineView>| {
+                    // When outline::Toggle is triggered while the outline is open, dismiss it
+                    cx.emit(DismissEvent);
+                },
+            ))
+            .child(self.picker.clone())
     }
 }
 
@@ -119,7 +132,7 @@ struct OutlineViewDelegate {
     active_editor: Entity<Editor>,
     outline: Outline<Anchor>,
     selected_match_index: usize,
-    prev_scroll_position: Option<Point<f32>>,
+    prev_scroll_position: Option<Point<ScrollOffset>>,
     matches: Vec<StringMatch>,
     last_query: String,
 }
@@ -378,7 +391,7 @@ mod tests {
     use language::{Language, LanguageConfig, LanguageMatcher};
     use project::{FakeFs, Project};
     use serde_json::json;
-    use util::path;
+    use util::{path, rel_path::rel_path};
     use workspace::{AppState, Workspace};
 
     #[gpui::test]
@@ -419,7 +432,7 @@ mod tests {
             .unwrap();
         let editor = workspace
             .update_in(cx, |workspace, window, cx| {
-                workspace.open_path((worktree_id, "a.rs"), None, true, window, cx)
+                workspace.open_path((worktree_id, rel_path("a.rs")), None, true, window, cx)
             })
             .await
             .unwrap()

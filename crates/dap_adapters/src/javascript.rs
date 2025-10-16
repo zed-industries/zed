@@ -99,10 +99,10 @@ impl JsDebugAdapter {
                 }
             }
 
-            if let Some(env) = configuration.get("env").cloned() {
-                if let Ok(env) = serde_json::from_value(env) {
-                    envs = env;
-                }
+            if let Some(env) = configuration.get("env").cloned()
+                && let Ok(env) = serde_json::from_value(env)
+            {
+                envs = env;
             }
 
             configuration
@@ -120,6 +120,13 @@ impl JsDebugAdapter {
             configuration
                 .entry("sourceMapRenames")
                 .or_insert(true.into());
+
+            // Set up remote browser debugging
+            if delegate.is_headless() {
+                configuration
+                    .entry("browserLaunchLocation")
+                    .or_insert("ui".into());
+            }
         }
 
         let adapter_path = if let Some(user_installed_path) = user_installed_path {
@@ -138,11 +145,11 @@ impl JsDebugAdapter {
         };
 
         let arguments = if let Some(mut args) = user_args {
-            args.insert(0, adapter_path.to_string_lossy().to_string());
+            args.insert(0, adapter_path.to_string_lossy().into_owned());
             args
         } else {
             vec![
-                adapter_path.to_string_lossy().to_string(),
+                adapter_path.to_string_lossy().into_owned(),
                 port.to_string(),
                 host.to_string(),
             ]
@@ -514,7 +521,7 @@ impl DebugAdapter for JsDebugAdapter {
             }
         }
 
-        self.get_installed_binary(delegate, &config, user_installed_path, user_args, cx)
+        self.get_installed_binary(delegate, config, user_installed_path, user_args, cx)
             .await
     }
 

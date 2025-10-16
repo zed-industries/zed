@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use gpui::{ClickEvent, CursorStyle};
+use gpui::{ClickEvent, CursorStyle, SharedString};
 
 use crate::{Color, IconButton, IconButtonShape, IconName, IconSize, prelude::*};
 
@@ -10,10 +10,11 @@ pub struct Disclosure {
     is_open: bool,
     selected: bool,
     disabled: bool,
-    on_toggle: Option<Arc<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
+    on_toggle_expanded: Option<Arc<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
     cursor_style: CursorStyle,
     opened_icon: IconName,
     closed_icon: IconName,
+    visible_on_hover: Option<SharedString>,
 }
 
 impl Disclosure {
@@ -23,18 +24,19 @@ impl Disclosure {
             is_open,
             selected: false,
             disabled: false,
-            on_toggle: None,
+            on_toggle_expanded: None,
             cursor_style: CursorStyle::PointingHand,
             opened_icon: IconName::ChevronDown,
             closed_icon: IconName::ChevronRight,
+            visible_on_hover: None,
         }
     }
 
-    pub fn on_toggle(
+    pub fn on_toggle_expanded(
         mut self,
         handler: impl Into<Option<Arc<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>>,
     ) -> Self {
-        self.on_toggle = handler.into();
+        self.on_toggle_expanded = handler.into();
         self
     }
 
@@ -63,12 +65,19 @@ impl Toggleable for Disclosure {
 
 impl Clickable for Disclosure {
     fn on_click(mut self, handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static) -> Self {
-        self.on_toggle = Some(Arc::new(handler));
+        self.on_toggle_expanded = Some(Arc::new(handler));
         self
     }
 
     fn cursor_style(mut self, cursor_style: gpui::CursorStyle) -> Self {
         self.cursor_style = cursor_style;
+        self
+    }
+}
+
+impl VisibleOnHover for Disclosure {
+    fn visible_on_hover(mut self, group_name: impl Into<SharedString>) -> Self {
+        self.visible_on_hover = Some(group_name.into());
         self
     }
 }
@@ -87,7 +96,10 @@ impl RenderOnce for Disclosure {
         .icon_size(IconSize::Small)
         .disabled(self.disabled)
         .toggle_state(self.selected)
-        .when_some(self.on_toggle, move |this, on_toggle| {
+        .when_some(self.visible_on_hover.clone(), |this, group_name| {
+            this.visible_on_hover(group_name)
+        })
+        .when_some(self.on_toggle_expanded, move |this, on_toggle| {
             this.on_click(move |event, window, cx| on_toggle(event, window, cx))
         })
     }
@@ -95,7 +107,7 @@ impl RenderOnce for Disclosure {
 
 impl Component for Disclosure {
     fn scope() -> ComponentScope {
-        ComponentScope::Navigation
+        ComponentScope::Input
     }
 
     fn description() -> Option<&'static str> {

@@ -2,6 +2,7 @@ use crate::{
     Vim,
     motion::{Motion, MotionKind},
     object::Object,
+    state::Mode,
 };
 use collections::{HashMap, HashSet};
 use editor::{
@@ -22,7 +23,7 @@ impl Vim {
         cx: &mut Context<Self>,
     ) {
         self.stop_recording(cx);
-        self.update_editor(window, cx, |vim, editor, window, cx| {
+        self.update_editor(cx, |vim, editor, cx| {
             let text_layout_details = editor.text_layout_details(window);
             editor.transact(window, cx, |editor, window, cx| {
                 editor.set_clip_at_line_ends(false, cx);
@@ -49,12 +50,13 @@ impl Vim {
                         if kind == Some(MotionKind::Linewise) {
                             let start = selection.start.to_point(map);
                             let end = selection.end.to_point(map);
-                            if end.row < map.buffer_snapshot.max_point().row {
+                            if end.row < map.buffer_snapshot().max_point().row {
                                 selection.end = Point::new(end.row + 1, 0).to_display_point(map)
                             } else if start.row > 0 {
                                 selection.start = Point::new(
                                     start.row - 1,
-                                    map.buffer_snapshot.line_len(MultiBufferRow(start.row - 1)),
+                                    map.buffer_snapshot()
+                                        .line_len(MultiBufferRow(start.row - 1)),
                                 )
                                 .to_display_point(map)
                             }
@@ -73,10 +75,10 @@ impl Vim {
                 editor.change_selections(Default::default(), window, cx, |s| {
                     s.move_with(|map, selection| {
                         let mut cursor = selection.head();
-                        if kind.linewise() {
-                            if let Some(column) = original_columns.get(&selection.id) {
-                                *cursor.column_mut() = *column
-                            }
+                        if kind.linewise()
+                            && let Some(column) = original_columns.get(&selection.id)
+                        {
+                            *cursor.column_mut() = *column
                         }
                         cursor = map.clip_point(cursor, Bias::Left);
                         selection.collapse_to(cursor, selection.goal)
@@ -96,14 +98,26 @@ impl Vim {
         cx: &mut Context<Self>,
     ) {
         self.stop_recording(cx);
-        self.update_editor(window, cx, |vim, editor, window, cx| {
+        self.update_editor(cx, |vim, editor, cx| {
             editor.transact(window, cx, |editor, window, cx| {
                 editor.set_clip_at_line_ends(false, cx);
                 // Emulates behavior in vim where if we expanded backwards to include a newline
                 // the cursor gets set back to the start of the line
                 let mut should_move_to_start: HashSet<_> = Default::default();
+
+                // Emulates behavior in vim where after deletion the cursor should try to move
+                // to the same column it was before deletion if the line is not empty or only
+                // contains whitespace
+                let mut column_before_move: HashMap<_, _> = Default::default();
+                let target_mode = object.target_visual_mode(vim.mode, around);
+
                 editor.change_selections(Default::default(), window, cx, |s| {
                     s.move_with(|map, selection| {
+                        let cursor_point = selection.head().to_point(map);
+                        if target_mode == Mode::VisualLine {
+                            column_before_move.insert(selection.id, cursor_point.column);
+                        }
+
                         object.expand_selection(map, selection, around, times);
                         let offset_range = selection.map(|p| p.to_offset(map, Bias::Left)).range();
                         let mut move_selection_start_to_previous_line =
@@ -164,6 +178,15 @@ impl Vim {
                         let mut cursor = selection.head();
                         if should_move_to_start.contains(&selection.id) {
                             *cursor.column_mut() = 0;
+                        } else if let Some(column) = column_before_move.get(&selection.id)
+                            && *column > 0
+                        {
+                            let mut cursor_point = cursor.to_point(map);
+                            cursor_point.column = *column;
+                            cursor = map
+                                .buffer_snapshot()
+                                .clip_point(cursor_point, Bias::Left)
+                                .to_display_point(map);
                         }
                         cursor = map.clip_point(cursor, Bias::Left);
                         selection.collapse_to(cursor, selection.goal)
@@ -181,7 +204,7 @@ fn move_selection_end_to_next_line(map: &DisplaySnapshot, selection: &mut Select
 }
 
 fn ends_at_eof(map: &DisplaySnapshot, selection: &mut Selection<DisplayPoint>) -> bool {
-    selection.end.to_point(map) == map.buffer_snapshot.max_point()
+    selection.end.to_point(map) == map.buffer_snapshot().max_point()
 }
 
 #[cfg(test)]

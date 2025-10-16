@@ -1,5 +1,6 @@
 use gpui::{
-    FontStyle, FontWeight, HighlightStyle, SharedString, StrikethroughStyle, UnderlineStyle, px,
+    DefiniteLength, FontStyle, FontWeight, HighlightStyle, Hsla, SharedString, StrikethroughStyle,
+    UnderlineStyle, px,
 };
 use language::HighlightId;
 use std::{fmt::Display, ops::Range, path::PathBuf};
@@ -15,6 +16,7 @@ pub enum ParsedMarkdownElement {
     /// A paragraph of text and other inline elements.
     Paragraph(MarkdownParagraph),
     HorizontalRule(Range<usize>),
+    Image(Image),
 }
 
 impl ParsedMarkdownElement {
@@ -30,6 +32,7 @@ impl ParsedMarkdownElement {
                 MarkdownParagraphChunk::Image(image) => image.source_range.clone(),
             },
             Self::HorizontalRule(range) => range.clone(),
+            Self::Image(image) => image.source_range.clone(),
         })
     }
 
@@ -152,7 +155,7 @@ pub struct ParsedMarkdownText {
     /// Where the text is located in the source Markdown document.
     pub source_range: Range<usize>,
     /// The text content stripped of any formatting symbols.
-    pub contents: String,
+    pub contents: SharedString,
     /// The list of highlights contained in the Markdown document.
     pub highlights: Vec<(Range<usize>, MarkdownHighlight)>,
     /// The regions of the various ranges in the Markdown document.
@@ -172,7 +175,11 @@ pub enum MarkdownHighlight {
 
 impl MarkdownHighlight {
     /// Converts this [`MarkdownHighlight`] to a [`HighlightStyle`].
-    pub fn to_highlight_style(&self, theme: &theme::SyntaxTheme) -> Option<HighlightStyle> {
+    pub fn to_highlight_style(
+        &self,
+        theme: &theme::SyntaxTheme,
+        link_color: Hsla,
+    ) -> Option<HighlightStyle> {
         match self {
             MarkdownHighlight::Style(style) => {
                 let mut highlight = HighlightStyle::default();
@@ -199,6 +206,15 @@ impl MarkdownHighlight {
                     highlight.font_weight = Some(style.weight);
                 }
 
+                if style.link {
+                    highlight.underline = Some(UnderlineStyle {
+                        thickness: px(1.),
+                        color: Some(link_color),
+                        ..Default::default()
+                    });
+                    highlight.color = Some(link_color);
+                }
+
                 Some(highlight)
             }
 
@@ -218,6 +234,8 @@ pub struct MarkdownHighlightStyle {
     pub strikethrough: bool,
     /// The weight of the text.
     pub weight: FontWeight,
+    /// Whether the text should be stylized as link.
+    pub link: bool,
 }
 
 /// A parsed region in a Markdown document.
@@ -290,6 +308,8 @@ pub struct Image {
     pub link: Link,
     pub source_range: Range<usize>,
     pub alt_text: Option<SharedString>,
+    pub width: Option<DefiniteLength>,
+    pub height: Option<DefiniteLength>,
 }
 
 impl Image {
@@ -303,10 +323,20 @@ impl Image {
             source_range,
             link,
             alt_text: None,
+            width: None,
+            height: None,
         })
     }
 
     pub fn set_alt_text(&mut self, alt_text: SharedString) {
         self.alt_text = Some(alt_text);
+    }
+
+    pub fn set_width(&mut self, width: DefiniteLength) {
+        self.width = Some(width);
+    }
+
+    pub fn set_height(&mut self, height: DefiniteLength) {
+        self.height = Some(height);
     }
 }

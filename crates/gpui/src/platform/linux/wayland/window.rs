@@ -14,20 +14,21 @@ use raw_window_handle as rwh;
 use wayland_backend::client::ObjectId;
 use wayland_client::WEnum;
 use wayland_client::{Proxy, protocol::wl_surface};
-use wayland_protocols::wp::fractional_scale::v1::client::wp_fractional_scale_v1;
 use wayland_protocols::wp::viewporter::client::wp_viewport;
 use wayland_protocols::xdg::decoration::zv1::client::zxdg_toplevel_decoration_v1;
 use wayland_protocols::xdg::shell::client::xdg_surface;
 use wayland_protocols::xdg::shell::client::xdg_toplevel::{self};
+use wayland_protocols::{
+    wp::fractional_scale::v1::client::wp_fractional_scale_v1,
+    xdg::shell::client::xdg_toplevel::XdgToplevel,
+};
 use wayland_protocols_plasma::blur::client::org_kde_kwin_blur;
 
-use crate::scene::Scene;
 use crate::{
     AnyWindowHandle, Bounds, Decorations, Globals, GpuSpecs, Modifiers, Output, Pixels,
     PlatformDisplay, PlatformInput, Point, PromptButton, PromptLevel, RequestFrameOptions,
-    ResizeEdge, ScaledPixels, Size, Tiling, WaylandClientStatePtr, WindowAppearance,
-    WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowControls, WindowDecorations,
-    WindowParams, px, size,
+    ResizeEdge, Size, Tiling, WaylandClientStatePtr, WindowAppearance, WindowBackgroundAppearance,
+    WindowBounds, WindowControlArea, WindowControls, WindowDecorations, WindowParams, px, size,
 };
 use crate::{
     Capslock,
@@ -37,6 +38,7 @@ use crate::{
         linux::wayland::{display::WaylandDisplay, serial::SerialKind},
     },
 };
+use crate::{WindowKind, scene::Scene};
 
 #[derive(Default)]
 pub(crate) struct Callbacks {
@@ -277,12 +279,17 @@ impl WaylandWindow {
         client: WaylandClientStatePtr,
         params: WindowParams,
         appearance: WindowAppearance,
+        parent: Option<XdgToplevel>,
     ) -> anyhow::Result<(Self, ObjectId)> {
         let surface = globals.compositor.create_surface(&globals.qh, ());
         let xdg_surface = globals
             .wm_base
             .get_xdg_surface(&surface, &globals.qh, surface.id());
         let toplevel = xdg_surface.get_toplevel(&globals.qh, surface.id());
+
+        if params.kind == WindowKind::Floating {
+            toplevel.set_parent(parent.as_ref());
+        }
 
         if let Some(size) = params.window_min_size {
             toplevel.set_min_size(size.width.0 as i32, size.height.0 as i32);
@@ -338,6 +345,10 @@ impl WaylandWindowStatePtr {
         self.state.borrow().surface.clone()
     }
 
+    pub fn toplevel(&self) -> xdg_toplevel::XdgToplevel {
+        self.state.borrow().toplevel.clone()
+    }
+
     pub fn ptr_eq(&self, other: &Self) -> bool {
         Rc::ptr_eq(&self.state, &other.state)
     }
@@ -355,85 +366,82 @@ impl WaylandWindowStatePtr {
     }
 
     pub fn handle_xdg_surface_event(&self, event: xdg_surface::Event) {
-        match event {
-            xdg_surface::Event::Configure { serial } => {
-                {
-                    let mut state = self.state.borrow_mut();
-                    if let Some(window_controls) = state.in_progress_window_controls.take() {
-                        state.window_controls = window_controls;
-
-                        drop(state);
-                        let mut callbacks = self.callbacks.borrow_mut();
-                        if let Some(appearance_changed) = callbacks.appearance_changed.as_mut() {
-                            appearance_changed();
-                        }
-                    }
-                }
-                {
-                    let mut state = self.state.borrow_mut();
-
-                    if let Some(mut configure) = state.in_progress_configure.take() {
-                        let got_unmaximized = state.maximized && !configure.maximized;
-                        state.fullscreen = configure.fullscreen;
-                        state.maximized = configure.maximized;
-                        state.tiling = configure.tiling;
-                        // Limit interactive resizes to once per vblank
-                        if configure.resizing && state.resize_throttle {
-                            return;
-                        } else if configure.resizing {
-                            state.resize_throttle = true;
-                        }
-                        if !configure.fullscreen && !configure.maximized {
-                            configure.size = if got_unmaximized {
-                                Some(state.window_bounds.size)
-                            } else {
-                                compute_outer_size(state.inset(), configure.size, state.tiling)
-                            };
-                            if let Some(size) = configure.size {
-                                state.window_bounds = Bounds {
-                                    origin: Point::default(),
-                                    size,
-                                };
-                            }
-                        }
-                        drop(state);
-                        if let Some(size) = configure.size {
-                            self.resize(size);
-                        }
-                    }
-                }
+        if let xdg_surface::Event::Configure { serial } = event {
+            {
                 let mut state = self.state.borrow_mut();
-                state.xdg_surface.ack_configure(serial);
+                if let Some(window_controls) = state.in_progress_window_controls.take() {
+                    state.window_controls = window_controls;
 
-                let window_geometry = inset_by_tiling(
-                    state.bounds.map_origin(|_| px(0.0)),
-                    state.inset(),
-                    state.tiling,
-                )
-                .map(|v| v.0 as i32)
-                .map_size(|v| if v <= 0 { 1 } else { v });
-
-                state.xdg_surface.set_window_geometry(
-                    window_geometry.origin.x,
-                    window_geometry.origin.y,
-                    window_geometry.size.width,
-                    window_geometry.size.height,
-                );
-
-                let request_frame_callback = !state.acknowledged_first_configure;
-                if request_frame_callback {
-                    state.acknowledged_first_configure = true;
                     drop(state);
-                    self.frame();
+                    let mut callbacks = self.callbacks.borrow_mut();
+                    if let Some(appearance_changed) = callbacks.appearance_changed.as_mut() {
+                        appearance_changed();
+                    }
                 }
             }
-            _ => {}
+            {
+                let mut state = self.state.borrow_mut();
+
+                if let Some(mut configure) = state.in_progress_configure.take() {
+                    let got_unmaximized = state.maximized && !configure.maximized;
+                    state.fullscreen = configure.fullscreen;
+                    state.maximized = configure.maximized;
+                    state.tiling = configure.tiling;
+                    // Limit interactive resizes to once per vblank
+                    if configure.resizing && state.resize_throttle {
+                        return;
+                    } else if configure.resizing {
+                        state.resize_throttle = true;
+                    }
+                    if !configure.fullscreen && !configure.maximized {
+                        configure.size = if got_unmaximized {
+                            Some(state.window_bounds.size)
+                        } else {
+                            compute_outer_size(state.inset(), configure.size, state.tiling)
+                        };
+                        if let Some(size) = configure.size {
+                            state.window_bounds = Bounds {
+                                origin: Point::default(),
+                                size,
+                            };
+                        }
+                    }
+                    drop(state);
+                    if let Some(size) = configure.size {
+                        self.resize(size);
+                    }
+                }
+            }
+            let mut state = self.state.borrow_mut();
+            state.xdg_surface.ack_configure(serial);
+
+            let window_geometry = inset_by_tiling(
+                state.bounds.map_origin(|_| px(0.0)),
+                state.inset(),
+                state.tiling,
+            )
+            .map(|v| v.0 as i32)
+            .map_size(|v| if v <= 0 { 1 } else { v });
+
+            state.xdg_surface.set_window_geometry(
+                window_geometry.origin.x,
+                window_geometry.origin.y,
+                window_geometry.size.width,
+                window_geometry.size.height,
+            );
+
+            let request_frame_callback = !state.acknowledged_first_configure;
+            if request_frame_callback {
+                state.acknowledged_first_configure = true;
+                drop(state);
+                self.frame();
+            }
         }
     }
 
     pub fn handle_toplevel_decoration_event(&self, event: zxdg_toplevel_decoration_v1::Event) {
-        match event {
-            zxdg_toplevel_decoration_v1::Event::Configure { mode } => match mode {
+        if let zxdg_toplevel_decoration_v1::Event::Configure { mode } = event {
+            match mode {
                 WEnum::Value(zxdg_toplevel_decoration_v1::Mode::ServerSide) => {
                     self.state.borrow_mut().decorations = WindowDecorations::Server;
                     if let Some(mut appearance_changed) =
@@ -457,17 +465,13 @@ impl WaylandWindowStatePtr {
                 WEnum::Unknown(v) => {
                     log::warn!("Unknown decoration mode: {}", v);
                 }
-            },
-            _ => {}
+            }
         }
     }
 
     pub fn handle_fractional_scale_event(&self, event: wp_fractional_scale_v1::Event) {
-        match event {
-            wp_fractional_scale_v1::Event::PreferredScale { scale } => {
-                self.rescale(scale as f32 / 120.0);
-            }
-            _ => {}
+        if let wp_fractional_scale_v1::Event::PreferredScale { scale } = event {
+            self.rescale(scale as f32 / 120.0);
         }
     }
 
@@ -669,8 +673,8 @@ impl WaylandWindowStatePtr {
     pub fn set_size_and_scale(&self, size: Option<Size<Pixels>>, scale: Option<f32>) {
         let (size, scale) = {
             let mut state = self.state.borrow_mut();
-            if size.map_or(true, |size| size == state.bounds.size)
-                && scale.map_or(true, |scale| scale == state.scale)
+            if size.is_none_or(|size| size == state.bounds.size)
+                && scale.is_none_or(|scale| scale == state.scale)
             {
                 return;
             }
@@ -713,21 +717,20 @@ impl WaylandWindowStatePtr {
     }
 
     pub fn handle_input(&self, input: PlatformInput) {
-        if let Some(ref mut fun) = self.callbacks.borrow_mut().input {
-            if !fun(input.clone()).propagate {
-                return;
-            }
+        if let Some(ref mut fun) = self.callbacks.borrow_mut().input
+            && !fun(input.clone()).propagate
+        {
+            return;
         }
-        if let PlatformInput::KeyDown(event) = input {
-            if event.keystroke.modifiers.is_subset_of(&Modifiers::shift()) {
-                if let Some(key_char) = &event.keystroke.key_char {
-                    let mut state = self.state.borrow_mut();
-                    if let Some(mut input_handler) = state.input_handler.take() {
-                        drop(state);
-                        input_handler.replace_text_in_range(None, key_char);
-                        self.state.borrow_mut().input_handler = Some(input_handler);
-                    }
-                }
+        if let PlatformInput::KeyDown(event) = input
+            && event.keystroke.modifiers.is_subset_of(&Modifiers::shift())
+            && let Some(key_char) = &event.keystroke.key_char
+        {
+            let mut state = self.state.borrow_mut();
+            if let Some(mut input_handler) = state.input_handler.take() {
+                drop(state);
+                input_handler.replace_text_in_range(None, key_char);
+                self.state.borrow_mut().input_handler = Some(input_handler);
             }
         }
     }
@@ -1086,7 +1089,7 @@ impl PlatformWindow for WaylandWindow {
         }
     }
 
-    fn update_ime_position(&self, bounds: Bounds<ScaledPixels>) {
+    fn update_ime_position(&self, bounds: Bounds<Pixels>) {
         let state = self.borrow();
         state.client.update_ime_position(bounds);
     }
@@ -1147,7 +1150,7 @@ fn update_window(mut state: RefMut<WaylandWindowState>) {
 }
 
 impl WindowDecorations {
-    fn to_xdg(&self) -> zxdg_toplevel_decoration_v1::Mode {
+    fn to_xdg(self) -> zxdg_toplevel_decoration_v1::Mode {
         match self {
             WindowDecorations::Client => zxdg_toplevel_decoration_v1::Mode::ClientSide,
             WindowDecorations::Server => zxdg_toplevel_decoration_v1::Mode::ServerSide,
@@ -1156,7 +1159,7 @@ impl WindowDecorations {
 }
 
 impl ResizeEdge {
-    fn to_xdg(&self) -> xdg_toplevel::ResizeEdge {
+    fn to_xdg(self) -> xdg_toplevel::ResizeEdge {
         match self {
             ResizeEdge::Top => xdg_toplevel::ResizeEdge::Top,
             ResizeEdge::TopRight => xdg_toplevel::ResizeEdge::TopRight,

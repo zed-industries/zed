@@ -37,7 +37,7 @@ You can open the same modal by clicking the "plus" button at the top right of th
 
 For languages that don't provide preconfigured debug tasks (this includes C, C++, and some extension-supported languages), you can define debug configurations in the `.zed/debug.json` file in your project root. This file should be an array of configuration objects:
 
-```json
+```json [debug]
 [
   {
     "adapter": "CodeLLDB",
@@ -70,7 +70,7 @@ Compared to launching, attaching to an existing process might seem inferior, but
 
 While configuration fields are debug adapter-dependent, most adapters support the following fields:
 
-```json
+```json [debug]
 [
   {
     // The label for the debug configuration and used to identify the debug session inside the debug panel & new process modal
@@ -78,11 +78,10 @@ While configuration fields are debug adapter-dependent, most adapters support th
     // The debug adapter that Zed should use to debug the program
     "adapter": "Example adapter name",
     // Request:
-    //  - launch: Zed will launch the program if specified or shows a debug terminal with the right configuration
-    //  - attach: Zed will attach to a running program to debug it or when the process_id is not specified we will show a process picker (only supported for node currently)
+    //  - launch: Zed will launch the program if specified, or show a debug terminal with the right configuration
+    //  - attach: Zed will attach to a running program to debug it, or when the process_id is not specified, will show a process picker (only supported for node currently)
     "request": "launch",
-    // program: The program that you want to debug
-    // This field supports path resolution with ~ or . symbols
+    // The program to debug. This field supports path resolution with ~ or . symbols.
     "program": "path_to_program",
     // cwd: defaults to the current working directory of your project ($ZED_WORKTREE_ROOT)
     "cwd": "$ZED_WORKTREE_ROOT"
@@ -96,7 +95,7 @@ All configuration fields support [task variables](./tasks.md#variables).
 
 Zed also allows embedding a Zed task in a `build` field that is run before the debugger starts. This is useful for setting up the environment or running any necessary setup steps before the debugger starts.
 
-```json
+```json [debug]
 [
   {
     "label": "Build Binary",
@@ -113,7 +112,7 @@ Zed also allows embedding a Zed task in a `build` field that is run before the d
 
 Build tasks can also refer to the existing tasks by unsubstituted label:
 
-```json
+```json [debug]
 [
   {
     "label": "Build Binary",
@@ -148,6 +147,8 @@ The debug adapter will then stop whenever an exception of a given kind occurs. W
 
 ## Settings
 
+The settings for the debugger are grouped under the `debugger` key in `settings.json`:
+
 - `dock`: Determines the position of the debug panel in the UI.
 - `stepping_granularity`: Determines the stepping granularity.
 - `save_breakpoints`: Whether the breakpoints should be reused across Zed sessions.
@@ -168,7 +169,7 @@ The debug adapter will then stop whenever an exception of a given kind occurs. W
 2. `right` - The debug panel will be docked to the right side of the UI.
 3. `bottom` - The debug panel will be docked to the bottom of the UI.
 
-```json
+```json [settings]
 "debugger": {
   "dock": "bottom"
 },
@@ -186,7 +187,7 @@ The debug adapter will then stop whenever an exception of a given kind occurs. W
    The meaning of a statement is determined by the adapter and it may be considered equivalent to a line.
    For example 'for(int i = 0; i < 10; i++)' could be considered to have 3 statements 'int i = 0', 'i < 10', and 'i++'.
 
-```json
+```json [settings]
 {
   "debugger": {
     "stepping_granularity": "statement"
@@ -196,7 +197,7 @@ The debug adapter will then stop whenever an exception of a given kind occurs. W
 
 2. Line - The step should allow the program to run until the current source line has executed.
 
-```json
+```json [settings]
 {
   "debugger": {
     "stepping_granularity": "line"
@@ -206,7 +207,7 @@ The debug adapter will then stop whenever an exception of a given kind occurs. W
 
 3. Instruction - The step should allow one instruction to execute (e.g. one x86 instruction).
 
-```json
+```json [settings]
 {
   "debugger": {
     "stepping_granularity": "instruction"
@@ -224,7 +225,7 @@ The debug adapter will then stop whenever an exception of a given kind occurs. W
 
 `boolean` values
 
-```json
+```json [settings]
 {
   "debugger": {
     "save_breakpoints": true
@@ -242,7 +243,7 @@ The debug adapter will then stop whenever an exception of a given kind occurs. W
 
 `boolean` values
 
-```json
+```json [settings]
 {
   "debugger": {
     "show_button": true
@@ -260,7 +261,7 @@ The debug adapter will then stop whenever an exception of a given kind occurs. W
 
 `integer` values
 
-```json
+```json [settings]
 {
   "debugger": {
     "timeout": 3000
@@ -276,7 +277,7 @@ The debug adapter will then stop whenever an exception of a given kind occurs. W
 
 **Options**
 
-```json
+```json [settings]
 {
   "inlay_hints": {
     "show_value_hints": false
@@ -296,7 +297,7 @@ Inline value hints can also be toggled from the Editor Controls menu in the edit
 
 `boolean` values
 
-```json
+```json [settings]
 {
   "debugger": {
     "log_dap_communications": true
@@ -314,7 +315,7 @@ Inline value hints can also be toggled from the Editor Controls menu in the edit
 
 `boolean` values
 
-```json
+```json [settings]
 {
   "debugger": {
     "format_dap_log_messages": true
@@ -330,7 +331,7 @@ Inline value hints can also be toggled from the Editor Controls menu in the edit
 
 You can pass `binary`, `args`, or both. `binary` should be a path to a _debug adapter_ (like `lldb-dap`) not a _debugger_ (like `lldb` itself). The `args` setting overrides any arguments that Zed would otherwise pass to the adapter.
 
-```json
+```json [settings]
 {
   "dap": {
     "CodeLLDB": {
@@ -350,9 +351,7 @@ The Debugger supports the following theme options:
 
 ## Troubleshooting
 
-If you're running into problems with the debugger, please [open a GitHub issue](https://github.com/zed-industries/zed/issues/new?template=04_bug_debugger.yml) or [schedule an onboarding call](https://cal.com/team/zed-research/debugger) with us so we can help understand and fix your issue.
-
-There are also some features you can use to gather more information about the problem:
+If you're running into problems with the debugger, please [open a GitHub issue](https://github.com/zed-industries/zed/issues/new?template=04_bug_debugger.yml), providing as much context as possible. There are also some features you can use to gather more information about the problem:
 
 - When you have a session running in the debug panel, you can run the {#action dev::CopyDebugAdapterArguments} action to copy a JSON blob to the clipboard that describes how Zed initialized the session. This is especially useful when the session failed to start, and is great context to add if you open a GitHub issue.
 - You can also use the {#action dev::OpenDebugAdapterLogs} action to see a trace of all of Zed's communications with debug adapters during the most recent debug sessions.
