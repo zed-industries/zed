@@ -2672,12 +2672,7 @@ async fn test_lsp_pull_diagnostics(
                     );
                 let _ = closure_pull_diagnostics_handle.lock().insert(pull_diagnostics_handle);
 
-                let closure_workspace_diagnostics_pulls_result_ids = closure_workspace_diagnostics_pulls_result_ids.clone();
                 let closure_workspace_diagnostics_pulls_made = closure_workspace_diagnostics_pulls_made.clone();
-                let closure_expected_workspace_diagnostic_token = expected_workspace_diagnostic_token.clone();
-                let closure_workspace_diagnostics_pulls_handle = closure_workspace_diagnostics_pulls_handle.clone();
-                let closure_workspace_diagnostic_cancel_rx = closure_workspace_diagnostic_cancel_rx.clone();
-                let closure_workspace_diagnostic_received_tx = closure_workspace_diagnostic_received_tx.clone();
                 let workspace_diagnostics_pulls_handle = fake_language_server.set_request_handler::<lsp::request::WorkspaceDiagnosticRequest, _, _>(
                     move |params, _| {
                         let workspace_requests_made = closure_workspace_diagnostics_pulls_made.clone();
@@ -2685,7 +2680,7 @@ async fn test_lsp_pull_diagnostics(
                             closure_workspace_diagnostics_pulls_result_ids.clone();
                         let workspace_diagnostic_cancel_rx = closure_workspace_diagnostic_cancel_rx.clone();
                         let workspace_diagnostic_received_tx = closure_workspace_diagnostic_received_tx.clone();
-                        let expected_workspace_diagnostic_token = closure_expected_workspace_diagnostic_token.clone();
+                        let expected_workspace_diagnostic_token = expected_workspace_diagnostic_token.clone();
                         async move {
                             let workspace_request_count =
                                 workspace_requests_made.fetch_add(1, atomic::Ordering::Release) + 1;
