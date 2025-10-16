@@ -82,7 +82,7 @@ impl WslRemoteConnection {
         this.can_exec = this.detect_can_exec(shell).await?;
         this.platform = this.detect_platform(shell).await?;
         this.remote_binary_path = Some(
-            this.ensure_server_binary(&delegate, release_channel, version, commit, cx)
+            this.ensure_server_binary(&delegate, release_channel, version, commit, shell, cx)
                 .await?,
         );
         log::debug!("Detected WSL environment: {this:#?}");
@@ -163,6 +163,7 @@ impl WslRemoteConnection {
         release_channel: ReleaseChannel,
         version: SemanticVersion,
         commit: Option<AppCommitSha>,
+        shell: ShellKind,
         cx: &mut AsyncApp,
     ) -> Result<Arc<RelPath>> {
         let version_str = match release_channel {
@@ -184,9 +185,13 @@ impl WslRemoteConnection {
             paths::remote_wsl_server_dir_relative().join(RelPath::unix(&binary_name).unwrap());
 
         if let Some(parent) = dst_path.parent() {
-            self.run_wsl_command("mkdir", &["-p", &parent.display(PathStyle::Posix)])
-                .await
-                .map_err(|e| anyhow!("Failed to create directory: {}", e))?;
+            let parent = parent.display(PathStyle::Posix);
+            if shell == ShellKind::Nushell {
+                self.run_wsl_command("mkdir", &[&parent]).await
+            } else {
+                self.run_wsl_command("mkdir", &["-p", &parent]).await
+            }
+            .map_err(|e| anyhow!("Failed to create directory: {}", e))?;
         }
 
         #[cfg(debug_assertions)]
