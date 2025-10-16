@@ -462,6 +462,17 @@ impl DispatchTree {
         (bindings, partial, context_stack)
     }
 
+    /// Find the bindings that can follow the current input sequence.
+    pub fn possible_next_bindings_for_input(
+        &self,
+        input: &[Keystroke],
+        context_stack: &[KeyContext],
+    ) -> Vec<KeyBinding> {
+        self.keymap
+            .borrow()
+            .possible_next_bindings_for_input(input, context_stack)
+    }
+
     /// dispatch_key processes the keystroke
     /// input should be set to the value of `pending` from the previous call to dispatch_key.
     /// This returns three instructions to the input handler:
