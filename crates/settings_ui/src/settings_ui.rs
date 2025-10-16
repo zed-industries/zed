@@ -34,7 +34,7 @@ use ui::{
 use ui_input::{NumberField, NumberFieldType};
 use util::{ResultExt as _, paths::PathStyle, rel_path::RelPath};
 use workspace::{OpenOptions, OpenVisible, Workspace, client_side_decorations};
-use zed_actions::OpenSettings;
+use zed_actions::{OpenSettings, OpenSettingsAt};
 
 use crate::components::SettingsEditor;
 
@@ -86,6 +86,7 @@ struct FocusFile(pub u32);
 struct SettingField<T: 'static> {
     pick: fn(&SettingsContent) -> &Option<T>,
     pick_mut: fn(&mut SettingsContent) -> &mut Option<T>,
+    json_path: &'static str,
 }
 
 impl<T: 'static> Clone for SettingField<T> {
@@ -116,6 +117,7 @@ impl<T: 'static> SettingField<T> {
         SettingField {
             pick: |_| &Some(UnimplementedSettingField),
             pick_mut: |_| unreachable!(),
+            json_path: "<invalid json path>",
         }
     }
 }
@@ -132,6 +134,8 @@ trait AnySettingField {
         file_set_in: &settings::SettingsFile,
         cx: &App,
     ) -> Option<Box<dyn Fn(&mut App)>>;
+    
+    fn json_path(&self) -> &'static str;
 }
 
 impl<T: PartialEq + Clone + Send + Sync + 'static> AnySettingField for SettingField<T> {
@@ -193,6 +197,10 @@ impl<T: PartialEq + Clone + Send + Sync + 'static> AnySettingField for SettingFi
             // todo(settings_ui): Don't log err
             .log_err();
         }));
+    }
+    
+    fn json_path(&self) -> &'static str {
+        self.json_path
     }
 }
 
@@ -342,12 +350,25 @@ pub fn init(cx: &mut App) {
     init_renderers(cx);
 
     cx.observe_new(|workspace: &mut workspace::Workspace, _, _| {
+        workspace.register_action(
+            |workspace, OpenSettingsAt { path }: &OpenSettingsAt, window, cx| {
+                let window_handle = window
+                    .window_handle()
+                    .downcast::<Workspace>()
+                    .expect("Workspaces are root Windows");
+                open_settings_editor(workspace, window_handle, cx, Some(&path));
+            },
+        );
+    })
+    .detach();
+
+    cx.observe_new(|workspace: &mut workspace::Workspace, _, _| {
         workspace.register_action(|workspace, _: &OpenSettings, window, cx| {
             let window_handle = window
                 .window_handle()
                 .downcast::<Workspace>()
                 .expect("Workspaces are root Windows");
-            open_settings_editor(workspace, window_handle, cx);
+            open_settings_editor(workspace, window_handle, cx, None);
         });
     })
     .detach();
@@ -447,7 +468,27 @@ pub fn open_settings_editor(
     _workspace: &mut Workspace,
     workspace_handle: WindowHandle<Workspace>,
     cx: &mut App,
+    path: Option<&str>,
 ) {
+    fn open_path(
+        path: &str,
+        window: &mut Window,
+        settings_window: &mut SettingsWindow,
+        cx: &mut App,
+    ) {
+        let item = settings_window.pages.iter().flat_map(|page| &page.items).find_map(|item| match item{
+            SettingsPageItem::SettingItem(item) if item.field.json_path() == path => Some(item),
+            _ => None
+        });
+        
+        let Some(item) = item else {
+            todo!("cameron");  // show an error popup maybe
+        };
+        
+        settings_window.open_and_scroll_to_setting(item, window, cx, focus_content);
+        todo!("cameron");
+    }
+
     let existing_window = cx
         .windows()
         .into_iter()
@@ -455,9 +496,12 @@ pub fn open_settings_editor(
 
     if let Some(existing_window) = existing_window {
         existing_window
-            .update(cx, |settings_window, window, _| {
+            .update(cx, |settings_window, window, cx| {
                 settings_window.original_window = Some(workspace_handle);
                 window.activate_window();
+                if let Some(path) = path {
+                    open_path(path, window, settings_window, cx);
+                }
             })
             .ok();
         return;
@@ -465,6 +509,7 @@ pub fn open_settings_editor(
 
     // We have to defer this to get the workspace off the stack.
 
+    let path = path.map(ToOwned::to_owned);
     cx.defer(move |cx| {
         cx.open_window(
             WindowOptions {
@@ -482,7 +527,18 @@ pub fn open_settings_editor(
                 window_bounds: Some(WindowBounds::centered(size(px(900.), px(750.)), cx)),
                 ..Default::default()
             },
-            |window, cx| cx.new(|cx| SettingsWindow::new(Some(workspace_handle), window, cx)),
+            |window, cx| {
+                let settings_window =
+                    cx.new(|cx| SettingsWindow::new(Some(workspace_handle), window, cx));
+                
+                settings_window.update(cx, |settings_window, cx| {
+                    if let Some(path) = path {
+                        open_path(&path, window, settings_window, cx);
+                    }
+                });
+                
+                settings_window
+            },
         )
         .log_err();
     });

@@ -8,6 +8,29 @@ use crate::{
     SubPageLink, USER, all_language_names, sub_page_stack,
 };
 
+/// Pulled out into a new macro because stringify doesn't guarantee the output representation
+#[doc(hidden)]
+macro_rules! _path_to_string {
+    ($(.)? $head:ident) => { stringify!($head) };
+    ($(.)? $head:ident $(. $tail:ident)* ) => {
+        concat!(_path_to_string!($head), ".", _path_to_string!($(. $tail)*))
+    };
+}
+
+/// Takes two parameters
+macro_rules! settings_field {
+    {
+        namespace: $namespace:ident,
+        path: $head:ident $(. $tail:ident)*,
+    } => {
+        Box::new(SettingField {
+            pick: |settings_content| &settings_content.$namespace.$head $(. $tail)*,
+            pick_mut: |settings_content| &mut settings_content.$namespace.$head $(. $tail)*,
+            json_path: _path_to_string!($head $(. $tail)*),
+        })
+    };
+}
+
 pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
     vec![
         SettingsPage {
@@ -17,62 +40,47 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Confirm Quit",
                     description: "Confirm before quitting Zed",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| &settings_content.workspace.confirm_quit,
-                        pick_mut: |settings_content| &mut settings_content.workspace.confirm_quit,
-                    }),
+                    field: settings_field!(
+                        namespace: workspace,
+                        path: confirm_quit,
+                    ),
                     metadata: None,
                     files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "When Closing With No Tabs",
                     description: "What to do when using the 'close active item' action with no tabs",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            &settings_content.workspace.when_closing_with_no_tabs
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content.workspace.when_closing_with_no_tabs
-                        },
-                    }),
+                    field: settings_field!(
+                       namespace: workspace,
+                       path: when_closing_with_no_tabs,
+                    ),
                     metadata: None,
                     files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "On Last Window Closed",
                     description: "What to do when the last window is closed",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| &settings_content.workspace.on_last_window_closed,
-                        pick_mut: |settings_content| {
-                            &mut settings_content.workspace.on_last_window_closed
-                        },
-                    }),
+                    field: settings_field!(
+                       namespace: workspace,
+                       path: on_last_window_closed,
+                    ),
                     metadata: None,
                     files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Use System Path Prompts",
                     description: "Use native OS dialogs for 'Open' and 'Save As'",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            &settings_content.workspace.use_system_path_prompts
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content.workspace.use_system_path_prompts
-                        },
-                    }),
+                    field: settings_field!(
+                       namespace: workspace,
+                       path: use_system_path_prompts,
+                    ),
                     metadata: None,
                     files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Use System Prompts",
                     description: "Use native OS dialogs for confirmations",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| &settings_content.workspace.use_system_prompts,
-                        pick_mut: |settings_content| {
-                            &mut settings_content.workspace.use_system_prompts
-                        },
-                    }),
+                    field: settings_field!(),
                     metadata: None,
                     files: USER,
                 }),
@@ -6347,4 +6355,27 @@ fn non_editor_language_settings_data() -> Vec<SettingsPageItem> {
             files: USER | LOCAL,
         }),
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn path_macro_works() {
+        assert_eq!(_path_to_string!(foo), "foo");
+        assert_eq!(_path_to_string!(foo.bar.baz), "foo.bar.baz");
+    }
+
+    #[test]
+    fn settings_field_macro_works() {
+        let field: Box<SettingsField<bool>> = settings_field!(
+            namespace: workspace,
+            path: confirm_quit,
+        );
+
+        assert_eq!(field.json_path, "confirm_quit");
+        assert_eq!(*field.pick(&SettingsContent::default()), false);
+        assert_eq!(*field.pick_mut(&mut SettingsContent::default()), false);
+    }
 }

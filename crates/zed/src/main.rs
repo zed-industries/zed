@@ -848,6 +848,10 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                     .detach();
                 });
             }
+            OpenRequestKind::Setting { setting_path } => {
+                // zed_actions::OpenSettings
+                cx.dispatch_action(&zed_actions::OpenSettingsAt { path: setting_path });
+            }
         }
 
         return;
