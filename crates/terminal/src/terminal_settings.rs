@@ -67,7 +67,7 @@ fn settings_shell_to_task_shell(shell: settings::Shell) -> Shell {
         } => Shell::WithArguments {
             program,
             args,
-            title_override,
+            title_override: title_override.map(Into::into),
         },
     }
 }
