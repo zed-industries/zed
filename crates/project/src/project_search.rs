@@ -116,6 +116,7 @@ impl Search {
                         scope.spawn(worker.run());
                     }
                     drop(tx);
+                    drop(find_all_matches_rx);
 
                     scope.spawn(Self::maintain_sorted_search_results(
                         sorted_search_results_rx,
