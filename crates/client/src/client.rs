@@ -336,7 +336,7 @@ impl Credentials {
     }
 }
 
-pub const CREDENTIAL_READ_TIMEOUT: Duration = Duration::from_secs(10);
+pub const CREDENTIAL_READ_TIMEOUT: Duration = Duration::from_secs(25);
 pub struct ClientCredentialsProvider {
     provider: Arc<dyn CredentialsProvider>,
 }
