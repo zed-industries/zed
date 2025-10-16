@@ -644,10 +644,12 @@ impl PlatformWindow for WindowsWindow {
                     let mut btn_encoded = Vec::new();
                     for (index, btn) in answers.iter().enumerate() {
                         let encoded = HSTRING::from(btn.label().as_ref());
-                        let button_id = if btn.is_cancel() {
-                            IDCANCEL.0
-                        } else {
-                            index as i32 - 100
+                        let button_id = match btn {
+                            PromptButton::Ok(_) => IDOK.0,
+                            PromptButton::Cancel(_) => IDCANCEL.0,
+                            // the first few low integer values are reserved for known buttons
+                            // so for simplicity we just go backwards from -1
+                            PromptButton::Other(_) => -(index as i32) - 1,
                         };
                         button_id_map.push(button_id);
                         buttons.push(TASKDIALOG_BUTTON {
@@ -665,11 +667,11 @@ impl PlatformWindow for WindowsWindow {
                         .context("unable to create task dialog")
                         .log_err();
 
-                    let clicked = button_id_map
-                        .iter()
-                        .position(|&button_id| button_id == res)
-                        .unwrap();
-                    let _ = done_tx.send(clicked);
+                    if let Some(clicked) =
+                        button_id_map.iter().position(|&button_id| button_id == res)
+                    {
+                        let _ = done_tx.send(clicked);
+                    }
                 }
             })
             .detach();
