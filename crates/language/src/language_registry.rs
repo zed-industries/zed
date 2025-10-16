@@ -260,6 +260,7 @@ pub struct LoadedLanguage {
     pub manifest_name: Option<ManifestName>,
     pub variable_capture_names: Option<Vec<String>>,
     pub variable_parent_kinds: Option<Vec<String>>,
+    pub variable_lsp_token_types: Option<Vec<String>>,
 }
 
 impl LanguageRegistry {
@@ -358,6 +359,7 @@ impl LanguageRegistry {
                     toolchain_provider: None,
                     variable_capture_names: None,
                     variable_parent_kinds: None,
+                    variable_lsp_token_types: None,
                     context_provider: None,
                     manifest_name: None,
                 })
@@ -957,18 +959,23 @@ impl LanguageRegistry {
                             if let Some(grammar) = loaded_language.config.grammar.clone() {
                                 let grammar = Some(this.get_or_load_grammar(grammar).await?);
 
-                                let mut language = Language::new_with_id(id, loaded_language.config, grammar)
-                                    .with_context_provider(loaded_language.context_provider)
-                                    .with_toolchain_lister(loaded_language.toolchain_provider)
-                                    .with_manifest(loaded_language.manifest_name)
-                                    .with_queries(loaded_language.queries)?;
+                                let mut language =
+                                    Language::new_with_id(id, loaded_language.config, grammar)
+                                        .with_context_provider(loaded_language.context_provider)
+                                        .with_toolchain_lister(loaded_language.toolchain_provider)
+                                        .with_manifest(loaded_language.manifest_name)
+                                        .with_queries(loaded_language.queries)?;
 
                                 if let Some(names) = loaded_language.variable_capture_names {
-                                    let names_refs: Vec<&str> = names.iter().map(|s| s.as_str()).collect();
+                                    let names_refs: Vec<&str> =
+                                        names.iter().map(|s| s.as_str()).collect();
                                     language = language.with_variable_capture_names(&names_refs)?;
                                 }
                                 if let Some(kinds) = loaded_language.variable_parent_kinds {
                                     language = language.with_variable_parent_kinds(kinds)?;
+                                }
+                                if let Some(types) = loaded_language.variable_lsp_token_types {
+                                    language = language.with_variable_lsp_token_types(types)?;
                                 }
 
                                 Ok(language)

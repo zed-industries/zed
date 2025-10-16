@@ -8,15 +8,15 @@ pub fn is_valid_identifier(text: &str) -> bool {
     if text.len() < 2 {
         return false;
     }
-    
+
     if text.contains(char::is_whitespace) || text.contains(|c: char| c.is_control()) {
         return false;
     }
-    
+
     if text.chars().all(|c| c == '_') {
         return false;
     }
-    
+
     let mut chars = text.chars();
     match chars.next() {
         Some(first) if first.is_alphabetic() || first == '_' => {
@@ -32,7 +32,7 @@ pub trait RainbowConfig: Send + Sync {
     /// Returns the set of keywords/builtin identifiers to exclude from rainbow highlighting.
     /// This should include language keywords, common builtins, and reserved words.
     fn excluded_identifiers(&self) -> &HashSet<&'static str>;
-    
+
     /// Checks if an identifier should be rainbow highlighted.
     /// Returns true if the identifier is valid and not a keyword.
     fn should_highlight(&self, identifier: &str) -> bool {
@@ -48,7 +48,7 @@ pub struct DefaultRainbowConfig {
 impl Default for DefaultRainbowConfig {
     fn default() -> Self {
         let mut excluded = HashSet::new();
-        
+
         // Common keywords that should never be rainbow highlighted
         excluded.insert("self");
         excluded.insert("super");
@@ -57,7 +57,7 @@ impl Default for DefaultRainbowConfig {
         excluded.insert("none");
         excluded.insert("null");
         excluded.insert("undefined");
-        
+
         Self { excluded }
     }
 }
@@ -76,7 +76,7 @@ pub struct RustRainbowConfig {
 impl Default for RustRainbowConfig {
     fn default() -> Self {
         let mut excluded = HashSet::new();
-        
+
         // Rust keywords
         excluded.insert("self");
         excluded.insert("super");
@@ -105,7 +105,7 @@ impl Default for RustRainbowConfig {
         excluded.insert("break");
         excluded.insert("continue");
         excluded.insert("return");
-        
+
         Self { excluded }
     }
 }
@@ -124,7 +124,7 @@ pub struct PythonRainbowConfig {
 impl Default for PythonRainbowConfig {
     fn default() -> Self {
         let mut excluded = HashSet::new();
-        
+
         // Python keywords
         excluded.insert("def");
         excluded.insert("class");
@@ -153,7 +153,7 @@ impl Default for PythonRainbowConfig {
         excluded.insert("true");
         excluded.insert("false");
         excluded.insert("none");
-        
+
         // Common builtins
         excluded.insert("print");
         excluded.insert("len");
@@ -173,7 +173,7 @@ impl Default for PythonRainbowConfig {
         excluded.insert("abs");
         excluded.insert("all");
         excluded.insert("any");
-        
+
         Self { excluded }
     }
 }
@@ -191,7 +191,7 @@ pub struct TypeScriptRainbowConfig {
 impl Default for TypeScriptRainbowConfig {
     fn default() -> Self {
         let mut excluded = HashSet::new();
-        
+
         excluded.insert("abstract");
         excluded.insert("any");
         excluded.insert("as");
@@ -260,7 +260,7 @@ impl Default for TypeScriptRainbowConfig {
         excluded.insert("while");
         excluded.insert("with");
         excluded.insert("yield");
-        
+
         excluded.insert("console");
         excluded.insert("window");
         excluded.insert("document");
@@ -271,7 +271,7 @@ impl Default for TypeScriptRainbowConfig {
         excluded.insert("Boolean");
         excluded.insert("Function");
         excluded.insert("Promise");
-        
+
         Self { excluded }
     }
 }
@@ -289,7 +289,7 @@ pub struct JavaScriptRainbowConfig {
 impl Default for JavaScriptRainbowConfig {
     fn default() -> Self {
         let mut excluded = HashSet::new();
-        
+
         excluded.insert("arguments");
         excluded.insert("async");
         excluded.insert("await");
@@ -334,11 +334,11 @@ impl Default for JavaScriptRainbowConfig {
         excluded.insert("while");
         excluded.insert("with");
         excluded.insert("yield");
-        
+
         excluded.insert("console");
         excluded.insert("window");
         excluded.insert("document");
-        
+
         Self { excluded }
     }
 }
@@ -356,7 +356,7 @@ pub struct GoRainbowConfig {
 impl Default for GoRainbowConfig {
     fn default() -> Self {
         let mut excluded = HashSet::new();
-        
+
         excluded.insert("break");
         excluded.insert("case");
         excluded.insert("chan");
@@ -382,12 +382,12 @@ impl Default for GoRainbowConfig {
         excluded.insert("switch");
         excluded.insert("type");
         excluded.insert("var");
-        
+
         excluded.insert("true");
         excluded.insert("false");
         excluded.insert("nil");
         excluded.insert("iota");
-        
+
         excluded.insert("append");
         excluded.insert("cap");
         excluded.insert("close");
@@ -403,7 +403,7 @@ impl Default for GoRainbowConfig {
         excluded.insert("println");
         excluded.insert("real");
         excluded.insert("recover");
-        
+
         Self { excluded }
     }
 }
@@ -421,7 +421,7 @@ pub struct CppRainbowConfig {
 impl Default for CppRainbowConfig {
     fn default() -> Self {
         let mut excluded = HashSet::new();
-        
+
         excluded.insert("alignas");
         excluded.insert("alignof");
         excluded.insert("and");
@@ -514,13 +514,13 @@ impl Default for CppRainbowConfig {
         excluded.insert("while");
         excluded.insert("xor");
         excluded.insert("xor_eq");
-        
+
         excluded.insert("std");
         excluded.insert("cout");
         excluded.insert("cin");
         excluded.insert("endl");
         excluded.insert("NULL");
-        
+
         Self { excluded }
     }
 }
@@ -538,7 +538,7 @@ pub struct JavaRainbowConfig {
 impl Default for JavaRainbowConfig {
     fn default() -> Self {
         let mut excluded = HashSet::new();
-        
+
         excluded.insert("abstract");
         excluded.insert("assert");
         excluded.insert("boolean");
@@ -589,11 +589,11 @@ impl Default for JavaRainbowConfig {
         excluded.insert("void");
         excluded.insert("volatile");
         excluded.insert("while");
-        
+
         excluded.insert("true");
         excluded.insert("false");
         excluded.insert("null");
-        
+
         excluded.insert("String");
         excluded.insert("System");
         excluded.insert("Object");
@@ -601,7 +601,7 @@ impl Default for JavaRainbowConfig {
         excluded.insert("Boolean");
         excluded.insert("Double");
         excluded.insert("Float");
-        
+
         Self { excluded }
     }
 }
@@ -619,7 +619,7 @@ pub struct CSharpRainbowConfig {
 impl Default for CSharpRainbowConfig {
     fn default() -> Self {
         let mut excluded = HashSet::new();
-        
+
         excluded.insert("abstract");
         excluded.insert("as");
         excluded.insert("base");
@@ -697,20 +697,20 @@ impl Default for CSharpRainbowConfig {
         excluded.insert("void");
         excluded.insert("volatile");
         excluded.insert("while");
-        
+
         excluded.insert("var");
         excluded.insert("dynamic");
         excluded.insert("async");
         excluded.insert("await");
         excluded.insert("nameof");
         excluded.insert("when");
-        
+
         excluded.insert("String");
         excluded.insert("Int32");
         excluded.insert("Console");
         excluded.insert("Task");
         excluded.insert("List");
-        
+
         Self { excluded }
     }
 }
@@ -728,7 +728,7 @@ pub struct PhpRainbowConfig {
 impl Default for PhpRainbowConfig {
     fn default() -> Self {
         let mut excluded = HashSet::new();
-        
+
         excluded.insert("abstract");
         excluded.insert("and");
         excluded.insert("array");
@@ -795,13 +795,13 @@ impl Default for PhpRainbowConfig {
         excluded.insert("while");
         excluded.insert("xor");
         excluded.insert("yield");
-        
+
         excluded.insert("true");
         excluded.insert("false");
         excluded.insert("null");
         excluded.insert("self");
         excluded.insert("parent");
-        
+
         Self { excluded }
     }
 }
@@ -819,7 +819,7 @@ pub struct RubyRainbowConfig {
 impl Default for RubyRainbowConfig {
     fn default() -> Self {
         let mut excluded = HashSet::new();
-        
+
         excluded.insert("BEGIN");
         excluded.insert("END");
         excluded.insert("alias");
@@ -858,7 +858,7 @@ impl Default for RubyRainbowConfig {
         excluded.insert("when");
         excluded.insert("while");
         excluded.insert("yield");
-        
+
         excluded.insert("puts");
         excluded.insert("print");
         excluded.insert("gets");
@@ -868,7 +868,7 @@ impl Default for RubyRainbowConfig {
         excluded.insert("attr_reader");
         excluded.insert("attr_writer");
         excluded.insert("attr_accessor");
-        
+
         Self { excluded }
     }
 }
@@ -886,7 +886,7 @@ pub struct SwiftRainbowConfig {
 impl Default for SwiftRainbowConfig {
     fn default() -> Self {
         let mut excluded = HashSet::new();
-        
+
         excluded.insert("associatedtype");
         excluded.insert("class");
         excluded.insert("deinit");
@@ -939,7 +939,7 @@ impl Default for SwiftRainbowConfig {
         excluded.insert("throws");
         excluded.insert("true");
         excluded.insert("try");
-        
+
         excluded.insert("Any");
         excluded.insert("String");
         excluded.insert("Int");
@@ -947,7 +947,7 @@ impl Default for SwiftRainbowConfig {
         excluded.insert("Array");
         excluded.insert("Dictionary");
         excluded.insert("Optional");
-        
+
         Self { excluded }
     }
 }
@@ -965,7 +965,7 @@ pub struct KotlinRainbowConfig {
 impl Default for KotlinRainbowConfig {
     fn default() -> Self {
         let mut excluded = HashSet::new();
-        
+
         excluded.insert("as");
         excluded.insert("break");
         excluded.insert("class");
@@ -994,7 +994,7 @@ impl Default for KotlinRainbowConfig {
         excluded.insert("var");
         excluded.insert("when");
         excluded.insert("while");
-        
+
         excluded.insert("by");
         excluded.insert("catch");
         excluded.insert("constructor");
@@ -1012,7 +1012,7 @@ impl Default for KotlinRainbowConfig {
         excluded.insert("set");
         excluded.insert("setparam");
         excluded.insert("where");
-        
+
         excluded.insert("actual");
         excluded.insert("abstract");
         excluded.insert("annotation");
@@ -1042,14 +1042,14 @@ impl Default for KotlinRainbowConfig {
         excluded.insert("suspend");
         excluded.insert("tailrec");
         excluded.insert("vararg");
-        
+
         excluded.insert("String");
         excluded.insert("Int");
         excluded.insert("Boolean");
         excluded.insert("Any");
         excluded.insert("Unit");
         excluded.insert("Nothing");
-        
+
         Self { excluded }
     }
 }
@@ -1091,7 +1091,7 @@ mod tests {
     #[test]
     fn test_rust_should_highlight() {
         let config = RustRainbowConfig::default();
-        
+
         assert!(config.should_highlight("my_variable"));
         assert!(config.should_highlight("user_name"));
         assert!(!config.should_highlight("self"));
@@ -1104,7 +1104,7 @@ mod tests {
     #[test]
     fn test_python_should_highlight() {
         let config = PythonRainbowConfig::default();
-        
+
         assert!(config.should_highlight("my_var"));
         assert!(config.should_highlight("user_data"));
         assert!(!config.should_highlight("def"));
@@ -1118,7 +1118,7 @@ mod tests {
         let rust = RustRainbowConfig::default();
         let python = PythonRainbowConfig::default();
         let ts = TypeScriptRainbowConfig::default();
-        
+
         assert!(rust.excluded_identifiers().contains("true"));
         assert!(python.excluded_identifiers().contains("true"));
         assert!(ts.excluded_identifiers().contains("true"));

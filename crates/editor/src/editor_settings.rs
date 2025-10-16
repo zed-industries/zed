@@ -175,7 +175,7 @@ pub enum VariableColorMode {
 }
 
 /// Variable color highlighting configuration.
-/// 
+///
 /// This feature assigns consistent, distinct colors to different variables
 /// to improve code readability and help distinguish between identifiers.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -184,7 +184,7 @@ pub struct RainbowConfig {
     ///
     /// Default: false
     pub enabled: bool,
-    
+
     /// Color generation mode.
     ///
     /// - `ThemePalette`: Uses colors from your theme's rainbow palette (respects theme design)
@@ -210,18 +210,22 @@ mod rainbow_tests {
     #[test]
     fn test_rainbow_config_defaults() {
         let config = RainbowConfig::default();
-        
+
         assert!(!config.enabled, "Should be disabled by default");
-        assert_eq!(config.mode, VariableColorMode::ThemePalette, "Should default to theme palette");
+        assert_eq!(
+            config.mode,
+            VariableColorMode::ThemePalette,
+            "Should default to theme palette"
+        );
     }
-    
+
     #[test]
     fn test_rainbow_config_enabled() {
         let config = RainbowConfig {
             enabled: true,
             mode: VariableColorMode::DynamicHSL,
         };
-        
+
         assert!(config.enabled);
         assert_eq!(config.mode, VariableColorMode::DynamicHSL);
     }
@@ -341,7 +345,7 @@ impl Settings for EditorSettings {
                         VariableColorMode::ThemePalette
                     }
                 };
-                
+
                 RainbowConfig {
                     enabled: rh.enabled.unwrap_or(false),
                     mode,

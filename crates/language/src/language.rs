@@ -22,6 +22,8 @@ mod toolchain;
 
 #[cfg(test)]
 pub mod buffer_tests;
+#[cfg(test)]
+mod variable_detection_tests;
 
 use crate::language_settings::SoftWrap;
 pub use crate::language_settings::{EditPredictionsMode, IndentGuideSettings};
@@ -1175,6 +1177,9 @@ pub struct HighlightsConfig {
     /// Parent node kinds that indicate variable contexts when captures are not available.
     /// Examples: "let_declaration", "assignment_expression", "binary_expression"
     pub variable_parent_kinds: Vec<String>,
+    /// LSP semantic token types that represent variable-like identifiers.
+    /// Examples: "variable", "parameter", "const"
+    pub variable_lsp_token_types: Vec<String>,
 }
 
 impl HighlightsConfig {
@@ -1182,12 +1187,19 @@ impl HighlightsConfig {
     pub fn is_variable_capture(&self, capture_index: u32) -> bool {
         self.variable_capture_indices.contains(&capture_index)
     }
-    
+
     /// Checks if a parent node kind indicates a variable context.
     pub fn is_variable_parent_kind(&self, parent_kind: &str) -> bool {
-        self.variable_parent_kinds.iter().any(|kind| {
-            parent_kind == kind || parent_kind.contains(kind)
-        })
+        self.variable_parent_kinds
+            .iter()
+            .any(|kind| parent_kind == kind || parent_kind.contains(kind))
+    }
+
+    /// Checks if an LSP semantic token type represents a variable-like identifier.
+    pub fn is_variable_lsp_token_type(&self, token_type: &str) -> bool {
+        self.variable_lsp_token_types
+            .iter()
+            .any(|t| t == token_type)
     }
 }
 
@@ -1484,6 +1496,7 @@ impl Language {
             identifier_capture_indices,
             variable_capture_indices,
             variable_parent_kinds: Self::default_variable_parent_kinds(),
+            variable_lsp_token_types: Self::default_variable_lsp_token_types(),
         });
 
         Ok(self)
@@ -1507,6 +1520,14 @@ impl Language {
         let grammar = self.grammar_mut()?;
         if let Some(highlights_config) = &mut grammar.highlights_config {
             highlights_config.variable_parent_kinds = kinds;
+        }
+        Ok(self)
+    }
+
+    pub fn with_variable_lsp_token_types(mut self, types: Vec<String>) -> Result<Self> {
+        let grammar = self.grammar_mut()?;
+        if let Some(highlights_config) = &mut grammar.highlights_config {
+            highlights_config.variable_lsp_token_types = types;
         }
         Ok(self)
     }
@@ -1537,6 +1558,14 @@ impl Language {
             "block".to_string(),
             "return_statement".to_string(),
             "token_tree".to_string(),
+        ]
+    }
+
+    fn default_variable_lsp_token_types() -> Vec<String> {
+        vec![
+            "variable".to_string(),
+            "parameter".to_string(),
+            "const".to_string(),
         ]
     }
 

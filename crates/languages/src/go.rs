@@ -26,12 +26,13 @@ use std::{
 use task::{TaskTemplate, TaskTemplates, TaskVariables, VariableName};
 use util::{ResultExt, fs::remove_matching, maybe};
 
-/// Returns Go-specific variable capture names and parent kinds for rainbow highlighting.
-pub fn variable_config() -> (Option<Vec<String>>, Option<Vec<String>>) {
-    let capture_names = vec![
-        "variable".to_string(),
-        "constant".to_string(),
-    ];
+/// Returns Go-specific variable capture names, parent kinds, and LSP token types for rainbow highlighting.
+pub fn variable_config() -> (
+    Option<Vec<String>>,
+    Option<Vec<String>>,
+    Option<Vec<String>>,
+) {
+    let capture_names = vec!["variable".to_string(), "constant".to_string()];
 
     let parent_kinds = vec![
         "var_declaration".to_string(),
@@ -54,7 +55,13 @@ pub fn variable_config() -> (Option<Vec<String>>, Option<Vec<String>>) {
         "keyed_element".to_string(),
     ];
 
-    (Some(capture_names), Some(parent_kinds))
+    let lsp_token_types = vec!["variable".to_string(), "parameter".to_string()];
+
+    (
+        Some(capture_names),
+        Some(parent_kinds),
+        Some(lsp_token_types),
+    )
 }
 
 fn server_binary_arguments() -> Vec<OsString> {
@@ -1345,39 +1352,75 @@ mod tests {
 
     #[test]
     fn test_go_variable_config() {
-        let (capture_names, parent_kinds) = super::variable_config();
-        assert!(capture_names.is_some() && parent_kinds.is_some());
+        let (capture_names, parent_kinds, lsp_token_types) = super::variable_config();
+        assert!(capture_names.is_some() && parent_kinds.is_some() && lsp_token_types.is_some());
     }
 
     #[test]
     fn test_go_captures_essential_types() {
-        let (capture_names, parent_kinds) = super::variable_config();
+        let (capture_names, parent_kinds, _) = super::variable_config();
         let captures = capture_names.unwrap();
         let kinds = parent_kinds.unwrap();
-        
+
         // Verify we have essential Go variable types
         // Variables and constants
-        assert!(captures.contains(&"variable".to_string()), "Should capture variables");
-        assert!(captures.contains(&"constant".to_string()), "Should capture constants");
-        
+        assert!(
+            captures.contains(&"variable".to_string()),
+            "Should capture variables"
+        );
+        assert!(
+            captures.contains(&"constant".to_string()),
+            "Should capture constants"
+        );
+
         // Declarations
-        assert!(kinds.contains(&"var_declaration".to_string()), "Should include var declarations");
-        assert!(kinds.contains(&"const_declaration".to_string()), "Should include const declarations");
-        assert!(kinds.contains(&"short_var_declaration".to_string()), "Should include := declarations");
-        
+        assert!(
+            kinds.contains(&"var_declaration".to_string()),
+            "Should include var declarations"
+        );
+        assert!(
+            kinds.contains(&"const_declaration".to_string()),
+            "Should include const declarations"
+        );
+        assert!(
+            kinds.contains(&"short_var_declaration".to_string()),
+            "Should include := declarations"
+        );
+
         // Parameters
-        assert!(kinds.contains(&"parameter_list".to_string()), "Should include function parameters");
-        assert!(kinds.contains(&"parameter_declaration".to_string()), "Should include parameter declarations");
-        
+        assert!(
+            kinds.contains(&"parameter_list".to_string()),
+            "Should include function parameters"
+        );
+        assert!(
+            kinds.contains(&"parameter_declaration".to_string()),
+            "Should include parameter declarations"
+        );
+
         // Range loops
-        assert!(kinds.contains(&"range_clause".to_string()), "Should include range loops");
-        
+        assert!(
+            kinds.contains(&"range_clause".to_string()),
+            "Should include range loops"
+        );
+
         // Control flow
-        assert!(kinds.contains(&"for_statement".to_string()), "Should include for loops");
-        assert!(kinds.contains(&"if_statement".to_string()), "Should include if statements");
-        
-        // Switch statements  
-        assert!(kinds.contains(&"expression_switch_statement".to_string()), "Should include switch statements");
-        assert!(kinds.contains(&"type_switch_statement".to_string()), "Should include type switch");
+        assert!(
+            kinds.contains(&"for_statement".to_string()),
+            "Should include for loops"
+        );
+        assert!(
+            kinds.contains(&"if_statement".to_string()),
+            "Should include if statements"
+        );
+
+        // Switch statements
+        assert!(
+            kinds.contains(&"expression_switch_statement".to_string()),
+            "Should include switch statements"
+        );
+        assert!(
+            kinds.contains(&"type_switch_statement".to_string()),
+            "Should include type switch"
+        );
     }
 }

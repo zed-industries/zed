@@ -171,10 +171,20 @@ impl SyntaxTokenView {
     ) -> Option<Self> {
         let mut tokens = Vec::new();
 
+        // Pre-collect all variable captures once to avoid O(n*m) complexity
+        let variable_captures = Self::collect_variable_captures(&snapshot);
+
         // Walk the syntax tree to find ALL identifiers
         for layer in snapshot.syntax_layers() {
             let root = layer.node();
-            Self::extract_identifiers_recursive(root, &snapshot, cache, theme, &mut tokens);
+            Self::extract_identifiers_recursive(
+                root,
+                &snapshot,
+                cache,
+                theme,
+                &mut tokens,
+                &variable_captures,
+            );
         }
 
         if tokens.is_empty() {
@@ -200,12 +210,47 @@ impl SyntaxTokenView {
         })
     }
 
+    /// Collect all variable captures once to avoid repeated queries.
+    /// Returns a HashSet of byte ranges that represent variable identifiers.
+    fn collect_variable_captures(
+        snapshot: &language::BufferSnapshot,
+    ) -> std::collections::HashSet<Range<usize>> {
+        use std::collections::HashSet;
+        let mut captures = HashSet::new();
+
+        for layer in snapshot.syntax_layers() {
+            let Some(grammar) = layer.language.grammar() else {
+                continue;
+            };
+            let Some(highlights_config) = &grammar.highlights_config else {
+                continue;
+            };
+
+            let mut query_captures =
+                snapshot
+                    .syntax
+                    .captures(0..snapshot.len(), &snapshot.text, |g| {
+                        g.highlights_config.as_ref().map(|c| &c.query)
+                    });
+
+            while let Some(capture) = query_captures.next() {
+                if highlights_config.is_variable_capture(capture.index) {
+                    let range = capture.node.start_byte()..capture.node.end_byte();
+                    captures.insert(range);
+                }
+            }
+        }
+
+        captures
+    }
+
     fn extract_identifiers_recursive(
         node: language::Node,
         snapshot: &language::BufferSnapshot,
         cache: &crate::rainbow::VariableColorCache,
         theme: &theme::SyntaxTheme,
         tokens: &mut Vec<SyntaxToken>,
+        variable_captures: &std::collections::HashSet<Range<usize>>,
     ) {
         // Process identifier nodes and metavariables (Rust macro parameters like $name)
         if node.kind() == "identifier" || node.kind() == "metavariable" {
@@ -220,8 +265,8 @@ impl SyntaxTokenView {
                 start += 1; // Skip the $ character in the token range
             }
 
-            // Check if this identifier has a variable-like capture
-            if Self::is_variable_context(&node, &snapshot) {
+            // Check if this identifier has a variable-like capture (cached lookup)
+            if Self::is_variable_context_cached(&node, start..end, snapshot, variable_captures) {
                 if let Some(validated) =
                     crate::rainbow::validate_identifier_for_rainbow(&identifier)
                 {
@@ -237,24 +282,39 @@ impl SyntaxTokenView {
         // Recursively process children
         let mut cursor = node.walk();
         for child in node.children(&mut cursor) {
-            Self::extract_identifiers_recursive(child, snapshot, cache, theme, tokens);
+            Self::extract_identifiers_recursive(
+                child,
+                snapshot,
+                cache,
+                theme,
+                tokens,
+                variable_captures,
+            );
         }
     }
 
-    /// Language-configurable variable detection using HighlightsConfig.
+    /// Optimized variable detection using pre-collected captures cache.
     ///
-    /// Delegates to the language's HighlightsConfig for both:
-    /// 1. Capture index matching (primary detection) - uses variable_capture_indices
-    /// 2. Parent node kind checking (fallback when captures unavailable)
+    /// This uses a two-tier approach:
+    /// 1. O(1) lookup in the cached captures HashSet (primary, fast path)
+    /// 2. Parent node kind checking (fallback for uncaptured contexts)
     ///
-    /// Each language can customize via:
-    /// - .with_variable_capture_names(&["variable", "parameter", ...])
-    /// - .with_variable_parent_kinds(vec!["let_declaration", ...])
-    fn is_variable_context(node: &language::Node, snapshot: &language::BufferSnapshot) -> bool {
-        let start = node.start_byte();
-        let end = node.end_byte();
+    /// This eliminates the O(n*m) complexity of querying captures for each identifier.
+    fn is_variable_context_cached(
+        node: &language::Node,
+        range: Range<usize>,
+        snapshot: &language::BufferSnapshot,
+        variable_captures: &std::collections::HashSet<Range<usize>>,
+    ) -> bool {
+        // Fast path: O(1) lookup in the pre-collected captures
+        if variable_captures.contains(&range) {
+            return true;
+        }
 
-        // Find which syntax layer contains this node
+        // Fallback: Check parent node kind (for contexts not captured by tree-sitter queries)
+        let start = range.start;
+        let end = range.end;
+
         let Some(layer) = snapshot
             .syntax
             .layers_for_range(start..end, &snapshot.text, false)
@@ -271,33 +331,6 @@ impl SyntaxTokenView {
             return false;
         };
 
-        // First try: Check highlight captures using language's configuration
-        // Query captures in a wider range to ensure we get all relevant captures
-        let query_start = node.parent().map(|p| p.start_byte()).unwrap_or(start);
-        let query_end = node.parent().map(|p| p.end_byte()).unwrap_or(end);
-
-        let mut captures = snapshot
-            .syntax
-            .captures(query_start..query_end, &snapshot.text, |g| {
-                g.highlights_config.as_ref().map(|c| &c.query)
-            });
-
-        while let Some(capture) = captures.next() {
-            let capture_start = capture.node.start_byte();
-            let capture_end = capture.node.end_byte();
-
-            // The capture must cover our identifier
-            if !(capture_start <= start && capture_end >= end) {
-                continue;
-            }
-
-            // Check if this capture index is configured as a variable capture
-            if highlights_config.is_variable_capture(capture.index) {
-                return true;
-            }
-        }
-
-        // Fallback: Check parent node kind using language's configuration
         if let Some(parent) = node.parent() {
             return highlights_config.is_variable_parent_kind(parent.kind());
         }
@@ -1796,6 +1829,10 @@ impl SemanticTokenView {
         let buffer = buffer.read(cx);
 
         let rainbow_config = EditorSettings::get_global(cx).rainbow_highlighting;
+        let highlights_config = buffer
+            .language()
+            .and_then(|lang| lang.grammar())
+            .and_then(|grammar| grammar.highlights_config.as_ref());
         let stylizer = SemanticTokenStylizer::new(legend, &rainbow_config);
 
         let mut tokens = lsp
@@ -1817,6 +1854,7 @@ impl SemanticTokenView {
                         &buffer,
                         start_offset..end_offset,
                         variable_color_cache,
+                        highlights_config,
                     )?,
                     lsp_type: token.token_type,
                     lsp_modifiers: token.token_modifiers,
@@ -1910,6 +1948,7 @@ impl<'a> SemanticTokenStylizer<'a> {
         buffer: &text::Buffer,
         range: Range<usize>,
         variable_color_cache: Option<&Arc<crate::rainbow::VariableColorCache>>,
+        highlights_config: Option<&language::HighlightsConfig>,
     ) -> Option<HighlightStyle> {
         let token_type_name = self.token_type(token_type)?;
         let has_modifier = |modifier| self.has_modifier(modifiers, modifier);
@@ -2012,8 +2051,11 @@ impl<'a> SemanticTokenStylizer<'a> {
         };
 
         // Rainbow coloring for variables (when enabled)
-        // Extract variable name from buffer and apply rainbow color
-        let is_variable = matches!(token_type_name, "variable" | "parameter" | "const");
+        // Use language configuration to determine if this is a variable token
+        let is_variable = highlights_config
+            .map(|config| config.is_variable_lsp_token_type(token_type_name))
+            .unwrap_or(false);
+
         if is_variable && self.rainbow_config.enabled {
             if let Some(cache) = variable_color_cache {
                 let variable_name: String = buffer.text_for_range(range).collect();

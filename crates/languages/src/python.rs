@@ -38,8 +38,12 @@ use std::{
 use task::{ShellKind, TaskTemplate, TaskTemplates, VariableName};
 use util::{ResultExt, maybe};
 
-/// Returns Python-specific variable capture names and parent kinds for rainbow highlighting.
-pub fn variable_config() -> (Option<Vec<String>>, Option<Vec<String>>) {
+/// Returns Python-specific variable capture names, parent kinds, and LSP token types for rainbow highlighting.
+pub fn variable_config() -> (
+    Option<Vec<String>>,
+    Option<Vec<String>>,
+    Option<Vec<String>>,
+) {
     let capture_names = vec![
         "variable".to_string(),
         "variable.parameter".to_string(),
@@ -69,7 +73,13 @@ pub fn variable_config() -> (Option<Vec<String>>, Option<Vec<String>>) {
         "set_comprehension".to_string(),
     ];
 
-    (Some(capture_names), Some(parent_kinds))
+    let lsp_token_types = vec!["variable".to_string(), "parameter".to_string()];
+
+    (
+        Some(capture_names),
+        Some(parent_kinds),
+        Some(lsp_token_types),
+    )
 }
 
 pub(crate) struct PyprojectTomlManifestProvider;
@@ -2348,39 +2358,69 @@ mod tests {
 
     #[test]
     fn test_python_variable_config() {
-        let (capture_names, parent_kinds) = super::variable_config();
-        assert!(capture_names.is_some() && parent_kinds.is_some());
+        let (capture_names, parent_kinds, lsp_token_types) = super::variable_config();
+        assert!(capture_names.is_some() && parent_kinds.is_some() && lsp_token_types.is_some());
     }
 
     #[test]
     fn test_python_captures_essential_types() {
-        let (capture_names, parent_kinds) = super::variable_config();
+        let (capture_names, parent_kinds, _) = super::variable_config();
         let _captures = capture_names.unwrap();
         let kinds = parent_kinds.unwrap();
-        
+
         // Verify we have essential Python variable types
         // Parameters
-        assert!(kinds.contains(&"parameters".to_string()), "Should include parameters");
-        
+        assert!(
+            kinds.contains(&"parameters".to_string()),
+            "Should include parameters"
+        );
+
         // Lambda
-        assert!(kinds.contains(&"lambda".to_string()), "Should include lambda");
-        
+        assert!(
+            kinds.contains(&"lambda".to_string()),
+            "Should include lambda"
+        );
+
         // Loops
-        assert!(kinds.contains(&"for_statement".to_string()), "Should include for loops");
-        assert!(kinds.contains(&"for_in_clause".to_string()), "Should include for-in");
-        
+        assert!(
+            kinds.contains(&"for_statement".to_string()),
+            "Should include for loops"
+        );
+        assert!(
+            kinds.contains(&"for_in_clause".to_string()),
+            "Should include for-in"
+        );
+
         // Comprehensions
-        assert!(kinds.contains(&"list_comprehension".to_string()), "Should include list comprehensions");
-        assert!(kinds.contains(&"dictionary_comprehension".to_string()), "Should include dict comprehensions");
-        
+        assert!(
+            kinds.contains(&"list_comprehension".to_string()),
+            "Should include list comprehensions"
+        );
+        assert!(
+            kinds.contains(&"dictionary_comprehension".to_string()),
+            "Should include dict comprehensions"
+        );
+
         // Exception handling
-        assert!(kinds.contains(&"except_clause".to_string()), "Should include exception variables");
-        
+        assert!(
+            kinds.contains(&"except_clause".to_string()),
+            "Should include exception variables"
+        );
+
         // With statements
-        assert!(kinds.contains(&"with_statement".to_string()), "Should include with statement");
-        
+        assert!(
+            kinds.contains(&"with_statement".to_string()),
+            "Should include with statement"
+        );
+
         // Assignment types
-        assert!(kinds.contains(&"assignment".to_string()), "Should include assignment");
-        assert!(kinds.contains(&"named_expression".to_string()), "Should include named expressions (walrus)");
+        assert!(
+            kinds.contains(&"assignment".to_string()),
+            "Should include assignment"
+        );
+        assert!(
+            kinds.contains(&"named_expression".to_string()),
+            "Should include named expressions (walrus)"
+        );
     }
 }

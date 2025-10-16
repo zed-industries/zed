@@ -189,7 +189,7 @@ pub struct EditorSettingsContent {
     ///
     /// Default: [`DocumentColorsRenderMode::Inlay`]
     pub lsp_document_colors: Option<DocumentColorsRenderMode>,
-    
+
     /// Rainbow highlighting settings
     pub rainbow_highlighting: Option<RainbowHighlightingContent>,
 }
@@ -205,7 +205,7 @@ pub struct RainbowHighlightingContent {
     ///
     /// Default: false
     pub enabled: Option<bool>,
-    
+
     /// Color generation mode.
     ///
     /// Options:

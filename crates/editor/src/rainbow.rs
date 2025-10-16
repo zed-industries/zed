@@ -1,5 +1,5 @@
 use dashmap::DashMap;
-use gpui::{ Hsla, HighlightStyle };
+use gpui::{HighlightStyle, Hsla};
 use theme::SyntaxTheme;
 
 use crate::editor_settings::VariableColorMode;
@@ -34,11 +34,11 @@ impl VariableColorCache {
                 ..Default::default()
             };
         }
-        
+
         if self.colors.len() >= self.max_entries {
             return self.generate_color_without_cache(hash, theme);
         }
-        
+
         let style = self.generate_color_without_cache(hash, theme);
         if let Some(color) = style.color {
             self.colors.insert(hash, color);
@@ -63,16 +63,22 @@ impl VariableColorCache {
             VariableColorMode::ThemePalette => {
                 const RAINBOW_PALETTE_SIZE: usize = 32;
                 let index = fibonacci_hash(hash, RAINBOW_PALETTE_SIZE);
-                theme.rainbow_color(index)
+                theme
+                    .rainbow_color(index)
                     .and_then(|style| style.color)
                     .unwrap_or_else(|| gpui::rgb(0xa6e3a1).into())
             }
             VariableColorMode::DynamicHSL => {
                 let hue = hash_to_hue(hash);
-                Hsla { h: hue, s: 0.70, l: 0.65, a: 1.0 }
+                Hsla {
+                    h: hue,
+                    s: 0.70,
+                    l: 0.65,
+                    a: 1.0,
+                }
             }
         };
-        
+
         HighlightStyle {
             color: Some(color),
             ..Default::default()
@@ -86,25 +92,27 @@ const GOLDEN_RATIO_MULTIPLIER: u64 = 11400714819323198485u64;
 
 #[inline]
 pub fn hash_identifier(s: &str) -> u64 {
-    s.bytes().fold(FNV_OFFSET, |hash, byte| { (hash ^ (byte as u64)).wrapping_mul(FNV_PRIME) })
+    s.bytes().fold(FNV_OFFSET, |hash, byte| {
+        (hash ^ (byte as u64)).wrapping_mul(FNV_PRIME)
+    })
 }
 pub fn validate_identifier_for_rainbow(text: &str) -> Option<&str> {
     let trimmed = text.trim();
-    
+
     if trimmed.is_empty() || trimmed.len() > 120 {
         return None;
     }
     let mut chars = trimmed.chars();
     let first = chars.next()?;
-    
+
     if !first.is_alphabetic() && first != '_' {
         return None;
     }
-    
+
     if !chars.all(|c| c.is_alphanumeric() || c == '_') {
         return None;
     }
-    
+
     Some(trimmed)
 }
 
@@ -138,7 +146,10 @@ mod tests {
         let hash3 = hash_identifier("other_variable");
 
         assert_eq!(hash1, hash2, "Same identifier should produce same hash");
-        assert_ne!(hash1, hash3, "Different identifiers should produce different hashes");
+        assert_ne!(
+            hash1, hash3,
+            "Different identifiers should produce different hashes"
+        );
     }
 
     #[test]
@@ -173,34 +184,43 @@ mod tests {
     fn test_hue_full_spectrum_coverage() {
         let mut min_hue: f32 = 1.0;
         let mut max_hue: f32 = 0.0;
-        
+
         for i in 0..1000 {
             let name = format!("variable_{}", i);
             let hash = hash_identifier(&name);
             let hue = hash_to_hue(hash);
-            
+
             assert!(hue >= 0.0 && hue <= 1.0, "Hue {} out of range", hue);
             min_hue = min_hue.min(hue);
             max_hue = max_hue.max(hue);
         }
-        
+
         let coverage = max_hue - min_hue;
-        assert!(coverage > 0.9, "Hue coverage {:.2} should span most of spectrum", coverage);
+        assert!(
+            coverage > 0.9,
+            "Hue coverage {:.2} should span most of spectrum",
+            coverage
+        );
     }
 
     #[test]
     fn test_fibonacci_hash_uniform_distribution() {
         let mut bucket_counts = [0; 12];
-        
+
         for i in 0..1200 {
             let name = format!("identifier_{}", i);
             let hash = hash_identifier(&name);
             let bucket = fibonacci_hash(hash, 12);
             bucket_counts[bucket] += 1;
         }
-        
+
         for (i, count) in bucket_counts.iter().enumerate() {
-            assert!(*count > 50, "Bucket {} has poor distribution: {} items", i, count);
+            assert!(
+                *count > 50,
+                "Bucket {} has poor distribution: {} items",
+                i,
+                count
+            );
         }
     }
 
@@ -209,10 +229,18 @@ mod tests {
         let hash1 = hash_identifier("variable_a");
         let hash2 = hash_identifier("variable_b");
         let hash3 = hash_identifier("avariable_");
-        
-        assert_ne!(hash1, hash2, "Different strings should have different hashes");
-        assert_ne!(hash1, hash3, "Different strings should have different hashes");
-        assert_ne!(hash2, hash3, "Different strings should have different hashes");
-    }
 
+        assert_ne!(
+            hash1, hash2,
+            "Different strings should have different hashes"
+        );
+        assert_ne!(
+            hash1, hash3,
+            "Different strings should have different hashes"
+        );
+        assert_ne!(
+            hash2, hash3,
+            "Different strings should have different hashes"
+        );
+    }
 }

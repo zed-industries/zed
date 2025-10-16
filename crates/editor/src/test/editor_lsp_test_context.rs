@@ -77,7 +77,13 @@ pub(crate) fn rust_lang() -> Arc<Language> {
         "#})),
         ..Default::default()
     })
-    .expect("Could not parse queries");
+    .expect("Could not parse queries")
+    .with_variable_lsp_token_types(vec![
+        "variable".to_string(),
+        "parameter".to_string(),
+        "const".to_string(),
+    ])
+    .expect("Could not set variable LSP token types");
     Arc::new(language)
 }
 

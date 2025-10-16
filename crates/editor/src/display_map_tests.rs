@@ -4,7 +4,7 @@ mod syntax_token_tests {
     use crate::editor_tests::init_test;
     use gpui::{AppContext, TestAppContext};
     use indoc::indoc;
-    use language::{tree_sitter_rust, Buffer, Language, LanguageConfig};
+    use language::{Buffer, Language, LanguageConfig, tree_sitter_rust};
     use std::sync::Arc;
     use theme::ActiveTheme;
 
@@ -62,9 +62,10 @@ mod syntax_token_tests {
         });
 
         // Wait for parsing to complete
-        cx.condition(&buffer, |buf: &mut Buffer, _| !buf.is_parsing()).await;
+        cx.condition(&buffer, |buf: &mut Buffer, _| !buf.is_parsing())
+            .await;
 
-        let (snapshot, token_texts) = buffer.read_with(cx, |buffer, cx| {
+        let (_snapshot, token_texts) = buffer.read_with(cx, |buffer, cx| {
             let snapshot = buffer.snapshot();
             let cache = Arc::new(crate::rainbow::VariableColorCache::new(
                 crate::editor_settings::VariableColorMode::ThemePalette,

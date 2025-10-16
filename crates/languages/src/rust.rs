@@ -29,13 +29,17 @@ use util::{ResultExt, maybe};
 
 use crate::language_settings::language_settings;
 
-/// Returns Rust-specific variable capture names and parent kinds for rainbow highlighting.
+/// Returns Rust-specific variable capture names, parent kinds, and LSP token types for rainbow highlighting.
 /// These patterns identify variables, parameters, constants, and macro parameters in Rust code.
-pub fn variable_config() -> (Option<Vec<String>>, Option<Vec<String>>) {
+pub fn variable_config() -> (
+    Option<Vec<String>>,
+    Option<Vec<String>>,
+    Option<Vec<String>>,
+) {
     let capture_names = vec![
         "variable".to_string(),
         "variable.parameter".to_string(),
-        "variable.special".to_string(),  // for `self`
+        "variable.special".to_string(), // for `self`
         "constant".to_string(),
         "constant.builtin".to_string(),
     ];
@@ -46,7 +50,7 @@ pub fn variable_config() -> (Option<Vec<String>>, Option<Vec<String>>) {
         "static_item".to_string(),
         "parameter".to_string(),
         "closure_parameters".to_string(),
-        "token_tree".to_string(),  // for macro parameters
+        "token_tree".to_string(), // for macro parameters
         "arguments".to_string(),
         "field_initializer".to_string(),
         "binary_expression".to_string(),
@@ -59,7 +63,17 @@ pub fn variable_config() -> (Option<Vec<String>>, Option<Vec<String>>) {
         "while_expression".to_string(),
     ];
 
-    (Some(capture_names), Some(parent_kinds))
+    let lsp_token_types = vec![
+        "variable".to_string(),
+        "parameter".to_string(),
+        "const".to_string(),
+    ];
+
+    (
+        Some(capture_names),
+        Some(parent_kinds),
+        Some(lsp_token_types),
+    )
 }
 
 pub struct RustLspAdapter;
@@ -1610,20 +1624,34 @@ mod tests {
     #[gpui::test]
     fn test_variable_capture_configuration() {
         let language = crate::language("rust", tree_sitter_rust::LANGUAGE.into());
-        
-        let highlights_config = language.grammar().unwrap().highlights_config.as_ref().unwrap();
-        
+
+        let highlights_config = language
+            .grammar()
+            .unwrap()
+            .highlights_config
+            .as_ref()
+            .unwrap();
+
         // Verify that variable captures are configured
         assert!(
-            highlights_config.query.capture_index_for_name("variable").is_some(),
+            highlights_config
+                .query
+                .capture_index_for_name("variable")
+                .is_some(),
             "variable capture should be present in the query"
         );
         assert!(
-            highlights_config.query.capture_index_for_name("variable.parameter").is_some() 
-                || highlights_config.query.capture_index_for_name("parameter").is_some(),
+            highlights_config
+                .query
+                .capture_index_for_name("variable.parameter")
+                .is_some()
+                || highlights_config
+                    .query
+                    .capture_index_for_name("parameter")
+                    .is_some(),
             "parameter captures should be present in the query"
         );
-        
+
         // Verify the captures are marked as variable captures (they should be by default)
         if let Some(var_idx) = highlights_config.query.capture_index_for_name("variable") {
             assert!(
@@ -1631,7 +1659,7 @@ mod tests {
                 "variable capture should be recognized as a variable capture"
             );
         }
-        
+
         if let Some(const_idx) = highlights_config.query.capture_index_for_name("constant") {
             assert!(
                 highlights_config.is_variable_capture(const_idx),
@@ -1642,8 +1670,8 @@ mod tests {
 
     #[gpui::test]
     fn test_parent_kind_configuration() {
-        let (_capture_names, parent_kinds) = variable_config();
-        
+        let (_capture_names, parent_kinds, _lsp_token_types) = variable_config();
+
         // Verify essential Rust parent kinds are in the configuration
         let kinds = parent_kinds.unwrap();
         let expected_parent_kinds = [
@@ -1658,7 +1686,7 @@ mod tests {
             "for_expression",
             "match_arm",
         ];
-        
+
         for kind in &expected_parent_kinds {
             assert!(
                 kinds.contains(&kind.to_string()),
@@ -1670,8 +1698,8 @@ mod tests {
 
     #[gpui::test]
     fn test_variable_config_values() {
-        let (capture_names, parent_kinds) = variable_config();
-        
+        let (capture_names, parent_kinds, _lsp_token_types) = variable_config();
+
         // Verify capture names are configured
         let captures = capture_names.unwrap();
         assert!(captures.contains(&"variable".to_string()));
@@ -1679,7 +1707,7 @@ mod tests {
         assert!(captures.contains(&"variable.special".to_string()));
         assert!(captures.contains(&"constant".to_string()));
         assert!(captures.contains(&"constant.builtin".to_string()));
-        
+
         // Verify parent kinds are configured
         let kinds = parent_kinds.unwrap();
         assert!(kinds.contains(&"let_declaration".to_string()));

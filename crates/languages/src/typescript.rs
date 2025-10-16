@@ -28,12 +28,16 @@ use util::{merge_json_value_into, rel_path::RelPath};
 
 use crate::{PackageJson, PackageJsonData};
 
-/// Returns TypeScript/JavaScript-specific variable capture names and parent kinds for rainbow highlighting.
-pub fn variable_config() -> (Option<Vec<String>>, Option<Vec<String>>) {
+/// Returns TypeScript/JavaScript-specific variable capture names, parent kinds, and LSP token types for rainbow highlighting.
+pub fn variable_config() -> (
+    Option<Vec<String>>,
+    Option<Vec<String>>,
+    Option<Vec<String>>,
+) {
     let capture_names = vec![
         "variable".to_string(),
         "variable.parameter".to_string(),
-        "variable.special".to_string(),  // for `this`, `super`
+        "variable.special".to_string(), // for `this`, `super`
         "constant".to_string(),
         "constant.builtin".to_string(),
     ];
@@ -62,7 +66,17 @@ pub fn variable_config() -> (Option<Vec<String>>, Option<Vec<String>>) {
         "object_pattern".to_string(),
     ];
 
-    (Some(capture_names), Some(parent_kinds))
+    let lsp_token_types = vec![
+        "variable".to_string(),
+        "parameter".to_string(),
+        "const".to_string(),
+    ];
+
+    (
+        Some(capture_names),
+        Some(parent_kinds),
+        Some(lsp_token_types),
+    )
 }
 
 pub(crate) struct TypeScriptContextProvider {
@@ -1304,44 +1318,95 @@ mod tests {
 
     #[test]
     fn test_typescript_variable_config() {
-        let (capture_names, parent_kinds) = super::variable_config();
-        assert!(capture_names.is_some() && parent_kinds.is_some());
+        let (capture_names, parent_kinds, lsp_token_types) = super::variable_config();
+        assert!(capture_names.is_some() && parent_kinds.is_some() && lsp_token_types.is_some());
     }
 
     #[test]
     fn test_typescript_captures_essential_types() {
-        let (capture_names, parent_kinds) = super::variable_config();
+        let (capture_names, parent_kinds, _) = super::variable_config();
         let captures = capture_names.unwrap();
         let kinds = parent_kinds.unwrap();
-        
+
         // Verify we have essential TypeScript/JavaScript variable types
         // Captures
-        assert!(captures.contains(&"variable".to_string()), "Should capture variables");
-        assert!(captures.contains(&"variable.parameter".to_string()), "Should capture parameters");
-        assert!(captures.contains(&"variable.special".to_string()), "Should capture this/super");
-        assert!(captures.contains(&"constant".to_string()), "Should capture constants");
-        
+        assert!(
+            captures.contains(&"variable".to_string()),
+            "Should capture variables"
+        );
+        assert!(
+            captures.contains(&"variable.parameter".to_string()),
+            "Should capture parameters"
+        );
+        assert!(
+            captures.contains(&"variable.special".to_string()),
+            "Should capture this/super"
+        );
+        assert!(
+            captures.contains(&"constant".to_string()),
+            "Should capture constants"
+        );
+
         // Declarations
-        assert!(kinds.contains(&"variable_declaration".to_string()), "Should include var/let/const declarations");
-        assert!(kinds.contains(&"variable_declarator".to_string()), "Should include variable declarators");
-        assert!(kinds.contains(&"lexical_declaration".to_string()), "Should include lexical declarations");
-        
+        assert!(
+            kinds.contains(&"variable_declaration".to_string()),
+            "Should include var/let/const declarations"
+        );
+        assert!(
+            kinds.contains(&"variable_declarator".to_string()),
+            "Should include variable declarators"
+        );
+        assert!(
+            kinds.contains(&"lexical_declaration".to_string()),
+            "Should include lexical declarations"
+        );
+
         // Parameters
-        assert!(kinds.contains(&"formal_parameters".to_string()), "Should include function parameters");
-        assert!(kinds.contains(&"required_parameter".to_string()), "Should include required parameters");
-        assert!(kinds.contains(&"optional_parameter".to_string()), "Should include optional parameters");
-        
+        assert!(
+            kinds.contains(&"formal_parameters".to_string()),
+            "Should include function parameters"
+        );
+        assert!(
+            kinds.contains(&"required_parameter".to_string()),
+            "Should include required parameters"
+        );
+        assert!(
+            kinds.contains(&"optional_parameter".to_string()),
+            "Should include optional parameters"
+        );
+
         // Functions
-        assert!(kinds.contains(&"arrow_function".to_string()), "Should include arrow functions");
-        assert!(kinds.contains(&"function_expression".to_string()), "Should include function expressions");
-        
+        assert!(
+            kinds.contains(&"arrow_function".to_string()),
+            "Should include arrow functions"
+        );
+        assert!(
+            kinds.contains(&"function_expression".to_string()),
+            "Should include function expressions"
+        );
+
         // Control flow
-        assert!(kinds.contains(&"for_statement".to_string()), "Should include for loops");
-        assert!(kinds.contains(&"for_in_statement".to_string()), "Should include for-in loops");
-        assert!(kinds.contains(&"catch_clause".to_string()), "Should include catch clauses");
-        
+        assert!(
+            kinds.contains(&"for_statement".to_string()),
+            "Should include for loops"
+        );
+        assert!(
+            kinds.contains(&"for_in_statement".to_string()),
+            "Should include for-in loops"
+        );
+        assert!(
+            kinds.contains(&"catch_clause".to_string()),
+            "Should include catch clauses"
+        );
+
         // Destructuring
-        assert!(kinds.contains(&"array_pattern".to_string()), "Should include array destructuring");
-        assert!(kinds.contains(&"object_pattern".to_string()), "Should include object destructuring");
+        assert!(
+            kinds.contains(&"array_pattern".to_string()),
+            "Should include array destructuring"
+        );
+        assert!(
+            kinds.contains(&"object_pattern".to_string()),
+            "Should include object destructuring"
+        );
     }
 }

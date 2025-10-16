@@ -1,11 +1,13 @@
 use project::ContextProviderWithTasks;
 use task::{TaskTemplate, TaskTemplates, VariableName};
 
-/// Returns Bash-specific variable capture names and parent kinds for rainbow highlighting.
-pub fn variable_config() -> (Option<Vec<String>>, Option<Vec<String>>) {
-    let capture_names = vec![
-        "variable".to_string(),
-    ];
+/// Returns Bash-specific variable capture names, parent kinds, and LSP token types for rainbow highlighting.
+pub fn variable_config() -> (
+    Option<Vec<String>>,
+    Option<Vec<String>>,
+    Option<Vec<String>>,
+) {
+    let capture_names = vec!["variable".to_string()];
 
     let parent_kinds = vec![
         "variable_assignment".to_string(),
@@ -21,7 +23,13 @@ pub fn variable_config() -> (Option<Vec<String>>, Option<Vec<String>>) {
         "compound_statement".to_string(),
     ];
 
-    (Some(capture_names), Some(parent_kinds))
+    let lsp_token_types = vec!["variable".to_string()];
+
+    (
+        Some(capture_names),
+        Some(parent_kinds),
+        Some(lsp_token_types),
+    )
 }
 
 pub(super) fn bash_task_context() -> ContextProviderWithTasks {
@@ -184,39 +192,69 @@ mod tests {
 
     #[test]
     fn test_bash_variable_config() {
-        let (capture_names, parent_kinds) = super::variable_config();
-        assert!(capture_names.is_some() && parent_kinds.is_some());
+        let (capture_names, parent_kinds, lsp_token_types) = super::variable_config();
+        assert!(capture_names.is_some() && parent_kinds.is_some() && lsp_token_types.is_some());
     }
 
     #[test]
     fn test_bash_captures_essential_types() {
-        let (capture_names, parent_kinds) = super::variable_config();
+        let (capture_names, parent_kinds, _) = super::variable_config();
         let captures = capture_names.unwrap();
         let kinds = parent_kinds.unwrap();
-        
+
         // Verify we have essential Bash variable types
         // Variables (Bash uses variable in our config)
-        assert!(captures.contains(&"variable".to_string()), "Should capture variables");
-        
+        assert!(
+            captures.contains(&"variable".to_string()),
+            "Should capture variables"
+        );
+
         // Assignments
-        assert!(kinds.contains(&"variable_assignment".to_string()), "Should include variable assignments");
-        
+        assert!(
+            kinds.contains(&"variable_assignment".to_string()),
+            "Should include variable assignments"
+        );
+
         // Declarations (local, declare, etc.)
-        assert!(kinds.contains(&"declaration_command".to_string()), "Should include declaration commands");
-        
+        assert!(
+            kinds.contains(&"declaration_command".to_string()),
+            "Should include declaration commands"
+        );
+
         // Loops
-        assert!(kinds.contains(&"for_statement".to_string()), "Should include for loops");
-        assert!(kinds.contains(&"while_statement".to_string()), "Should include while loops");
-        
+        assert!(
+            kinds.contains(&"for_statement".to_string()),
+            "Should include for loops"
+        );
+        assert!(
+            kinds.contains(&"while_statement".to_string()),
+            "Should include while loops"
+        );
+
         // Control flow
-        assert!(kinds.contains(&"if_statement".to_string()), "Should include if statements");
-        assert!(kinds.contains(&"case_statement".to_string()), "Should include case statements");
-        
+        assert!(
+            kinds.contains(&"if_statement".to_string()),
+            "Should include if statements"
+        );
+        assert!(
+            kinds.contains(&"case_statement".to_string()),
+            "Should include case statements"
+        );
+
         // Functions
-        assert!(kinds.contains(&"function_definition".to_string()), "Should include function definitions");
-        
+        assert!(
+            kinds.contains(&"function_definition".to_string()),
+            "Should include function definitions"
+        );
+
         // Commands and pipelines
-        assert!(kinds.contains(&"command".to_string()), "Should include commands");
-        assert!(kinds.contains(&"pipeline".to_string()), "Should include pipelines");
+        assert!(
+            kinds.contains(&"command".to_string()),
+            "Should include commands"
+        );
+        assert!(
+            kinds.contains(&"pipeline".to_string()),
+            "Should include pipelines"
+        );
     }
 }

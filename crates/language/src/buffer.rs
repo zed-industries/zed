@@ -4945,9 +4945,11 @@ impl<'a> Iterator for BufferChunks<'a> {
                 } else {
                     let highlight_id =
                         highlights.highlight_maps[capture.grammar_index].get(capture.index);
-                    highlights
-                        .stack
-                        .push((capture.node.start_byte(), capture.node.end_byte(), highlight_id));
+                    highlights.stack.push((
+                        capture.node.start_byte(),
+                        capture.node.end_byte(),
+                        highlight_id,
+                    ));
                     highlights.next_capture = highlights.captures.next();
                 }
             }
@@ -4981,7 +4983,8 @@ impl<'a> Iterator for BufferChunks<'a> {
             let mut highlight_id = None;
             let mut capture_node_range = None;
             if let Some(highlights) = self.highlights.as_ref()
-                && let Some((parent_capture_start, parent_capture_end, parent_highlight_id)) = highlights.stack.last()
+                && let Some((parent_capture_start, parent_capture_end, parent_highlight_id)) =
+                    highlights.stack.last()
             {
                 chunk_end = chunk_end.min(*parent_capture_end);
                 highlight_id = Some(*parent_highlight_id);
