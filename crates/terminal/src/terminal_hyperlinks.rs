@@ -687,6 +687,14 @@ mod tests {
             }
 
             #[test]
+            // <https://github.com/zed-industries/zed/issues/12338>
+            fn issue_12338_regex() {
+                // Issue #12338
+                test_path!(".rw-r--r--     0     staff 05-27 14:03 ‹«'test file 👉1.txt'»›");
+                test_path!(".rw-r--r--     0     staff 05-27 14:03 ‹«👉'test file 1.txt'»›");
+            }
+
+            #[test]
             #[should_panic(expected = "No hyperlink found")]
             // <https://github.com/zed-industries/zed/issues/12338>
             fn issue_12338() {
@@ -1398,6 +1406,7 @@ mod tests {
         const CARGO_DIR_REGEX: &str =
             r#"\s+(Compiling|Checking|Documenting) [^(]+\((?<path>.+)\)$"#;
         const RUSTC_DIAGNOSTIC_REGEX: &str = r#"\s+(-->|:::) (?<path>.+)$"#;
+        const ISSUE_12338_REGEX: &str = r#"[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2} (?<path>.+)$"#;
         const PATH_HYPERLINK_TIMEOUT_MS: u64 = 1000;
 
         thread_local! {
@@ -1406,6 +1415,7 @@ mod tests {
                     PYTHON_FILE_LINE_REGEX.to_string(),
                     CARGO_DIR_REGEX.to_string(),
                     RUSTC_DIAGNOSTIC_REGEX.to_string(),
+                    ISSUE_12338_REGEX.to_string(),
                 ], PATH_HYPERLINK_TIMEOUT_MS));
         }
 
