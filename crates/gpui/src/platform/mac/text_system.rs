@@ -450,7 +450,6 @@ impl MacTextSystemState {
                 // to prevent core text from forming ligatures between them
                 let needs_zwnj = last_font_run.replace(run.font_id) == Some(run.font_id);
 
-                let n_zwnjs = self.zwnjs_scratch_space.len(); // from previous loop
                 let utf16_start = string.char_len(); // insert at end of string
                 ix_converter.advance_to_utf8_ix(ix_converter.utf8_ix + run.len);
 
