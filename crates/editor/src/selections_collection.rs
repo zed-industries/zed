@@ -392,6 +392,11 @@ impl SelectionsCollection {
             .collect()
     }
 
+    /// Attempts to build a selection in the provided `DisplayRow` within the
+    /// same range as the provided range of `Pixels`.
+    /// Returns `None` if the range is not empty but it starts past the line's
+    /// length, meaning that the line isn't long enough to be contained within
+    /// part of the provided range.
     pub fn build_columnar_selection(
         &mut self,
         display_map: &DisplaySnapshot,
