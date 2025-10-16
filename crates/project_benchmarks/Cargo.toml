@@ -16,6 +16,7 @@ node_runtime.workspace = true
 project.workspace = true
 settings.workspace = true
 watch.workspace = true
+workspace-hack = { version = "0.1", path = "../../tooling/workspace-hack" }
 
 [lints]
 workspace = true

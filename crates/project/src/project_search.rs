@@ -30,10 +30,8 @@ pub(crate) struct Search {
     pub(crate) fs: Arc<dyn Fs>,
     pub(crate) buffer_store: Entity<BufferStore>,
     pub(crate) worktrees: Vec<Entity<Worktree>>,
+    pub(crate) limit: usize,
 }
-
-const MAX_SEARCH_RESULT_FILES: usize = 5_000;
-const MAX_SEARCH_RESULT_RANGES: usize = 10_000;
 
 /// Represents results of project search and allows one to either obtain match positions OR
 /// just the handles to buffers that may match the search.
@@ -56,6 +54,8 @@ impl SearchResultsHandle {
 }
 
 impl Search {
+    pub(crate) const MAX_SEARCH_RESULT_FILES: usize = 5_000;
+    pub(crate) const MAX_SEARCH_RESULT_RANGES: usize = 10_000;
     /// Prepares a project search run. The result has to be used to specify whether you're interested in matching buffers
     /// or full search results.
     pub(crate) fn into_results(mut self, query: SearchQuery, cx: &mut App) -> SearchResultsHandle {
@@ -70,7 +70,7 @@ impl Search {
             } else if let Some(entry_id) = buffer.entry_id(cx) {
                 open_buffers.insert(entry_id);
             } else {
-                // limit = limit.saturating_sub(1); todo!()
+                self.limit -= self.limit.saturating_sub(1);
                 unnamed_buffers.push(handle)
             };
         }
@@ -120,6 +120,7 @@ impl Search {
                     scope.spawn(Self::maintain_sorted_search_results(
                         sorted_search_results_rx,
                         get_buffer_for_full_scan_tx,
+                        self.limit,
                     ))
                 });
                 let provide_search_paths = cx.spawn(Self::provide_search_paths(
@@ -223,8 +224,10 @@ impl Search {
     async fn maintain_sorted_search_results(
         rx: Receiver<oneshot::Receiver<ProjectPath>>,
         paths_for_full_scan: Sender<ProjectPath>,
+        limit: usize,
     ) {
         let mut rx = pin!(rx);
+        let mut matched = 0;
         while let Some(mut next_path_result) = rx.next().await {
             let Some(successful_path) = next_path_result.next().await else {
                 // This math did not produce a match, hence skip it.
@@ -233,6 +236,10 @@ impl Search {
             if paths_for_full_scan.send(successful_path).await.is_err() {
                 return;
             };
+            matched += 1;
+            if matched >= limit {
+                break;
+            }
         }
     }
 
@@ -395,12 +402,14 @@ impl RequestHandler<'_> {
             .collect::<Vec<_>>();
 
         let matched_ranges = ranges.len();
-        if self.matched_buffer_count.fetch_add(1, Ordering::Release) > MAX_SEARCH_RESULT_FILES
+        if self.matched_buffer_count.fetch_add(1, Ordering::Release)
+            > Search::MAX_SEARCH_RESULT_FILES
             || self
                 .matches_count
                 .fetch_add(matched_ranges, Ordering::Release)
-                > MAX_SEARCH_RESULT_RANGES
+                > Search::MAX_SEARCH_RESULT_RANGES
         {
+            _ = self.publish_matches.send(SearchResult::LimitReached).await;
             Some(LimitReached)
         } else {
             _ = self
