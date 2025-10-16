@@ -1000,36 +1000,36 @@ fn natural_sort_case_insensitive(a: &str, b: &str) -> Ordering {
     }
 }
 
+fn stem_and_extension(filename: &str) -> (Option<&str>, Option<&str>) {
+    if filename.is_empty() {
+        return (None, None);
+    }
+
+    match filename.rsplit_once('.') {
+        // Case 1: No dot was found. The entire name is the stem.
+        None => (Some(filename), None),
+
+        // Case 2: A dot was found.
+        Some((before, after)) => {
+            // This is the crucial check for dotfiles like ".bashrc".
+            // If `before` is empty, the dot was the first character.
+            // In that case, we revert to the "whole name is the stem" logic.
+            if before.is_empty() {
+                (Some(filename), None)
+            } else {
+                // Otherwise, we have a standard stem and extension.
+                (Some(before), Some(after))
+            }
+        }
+    }
+}
+
 pub fn compare_rel_paths(
     (path_a, a_is_file): (&RelPath, bool),
     (path_b, b_is_file): (&RelPath, bool),
 ) -> Ordering {
     let mut components_a = path_a.components();
     let mut components_b = path_b.components();
-
-    fn stem_and_extension(filename: &str) -> (Option<&str>, Option<&str>) {
-        if filename.is_empty() {
-            return (None, None);
-        }
-
-        match filename.rsplit_once('.') {
-            // Case 1: No dot was found. The entire name is the stem.
-            None => (Some(filename), None),
-
-            // Case 2: A dot was found.
-            Some((before, after)) => {
-                // This is the crucial check for dotfiles like ".bashrc".
-                // If `before` is empty, the dot was the first character.
-                // In that case, we revert to the "whole name is the stem" logic.
-                if before.is_empty() {
-                    (Some(filename), None)
-                } else {
-                    // Otherwise, we have a standard stem and extension.
-                    (Some(before), Some(after))
-                }
-            }
-        }
-    }
     loop {
         match (components_a.next(), components_b.next()) {
             (Some(component_a), Some(component_b)) => {
@@ -1092,22 +1092,6 @@ pub fn compare_rel_paths_interleaved(
     let mut components_a = path_a.components();
     let mut components_b = path_b.components();
 
-    fn stem_and_extension(filename: &str) -> (Option<&str>, Option<&str>) {
-        if filename.is_empty() {
-            return (None, None);
-        }
-        match filename.rsplit_once('.') {
-            None => (Some(filename), None),
-            Some((before, after)) => {
-                if before.is_empty() {
-                    (Some(filename), None)
-                } else {
-                    (Some(before), Some(after))
-                }
-            }
-        }
-    }
-
     loop {
         match (components_a.next(), components_b.next()) {
             (Some(component_a), Some(component_b)) => {
@@ -1168,22 +1152,6 @@ pub fn compare_rel_paths_macos_like(
     let original_paths_equal = std::ptr::eq(path_a, path_b) || path_a == path_b;
     let mut components_a = path_a.components();
     let mut components_b = path_b.components();
-
-    fn stem_and_extension(filename: &str) -> (Option<&str>, Option<&str>) {
-        if filename.is_empty() {
-            return (None, None);
-        }
-        match filename.rsplit_once('.') {
-            None => (Some(filename), None),
-            Some((before, after)) => {
-                if before.is_empty() {
-                    (Some(filename), None)
-                } else {
-                    (Some(before), Some(after))
-                }
-            }
-        }
-    }
 
     loop {
         match (components_a.next(), components_b.next()) {
