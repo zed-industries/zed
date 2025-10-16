@@ -3758,6 +3758,8 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     metadata: None,
                     files: USER,
                 }),
+
+                SettingsPageItem::SectionHeader("Auto Open Files"),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Hidden Files",
                     description: "Globs to match files that will be considered \"hidden\" and can be hidden from the project panel.",
@@ -3777,22 +3779,67 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
-                    title: "Open File on Paste",
-                    description: "Whether to automatically open files when pasting them in the project panel.",
+                    title: "On Create",
+                    description: "Automatically open newly created files in the editor",
                     field: Box::new(SettingField {
                         json_path: Some("project_panel.open_file_on_paste"),
                         pick: |settings_content| {
-                            settings_content
-                                .project_panel
-                                .as_ref()?
-                                .open_file_on_paste
-                                .as_ref()
+                            if let Some(project_panel) = &settings_content.project_panel {
+                                if let Some(auto_open) = &project_panel.auto_open {
+                                    &auto_open.on_create
+                                } else {
+                                    &None
+                                }
+                            } else {
+                                &None
+                            }
                         },
                         write: |settings_content, value| {
-                            settings_content
-                                .project_panel
-                                .get_or_insert_default()
-                                .open_file_on_paste = value;
+                            settings_content.project_panel.get_or_insert_default().auto_open.get_or_insert_default().on_create = value;
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "On Paste",
+                    description: "Automatically open files after pasting or duplicating them in the project panel",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(project_panel) = &settings_content.project_panel {
+                                if let Some(auto_open) = &project_panel.auto_open {
+                                    &auto_open.on_paste
+                                } else {
+                                    &None
+                                }
+                            } else {
+                                &None
+                            }
+                        },
+                        write: |settings_content, value| {
+                            settings_content.project_panel.get_or_insert_default().auto_open.get_or_insert_default().on_paste = value;
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "On Drop",
+                    description: "Automatically open files dropped from external sources into the project panel",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(project_panel) = &settings_content.project_panel {
+                                if let Some(auto_open) = &project_panel.auto_open {
+                                    &auto_open.on_drop
+                                } else {
+                                    &None
+                                }
+                            } else {
+                                &None
+                            }
+                        },
+                        write: |settings_content, value| {
+                            settings_content.project_panel.get_or_insert_default().auto_open.get_or_insert_default().on_drop = value;
                         },
                     }),
                     metadata: None,

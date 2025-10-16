@@ -1161,6 +1161,7 @@ async fn test_adding_directory_via_file(cx: &mut gpui::TestAppContext) {
 #[gpui::test]
 async fn test_copy_paste(cx: &mut gpui::TestAppContext) {
     init_test(cx);
+    set_auto_open_settings(cx, true, true, true);
 
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
@@ -1255,6 +1256,140 @@ async fn test_copy_paste(cx: &mut gpui::TestAppContext) {
     panel.update_in(cx, |panel, window, cx| {
         assert!(panel.confirm_edit(true, window, cx).is_none())
     });
+}
+
+#[gpui::test]
+async fn test_paste_with_auto_open_disabled(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+    set_auto_open_settings(cx, true, false, true);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root1",
+        json!({
+            "test.txt": "content"
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/root1".as_ref()], cx).await;
+    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+    let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+    cx.run_until_parked();
+
+    panel.update_in(cx, |panel, window, cx| {
+        panel.select_next(&Default::default(), window, cx);
+    });
+
+    panel.update_in(cx, |panel, window, cx| {
+        panel.copy(&Default::default(), window, cx);
+        panel.paste(&Default::default(), window, cx);
+    });
+    cx.executor().run_until_parked();
+
+    // File should be pasted but not opened (no EDITOR marker)
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..50, cx),
+        &[
+            "v root1",
+            "      test.txt",
+            "      [EDITOR: 'test copy.txt']  <== selected  <== marked",
+        ]
+    );
+
+    // Rename editor appears for disambiguation, confirm it
+    panel.update_in(cx, |panel, window, cx| {
+        assert!(panel.confirm_edit(window, cx).is_none())
+    });
+    cx.executor().run_until_parked();
+
+    // After confirming rename, file should exist but still not be opened as a separate editor
+    let entries = visible_entries_as_strings(&panel, 0..50, cx);
+    assert!(entries.contains(&"      test copy.txt".to_string()));
+    assert!(entries.contains(&"      test.txt".to_string()));
+}
+
+#[gpui::test]
+async fn test_paste_with_auto_open_enabled(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+    set_auto_open_settings(cx, true, true, true);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root1",
+        json!({
+            "test.txt": "content"
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/root1".as_ref()], cx).await;
+    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+    let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+    cx.run_until_parked();
+
+    panel.update_in(cx, |panel, window, cx| {
+        panel.select_next(&Default::default(), window, cx);
+    });
+
+    panel.update_in(cx, |panel, window, cx| {
+        panel.copy(&Default::default(), window, cx);
+        panel.paste(&Default::default(), window, cx);
+    });
+    cx.executor().run_until_parked();
+
+    // File should be pasted AND opened (EDITOR marker present)
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..50, cx),
+        &[
+            "v root1",
+            "      test.txt",
+            "      [EDITOR: 'test copy.txt']  <== selected  <== marked",
+        ]
+    );
+}
+
+#[gpui::test]
+async fn test_duplicate_respects_auto_open_setting(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+    set_auto_open_settings(cx, true, false, true);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root1",
+        json!({
+            "test.txt": "content"
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/root1".as_ref()], cx).await;
+    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+    let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+    cx.run_until_parked();
+
+    panel.update_in(cx, |panel, window, cx| {
+        panel.select_next(&Default::default(), window, cx);
+    });
+
+    // Duplicate uses paste internally, so it should respect on_paste setting
+    panel.update_in(cx, |panel, window, cx| {
+        panel.duplicate(&Duplicate, window, cx);
+    });
+    cx.executor().run_until_parked();
+
+    // File should be duplicated but not opened (no additional EDITOR marker beyond rename)
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..50, cx),
+        &[
+            "v root1",
+            "      test.txt",
+            "      [EDITOR: 'test copy.txt']  <== selected  <== marked",
+        ]
+    );
 }
 
 #[gpui::test]
@@ -7365,6 +7500,21 @@ fn init_test_with_editor(cx: &mut TestAppContext) {
                 settings.project.worktree.file_scan_exclusions = Some(Vec::new())
             });
         });
+    });
+}
+
+fn set_auto_open_settings(cx: &mut TestAppContext, on_create: bool, on_paste: bool, on_drop: bool) {
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project_panel.get_or_insert_default().auto_open =
+                    Some(settings::ProjectPanelAutoOpenSettings {
+                        on_create: Some(on_create),
+                        on_paste: Some(on_paste),
+                        on_drop: Some(on_drop),
+                    });
+            });
+        })
     });
 }
 
