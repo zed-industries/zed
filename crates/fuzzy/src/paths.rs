@@ -88,6 +88,7 @@ impl Ord for PathMatch {
 pub fn match_fixed_path_set(
     candidates: Vec<PathMatchCandidate>,
     worktree_id: usize,
+    worktree_root_name: Option<Arc<RelPath>>,
     query: &str,
     smart_case: bool,
     max_results: usize,
@@ -111,7 +112,10 @@ pub fn match_fixed_path_set(
             positions: positions.clone(),
             is_dir: candidate.is_dir,
             path: candidate.path.into(),
-            path_prefix: RelPath::empty().into(),
+            path_prefix: match worktree_root_name.clone() {
+                Some(worktree_root_name) => worktree_root_name,
+                None => RelPath::empty().into(),
+            },
             distance_to_relative_ancestor: usize::MAX,
         },
     );
