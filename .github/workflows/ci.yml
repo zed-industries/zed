@@ -474,7 +474,6 @@ jobs:
       - actionlint
       - migration_checks
       # run_tests: If adding required tests, add them here and to script below.
-      - workspace_hack
       - linux_tests
       - build_remote_server
       - macos_tests
