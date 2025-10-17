@@ -455,7 +455,7 @@
       "alt-s": ["editor::SplitSelectionIntoLines", { "keep_selections": true }],
       ";": "vim::HelixCollapseSelection",
       "alt-;": "vim::OtherEnd",
-      ",": "vim::HelixKeepNewestSelection"
+      ",": "vim::HelixKeepNewestSelection",
       "shift-c": "vim::HelixDuplicateBelow",
       "alt-shift-c": "vim::HelixDuplicateAbove",
       "%": "editor::SelectAll",
@@ -463,7 +463,7 @@
       "shift-x": "editor::SelectLine",
       "ctrl-c": "editor::ToggleComments",
       "alt-o": "editor::SelectLargerSyntaxNode",
-      "alt-i": "editor::SelectSmallerSyntaxNode"
+      "alt-i": "editor::SelectSmallerSyntaxNode",
       
       // Goto mode
       "g e": "vim::EndOfDocument",
