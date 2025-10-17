@@ -175,10 +175,8 @@ impl RemoteConnection for SshRemoteConnection {
 
         let mut sftp_check_command = self.socket.ssh_command("which", &["sftp"]);
         let mut sftp_command = self.build_sftp_command();
-        let sftp_batch = format!("put -r {} {}\n", src_path.display(), dest_path_str);
-
-        let mut scp_command = self.build_scp_command(&src_path, &dest_path_str, true, true);
-        let scp_output = scp_command.output();
+        let mut scp_command =
+            self.build_scp_command(&src_path, &dest_path_str, Some(&["-C", "-r"]));
 
         cx.background_spawn(async move {
             let sftp_available = sftp_check_command
@@ -192,6 +190,7 @@ impl RemoteConnection for SshRemoteConnection {
                 let mut child = sftp_command.spawn()?;
                 if let Some(mut stdin) = child.stdin.take() {
                     use futures::AsyncWriteExt;
+                    let sftp_batch = format!("put -r {} {}\n", src_path.display(), dest_path_str);
                     stdin.write_all(sftp_batch.as_bytes()).await?;
                     drop(stdin);
                 }
@@ -209,7 +208,7 @@ impl RemoteConnection for SshRemoteConnection {
             }
 
             log::debug!("using SCP for directory upload");
-            let output = scp_output.await?;
+            let output = scp_command.output().await?;
 
             anyhow::ensure!(
                 output.status.success(),
@@ -664,8 +663,7 @@ impl SshRemoteConnection {
         &self,
         src_path: &Path,
         dest_path_str: &str,
-        compression: bool,
-        recursive: bool,
+        args: Option<&[&str]>,
     ) -> process::Command {
         let mut command = util::command::new_smol_command("scp");
         self.socket.ssh_options(&mut command, false).args(
@@ -675,20 +673,14 @@ impl SshRemoteConnection {
                 .map(|port| vec!["-P".to_string(), port.to_string()])
                 .unwrap_or_default(),
         );
-
-        if compression {
-            command.arg("-C");
+        if let Some(args) = args {
+            command.args(args);
         }
-        if recursive {
-            command.arg("-r");
-        }
-
         command.arg(src_path).arg(format!(
             "{}:{}",
             self.socket.connection_options.scp_url(),
             dest_path_str
         ));
-
         command
     }
 
@@ -741,7 +733,7 @@ impl SshRemoteConnection {
         }
 
         log::debug!("using SCP for file upload");
-        let mut command = self.build_scp_command(src_path, &dest_path_str, false, false);
+        let mut command = self.build_scp_command(src_path, &dest_path_str, None);
         let output = command.output().await?;
 
         anyhow::ensure!(
