@@ -541,7 +541,6 @@ pub struct SettingsWindow {
     content_focus_handle: Entity<NonFocusableHandle>,
     files_focus_handle: FocusHandle,
     search_index: Option<Arc<SearchIndex>>,
-    visible_items: Vec<usize>,
     list_state: ListState,
 }
 
@@ -1074,7 +1073,6 @@ impl SettingsWindow {
                 .tab_index(HEADER_CONTAINER_TAB_INDEX)
                 .tab_stop(false),
             search_index: None,
-            visible_items: Vec::default(),
             list_state,
         };
 
@@ -1472,14 +1470,14 @@ impl SettingsWindow {
 
     fn reset_list_state(&mut self) {
         // plus one for the title
-        self.visible_items = self.visible_page_items().map(|(index, _)| index).collect();
+        let mut visible_items_count = self.visible_page_items().count();
 
-        if self.visible_items.is_empty() {
-            self.list_state.reset(0);
-        } else {
+        if visible_items_count > 0 {
             // show page title if page is non empty
-            self.list_state.reset(self.visible_items.len() + 1);
+            visible_items_count += 1;
         }
+
+        self.list_state.reset(visible_items_count);
     }
 
     fn build_ui(&mut self, window: &mut Window, cx: &mut Context<SettingsWindow>) {
@@ -2123,7 +2121,7 @@ impl SettingsWindow {
         let mut page_content = v_flex().id("settings-ui-page").size_full();
 
         let has_active_search = !self.search_bar.read(cx).is_empty(cx);
-        let has_no_results = self.visible_items.len() == 0 && has_active_search;
+        let has_no_results = self.visible_page_items().next().is_none() && has_active_search;
 
         if has_no_results {
             let search_query = self.search_bar.read(cx).text(cx);
@@ -2142,16 +2140,12 @@ impl SettingsWindow {
                     ),
             )
         } else {
-            let items = &self.current_page().items;
-
             let last_non_header_index = self
-                .visible_items
-                .iter()
-                .map(|index| &items[*index])
-                .enumerate()
-                .rev()
-                .find(|(_, item)| !matches!(item, SettingsPageItem::SectionHeader(_)))
-                .map(|(index, _)| index);
+                .visible_page_items()
+                .filter_map(|(index, item)| {
+                    (!matches!(item, SettingsPageItem::SectionHeader(_))).then_some(index)
+                })
+                .last();
 
             let root_nav_label = self
                 .navbar_entries
@@ -2173,20 +2167,16 @@ impl SettingsWindow {
                             })
                             .into_any_element();
                     }
+                    let mut visible_items = this.visible_page_items();
+                    let Some((actual_item_index, item)) = visible_items.nth(index - 1) else {
+                        return gpui::Empty.into_any_element();
+                    };
 
-                    let index = index - 1;
-                    let actual_item_index = this.visible_items[index];
-                    let item: &SettingsPageItem = &this.current_page().items[actual_item_index];
-
-                    let no_bottom_border = this
-                        .visible_items
-                        .get(index + 1)
-                        .map(|item_index| {
-                            let item = &this.current_page().items[*item_index];
-                            matches!(item, SettingsPageItem::SectionHeader(_))
-                        })
+                    let no_bottom_border = visible_items
+                        .next()
+                        .map(|(_, item)| matches!(item, SettingsPageItem::SectionHeader(_)))
                         .unwrap_or(false);
-                    let is_last = Some(index) == last_non_header_index;
+                    let is_last = Some(actual_item_index) == last_non_header_index;
 
                     v_flex()
                         .id(("settings-page-item", actual_item_index))
@@ -3062,7 +3052,6 @@ mod test {
             ),
             files_focus_handle: cx.focus_handle(),
             search_index: None,
-            visible_items: Vec::default(),
             list_state: ListState::new(0, gpui::ListAlignment::Top, px(0.0)),
         };
 
