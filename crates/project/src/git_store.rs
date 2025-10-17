@@ -2910,6 +2910,13 @@ impl RepositorySnapshot {
         Self::abs_path_to_repo_path_inner(&self.work_directory_abs_path, abs_path, self.path_style)
     }
 
+    fn repo_path_to_abs_path(&self, repo_path: &RepoPath) -> PathBuf {
+        self.path_style
+            .join(&self.work_directory_abs_path, repo_path.as_std_path())
+            .unwrap()
+            .into()
+    }
+
     #[inline]
     fn abs_path_to_repo_path_inner(
         work_directory_abs_path: &Path,
@@ -3349,10 +3356,7 @@ impl Repository {
     pub fn repo_path_to_project_path(&self, path: &RepoPath, cx: &App) -> Option<ProjectPath> {
         let git_store = self.git_store.upgrade()?;
         let worktree_store = git_store.read(cx).worktree_store.read(cx);
-        let abs_path = self
-            .snapshot
-            .work_directory_abs_path
-            .join(path.as_std_path());
+        let abs_path = self.snapshot.repo_path_to_abs_path(path);
         let abs_path = SanitizedPath::new(&abs_path);
         let (worktree, relative_path) = worktree_store.find_worktree(abs_path, cx)?;
         Some(ProjectPath {
