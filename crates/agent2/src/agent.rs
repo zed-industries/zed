@@ -4,7 +4,6 @@ use crate::{
 };
 use crate::{HistoryStore, TerminalHandle, ThreadEnvironment, TitleUpdated, TokenUsageUpdated};
 use acp_thread::{AcpThread, AgentModelSelector};
-use action_log::ActionLog;
 use agent_client_protocol as acp;
 use anyhow::{Context as _, Result, anyhow};
 use chrono::{DateTime, Utc};

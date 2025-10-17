@@ -348,6 +348,7 @@ impl ContextPicker {
                                 thread_store,
                                 context_picker.clone(),
                                 self.context_store.clone(),
+                                self.workspace.clone(),
                                 window,
                                 cx,
                             )
@@ -463,11 +464,18 @@ impl ContextPicker {
     fn add_recent_thread(
         &self,
         entry: HistoryEntry,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let Some(context_store) = self.context_store.upgrade() else {
             return Task::ready(Err(anyhow!("context store not available")));
+        };
+        let Some(project) = self
+            .workspace
+            .upgrade()
+            .map(|workspace| workspace.read(cx).project().clone())
+        else {
+            return Task::ready(Err(anyhow!("project not available")));
         };
 
         match entry {
@@ -479,11 +487,10 @@ impl ContextPicker {
                 else {
                     return Task::ready(Err(anyhow!("thread store not available")));
                 };
-
-                let open_thread_task =
-                    thread_store.update(cx, |this, cx| this.load_thread(thread.id, cx));
+                let load_thread_task =
+                    agent2::load_agent_thread(thread.id, thread_store, project, cx);
                 cx.spawn(async move |this, cx| {
-                    let thread = open_thread_task.await?;
+                    let thread = load_thread_task.await?;
                     context_store.update(cx, |context_store, cx| {
                         context_store.add_thread(thread, true, cx);
                     })?;

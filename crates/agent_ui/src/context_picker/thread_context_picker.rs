@@ -10,6 +10,7 @@ use fuzzy::StringMatchCandidate;
 use gpui::{App, DismissEvent, Entity, FocusHandle, Focusable, Task, WeakEntity};
 use picker::{Picker, PickerDelegate};
 use ui::{ListItem, prelude::*};
+use workspace::Workspace;
 
 pub struct ThreadContextPicker {
     picker: Entity<Picker<ThreadContextPickerDelegate>>,
@@ -20,11 +21,16 @@ impl ThreadContextPicker {
         thread_store: WeakEntity<HistoryStore>,
         context_picker: WeakEntity<ContextPicker>,
         context_store: WeakEntity<context_store::ContextStore>,
+        workspace: WeakEntity<Workspace>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let delegate =
-            ThreadContextPickerDelegate::new(thread_store, context_picker, context_store);
+        let delegate = ThreadContextPickerDelegate::new(
+            thread_store,
+            context_picker,
+            context_store,
+            workspace,
+        );
         let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx));
 
         ThreadContextPicker { picker }
@@ -47,6 +53,7 @@ pub struct ThreadContextPickerDelegate {
     thread_store: WeakEntity<HistoryStore>,
     context_picker: WeakEntity<ContextPicker>,
     context_store: WeakEntity<context_store::ContextStore>,
+    workspace: WeakEntity<Workspace>,
     matches: Vec<HistoryEntry>,
     selected_index: usize,
 }
@@ -56,11 +63,13 @@ impl ThreadContextPickerDelegate {
         thread_store: WeakEntity<HistoryStore>,
         context_picker: WeakEntity<ContextPicker>,
         context_store: WeakEntity<context_store::ContextStore>,
+        workspace: WeakEntity<Workspace>,
     ) -> Self {
         ThreadContextPickerDelegate {
             thread_store,
             context_picker,
             context_store,
+            workspace,
             matches: Vec::new(),
             selected_index: 0,
         }
@@ -113,7 +122,14 @@ impl PickerDelegate for ThreadContextPickerDelegate {
         })
     }
 
-    fn confirm(&mut self, _secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
+    fn confirm(&mut self, _secondary: bool, _window: &mut Window, cx: &mut Context<Picker<Self>>) {
+        let Some(project) = self
+            .workspace
+            .upgrade()
+            .map(|w| w.read(cx).project().clone())
+        else {
+            return;
+        };
         let Some((entry, thread_store)) = self
             .matches
             .get(self.selected_index)
@@ -124,11 +140,11 @@ impl PickerDelegate for ThreadContextPickerDelegate {
 
         match entry {
             HistoryEntry::AcpThread(thread) => {
-                let open_thread_task =
-                    thread_store.update(cx, |this, cx| this.load_thread(thread.id, cx));
+                let load_thread_task =
+                    agent2::load_agent_thread(thread.id.clone(), thread_store, project, cx);
 
                 cx.spawn(async move |this, cx| {
-                    let thread = open_thread_task.await?;
+                    let thread = load_thread_task.await?;
                     this.update(cx, |this, cx| {
                         this.delegate
                             .context_store

@@ -8,8 +8,9 @@ use db::kvp::KEY_VALUE_STORE;
 use gpui::{App, AsyncApp, Entity, SharedString, Task, prelude::*};
 use itertools::Itertools;
 use paths::contexts_dir;
+use project::Project;
 use serde::{Deserialize, Serialize};
-use std::{collections::VecDeque, path::Path, sync::Arc, time::Duration};
+use std::{collections::VecDeque, path::Path, rc::Rc, sync::Arc, time::Duration};
 use ui::ElementId;
 use util::ResultExt as _;
 
@@ -18,6 +19,37 @@ const RECENTLY_OPENED_THREADS_KEY: &str = "recent-agent-threads";
 const SAVE_RECENTLY_OPENED_ENTRIES_DEBOUNCE: Duration = Duration::from_millis(50);
 
 const DEFAULT_TITLE: &SharedString = &SharedString::new_static("New Thread");
+
+//todo: We should remove this function once we support loading all acp thread
+pub fn load_agent_thread(
+    session_id: acp::SessionId,
+    history_store: Entity<HistoryStore>,
+    project: Entity<Project>,
+    cx: &mut App,
+) -> Task<Result<Entity<crate::Thread>>> {
+    use agent_servers::{AgentServer, AgentServerDelegate};
+
+    let server = Rc::new(crate::NativeAgentServer::new(
+        project.read(cx).fs().clone(),
+        history_store.clone(),
+    ));
+    let delegate = AgentServerDelegate::new(
+        project.read(cx).agent_server_store().clone(),
+        project.clone(),
+        None,
+        None,
+    );
+    let connection = server.connect(None, delegate, cx);
+    cx.spawn(async move |cx| {
+        let (agent, _) = connection.await?;
+        let agent = agent.downcast::<crate::NativeAgentConnection>().unwrap();
+        cx.update(|cx| {
+            agent
+                .thread(&session_id, cx)
+                .context("Thread {session_id} not found")
+        })?
+    })
+}
 
 #[derive(Clone, Debug)]
 pub enum HistoryEntry {

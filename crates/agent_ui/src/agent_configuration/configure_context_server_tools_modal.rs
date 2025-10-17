@@ -1,5 +1,4 @@
 use agent2::ContextServerRegistry;
-use assistant_tool::{ToolSource, ToolWorkingSet};
 use collections::HashMap;
 use context_server::ContextServerId;
 use gpui::{

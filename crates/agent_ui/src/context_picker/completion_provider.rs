@@ -15,8 +15,8 @@ use language::{Buffer, CodeLabel, HighlightId};
 use lsp::CompletionContext;
 use project::lsp_store::SymbolLocation;
 use project::{
-    Completion, CompletionDisplayOptions, CompletionIntent, CompletionResponse, ProjectPath,
-    Symbol, WorktreeId,
+    Completion, CompletionDisplayOptions, CompletionIntent, CompletionResponse, Project,
+    ProjectPath, Symbol, WorktreeId,
 };
 use prompt_store::PromptStore;
 use rope::Point;
@@ -404,6 +404,7 @@ impl ContextPickerCompletionProvider {
         editor: Entity<Editor>,
         context_store: Entity<ContextStore>,
         thread_store: Entity<HistoryStore>,
+        project: Entity<Project>,
     ) -> Completion {
         let icon_for_completion = if recent {
             IconName::HistoryRerun
@@ -431,15 +432,14 @@ impl ContextPickerCompletionProvider {
                 move |window, cx| match &thread_entry {
                     HistoryEntry::AcpThread(thread) => {
                         let context_store = context_store.clone();
-                        let thread_store = thread_store.clone();
+                        let load_thread_task = agent2::load_agent_thread(
+                            thread.id.clone(),
+                            thread_store.clone(),
+                            project.clone(),
+                            cx,
+                        );
                         window.spawn::<_, Option<_>>(cx, async move |cx| {
-                            let thread = thread_store
-                                .update_in(cx, |thread_store, window, cx| {
-                                    thread_store.load_thread(thread.id, cx)
-                                })
-                                .ok()?
-                                .await
-                                .log_err()??;
+                            let thread = load_thread_task.await.log_err()?;
                             let context = context_store
                                 .update(cx, |context_store, cx| {
                                     context_store.add_thread(thread, false, cx)
@@ -797,10 +797,11 @@ impl CompletionProvider for ContextPickerCompletionProvider {
             workspace.clone(),
             cx,
         );
+        let project = workspace.read(cx).project().downgrade();
 
         cx.spawn(async move |_, cx| {
             let matches = search_task.await;
-            let Some(editor) = editor.upgrade() else {
+            let Some((editor, project)) = editor.upgrade().zip(project.upgrade()) else {
                 return Ok(Vec::new());
             };
 
@@ -851,6 +852,7 @@ impl CompletionProvider for ContextPickerCompletionProvider {
                                 editor.clone(),
                                 context_store.clone(),
                                 thread_store,
+                                project.clone(),
                             ))
                         }
                         Match::RecentThread(thread) => {
@@ -863,6 +865,7 @@ impl CompletionProvider for ContextPickerCompletionProvider {
                                 editor.clone(),
                                 context_store.clone(),
                                 thread_store,
+                                project.clone(),
                             ))
                         }
                         Match::Rules(user_rules) => Some(Self::completion_for_rules(
