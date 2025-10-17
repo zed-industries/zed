@@ -83,8 +83,11 @@ impl<T: Future> FutureExt for T {
     }
 }
 
+#[pin_project::pin_project]
 pub struct WithTimeout<T> {
+    #[pin]
     future: T,
+    #[pin]
     timer: Task<()>,
 }
 
@@ -97,15 +100,11 @@ impl<T: Future> Future for WithTimeout<T> {
     type Output = Result<T::Output, Timeout>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut task::Context) -> task::Poll<Self::Output> {
-        // SAFETY: the fields of Timeout are private and we never move the future ourselves
-        // And its already pinned since we are being polled (all futures need to be pinned to be polled)
-        let this = unsafe { &raw mut *self.get_unchecked_mut() };
-        let future = unsafe { Pin::new_unchecked(&mut (*this).future) };
-        let timer = unsafe { Pin::new_unchecked(&mut (*this).timer) };
+        let this = self.project();
 
-        if let task::Poll::Ready(output) = future.poll(cx) {
+        if let task::Poll::Ready(output) = this.future.poll(cx) {
             task::Poll::Ready(Ok(output))
-        } else if timer.poll(cx).is_ready() {
+        } else if this.timer.poll(cx).is_ready() {
             task::Poll::Ready(Err(Timeout))
         } else {
             task::Poll::Pending
