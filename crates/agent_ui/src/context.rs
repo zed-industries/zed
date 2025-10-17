@@ -1096,7 +1096,7 @@ mod tests {
         assert!(
             file_context
                 .text
-                .contains("# File outline for test/file.txt"),
+                .contains(&format!("# File outline for {}", path!("test/file.txt"))),
             "Large files should not get an outline"
         );
 
@@ -1120,7 +1120,7 @@ mod tests {
         assert!(
             !file_context
                 .text
-                .contains("# File outline for test/file.txt"),
+                .contains(&format!("# File outline for {}", path!("test/file.txt"))),
             "Small files should not get an outline"
         );
 
