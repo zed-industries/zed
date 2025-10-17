@@ -252,7 +252,10 @@ impl SyntaxTreeView {
             .editor
             .update(cx, |editor, cx| editor.snapshot(window, cx));
         let (buffer, range, excerpt_id) = editor_state.editor.update(cx, |editor, cx| {
-            let selection_range = editor.selections.last::<usize>(cx).range();
+            let selection_range = editor
+                .selections
+                .last::<usize>(&editor.display_snapshot(cx))
+                .range();
             let multi_buffer = editor.buffer().read(cx);
             let (buffer, range, excerpt_id) = snapshot
                 .buffer_snapshot()
