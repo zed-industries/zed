@@ -23009,7 +23009,7 @@ fn snippet_completions(
             });
         }
 
-        for snippets in scopes.into_iter() {
+        for (_scope, snippets) in scopes.into_iter() {
             // Sort snippets by word count to match longer snippet prefixes first.
             let mut sorted_snippet_candidates = snippets
                 .iter()

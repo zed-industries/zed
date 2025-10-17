@@ -11084,6 +11084,50 @@ async fn test_snippet_indentation(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_snippet_with_multi_word_prefix(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.update_editor(|editor, window, cx| {
+        editor.project().unwrap().update(cx, |project, cx| {
+            project.snippets().update(cx, |snippets, cx| {
+                let snippet = project::snippet_provider::Snippet {
+                    prefix: "multi word".to_string(),
+                    body: "this is many words".to_string(),
+                    description: "description".to_string(),
+                    name: "multi-word snippet test".to_string(),
+                };
+                snippets.add_snippet_for_test(
+                    None,
+                    PathBuf::from("test_snippets.json"),
+                    vec![Arc::new(snippet)],
+                    cx,
+                );
+            });
+        })
+    });
+
+    cx.set_state("mˇ");
+    cx.simulate_input("u");
+
+    cx.update_editor(|editor, window, cx| {
+        let CodeContextMenu::Completions(context_menu) = editor.context_menu.borrow().unwrap()
+        else {
+            panic!("expected completion menu")
+        };
+        assert!(context_menu.visible());
+        let completions = context_menu;
+
+        assert!(
+            completions
+                .iter()
+                .any(|c| c.string.as_str() == "multi word"),
+            "Expected to find 'multi word' snippet in completions"
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_document_format_during_save(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -13584,7 +13628,14 @@ async fn test_completion_mode(cx: &mut TestAppContext) {
 
             cx.set_state(&run.initial_state);
             cx.update_editor(|editor, window, cx| {
-                editor.show_completions(&ShowCompletions { trigger: None }, window, cx);
+                editor.show_completions(
+                    &ShowCompletions {
+                        trigger: None,
+                        snippets_only: false,
+                    },
+                    window,
+                    cx,
+                );
             });
 
             let counter = Arc::new(AtomicUsize::new(0));
