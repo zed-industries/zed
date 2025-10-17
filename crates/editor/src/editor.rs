@@ -3136,7 +3136,14 @@ impl Editor {
                 };
 
                 if continue_showing {
-                    self.show_completions(&ShowCompletions { trigger: None }, window, cx);
+                    self.show_completions(
+                        &ShowCompletions {
+                            trigger: None,
+                            snippets_only: false,
+                        },
+                        window,
+                        cx,
+                    );
                 } else {
                     self.hide_context_menu(window, cx);
                 }
@@ -4940,6 +4947,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        dbg!(&text);
         let completions_source = self
             .context_menu
             .borrow()
@@ -4956,27 +4964,28 @@ impl Editor {
                         ignore_threshold: false,
                     }),
                     None,
+                    false,
                     window,
                     cx,
                 );
             }
             Some(CompletionsMenuSource::Normal)
             | Some(CompletionsMenuSource::SnippetChoices)
-            | None
-                if self.is_completion_trigger(
+            | None => {
+                let snippets_only = !self.is_completion_trigger(
                     text,
                     trigger_in_words,
                     completions_source.is_some(),
                     cx,
-                ) =>
-            {
+                );
                 self.show_completions(
                     &ShowCompletions {
                         trigger: Some(text.to_owned()).filter(|x| !x.is_empty()),
+                        snippets_only,
                     },
                     window,
                     cx,
-                )
+                );
             }
             _ => {
                 self.hide_context_menu(window, cx);
@@ -5474,6 +5483,7 @@ impl Editor {
                 ignore_threshold: true,
             }),
             None,
+            false,
             window,
             cx,
         );
@@ -5485,13 +5495,20 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.open_or_update_completions_menu(None, options.trigger.as_deref(), window, cx);
+        self.open_or_update_completions_menu(
+            None,
+            options.trigger.as_deref(),
+            options.snippets_only,
+            window,
+            cx,
+        );
     }
 
     fn open_or_update_completions_menu(
         &mut self,
         requested_source: Option<CompletionsMenuSource>,
         trigger: Option<&str>,
+        snippets_only: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -5673,6 +5690,7 @@ impl Editor {
                     &buffer,
                     buffer_position,
                     completion_context,
+                    snippets_only,
                     window,
                     cx,
                 );
@@ -6105,7 +6123,14 @@ impl Editor {
             .as_ref()
             .is_some_and(|confirm| confirm(intent, window, cx));
         if show_new_completions_on_confirm {
-            self.show_completions(&ShowCompletions { trigger: None }, window, cx);
+            self.show_completions(
+                &ShowCompletions {
+                    trigger: None,
+                    snippets_only: false,
+                },
+                window,
+                cx,
+            );
         }
 
         let provider = self.completion_provider.as_ref()?;
@@ -22815,6 +22840,7 @@ pub trait CompletionProvider {
         buffer: &Entity<Buffer>,
         buffer_position: text::Anchor,
         trigger: CompletionContext,
+        snippets_only: bool,
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) -> Task<Result<Vec<CompletionResponse>>>;
@@ -23189,6 +23215,7 @@ impl CompletionProvider for Entity<Project> {
         buffer: &Entity<Buffer>,
         buffer_position: text::Anchor,
         options: CompletionContext,
+        snippets_only: bool,
         _window: &mut Window,
         cx: &mut Context<Editor>,
     ) -> Task<Result<Vec<CompletionResponse>>> {
@@ -23196,7 +23223,11 @@ impl CompletionProvider for Entity<Project> {
             let snippets = snippet_completions(project, buffer, buffer_position, cx);
             let project_completions = project.completions(buffer, buffer_position, options, cx);
             cx.background_spawn(async move {
-                let mut responses = project_completions.await?;
+                let mut responses = if snippets_only {
+                    Vec::new()
+                } else {
+                    project_completions.await?
+                };
                 let snippets = snippets.await?;
                 if !snippets.completions.is_empty() {
                     responses.push(snippets);

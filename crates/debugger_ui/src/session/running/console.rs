@@ -521,6 +521,7 @@ impl CompletionProvider for ConsoleQueryBarCompletionProvider {
         buffer: &Entity<Buffer>,
         buffer_position: language::Anchor,
         _trigger: editor::CompletionContext,
+        _snippets_only: bool,
         _window: &mut Window,
         cx: &mut Context<Editor>,
     ) -> Task<Result<Vec<CompletionResponse>>> {

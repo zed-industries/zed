@@ -263,6 +263,7 @@ impl CompletionProvider for SlashCommandCompletionProvider {
         buffer: &Entity<Buffer>,
         buffer_position: Anchor,
         _: editor::CompletionContext,
+        _snippets_only: bool,
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) -> Task<Result<Vec<project::CompletionResponse>>> {

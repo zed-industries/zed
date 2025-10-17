@@ -692,6 +692,7 @@ impl CompletionProvider for ContextPickerCompletionProvider {
         buffer: &Entity<Buffer>,
         buffer_position: Anchor,
         _trigger: CompletionContext,
+        _snippets_only: bool,
         _window: &mut Window,
         cx: &mut Context<Editor>,
     ) -> Task<Result<Vec<CompletionResponse>>> {
