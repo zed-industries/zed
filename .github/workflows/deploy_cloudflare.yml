@@ -22,6 +22,8 @@ jobs:
 
       - name: Build docs
         uses: ./.github/actions/build_docs
+        env:
+          DOCS_AMPLITUDE_API_KEY: ${{ secrets.DOCS_AMPLITUDE_API_KEY }}
 
       - name: Deploy Docs
         uses: cloudflare/wrangler-action@da0e0dfe58b7a431659754fdf3f186c529afbe65 # v3
