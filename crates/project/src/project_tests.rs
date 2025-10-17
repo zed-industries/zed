@@ -8878,6 +8878,7 @@ async fn test_ignored_dirs_events(cx: &mut gpui::TestAppContext) {
     git_commit("Initial commit", &repo);
 
     let project = Project::test(Arc::new(RealFs::new(None, cx.executor())), [root_path], cx).await;
+    cx.run_until_parked();
     let repository_updates = Arc::new(Mutex::new(Vec::new()));
     let project_events = Arc::new(Mutex::new(Vec::new()));
     project.update(cx, |project, cx| {
@@ -8904,6 +8905,7 @@ async fn test_ignored_dirs_events(cx: &mut gpui::TestAppContext) {
 
     let tree = project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
     tree.flush_fs_events(cx).await;
+    cx.run_until_parked();
     tree.update(cx, |tree, cx| {
         tree.load_file(rel_path("project/target/debug/important_text.txt"), cx)
     })
