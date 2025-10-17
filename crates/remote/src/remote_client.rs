@@ -884,6 +884,10 @@ impl RemoteClient {
         self.path_style
     }
 
+    pub fn unique_identifier(&self) -> String {
+        self.unique_identifier.clone()
+    }
+
     #[cfg(any(test, feature = "test-support"))]
     pub fn simulate_disconnect(&self, client_cx: &mut App) -> Task<()> {
         let opts = self.connection_options();
