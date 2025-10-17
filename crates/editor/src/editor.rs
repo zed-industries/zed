@@ -1934,8 +1934,7 @@ impl Editor {
                                 }
                             }
                         }
-                    }
-                    project::Event::LanguageServerBufferRegistered { buffer_id, .. } => {
+                        project::Event::LanguageServerBufferRegistered { buffer_id, .. } => {
                         let buffer_id = *buffer_id;
                         if editor.buffer().read(cx).buffer(buffer_id).is_some() {
                             let registered = editor.register_buffer(buffer_id, cx);
@@ -1952,7 +1951,7 @@ impl Editor {
                         }
                     }
 
-                    project::Event::EntryRenamed(transaction) => {
+                        project::Event::EntryRenamed(transaction) => {
                             let Some(workspace) = editor.workspace() else {
                                 return;
                             };
@@ -2004,7 +2003,6 @@ impl Editor {
                                 }
                             }
                         }
-
                         _ => {}
                     }
                 },

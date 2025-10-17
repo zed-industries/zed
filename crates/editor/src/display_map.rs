@@ -1244,7 +1244,7 @@ impl DisplaySnapshot {
         let display_row_start = display_rows.start;
         let start_point =
             self.display_point_to_point(DisplayPoint::new(display_row_start, 0), Bias::Left);
-        let start_buffer_offset = self.buffer_snapshot.point_to_offset(start_point);
+        let start_buffer_offset = self.buffer_snapshot().point_to_offset(start_point);
 
         self.chunks(
             display_rows,
