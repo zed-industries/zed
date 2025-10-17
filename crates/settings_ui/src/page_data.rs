@@ -604,24 +604,79 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     metadata: None,
                     files: USER,
                 }),
-                // todo(settings_ui): This needs custom ui
-                SettingsPageItem::SettingItem(SettingItem {
-                    files: USER,
-                    title: "Line Height",
-                    description: "Line height for editor text",
-                    field: Box::new(
-                        SettingField {
+                SettingsPageItem::DynamicItem(DynamicItem {
+                    discriminant: SettingItem {
+                        files: USER,
+                        title: "Line Height",
+                        description: "Line height for editor text",
+                        field: Box::new(SettingField {
                             pick: |settings_content| {
-                                settings_content.theme.buffer_line_height.as_ref()
+                                Some(&dynamic_variants::<settings::BufferLineHeight>()[
+                                    settings_content
+                                        .theme
+                                        .buffer_line_height
+                                        .as_ref()?
+                                        .discriminant() as usize])
                             },
                             write: |settings_content, value| {
-                                settings_content.theme.buffer_line_height = value;
-
+                                let Some(value) = value else {
+                                    return;
+                                };
+                                let settings_value = settings_content.theme.buffer_line_height.get_or_insert_with(|| {
+                                    settings::BufferLineHeight::default()
+                                });
+                                *settings_value = match value {
+                                    settings::BufferLineHeightDiscriminants::Comfortable => {
+                                        settings::BufferLineHeight::Comfortable
+                                    },
+                                    settings::BufferLineHeightDiscriminants::Standard => {
+                                        settings::BufferLineHeight::Standard
+                                    },
+                                    settings::BufferLineHeightDiscriminants::Custom => {
+                                        let custom_value = theme::BufferLineHeight::from(*settings_value).value();
+                                        settings::BufferLineHeight::Custom(custom_value)
+                                    },
+                                };
                             },
+                        }),
+                        metadata: None,
+                    },
+                    pick_discriminant: |settings_content| {
+                        Some(settings_content.theme.buffer_line_height.as_ref()?.discriminant() as usize)
+                    },
+                    fields: dynamic_variants::<settings::BufferLineHeight>().into_iter().map(|variant| {
+                        match variant {
+                            settings::BufferLineHeightDiscriminants::Comfortable => vec![],
+                            settings::BufferLineHeightDiscriminants::Standard => vec![],
+                            settings::BufferLineHeightDiscriminants::Custom => vec![
+                                SettingItem {
+                                    files: USER,
+                                    title: "Custom Line Height",
+                                    description: "Custom line height value (must be at least 1.0)",
+                                    field: Box::new(SettingField {
+                                        pick: |settings_content| {
+                                            match settings_content.theme.buffer_line_height.as_ref() {
+                                                Some(settings::BufferLineHeight::Custom(value)) => Some(value),
+                                                _ => None
+                                            }
+                                        },
+                                        write: |settings_content, value| {
+                                            let Some(value) = value else {
+                                                return;
+                                            };
+                                            match settings_content
+                                                .theme
+                                                .buffer_line_height.as_mut() {
+                                                    Some(settings::BufferLineHeight::Custom(line_height)) => *line_height = f32::max(value, 1.0),
+                                                    _ => return
+                                                }
+                                        },
+                                    }),
+                                    metadata: None,
+                                }
+                            ],
                         }
-                        .unimplemented(),
-                    ),
-                    metadata: None,
+                    }).collect(),
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     files: USER,
