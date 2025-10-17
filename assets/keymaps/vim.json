@@ -475,7 +475,9 @@
       "g b": "vim::WindowBottom",
       "g r": "editor::FindAllReferences", // zed specific
       "g n": "pane::ActivateNextItem",
+      "shift-l": "pane::ActivateNextItem",      
       "g p": "pane::ActivatePreviousItem",
+      "shift-h": "pane::ActivatePreviousItem",
       "g .": "vim::HelixGotoLastModification", // go to last modification
       
       // Window mode
@@ -488,10 +490,6 @@
       "space w r": "pane::SplitRight",
       "space w v": "pane::SplitDown",
       "space w d": "pane::SplitDown",
-      "shift-h": "workspace::SwapPaneLeft",
-      "shift-j": "workspace::SwapPaneDown",
-      "shift-k": "workspace::SwapPaneUp",
-      "shift-l": "workspace::SwapPaneRight",
 
       // Space mode
       "space f": "file_finder::Toggle",
