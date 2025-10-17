@@ -160,7 +160,18 @@ pub enum ThemeSelection {
 }
 
 /// Represents the selection of an icon theme, which can be either static or dynamic.
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
+#[derive(
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    Eq,
+    strum::EnumDiscriminants,
+)]
+#[strum_discriminants(derive(strum::VariantArray, strum::VariantNames, strum::FromRepr))]
 #[serde(untagged)]
 pub enum IconThemeSelection {
     /// A static icon theme selection, represented by a single icon theme name.
