@@ -1,5 +1,5 @@
 mod add_llm_provider_modal;
-mod configure_context_server_modal;
+pub mod configure_context_server_modal;
 mod configure_context_server_tools_modal;
 mod manage_profiles_modal;
 mod tool_picker;
@@ -42,9 +42,11 @@ pub(crate) use configure_context_server_tools_modal::ConfigureContextServerTools
 pub(crate) use manage_profiles_modal::ManageProfilesModal;
 
 use crate::{
-    AddContextServer,
     agent_configuration::add_llm_provider_modal::{AddLlmProviderModal, LlmCompatibleProvider},
 };
+use gpui::actions;
+
+actions!(agent_ui, [AddRemoteContextServer]);
 
 pub struct AgentConfiguration {
     fs: Arc<dyn Fs>,
@@ -477,8 +479,11 @@ impl AgentConfiguration {
                 move |window, cx| {
                     Some(ContextMenu::build(window, cx, |menu, _window, _cx| {
                         menu.entry("Add Custom Server", None, {
-                            |window, cx| window.dispatch_action(AddContextServer.boxed_clone(), cx)
+                            |window, cx| window.dispatch_action(crate::AddContextServer.boxed_clone(), cx)
                         })
+                                                            .entry("Add Remote Server", None, {
+                                                                |window, cx| window.dispatch_action(AddRemoteContextServer.boxed_clone(), cx)
+                                                            })
                         .entry("Install from Extensions", None, {
                             |window, cx| {
                                 window.dispatch_action(
@@ -554,7 +559,7 @@ impl AgentConfiguration {
                 }
             }))
     }
-
+    
     fn render_context_server(
         &self,
         context_server_id: ContextServerId,
@@ -595,10 +600,25 @@ impl AgentConfiguration {
             .tools_for_server(&context_server_id)
             .count();
 
+        let is_remote = server_configuration
+            .as_ref()
+            .map(|config| {
+                matches!(
+                    config.as_ref(),
+                    ContextServerConfiguration::Remote { .. }
+                )
+            })
+            .unwrap_or(false);
+
         let (source_icon, source_tooltip) = if is_from_extension {
             (
                 IconName::ZedMcpExtension,
                 "This MCP server was installed from an extension.",
+            )
+        } else if is_remote {
+            (
+                IconName::Server,
+                "This is a remote MCP server.",
             )
         } else {
             (
@@ -655,15 +675,27 @@ impl AgentConfiguration {
                             let context_server_id = context_server_id.clone();
                             let language_registry = language_registry.clone();
                             let workspace = workspace.clone();
+                            let is_remote = is_remote;
                             move |window, cx| {
-                                ConfigureContextServerModal::show_modal_for_existing_server(
-                                    context_server_id.clone(),
-                                    language_registry.clone(),
-                                    workspace.clone(),
-                                    window,
-                                    cx,
-                                )
-                                .detach_and_log_err(cx);
+                                if is_remote {
+                                    crate::agent_configuration::configure_context_server_modal::ConfigureContextServerModal::show_modal_for_existing_server(
+                                        context_server_id.clone(),
+                                        language_registry.clone(),
+                                        workspace.clone(),
+                                        window,
+                                        cx,
+                                    )
+                                    .detach();
+                                } else {
+                                    ConfigureContextServerModal::show_modal_for_existing_server(
+                                        context_server_id.clone(),
+                                        language_registry.clone(),
+                                        workspace.clone(),
+                                        window,
+                                        cx,
+                                    )
+                                    .detach();
+                                }
                             }
                         }).when(tool_count > 0, |this| this.entry("View Tools", None, {
                             let context_server_id = context_server_id.clone();
@@ -940,7 +972,7 @@ impl AgentConfiguration {
                                                                     cx,
                                                                 ).await
                                                             })
-                                                            .detach_and_log_err(cx);
+                                                            .detach();
                                                     }
                                                 }
                                             ),

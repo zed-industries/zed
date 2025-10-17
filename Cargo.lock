@@ -3702,6 +3702,7 @@ dependencies = [
  "collections",
  "futures 0.3.31",
  "gpui",
+ "http_client",
  "log",
  "net",
  "parking_lot",

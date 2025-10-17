@@ -32,9 +32,15 @@ use crate::AddContextServer;
 
 enum ConfigurationTarget {
     New,
+    NewRemote,
     Existing {
         id: ContextServerId,
         command: ContextServerCommand,
+    },
+    ExistingRemote {
+        id: ContextServerId,
+        url: String,
+        auth: Option<settings::ContextServerAuth>,
     },
     Extension {
         id: ContextServerId,
@@ -46,9 +52,11 @@ enum ConfigurationTarget {
 enum ConfigurationSource {
     New {
         editor: Entity<Editor>,
+        is_remote: bool,
     },
     Existing {
         editor: Entity<Editor>,
+        is_remote: bool,
     },
     Extension {
         id: ContextServerId,
@@ -96,6 +104,16 @@ impl ConfigurationSource {
         match target {
             ConfigurationTarget::New => ConfigurationSource::New {
                 editor: create_editor(context_server_input(None), jsonc_language, window, cx),
+                is_remote: false,
+            },
+            ConfigurationTarget::NewRemote => ConfigurationSource::New {
+                editor: create_editor(
+                    context_server_remote_input(None),
+                    jsonc_language,
+                    window,
+                    cx,
+                ),
+                is_remote: true,
             },
             ConfigurationTarget::Existing { id, command } => ConfigurationSource::Existing {
                 editor: create_editor(
@@ -104,6 +122,16 @@ impl ConfigurationSource {
                     window,
                     cx,
                 ),
+                is_remote: false,
+            },
+            ConfigurationTarget::ExistingRemote { id, url, auth } => ConfigurationSource::Existing {
+                editor: create_editor(
+                    context_server_remote_input(Some((id, url, auth))),
+                    jsonc_language,
+                    window,
+                    cx,
+                ),
+                is_remote: true,
             },
             ConfigurationTarget::Extension {
                 id,
@@ -140,16 +168,22 @@ impl ConfigurationSource {
 
     fn output(&self, cx: &mut App) -> Result<(ContextServerId, ContextServerSettings)> {
         match self {
-            ConfigurationSource::New { editor } | ConfigurationSource::Existing { editor } => {
-                parse_input(&editor.read(cx).text(cx)).map(|(id, command)| {
-                    (
-                        id,
-                        ContextServerSettings::Custom {
-                            enabled: true,
-                            command,
-                        },
-                    )
-                })
+            ConfigurationSource::New { editor, is_remote }
+            | ConfigurationSource::Existing { editor, is_remote } => {
+                if *is_remote {
+                    parse_remote_input(&editor.read(cx).text(cx))
+                        .map(|(id, url, auth)| (id, ContextServerSettings::Remote { enabled: true, url, auth }))
+                } else {
+                    parse_input(&editor.read(cx).text(cx)).map(|(id, command)| {
+                        (
+                            id,
+                            ContextServerSettings::Custom {
+                                enabled: true,
+                                command,
+                            },
+                        )
+                    })
+                }
             }
             ConfigurationSource::Extension {
                 id,
@@ -211,6 +245,117 @@ fn context_server_input(existing: Option<(ContextServerId, ContextServerCommand)
     )
 }
 
+fn context_server_remote_input(
+    existing: Option<(ContextServerId, String, Option<settings::ContextServerAuth>)>,
+) -> String {
+    let (name, url, auth_example) = match existing {
+        Some((id, url, auth)) => {
+            let auth_text = if let Some(auth) = auth {
+                match auth {
+                    settings::ContextServerAuth::Bearer { token } => {
+                        format!(
+                            r#",
+    /// Authentication configuration
+    "auth": {{
+      "type": "bearer",
+      "token": "{}"
+    }}"#,
+                            token
+                        )
+                    }
+                    settings::ContextServerAuth::ApiKey { header, value } => {
+                        format!(
+                            r#",
+    /// Authentication configuration
+    "auth": {{
+      "type": "api_key",
+      "header": "{}",
+      "value": "{}"
+    }}"#,
+                            header, value
+                        )
+                    }
+                    settings::ContextServerAuth::Custom { headers } => {
+                        let headers_json = serde_json::to_string_pretty(&headers)
+                            .unwrap_or_else(|_| "{}".to_string());
+                        format!(
+                            r#",
+    /// Authentication configuration
+    "auth": {{
+      "type": "custom",
+      "headers": {}
+    }}"#,
+                            headers_json
+                        )
+                    }
+                }
+            } else {
+                String::new()
+            };
+            (id.0.to_string(), url, auth_text)
+        }
+        None => (
+            "some-remote-server".to_string(),
+            "https://example.com/mcp".to_string(),
+            r#",
+    /// Optional: Authentication configuration
+    /// Uncomment one of the following auth types:
+    // "auth": {
+    //   "type": "bearer",
+    //   "token": "your-token-here"
+    // }
+    // "auth": {
+    //   "type": "api_key",
+    //   "header": "X-API-Key",
+    //   "value": "your-api-key-here"
+    // }
+    // "auth": {
+    //   "type": "custom",
+    //   "headers": {
+    //     "X-Custom-Header": "value"
+    //   }
+    // }"#
+                .to_string(),
+        ),
+    };
+
+    format!(
+        r#"{{
+  /// The name of your remote MCP server
+  "{name}": {{
+    /// The URL of the remote MCP server
+    "url": "{url}"{auth_example}
+  }}
+}}"#
+    )
+}
+
+fn parse_remote_input(text: &str) -> Result<(ContextServerId, String, Option<settings::ContextServerAuth>)> {
+    let value: serde_json::Value = serde_json_lenient::from_str(text)?;
+    let object = value.as_object().context("Expected object")?;
+    anyhow::ensure!(object.len() == 1, "Expected exactly one key-value pair");
+    let (context_server_name, value) = object.into_iter().next().unwrap();
+    let server_config = value
+        .as_object()
+        .context("Expected object for server config")?;
+    let url = server_config
+        .get("url")
+        .and_then(|v| v.as_str())
+        .context("Expected 'url' field as string")?;
+    
+    let auth = server_config
+        .get("auth")
+        .map(|auth_value| serde_json::from_value::<settings::ContextServerAuth>(auth_value.clone()))
+        .transpose()
+        .context("Failed to parse auth configuration")?;
+    
+    Ok((
+        ContextServerId(context_server_name.clone().into()),
+        url.to_string(),
+        auth,
+    ))
+}
+
 fn resolve_context_server_extension(
     id: ContextServerId,
     worktree_store: Entity<WorktreeStore>,
@@ -255,6 +400,22 @@ pub struct ConfigureContextServerModal {
 }
 
 impl ConfigureContextServerModal {
+    pub fn new_remote_server(
+        project: Entity<project::Project>,
+        workspace: WeakEntity<Workspace>,
+        language_registry: Option<Arc<LanguageRegistry>>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Task<Result<()>> {
+        let target = ConfigurationTarget::NewRemote;
+        let language_registry =
+            language_registry.unwrap_or_else(|| project.read(cx).languages().clone());
+
+        window.spawn(cx, async move |mut cx| {
+            Self::show_modal(target, language_registry, workspace, &mut cx).await
+        })
+    }
+
     pub fn register(
         workspace: &mut Workspace,
         language_registry: Arc<LanguageRegistry>,
@@ -310,6 +471,9 @@ impl ConfigureContextServerModal {
                     id: server_id,
                     command,
                 }),
+                ContextServerSettings::Remote { enabled: _, url, auth } => {
+                    Some(ConfigurationTarget::ExistingRemote { id: server_id, url, auth })
+                }
                 ContextServerSettings::Extension { .. } => {
                     match workspace
                         .update(cx, |workspace, cx| {
@@ -351,8 +515,9 @@ impl ConfigureContextServerModal {
                     state: State::Idle,
                     original_server_id: match &target {
                         ConfigurationTarget::Existing { id, .. } => Some(id.clone()),
+                        ConfigurationTarget::ExistingRemote { id, .. } => Some(id.clone()),
                         ConfigurationTarget::Extension { id, .. } => Some(id.clone()),
-                        ConfigurationTarget::New => None,
+                        ConfigurationTarget::New | ConfigurationTarget::NewRemote => None,
                     },
                     source: ConfigurationSource::from_target(
                         target,
@@ -478,7 +643,7 @@ impl ModalView for ConfigureContextServerModal {}
 impl Focusable for ConfigureContextServerModal {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
         match &self.source {
-            ConfigurationSource::New { editor } => editor.focus_handle(cx),
+            ConfigurationSource::New { editor, .. } => editor.focus_handle(cx),
             ConfigurationSource::Existing { editor, .. } => editor.focus_handle(cx),
             ConfigurationSource::Extension { editor, .. } => editor
                 .as_ref()
@@ -524,9 +689,10 @@ impl ConfigureContextServerModal {
     }
 
     fn render_modal_content(&self, cx: &App) -> AnyElement {
+        // All variants now use single editor approach
         let editor = match &self.source {
-            ConfigurationSource::New { editor } => editor,
-            ConfigurationSource::Existing { editor } => editor,
+            ConfigurationSource::New { editor, .. } => editor,
+            ConfigurationSource::Existing { editor, .. } => editor,
             ConfigurationSource::Extension { editor, .. } => {
                 let Some(editor) = editor else {
                     return div().into_any_element();
