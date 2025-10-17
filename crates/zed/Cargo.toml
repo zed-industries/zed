@@ -164,6 +164,7 @@ zed_actions.workspace = true
 zeta.workspace = true
 zlog.workspace = true
 zlog_settings.workspace = true
+resvg = "0.45.1"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows.workspace = true

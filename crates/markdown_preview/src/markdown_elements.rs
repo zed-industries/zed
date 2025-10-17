@@ -13,13 +13,21 @@ pub struct ParsedMarkdownMermaid {
 
 #[derive(Debug)]
 #[cfg_attr(test, derive(PartialEq))]
+pub struct ParsedLatexMath {
+    pub source_range: Range<usize>,
+    pub contents: String,
+}
+
+#[derive(Debug)]
+#[cfg_attr(test, derive(PartialEq))]
 pub enum ParsedMarkdownElement {
     Heading(ParsedMarkdownHeading),
     ListItem(ParsedMarkdownListItem),
     Table(ParsedMarkdownTable),
     BlockQuote(ParsedMarkdownBlockQuote),
     CodeBlock(ParsedMarkdownCodeBlock),
-    Mermaid(ParsedMarkdownMermaid),   // 👈 new variant
+    Mermaid(ParsedMarkdownMermaid),
+    DisplayMath(ParsedLatexMath), 
     Paragraph(MarkdownParagraph),
     HorizontalRule(Range<usize>),
 }
@@ -29,6 +37,7 @@ impl ParsedMarkdownElement {
     pub fn source_range(&self) -> Option<Range<usize>> {
         Some(match self {
             Self::Mermaid(mermaid) => mermaid.source_range.clone(),
+            Self::DisplayMath(latex) => latex.source_range.clone(),
             Self::Heading(heading) => heading.source_range.clone(),
             Self::ListItem(list_item) => list_item.source_range.clone(),
             Self::Table(table) => table.source_range.clone(),
@@ -37,6 +46,7 @@ impl ParsedMarkdownElement {
             Self::Paragraph(text) => match text.get(0)? {
                 MarkdownParagraphChunk::Text(t) => t.source_range.clone(),
                 MarkdownParagraphChunk::Image(image) => image.source_range.clone(),
+                MarkdownParagraphChunk::Latex(latex) => latex.source_range.clone(),
             },
             Self::HorizontalRule(range) => range.clone(),
         })
@@ -54,6 +64,7 @@ pub type MarkdownParagraph = Vec<MarkdownParagraphChunk>;
 pub enum MarkdownParagraphChunk {
     Text(ParsedMarkdownText),
     Image(Image),
+    Latex(ParsedLatexMath)
 }
 
 #[derive(Debug)]

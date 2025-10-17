@@ -128,9 +128,11 @@ impl<'a> MarkdownParser<'a> {
     async fn parse_block(&mut self) -> Option<Vec<ParsedMarkdownElement>> {
         let (current, source_range) = self.current().unwrap();
         let source_range = source_range.clone();
+              println!("Current event: {:?}", current);
+
         match current {
             Event::Start(tag) => match tag {
-                Tag::Paragraph => {
+                Tag::Paragraph => { 
                     self.cursor += 1;
                     let text = self.parse_text(false, Some(source_range));
                     Some(vec![ParsedMarkdownElement::Paragraph(text)])
@@ -185,6 +187,19 @@ impl<'a> MarkdownParser<'a> {
                 }
                 _ => None,
             },
+            
+            Event::DisplayMath(text) => {
+                println!("Found display math: {}", text);
+
+                let parsed_latex  = ParsedLatexMath {
+                        source_range,
+                        contents: text.to_string(),
+                    };
+                self.cursor += 1;
+                return Some(vec![ParsedMarkdownElement::DisplayMath(
+                    parsed_latex
+            )]);
+        }
             Event::Rule => {
                 self.cursor += 1;
                 Some(vec![ParsedMarkdownElement::HorizontalRule(source_range)])
@@ -217,8 +232,6 @@ impl<'a> MarkdownParser<'a> {
             contents: contents.into(),
         }
     }
-
-
 
     fn parse_text(
         &mut self,
@@ -258,7 +271,6 @@ impl<'a> MarkdownParser<'a> {
                     }
                     text.push(' ');
                 }
-
                 Event::HardBreak => {
                     text.push('\n');
                 }
@@ -349,6 +361,33 @@ impl<'a> MarkdownParser<'a> {
                         }
                     }
                 }
+
+
+                Event::InlineMath(latex) => {
+
+                println!("Found inline math: {}", latex);
+
+                    if !text.is_empty() {
+        markdown_text_like.push(MarkdownParagraphChunk::Text(ParsedMarkdownText {
+            source_range: source_range.clone(),
+            contents: text.clone(),
+            highlights,
+            region_ranges,
+            regions,
+        }));
+        text.clear();
+        highlights = vec![];
+        region_ranges = vec![];
+        regions = vec![];
+    }
+
+
+                markdown_text_like.push(MarkdownParagraphChunk::Latex(ParsedLatexMath {
+                source_range: source_range.clone(),
+                contents : latex.to_string()
+                }));
+                }   
+
                 Event::Code(t) => {
                     text.push_str(t.as_ref());
                     region_ranges.push(prev_len..text.len());
@@ -413,7 +452,7 @@ impl<'a> MarkdownParser<'a> {
                     TagEnd::Image => {
                         if let Some(mut image) = image.take() {
                             if !text.is_empty() {
-                                image.alt_text = Some(std::mem::take(&mut text).into());
+                                image.set_alt_text(std::mem::take(&mut text).into());
                             }
                             markdown_text_like.push(MarkdownParagraphChunk::Image(image));
                         }

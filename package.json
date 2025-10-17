@@ -1,0 +1,18 @@
+{
+  "name": "zed",
+  "version": "1.0.0",
+  "description": "<math xmlns=\"http://www.w3.org/1998/Math/MathML\">\r   <msup>\r     <mi>x</mi>\r     <mn>2</mn>\r   </msup>\r   <mo>+</mo>\r   <msup>\r     <mi>y</mi>\r     <mn>2</mn>\r   </msup>\r   <mo>=</mo>\r   <msup>\r     <mi>z</mi>\r     <mn>2</mn>\r   </msup>\r </math>",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "katex": "^0.16.22"
+  }
+}

@@ -1,12 +1,12 @@
 use crate::markdown_elements::{
-    HeadingLevel, Link, MarkdownParagraph, MarkdownParagraphChunk, ParsedMarkdown, ParsedMarkdownBlockQuote, ParsedMarkdownCodeBlock, ParsedMarkdownElement, ParsedMarkdownHeading, ParsedMarkdownListItem, ParsedMarkdownListItemType, ParsedMarkdownMermaid, ParsedMarkdownTable, ParsedMarkdownTableAlignment, ParsedMarkdownTableRow
+    HeadingLevel, Link, MarkdownParagraph, MarkdownParagraphChunk, ParsedLatexMath, ParsedMarkdown, ParsedMarkdownBlockQuote, ParsedMarkdownCodeBlock, ParsedMarkdownElement, ParsedMarkdownHeading, ParsedMarkdownListItem, ParsedMarkdownListItemType, ParsedMarkdownMermaid, ParsedMarkdownTable, ParsedMarkdownTableAlignment, ParsedMarkdownTableRow
 };
 use gpui::{
-    div, img, rems, AbsoluteLength, AnyElement, App, AppContext as _, ClipboardItem, Context, DefiniteLength, Div, Element, ElementId, Entity, HighlightStyle, Hsla, Image, ImageSource, InteractiveText, IntoElement, Keystroke, Length, Modifiers, ParentElement, Render, Resource, SharedString, Styled, StyledText, TextStyle, WeakEntity, Window
+    div, img, rems, svg, AbsoluteLength, AnyElement, App, AppContext as _, ClipboardItem, Context, DefiniteLength, Div, Element, ElementId, Entity, HighlightStyle, Hsla, Image, ImageSource, InteractiveText, IntoElement, Keystroke, Length, Modifiers, ParentElement, Render, Resource, SharedString, Styled, StyledText, TextStyle, WeakEntity, Window
 };
 use settings::Settings;
 use std::{
-    ops::{Mul, Range}, path::PathBuf, sync::Arc, vec
+    fs::File, ops::{Mul, Range}, path::PathBuf, sync::Arc, vec
 };
 use theme::{ActiveTheme, SyntaxTheme, ThemeSettings};
 use ui::{
@@ -141,6 +141,7 @@ pub fn render_parsed_markdown(
 ) -> Div {
     let mut cx = RenderContext::new(workspace, window, cx);
 
+
     v_flex().gap_3().children(
         parsed
             .children
@@ -150,6 +151,7 @@ pub fn render_parsed_markdown(
 }
 pub fn render_markdown_block(block: &ParsedMarkdownElement, cx: &mut RenderContext) -> AnyElement {
     use ParsedMarkdownElement::*;
+    print!("rendering block: {:?}", block);
     match block {
         Paragraph(text) => render_markdown_paragraph(text, cx),
         Heading(heading) => render_markdown_heading(heading, cx),
@@ -159,6 +161,7 @@ pub fn render_markdown_block(block: &ParsedMarkdownElement, cx: &mut RenderConte
         CodeBlock(code_block) => render_markdown_code_block(code_block, cx),
         HorizontalRule(_) => render_markdown_rule(cx),
         Mermaid(mermaid) => render_markdown_mermaid(mermaid, cx),
+        DisplayMath(latex) => render_markdown_latex(latex, cx),
     }
 }
 
@@ -166,10 +169,14 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
 use std::thread;
-
+use std::collections::{HashSet};
+use std::sync::Mutex;
+lazy_static::lazy_static! {
+    static ref GENERATING_LATEX: Mutex<HashSet<u64>> = Mutex::new(HashSet::new());
+    static ref GENERATING: Mutex<HashSet<u64>> = Mutex::new(HashSet::new());
+}
 
 fn generate_mermaid_svg_async(mermaid_code: &str) -> PathBuf {
-    // Hash the code so we always get a unique, deterministic filename
     let mut hasher = DefaultHasher::new();
     mermaid_code.hash(&mut hasher);
     let hash = hasher.finish();
@@ -178,42 +185,48 @@ fn generate_mermaid_svg_async(mermaid_code: &str) -> PathBuf {
     let tmp_png = tmp_dir.join(format!("diagram_{}.png", hash));
     let tmp_mmd = tmp_dir.join(format!("diagram_{}.mmd", hash));
 
-    // If PNG already exists, don’t regenerate
+    println!("tmp dir: {:?}", tmp_dir);
+
     if tmp_png.exists() {
         return tmp_png;
     }
 
-    // Write .mmd (only if not already written)
     if !tmp_mmd.exists() {
-        std::fs::write(&tmp_mmd, &mermaid_code).expect("Failed to write Mermaid file");
+        std::fs::write(&tmp_mmd, mermaid_code).expect("Failed to write Mermaid file");
     }
 
-    // Spawn thread to generate PNG in background
-    let png_clone = tmp_png.clone();
-    let mmd_clone = tmp_mmd.clone();
-    thread::spawn(move || {
-        if !png_clone.exists() {
-            Command::new(r"C:\nvm4w\nodejs\mmdc.cmd")
-                .args(&[
-                    "-i", mmd_clone.to_str().unwrap(),
-                    "-o", png_clone.to_str().unwrap(),
-                    "-w", "600",
-                    "-H", "400",
-                ])
-                .status()
-                .expect("Failed to execute Mermaid CLI for PNG");
-        }
-    });
+    let mut generating = GENERATING.lock().unwrap();
+    if !generating.contains(&hash) {
+        generating.insert(hash);
+        let png_clone = tmp_png.clone();
+        let mmd_clone = tmp_mmd.clone();
+        thread::spawn(move || {
+            if !png_clone.exists() {
+                let _ = Command::new(r"C:\nvm4w\nodejs\mmdc.cmd")
+                    .args(&[
+                        "-i", mmd_clone.to_str().unwrap(),
+                        "-o", png_clone.to_str().unwrap(),
+                        "-w", "600",
+                        "-H", "400",
+                    ])
+                    .status();
+            }
+            GENERATING.lock().unwrap().remove(&hash);
+        });
+    }
 
     tmp_png
 }
+
 fn render_markdown_mermaid(mermaid: &ParsedMarkdownMermaid, cx: &mut RenderContext) -> AnyElement {
     // let url = String::from("file:///C:/Users/Charbel/Downloads/Untitled%20diagram%20_%20Mermaid%20Chart-2025-08-19-011545.svg");
     //                let image_resource = Resource::Uri(url.into());0
                    
                  
                let svg_path = generate_mermaid_svg_async(&mermaid.contents);
-             //  let svg_path = "tmp\test.png";
+               println!("svg path: {:?}", svg_path);
+
+               //  let svg_path = "tmp\test.png";
                let image_resource = Resource::Path(Arc::from(Path::new(&svg_path)));
                 
                 let element_id = cx.next_id(&mermaid.source_range);
@@ -227,7 +240,233 @@ fn render_markdown_mermaid(mermaid: &ParsedMarkdownMermaid, cx: &mut RenderConte
                     )
                     .into_any();
 
-                    return image_element;
+                // let svg_path = "C:\\Users\\Charbel\\OneDrive\\Desktop\\zed\\tmp\\equation.svg";
+                // let test_svg = PathBuf::from(&svg_path);
+
+                // let image_svg = div()
+                //     .id(element_id)
+                //     .cursor_pointer()
+                //     .child( img(ImageSource::from(test_svg.clone()))
+                //     .max_w_full()
+                //     .max_h_full()
+                //     .with_fallback(|| {
+                //         div()
+                //             .p_4()
+                //             .child("Failed to load SVG file")
+                //             .into_any_element()
+                //     })
+                //     )
+                //     .into_any_element();
+                //     return image_svg;
+                // }
+                image_element
+
+         }
+
+
+
+use resvg::render;
+use resvg::usvg::{Options, Tree, TreeParsing};
+use resvg::tiny_skia::{Pixmap, Transform};
+use mathjax::MathJax;
+use std::io::Write;
+
+
+
+fn generate_latex_mathjax_svg_async(latex_code: &str) -> PathBuf {
+    let mut hasher = DefaultHasher::new();
+    latex_code.hash(&mut hasher);
+    let hash = hasher.finish();
+
+    let tmp_dir = env::temp_dir();
+    let svg_file = tmp_dir.join(format!("latex_{}.svg", hash));
+
+    if svg_file.exists() {
+        return svg_file;
+    }
+
+    let mut generating = GENERATING_LATEX.lock().unwrap();
+    if !generating.contains(&hash) {
+        generating.insert(hash);
+        let code = latex_code.to_string();
+        let svg_clone = svg_file.clone();
+
+        thread::spawn(move || {
+    let renderer = MathJax::new().expect("Failed to initialize MathJax");
+    let mut result = renderer.render(&code).expect("Failed to render LaTeX");
+    result.set_color("white");
+
+    let write_path = svg_clone.clone();
+    std::fs::write(write_path, result.into_raw()).unwrap();
+
+    println!("SVG generated: {:?}", svg_clone);
+    GENERATING_LATEX.lock().unwrap().remove(&hash);
+});
+    }
+
+    svg_file
+}
+
+fn generate_latex_mathjax_svg(latex_code: &str) -> PathBuf {
+    let mut hasher = DefaultHasher::new();
+    latex_code.hash(&mut hasher);
+    let hash = hasher.finish();
+
+    let tmp_dir = env::temp_dir();
+    let svg_file = tmp_dir.join(format!("latex_{}.svg", hash));
+
+    if svg_file.exists() {
+        return svg_file;
+    }
+
+    let renderer = MathJax::new().expect("Failed to initialize MathJax");
+    let mut result = renderer.render(latex_code).expect("Failed to render LaTeX");
+    result.set_color("white");
+
+    std::fs::write(&svg_file, result.into_raw()).unwrap();
+    svg_file
+}
+
+
+fn generate_latex_mathjax_png_async(latex_code: &str) -> PathBuf {
+    let mut hasher = DefaultHasher::new();
+    latex_code.hash(&mut hasher);
+    let hash = hasher.finish();
+
+    let tmp_dir = env::temp_dir();
+    let png_file = tmp_dir.join(format!("latex_{}.png", hash));
+
+    if png_file.exists() {
+        return png_file;
+    }
+
+    let mut generating = GENERATING_LATEX.lock().unwrap();
+    if !generating.contains(&hash) {
+        generating.insert(hash);
+        let code = latex_code.to_string();
+        let png_clone = png_file.clone();
+
+        thread::spawn(move || {
+            let renderer = MathJax::new().expect("Failed to initialize MathJax");
+
+            let mut result = renderer.render(&code).expect("Failed to render LaTeX");
+            result.set_color("white");
+            let image = result.into_image(1.4).expect("Failed to convert to image");
+
+            image.save(&png_clone).expect("Failed to save PNG file");
+
+            println!("PNG generated: {:?}", png_clone);
+            GENERATING_LATEX.lock().unwrap().remove(&hash);
+        });
+    }
+
+    png_file
+}
+
+fn generate_latex_png_async(latex_code: &str) -> PathBuf {
+    // Hash LaTeX code
+    let mut hasher = DefaultHasher::new();
+    latex_code.hash(&mut hasher);
+    let hash = hasher.finish();
+
+    let tmp_dir = env::temp_dir();
+    let png_file = tmp_dir.join(format!("latex_{}.png", hash));
+
+    if png_file.exists() {
+        return png_file;
+    }
+
+    let mut generating = GENERATING_LATEX.lock().unwrap();
+    if !generating.contains(&hash) {
+        generating.insert(hash);
+        let code = latex_code.to_string();
+        let png_clone = png_file.clone();
+
+        thread::spawn(move || {
+            // Step 1: Render LaTeX → SVG using KaTeX (Node.js)
+            let svg_content = {
+    let output = std::process::Command::new("node")
+        .arg("-e")
+        .arg(format!(
+            r#"
+            const katex = require('katex');
+            const svg = katex.renderToString(`{}`, {{ throwOnError: false, output: 'svg' }});
+            console.log(svg);
+        "#,
+            code.replace('`', "\\`")
+        ))
+        .output()
+        .expect("Failed to run Node.js KaTeX");
+
+    let svg = String::from_utf8_lossy(&output.stdout).to_string();
+    println!("SVG OUTPUT: {}", svg); // << check this!
+    svg
+};
+            println!("SVG Content: {}", svg_content);
+
+            // Step 2: Convert SVG → PNG using resvg + tiny-skia
+            let options = Options::default();
+            let tree = Tree::from_str(&svg_content, &options).expect("Failed to parse SVG");
+   let size = tree.size.to_screen_size();
+    let mut pixmap = Pixmap::new(size.width(), size.height()).expect("Failed to create pixmap");
+
+
+            // Render with default transform
+            render(&tree, resvg::FitTo::Original, Transform::default(), pixmap.as_mut())
+                .expect("Failed to render SVG to PNG");
+
+            // Write PNG to file
+            let mut file = File::create(&png_clone).expect("Failed to create PNG file");
+            let png_data = pixmap.encode_png().expect("Failed to encode PNG");
+            file.write_all(&png_data).expect("Failed to write PNG file");
+
+            println!("PNG generated: {:?}", png_clone);
+            GENERATING_LATEX.lock().unwrap().remove(&hash);
+        });
+    }
+
+    png_file
+}
+
+fn render_markdown_latex(latex: &ParsedLatexMath, cx: &mut RenderContext) -> AnyElement {
+    let svg_path = generate_latex_mathjax_png_async(&latex.contents);
+    let image_resource = Resource::Path(Arc::from(Path::new(&svg_path)));
+    let element_id = cx.next_id(&latex.source_range);
+
+
+     div()
+    .id(element_id)
+    .border_5()
+    .cursor_pointer()
+    .children(vec![
+        img(ImageSource::Resource(image_resource))
+            .max_w_full()
+            .with_loading(|| {
+                div()
+                    .p_4()
+                    .child("Loading 2")
+                    .into_any_element()
+            }),
+    ])
+    .into_any()
+
+
+    // h_flex()
+    // .gap_10()
+    // .border_10()
+    // .id(element_id)
+    // .cursor_pointer()
+    // .children(vec![
+    //     img(ImageSource::Resource(image_resource))
+    //         .max_w_full()
+    //         .with_loading(|| {
+    //             div()
+    //                 .p_4()
+    //                 .child("Loading 2")
+    //                 .into_any_element()
+    //         }),
+    // ])
+    // .into_any()
 }
 
 fn render_markdown_heading(parsed: &ParsedMarkdownHeading, cx: &mut RenderContext) -> AnyElement {
@@ -506,11 +745,13 @@ impl gpui::RenderOnce for MarkdownCheckbox {
     }
 }
 
-fn paragraph_len(paragraphs: &MarkdownParagraph) -> usize {
+fn paragraph_len(paragraphs: &MarkdownParagraph) -> usize
+ {
     paragraphs
         .iter()
         .map(|paragraph| match paragraph {
             MarkdownParagraphChunk::Text(text) => text.contents.len(),
+            MarkdownParagraphChunk::Latex(latex) => latex.contents.len(),
             // TODO: Scale column width based on image size
             MarkdownParagraphChunk::Image(_) => 1,
         })
@@ -688,8 +929,9 @@ fn render_markdown_code_block(
 fn render_markdown_paragraph(parsed: &MarkdownParagraph, cx: &mut RenderContext) -> AnyElement {
     cx.with_common_p(div())
         .children(render_markdown_text(parsed, cx))
+        .content_center()
         .flex()
-        .flex_col()
+        .flex_row()
         .into_any_element()
 }
 
@@ -704,147 +946,154 @@ fn render_markdown_text(parsed_new: &MarkdownParagraph, cx: &mut RenderContext) 
     for parsed_region in parsed_new {
         match parsed_region {
             MarkdownParagraphChunk::Text(parsed) => {
-                let element_id = cx.next_id(&parsed.source_range);
+                println!("rendering text: {}", parsed.contents);
+                
+                        let element_id = cx.next_id(&parsed.source_range);
 
-                let highlights = gpui::combine_highlights(
-                    parsed.highlights.iter().filter_map(|(range, highlight)| {
-                        highlight
-                            .to_highlight_style(&syntax_theme)
-                            .map(|style| (range.clone(), style))
-                    }),
-                    parsed.regions.iter().zip(&parsed.region_ranges).filter_map(
-                        |(region, range)| {
-                            if region.code {
-                                Some((
-                                    range.clone(),
-                                    HighlightStyle {
-                                        background_color: Some(code_span_bg_color),
-                                        ..Default::default()
-                                    },
-                                ))
-                            } else {
-                                None
-                            }
-                        },
-                    ),
-                );
-                let mut links = Vec::new();
-                let mut link_ranges = Vec::new();
-                for (range, region) in parsed.region_ranges.iter().zip(&parsed.regions) {
-                    if let Some(link) = region.link.clone() {
-                        links.push(link);
-                        link_ranges.push(range.clone());
-                    }
-                }
-                let workspace = workspace_clone.clone();
-                let element = div()
-                    .child(
-                        InteractiveText::new(
-                            element_id,
-                            StyledText::new(parsed.contents.clone())
-                                .with_default_highlights(&text_style, highlights),
-                        )
-                        .tooltip({
-                            let links = links.clone();
-                            let link_ranges = link_ranges.clone();
-                            move |idx, _, cx| {
-                                for (ix, range) in link_ranges.iter().enumerate() {
-                                    if range.contains(&idx) {
-                                        return Some(LinkPreview::new(&links[ix].to_string(), cx));
-                                    }
-                                }
-                                None
-                            }
-                        })
-                        .on_click(
-                            link_ranges,
-                            move |clicked_range_ix, window, cx| match &links[clicked_range_ix] {
-                                Link::Web { url } => cx.open_url(url),
-                                Link::Path { path, .. } => {
-                                    if let Some(workspace) = &workspace {
-                                        _ = workspace.update(cx, |workspace, cx| {
-                                            workspace
-                                                .open_abs_path(
-                                                    normalize_path(path.clone().as_path()),
-                                                    OpenOptions {
-                                                        visible: Some(OpenVisible::None),
-                                                        ..Default::default()
-                                                    },
-                                                    window,
-                                                    cx,
-                                                )
-                                                .detach();
-                                        });
-                                    }
-                                }
-                            },
-                        ),
-                    )
-                    .into_any();
-                any_element.push(element);
-            }
-
-            MarkdownParagraphChunk::Image(image) => {
-                let image_resource = match image.link.clone() {
-                    Link::Web { url } => Resource::Uri(url.into()),
-                    Link::Path { path, .. } => Resource::Path(Arc::from(path)),
-                };
-
-                let element_id = cx.next_id(&image.source_range);
-
-                let image_element = div()
-                    .id(element_id)
-                    .cursor_pointer()
-                    .child(
-                        img(ImageSource::Resource(image_resource))
-                            .max_w_full()
-                            .with_fallback({
-                                let alt_text = image.alt_text.clone();
-                                move || div().children(alt_text.clone()).into_any_element()
+                        let highlights = gpui::combine_highlights(
+                            parsed.highlights.iter().filter_map(|(range, highlight)| {
+                                highlight
+                                    .to_highlight_style(&syntax_theme)
+                                    .map(|style| (range.clone(), style))
                             }),
-                    )
-                    .tooltip({
-                        let link = image.link.clone();
-                        move |_, cx| {
-                            InteractiveMarkdownElementTooltip::new(
-                                Some(link.to_string()),
-                                "open image",
-                                cx,
-                            )
-                            .into()
+                            parsed.regions.iter().zip(&parsed.region_ranges).filter_map(
+                                |(region, range)| {
+                                    if region.code {
+                                        Some((
+                                            range.clone(),
+                                            HighlightStyle {
+                                                background_color: Some(code_span_bg_color),
+                                                ..Default::default()
+                                            },
+                                        ))
+                                    } else {
+                                        None
+                                    }
+                                },
+                            ),
+                        );
+                        let mut links = Vec::new();
+                        let mut link_ranges = Vec::new();
+                        for (range, region) in parsed.region_ranges.iter().zip(&parsed.regions) {
+                            if let Some(link) = region.link.clone() {
+                                links.push(link);
+                                link_ranges.push(range.clone());
+                            }
                         }
-                    })
-                    .on_click({
                         let workspace = workspace_clone.clone();
-                        let link = image.link.clone();
-                        move |_, window, cx| {
-                            if window.modifiers().secondary() {
-                                match &link {
-                                    Link::Web { url } => cx.open_url(url),
-                                    Link::Path { path, .. } => {
-                                        if let Some(workspace) = &workspace {
-                                            _ = workspace.update(cx, |workspace, cx| {
-                                                workspace
-                                                    .open_abs_path(
-                                                        path.clone(),
-                                                        OpenOptions {
-                                                            visible: Some(OpenVisible::None),
-                                                            ..Default::default()
-                                                        },
-                                                        window,
-                                                        cx,
-                                                    )
-                                                    .detach();
-                                            });
+                        let element = div()
+                            .child(
+                                InteractiveText::new(
+                                    element_id,
+                                    StyledText::new(parsed.contents.clone())
+                                        .with_default_highlights(&text_style, highlights),
+                                )
+                                .tooltip({
+                                    let links = links.clone();
+                                    let link_ranges = link_ranges.clone();
+                                    move |idx, _, cx| {
+                                        for (ix, range) in link_ranges.iter().enumerate() {
+                                            if range.contains(&idx) {
+                                                return Some(LinkPreview::new(&links[ix].to_string(), cx));
+                                            }
+                                        }
+                                        None
+                                    }
+                                })
+                                .on_click(
+                                    link_ranges,
+                                    move |clicked_range_ix, window, cx| match &links[clicked_range_ix] {
+                                        Link::Web { url } => cx.open_url(url),
+                                        Link::Path { path, .. } => {
+                                            if let Some(workspace) = &workspace {
+                                                _ = workspace.update(cx, |workspace, cx| {
+                                                    workspace
+                                                        .open_abs_path(
+                                                            normalize_path(path.clone().as_path()),
+                                                            OpenOptions {
+                                                                visible: Some(OpenVisible::None),
+                                                                ..Default::default()
+                                                            },
+                                                            window,
+                                                            cx,
+                                                        )
+                                                        .detach();
+                                                });
+                                            }
+                                        }
+                                    },
+                                ),
+                            )
+                            .into_any();
+                        any_element.push(element);
+                    }
+            MarkdownParagraphChunk::Image(image) => {
+                println!("rendering image: {:?}", image.link);
+                        let image_resource = match image.link.clone() {
+                            Link::Web { url } => Resource::Uri(url.into()),
+                            Link::Path { path, .. } => Resource::Path(Arc::from(path)),
+                        };
+
+                        let element_id = cx.next_id(&image.source_range);
+
+                        let image_element = div()
+                            .id(element_id)
+                            .cursor_pointer()
+                            .child(
+                                img(ImageSource::Resource(image_resource))
+                                    .max_w_full()
+                                    .with_fallback({
+                                        let alt_text = image.alt_text.clone();
+                                        move || div().children(alt_text.clone()).into_any_element()
+                                    }),
+                            )
+                            .tooltip({
+                                let link = image.link.clone();
+                                move |_, cx| {
+                                    InteractiveMarkdownElementTooltip::new(
+                                        Some(link.to_string()),
+                                        "open image",
+                                        cx,
+                                    )
+                                    .into()
+                                }
+                            })
+                            .on_click({
+                                let workspace = workspace_clone.clone();
+                                let link = image.link.clone();
+                                move |_, window, cx| {
+                                    if window.modifiers().secondary() {
+                                        match &link {
+                                            Link::Web { url } => cx.open_url(url),
+                                            Link::Path { path, .. } => {
+                                                if let Some(workspace) = &workspace {
+                                                    _ = workspace.update(cx, |workspace, cx| {
+                                                        workspace
+                                                            .open_abs_path(
+                                                                path.clone(),
+                                                                OpenOptions {
+                                                                    visible: Some(OpenVisible::None),
+                                                                    ..Default::default()
+                                                                },
+                                                                window,
+                                                                cx,
+                                                            )
+                                                            .detach();
+                                                    });
+                                                }
+                                            }
                                         }
                                     }
                                 }
-                            }
-                        }
-                    })
-                    .into_any();
-                any_element.push(image_element);
-            }
+                            })
+                            .into_any();
+                        any_element.push(image_element);
+                    }
+            MarkdownParagraphChunk::Latex(parsed_latex_math) => {
+                print!("rendering latex");
+    let latex_element = render_markdown_latex(parsed_latex_math, cx);
+    any_element.push(latex_element);
+}
         }
     }
 

@@ -15,6 +15,12 @@ path = "src/markdown_preview.rs"
 test-support = []
 
 [dependencies]
+mathjax = "0.1.1"
+resvg = "0.30.0"
+usvg = "0.30.0"
+tiny-skia = "0.11.4"
+katex-wasmbind = "0.10.0"
+lazy_static = "1.4"
 anyhow.workspace = true
 async-recursion.workspace = true
 collections.workspace = true
