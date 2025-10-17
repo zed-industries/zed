@@ -464,6 +464,8 @@
       "ctrl-c": "editor::ToggleComments",
       "alt-o": "editor::SelectLargerSyntaxNode",
       "alt-i": "editor::SelectSmallerSyntaxNode",
+      "alt-p": "editor::SelectPreviousSyntaxNode",
+      "alt-n": "editor::SelectNextSyntaxNode",
       
       // Goto mode
       "g e": "vim::EndOfDocument",
