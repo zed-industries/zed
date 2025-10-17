@@ -3209,11 +3209,11 @@ mod test {
         ",
         toggle_page: "General Page",
         after: r"
-        > General Page
+        > General Page*
         v Project
         - Worktree Settings Content
         v AI
-        - General*
+        - General
         > Appearance & Behavior
         "
     );
@@ -3232,13 +3232,13 @@ mod test {
         ",
         toggle_page: "General Page",
         after: r"
-        v General Page
+        v General Page*
         - General
         - Privacy
         v Project
         - Worktree Settings Content
         v AI
-        - General*
+        - General
         > Appearance & Behavior
         "
     );
