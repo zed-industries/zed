@@ -98,7 +98,7 @@ impl AcpConnection {
         let stdout = child.stdout.take().context("Failed to take stdout")?;
         let stdin = child.stdin.take().context("Failed to take stdin")?;
         let stderr = child.stderr.take().context("Failed to take stderr")?;
-        log::info!(
+        log::debug!(
             "Spawning external agent server: {:?}, {:?}",
             command.path,
             command.args

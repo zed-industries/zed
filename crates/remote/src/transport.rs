@@ -183,6 +183,7 @@ async fn build_remote_server_from_source(
         log::info!("building remote server binary from source");
         run_cmd(
             Command::new("cargo")
+                .current_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."))
                 .args([
                     "build",
                     "--package",
