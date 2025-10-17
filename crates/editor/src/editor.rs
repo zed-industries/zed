@@ -1883,8 +1883,14 @@ impl Editor {
                     project::Event::RefreshInlayHints => {
                         editor.refresh_inlay_hints(InlayHintRefreshReason::RefreshRequested, cx);
                     }
-                    project::Event::LanguageServerAdded(..)
-                    | project::Event::LanguageServerRemoved(..) => {
+                    project::Event::LanguageServerRemoved(..) => {
+                        if editor.tasks_update_task.is_none() {
+                            editor.tasks_update_task = Some(editor.refresh_runnables(window, cx));
+                        }
+                        editor.registered_buffers.clear();
+                        editor.register_visible_buffers(cx);
+                    }
+                    project::Event::LanguageServerAdded(..) => {
                         if editor.tasks_update_task.is_none() {
                             editor.tasks_update_task = Some(editor.refresh_runnables(window, cx));
                         }
@@ -22102,8 +22108,7 @@ impl Editor {
     }
 
     fn register_visible_buffers(&mut self, cx: &mut Context<Self>) {
-        // Singletons are registered on editor creation.
-        if self.ignore_lsp_data() || self.buffer().read(cx).is_singleton() {
+        if self.ignore_lsp_data() {
             return;
         }
         for (_, (visible_buffer, _, _)) in self.visible_excerpts(None, cx) {
