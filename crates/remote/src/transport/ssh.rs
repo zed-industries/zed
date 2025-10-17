@@ -679,7 +679,7 @@ impl SshRemoteConnection {
 
     fn build_sftp_command(&self) -> process::Command {
         let mut command = util::command::new_smol_command("sftp");
-        self.socket.ssh_options(&mut command).args(
+        self.socket.ssh_options(&mut command, false).args(
             self.socket
                 .connection_options
                 .port
