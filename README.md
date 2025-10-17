@@ -9,7 +9,7 @@ Welcome to Zed, a high-performance, multiplayer code editor from the creators of
 
 ### Installation
 
-On macOS, Linux and Windows you can [download Zed directly](https://zed.dev/download) or [install Zed via your local package manager](https://zed.dev/docs/linux#installing-via-a-package-manager).
+On macOS, Linux, and Windows you can [download Zed directly](https://zed.dev/download) or [install Zed via your local package manager](https://zed.dev/docs/linux#installing-via-a-package-manager).
 
 Other platforms are not yet available:
 
