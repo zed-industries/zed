@@ -23009,14 +23009,8 @@ fn snippet_completions(
             });
         }
 
-        for (scope, snippets) in scopes.into_iter() {
-            let max_snippet_words = snippets
-                .iter()
-                .flat_map(|snippet| &snippet.prefix)
-                .map(|prefix| snippet_match_points(prefix).count())
-                .max()
-                .unwrap_or(0);
-
+        for snippets in scopes.into_iter() {
+            // Sort snippets by word count to match longer snippet prefixes first.
             let mut sorted_snippet_candidates = snippets
                 .iter()
                 .enumerate()
@@ -23029,23 +23023,21 @@ fn snippet_completions(
                             (
                                 (snippet_ix, prefix_ix),
                                 prefix,
-                                snippet_match_points(prefix).count(),
+                                snippet_candidate_suffixes(prefix).count(),
                             )
                         })
                 })
                 .collect_vec();
-
-            // Match longer snippets first
             sorted_snippet_candidates
-                .sort_unstable_by_key(|(_, _, match_points)| usize::MAX - *match_points);
+                .sort_unstable_by_key(|(_, _, word_count)| Reverse(*word_count));
             // One snippet may be matched multiple times, but each prefix may only be matched once.
             let mut sorted_snippet_candidates_seen = HashSet::<usize>::default();
 
-            let buffer_windows = snippet_match_points(&max_buffer_window)
+            let buffer_windows = snippet_candidate_suffixes(&max_buffer_window)
                 .take(
                     sorted_snippet_candidates
                         .last()
-                        .map(|(_, _, match_points)| *match_points)
+                        .map(|(_, _, word_count)| *word_count)
                         .unwrap_or_default(),
                 )
                 .collect_vec();
@@ -23114,7 +23106,7 @@ fn snippet_completions(
                     .map(|string_match| (string_match, buffer_window.len())),
                 );
 
-                if matches.len() == MAX_RESULTS {
+                if matches.len() >= MAX_RESULTS {
                     break;
                 }
             }
@@ -23129,8 +23121,8 @@ fn snippet_completions(
                 is_incomplete = true;
             }
 
-            // TODO: ok to match the same snippet multiple times with different prefixes? (probably yes)
-            // TODO: ok to match the same prefix multiple times with different start points? (probably no)
+            // TODO! ok to match the same snippet multiple times with different prefixes? (probably yes)
+            // TODO! ok to match the same prefix multiple times with different start points? (probably no)
 
             completions.extend(
                 matches
@@ -24458,7 +24450,7 @@ pub(crate) fn split_words(text: &str) -> impl std::iter::Iterator<Item = &str> +
 /// strings a snippet could match to. More precisely: returns an iterator over
 /// suffixes of `text` created by splitting at word boundaries (for a particular
 /// definition of "word").
-pub(crate) fn snippet_match_points(text: &str) -> impl std::iter::Iterator<Item = &str> {
+pub(crate) fn snippet_candidate_suffixes(text: &str) -> impl std::iter::Iterator<Item = &str> {
     let mut prev_index = 0;
     let mut prev_codepoint: Option<char> = None;
     let is_word_char = |c: char| c.is_alphanumeric() || c == '_';

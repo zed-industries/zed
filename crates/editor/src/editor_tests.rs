@@ -13644,7 +13644,14 @@ async fn test_completion_with_mode_specified_by_action(cx: &mut TestAppContext) 
 
     cx.set_state(initial_state);
     cx.update_editor(|editor, window, cx| {
-        editor.show_completions(&ShowCompletions { trigger: None }, window, cx);
+        editor.show_completions(
+            &ShowCompletions {
+                trigger: None,
+                snippets_only: false,
+            },
+            window,
+            cx,
+        );
     });
 
     let counter = Arc::new(AtomicUsize::new(0));
@@ -13680,7 +13687,14 @@ async fn test_completion_with_mode_specified_by_action(cx: &mut TestAppContext) 
 
     cx.set_state(initial_state);
     cx.update_editor(|editor, window, cx| {
-        editor.show_completions(&ShowCompletions { trigger: None }, window, cx);
+        editor.show_completions(
+            &ShowCompletions {
+                trigger: None,
+                snippets_only: false,
+            },
+            window,
+            cx,
+        );
     });
     handle_completion_request_with_insert_and_replace(
         &mut cx,
@@ -13767,7 +13781,14 @@ async fn test_completion_replacing_surrounding_text_with_multicursors(cx: &mut T
     "};
     cx.set_state(initial_state);
     cx.update_editor(|editor, window, cx| {
-        editor.show_completions(&ShowCompletions { trigger: None }, window, cx);
+        editor.show_completions(
+            &ShowCompletions {
+                trigger: None,
+                snippets_only: false,
+            },
+            window,
+            cx,
+        );
     });
     handle_completion_request_with_insert_and_replace(
         &mut cx,
@@ -13821,7 +13842,14 @@ async fn test_completion_replacing_surrounding_text_with_multicursors(cx: &mut T
     "};
     cx.set_state(initial_state);
     cx.update_editor(|editor, window, cx| {
-        editor.show_completions(&ShowCompletions { trigger: None }, window, cx);
+        editor.show_completions(
+            &ShowCompletions {
+                trigger: None,
+                snippets_only: false,
+            },
+            window,
+            cx,
+        );
     });
     handle_completion_request_with_insert_and_replace(
         &mut cx,
@@ -13870,7 +13898,14 @@ async fn test_completion_replacing_surrounding_text_with_multicursors(cx: &mut T
     "};
     cx.set_state(initial_state);
     cx.update_editor(|editor, window, cx| {
-        editor.show_completions(&ShowCompletions { trigger: None }, window, cx);
+        editor.show_completions(
+            &ShowCompletions {
+                trigger: None,
+                snippets_only: false,
+            },
+            window,
+            cx,
+        );
     });
     handle_completion_request_with_insert_and_replace(
         &mut cx,
@@ -14021,7 +14056,14 @@ async fn test_completion_in_multibuffer_with_replace_range(cx: &mut TestAppConte
     });
 
     editor.update_in(cx, |editor, window, cx| {
-        editor.show_completions(&ShowCompletions { trigger: None }, window, cx);
+        editor.show_completions(
+            &ShowCompletions {
+                trigger: None,
+                snippets_only: false,
+            },
+            window,
+            cx,
+        );
     });
 
     fake_server
@@ -14260,7 +14302,14 @@ async fn test_completion(cx: &mut TestAppContext) {
     cx.assert_editor_state("editor.cloˇ");
     assert!(cx.editor(|e, _, _| e.context_menu.borrow_mut().is_none()));
     cx.update_editor(|editor, window, cx| {
-        editor.show_completions(&ShowCompletions { trigger: None }, window, cx);
+        editor.show_completions(
+            &ShowCompletions {
+                trigger: None,
+                snippets_only: false,
+            },
+            window,
+            cx,
+        );
     });
     handle_completion_request(
         "editor.<clo|>",
@@ -15112,6 +15161,7 @@ async fn test_as_is_completions(cx: &mut TestAppContext) {
         editor.show_completions(
             &ShowCompletions {
                 trigger: Some("\n".into()),
+                snippets_only: false,
             },
             window,
             cx,
@@ -15213,7 +15263,14 @@ int fn_branch(bool do_branch1, bool do_branch2);
             })))
         });
     cx.update_editor(|editor, window, cx| {
-        editor.show_completions(&ShowCompletions { trigger: None }, window, cx);
+        editor.show_completions(
+            &ShowCompletions {
+                trigger: None,
+                snippets_only: false,
+            },
+            window,
+            cx,
+        );
     });
     cx.executor().run_until_parked();
     cx.update_editor(|editor, window, cx| {
@@ -15262,7 +15319,14 @@ int fn_branch(bool do_branch1, bool do_branch2);
             })))
         });
     cx.update_editor(|editor, window, cx| {
-        editor.show_completions(&ShowCompletions { trigger: None }, window, cx);
+        editor.show_completions(
+            &ShowCompletions {
+                trigger: None,
+                snippets_only: false,
+            },
+            window,
+            cx,
+        );
     });
     cx.executor().run_until_parked();
     cx.update_editor(|editor, window, cx| {
@@ -17001,7 +17065,7 @@ fn test_split_words() {
 #[test]
 fn test_split_words_for_snippet_prefix() {
     fn split(text: &str) -> Vec<&str> {
-        snippet_match_points(text).collect()
+        snippet_candidate_suffixes(text).collect()
     }
 
     assert_eq!(split("HelloWorld"), &["HelloWorld"]);
@@ -17013,7 +17077,21 @@ fn test_split_words_for_snippet_prefix() {
     assert_eq!(
         split("this@is!@#$^many   . symbols"),
         &[
-            "this", "@", "is", "!", "@", "#", "$", "^", "many", " ", " ", " ", ".", " ", "symbols"
+            "this@is!@#$^many   . symbols",
+            "@is!@#$^many   . symbols",
+            "is!@#$^many   . symbols",
+            "!@#$^many   . symbols",
+            "@#$^many   . symbols",
+            "#$^many   . symbols",
+            "$^many   . symbols",
+            "^many   . symbols",
+            "many   . symbols",
+            "   . symbols",
+            "  . symbols",
+            " . symbols",
+            ". symbols",
+            " symbols",
+            "symbols"
         ],
     );
 }
@@ -17754,7 +17832,14 @@ async fn test_context_menus_hide_hover_popover(cx: &mut gpui::TestAppContext) {
             }
         });
     cx.update_editor(|editor, window, cx| {
-        editor.show_completions(&ShowCompletions { trigger: None }, window, cx);
+        editor.show_completions(
+            &ShowCompletions {
+                trigger: None,
+                snippets_only: false,
+            },
+            window,
+            cx,
+        );
     });
     completion_requests.next().await;
     cx.condition(|editor, _| editor.context_menu_visible())
@@ -24150,7 +24235,14 @@ async fn test_html_linked_edits_on_completion(cx: &mut TestAppContext) {
             ])))
         });
     editor.update_in(cx, |editor, window, cx| {
-        editor.show_completions(&ShowCompletions { trigger: None }, window, cx);
+        editor.show_completions(
+            &ShowCompletions {
+                trigger: None,
+                snippets_only: false,
+            },
+            window,
+            cx,
+        );
     });
     cx.run_until_parked();
     completion_handle.next().await.unwrap();
