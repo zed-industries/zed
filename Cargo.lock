@@ -8774,7 +8774,6 @@ dependencies = [
  "open_router",
  "parking_lot",
  "proto",
- "schemars 1.0.1",
  "serde",
  "serde_json",
  "settings",
