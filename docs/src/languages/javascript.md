@@ -191,7 +191,6 @@ As for all languages, configurations from `.vscode/launch.json` are also availab
 
 If your use-case isn't covered by any of these, you can take full control by adding debug configurations to `.zed/debug.json`. See below for example configurations.
 
-
 ### Configuring JavaScript debug tasks
 
 JavaScript debugging is more complicated than other languages because there are two different environments: Node.js and the browser. `vscode-js-debug` exposes a `type` field, that you can use to specify the environment, either `node` or `chrome`.

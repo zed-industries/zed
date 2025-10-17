@@ -301,7 +301,6 @@ For more control, you can add debug configurations to `.zed/debug.json`. See the
 - [CodeLLDB configuration documentation](https://github.com/vadimcn/codelldb/blob/master/MANUAL.md#starting-a-new-debug-session)
 - [GDB configuration documentation](https://sourceware.org/gdb/current/onlinedocs/gdb.html/Debugger-Adapter-Protocol.html)
 
-
 ### Build binary then debug
 
 ```json [debug]
