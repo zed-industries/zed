@@ -30,8 +30,11 @@ use project::{
     git_store::{GitStore, GitStoreEvent, Repository},
 };
 use settings::{Settings, SettingsStore};
-use std::any::{Any, TypeId};
 use std::ops::Range;
+use std::{
+    any::{Any, TypeId},
+    sync::Arc,
+};
 use theme::ActiveTheme;
 use ui::{KeyBinding, Tooltip, prelude::*, vertical_divider};
 use util::ResultExt as _;
@@ -567,7 +570,7 @@ impl Item for ProjectDiff {
 
     fn navigate(
         &mut self,
-        data: Box<dyn Any>,
+        data: Arc<dyn Any + Send>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
