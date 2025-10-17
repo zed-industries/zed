@@ -348,8 +348,6 @@ impl Debug for DisplayId {
     }
 }
 
-unsafe impl Send for DisplayId {}
-
 /// Which part of the window to resize
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResizeEdge {

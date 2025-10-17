@@ -69,9 +69,7 @@ impl TaffyLayoutEngine {
         } else {
             self.taffy
                 // This is safe because LayoutId is repr(transparent) to taffy::tree::NodeId.
-                .new_with_children(taffy_style, unsafe {
-                    std::mem::transmute::<&[LayoutId], &[taffy::NodeId]>(children)
-                })
+                .new_with_children(taffy_style, LayoutId::to_taffy_slice(children))
                 .expect(EXPECT_MESSAGE)
                 .into()
         }
@@ -264,6 +262,13 @@ impl TaffyLayoutEngine {
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 #[repr(transparent)]
 pub struct LayoutId(NodeId);
+
+impl LayoutId {
+    fn to_taffy_slice(node_ids: &[Self]) -> &[taffy::NodeId] {
+        // SAFETY: LayoutId is repr(transparent) to taffy::tree::NodeId.
+        unsafe { std::mem::transmute::<&[LayoutId], &[taffy::NodeId]>(node_ids) }
+    }
+}
 
 impl std::hash::Hash for LayoutId {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {

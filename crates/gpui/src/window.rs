@@ -4650,7 +4650,7 @@ pub struct WindowHandle<V> {
     #[deref]
     #[deref_mut]
     pub(crate) any_handle: AnyWindowHandle,
-    state_type: PhantomData<V>,
+    state_type: PhantomData<fn(V) -> V>,
 }
 
 impl<V> Debug for WindowHandle<V> {
@@ -4785,9 +4785,6 @@ impl<V: 'static> From<WindowHandle<V>> for AnyWindowHandle {
         val.any_handle
     }
 }
-
-unsafe impl<V> Send for WindowHandle<V> {}
-unsafe impl<V> Sync for WindowHandle<V> {}
 
 /// A handle to a window with any root view type, which can be downcast to a window with a specific root view type.
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
