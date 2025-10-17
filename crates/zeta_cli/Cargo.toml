@@ -50,7 +50,6 @@ soa-rs = "0.8.1"
 terminal_view.workspace = true
 util.workspace = true
 watch.workspace = true
-workspace-hack.workspace = true
 zeta.workspace = true
 zeta2.workspace = true
 zlog.workspace = true

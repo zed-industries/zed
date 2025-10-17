@@ -9,7 +9,6 @@ fs.workspace = true
 gpui = { workspace = true, features = ["windows-manifest"] }
 settings.workspace = true
 worktree.workspace = true
-workspace-hack = { version = "0.1", path = "../../tooling/workspace-hack" }
 
 [lints]
 workspace = true

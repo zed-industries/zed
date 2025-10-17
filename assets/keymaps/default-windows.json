@@ -270,7 +270,7 @@
     }
   },
   {
-    "context": "AgentPanel && prompt_editor",
+    "context": "AgentPanel && text_thread",
     "use_key_equivalents": true,
     "bindings": {
       "ctrl-n": "agent::NewTextThread",
@@ -278,7 +278,7 @@
     }
   },
   {
-    "context": "AgentPanel && external_agent_thread",
+    "context": "AgentPanel && acp_thread",
     "use_key_equivalents": true,
     "bindings": {
       "ctrl-n": "agent::NewExternalAgentThread",
@@ -1117,6 +1117,7 @@
       "ctrl-insert": "terminal::Copy",
       "ctrl-shift-c": "terminal::Copy",
       "shift-insert": "terminal::Paste",
+      "ctrl-v": "terminal::Paste",
       "ctrl-shift-v": "terminal::Paste",
       "ctrl-i": "assistant::InlineAssist",
       "alt-b": ["terminal::SendText", "\u001bb"],
@@ -1151,6 +1152,12 @@
       "ctrl-shift-r": "terminal::RerunTask",
       "ctrl-alt-r": "terminal::RerunTask",
       "alt-t": "terminal::RerunTask"
+    }
+  },
+  {
+    "context": "Terminal && selection",
+    "bindings": {
+      "ctrl-c": "terminal::Copy"
     }
   },
   {

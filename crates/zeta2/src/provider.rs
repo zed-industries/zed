@@ -179,8 +179,8 @@ impl EditPredictionProvider for ZetaEditPredictionProvider {
     }
 
     fn accept(&mut self, cx: &mut Context<Self>) {
-        self.zeta.update(cx, |zeta, _cx| {
-            zeta.accept_current_prediction(&self.project);
+        self.zeta.update(cx, |zeta, cx| {
+            zeta.accept_current_prediction(&self.project, cx);
         });
         self.pending_predictions.clear();
     }

@@ -84,7 +84,7 @@ impl Vim {
         self.update_editor(cx, |_, editor, cx| {
             let snapshot = editor.buffer().read(cx).snapshot(cx);
             let mut edits = Vec::new();
-            for selection in editor.selections.all::<Point>(cx) {
+            for selection in editor.selections.all::<Point>(&editor.display_snapshot(cx)) {
                 let point = selection.head();
                 let new_row = match direction {
                     Direction::Next => point.row + 1,
