@@ -22,7 +22,6 @@ human_bytes.workspace = true
 release_channel.workspace = true
 serde.workspace = true
 sysinfo.workspace = true
-workspace-hack.workspace = true
 
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
 pciid-parser.workspace = true

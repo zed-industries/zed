@@ -352,10 +352,9 @@ pub fn show_link_definition(
                     if let Some((url_range, url)) = find_url(&buffer, text_anchor, cx.clone()) {
                         this.read_with(cx, |_, _| {
                             let range = maybe!({
-                                let start =
-                                    snapshot.anchor_in_excerpt(excerpt_id, url_range.start)?;
-                                let end = snapshot.anchor_in_excerpt(excerpt_id, url_range.end)?;
-                                Some(RangeInEditor::Text(start..end))
+                                let range =
+                                    snapshot.anchor_range_in_excerpt(excerpt_id, url_range)?;
+                                Some(RangeInEditor::Text(range))
                             });
                             (range, vec![HoverLink::Url(url)])
                         })
@@ -364,10 +363,9 @@ pub fn show_link_definition(
                         find_file(&buffer, project.clone(), text_anchor, cx).await
                     {
                         let range = maybe!({
-                            let start =
-                                snapshot.anchor_in_excerpt(excerpt_id, filename_range.start)?;
-                            let end = snapshot.anchor_in_excerpt(excerpt_id, filename_range.end)?;
-                            Some(RangeInEditor::Text(start..end))
+                            let range =
+                                snapshot.anchor_range_in_excerpt(excerpt_id, filename_range)?;
+                            Some(RangeInEditor::Text(range))
                         });
 
                         Some((range, vec![HoverLink::File(filename)]))
@@ -380,13 +378,11 @@ pub fn show_link_definition(
                                 (
                                     definition_result.iter().find_map(|link| {
                                         link.origin.as_ref().and_then(|origin| {
-                                            let start = snapshot.anchor_in_excerpt(
+                                            let range = snapshot.anchor_range_in_excerpt(
                                                 excerpt_id,
-                                                origin.range.start,
+                                                origin.range.clone(),
                                             )?;
-                                            let end = snapshot
-                                                .anchor_in_excerpt(excerpt_id, origin.range.end)?;
-                                            Some(RangeInEditor::Text(start..end))
+                                            Some(RangeInEditor::Text(range))
                                         })
                                     }),
                                     definition_result.into_iter().map(HoverLink::Text).collect(),

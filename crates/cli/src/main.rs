@@ -155,6 +155,7 @@ fn parse_path_with_position(argument_str: &str) -> anyhow::Result<String> {
 }
 
 fn parse_path_in_wsl(source: &str, wsl: &str) -> Result<String> {
+    let mut source = PathWithPosition::parse_str(source);
     let mut command = util::command::new_std_command("wsl.exe");
 
     let (user, distro_name) = if let Some((user, distro)) = wsl.split_once('@') {
@@ -173,19 +174,17 @@ fn parse_path_in_wsl(source: &str, wsl: &str) -> Result<String> {
     let output = command
         .arg("--distribution")
         .arg(distro_name)
+        .arg("--exec")
         .arg("wslpath")
         .arg("-m")
-        .arg(source)
+        .arg(&source.path)
         .output()?;
 
     let result = String::from_utf8_lossy(&output.stdout);
     let prefix = format!("//wsl.localhost/{}", distro_name);
+    source.path = Path::new(result.trim().strip_prefix(&prefix).unwrap_or(&result)).to_owned();
 
-    Ok(result
-        .trim()
-        .strip_prefix(&prefix)
-        .unwrap_or(&result)
-        .to_string())
+    Ok(source.to_string(|path| path.to_string_lossy().into_owned()))
 }
 
 fn main() -> Result<()> {
