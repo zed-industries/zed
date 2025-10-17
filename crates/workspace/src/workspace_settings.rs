@@ -4,11 +4,11 @@ use crate::DockPosition;
 use collections::HashMap;
 use serde::Deserialize;
 pub use settings::AutosaveSetting;
-use settings::Settings;
 pub use settings::{
     BottomDockLayout, PaneSplitDirectionHorizontal, PaneSplitDirectionVertical,
     RestoreOnStartupBehavior,
 };
+use settings::{InactiveOpacity, Settings};
 
 pub struct WorkspaceSettings {
     pub active_pane_modifiers: ActivePanelModifiers,
@@ -50,7 +50,7 @@ pub struct ActivePanelModifiers {
     ///
     /// Default: `1.0`
     // TODO: make this not an option, it is never None
-    pub inactive_opacity: Option<f32>,
+    pub inactive_opacity: Option<InactiveOpacity>,
 }
 
 #[derive(Deserialize)]
@@ -124,7 +124,7 @@ impl Settings for WorkspaceSettings {
                 .workspace
                 .active_pane_modifiers
                 .get_or_insert_default()
-                .inactive_opacity = Some(opacity as f32);
+                .inactive_opacity = Some(InactiveOpacity(opacity as f32))
         }
 
         vscode.enum_setting(

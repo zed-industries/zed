@@ -2642,13 +2642,12 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     title: "Inactive Opacity",
                     description: "Opacity of inactive panels (0.0 - 1.0)",
                     field: Box::new(SettingField {
-                        pick: |settings_content| match settings_content
-                            .workspace
-                            .active_pane_modifiers
-                            .as_ref()
-                        {
-                            Some(modifiers) => &modifiers.inactive_opacity,
-                            None => &None,
+                        pick: |settings_content| {
+                            settings_content
+                                .workspace
+                                .active_pane_modifiers
+                                .as_ref()
+                                .map_or(&None, |modifiers| &modifiers.inactive_opacity)
                         },
                         pick_mut: |settings_content| {
                             &mut settings_content
