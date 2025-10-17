@@ -582,7 +582,6 @@ pub fn main() {
             false,
             cx,
         );
-        assistant_tools::init(app_state.client.http_client(), cx);
         repl::init(app_state.fs.clone(), cx);
         recent_projects::init(cx);
 

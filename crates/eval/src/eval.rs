@@ -429,7 +429,6 @@ pub fn init(cx: &mut App) -> Arc<AgentAppState> {
         true,
         cx,
     );
-    assistant_tools::init(client.http_client(), cx);
 
     SettingsStore::update_global(cx, |store, cx| {
         store.set_user_settings(include_str!("../runner_settings.json"), cx)

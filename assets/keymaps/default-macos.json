@@ -307,7 +307,7 @@
     }
   },
   {
-    "context": "AgentPanel && prompt_editor",
+    "context": "AgentPanel && text_thread",
     "use_key_equivalents": true,
     "bindings": {
       "cmd-n": "agent::NewTextThread",
@@ -315,7 +315,7 @@
     }
   },
   {
-    "context": "AgentPanel && external_agent_thread",
+    "context": "AgentPanel && acp_thread",
     "use_key_equivalents": true,
     "bindings": {
       "cmd-n": "agent::NewExternalAgentThread",

@@ -1,6 +1,6 @@
 use crate::acp::AcpThreadView;
 use crate::{AgentPanel, RemoveSelectedThread};
-use agent2::{HistoryEntry, HistoryStore};
+use agent::{HistoryEntry, HistoryStore};
 use chrono::{Datelike as _, Local, NaiveDate, TimeDelta};
 use editor::{Editor, EditorEvent};
 use fuzzy::StringMatchCandidate;
@@ -23,11 +23,8 @@ pub struct AcpThreadHistory {
     hovered_index: Option<usize>,
     search_editor: Entity<Editor>,
     search_query: SharedString,
-
     visible_items: Vec<ListItemType>,
-
     local_timezone: UtcOffset,
-
     _update_task: Task<()>,
     _subscriptions: Vec<gpui::Subscription>,
 }
@@ -62,7 +59,7 @@ impl EventEmitter<ThreadHistoryEvent> for AcpThreadHistory {}
 
 impl AcpThreadHistory {
     pub(crate) fn new(
-        history_store: Entity<agent2::HistoryStore>,
+        history_store: Entity<agent::HistoryStore>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -642,7 +639,7 @@ impl RenderOnce for AcpHistoryEntryElement {
                                 if let Some(panel) = workspace.read(cx).panel::<AgentPanel>(cx) {
                                     panel.update(cx, |panel, cx| {
                                         panel
-                                            .open_saved_prompt_editor(
+                                            .open_saved_text_thread(
                                                 context.path.clone(),
                                                 window,
                                                 cx,

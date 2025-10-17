@@ -1,4 +1,5 @@
-use assistant_tool::{ToolSource, ToolWorkingSet};
+use agent::ContextServerRegistry;
+use collections::HashMap;
 use context_server::ContextServerId;
 use gpui::{
     DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, ScrollHandle, Window, prelude::*,
@@ -8,37 +9,37 @@ use workspace::{ModalView, Workspace};
 
 pub struct ConfigureContextServerToolsModal {
     context_server_id: ContextServerId,
-    tools: Entity<ToolWorkingSet>,
+    context_server_registry: Entity<ContextServerRegistry>,
     focus_handle: FocusHandle,
-    expanded_tools: std::collections::HashMap<String, bool>,
+    expanded_tools: HashMap<SharedString, bool>,
     scroll_handle: ScrollHandle,
 }
 
 impl ConfigureContextServerToolsModal {
     fn new(
         context_server_id: ContextServerId,
-        tools: Entity<ToolWorkingSet>,
+        context_server_registry: Entity<ContextServerRegistry>,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         Self {
             context_server_id,
-            tools,
+            context_server_registry,
             focus_handle: cx.focus_handle(),
-            expanded_tools: std::collections::HashMap::new(),
+            expanded_tools: HashMap::default(),
             scroll_handle: ScrollHandle::new(),
         }
     }
 
     pub fn toggle(
         context_server_id: ContextServerId,
-        tools: Entity<ToolWorkingSet>,
+        context_server_registry: Entity<ContextServerRegistry>,
         workspace: &mut Workspace,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
         workspace.toggle_modal(window, cx, |window, cx| {
-            Self::new(context_server_id, tools, window, cx)
+            Self::new(context_server_id, context_server_registry, window, cx)
         });
     }
 
@@ -51,13 +52,11 @@ impl ConfigureContextServerToolsModal {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let tools_by_source = self.tools.read(cx).tools_by_source(cx);
-        let server_tools = tools_by_source
-            .get(&ToolSource::ContextServer {
-                id: self.context_server_id.0.clone().into(),
-            })
-            .map(|tools| tools.as_slice())
-            .unwrap_or(&[]);
+        let tools = self
+            .context_server_registry
+            .read(cx)
+            .tools_for_server(&self.context_server_id)
+            .collect::<Vec<_>>();
 
         div()
             .size_full()
@@ -70,11 +69,11 @@ impl ConfigureContextServerToolsModal {
                     .max_h_128()
                     .overflow_y_scroll()
                     .track_scroll(&self.scroll_handle)
-                    .children(server_tools.iter().enumerate().flat_map(|(index, tool)| {
+                    .children(tools.iter().enumerate().flat_map(|(index, tool)| {
                         let tool_name = tool.name();
                         let is_expanded = self
                             .expanded_tools
-                            .get(&tool_name)
+                            .get(tool_name.as_ref())
                             .copied()
                             .unwrap_or(false);
 
@@ -110,7 +109,7 @@ impl ConfigureContextServerToolsModal {
                                             move |this, _event, _window, _cx| {
                                                 let current = this
                                                     .expanded_tools
-                                                    .get(&tool_name)
+                                                    .get(tool_name.as_ref())
                                                     .copied()
                                                     .unwrap_or(false);
                                                 this.expanded_tools
@@ -127,7 +126,7 @@ impl ConfigureContextServerToolsModal {
                                 .into_any_element(),
                         ];
 
-                        if index < server_tools.len() - 1 {
+                        if index < tools.len() - 1 {
                             items.push(
                                 h_flex()
                                     .w_full()

@@ -48,7 +48,7 @@
   "remove_trailing_whitespace_on_save": true,
   "ensure_final_newline_on_save": true,
   "file_scan_exclusions": [
-    "crates/assistant_tools/src/edit_agent/evals/fixtures",
+    "crates/agent/src/edit_agent/evals/fixtures",
     "crates/eval/worktrees/",
     "crates/eval/repos/",
     "**/.git",

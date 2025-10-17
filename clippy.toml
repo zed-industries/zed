@@ -3,7 +3,7 @@ avoid-breaking-exported-api = false
 ignore-interior-mutability = [
     # Suppresses clippy::mutable_key_type, which is a false positive as the Eq
     # and Hash impls do not use fields with interior mutability.
-    "agent::context::AgentContextKey"
+    "agent_ui::context::AgentContextKey"
 ]
 disallowed-methods = [
     { path = "std::process::Command::spawn", reason = "Spawning `std::process::Command` can block the current thread for an unknown duration", replacement = "smol::process::Command::spawn" },

@@ -269,14 +269,14 @@
     }
   },
   {
-    "context": "AgentPanel && prompt_editor",
+    "context": "AgentPanel && text_thread",
     "bindings": {
       "ctrl-n": "agent::NewTextThread",
       "ctrl-alt-t": "agent::NewThread"
     }
   },
   {
-    "context": "AgentPanel && external_agent_thread",
+    "context": "AgentPanel && acp_thread",
     "use_key_equivalents": true,
     "bindings": {
       "ctrl-n": "agent::NewExternalAgentThread",

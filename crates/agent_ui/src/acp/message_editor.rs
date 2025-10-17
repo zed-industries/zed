@@ -3,12 +3,11 @@ use crate::{
     context_picker::{ContextPickerAction, fetch_context_picker::fetch_url_content},
 };
 use acp_thread::{MentionUri, selection_name};
+use agent::{HistoryStore, outline};
 use agent_client_protocol as acp;
 use agent_servers::{AgentServer, AgentServerDelegate};
-use agent2::HistoryStore;
 use anyhow::{Result, anyhow};
 use assistant_slash_commands::codeblock_fence_for_path;
-use assistant_tool::outline;
 use collections::{HashMap, HashSet};
 use editor::{
     Addon, Anchor, AnchorRangeExt, ContextMenuOptions, ContextMenuPlacement, Editor, EditorElement,
@@ -230,7 +229,7 @@ impl MessageEditor {
 
     pub fn insert_thread_summary(
         &mut self,
-        thread: agent2::DbThreadMetadata,
+        thread: agent::DbThreadMetadata,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -599,7 +598,7 @@ impl MessageEditor {
         id: acp::SessionId,
         cx: &mut Context<Self>,
     ) -> Task<Result<Mention>> {
-        let server = Rc::new(agent2::NativeAgentServer::new(
+        let server = Rc::new(agent::NativeAgentServer::new(
             self.project.read(cx).fs().clone(),
             self.history_store.clone(),
         ));
@@ -612,7 +611,7 @@ impl MessageEditor {
         let connection = server.connect(None, delegate, cx);
         cx.spawn(async move |_, cx| {
             let (agent, _) = connection.await?;
-            let agent = agent.downcast::<agent2::NativeAgentConnection>().unwrap();
+            let agent = agent.downcast::<agent::NativeAgentConnection>().unwrap();
             let summary = agent
                 .0
                 .update(cx, |agent, cx| agent.thread_summary(id, cx))?
@@ -629,8 +628,8 @@ impl MessageEditor {
         path: PathBuf,
         cx: &mut Context<Self>,
     ) -> Task<Result<Mention>> {
-        let context = self.history_store.update(cx, |text_thread_store, cx| {
-            text_thread_store.load_text_thread(path.as_path().into(), cx)
+        let context = self.history_store.update(cx, |store, cx| {
+            store.load_text_thread(path.as_path().into(), cx)
         });
         cx.spawn(async move |_, cx| {
             let context = context.await?;
@@ -1589,10 +1588,9 @@ mod tests {
     use std::{cell::RefCell, ops::Range, path::Path, rc::Rc, sync::Arc};
 
     use acp_thread::MentionUri;
+    use agent::{HistoryStore, outline};
     use agent_client_protocol as acp;
-    use agent2::HistoryStore;
     use assistant_context::ContextStore;
-    use assistant_tool::outline;
     use editor::{AnchorRangeExt as _, Editor, EditorMode};
     use fs::FakeFs;
     use futures::StreamExt as _;

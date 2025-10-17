@@ -5,10 +5,10 @@ use acp_thread::{
 };
 use acp_thread::{AgentConnection, Plan};
 use action_log::ActionLog;
+use agent::{DbThreadMetadata, HistoryEntry, HistoryEntryId, HistoryStore, NativeAgentServer};
 use agent_client_protocol::{self as acp, PromptCapabilities};
 use agent_servers::{AgentServer, AgentServerDelegate};
 use agent_settings::{AgentProfileId, AgentSettings, CompletionMode};
-use agent2::{DbThreadMetadata, HistoryEntry, HistoryEntryId, HistoryStore, NativeAgentServer};
 use anyhow::{Result, anyhow, bail};
 use arrayvec::ArrayVec;
 use audio::{Audio, Sound};
@@ -117,7 +117,7 @@ impl ThreadError {
     }
 }
 
-impl ProfileProvider for Entity<agent2::Thread> {
+impl ProfileProvider for Entity<agent::Thread> {
     fn profile_id(&self, cx: &App) -> AgentProfileId {
         self.read(cx).profile().clone()
     }
@@ -529,7 +529,7 @@ impl AcpThreadView {
 
             let result = if let Some(native_agent) = connection
                 .clone()
-                .downcast::<agent2::NativeAgentConnection>()
+                .downcast::<agent::NativeAgentConnection>()
                 && let Some(resume) = resume_thread.clone()
             {
                 cx.update(|_, cx| {
@@ -3106,7 +3106,7 @@ impl AcpThreadView {
         let render_history = self
             .agent
             .clone()
-            .downcast::<agent2::NativeAgentServer>()
+            .downcast::<agent::NativeAgentServer>()
             .is_some()
             && self
                 .history_store
@@ -4011,12 +4011,12 @@ impl AcpThreadView {
     pub(crate) fn as_native_connection(
         &self,
         cx: &App,
-    ) -> Option<Rc<agent2::NativeAgentConnection>> {
+    ) -> Option<Rc<agent::NativeAgentConnection>> {
         let acp_thread = self.thread()?.read(cx);
         acp_thread.connection().clone().downcast()
     }
 
-    pub(crate) fn as_native_thread(&self, cx: &App) -> Option<Entity<agent2::Thread>> {
+    pub(crate) fn as_native_thread(&self, cx: &App) -> Option<Entity<agent::Thread>> {
         let acp_thread = self.thread()?.read(cx);
         self.as_native_connection(cx)?
             .thread(acp_thread.session_id(), cx)
@@ -4404,7 +4404,7 @@ impl AcpThreadView {
                     if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                         panel.update(cx, |panel, cx| {
                             panel
-                                .open_saved_prompt_editor(path.as_path().into(), window, cx)
+                                .open_saved_text_thread(path.as_path().into(), window, cx)
                                 .detach_and_log_err(cx);
                         });
                     }
@@ -5137,7 +5137,7 @@ impl AcpThreadView {
         if self
             .agent
             .clone()
-            .downcast::<agent2::NativeAgentServer>()
+            .downcast::<agent::NativeAgentServer>()
             .is_some()
         {
             // Native agent - use the model name
