@@ -13,6 +13,12 @@ use uuid::Uuid;
 #[derive(Copy, Clone, Default, Debug, PartialEq, Eq, Hash)]
 pub struct EditPredictionId(Uuid);
 
+impl Into<Uuid> for EditPredictionId {
+    fn into(self) -> Uuid {
+        self.0
+    }
+}
+
 impl From<EditPredictionId> for gpui::ElementId {
     fn from(value: EditPredictionId) -> Self {
         gpui::ElementId::Uuid(value.0)

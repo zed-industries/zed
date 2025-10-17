@@ -21791,6 +21791,7 @@ dependencies = [
  "pretty_assertions",
  "project",
  "release_channel",
+ "serde",
  "serde_json",
  "settings",
  "thiserror 2.0.12",
