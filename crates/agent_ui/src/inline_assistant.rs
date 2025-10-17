@@ -1880,9 +1880,7 @@ impl CodeActionProvider for AssistantCodeActionProvider {
                         let multibuffer_snapshot = multibuffer.read(cx);
                         Some(
                             multibuffer_snapshot
-                                .anchor_in_excerpt(excerpt_id, action.range.start)?
-                                ..multibuffer_snapshot
-                                    .anchor_in_excerpt(excerpt_id, action.range.end)?,
+                                .anchor_range_in_excerpt(excerpt_id, action.range)?,
                         )
                     })
                 })?

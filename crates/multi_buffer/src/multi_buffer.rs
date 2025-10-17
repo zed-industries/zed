@@ -5230,6 +5230,12 @@ impl MultiBufferSnapshot {
         }
     }
 
+    /// Wraps the [`text::Anchor`] in a [`multi_buffer::Anchor`] if this multi-buffer is a singleton.
+    pub fn as_singleton_anchor(&self, text_anchor: text::Anchor) -> Option<Anchor> {
+        let (excerpt, buffer, _) = self.as_singleton()?;
+        Some(Anchor::in_buffer(*excerpt, buffer, text_anchor))
+    }
+
     /// Returns an anchor for the given excerpt and text anchor,
     /// Returns [`None`] if the excerpt_id is no longer valid or the text anchor range is out of excerpt's bounds.
     pub fn anchor_in_excerpt(
@@ -5256,6 +5262,43 @@ impl MultiBufferSnapshot {
             excerpt.buffer_id,
             text_anchor,
         ))
+    }
+
+    /// Returns an anchor for the given excerpt and text anchor,
+    /// Returns [`None`] if the excerpt_id is no longer valid or the text anchor range is out of excerpt's bounds.
+    pub fn anchor_range_in_excerpt(
+        &self,
+        excerpt_id: ExcerptId,
+        text_anchor: Range<text::Anchor>,
+    ) -> Option<Range<Anchor>> {
+        let excerpt_id = self.latest_excerpt_id(excerpt_id);
+        let excerpt = self.excerpt(excerpt_id)?;
+
+        // todo(lw): consider buffer id being None -> min or max anchor needs special handling
+        let context = &excerpt.range.context;
+        if text_anchor
+            .start
+            .buffer_id
+            .is_some_and(|buffer_id| buffer_id != excerpt.buffer_id)
+            || text_anchor
+                .start
+                .buffer_id
+                .is_some_and(|buffer_id| buffer_id != excerpt.buffer_id)
+            || context
+                .start
+                .cmp(&text_anchor.start, &excerpt.buffer)
+                .is_gt()
+            || context.end.cmp(&text_anchor.start, &excerpt.buffer).is_lt()
+            || context.start.cmp(&text_anchor.end, &excerpt.buffer).is_gt()
+            || context.end.cmp(&text_anchor.end, &excerpt.buffer).is_lt()
+        {
+            return None;
+        }
+
+        Some(
+            Anchor::in_buffer(excerpt_id, excerpt.buffer_id, text_anchor.start)
+                ..Anchor::in_buffer(excerpt_id, excerpt.buffer_id, text_anchor.end),
+        )
     }
 
     pub fn context_range_for_excerpt(&self, excerpt_id: ExcerptId) -> Option<Range<text::Anchor>> {
@@ -6087,22 +6130,15 @@ impl MultiBufferSnapshot {
                 .flat_map(|item| {
                     Some(OutlineItem {
                         depth: item.depth,
-                        range: self.anchor_in_excerpt(*excerpt_id, item.range.start)?
-                            ..self.anchor_in_excerpt(*excerpt_id, item.range.end)?,
+                        range: self.anchor_range_in_excerpt(*excerpt_id, item.range)?,
                         text: item.text,
                         highlight_ranges: item.highlight_ranges,
                         name_ranges: item.name_ranges,
                         body_range: item.body_range.and_then(|body_range| {
-                            Some(
-                                self.anchor_in_excerpt(*excerpt_id, body_range.start)?
-                                    ..self.anchor_in_excerpt(*excerpt_id, body_range.end)?,
-                            )
+                            self.anchor_range_in_excerpt(*excerpt_id, body_range)
                         }),
                         annotation_range: item.annotation_range.and_then(|annotation_range| {
-                            Some(
-                                self.anchor_in_excerpt(*excerpt_id, annotation_range.start)?
-                                    ..self.anchor_in_excerpt(*excerpt_id, annotation_range.end)?,
-                            )
+                            self.anchor_range_in_excerpt(*excerpt_id, annotation_range)
                         }),
                     })
                 })

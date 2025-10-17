@@ -7464,8 +7464,8 @@ impl EditorElement {
                         }
                         let clipped_start = range.start.max(&buffer_range.start, buffer);
                         let clipped_end = range.end.min(&buffer_range.end, buffer);
-                        let range = buffer_snapshot.anchor_in_excerpt(excerpt_id, clipped_start)?
-                            ..buffer_snapshot.anchor_in_excerpt(excerpt_id, clipped_end)?;
+                        let range = buffer_snapshot
+                            .anchor_range_in_excerpt(excerpt_id, clipped_start..clipped_end)?;
                         let start = range.start.to_display_point(display_snapshot);
                         let end = range.end.to_display_point(display_snapshot);
                         let selection_layout = SelectionLayout {
