@@ -22972,7 +22972,7 @@ fn snippet_completions(
         let buffer_offset = text::ToOffset::to_offset(&buffer_anchor, &snapshot);
         let window_start = buffer_offset.saturating_sub(MAX_PREFIX_LEN);
         let max_buffer_window: String = snapshot
-            .text_for_range(window_start.to_anchor(&snapshot)..buffer_anchor)
+            .text_for_range(window_start..buffer_offset)
             .collect();
 
         if max_buffer_window.is_empty() {
@@ -22998,11 +22998,22 @@ fn snippet_completions(
                     snippet
                         .prefix
                         .iter()
-                        .map(|prefix| (snippet_ix, prefix, snippet_match_points(prefix).count()))
+                        .enumerate()
+                        .map(move |(prefix_ix, prefix)| {
+                            (
+                                (snippet_ix, prefix_ix),
+                                prefix,
+                                snippet_match_points(prefix).count(),
+                            )
+                        })
                 })
                 .collect_vec();
 
-            sorted_snippet_candidates.sort_unstable_by_key(|(_, _, match_points)| match_points);
+            // Match longer snippets first
+            sorted_snippet_candidates
+                .sort_unstable_by_key(|(_, _, match_points)| usize::MAX - *match_points);
+            // One snippet may be matched multiple times, but each prefix may only be matched once.
+            let mut sorted_snippet_candidates_seen = HashSet::<usize>::default();
 
             let buffer_windows = snippet_match_points(&max_buffer_window)
                 .take(
@@ -23031,13 +23042,15 @@ fn snippet_completions(
                     snippet_list_cutoff_index += 1;
                 }
 
+                // Take only the candidates with at least `word_count` many words
                 let snippet_candidates_at_word_len =
                     &sorted_snippet_candidates[..snippet_list_cutoff_index];
 
                 let candidates = snippet_candidates_at_word_len
                     .iter()
+                    .enumerate() // index in `sorted_snippet_candidates`
                     // First char must match
-                    .filter(|(_ix, prefix, _snippet_word_count)| {
+                    .filter(|(_ix, (_, prefix, _snippet_word_count))| {
                         itertools::equal(
                             prefix
                                 .chars()
@@ -23051,10 +23064,15 @@ fn snippet_completions(
                                 .flat_map(|c| c.to_lowercase()),
                         )
                     })
-                    .map(|(ix, prefix, _snippet_word_count)| StringMatchCandidate::new(*ix, prefix))
+                    // Match each prefix only once
+                    .filter(|(ix, (_, _prefix, _snippet_word_count))| {
+                        sorted_snippet_candidates_seen.insert(*ix)
+                    })
+                    .map(|(ix, (_, prefix, _snippet_word_count))| {
+                        StringMatchCandidate::new(ix, prefix)
+                    })
                     .collect::<Vec<StringMatchCandidate>>();
 
-                // TODO: ok to match same snippet multiple times?
                 matches.extend(
                     fuzzy::match_strings(
                         &candidates,
@@ -23092,9 +23110,10 @@ fn snippet_completions(
                 matches
                     .iter()
                     .filter_map(|(string_match, buffer_window_len)| {
-                        let snippet_index = string_match.candidate_id;
+                        let (snippet_index, prefix_index) =
+                            sorted_snippet_candidates[string_match.candidate_id].0;
                         let snippet = &snippets[snippet_index];
-                        let matching_prefix = todo!();
+                        let matching_prefix = &snippet.prefix[prefix_index];
                         let start = buffer_offset - buffer_window_len;
                         let start = snapshot.anchor_before(start);
                         let range = start..buffer_anchor;
