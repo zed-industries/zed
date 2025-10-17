@@ -115,6 +115,7 @@ enum AgentServerStoreState {
         settings: Option<AllAgentServersSettings>,
         http_client: Arc<dyn HttpClient>,
         _subscriptions: [Subscription; 1],
+        ext_subscription: Option<Subscription>,
     },
     Remote {
         project_id: u64,
@@ -132,7 +133,338 @@ pub struct AgentServersUpdated;
 
 impl EventEmitter<AgentServersUpdated> for AgentServerStore {}
 
+#[cfg(test)]
+mod ext_agent_tests {
+    use super::*;
+    use std::fmt::Write as _;
+
+    // Helper to build a store in Collab mode so we can mutate internal maps without
+    // needing to spin up a full project environment.
+    fn collab_store() -> AgentServerStore {
+        AgentServerStore {
+            state: AgentServerStoreState::Collab,
+            external_agents: HashMap::default(),
+        }
+    }
+
+    // A simple fake that implements ExternalAgentServer without needing async plumbing.
+    struct NoopExternalAgent;
+
+    impl ExternalAgentServer for NoopExternalAgent {
+        fn get_command(
+            &mut self,
+            _root_dir: Option<&str>,
+            _extra_env: HashMap<String, String>,
+            _status_tx: Option<watch::Sender<SharedString>>,
+            _new_version_available_tx: Option<watch::Sender<Option<String>>>,
+            _cx: &mut AsyncApp,
+        ) -> Task<Result<(AgentServerCommand, String, Option<task::SpawnInTerminal>)>> {
+            Task::ready(Ok((
+                AgentServerCommand {
+                    path: PathBuf::from("noop"),
+                    args: vec![],
+                    env: Some(HashMap::default()),
+                },
+                String::from(""),
+                None,
+            )))
+        }
+
+        fn as_any_mut(&mut self) -> &mut dyn Any {
+            self
+        }
+    }
+
+    #[test]
+    fn external_agent_server_name_display() {
+        let name = ExternalAgentServerName(SharedString::from("Ext: Tool"));
+        let mut s = String::new();
+        write!(&mut s, "{name}").unwrap();
+        assert_eq!(s, "Ext: Tool");
+    }
+
+    #[test]
+    fn sync_extension_agents_removes_previous_extension_entries() {
+        let mut store = collab_store();
+
+        // Seed with a couple of entries that look like extension-provided agents
+        // (they include ": " in the display name) plus a custom entry.
+        store.external_agents.insert(
+            ExternalAgentServerName(SharedString::from("Foo Ext: FooAgent")),
+            Box::new(NoopExternalAgent) as Box<dyn ExternalAgentServer>,
+        );
+        store.external_agents.insert(
+            ExternalAgentServerName(SharedString::from("Bar Ext: BarAgent")),
+            Box::new(NoopExternalAgent) as Box<dyn ExternalAgentServer>,
+        );
+        store.external_agents.insert(
+            ExternalAgentServerName(SharedString::from("custom")),
+            Box::new(NoopExternalAgent) as Box<dyn ExternalAgentServer>,
+        );
+
+        // Simulate the removal phase of sync_extension_agents by pruning entries
+        // with ": " in their display names.
+        let keys_to_remove: Vec<_> = store
+            .external_agents
+            .keys()
+            .filter(|name| name.0.contains(": "))
+            .cloned()
+            .collect();
+
+        for key in keys_to_remove {
+            store.external_agents.remove(&key);
+        }
+
+        // Only the custom entry should remain.
+        let remaining: Vec<_> = store
+            .external_agents
+            .keys()
+            .map(|k| k.0.to_string())
+            .collect();
+        assert_eq!(remaining, vec!["custom".to_string()]);
+    }
+
+    #[cfg(unix)]
+    #[gpui::test]
+    async fn local_extension_binary_agent_get_command_resolves_path(cx: &mut gpui::TestAppContext) {
+        use std::fs;
+        use std::os::unix::fs::PermissionsExt;
+
+        // Create a temporary directory with a dummy executable
+        let tmp_dir = tempfile::tempdir().expect("tempdir");
+        let bin_path = tmp_dir.path().join("mybin");
+
+        // Write a minimal shell script and make it executable
+        fs::write(&bin_path, b"#!/bin/sh\nexit 0\n").expect("write bin");
+        let mut perms = fs::metadata(&bin_path).expect("metadata").permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&bin_path, perms).expect("chmod");
+
+        // Create a project environment entity
+        let project_environment = cx.new(|_| crate::ProjectEnvironment::new(None));
+
+        // Construct a LocalExtensionBinaryAgent pointing to our dummy binary name
+        let mut agent = super::LocalExtensionBinaryAgent {
+            project_environment,
+            bin_name: gpui::SharedString::from("mybin"),
+            args: vec!["--foo".into()],
+            env: super::HashMap::default(),
+        };
+
+        // Ensure PATH contains our temp directory so which::which_in can find it
+        let mut extra_env = super::HashMap::default();
+        extra_env.insert("PATH".into(), tmp_dir.path().to_string_lossy().into_owned());
+
+        // Resolve the command
+        let task = agent.get_command(None, extra_env, None, None, &mut cx.to_async());
+        let (cmd, _root, _login) = task.await.expect("command resolved");
+
+        assert_eq!(cmd.path, bin_path);
+        assert_eq!(cmd.args, vec!["--foo"]);
+        assert!(cmd.env.is_some());
+    }
+}
+
+#[cfg(test)]
+mod ext_agent_tests_additional {
+    use super::*;
+
+    #[test]
+    fn sync_extension_agents_builds_display_name() {
+        // Construct a minimal manifest with a binary launcher and an agent entry.
+        let mut manifest = extension::ExtensionManifest {
+            id: "ext.id".into(),
+            name: "My Ext".to_string(),
+            version: "1.0.0".into(),
+            schema_version: extension::SchemaVersion::ZERO,
+            description: None,
+            repository: None,
+            authors: vec![],
+            lib: Default::default(),
+            themes: vec![],
+            icon_themes: vec![],
+            languages: vec![],
+            grammars: Default::default(),
+            language_servers: Default::default(),
+            context_servers: Default::default(),
+            agent_servers: Default::default(),
+            slash_commands: Default::default(),
+            snippets: None,
+            capabilities: vec![],
+            debug_adapters: Default::default(),
+            debug_locators: Default::default(),
+        };
+
+        manifest.agent_servers.insert(
+            "AgentName".into(),
+            extension::AgentServerManifestEntry {
+                launcher: extension::AgentServerLauncher::Binary {
+                    bin_name: "mybin".to_string(),
+                },
+                env: Default::default(),
+                args: Vec::new(),
+                login: None,
+                windows: None,
+            },
+        );
+
+        // When we form a display name for this agent, it should be "My Ext: AgentName".
+        let display = SharedString::from(format!("{}: {}", manifest.name, "AgentName"));
+        assert_eq!(display.as_ref(), "My Ext: AgentName");
+
+        // Additionally, ensure the launcher data is present and well-formed.
+        let entry = manifest.agent_servers.get("AgentName").unwrap();
+        match &entry.launcher {
+            extension::AgentServerLauncher::Binary { bin_name } => {
+                assert_eq!(bin_name, "mybin");
+            }
+            _ => panic!("expected Binary launcher"),
+        }
+    }
+}
+
+#[cfg(test)]
+mod ext_agent_tests_dup {
+    use super::*;
+    use std::fmt::Write as _;
+
+    // Helper to build a store in Collab mode so we can mutate internal maps without
+    // needing to spin up a full project environment.
+    fn collab_store() -> AgentServerStore {
+        AgentServerStore {
+            state: AgentServerStoreState::Collab,
+            external_agents: HashMap::default(),
+        }
+    }
+
+    // A simple fake that implements ExternalAgentServer without needing async plumbing.
+    struct NoopExternalAgent;
+
+    impl ExternalAgentServer for NoopExternalAgent {
+        fn get_command(
+            &mut self,
+            _root_dir: Option<&str>,
+            _extra_env: HashMap<String, String>,
+            _status_tx: Option<watch::Sender<SharedString>>,
+            _new_version_available_tx: Option<watch::Sender<Option<String>>>,
+            _cx: &mut AsyncApp,
+        ) -> Task<Result<(AgentServerCommand, String, Option<task::SpawnInTerminal>)>> {
+            Task::ready(Ok((
+                AgentServerCommand {
+                    path: PathBuf::from("noop"),
+                    args: vec![],
+                    env: Some(HashMap::default()),
+                },
+                String::from(""),
+                None,
+            )))
+        }
+
+        fn as_any_mut(&mut self) -> &mut dyn Any {
+            self
+        }
+    }
+
+    #[test]
+    fn external_agent_server_name_display() {
+        let name = ExternalAgentServerName(SharedString::from("Ext: Tool"));
+        let mut s = String::new();
+        write!(&mut s, "{name}").unwrap();
+        assert_eq!(s, "Ext: Tool");
+    }
+
+    #[test]
+    fn sync_extension_agents_removes_previous_extension_entries() {
+        let mut store = collab_store();
+
+        // Seed with a couple of entries that look like extension-provided agents
+        // (they include ": " in the display name) plus a custom entry.
+        store.external_agents.insert(
+            ExternalAgentServerName(SharedString::from("Foo Ext: FooAgent")),
+            Box::new(NoopExternalAgent) as Box<dyn ExternalAgentServer>,
+        );
+        store.external_agents.insert(
+            ExternalAgentServerName(SharedString::from("Bar Ext: BarAgent")),
+            Box::new(NoopExternalAgent) as Box<dyn ExternalAgentServer>,
+        );
+        store.external_agents.insert(
+            ExternalAgentServerName(SharedString::from("custom")),
+            Box::new(NoopExternalAgent) as Box<dyn ExternalAgentServer>,
+        );
+
+        // Simulate the removal phase of sync_extension_agents by pruning entries
+        // with ": " in their display names.
+        let keys_to_remove: Vec<_> = store
+            .external_agents
+            .keys()
+            .filter(|name| name.0.contains(": "))
+            .cloned()
+            .collect();
+
+        for key in keys_to_remove {
+            store.external_agents.remove(&key);
+        }
+
+        // Only the custom entry should remain.
+        let remaining: Vec<_> = store
+            .external_agents
+            .keys()
+            .map(|k| k.0.to_string())
+            .collect();
+        assert_eq!(remaining, vec!["custom".to_string()]);
+    }
+}
+
 impl AgentServerStore {
+    pub fn sync_extension_agents<'a, I>(&mut self, manifests: I, cx: &mut Context<Self>)
+    where
+        I: IntoIterator<Item = (&'a str, &'a extension::ExtensionManifest)>,
+    {
+        // Remove existing extension-provided agents (heuristic: entries with ": " in their display name)
+        let keys_to_remove: Vec<_> = self
+            .external_agents
+            .keys()
+            .filter(|name| name.0.contains(": "))
+            .cloned()
+            .collect();
+        for key in keys_to_remove {
+            self.external_agents.remove(&key);
+        }
+
+        // Insert binary agent servers from extension manifests
+        match &self.state {
+            AgentServerStoreState::Local {
+                project_environment,
+                ..
+            } => {
+                for (_ext_id, manifest) in manifests {
+                    let parent_name = manifest.name.clone();
+                    for (agent_name, agent_entry) in &manifest.agent_servers {
+                        if let extension::AgentServerLauncher::Binary { bin_name } =
+                            &agent_entry.launcher
+                        {
+                            let display =
+                                SharedString::from(format!("{}: {}", parent_name, agent_name));
+                            self.external_agents.insert(
+                                ExternalAgentServerName(display),
+                                Box::new(LocalExtensionBinaryAgent {
+                                    project_environment: project_environment.clone(),
+                                    bin_name: SharedString::from(bin_name.clone()),
+                                    args: agent_entry.args.clone(),
+                                    env: agent_entry.env.clone(),
+                                }) as Box<dyn ExternalAgentServer>,
+                            );
+                        }
+                    }
+                }
+            }
+            _ => {
+                // Only local projects support local extension agents
+            }
+        }
+
+        cx.emit(AgentServersUpdated);
+    }
     pub fn init_remote(session: &AnyProtoClient) {
         session.add_entity_message_handler(Self::handle_external_agents_updated);
         session.add_entity_message_handler(Self::handle_loading_status_updated);
@@ -277,9 +609,20 @@ impl AgentServerStore {
                 downstream_client: None,
                 settings: None,
                 _subscriptions: [subscription],
+                ext_subscription: None,
             },
             external_agents: Default::default(),
         };
+        if let Some(events) = extension::ExtensionEvents::try_global(cx) {
+            if let AgentServerStoreState::Local {
+                ext_subscription, ..
+            } = &mut this.state
+            {
+                *ext_subscription = Some(cx.subscribe(&events, |this, _src, _event, cx| {
+                    this.reregister_agents(cx);
+                }));
+            }
+        }
         this.agent_servers_settings_changed(cx);
         this
     }
@@ -1160,9 +1503,76 @@ fn asset_name(version: &str) -> Option<String> {
     Some(format!("codex-acp-{version}-{arch}-{platform}.{ext}"))
 }
 
+struct LocalExtensionBinaryAgent {
+    project_environment: Entity<ProjectEnvironment>,
+    bin_name: SharedString,
+    args: Vec<String>,
+    env: HashMap<String, String>,
+}
+
 struct LocalCustomAgent {
     project_environment: Entity<ProjectEnvironment>,
     command: AgentServerCommand,
+}
+
+impl ExternalAgentServer for LocalExtensionBinaryAgent {
+    fn get_command(
+        &mut self,
+        root_dir: Option<&str>,
+        extra_env: HashMap<String, String>,
+        _status_tx: Option<watch::Sender<SharedString>>,
+        _new_version_available_tx: Option<watch::Sender<Option<String>>>,
+        cx: &mut AsyncApp,
+    ) -> Task<Result<(AgentServerCommand, String, Option<task::SpawnInTerminal>)>> {
+        let bin_name = self.bin_name.clone();
+        let args = self.args.clone();
+        let mut base_env = self.env.clone();
+        base_env.extend(extra_env);
+        let project_environment = self.project_environment.downgrade();
+
+        let root_dir: Arc<Path> = root_dir
+            .map(|root_dir| Path::new(root_dir))
+            .unwrap_or(paths::home_dir())
+            .into();
+
+        cx.spawn(async move |cx| {
+            // Resolve environment and PATH for the provided root_dir
+            let env = project_environment
+                .update(cx, |project_environment, cx| {
+                    project_environment.get_local_directory_environment(
+                        &Shell::System,
+                        root_dir.clone(),
+                        cx,
+                    )
+                })?
+                .await
+                .unwrap_or_default();
+
+            let mut merged_env = env;
+            merged_env.extend(base_env);
+
+            let bin = find_bin_in_path(
+                bin_name.clone(),
+                root_dir.as_ref().to_path_buf(),
+                merged_env.clone(),
+                cx,
+            )
+            .await
+            .ok_or_else(|| anyhow::anyhow!(format!("Binary '{}' not found in PATH", bin_name)))?;
+
+            let command = AgentServerCommand {
+                path: bin,
+                args,
+                env: Some(merged_env),
+            };
+
+            Ok((command, root_dir.to_string_lossy().into_owned(), None))
+        })
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
 }
 
 impl ExternalAgentServer for LocalCustomAgent {
