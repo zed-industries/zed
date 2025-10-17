@@ -158,7 +158,7 @@ When using `vtsls`:
 
 ## Debugging
 
-Zed supports debugging TypeScript code out of the box.
+Zed supports debugging TypeScript code out of the box with `vscode-js-debug`.
 The following can be debugged without writing additional configuration:
 
 - Tasks from `package.json`
@@ -173,6 +173,12 @@ Run {#action debugger::Start} ({#kb debugger::Start}) to see a contextual list o
 As for all languages, configurations from `.vscode/launch.json` are also available for debugging in Zed.
 
 If your use-case isn't covered by any of these, you can take full control by adding debug configurations to `.zed/debug.json`. See below for example configurations.
+
+### Configuring JavaScript debug tasks
+
+JavaScript debugging is more complicated than other languages because there are two different environments: Node.js and the browser. `vscode-js-debug` exposes a `type` field, that you can use to specify the environment, either `node` or `chrome`.
+
+- [vscode-js-debug configuration documentation](https://github.com/microsoft/vscode-js-debug/blob/main/OPTIONS.md)
 
 ### Attach debugger to a server running in web browser (`npx serve`)
 
