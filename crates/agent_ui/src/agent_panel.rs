@@ -690,6 +690,10 @@ impl AgentPanel {
         &self.history_store
     }
 
+    pub(crate) fn context_server_registry(&self) -> &Entity<ContextServerRegistry> {
+        &self.context_server_registry
+    }
+
     fn active_thread_view(&self) -> Option<&Entity<AcpThreadView>> {
         match &self.active_view {
             ActiveView::ExternalAgentThread { thread_view, .. } => Some(thread_view),

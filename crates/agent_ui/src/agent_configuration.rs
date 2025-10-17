@@ -17,7 +17,7 @@ use extension_host::ExtensionStore;
 use fs::Fs;
 use gpui::{
     Action, AnyView, App, AsyncWindowContext, Corner, Entity, EventEmitter, FocusHandle, Focusable,
-    Hsla, ScrollHandle, Subscription, Task, WeakEntity,
+    ScrollHandle, Subscription, Task, WeakEntity,
 };
 use language::LanguageRegistry;
 use language_model::{
@@ -434,10 +434,6 @@ impl AgentConfiguration {
         } else {
             div().into_any_element()
         }
-    }
-
-    fn card_item_border_color(&self, cx: &mut Context<Self>) -> Hsla {
-        cx.theme().colors().border.opacity(0.6)
     }
 
     fn render_context_servers_section(
