@@ -410,7 +410,6 @@ impl Zeta {
             let url = if let Ok(predict_edits_url) = std::env::var("ZED_ACCEPT_PREDICTION_URL") {
                 http_client::Url::parse(&predict_edits_url)?
             } else {
-                // todo! reuse endpoint?
                 client
                     .http_client()
                     .build_zed_llm_url("/predict_edits/accept", &[])?
