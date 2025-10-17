@@ -228,7 +228,7 @@ impl PickerDelegate for PickerPromptDelegate {
                     let highlights: Vec<_> = hit
                         .positions
                         .iter()
-                        .filter(|index| index < &&self.max_match_length)
+                        .filter(|&&index| index < self.max_match_length)
                         .copied()
                         .collect();
 
