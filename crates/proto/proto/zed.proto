@@ -421,7 +421,11 @@ message Envelope {
         RemoteStarted remote_started = 381;
 
         GetDirectoryEnvironment get_directory_environment = 382;
-        DirectoryEnvironment directory_environment = 383; // current max
+        DirectoryEnvironment directory_environment = 383;
+
+        // Remote CLI open request/response.
+        RemoteCliOpen remote_cli_open = 384;
+        RemoteCliOpenResponse remote_cli_open_response = 385; // current max
     }
 
     reserved 87 to 88;

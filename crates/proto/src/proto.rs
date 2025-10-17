@@ -187,6 +187,8 @@ messages!(
     (OpenContextResponse, Foreground),
     (OpenNewBuffer, Foreground),
     (OpenServerSettings, Foreground),
+    (RemoteCliOpen, Foreground),
+    (RemoteCliOpenResponse, Foreground),
     (PerformRename, Background),
     (PerformRenameResponse, Background),
     (Ping, Foreground),
@@ -503,6 +505,7 @@ request_messages!(
     (GetProcesses, GetProcessesResponse),
     (GetAgentServerCommand, AgentServerCommand),
     (RemoteStarted, Ack),
+    (RemoteCliOpen, RemoteCliOpenResponse),
 );
 
 lsp_messages!(
