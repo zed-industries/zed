@@ -143,18 +143,15 @@ impl ProjectEnvironment {
         self.local_environments
             .entry((shell.clone(), abs_path.clone()))
             .or_insert_with(|| {
-                let shell = shell;
-                let abs_path = abs_path.clone();
                 let load_direnv = ProjectSettings::get_global(cx).load_direnv.clone();
-
                 let shell = shell.clone();
                 let tx = self.environment_error_messages_tx.clone();
                 cx.spawn(async move |_, cx| {
                     let mut shell_env = cx
                         .background_spawn(load_directory_shell_environment(
-                            shell.clone(),
+                            shell,
                             abs_path.clone(),
-                            load_direnv.clone(),
+                            load_direnv,
                             tx,
                         ))
                         .await
