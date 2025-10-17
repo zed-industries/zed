@@ -1,7 +1,6 @@
+use agent::{AgentTool, OpenTool, TerminalTool};
 use agent_settings::AgentProfileId;
 use anyhow::Result;
-use assistant_tool::Tool;
-use assistant_tools::{OpenTool, TerminalTool};
 use async_trait::async_trait;
 
 use crate::example::{Example, ExampleContext, ExampleMetadata, JudgeAssertion};
@@ -38,9 +37,9 @@ impl Example for Planets {
         let mut terminal_tool_uses = 0;
 
         for tool_use in response.tool_uses() {
-            if tool_use.name == OpenTool.name() {
+            if tool_use.name == OpenTool::name() {
                 open_tool_uses += 1;
-            } else if tool_use.name == TerminalTool::NAME {
+            } else if tool_use.name == TerminalTool::name() {
                 terminal_tool_uses += 1;
             }
         }

@@ -18,7 +18,9 @@ name = "explorer"
 path = "src/explorer.rs"
 
 [dependencies]
+acp_thread.workspace = true
 agent.workspace = true
+agent-client-protocol.workspace = true
 agent_settings.workspace = true
 agent_ui.workspace = true
 anyhow.workspace = true
