@@ -11,9 +11,11 @@
   = @ConradIrwin
   = @maxdeviant
   = @SomeoneToIgnore
+  = @probably-neb
 
 vim
   = @ConradIrwin
+  = @probably-neb
 
 gpui
   = @MikaylaMaki
@@ -41,3 +43,6 @@ dap
 
 extension
   = @kubkon
+
+settings_ui
+    = @probably-neb
