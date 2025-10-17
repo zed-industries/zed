@@ -89,12 +89,34 @@ impl VsCodeSettings {
         self.content.get(setting)
     }
 
-    pub fn read_string(&self, setting: &str) -> Option<&str> {
+    pub fn read_str(&self, setting: &str) -> Option<&str> {
         self.read_value(setting).and_then(|v| v.as_str())
+    }
+
+    pub fn read_string(&self, setting: &str) -> Option<String> {
+        self.read_value(setting)
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_owned())
     }
 
     pub fn read_bool(&self, setting: &str) -> Option<bool> {
         self.read_value(setting).and_then(|v| v.as_bool())
+    }
+
+    pub fn read_f32(&self, setting: &str) -> Option<f32> {
+        self.read_value(setting)
+            .and_then(|v| v.as_f64())
+            .map(|v| v as f32)
+    }
+
+    pub fn read_u64(&self, setting: &str) -> Option<u64> {
+        self.read_value(setting).and_then(|v| v.as_u64())
+    }
+
+    pub fn read_u32(&self, setting: &str) -> Option<u32> {
+        self.read_value(setting)
+            .and_then(|v| v.as_u64())
+            .and_then(|v| v.try_into().ok())
     }
 
     pub fn string_setting(&self, key: &str, setting: &mut Option<String>) {
@@ -203,395 +225,386 @@ impl VsCodeSettings {
         }
     }
 
-    pub fn import(&self, current: &mut SettingsContent) {
-        current.base_keymap = Some(BaseKeymapContent::VSCode);
-        // agent settings
-        if let Some(b) = self
-            .read_value("chat.agent.enabled")
-            .and_then(|b| b.as_bool())
-        {
-            current.agent.get_or_insert_default().enabled = Some(b);
-            current.agent.get_or_insert_default().button = Some(b);
+    pub fn settings_content(&self) -> SettingsContent {
+        SettingsContent {
+            agent: self.agent_settings_content(),
+            agent_servers: None,
+            audio: None,
+            auto_update: None,
+            base_keymap: Some(BaseKeymapContent::VSCode),
+            calls: None,
+            collaboration_panel: None,
+            debugger: None,
+            diagnostics: None,
+            disable_ai: None,
+            editor: self.editor_settings_content(),
+            extension: ExtensionSettingsContent::default(),
+            file_finder: None,
+            git: self.git_settings_content(),
+            git_panel: self.git_panel_settings_content(),
+            global_lsp_settings: None,
+            helix_mode: None,
+            image_viewer: None,
+            journal: None,
+            language_models: None,
+            line_indicator_format: None,
+            log: None,
+            message_editor: None,
+            node: self.node_binary_settings(),
+            notification_panel: None,
+            outline_panel: self.outline_panel_settings_content(),
+            preview_tabs: None,
+            project: self.project_settings_content(),
+            project_panel: self.project_panel_settings_content(),
+            proxy: self.read_string("http.proxy"),
+            remote: RemoteSettingsContent::default(),
+            repl: None,
+            server_url: None,
+            session: None,
+            status_bar: None,
+            tab_bar: None,
+            tabs: self.item_settings_content(),
+            telemetry: self.telemetry_settings_content(),
+            terminal: None,
+            theme: Box::new(ThemeSettingsContent::default()),
+            title_bar: None,
+            vim: None,
+            vim_mode: None,
+            workspace: WorkspaceSettingsContent::default(),
         }
+    }
 
-        // client settings
+    fn agent_settings_content(&self) -> Option<AgentSettingsContent> {
+        let enabled = self.read_bool("chat.agent.enabled");
+        skip_default(AgentSettingsContent {
+            enabled: enabled,
+            button: enabled,
+            ..Default::default()
+        })
+    }
 
-        self.string_setting("http.proxy", &mut current.proxy);
-
-        // editor settings
-
-        self.enum_setting(
-            "editor.cursorBlinking",
-            &mut current.editor.cursor_blink,
-            |s| match s {
+    fn editor_settings_content(&self) -> EditorSettingsContent {
+        EditorSettingsContent {
+            auto_signature_help: self.read_bool("editor.parameterHints.enabled"),
+            autoscroll_on_clicks: None,
+            cursor_blink: self.read_enum("editor.cursorBlinking", |s| match s {
                 "blink" | "phase" | "expand" | "smooth" => Some(true),
                 "solid" => Some(false),
                 _ => None,
-            },
-        );
-        self.enum_setting(
-            "editor.cursorStyle",
-            &mut current.editor.cursor_shape,
-            |s| match s {
+            }),
+            cursor_shape: self.read_enum("editor.cursorStyle", |s| match s {
                 "block" => Some(CursorShape::Block),
                 "block-outline" => Some(CursorShape::Hollow),
                 "line" | "line-thin" => Some(CursorShape::Bar),
                 "underline" | "underline-thin" => Some(CursorShape::Underline),
                 _ => None,
-            },
-        );
-
-        self.enum_setting(
-            "editor.renderLineHighlight",
-            &mut current.editor.current_line_highlight,
-            |s| match s {
+            }),
+            current_line_highlight: self.read_enum("editor.renderLineHighlight", |s| match s {
                 "gutter" => Some(CurrentLineHighlight::Gutter),
                 "line" => Some(CurrentLineHighlight::Line),
                 "all" => Some(CurrentLineHighlight::All),
                 _ => None,
-            },
-        );
-
-        self.bool_setting(
-            "editor.selectionHighlight",
-            &mut current.editor.selection_highlight,
-        );
-        self.bool_setting(
-            "editor.roundedSelection",
-            &mut current.editor.rounded_selection,
-        );
-        self.bool_setting(
-            "editor.hover.enabled",
-            &mut current.editor.hover_popover_enabled,
-        );
-        self.u64_setting(
-            "editor.hover.delay",
-            &mut current.editor.hover_popover_delay,
-        );
-
-        let mut gutter = GutterContent::default();
-        self.enum_setting(
-            "editor.showFoldingControls",
-            &mut gutter.folds,
-            |s| match s {
-                "always" | "mouseover" => Some(true),
-                "never" => Some(false),
-                _ => None,
-            },
-        );
-        self.enum_setting(
-            "editor.lineNumbers",
-            &mut gutter.line_numbers,
-            |s| match s {
-                "on" | "relative" => Some(true),
-                "off" => Some(false),
-                _ => None,
-            },
-        );
-        if let Some(old_gutter) = current.editor.gutter.as_mut() {
-            if gutter.folds.is_some() {
-                old_gutter.folds = gutter.folds
-            }
-            if gutter.line_numbers.is_some() {
-                old_gutter.line_numbers = gutter.line_numbers
-            }
-        } else if gutter != GutterContent::default() {
-            current.editor.gutter = Some(gutter)
-        }
-        if let Some(b) = self.read_bool("editor.scrollBeyondLastLine") {
-            current.editor.scroll_beyond_last_line = Some(if b {
-                ScrollBeyondLastLine::OnePage
-            } else {
-                ScrollBeyondLastLine::Off
-            })
-        }
-
-        let mut scrollbar_axes = crate::ScrollbarAxesContent::default();
-        self.enum_setting(
-            "editor.scrollbar.horizontal",
-            &mut scrollbar_axes.horizontal,
-            |s| match s {
-                "auto" | "visible" => Some(true),
-                "hidden" => Some(false),
-                _ => None,
-            },
-        );
-        self.enum_setting(
-            "editor.scrollbar.vertical",
-            &mut scrollbar_axes.horizontal,
-            |s| match s {
-                "auto" | "visible" => Some(true),
-                "hidden" => Some(false),
-                _ => None,
-            },
-        );
-
-        if scrollbar_axes != crate::ScrollbarAxesContent::default() {
-            let scrollbar_settings = current.editor.scrollbar.get_or_insert_default();
-            let axes_settings = scrollbar_settings.axes.get_or_insert_default();
-
-            if let Some(vertical) = scrollbar_axes.vertical {
-                axes_settings.vertical = Some(vertical);
-            }
-            if let Some(horizontal) = scrollbar_axes.horizontal {
-                axes_settings.horizontal = Some(horizontal);
-            }
-        }
-
-        // TODO: check if this does the int->float conversion?
-        self.f32_setting(
-            "editor.cursorSurroundingLines",
-            &mut current.editor.vertical_scroll_margin,
-        );
-        self.f32_setting(
-            "editor.mouseWheelScrollSensitivity",
-            &mut current.editor.scroll_sensitivity,
-        );
-        self.f32_setting(
-            "editor.fastScrollSensitivity",
-            &mut current.editor.fast_scroll_sensitivity,
-        );
-        if Some("relative") == self.read_string("editor.lineNumbers") {
-            current.editor.relative_line_numbers = Some(true);
-        }
-
-        self.enum_setting(
-            "editor.find.seedSearchStringFromSelection",
-            &mut current.editor.seed_search_query_from_cursor,
-            |s| match s {
-                "always" => Some(SeedQuerySetting::Always),
-                "selection" => Some(SeedQuerySetting::Selection),
-                "never" => Some(SeedQuerySetting::Never),
-                _ => None,
-            },
-        );
-        self.bool_setting("search.smartCase", &mut current.editor.use_smartcase_search);
-        self.enum_setting(
-            "editor.multiCursorModifier",
-            &mut current.editor.multi_cursor_modifier,
-            |s| match s {
+            }),
+            diagnostics_max_severity: None,
+            double_click_in_multibuffer: None,
+            drag_and_drop_selection: None,
+            excerpt_context_lines: None,
+            expand_excerpt_lines: None,
+            fast_scroll_sensitivity: self.read_f32("editor.fastScrollSensitivity"),
+            go_to_definition_fallback: None,
+            gutter: self.gutter_content(),
+            hide_mouse: None,
+            horizontal_scroll_margin: None,
+            hover_popover_delay: self.read_u64("editor.hover.delay"),
+            hover_popover_enabled: self.read_bool("editor.hover.enabled"),
+            inline_code_actions: None,
+            jupyter: None,
+            lsp_document_colors: None,
+            lsp_highlight_debounce: None,
+            middle_click_paste: None,
+            minimap: self.minimap_content(),
+            minimum_contrast_for_highlights: None,
+            multi_cursor_modifier: self.read_enum("editor.multiCursorModifier", |s| match s {
                 "ctrlCmd" => Some(MultiCursorModifier::CmdOrCtrl),
                 "alt" => Some(MultiCursorModifier::Alt),
                 _ => None,
-            },
-        );
-
-        self.bool_setting(
-            "editor.parameterHints.enabled",
-            &mut current.editor.auto_signature_help,
-        );
-        self.bool_setting(
-            "editor.parameterHints.enabled",
-            &mut current.editor.show_signature_help_after_edits,
-        );
-
-        if let Some(use_ignored) = self.read_bool("search.useIgnoreFiles") {
-            let search = current.editor.search.get_or_insert_default();
-            search.include_ignored = Some(use_ignored);
+            }),
+            redact_private_values: None,
+            relative_line_numbers: self.read_enum("editor.lineNumbers", |s| match s {
+                "relative" => Some(true),
+                _ => None,
+            }),
+            rounded_selection: self.read_bool("editor.roundedSelection"),
+            scroll_beyond_last_line: None,
+            scroll_sensitivity: self.read_f32("editor.mouseWheelScrollSensitivity"),
+            scrollbar: self.scrollbar_content(),
+            search: self.search_content(),
+            search_wrap: None,
+            seed_search_query_from_cursor: self.read_enum(
+                "editor.find.seedSearchStringFromSelection",
+                |s| match s {
+                    "always" => Some(SeedQuerySetting::Always),
+                    "selection" => Some(SeedQuerySetting::Selection),
+                    "never" => Some(SeedQuerySetting::Never),
+                    _ => None,
+                },
+            ),
+            selection_highlight: self.read_bool("editor.selectionHighlight"),
+            show_signature_help_after_edits: self.read_bool("editor.parameterHints.enabled"),
+            snippet_sort_order: None,
+            toolbar: None,
+            use_smartcase_search: self.read_bool("search.smartCase"),
+            vertical_scroll_margin: self.read_f32("editor.cursorSurroundingLines"),
         }
+    }
 
-        let mut minimap = crate::MinimapContent::default();
+    fn gutter_content(&self) -> Option<GutterContent> {
+        skip_default(GutterContent {
+            line_numbers: self.read_enum("editor.lineNumbers", |s| match s {
+                "on" | "relative" => Some(true),
+                "off" => Some(false),
+                _ => None,
+            }),
+            min_line_number_digits: None,
+            runnables: None,
+            breakpoints: None,
+            folds: self.read_enum("editor.showFoldingControls", |s| match s {
+                "always" | "mouseover" => Some(true),
+                "never" => Some(false),
+                _ => None,
+            }),
+        })
+    }
+
+    fn scrollbar_content(&self) -> Option<ScrollbarContent> {
+        let scrollbar_axes = skip_default(ScrollbarAxesContent {
+            horizontal: self.read_enum("editor.scrollbar.horizontal", |s| match s {
+                "auto" | "visible" => Some(true),
+                "hidden" => Some(false),
+                _ => None,
+            }),
+            vertical: self.read_enum("editor.scrollbar.vertical", |s| match s {
+                "auto" | "visible" => Some(true),
+                "hidden" => Some(false),
+                _ => None,
+            }),
+        })?;
+
+        Some(ScrollbarContent {
+            axes: Some(scrollbar_axes),
+            ..Default::default()
+        })
+    }
+
+    fn search_content(&self) -> Option<SearchSettingsContent> {
+        skip_default(SearchSettingsContent {
+            include_ignored: self.read_bool("search.useIgnoreFiles"),
+            ..Default::default()
+        })
+    }
+
+    fn minimap_content(&self) -> Option<MinimapContent> {
+        // todo!() this enables minimap for all vscode users?
         let minimap_enabled = self.read_bool("editor.minimap.enabled").unwrap_or(true);
         let autohide = self.read_bool("editor.minimap.autohide");
-        let mut max_width_columns: Option<u32> = None;
-        self.u32_setting("editor.minimap.maxColumn", &mut max_width_columns);
-        if minimap_enabled {
+        let show = if minimap_enabled {
             if let Some(false) = autohide {
-                minimap.show = Some(ShowMinimap::Always);
+                Some(ShowMinimap::Always)
             } else {
-                minimap.show = Some(ShowMinimap::Auto);
+                Some(ShowMinimap::Auto)
             }
         } else {
-            minimap.show = Some(ShowMinimap::Never);
-        }
-        if let Some(max_width_columns) = max_width_columns {
-            minimap.max_width_columns = NonZeroU32::new(max_width_columns);
-        }
+            Some(ShowMinimap::Never)
+        };
 
-        self.enum_setting(
-            "editor.minimap.showSlider",
-            &mut minimap.thumb,
-            |s| match s {
+        skip_default(MinimapContent {
+            show,
+            thumb: self.read_enum("editor.minimap.showSlider", |s| match s {
                 "always" => Some(MinimapThumb::Always),
                 "mouseover" => Some(MinimapThumb::Hover),
                 _ => None,
+            }),
+            max_width_columns: self
+                .read_u32("editor.minimap.maxColumn")
+                .and_then(|v| NonZeroU32::new(v)),
+            ..Default::default()
+        })
+    }
+
+    fn git_panel_settings_content(&self) -> Option<GitPanelSettingsContent> {
+        skip_default(GitPanelSettingsContent {
+            button: self.read_bool("git.enabled"),
+            fallback_branch_name: self.read_string("git.defaultBranchName"),
+            ..Default::default()
+        })
+    }
+
+    fn project_settings_content(&self) -> ProjectSettingsContent {
+        ProjectSettingsContent {
+            all_languages: AllLanguageSettingsContent {
+                features: None,
+                edit_predictions: self.edit_predictions_settings_content(),
+                defaults: self.default_language_settings_content(),
+                languages: Default::default(),
+                file_types: self.file_types(),
             },
-        );
+            worktree: Default::default(),
+            lsp: Default::default(),
+            terminal: None,
+            dap: Default::default(),
+            context_servers: self.context_servers(),
+            load_direnv: None,
+            slash_commands: None,
+            git_hosting_providers: None,
+        }
+    }
 
-        if minimap != crate::MinimapContent::default() {
-            current.editor.minimap = Some(minimap)
-        }
-
-        // git
-
-        if let Some(git_enabled) = self.read_bool("git.enabled") {
-            current.git_panel.get_or_insert_default().button = Some(git_enabled);
-        }
-        if let Some(default_branch) = self.read_string("git.defaultBranchName") {
-            current
-                .git_panel
-                .get_or_insert_default()
-                .fallback_branch_name = Some(default_branch.to_string());
-        }
-
-        // langauge settings
-        let d = &mut current.project.all_languages.defaults;
-        if let Some(size) = self
-            .read_value("editor.tabSize")
-            .and_then(|v| v.as_u64())
-            .and_then(|n| NonZeroU32::new(n as u32))
-        {
-            d.tab_size = Some(size);
-        }
-        if let Some(v) = self.read_bool("editor.insertSpaces") {
-            d.hard_tabs = Some(!v);
-        }
-
-        self.enum_setting("editor.wordWrap", &mut d.soft_wrap, |s| match s {
-            "on" => Some(SoftWrap::EditorWidth),
-            "wordWrapColumn" => Some(SoftWrap::PreferLine),
-            "bounded" => Some(SoftWrap::Bounded),
-            "off" => Some(SoftWrap::None),
-            _ => None,
-        });
-        self.u32_setting("editor.wordWrapColumn", &mut d.preferred_line_length);
-
-        if let Some(arr) = self
-            .read_value("editor.rulers")
-            .and_then(|v| v.as_array())
-            .map(|v| v.iter().map(|n| n.as_u64().map(|n| n as usize)).collect())
-        {
-            d.wrap_guides = arr;
-        }
-        if let Some(b) = self.read_bool("editor.guides.indentation") {
-            d.indent_guides.get_or_insert_default().enabled = Some(b);
-        }
-
-        if let Some(b) = self.read_bool("editor.guides.formatOnSave") {
-            d.format_on_save = Some(if b {
-                FormatOnSave::On
-            } else {
-                FormatOnSave::Off
-            });
-        }
-        self.bool_setting(
-            "editor.trimAutoWhitespace",
-            &mut d.remove_trailing_whitespace_on_save,
-        );
-        self.bool_setting(
-            "files.insertFinalNewline",
-            &mut d.ensure_final_newline_on_save,
-        );
-        self.bool_setting("editor.inlineSuggest.enabled", &mut d.show_edit_predictions);
-        self.enum_setting("editor.renderWhitespace", &mut d.show_whitespaces, |s| {
-            Some(match s {
-                "boundary" => ShowWhitespaceSetting::Boundary,
-                "trailing" => ShowWhitespaceSetting::Trailing,
-                "selection" => ShowWhitespaceSetting::Selection,
-                "all" => ShowWhitespaceSetting::All,
-                _ => ShowWhitespaceSetting::None,
-            })
-        });
-        self.enum_setting(
-            "editor.autoSurround",
-            &mut d.use_auto_surround,
-            |s| match s {
+    fn default_language_settings_content(&self) -> LanguageSettingsContent {
+        LanguageSettingsContent {
+            allow_rewrap: None,
+            always_treat_brackets_as_autoclosed: None,
+            auto_indent: None,
+            auto_indent_on_paste: self.read_bool("editor.formatOnPaste"),
+            code_actions_on_format: None,
+            completions: skip_default(CompletionSettingsContent {
+                words: self.read_bool("editor.suggest.showWords").map(|b| {
+                    if b {
+                        WordsCompletionMode::Enabled
+                    } else {
+                        WordsCompletionMode::Disabled
+                    }
+                }),
+                ..Default::default()
+            }),
+            debuggers: None,
+            edit_predictions_disabled_in: None,
+            enable_language_server: None,
+            ensure_final_newline_on_save: self.read_bool("files.insertFinalNewline"),
+            extend_comment_on_newline: None,
+            format_on_save: self.read_bool("editor.guides.formatOnSave").map(|b| {
+                if b {
+                    FormatOnSave::On
+                } else {
+                    FormatOnSave::Off
+                }
+            }),
+            formatter: None,
+            hard_tabs: self.read_bool("editor.insertSpaces").map(|v| !v),
+            indent_guides: skip_default(IndentGuideSettingsContent {
+                enabled: self.read_bool("editor.guides.indentation"),
+                ..Default::default()
+            }),
+            inlay_hints: None,
+            jsx_tag_auto_close: None,
+            language_servers: None,
+            linked_edits: self.read_bool("editor.linkedEditing"),
+            preferred_line_length: self.read_u32("editor.wordWrapColumn"),
+            prettier: None,
+            remove_trailing_whitespace_on_save: self.read_bool("editor.trimAutoWhitespace"),
+            show_completion_documentation: None,
+            show_completions_on_input: self.read_bool("editor.suggestOnTriggerCharacters"),
+            show_edit_predictions: self.read_bool("editor.inlineSuggest.enabled"),
+            show_whitespaces: self.read_enum("editor.renderWhitespace", |s| {
+                Some(match s {
+                    "boundary" => ShowWhitespaceSetting::Boundary,
+                    "trailing" => ShowWhitespaceSetting::Trailing,
+                    "selection" => ShowWhitespaceSetting::Selection,
+                    "all" => ShowWhitespaceSetting::All,
+                    _ => ShowWhitespaceSetting::None,
+                })
+            }),
+            show_wrap_guides: None,
+            soft_wrap: self.read_enum("editor.wordWrap", |s| match s {
+                "on" => Some(SoftWrap::EditorWidth),
+                "wordWrapColumn" => Some(SoftWrap::PreferLine),
+                "bounded" => Some(SoftWrap::Bounded),
+                "off" => Some(SoftWrap::None),
+                _ => None,
+            }),
+            tab_size: self
+                .read_u32("editor.tabSize")
+                .and_then(|n| NonZeroU32::new(n)),
+            tasks: None,
+            use_auto_surround: self.read_enum("editor.autoSurround", |s| match s {
                 "languageDefined" | "quotes" | "brackets" => Some(true),
                 "never" => Some(false),
                 _ => None,
-            },
-        );
-        self.bool_setting("editor.formatOnType", &mut d.use_on_type_format);
-        self.bool_setting("editor.linkedEditing", &mut d.linked_edits);
-        self.bool_setting("editor.formatOnPaste", &mut d.auto_indent_on_paste);
-        self.bool_setting(
-            "editor.suggestOnTriggerCharacters",
-            &mut d.show_completions_on_input,
-        );
-        if let Some(b) = self.read_bool("editor.suggest.showWords") {
-            let mode = if b {
-                WordsCompletionMode::Enabled
-            } else {
-                WordsCompletionMode::Disabled
-            };
-            d.completions.get_or_insert_default().words = Some(mode);
+            }),
+            use_autoclose: None,
+            use_on_type_format: self.read_bool("editor.formatOnType"),
+            whitespace_map: None,
+            wrap_guides: self
+                .read_value("editor.rulers")
+                .and_then(|v| v.as_array())
+                .map(|v| {
+                    v.iter()
+                        .flat_map(|n| n.as_u64().map(|n| n as usize))
+                        .collect()
+                }),
         }
-        // TODO: pull ^ out into helper and reuse for per-language settings
+    }
 
+    fn file_types(&self) -> Option<HashMap<Arc<str>, ExtendingVec<String>>> {
         // vscodes file association map is inverted from ours, so we flip the mapping before merging
         let mut associations: HashMap<Arc<str>, ExtendingVec<String>> = HashMap::default();
-        if let Some(map) = self
-            .read_value("files.associations")
-            .and_then(|v| v.as_object())
-        {
-            for (k, v) in map {
-                let Some(v) = v.as_str() else { continue };
-                associations.entry(v.into()).or_default().0.push(k.clone());
-            }
+        let map = self.read_value("files.associations")?.as_object()?;
+        for (k, v) in map {
+            let Some(v) = v.as_str() else { continue };
+            associations.entry(v.into()).or_default().0.push(k.clone());
         }
+        skip_default(associations)
+    }
 
-        // TODO: do we want to merge imported globs per filetype? for now we'll just replace
-        current
-            .project
-            .all_languages
-            .file_types
-            .get_or_insert_default()
-            .extend(associations);
+    fn edit_predictions_settings_content(&self) -> Option<EditPredictionSettingsContent> {
+        let disabled_globs = self
+            .read_value("cursor.general.globalCursorIgnoreList")?
+            .as_array()?;
 
-        // cursor global ignore list applies to cursor-tab, so transfer it to edit_predictions.disabled_globs
-        if let Some(disabled_globs) = self
-            .read_value("cursor.general.globalCursorIgnoreList")
-            .and_then(|v| v.as_array())
-        {
-            current
-                .project
-                .all_languages
-                .edit_predictions
-                .get_or_insert_default()
-                .disabled_globs
-                .get_or_insert_default()
-                .extend(
-                    disabled_globs
-                        .iter()
-                        .filter_map(|glob| glob.as_str())
-                        .map(|s| s.to_string()),
-                );
-        }
+        skip_default(EditPredictionSettingsContent {
+            disabled_globs: skip_default(
+                disabled_globs
+                    .iter()
+                    .filter_map(|glob| glob.as_str())
+                    .map(|s| s.to_string())
+                    .collect(),
+            ),
+            ..Default::default()
+        })
+    }
 
-        // outline panel
+    fn outline_panel_settings_content(&self) -> Option<OutlinePanelSettingsContent> {
+        skip_default(OutlinePanelSettingsContent {
+            file_icons: self.read_bool("outline.icons"),
+            folder_icons: self.read_bool("outline.icons"),
+            git_status: self.read_bool("git.decorations.enabled"),
+            ..Default::default()
+        })
+    }
 
-        if let Some(b) = self.read_bool("outline.icons") {
-            let outline_panel = current.outline_panel.get_or_insert_default();
-            outline_panel.file_icons = Some(b);
-            outline_panel.folder_icons = Some(b);
-        }
-
-        if let Some(b) = self.read_bool("git.decorations.enabled") {
-            let outline_panel = current.outline_panel.get_or_insert_default();
-            outline_panel.git_status = Some(b);
-        }
-
-        // project
-        //
+    fn node_binary_settings(&self) -> Option<NodeBinarySettings> {
         // this just sets the binary name instead of a full path so it relies on path lookup
         // resolving to the one you want
-        let npm_path = self.read_enum("npm.packageManager", |s| match s {
-            v @ ("npm" | "yarn" | "bun" | "pnpm") => Some(v.to_owned()),
-            _ => None,
-        });
-        if npm_path.is_some() {
-            current.node.get_or_insert_default().npm_path = npm_path;
-        }
+        skip_default(NodeBinarySettings {
+            npm_path: self.read_enum("npm.packageManager", |s| match s {
+                v @ ("npm" | "yarn" | "bun" | "pnpm") => Some(v.to_owned()),
+                _ => None,
+            }),
+            ..Default::default()
+        })
+    }
 
-        if let Some(b) = self.read_bool("git.blame.editorDecoration.enabled") {
-            current
-                .git
-                .get_or_insert_default()
-                .inline_blame
-                .get_or_insert_default()
-                .enabled = Some(b);
-        }
+    fn git_settings_content(&self) -> Option<GitSettings> {
+        let inline_blame = self.read_bool("git.blame.editorDecoration.enabled")?;
+        skip_default(GitSettings {
+            inline_blame: Some(InlineBlameSettings {
+                enabled: Some(inline_blame),
+                ..Default::default()
+            }),
+            ..Default::default()
+        })
+    }
 
+    fn context_servers(&self) -> HashMap<Arc<str>, ContextServerSettingsContent> {
         #[derive(Deserialize)]
         struct VsCodeContextServerCommand {
             command: PathBuf,
@@ -599,18 +612,16 @@ impl VsCodeSettings {
             env: Option<HashMap<String, String>>,
             // note: we don't support envFile and type
         }
-        if let Some(mcp) = self.read_value("mcp").and_then(|v| v.as_object()) {
-            current
-                .project
-                .context_servers
-                .extend(mcp.iter().filter_map(|(k, v)| {
-                    Some((
-                        k.clone().into(),
-                        ContextServerSettingsContent::Custom {
-                            enabled: true,
-                            command: serde_json::from_value::<VsCodeContextServerCommand>(
-                                v.clone(),
-                            )
+        let Some(mcp) = self.read_value("mcp").and_then(|v| v.as_object()) else {
+            return Default::default();
+        };
+        mcp.iter()
+            .filter_map(|(k, v)| {
+                Some((
+                    k.clone().into(),
+                    ContextServerSettingsContent::Custom {
+                        enabled: true,
+                        command: serde_json::from_value::<VsCodeContextServerCommand>(v.clone())
                             .ok()
                             .map(|cmd| ContextServerCommand {
                                 path: cmd.command,
@@ -618,76 +629,72 @@ impl VsCodeSettings {
                                 env: cmd.env,
                                 timeout: None,
                             })?,
-                        },
-                    ))
-                }));
-        }
+                    },
+                ))
+            })
+            .collect()
+    }
 
-        // project item settings
+    fn item_settings_content(&self) -> Option<ItemSettingsContent> {
+        skip_default(ItemSettingsContent {
+            git_status: self.read_bool("workbench.editor.decorations.colors"),
+            ..Default::default()
+        })
+    }
 
-        if let Some(show) = self.read_bool("workbench.editor.decorations.colors") {
-            current
-                .tabs
-                .get_or_insert_default()
-                .git_status
-                .replace(show);
-        }
+    fn project_panel_settings_content(&self) -> Option<ProjectPanelSettingsContent> {
+        let mut project_panel_settings = ProjectPanelSettingsContent {
+            auto_fold_dirs: self.read_bool("explorer.compactFolders"),
+            auto_reveal_entries: self.read_bool("explorer.autoReveal"),
+            button: None,
+            default_width: None,
+            dock: None,
+            drag_and_drop: None,
+            entry_spacing: None,
+            file_icons: None,
+            folder_icons: None,
+            git_status: self.read_bool("git.decorations.enabled"),
+            hide_gitignore: self.read_bool("explorer.excludeGitIgnore"),
+            hide_hidden: None,
+            hide_root: None,
+            indent_guides: None,
+            indent_size: None,
+            open_file_on_paste: None,
+            scrollbar: None,
+            show_diagnostics: self
+                .read_bool("problems.decorations.enabled")
+                .and_then(|b| {
+                    if b == false {
+                        Some(ShowDiagnostics::Off)
+                    } else {
+                        None
+                    }
+                }),
+            starts_open: None,
+            sticky_scroll: None,
+        };
 
-        // project item settings
-        if let Some(hide_gitignore) = self.read_bool("explorer.excludeGitIgnore") {
-            current.project_panel.get_or_insert_default().hide_gitignore = Some(hide_gitignore);
-        }
-        if let Some(auto_reveal) = self.read_bool("explorer.autoReveal") {
-            current
-                .project_panel
-                .get_or_insert_default()
-                .auto_reveal_entries = Some(auto_reveal);
-        }
-        if let Some(compact_folders) = self.read_bool("explorer.compactFolders") {
-            current.project_panel.get_or_insert_default().auto_fold_dirs = Some(compact_folders);
-        }
-
-        if Some(false) == self.read_bool("git.decorations.enabled") {
-            current.project_panel.get_or_insert_default().git_status = Some(false);
-        }
-        if Some(false) == self.read_bool("problems.decorations.enabled") {
-            current
-                .project_panel
-                .get_or_insert_default()
-                .show_diagnostics = Some(ShowDiagnostics::Off);
-        }
         if let (Some(false), Some(false)) = (
             self.read_bool("explorer.decorations.badges"),
             self.read_bool("explorer.decorations.colors"),
         ) {
-            current.project_panel.get_or_insert_default().git_status = Some(false);
-            current
-                .project_panel
-                .get_or_insert_default()
-                .show_diagnostics = Some(ShowDiagnostics::Off);
+            project_panel_settings.git_status = Some(false);
+            project_panel_settings.show_diagnostics = Some(ShowDiagnostics::Off);
         }
 
-        // telemetry
+        skip_default(project_panel_settings)
+    }
 
-        let mut telemetry = TelemetrySettingsContent::default();
-        self.enum_setting("telemetry.telemetryLevel", &mut telemetry.metrics, |s| {
-            Some(s == "all")
-        });
-        self.enum_setting(
-            "telemetry.telemetryLevel",
-            &mut telemetry.diagnostics,
-            |s| Some(matches!(s, "all" | "error" | "crash")),
-        );
-        // we could translate telemetry.telemetryLevel, but just because users didn't want
-        // to send microsoft telemetry doesn't mean they don't want to send it to zed. their
-        // all/error/crash/off correspond to combinations of our "diagnostics" and "metrics".
-        if let Some(diagnostics) = telemetry.diagnostics {
-            current.telemetry.get_or_insert_default().diagnostics = Some(diagnostics)
-        }
-        if let Some(metrics) = telemetry.metrics {
-            current.telemetry.get_or_insert_default().metrics = Some(metrics)
-        }
+    fn telemetry_settings_content(&self) -> Option<TelemetrySettingsContent> {
+        skip_default(TelemetrySettingsContent {
+            metrics: self.read_enum("telemetry.telemetryLevel", |s| Some(s == "all")),
+            diagnostics: self.read_enum("telemetry.telemetryLevel", |s| {
+                Some(matches!(s, "all" | "error" | "crash"))
+            }),
+        })
+    }
 
+    pub fn import(&self, current: &mut SettingsContent) {
         // terminal settings
         let mut default = TerminalSettingsContent::default();
         let current_terminal = current.terminal.as_mut().unwrap_or(&mut default);
@@ -739,7 +746,7 @@ impl VsCodeSettings {
 
         // TODO: handle arguments
         let shell_name = format!("{platform}Exec");
-        if let Some(s) = self.read_string(&name(&shell_name)) {
+        if let Some(s) = self.read_str(&name(&shell_name)) {
             current_terminal.project.shell = Some(Shell::Program(s.to_owned()))
         }
 
@@ -866,7 +873,7 @@ impl VsCodeSettings {
         }) {
             current.tab_bar.get_or_insert_default().show = Some(b);
         }
-        if Some("hidden") == self.read_string("workbench.editor.editorActionsLocation") {
+        if Some("hidden") == self.read_str("workbench.editor.editorActionsLocation") {
             current.tab_bar.get_or_insert_default().show_tab_bar_buttons = Some(false)
         }
 
@@ -947,5 +954,13 @@ impl VsCodeSettings {
                 current.project.worktree.file_scan_exclusions = Some(exclusions)
             }
         }
+    }
+}
+
+fn skip_default<T: Default + PartialEq>(value: T) -> Option<T> {
+    if value == T::default() {
+        None
+    } else {
+        Some(value)
     }
 }

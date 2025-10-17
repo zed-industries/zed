@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 use settings_macros::MergeFrom;
 
-use crate::{DiagnosticSeverityContent, ShowScrollbar};
+use crate::{DiagnosticSeverityContent, ShowScrollbar, VsCodeSettings};
 
 #[skip_serializing_none]
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
