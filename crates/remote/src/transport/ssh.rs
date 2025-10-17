@@ -40,7 +40,6 @@ pub(crate) struct SshRemoteConnection {
     ssh_path_style: PathStyle,
     ssh_shell: String,
     ssh_default_system_shell: String,
-    sftp_available: Mutex<Option<bool>>,
     _temp_dir: TempDir,
 }
 
@@ -174,15 +173,21 @@ impl RemoteConnection for SshRemoteConnection {
         let dest_path_str = dest_path.to_string();
         let src_path_display = src_path.display().to_string();
 
-        let sftp_available = self.check_sftp_available();
-        let mut sftp_command = self.build_sftp_command(&src_path, &dest_path_str, true);
+        let mut sftp_check_command = self.socket.ssh_command("which", &["sftp"]);
+        let mut sftp_command = self.build_sftp_command();
         let sftp_batch = format!("put -r {} {}\n", src_path.display(), dest_path_str);
 
         let mut scp_command = self.build_scp_command(&src_path, &dest_path_str, true, true);
         let scp_output = scp_command.output();
 
         cx.background_spawn(async move {
-            if sftp_available.await {
+            let sftp_available = sftp_check_command
+                .output()
+                .await
+                .map(|output| output.status.success())
+                .unwrap_or(false);
+
+            if sftp_available {
                 log::debug!("using SFTP for directory upload");
                 let mut child = sftp_command.spawn()?;
                 if let Some(mut stdin) = child.stdin.take() {
@@ -403,7 +408,6 @@ impl SshRemoteConnection {
             ssh_platform,
             ssh_shell,
             ssh_default_system_shell,
-            sftp_available: Mutex::new(None),
         };
 
         let (release_channel, version, commit) = cx.update(|cx| {
@@ -688,12 +692,7 @@ impl SshRemoteConnection {
         command
     }
 
-    fn build_sftp_command(
-        &self,
-        src_path: &Path,
-        dest_path_str: &str,
-        recursive: bool,
-    ) -> process::Command {
+    fn build_sftp_command(&self) -> process::Command {
         let mut command = util::command::new_smol_command("sftp");
         self.socket.ssh_options(&mut command).args(
             self.socket
@@ -702,26 +701,14 @@ impl SshRemoteConnection {
                 .map(|port| vec!["-P".to_string(), port.to_string()])
                 .unwrap_or_default(),
         );
-
         command.arg("-b").arg("-");
         command.arg(self.socket.connection_options.scp_url());
-
         command.stdin(Stdio::piped());
-
         command
     }
 
     async fn check_sftp_available(&self) -> bool {
-        {
-            let cached = self.sftp_available.lock();
-            if let Some(available) = *cached {
-                return available;
-            }
-        }
-
-        let available = self.socket.run_command("which", &["sftp"]).await.is_ok();
-        *self.sftp_available.lock() = Some(available);
-        available
+        self.socket.run_command("which", &["sftp"]).await.is_ok()
     }
 
     async fn upload_file(&self, src_path: &Path, dest_path: &RelPath) -> Result<()> {
@@ -731,7 +718,7 @@ impl SshRemoteConnection {
 
         if self.check_sftp_available().await {
             log::debug!("using SFTP for file upload");
-            let mut command = self.build_sftp_command(src_path, &dest_path_str, false);
+            let mut command = self.build_sftp_command();
             let sftp_batch = format!("put {} {}\n", src_path.display(), dest_path_str);
 
             let mut child = command.spawn()?;
