@@ -302,6 +302,12 @@ pub struct MoveItemToPaneInDirection {
     pub clone: bool,
 }
 
+/// Creates a new file in a split of the desired direction.
+#[derive(Clone, Deserialize, PartialEq, JsonSchema, Action)]
+#[action(namespace = workspace)]
+#[serde(deny_unknown_fields)]
+pub struct NewFileSplit(pub SplitDirection);
+
 fn default_right() -> SplitDirection {
     SplitDirection::Right
 }
