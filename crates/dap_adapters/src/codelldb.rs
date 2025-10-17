@@ -2,6 +2,7 @@ use std::{path::PathBuf, sync::OnceLock};
 
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
+use collections::HashMap;
 use dap::adapters::{DebugTaskDefinition, latest_github_release};
 use futures::StreamExt;
 use gpui::AsyncApp;
@@ -329,6 +330,7 @@ impl DebugAdapter for CodeLldbDebugAdapter {
         config: &DebugTaskDefinition,
         user_installed_path: Option<PathBuf>,
         user_args: Option<Vec<String>>,
+        user_envs: Option<HashMap<String, String>>,
         _: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
         let mut command = user_installed_path
@@ -378,10 +380,11 @@ impl DebugAdapter for CodeLldbDebugAdapter {
         };
         let mut json_config = config.config.clone();
 
-        // Enable info level for CodeLLDB by default.
+        // Enable info level for CodeLLDB by default unless overridden by the user.
         // Logs can then be viewed in our DAP logs.
-        let mut envs = collections::HashMap::default();
-        envs.insert("RUST_LOG".to_string(), "info".to_string());
+        let mut envs = user_envs.unwrap_or_default();
+        envs.entry("RUST_LOG".to_string())
+            .or_insert("info".to_string());
 
         Ok(DebugAdapterBinary {
             command: Some(command.unwrap()),
