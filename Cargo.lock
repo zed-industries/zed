@@ -14867,6 +14867,7 @@ dependencies = [
  "ui",
  "unindent",
  "util",
+ "util_macros",
  "workspace",
  "zed_actions",
 ]
