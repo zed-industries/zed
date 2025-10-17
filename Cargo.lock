@@ -3755,6 +3755,7 @@ dependencies = [
  "collections",
  "derive_more",
  "gpui",
+ "workspace",
  "workspace-hack",
 ]
 
@@ -18743,6 +18744,7 @@ dependencies = [
  "editor",
  "env_logger 0.11.8",
  "futures 0.3.31",
+ "fuzzy",
  "git_ui",
  "gpui",
  "indoc",
