@@ -72,13 +72,15 @@ impl ConflictSetSnapshot {
             (None, None) => None,
             (None, Some(conflict)) => Some(conflict.range.start),
             (Some(conflict), None) => Some(conflict.range.start),
-            (Some(first), Some(second)) => Some(first.range.start.min(&second.range.start, buffer)),
+            (Some(first), Some(second)) => {
+                Some(*first.range.start.min(&second.range.start, buffer))
+            }
         };
         let end = match (old_conflicts.last(), new_conflicts.last()) {
             (None, None) => None,
             (None, Some(conflict)) => Some(conflict.range.end),
             (Some(first), None) => Some(first.range.end),
-            (Some(first), Some(second)) => Some(first.range.end.max(&second.range.end, buffer)),
+            (Some(first), Some(second)) => Some(*first.range.end.max(&second.range.end, buffer)),
         };
         ConflictSetUpdate {
             buffer_range: start.zip(end).map(|(start, end)| start..end),

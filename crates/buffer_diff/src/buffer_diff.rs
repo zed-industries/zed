@@ -118,11 +118,11 @@ impl sum_tree::Summary for DiffHunkSummary {
     }
 
     fn add_summary(&mut self, other: &Self, buffer: Self::Context<'_>) {
-        self.buffer_range.start = self
+        self.buffer_range.start = *self
             .buffer_range
             .start
             .min(&other.buffer_range.start, buffer);
-        self.buffer_range.end = self.buffer_range.end.max(&other.buffer_range.end, buffer);
+        self.buffer_range.end = *self.buffer_range.end.max(&other.buffer_range.end, buffer);
     }
 }
 
@@ -1068,8 +1068,8 @@ impl BufferDiff {
                 self.range_to_hunk_range(secondary_changed_range, buffer, cx)
         {
             if let Some(range) = &mut changed_range {
-                range.start = secondary_hunk_range.start.min(&range.start, buffer);
-                range.end = secondary_hunk_range.end.max(&range.end, buffer);
+                range.start = *secondary_hunk_range.start.min(&range.start, buffer);
+                range.end = *secondary_hunk_range.end.max(&range.end, buffer);
             } else {
                 changed_range = Some(secondary_hunk_range);
             }
@@ -1083,8 +1083,8 @@ impl BufferDiff {
             if let Some((first, last)) = state.pending_hunks.first().zip(state.pending_hunks.last())
             {
                 if let Some(range) = &mut changed_range {
-                    range.start = range.start.min(&first.buffer_range.start, buffer);
-                    range.end = range.end.max(&last.buffer_range.end, buffer);
+                    range.start = *range.start.min(&first.buffer_range.start, buffer);
+                    range.end = *range.end.max(&last.buffer_range.end, buffer);
                 } else {
                     changed_range = Some(first.buffer_range.start..last.buffer_range.end);
                 }

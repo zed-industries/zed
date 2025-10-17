@@ -45,19 +45,19 @@ impl Anchor {
             .then_with(|| self.bias.cmp(&other.bias))
     }
 
-    pub fn min(&self, other: &Self, buffer: &BufferSnapshot) -> Self {
+    pub fn min<'a>(&'a self, other: &'a Self, buffer: &BufferSnapshot) -> &'a Self {
         if self.cmp(other, buffer).is_le() {
-            *self
+            self
         } else {
-            *other
+            other
         }
     }
 
-    pub fn max(&self, other: &Self, buffer: &BufferSnapshot) -> Self {
+    pub fn max<'a>(&'a self, other: &'a Self, buffer: &BufferSnapshot) -> &'a Self {
         if self.cmp(other, buffer).is_ge() {
-            *self
+            self
         } else {
-            *other
+            other
         }
     }
 
