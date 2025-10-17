@@ -409,6 +409,7 @@ impl TerminalBuilder {
             events_rx,
         })
     }
+
     pub fn new(
         working_directory: Option<PathBuf>,
         task: Option<TaskState>,
@@ -465,16 +466,15 @@ impl TerminalBuilder {
 
         let shell_params = match shell.clone() {
             Shell::System => {
-                #[cfg(target_os = "windows")]
-                {
+                if cfg!(windows) {
                     Some(ShellParams::new(
                         util::shell::get_windows_system_shell(),
                         None,
                         None,
                     ))
+                } else {
+                    None
                 }
-                #[cfg(not(target_os = "windows"))]
-                None
             }
             Shell::Program(program) => Some(ShellParams::new(program, None, None)),
             Shell::WithArguments {
@@ -494,6 +494,13 @@ impl TerminalBuilder {
                 .unwrap_or(params.program.clone())
         });
 
+        // Note: when remoting, this shell_kind will scrutinize `ssh` or
+        // `wsl.exe` as a shell and fall back to posix or powershell based on
+        // the compilation target. This is fine right now due to the restricted
+        // way we use the return value, but would become incorrect if we
+        // supported remoting into windows.
+        let shell_kind = shell.shell_kind(cfg!(windows));
+
         let pty_options = {
             let alac_shell = shell_params.as_ref().map(|params| {
                 alacritty_terminal::tty::Shell::new(
@@ -507,8 +514,10 @@ impl TerminalBuilder {
                 working_directory: working_directory.clone(),
                 drain_on_exit: true,
                 env: env.clone().into_iter().collect(),
+                // We do not want to escape arguments if we are using CMD as our shell.
+                // If we do we end up with too many quotes/escaped quotes for CMD to handle.
                 #[cfg(windows)]
-                escape_args: true,
+                escape_args: shell_kind != util::shell::ShellKind::Cmd,
             }
         };
 
@@ -578,7 +587,7 @@ impl TerminalBuilder {
 
         let no_task = task.is_none();
 
-        let mut terminal = Terminal {
+        let terminal = Terminal {
             task,
             terminal_type: TerminalType::Pty {
                 pty_tx: Notifier(pty_tx),
@@ -616,12 +625,25 @@ impl TerminalBuilder {
             child_exited: None,
         };
 
-        if cfg!(not(target_os = "windows")) && !activation_script.is_empty() && no_task {
+        if !activation_script.is_empty() && no_task {
             for activation_script in activation_script {
-                terminal.input(activation_script.into_bytes());
-                terminal.write_to_pty(b"\n");
+                terminal.write_to_pty(activation_script.into_bytes());
+                // Simulate enter key press
+                // NOTE(PowerShell): using `\r\n` will put PowerShell in a continuation mode (infamous >> character)
+                // and generally mess up the rendering.
+                terminal.write_to_pty(b"\x0d");
             }
-            terminal.clear();
+            // In order to clear the screen at this point, we have two options:
+            // 1. We can send a shell-specific command such as "clear" or "cls"
+            // 2. We can "echo" a marker message that we will then catch when handling a Wakeup event
+            //    and clear the screen using `terminal.clear()` method
+            // We cannot issue a `terminal.clear()` command at this point as alacritty is evented
+            // and while we have sent the activation script to the pty, it will be executed asynchronously.
+            // Therefore, we somehow need to wait for the activation script to finish executing before we
+            // can proceed with clearing the screen.
+            terminal.write_to_pty(shell_kind.clear_screen_command().as_bytes());
+            // Simulate enter key press
+            terminal.write_to_pty(b"\x0d");
         }
 
         Ok(TerminalBuilder {
@@ -1217,12 +1239,30 @@ impl Terminal {
     pub fn write_output(&mut self, bytes: &[u8], cx: &mut Context<Self>) {
         // Inject bytes directly into the terminal emulator and refresh the UI.
         // This bypasses the PTY/event loop for display-only terminals.
+        //
+        // We first convert LF to CRLF, to get the expected line wrapping in Alacritty.
+        // When output comes from piped commands (not a PTY) such as codex-acp, and that
+        // output only contains LF (\n) without a CR (\r) after it, such as the output
+        // of the `ls` command when running outside a PTY, Alacritty moves the cursor
+        // cursor down a line but does not move it back to the initial column. This makes
+        // the rendered output look ridiculous. To prevent this, we insert a CR (\r) before
+        // each LF that didn't already have one. (Alacritty doesn't have a setting for this.)
+        let mut converted = Vec::with_capacity(bytes.len());
+        let mut prev_byte = 0u8;
+        for &byte in bytes {
+            if byte == b'\n' && prev_byte != b'\r' {
+                converted.push(b'\r');
+            }
+            converted.push(byte);
+            prev_byte = byte;
+        }
+
         let mut processor = alacritty_terminal::vte::ansi::Processor::<
             alacritty_terminal::vte::ansi::StdSyncHandler,
         >::new();
         {
             let mut term = self.term.lock();
-            processor.advance(&mut *term, bytes);
+            processor.advance(&mut *term, &converted);
         }
         cx.emit(Event::Wakeup);
     }
@@ -2113,12 +2153,8 @@ impl Terminal {
         self.vi_mode_enabled
     }
 
-    pub fn clone_builder(
-        &self,
-        cx: &App,
-        cwd: impl FnOnce() -> Option<PathBuf>,
-    ) -> Result<TerminalBuilder> {
-        let working_directory = self.working_directory().or_else(cwd);
+    pub fn clone_builder(&self, cx: &App, cwd: Option<PathBuf>) -> Result<TerminalBuilder> {
+        let working_directory = self.working_directory().or_else(|| cwd);
         TerminalBuilder::new(
             working_directory,
             None,
@@ -2151,21 +2187,13 @@ fn task_summary(task: &TaskState, error_code: Option<i32>) -> (bool, String, Str
         .full_label
         .replace("\r\n", "\r")
         .replace('\n', "\r");
-    let (success, task_line) = match error_code {
-        Some(0) => (
-            true,
-            format!("{TASK_DELIMITER}Task `{escaped_full_label}` finished successfully"),
+    let success = error_code == Some(0);
+    let task_line = match error_code {
+        Some(0) => format!("{TASK_DELIMITER}Task `{escaped_full_label}` finished successfully"),
+        Some(error_code) => format!(
+            "{TASK_DELIMITER}Task `{escaped_full_label}` finished with non-zero error code: {error_code}"
         ),
-        Some(error_code) => (
-            false,
-            format!(
-                "{TASK_DELIMITER}Task `{escaped_full_label}` finished with non-zero error code: {error_code}"
-            ),
-        ),
-        None => (
-            false,
-            format!("{TASK_DELIMITER}Task `{escaped_full_label}` finished"),
-        ),
+        None => format!("{TASK_DELIMITER}Task `{escaped_full_label}` finished"),
     };
     let escaped_command_label = task
         .spawned_task
@@ -2359,8 +2387,8 @@ mod tests {
         cx.executor().allow_parking();
 
         let (completion_tx, completion_rx) = smol::channel::unbounded();
-        let (program, args) =
-            ShellBuilder::new(&Shell::System).build(Some("echo".to_owned()), &["hello".to_owned()]);
+        let (program, args) = ShellBuilder::new(&Shell::System, false)
+            .build(Some("echo".to_owned()), &["hello".to_owned()]);
         let terminal = cx.new(|cx| {
             TerminalBuilder::new(
                 None,
@@ -2478,7 +2506,7 @@ mod tests {
         cx.executor().allow_parking();
 
         let (completion_tx, completion_rx) = smol::channel::unbounded();
-        let (program, args) = ShellBuilder::new(&Shell::System)
+        let (program, args) = ShellBuilder::new(&Shell::System, false)
             .build(Some("asdasdasdasd".to_owned()), &["@@@@@".to_owned()]);
         let terminal = cx.new(|cx| {
             TerminalBuilder::new(
@@ -2680,5 +2708,117 @@ mod tests {
             terminal_bounds,
             ..Default::default()
         }
+    }
+
+    #[gpui::test]
+    async fn test_write_output_converts_lf_to_crlf(cx: &mut TestAppContext) {
+        let terminal = cx.new(|cx| {
+            TerminalBuilder::new_display_only(CursorShape::default(), AlternateScroll::On, None, 0)
+                .unwrap()
+                .subscribe(cx)
+        });
+
+        // Test simple LF conversion
+        terminal.update(cx, |terminal, cx| {
+            terminal.write_output(b"line1\nline2\n", cx);
+        });
+
+        // Get the content by directly accessing the term
+        let content = terminal.update(cx, |terminal, _cx| {
+            let term = terminal.term.lock_unfair();
+            Terminal::make_content(&term, &terminal.last_content)
+        });
+
+        // If LF is properly converted to CRLF, each line should start at column 0
+        // The diagonal staircase bug would cause increasing column positions
+
+        // Get the cells and check that lines start at column 0
+        let cells = &content.cells;
+        let mut line1_col0 = false;
+        let mut line2_col0 = false;
+
+        for cell in cells {
+            if cell.c == 'l' && cell.point.column.0 == 0 {
+                if cell.point.line.0 == 0 && !line1_col0 {
+                    line1_col0 = true;
+                } else if cell.point.line.0 == 1 && !line2_col0 {
+                    line2_col0 = true;
+                }
+            }
+        }
+
+        assert!(line1_col0, "First line should start at column 0");
+        assert!(line2_col0, "Second line should start at column 0");
+    }
+
+    #[gpui::test]
+    async fn test_write_output_preserves_existing_crlf(cx: &mut TestAppContext) {
+        let terminal = cx.new(|cx| {
+            TerminalBuilder::new_display_only(CursorShape::default(), AlternateScroll::On, None, 0)
+                .unwrap()
+                .subscribe(cx)
+        });
+
+        // Test that existing CRLF doesn't get doubled
+        terminal.update(cx, |terminal, cx| {
+            terminal.write_output(b"line1\r\nline2\r\n", cx);
+        });
+
+        // Get the content by directly accessing the term
+        let content = terminal.update(cx, |terminal, _cx| {
+            let term = terminal.term.lock_unfair();
+            Terminal::make_content(&term, &terminal.last_content)
+        });
+
+        let cells = &content.cells;
+
+        // Check that both lines start at column 0
+        let mut found_lines_at_column_0 = 0;
+        for cell in cells {
+            if cell.c == 'l' && cell.point.column.0 == 0 {
+                found_lines_at_column_0 += 1;
+            }
+        }
+
+        assert!(
+            found_lines_at_column_0 >= 2,
+            "Both lines should start at column 0"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_write_output_preserves_bare_cr(cx: &mut TestAppContext) {
+        let terminal = cx.new(|cx| {
+            TerminalBuilder::new_display_only(CursorShape::default(), AlternateScroll::On, None, 0)
+                .unwrap()
+                .subscribe(cx)
+        });
+
+        // Test that bare CR (without LF) is preserved
+        terminal.update(cx, |terminal, cx| {
+            terminal.write_output(b"hello\rworld", cx);
+        });
+
+        // Get the content by directly accessing the term
+        let content = terminal.update(cx, |terminal, _cx| {
+            let term = terminal.term.lock_unfair();
+            Terminal::make_content(&term, &terminal.last_content)
+        });
+
+        let cells = &content.cells;
+
+        // Check that we have "world" at the beginning of the line
+        let mut text = String::new();
+        for cell in cells.iter().take(5) {
+            if cell.point.line.0 == 0 {
+                text.push(cell.c);
+            }
+        }
+
+        assert!(
+            text.starts_with("world"),
+            "Bare CR should allow overwriting: got '{}'",
+            text
+        );
     }
 }

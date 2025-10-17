@@ -420,10 +420,12 @@ message Envelope {
 
         RemoteStarted remote_started = 381;
 
-        SemanticTokensFull semantic_tokens_full = 382;
-        SemanticTokensFullResponse semantic_tokens_full_response = 383;
-        SemanticTokensDelta semantic_tokens_delta = 384;
-        SemanticTokensDeltaResponse semantic_tokens_delta_response = 385; // current max
+        GetDirectoryEnvironment get_directory_environment = 382;
+        DirectoryEnvironment directory_environment = 383;
+        SemanticTokensFull semantic_tokens_full = 384;
+        SemanticTokensFullResponse semantic_tokens_full_response = 385;
+        SemanticTokensDelta semantic_tokens_delta = 386;
+        SemanticTokensDeltaResponse semantic_tokens_delta_response = 387; // current max
     }
 
     reserved 87 to 88;

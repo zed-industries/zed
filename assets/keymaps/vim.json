@@ -95,8 +95,6 @@
       "g g": "vim::StartOfDocument",
       "g h": "editor::Hover",
       "g B": "editor::BlameHover",
-      "g t": "vim::GoToTab",
-      "g shift-t": "vim::GoToPreviousTab",
       "g d": "editor::GoToDefinition",
       "g shift-d": "editor::GoToDeclaration",
       "g y": "editor::GoToTypeDefinition",
@@ -240,7 +238,7 @@
       "delete": "vim::DeleteRight",
       "g shift-j": "vim::JoinLinesNoWhitespace",
       "y": "vim::PushYank",
-      "shift-y": "vim::YankToEndOfLine",
+      "shift-y": "vim::YankLine",
       "x": "vim::DeleteRight",
       "shift-x": "vim::DeleteLeft",
       "ctrl-a": "vim::Increment",
@@ -393,7 +391,7 @@
       "escape": "editor::Cancel",
       "shift-d": "vim::DeleteToEndOfLine",
       "shift-j": "vim::JoinLines",
-      "shift-y": "vim::YankToEndOfLine",
+      "shift-y": "vim::YankLine",
       "shift-i": "vim::InsertFirstNonWhitespace",
       "shift-a": "vim::InsertEndOfLine",
       "o": "vim::InsertLineBelow",
@@ -499,9 +497,11 @@
       "shift-u": "editor::Redo",
       "ctrl-c": "editor::ToggleComments",
       "d": "vim::HelixDelete",
-      "c": "vim::Substitute",
-      "shift-c": "editor::AddSelectionBelow",
-      "alt-shift-c": "editor::AddSelectionAbove"
+      "c": "vim::HelixSubstitute",
+      "alt-c": "vim::HelixSubstituteNoYank",
+      "shift-c": "vim::HelixDuplicateBelow",
+      "alt-shift-c": "vim::HelixDuplicateAbove",
+      ",": "vim::HelixKeepNewestSelection"
     }
   },
   {
@@ -580,18 +580,18 @@
       // "q": "vim::AnyQuotes",
       "q": "vim::MiniQuotes",
       "|": "vim::VerticalBars",
-      "(": "vim::Parentheses",
+      "(": ["vim::Parentheses", { "opening": true }],
       ")": "vim::Parentheses",
       "b": "vim::Parentheses",
       // "b": "vim::AnyBrackets",
       // "b": "vim::MiniBrackets",
-      "[": "vim::SquareBrackets",
+      "[": ["vim::SquareBrackets", { "opening": true }],
       "]": "vim::SquareBrackets",
       "r": "vim::SquareBrackets",
-      "{": "vim::CurlyBrackets",
+      "{": ["vim::CurlyBrackets", { "opening": true }],
       "}": "vim::CurlyBrackets",
       "shift-b": "vim::CurlyBrackets",
-      "<": "vim::AngleBrackets",
+      "<": ["vim::AngleBrackets", { "opening": true }],
       ">": "vim::AngleBrackets",
       "a": "vim::Argument",
       "i": "vim::IndentObj",
@@ -811,7 +811,7 @@
     }
   },
   {
-    "context": "VimControl || !Editor && !Terminal",
+    "context": "VimControl && !menu || !Editor && !Terminal",
     "bindings": {
       // window related commands (ctrl-w X)
       "ctrl-w": null,
@@ -831,10 +831,10 @@
       "ctrl-w shift-right": "workspace::SwapPaneRight",
       "ctrl-w shift-up": "workspace::SwapPaneUp",
       "ctrl-w shift-down": "workspace::SwapPaneDown",
-      "ctrl-w shift-h": "workspace::SwapPaneLeft",
-      "ctrl-w shift-l": "workspace::SwapPaneRight",
-      "ctrl-w shift-k": "workspace::SwapPaneUp",
-      "ctrl-w shift-j": "workspace::SwapPaneDown",
+      "ctrl-w shift-h": "workspace::MovePaneLeft",
+      "ctrl-w shift-l": "workspace::MovePaneRight",
+      "ctrl-w shift-k": "workspace::MovePaneUp",
+      "ctrl-w shift-j": "workspace::MovePaneDown",
       "ctrl-w >": "vim::ResizePaneRight",
       "ctrl-w <": "vim::ResizePaneLeft",
       "ctrl-w -": "vim::ResizePaneDown",
@@ -865,7 +865,9 @@
       "ctrl-w ctrl-o": "workspace::CloseInactiveTabsAndPanes",
       "ctrl-w o": "workspace::CloseInactiveTabsAndPanes",
       "ctrl-w ctrl-n": "workspace::NewFileSplitHorizontal",
-      "ctrl-w n": "workspace::NewFileSplitHorizontal"
+      "ctrl-w n": "workspace::NewFileSplitHorizontal",
+      "g t": "vim::GoToTab",
+      "g shift-t": "vim::GoToPreviousTab"
     }
   },
   {

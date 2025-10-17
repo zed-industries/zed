@@ -7,7 +7,7 @@ use crate::{
     worktree_store::{WorktreeStore, WorktreeStoreEvent},
 };
 use anyhow::{Context as _, Result, anyhow, bail};
-use askpass::{AskPassDelegate, EncryptedPassword};
+use askpass::{AskPassDelegate, EncryptedPassword, IKnowWhatIAmDoingAndIHaveReadTheDocs};
 use buffer_diff::{BufferDiff, BufferDiffEvent};
 use client::ProjectId;
 use collections::HashMap;
@@ -62,6 +62,7 @@ use std::{
     time::Instant,
 };
 use sum_tree::{Edit, SumTree, TreeSet};
+use task::Shell;
 use text::{Bias, BufferId};
 use util::{
     ResultExt, debug_panic,
@@ -298,10 +299,11 @@ pub enum RepositoryState {
     },
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RepositoryEvent {
     Updated { full_scan: bool, new_instance: bool },
     MergeHeadsChanged,
+    PathsChanged,
 }
 
 #[derive(Clone, Debug)]
@@ -968,8 +970,6 @@ impl GitStore {
                 get_permalink_in_rust_registry_src(provider_registry, file_path, selection)
                     .context("no permalink available")
             });
-
-            // TODO remote case
         };
 
         let buffer_id = buffer.read(cx).remote_id();
@@ -998,15 +998,9 @@ impl GitStore {
                             parse_git_remote_url(provider_registry, &origin_url)
                                 .context("parsing Git remote URL")?;
 
-                        let path = repo_path.as_unix_str();
-
                         Ok(provider.build_permalink(
                             remote,
-                            BuildPermalinkParams {
-                                sha: &sha,
-                                path,
-                                selection: Some(selection),
-                            },
+                            BuildPermalinkParams::new(&sha, &repo_path, Some(selection)),
                         ))
                     }
                     RepositoryState::Remote { project_id, client } => {
@@ -2110,13 +2104,19 @@ impl GitStore {
             anyhow::bail!("no askpass found");
         };
 
-        let response = askpass.ask_password(envelope.payload.prompt).await?;
+        let response = askpass
+            .ask_password(envelope.payload.prompt)
+            .await
+            .ok_or_else(|| anyhow::anyhow!("askpass cancelled"))?;
 
         delegates
             .lock()
             .insert(envelope.payload.askpass_id, askpass);
 
-        response.try_into()
+        // In fact, we don't quite know what we're doing here, as we're sending askpass password unencrypted, but..
+        Ok(proto::AskPassResponse {
+            response: response.decrypt(IKnowWhatIAmDoingAndIHaveReadTheDocs)?,
+        })
     }
 
     async fn handle_check_for_pushed_commits(
@@ -4600,7 +4600,7 @@ impl Repository {
                 .upgrade()
                 .context("missing project environment")?
                 .update(cx, |project_environment, cx| {
-                    project_environment.get_directory_environment(work_directory_abs_path.clone(), cx)
+                    project_environment.get_local_directory_environment(&Shell::System, work_directory_abs_path.clone(), cx)
                 })?
                 .await
                 .unwrap_or_else(|| {
@@ -4836,17 +4836,21 @@ impl Repository {
                         this.snapshot.scan_id += 1;
                     }
 
-                    if needs_update && let Some(updates_tx) = updates_tx {
+                    if needs_update {
+                        cx.emit(RepositoryEvent::Updated {
+                            full_scan: false,
+                            new_instance: false,
+                        });
+                    }
+
+                    if let Some(updates_tx) = updates_tx {
                         updates_tx
                             .unbounded_send(DownstreamUpdate::UpdateRepository(
                                 this.snapshot.clone(),
                             ))
                             .ok();
                     }
-                    cx.emit(RepositoryEvent::Updated {
-                        full_scan: false,
-                        new_instance: false,
-                    });
+                    cx.emit(RepositoryEvent::PathsChanged);
                 })
             },
         );
@@ -4902,11 +4906,15 @@ fn get_permalink_in_rust_registry_src(
     let path = PathBuf::from(cargo_vcs_info.path_in_vcs).join(path.strip_prefix(dir).unwrap());
     let permalink = provider.build_permalink(
         remote,
-        BuildPermalinkParams {
-            sha: &cargo_vcs_info.git.sha1,
-            path: &path.to_string_lossy(),
-            selection: Some(selection),
-        },
+        BuildPermalinkParams::new(
+            &cargo_vcs_info.git.sha1,
+            &RepoPath(
+                RelPath::new(&path, PathStyle::local())
+                    .context("invalid path")?
+                    .into_arc(),
+            ),
+            Some(selection),
+        ),
     );
     Ok(permalink)
 }

@@ -244,7 +244,7 @@ impl ScrollbarVisibility for EditorSettings {
 }
 
 impl Settings for EditorSettings {
-    fn from_settings(content: &settings::SettingsContent, _cx: &mut App) -> Self {
+    fn from_settings(content: &settings::SettingsContent) -> Self {
         let editor = content.editor.clone();
         let scrollbar = editor.scrollbar.unwrap();
         let minimap = editor.minimap.unwrap();
@@ -335,7 +335,7 @@ impl Settings for EditorSettings {
                 delay: drag_and_drop_selection.delay.unwrap(),
             },
             lsp_document_colors: editor.lsp_document_colors.unwrap(),
-            minimum_contrast_for_highlights: editor.minimum_contrast_for_highlights.unwrap(),
+            minimum_contrast_for_highlights: editor.minimum_contrast_for_highlights.unwrap().0,
             rainbow_highlighting: editor.rainbow_highlighting.map(|rh| {
                 let mode = match rh.mode.as_deref() {
                     Some("dynamic_hsl") => VariableColorMode::DynamicHSL,

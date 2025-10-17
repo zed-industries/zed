@@ -29,9 +29,9 @@ use util::{ResultExt, TryFutureExt};
 use workspace::{
     ActivateNextPane, ActivatePane, ActivatePaneDown, ActivatePaneLeft, ActivatePaneRight,
     ActivatePaneUp, ActivatePreviousPane, DraggedSelection, DraggedTab, ItemId, MoveItemToPane,
-    MoveItemToPaneInDirection, NewTerminal, Pane, PaneGroup, SplitDirection, SplitDown, SplitLeft,
-    SplitRight, SplitUp, SwapPaneDown, SwapPaneLeft, SwapPaneRight, SwapPaneUp, ToggleZoom,
-    Workspace,
+    MoveItemToPaneInDirection, MovePaneDown, MovePaneLeft, MovePaneRight, MovePaneUp, NewTerminal,
+    Pane, PaneGroup, SplitDirection, SplitDown, SplitLeft, SplitRight, SplitUp, SwapPaneDown,
+    SwapPaneLeft, SwapPaneRight, SwapPaneUp, ToggleZoom, Workspace,
     dock::{DockPosition, Panel, PanelEvent, PanelHandle},
     item::SerializableItem,
     move_active_item, move_item, pane,
@@ -449,12 +449,16 @@ impl TerminalPanel {
             .read(cx)
             .active_item()
             .and_then(|item| item.downcast::<TerminalView>());
-        let working_directory = terminal_view.as_ref().and_then(|terminal_view| {
-            let terminal = terminal_view.read(cx).terminal().read(cx);
-            terminal
-                .working_directory()
-                .or_else(|| default_working_directory(workspace, cx))
-        });
+        let working_directory = terminal_view
+            .as_ref()
+            .and_then(|terminal_view| {
+                terminal_view
+                    .read(cx)
+                    .terminal()
+                    .read(cx)
+                    .working_directory()
+            })
+            .or_else(|| default_working_directory(workspace, cx));
         let is_zoomed = active_pane.read(cx).is_zoomed();
         cx.spawn_in(window, async move |panel, cx| {
             let terminal = project
@@ -462,7 +466,7 @@ impl TerminalPanel {
                     Some(view) => Task::ready(project.clone_terminal(
                         &view.read(cx).terminal.clone(),
                         cx,
-                        || working_directory,
+                        working_directory,
                     )),
                     None => project.create_terminal_shell(working_directory, cx),
                 })
@@ -522,23 +526,18 @@ impl TerminalPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<WeakEntity<Terminal>>> {
-        let remote_client = self
-            .workspace
-            .update(cx, |workspace, cx| {
-                let project = workspace.project().read(cx);
-                if project.is_via_collab() {
-                    Err(anyhow!("cannot spawn tasks as a guest"))
-                } else {
-                    Ok(project.remote_client())
-                }
-            })
-            .flatten();
-
-        let remote_client = match remote_client {
-            Ok(remote_client) => remote_client,
-            Err(e) => return Task::ready(Err(e)),
+        let Some(workspace) = self.workspace.upgrade() else {
+            return Task::ready(Err(anyhow!("failed to read workspace")));
         };
 
+        let project = workspace.read(cx).project().read(cx);
+
+        if project.is_via_collab() {
+            return Task::ready(Err(anyhow!("cannot spawn tasks as a guest")));
+        }
+
+        let remote_client = project.remote_client();
+        let is_windows = project.path_style(cx).is_windows();
         let remote_shell = remote_client
             .as_ref()
             .and_then(|remote_client| remote_client.read(cx).shell());
@@ -551,7 +550,7 @@ impl TerminalPanel {
             task.shell.clone()
         };
 
-        let builder = ShellBuilder::new(&shell);
+        let builder = ShellBuilder::new(&shell, is_windows);
         let command_label = builder.command_label(task.command.as_deref().unwrap_or(""));
         let (command, args) = builder.build(task.command.clone(), &task.args);
 
@@ -1056,6 +1055,16 @@ impl TerminalPanel {
             cx.notify();
         }
     }
+
+    fn move_pane_to_border(&mut self, direction: SplitDirection, cx: &mut Context<Self>) {
+        if self
+            .center
+            .move_to_border(&self.active_pane, direction)
+            .unwrap()
+        {
+            cx.notify();
+        }
+    }
 }
 
 fn is_enabled_in_workspace(workspace: &Workspace, cx: &App) -> bool {
@@ -1404,6 +1413,18 @@ impl Render for TerminalPanel {
                 }))
                 .on_action(cx.listener(|terminal_panel, _: &SwapPaneDown, _, cx| {
                     terminal_panel.swap_pane_in_direction(SplitDirection::Down, cx);
+                }))
+                .on_action(cx.listener(|terminal_panel, _: &MovePaneLeft, _, cx| {
+                    terminal_panel.move_pane_to_border(SplitDirection::Left, cx);
+                }))
+                .on_action(cx.listener(|terminal_panel, _: &MovePaneRight, _, cx| {
+                    terminal_panel.move_pane_to_border(SplitDirection::Right, cx);
+                }))
+                .on_action(cx.listener(|terminal_panel, _: &MovePaneUp, _, cx| {
+                    terminal_panel.move_pane_to_border(SplitDirection::Up, cx);
+                }))
+                .on_action(cx.listener(|terminal_panel, _: &MovePaneDown, _, cx| {
+                    terminal_panel.move_pane_to_border(SplitDirection::Down, cx);
                 }))
                 .on_action(
                     cx.listener(|terminal_panel, action: &MoveItemToPane, window, cx| {

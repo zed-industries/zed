@@ -11,7 +11,7 @@ Support for Ansible in Zed is provided via a community-maintained [Ansible exten
 
 To avoid mishandling non-Ansible YAML files, the Ansible Language is not associated with any file extensions by default. To change this behavior you can add a `"file_types"` section to Zed settings inside your project (`.zed/settings.json`) or your Zed user settings (`~/.config/zed/settings.json`) to match your folder/naming conventions. For example:
 
-```json
+```json [settings]
 "file_types": {
     "Ansible": [
       "**.ansible.yml",
@@ -50,7 +50,7 @@ If your inventory file is in the YAML format, you can either:
 
 - Or configure the yaml language server settings to set this schema for all your inventory files, that match your inventory pattern, under your Zed settings ([ref](https://zed.dev/docs/languages/yaml)):
 
-```json
+```json [settings]
 "lsp": {
     "yaml-language-server": {
       "settings": {
@@ -71,7 +71,7 @@ If your inventory file is in the YAML format, you can either:
 
 By default, the following default config is passed to the Ansible language server. It conveniently mirrors the defaults set by [nvim-lspconfig](https://github.com/neovim/nvim-lspconfig/blob/03bc581e05e81d33808b42b2d7e76d70adb3b595/lua/lspconfig/configs/ansiblels.lua) for the Ansible language server:
 
-```json
+```json [settings]
 {
   "ansible": {
     "ansible": {
@@ -99,7 +99,7 @@ By default, the following default config is passed to the Ansible language serve
 
 When desired, any of the above default settings can be overridden under the `"lsp"` section of your Zed settings file. For example:
 
-```json
+```json [settings]
 "lsp": {
   // Note, the Zed Ansible extension prefixes all settings with `ansible`
   // so instead of using `ansible.ansible.path` use `ansible.path`.

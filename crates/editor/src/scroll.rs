@@ -251,7 +251,7 @@ impl ScrollManager {
                 Bias::Left,
             )
             .to_point(map);
-        let top_anchor = map.buffer_snapshot.anchor_after(scroll_top_buffer_point);
+        let top_anchor = map.buffer_snapshot().anchor_after(scroll_top_buffer_point);
 
         self.set_anchor(
             ScrollAnchor {
@@ -494,15 +494,15 @@ impl Editor {
         let opened_first_time = self.scroll_manager.visible_line_count.is_none();
         self.scroll_manager.visible_line_count = Some(lines);
         if opened_first_time {
-            cx.spawn_in(window, async move |editor, cx| {
+            self.post_scroll_update = cx.spawn_in(window, async move |editor, cx| {
                 editor
                     .update_in(cx, |editor, window, cx| {
+                        editor.register_visible_buffers(cx);
                         editor.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
-                        editor.refresh_colors(false, None, window, cx);
+                        editor.update_lsp_data(None, window, cx);
                     })
-                    .ok()
-            })
-            .detach()
+                    .ok();
+            });
         }
     }
 
@@ -550,7 +550,7 @@ impl Editor {
         let snapshot = self.snapshot(window, cx).display_snapshot;
         let new_screen_top = DisplayPoint::new(row, 0);
         let new_screen_top = new_screen_top.to_offset(&snapshot, Bias::Left);
-        let new_anchor = snapshot.buffer_snapshot.anchor_before(new_screen_top);
+        let new_anchor = snapshot.buffer_snapshot().anchor_before(new_screen_top);
 
         self.set_scroll_anchor(
             ScrollAnchor {
@@ -613,8 +613,19 @@ impl Editor {
             cx,
         );
 
-        self.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
-        self.refresh_colors(false, None, window, cx);
+        self.post_scroll_update = cx.spawn_in(window, async move |editor, cx| {
+            cx.background_executor()
+                .timer(Duration::from_millis(50))
+                .await;
+            editor
+                .update_in(cx, |editor, window, cx| {
+                    editor.register_visible_buffers(cx);
+                    editor.refresh_colors_for_visible_range(None, window, cx);
+                    editor.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
+                })
+                .ok();
+        });
+
         editor_was_scrolled
     }
 

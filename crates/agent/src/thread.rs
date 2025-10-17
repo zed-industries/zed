@@ -1276,62 +1276,6 @@ impl Thread {
         );
     }
 
-    pub fn retry_last_completion(
-        &mut self,
-        window: Option<AnyWindowHandle>,
-        cx: &mut Context<Self>,
-    ) {
-        // Clear any existing error state
-        self.retry_state = None;
-
-        // Use the last error context if available, otherwise fall back to configured model
-        let (model, intent) = if let Some((model, intent)) = self.last_error_context.take() {
-            (model, intent)
-        } else if let Some(configured_model) = self.configured_model.as_ref() {
-            let model = configured_model.model.clone();
-            let intent = if self.has_pending_tool_uses() {
-                CompletionIntent::ToolResults
-            } else {
-                CompletionIntent::UserPrompt
-            };
-            (model, intent)
-        } else if let Some(configured_model) = self.get_or_init_configured_model(cx) {
-            let model = configured_model.model.clone();
-            let intent = if self.has_pending_tool_uses() {
-                CompletionIntent::ToolResults
-            } else {
-                CompletionIntent::UserPrompt
-            };
-            (model, intent)
-        } else {
-            return;
-        };
-
-        self.send_to_model(model, intent, window, cx);
-    }
-
-    pub fn enable_burn_mode_and_retry(
-        &mut self,
-        window: Option<AnyWindowHandle>,
-        cx: &mut Context<Self>,
-    ) {
-        self.completion_mode = CompletionMode::Burn;
-        cx.emit(ThreadEvent::ProfileChanged);
-        self.retry_last_completion(window, cx);
-    }
-
-    pub fn used_tools_since_last_user_message(&self) -> bool {
-        for message in self.messages.iter().rev() {
-            if self.tool_use.message_has_tool_results(message.id) {
-                return true;
-            } else if message.role == Role::User {
-                return false;
-            }
-        }
-
-        false
-    }
-
     pub fn to_completion_request(
         &self,
         model: Arc<dyn LanguageModel>,
@@ -3276,7 +3220,6 @@ mod tests {
     use settings::{LanguageModelParameters, Settings, SettingsStore};
     use std::sync::Arc;
     use std::time::Duration;
-    use theme::ThemeSettings;
     use util::path;
     use workspace::Workspace;
 
@@ -5337,7 +5280,7 @@ fn main() {{
             thread_store::init(fs.clone(), cx);
             workspace::init_settings(cx);
             language_model::init_settings(cx);
-            ThemeSettings::register(cx);
+            theme::init(theme::LoadThemes::JustBase, cx);
             ToolRegistry::default_global(cx);
             assistant_tool::init(cx);
 

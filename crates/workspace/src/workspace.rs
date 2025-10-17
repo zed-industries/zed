@@ -60,7 +60,10 @@ use notifications::{
     simple_message_notification::MessageNotification,
 };
 pub use pane::*;
-pub use pane_group::*;
+pub use pane_group::{
+    ActivePaneDecorator, HANDLE_HITBOX_SIZE, Member, PaneAxis, PaneGroup, PaneRenderContext,
+    SplitDirection,
+};
 use persistence::{DB, SerializedWindowBounds, model::SerializedWorkspace};
 pub use persistence::{
     DB as WORKSPACE_DB, WorkspaceDb, delete_unloaded_items,
@@ -73,7 +76,10 @@ use project::{
     debugger::{breakpoint_store::BreakpointStoreEvent, session::ThreadStatus},
     toolchain_store::ToolchainStoreEvent,
 };
-use remote::{RemoteClientDelegate, RemoteConnectionOptions, remote_client::ConnectionIdentifier};
+use remote::{
+    RemoteClientDelegate, RemoteConnection, RemoteConnectionOptions,
+    remote_client::ConnectionIdentifier,
+};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use session::AppSession;
@@ -100,7 +106,7 @@ use std::{
     time::Duration,
 };
 use task::{DebugScenario, SpawnInTerminal, TaskContext};
-use theme::{ActiveTheme, SystemAppearance, ThemeSettings};
+use theme::{ActiveTheme, GlobalTheme, SystemAppearance, ThemeSettings};
 pub use toolbar::{Toolbar, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView};
 pub use ui;
 use ui::{Window, prelude::*};
@@ -117,11 +123,11 @@ pub use workspace_settings::{
 };
 use zed_actions::{Spawn, feedback::FileBugReport};
 
-use crate::notifications::NotificationId;
 use crate::persistence::{
     SerializedAxis,
     model::{DockData, DockStructure, SerializedItem, SerializedPane, SerializedPaneGroup},
 };
+use crate::{item::ItemBufferKind, notifications::NotificationId};
 
 pub const SERIALIZATION_THROTTLE_TIME: Duration = Duration::from_millis(200);
 
@@ -418,6 +424,14 @@ actions!(
         SwapPaneUp,
         /// Swaps the current pane with the one below.
         SwapPaneDown,
+        /// Move the current pane to be at the far left.
+        MovePaneLeft,
+        /// Move the current pane to be at the far right.
+        MovePaneRight,
+        /// Move the current pane to be at the very top.
+        MovePaneUp,
+        /// Move the current pane to be at the very bottom.
+        MovePaneDown,
     ]
 );
 
@@ -1432,8 +1446,8 @@ impl Workspace {
 
                 *SystemAppearance::global_mut(cx) = SystemAppearance(window_appearance.into());
 
-                ThemeSettings::reload_current_theme(cx);
-                ThemeSettings::reload_current_icon_theme(cx);
+                GlobalTheme::reload_theme(cx);
+                GlobalTheme::reload_icon_theme(cx);
             }),
             cx.on_release(move |this, cx| {
                 this.app_state.workspace_store.update(cx, move |store, _| {
@@ -1536,7 +1550,7 @@ impl Workspace {
                 persistence::DB.workspace_for_roots(paths_to_open.as_slice());
 
             if let Some(paths) = serialized_workspace.as_ref().map(|ws| &ws.paths) {
-                paths_to_open = paths.paths().to_vec();
+                paths_to_open = paths.ordered_paths().cloned().collect();
                 if !paths.is_lexicographically_ordered() {
                     project_handle
                         .update(cx, |project, cx| {
@@ -1743,6 +1757,19 @@ impl Workspace {
         dock.update(cx, |dock, cx| {
             dock.add_panel(panel, self.weak_self.clone(), window, cx)
         });
+    }
+
+    pub fn remove_panel<T: Panel>(
+        &mut self,
+        panel: &Entity<T>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        for dock in [&self.left_dock, &self.bottom_dock, &self.right_dock] {
+            dock.update(cx, |dock, cx| {
+                dock.remove_panel(panel, window, cx);
+            })
+        }
     }
 
     pub fn status_bar(&self) -> &Entity<StatusBar> {
@@ -2521,8 +2548,12 @@ impl Workspace {
             };
 
             for (pane, item) in dirty_items {
-                let (singleton, project_entry_ids) =
-                    cx.update(|_, cx| (item.is_singleton(cx), item.project_entry_ids(cx)))?;
+                let (singleton, project_entry_ids) = cx.update(|_, cx| {
+                    (
+                        item.buffer_kind(cx) == ItemBufferKind::Singleton,
+                        item.project_entry_ids(cx),
+                    )
+                })?;
                 if (singleton || !project_entry_ids.is_empty())
                     && !Pane::save_item(project.clone(), &pane, &*item, save_intent, cx).await?
                 {
@@ -3846,6 +3877,16 @@ impl Workspace {
         }
     }
 
+    pub fn move_pane_to_border(&mut self, direction: SplitDirection, cx: &mut Context<Self>) {
+        if self
+            .center
+            .move_to_border(&self.active_pane, direction)
+            .unwrap()
+        {
+            cx.notify();
+        }
+    }
+
     pub fn resize_pane(
         &mut self,
         axis: gpui::Axis,
@@ -4099,11 +4140,11 @@ impl Workspace {
                     pane.add_item(clone, true, true, None, window, cx)
                 });
                 self.center.split(&pane, &new_pane, direction).unwrap();
+                cx.notify();
                 Some(new_pane)
             } else {
                 None
             };
-        cx.notify();
         maybe_pane_handle
     }
 
@@ -4805,7 +4846,7 @@ impl Workspace {
                             .items()
                             .find_map(|item| {
                                 let item = item.to_followable_item_handle(cx)?;
-                                if item.is_singleton(cx)
+                                if item.buffer_kind(cx) == ItemBufferKind::Singleton
                                     && item.project_item_model_ids(cx).as_slice()
                                         == [buffer_entity_id]
                                 {
@@ -5654,6 +5695,18 @@ impl Workspace {
             .on_action(cx.listener(|workspace, _: &SwapPaneDown, _, cx| {
                 workspace.swap_pane_in_direction(SplitDirection::Down, cx)
             }))
+            .on_action(cx.listener(|workspace, _: &MovePaneLeft, _, cx| {
+                workspace.move_pane_to_border(SplitDirection::Left, cx)
+            }))
+            .on_action(cx.listener(|workspace, _: &MovePaneRight, _, cx| {
+                workspace.move_pane_to_border(SplitDirection::Right, cx)
+            }))
+            .on_action(cx.listener(|workspace, _: &MovePaneUp, _, cx| {
+                workspace.move_pane_to_border(SplitDirection::Up, cx)
+            }))
+            .on_action(cx.listener(|workspace, _: &MovePaneDown, _, cx| {
+                workspace.move_pane_to_border(SplitDirection::Down, cx)
+            }))
             .on_action(cx.listener(|this, _: &ToggleLeftDock, window, cx| {
                 this.toggle_dock(DockPosition::Left, window, cx);
             }))
@@ -5842,6 +5895,11 @@ impl Workspace {
         self.modal_layer.update(cx, |modal_layer, cx| {
             modal_layer.toggle_modal(window, cx, build)
         })
+    }
+
+    pub fn hide_modal(&mut self, window: &mut Window, cx: &mut App) -> bool {
+        self.modal_layer
+            .update(cx, |modal_layer, cx| modal_layer.hide_modal(window, cx))
     }
 
     pub fn toggle_status_toast<V: ToastView>(&mut self, entity: Entity<V>, cx: &mut App) {
@@ -7386,22 +7444,23 @@ pub fn create_and_open_local_file(
 
 pub fn open_remote_project_with_new_connection(
     window: WindowHandle<Workspace>,
-    connection_options: RemoteConnectionOptions,
+    remote_connection: Arc<dyn RemoteConnection>,
     cancel_rx: oneshot::Receiver<()>,
     delegate: Arc<dyn RemoteClientDelegate>,
     app_state: Arc<AppState>,
     paths: Vec<PathBuf>,
     cx: &mut App,
-) -> Task<Result<()>> {
+) -> Task<Result<Vec<Option<Box<dyn ItemHandle>>>>> {
     cx.spawn(async move |cx| {
         let (workspace_id, serialized_workspace) =
-            serialize_remote_project(connection_options.clone(), paths.clone(), cx).await?;
+            serialize_remote_project(remote_connection.connection_options(), paths.clone(), cx)
+                .await?;
 
         let session = match cx
             .update(|cx| {
                 remote::RemoteClient::new(
                     ConnectionIdentifier::Workspace(workspace_id.0),
-                    connection_options,
+                    remote_connection,
                     cancel_rx,
                     delegate,
                     cx,
@@ -7410,7 +7469,7 @@ pub fn open_remote_project_with_new_connection(
             .await?
         {
             Some(result) => result,
-            None => return Ok(()),
+            None => return Ok(Vec::new()),
         };
 
         let project = cx.update(|cx| {
@@ -7445,7 +7504,7 @@ pub fn open_remote_project_with_existing_connection(
     app_state: Arc<AppState>,
     window: WindowHandle<Workspace>,
     cx: &mut AsyncApp,
-) -> Task<Result<()>> {
+) -> Task<Result<Vec<Option<Box<dyn ItemHandle>>>>> {
     cx.spawn(async move |cx| {
         let (workspace_id, serialized_workspace) =
             serialize_remote_project(connection_options.clone(), paths.clone(), cx).await?;
@@ -7471,7 +7530,7 @@ async fn open_remote_project_inner(
     app_state: Arc<AppState>,
     window: WindowHandle<Workspace>,
     cx: &mut AsyncApp,
-) -> Result<()> {
+) -> Result<Vec<Option<Box<dyn ItemHandle>>>> {
     let toolchains = DB.toolchains(workspace_id).await?;
     for (toolchain, worktree_id, path) in toolchains {
         project
@@ -7528,7 +7587,7 @@ async fn open_remote_project_inner(
         });
     })?;
 
-    window
+    let items = window
         .update(cx, |_, window, cx| {
             window.activate_window();
             open_items(serialized_workspace, project_paths_to_open, window, cx)
@@ -7547,7 +7606,7 @@ async fn open_remote_project_inner(
         }
     })?;
 
-    Ok(())
+    Ok(items.into_iter().map(|item| item?.ok()).collect())
 }
 
 fn serialize_remote_project(
@@ -8192,7 +8251,7 @@ mod tests {
     use crate::{
         dock::{PanelEvent, test::TestPanel},
         item::{
-            ItemEvent,
+            ItemBufferKind, ItemEvent,
             test::{TestItem, TestProjectItem},
         },
     };
@@ -8553,7 +8612,7 @@ mod tests {
         let item_2_3 = cx.new(|cx| {
             TestItem::new(cx)
                 .with_dirty(true)
-                .with_singleton(false)
+                .with_buffer_kind(ItemBufferKind::Multibuffer)
                 .with_project_items(&[
                     single_entry_items[2].read(cx).project_items[0].clone(),
                     single_entry_items[3].read(cx).project_items[0].clone(),
@@ -8562,7 +8621,7 @@ mod tests {
         let item_3_4 = cx.new(|cx| {
             TestItem::new(cx)
                 .with_dirty(true)
-                .with_singleton(false)
+                .with_buffer_kind(ItemBufferKind::Multibuffer)
                 .with_project_items(&[
                     single_entry_items[3].read(cx).project_items[0].clone(),
                     single_entry_items[4].read(cx).project_items[0].clone(),
@@ -9583,7 +9642,7 @@ mod tests {
         let dirty_multi_buffer_with_both = cx.new(|cx| {
             TestItem::new(cx)
                 .with_dirty(true)
-                .with_singleton(false)
+                .with_buffer_kind(ItemBufferKind::Multibuffer)
                 .with_label("Fake Project Search")
                 .with_project_items(&[
                     dirty_regular_buffer.read(cx).project_items[0].clone(),
@@ -9734,7 +9793,7 @@ mod tests {
         let dirty_multi_buffer_with_both = cx.new(|cx| {
             TestItem::new(cx)
                 .with_dirty(true)
-                .with_singleton(false)
+                .with_buffer_kind(ItemBufferKind::Multibuffer)
                 .with_label("Fake Project Search")
                 .with_project_items(&[
                     dirty_regular_buffer.read(cx).project_items[0].clone(),
@@ -10148,7 +10207,7 @@ mod tests {
         let dirty_multi_buffer = cx.new(|cx| {
             TestItem::new(cx)
                 .with_dirty(true)
-                .with_singleton(false)
+                .with_buffer_kind(ItemBufferKind::Multibuffer)
                 .with_label("Fake Project Search")
                 .with_project_items(&[
                     dirty_regular_buffer.read(cx).project_items[0].clone(),

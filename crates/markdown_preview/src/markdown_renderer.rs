@@ -61,6 +61,7 @@ pub struct RenderContext {
     syntax_theme: Arc<SyntaxTheme>,
     indent: usize,
     checkbox_clicked_callback: Option<CheckboxClickedCallback>,
+    is_last_child: bool,
 }
 
 impl RenderContext {
@@ -94,6 +95,7 @@ impl RenderContext {
             code_block_background_color: theme.colors().surface_background,
             code_span_background_color: theme.colors().editor_document_highlight_read_background,
             checkbox_clicked_callback: None,
+            is_last_child: false,
         }
     }
 
@@ -135,11 +137,24 @@ impl RenderContext {
     /// We give padding between "This is a block quote."
     /// and "And this is the next paragraph."
     fn with_common_p(&self, element: Div) -> Div {
-        if self.indent > 0 {
+        if self.indent > 0 && !self.is_last_child {
             element.pb(self.scaled_rems(0.75))
         } else {
             element
         }
+    }
+
+    /// The is used to indicate that the current element is the last child or not of its parent.
+    ///
+    /// Then we can avoid adding padding to the bottom of the last child.
+    fn with_last_child<R>(&mut self, is_last: bool, render: R) -> AnyElement
+    where
+        R: FnOnce(&mut Self) -> AnyElement,
+    {
+        self.is_last_child = is_last;
+        let element = render(self);
+        self.is_last_child = false;
+        element
     }
 }
 
@@ -475,6 +490,10 @@ fn render_markdown_table(parsed: &ParsedMarkdownTable, cx: &mut RenderContext) -
         for (index, cell) in row.children.iter().enumerate() {
             let length = paragraph_len(cell);
 
+            if index >= max_lengths.len() {
+                max_lengths.resize(index + 1, length);
+            }
+
             if length > max_lengths[index] {
                 max_lengths[index] = length;
             }
@@ -523,7 +542,7 @@ fn render_markdown_table_row(
     is_header: bool,
     cx: &mut RenderContext,
 ) -> AnyElement {
-    let mut items = vec![];
+    let mut items = Vec::with_capacity(parsed.children.len());
     let count = parsed.children.len();
 
     for (index, cell) in parsed.children.iter().enumerate() {
@@ -581,7 +600,12 @@ fn render_markdown_block_quote(
     let children: Vec<AnyElement> = parsed
         .children
         .iter()
-        .map(|child| render_markdown_block(child, cx))
+        .enumerate()
+        .map(|(ix, child)| {
+            cx.with_last_child(ix + 1 == parsed.children.len(), |cx| {
+                render_markdown_block(child, cx)
+            })
+        })
         .collect();
 
     cx.indent -= 1;
@@ -652,7 +676,7 @@ fn render_markdown_paragraph(parsed: &MarkdownParagraph, cx: &mut RenderContext)
 }
 
 fn render_markdown_text(parsed_new: &MarkdownParagraph, cx: &mut RenderContext) -> Vec<AnyElement> {
-    let mut any_element = vec![];
+    let mut any_element = Vec::with_capacity(parsed_new.len());
     // these values are cloned in-order satisfy borrow checker
     let syntax_theme = cx.syntax_theme.clone();
     let workspace_clone = cx.workspace.clone();

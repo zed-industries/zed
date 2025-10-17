@@ -14,7 +14,7 @@ When using AI in Zed, you can configure multiple dimensions:
 We want to respect users who want to use Zed without interacting with AI whatsoever.
 To do that, add the following key to your `settings.json`:
 
-```json
+```json [settings]
 {
   "disable_ai": true
 }

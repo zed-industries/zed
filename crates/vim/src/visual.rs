@@ -15,10 +15,7 @@ use workspace::searchable::Direction;
 
 use crate::{
     Vim,
-    motion::{
-        Motion, MotionKind, first_non_whitespace, next_line_end, start_of_line,
-        start_of_relative_buffer_row,
-    },
+    motion::{Motion, MotionKind, first_non_whitespace, next_line_end, start_of_line},
     object::Object,
     state::{Mark, Mode, Operator},
 };
@@ -406,7 +403,9 @@ impl Vim {
                 // Move to the next or previous buffer row, ensuring that
                 // wrapped lines are handled correctly.
                 let direction = if tail.row() > head.row() { -1 } else { 1 };
-                row = start_of_relative_buffer_row(map, DisplayPoint::new(row, 0), direction).row();
+                row = map
+                    .start_of_relative_buffer_row(DisplayPoint::new(row, 0), direction)
+                    .row();
             }
 
             s.select(selections);
@@ -485,7 +484,7 @@ impl Vim {
                             if object == Object::Paragraph && range.start != range.end {
                                 let row_of_selection_end_line = selection.end.to_point(map).row;
                                 let new_selection_end = if map
-                                    .buffer_snapshot
+                                    .buffer_snapshot()
                                     .line_len(MultiBufferRow(row_of_selection_end_line))
                                     == 0
                                 {
@@ -505,7 +504,7 @@ impl Vim {
                                     if selection.end.to_point(map).row > new_start_point.row {
                                         if original_point.column
                                             == map
-                                                .buffer_snapshot
+                                                .buffer_snapshot()
                                                 .line_len(MultiBufferRow(original_point.row))
                                         {
                                             selection.start = movement::saturating_left(
@@ -635,7 +634,7 @@ impl Vim {
                                     let row = end.row.saturating_sub(1);
                                     selection.end = Point::new(
                                         row,
-                                        map.buffer_snapshot.line_len(MultiBufferRow(row)),
+                                        map.buffer_snapshot().line_len(MultiBufferRow(row)),
                                     )
                                     .to_display_point(map)
                                 } else {
@@ -658,12 +657,13 @@ impl Vim {
                         s.move_with(|map, selection| {
                             let end = selection.end.to_point(map);
                             let start = selection.start.to_point(map);
-                            if end.row < map.buffer_snapshot.max_point().row {
+                            if end.row < map.buffer_snapshot().max_point().row {
                                 selection.end = Point::new(end.row + 1, 0).to_display_point(map)
                             } else if start.row > 0 {
                                 selection.start = Point::new(
                                     start.row - 1,
-                                    map.buffer_snapshot.line_len(MultiBufferRow(start.row - 1)),
+                                    map.buffer_snapshot()
+                                        .line_len(MultiBufferRow(start.row - 1)),
                                 )
                                 .to_display_point(map)
                             }
@@ -706,9 +706,11 @@ impl Vim {
                         let end = selection.end.to_point(map);
                         if end.column == 0 && end > start {
                             let row = end.row.saturating_sub(1);
-                            selection.end =
-                                Point::new(row, map.buffer_snapshot.line_len(MultiBufferRow(row)))
-                                    .to_display_point(map);
+                            selection.end = Point::new(
+                                row,
+                                map.buffer_snapshot().line_len(MultiBufferRow(row)),
+                            )
+                            .to_display_point(map);
                         }
                     });
                 });
@@ -755,7 +757,7 @@ impl Vim {
                     .disjoint_anchors_arc()
                     .iter()
                     .map(|selection| {
-                        let start = selection.start.bias_left(&display_map.buffer_snapshot);
+                        let start = selection.start.bias_left(&display_map.buffer_snapshot());
                         start..start
                     })
                     .collect::<Vec<_>>();

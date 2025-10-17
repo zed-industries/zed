@@ -1,6 +1,7 @@
 use anyhow::Result;
 use client::{UserStore, zed_urls};
 use cloud_llm_client::UsageLimit;
+use codestral::CodestralCompletionProvider;
 use copilot::{Copilot, Status};
 use editor::{Editor, SelectionEffects, actions::ShowEditPrediction, scroll::Autoscroll};
 use feature_flags::{FeatureFlagAppExt, PredictEditsRateCompletionsFeatureFlag};
@@ -71,17 +72,17 @@ impl Render for EditPredictionButton {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // Return empty div if AI is disabled
         if DisableAiSettings::get_global(cx).disable_ai {
-            return div();
+            return div().hidden();
         }
 
         let all_language_settings = all_language_settings(None, cx);
 
         match all_language_settings.edit_predictions.provider {
-            EditPredictionProvider::None => div(),
+            EditPredictionProvider::None => div().hidden(),
 
             EditPredictionProvider::Copilot => {
                 let Some(copilot) = Copilot::global(cx) else {
-                    return div();
+                    return div().hidden();
                 };
                 let status = copilot.read(cx).status();
 
@@ -228,6 +229,67 @@ impl Render for EditPredictionButton {
                                 } else {
                                     Tooltip::text(tooltip_text.clone())(window, cx)
                                 }
+                            },
+                        )
+                        .with_handle(self.popover_menu_handle.clone()),
+                )
+            }
+
+            EditPredictionProvider::Codestral => {
+                let enabled = self.editor_enabled.unwrap_or(true);
+                let has_api_key = CodestralCompletionProvider::has_api_key(cx);
+                let fs = self.fs.clone();
+                let this = cx.entity();
+
+                div().child(
+                    PopoverMenu::new("codestral")
+                        .menu(move |window, cx| {
+                            if has_api_key {
+                                Some(this.update(cx, |this, cx| {
+                                    this.build_codestral_context_menu(window, cx)
+                                }))
+                            } else {
+                                Some(ContextMenu::build(window, cx, |menu, _, _| {
+                                    let fs = fs.clone();
+                                    menu.entry("Use Zed AI instead", None, move |_, cx| {
+                                        set_completion_provider(
+                                            fs.clone(),
+                                            cx,
+                                            EditPredictionProvider::Zed,
+                                        )
+                                    })
+                                    .separator()
+                                    .entry(
+                                        "Configure Codestral API Key",
+                                        None,
+                                        move |window, cx| {
+                                            window.dispatch_action(
+                                                zed_actions::agent::OpenSettings.boxed_clone(),
+                                                cx,
+                                            );
+                                        },
+                                    )
+                                }))
+                            }
+                        })
+                        .anchor(Corner::BottomRight)
+                        .trigger_with_tooltip(
+                            IconButton::new("codestral-icon", IconName::AiMistral)
+                                .shape(IconButtonShape::Square)
+                                .when(!has_api_key, |this| {
+                                    this.indicator(Indicator::dot().color(Color::Error))
+                                        .indicator_border_color(Some(
+                                            cx.theme().colors().status_bar_background,
+                                        ))
+                                })
+                                .when(has_api_key && !enabled, |this| {
+                                    this.indicator(Indicator::dot().color(Color::Ignored))
+                                        .indicator_border_color(Some(
+                                            cx.theme().colors().status_bar_background,
+                                        ))
+                                }),
+                            move |window, cx| {
+                                Tooltip::for_action("Codestral", &ToggleMenu, window, cx)
                             },
                         )
                         .with_handle(self.popover_menu_handle.clone()),
@@ -493,6 +555,7 @@ impl EditPredictionButton {
             EditPredictionProvider::Zed
                 | EditPredictionProvider::Copilot
                 | EditPredictionProvider::Supermaven
+                | EditPredictionProvider::Codestral
         ) {
             menu = menu
                 .separator()
@@ -716,6 +779,25 @@ impl EditPredictionButton {
             self.build_language_settings_menu(menu, window, cx)
                 .separator()
                 .action("Sign Out", supermaven::SignOut.boxed_clone())
+        })
+    }
+
+    fn build_codestral_context_menu(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<ContextMenu> {
+        let fs = self.fs.clone();
+        ContextMenu::build(window, cx, |menu, window, cx| {
+            self.build_language_settings_menu(menu, window, cx)
+                .separator()
+                .entry("Use Zed AI instead", None, move |_, cx| {
+                    set_completion_provider(fs.clone(), cx, EditPredictionProvider::Zed)
+                })
+                .separator()
+                .entry("Configure Codestral API Key", None, move |window, cx| {
+                    window.dispatch_action(zed_actions::agent::OpenSettings.boxed_clone(), cx);
+                })
         })
     }
 

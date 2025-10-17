@@ -33,8 +33,8 @@ const BULLETS: &[u8; u128::BITS as usize] = &[b'*'; _];
 ///
 /// See the [`display_map` module documentation](crate::display_map) for more information.
 pub struct BlockMap {
+    pub(super) wrap_snapshot: RefCell<WrapSnapshot>,
     next_block_id: AtomicUsize,
-    wrap_snapshot: RefCell<WrapSnapshot>,
     custom_blocks: Vec<Arc<CustomBlock>>,
     custom_blocks_by_id: TreeMap<CustomBlockId, Arc<CustomBlock>>,
     transforms: RefCell<SumTree<Transform>>,
@@ -53,7 +53,7 @@ pub struct BlockMapWriter<'a>(&'a mut BlockMap);
 
 #[derive(Clone)]
 pub struct BlockSnapshot {
-    wrap_snapshot: WrapSnapshot,
+    pub(super) wrap_snapshot: WrapSnapshot,
     transforms: SumTree<Transform>,
     custom_blocks_by_id: TreeMap<CustomBlockId, Arc<CustomBlock>>,
     pub(super) buffer_header_height: u32,
@@ -689,6 +689,7 @@ impl BlockMap {
 
             // For each of these blocks, insert a new isomorphic transform preceding the block,
             // and then insert the block itself.
+            let mut just_processed_folded_buffer = false;
             for (block_placement, block) in blocks_in_edit.drain(..) {
                 let mut summary = TransformSummary {
                     input_rows: 0,
@@ -701,8 +702,12 @@ impl BlockMap {
                 match block_placement {
                     BlockPlacement::Above(position) => {
                         rows_before_block = position.0 - new_transforms.summary().input_rows;
+                        just_processed_folded_buffer = false;
                     }
                     BlockPlacement::Near(position) | BlockPlacement::Below(position) => {
+                        if just_processed_folded_buffer {
+                            continue;
+                        }
                         if position.0 + 1 < new_transforms.summary().input_rows {
                             continue;
                         }
@@ -711,6 +716,7 @@ impl BlockMap {
                     BlockPlacement::Replace(range) => {
                         rows_before_block = range.start().0 - new_transforms.summary().input_rows;
                         summary.input_rows = range.end().0 - range.start().0 + 1;
+                        just_processed_folded_buffer = matches!(block, Block::FoldedBuffer { .. });
                     }
                 }
 
@@ -3564,6 +3570,96 @@ mod tests {
         );
         let blocks_snapshot = block_map.read(wraps_snapshot, Default::default());
         assert_eq!(blocks_snapshot.text(), "abc\n\ndef\nghi\njkl\nmno");
+    }
+
+    #[gpui::test]
+    fn test_folded_buffer_with_near_blocks(cx: &mut gpui::TestAppContext) {
+        cx.update(init_test);
+
+        let text = "line 1\nline 2\nline 3";
+        let buffer = cx.update(|cx| {
+            MultiBuffer::build_multi([(text, vec![Point::new(0, 0)..Point::new(2, 6)])], cx)
+        });
+        let buffer_snapshot = cx.update(|cx| buffer.read(cx).snapshot(cx));
+        let buffer_ids = buffer_snapshot
+            .excerpts()
+            .map(|(_, buffer_snapshot, _)| buffer_snapshot.remote_id())
+            .dedup()
+            .collect::<Vec<_>>();
+        assert_eq!(buffer_ids.len(), 1);
+        let buffer_id = buffer_ids[0];
+
+        let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
+        let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
+        let (_, tab_snapshot) = TabMap::new(fold_snapshot, 4.try_into().unwrap());
+        let (_, wrap_snapshot) =
+            cx.update(|cx| WrapMap::new(tab_snapshot, font("Helvetica"), px(14.0), None, cx));
+        let mut block_map = BlockMap::new(wrap_snapshot.clone(), 1, 1);
+
+        let mut writer = block_map.write(wrap_snapshot.clone(), Patch::default());
+        writer.insert(vec![BlockProperties {
+            style: BlockStyle::Fixed,
+            placement: BlockPlacement::Near(buffer_snapshot.anchor_after(Point::new(0, 0))),
+            height: Some(1),
+            render: Arc::new(|_| div().into_any()),
+            priority: 0,
+        }]);
+
+        let blocks_snapshot = block_map.read(wrap_snapshot.clone(), Patch::default());
+        assert_eq!(blocks_snapshot.text(), "\nline 1\n\nline 2\nline 3");
+
+        let mut writer = block_map.write(wrap_snapshot.clone(), Patch::default());
+        buffer.read_with(cx, |buffer, cx| {
+            writer.fold_buffers([buffer_id], buffer, cx);
+        });
+
+        let blocks_snapshot = block_map.read(wrap_snapshot, Patch::default());
+        assert_eq!(blocks_snapshot.text(), "");
+    }
+
+    #[gpui::test]
+    fn test_folded_buffer_with_near_blocks_on_last_line(cx: &mut gpui::TestAppContext) {
+        cx.update(init_test);
+
+        let text = "line 1\nline 2\nline 3\nline 4";
+        let buffer = cx.update(|cx| {
+            MultiBuffer::build_multi([(text, vec![Point::new(0, 0)..Point::new(3, 6)])], cx)
+        });
+        let buffer_snapshot = cx.update(|cx| buffer.read(cx).snapshot(cx));
+        let buffer_ids = buffer_snapshot
+            .excerpts()
+            .map(|(_, buffer_snapshot, _)| buffer_snapshot.remote_id())
+            .dedup()
+            .collect::<Vec<_>>();
+        assert_eq!(buffer_ids.len(), 1);
+        let buffer_id = buffer_ids[0];
+
+        let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
+        let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
+        let (_, tab_snapshot) = TabMap::new(fold_snapshot, 4.try_into().unwrap());
+        let (_, wrap_snapshot) =
+            cx.update(|cx| WrapMap::new(tab_snapshot, font("Helvetica"), px(14.0), None, cx));
+        let mut block_map = BlockMap::new(wrap_snapshot.clone(), 1, 1);
+
+        let mut writer = block_map.write(wrap_snapshot.clone(), Patch::default());
+        writer.insert(vec![BlockProperties {
+            style: BlockStyle::Fixed,
+            placement: BlockPlacement::Near(buffer_snapshot.anchor_after(Point::new(3, 6))),
+            height: Some(1),
+            render: Arc::new(|_| div().into_any()),
+            priority: 0,
+        }]);
+
+        let blocks_snapshot = block_map.read(wrap_snapshot.clone(), Patch::default());
+        assert_eq!(blocks_snapshot.text(), "\nline 1\nline 2\nline 3\nline 4\n");
+
+        let mut writer = block_map.write(wrap_snapshot.clone(), Patch::default());
+        buffer.read_with(cx, |buffer, cx| {
+            writer.fold_buffers([buffer_id], buffer, cx);
+        });
+
+        let blocks_snapshot = block_map.read(wrap_snapshot, Patch::default());
+        assert_eq!(blocks_snapshot.text(), "");
     }
 
     fn init_test(cx: &mut gpui::App) {
