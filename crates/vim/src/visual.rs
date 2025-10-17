@@ -15,10 +15,7 @@ use workspace::searchable::Direction;
 
 use crate::{
     Vim,
-    motion::{
-        Motion, MotionKind, first_non_whitespace, next_line_end, start_of_line,
-        start_of_relative_buffer_row,
-    },
+    motion::{Motion, MotionKind, first_non_whitespace, next_line_end, start_of_line},
     object::Object,
     state::{Mark, Mode, Operator},
 };
@@ -406,7 +403,9 @@ impl Vim {
                 // Move to the next or previous buffer row, ensuring that
                 // wrapped lines are handled correctly.
                 let direction = if tail.row() > head.row() { -1 } else { 1 };
-                row = start_of_relative_buffer_row(map, DisplayPoint::new(row, 0), direction).row();
+                row = map
+                    .start_of_relative_buffer_row(DisplayPoint::new(row, 0), direction)
+                    .row();
             }
 
             s.select(selections);

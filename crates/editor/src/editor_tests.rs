@@ -27,7 +27,6 @@ use language::{
     LanguageConfigOverride, LanguageMatcher, LanguageName, Override, Point,
     language_settings::{
         CompletionSettingsContent, FormatterList, LanguageSettingsContent, LspInsertMode,
-        SelectedFormatter,
     },
     tree_sitter_python,
 };
@@ -636,6 +635,93 @@ fn test_movement_actions_with_pending_selection(cx: &mut TestAppContext) {
         assert_eq!(
             editor.selections.display_ranges(cx),
             [DisplayPoint::new(DisplayRow(1), 2)..DisplayPoint::new(DisplayRow(1), 2)]
+        );
+    });
+}
+
+#[gpui::test]
+fn test_extending_selection(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let editor = cx.add_window(|window, cx| {
+        let buffer = MultiBuffer::build_simple("aaa bbb ccc ddd eee", cx);
+        build_editor(buffer, window, cx)
+    });
+
+    _ = editor.update(cx, |editor, window, cx| {
+        editor.begin_selection(DisplayPoint::new(DisplayRow(0), 5), false, 1, window, cx);
+        editor.end_selection(window, cx);
+        assert_eq!(
+            editor.selections.display_ranges(cx),
+            [DisplayPoint::new(DisplayRow(0), 5)..DisplayPoint::new(DisplayRow(0), 5)]
+        );
+
+        editor.extend_selection(DisplayPoint::new(DisplayRow(0), 10), 1, window, cx);
+        editor.end_selection(window, cx);
+        assert_eq!(
+            editor.selections.display_ranges(cx),
+            [DisplayPoint::new(DisplayRow(0), 5)..DisplayPoint::new(DisplayRow(0), 10)]
+        );
+
+        editor.extend_selection(DisplayPoint::new(DisplayRow(0), 10), 1, window, cx);
+        editor.end_selection(window, cx);
+        editor.extend_selection(DisplayPoint::new(DisplayRow(0), 10), 2, window, cx);
+        assert_eq!(
+            editor.selections.display_ranges(cx),
+            [DisplayPoint::new(DisplayRow(0), 5)..DisplayPoint::new(DisplayRow(0), 11)]
+        );
+
+        editor.update_selection(
+            DisplayPoint::new(DisplayRow(0), 1),
+            0,
+            gpui::Point::<f32>::default(),
+            window,
+            cx,
+        );
+        editor.end_selection(window, cx);
+        assert_eq!(
+            editor.selections.display_ranges(cx),
+            [DisplayPoint::new(DisplayRow(0), 5)..DisplayPoint::new(DisplayRow(0), 0)]
+        );
+
+        editor.begin_selection(DisplayPoint::new(DisplayRow(0), 5), true, 1, window, cx);
+        editor.end_selection(window, cx);
+        editor.begin_selection(DisplayPoint::new(DisplayRow(0), 5), true, 2, window, cx);
+        editor.end_selection(window, cx);
+        assert_eq!(
+            editor.selections.display_ranges(cx),
+            [DisplayPoint::new(DisplayRow(0), 4)..DisplayPoint::new(DisplayRow(0), 7)]
+        );
+
+        editor.extend_selection(DisplayPoint::new(DisplayRow(0), 10), 1, window, cx);
+        assert_eq!(
+            editor.selections.display_ranges(cx),
+            [DisplayPoint::new(DisplayRow(0), 4)..DisplayPoint::new(DisplayRow(0), 11)]
+        );
+
+        editor.update_selection(
+            DisplayPoint::new(DisplayRow(0), 6),
+            0,
+            gpui::Point::<f32>::default(),
+            window,
+            cx,
+        );
+        assert_eq!(
+            editor.selections.display_ranges(cx),
+            [DisplayPoint::new(DisplayRow(0), 4)..DisplayPoint::new(DisplayRow(0), 7)]
+        );
+
+        editor.update_selection(
+            DisplayPoint::new(DisplayRow(0), 1),
+            0,
+            gpui::Point::<f32>::default(),
+            window,
+            cx,
+        );
+        editor.end_selection(window, cx);
+        assert_eq!(
+            editor.selections.display_ranges(cx),
+            [DisplayPoint::new(DisplayRow(0), 7)..DisplayPoint::new(DisplayRow(0), 0)]
         );
     });
 }
@@ -4331,8 +4417,8 @@ fn test_delete_line(cx: &mut TestAppContext) {
         assert_eq!(
             editor.selections.display_ranges(cx),
             vec![
+                DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 0),
                 DisplayPoint::new(DisplayRow(0), 1)..DisplayPoint::new(DisplayRow(0), 1),
-                DisplayPoint::new(DisplayRow(0), 3)..DisplayPoint::new(DisplayRow(0), 3),
             ]
         );
     });
@@ -4352,6 +4438,24 @@ fn test_delete_line(cx: &mut TestAppContext) {
         assert_eq!(
             editor.selections.display_ranges(cx),
             vec![DisplayPoint::new(DisplayRow(0), 1)..DisplayPoint::new(DisplayRow(0), 1)]
+        );
+    });
+
+    let editor = cx.add_window(|window, cx| {
+        let buffer = MultiBuffer::build_simple("abc\ndef\nghi\n\njkl\nmno", cx);
+        build_editor(buffer, window, cx)
+    });
+    _ = editor.update(cx, |editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_display_ranges([
+                DisplayPoint::new(DisplayRow(0), 1)..DisplayPoint::new(DisplayRow(2), 1)
+            ])
+        });
+        editor.delete_line(&DeleteLine, window, cx);
+        assert_eq!(editor.display_text(cx), "\njkl\nmno");
+        assert_eq!(
+            editor.selections.display_ranges(cx),
+            vec![DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 0)]
         );
     });
 }
@@ -11908,8 +12012,8 @@ async fn test_range_format_respects_language_tab_size_override(cx: &mut TestAppC
 #[gpui::test]
 async fn test_document_format_manual_trigger(cx: &mut TestAppContext) {
     init_test(cx, |settings| {
-        settings.defaults.formatter = Some(SelectedFormatter::List(FormatterList::Single(
-            Formatter::LanguageServer { name: None },
+        settings.defaults.formatter = Some(FormatterList::Single(Formatter::LanguageServer(
+            settings::LanguageServerFormatterSpecifier::Current,
         )))
     });
 
@@ -12034,11 +12138,11 @@ async fn test_document_format_manual_trigger(cx: &mut TestAppContext) {
 async fn test_multiple_formatters(cx: &mut TestAppContext) {
     init_test(cx, |settings| {
         settings.defaults.remove_trailing_whitespace_on_save = Some(true);
-        settings.defaults.formatter = Some(SelectedFormatter::List(FormatterList::Vec(vec![
-            Formatter::LanguageServer { name: None },
+        settings.defaults.formatter = Some(FormatterList::Vec(vec![
+            Formatter::LanguageServer(settings::LanguageServerFormatterSpecifier::Current),
             Formatter::CodeAction("code-action-1".into()),
             Formatter::CodeAction("code-action-2".into()),
-        ])))
+        ]))
     });
 
     let fs = FakeFs::new(cx.executor());
@@ -12293,9 +12397,9 @@ async fn test_multiple_formatters(cx: &mut TestAppContext) {
 #[gpui::test]
 async fn test_organize_imports_manual_trigger(cx: &mut TestAppContext) {
     init_test(cx, |settings| {
-        settings.defaults.formatter = Some(SelectedFormatter::List(FormatterList::Vec(vec![
-            Formatter::LanguageServer { name: None },
-        ])))
+        settings.defaults.formatter = Some(FormatterList::Vec(vec![Formatter::LanguageServer(
+            settings::LanguageServerFormatterSpecifier::Current,
+        )]))
     });
 
     let fs = FakeFs::new(cx.executor());
@@ -12498,7 +12602,7 @@ async fn test_concurrent_format_requests(cx: &mut TestAppContext) {
 #[gpui::test]
 async fn test_strip_whitespace_and_format_via_lsp(cx: &mut TestAppContext) {
     init_test(cx, |settings| {
-        settings.defaults.formatter = Some(SelectedFormatter::Auto)
+        settings.defaults.formatter = Some(FormatterList::default())
     });
 
     let mut cx = EditorLspTestContext::new_rust(
@@ -12510,6 +12614,7 @@ async fn test_strip_whitespace_and_format_via_lsp(cx: &mut TestAppContext) {
     )
     .await;
 
+    cx.run_until_parked();
     // Set up a buffer white some trailing whitespace and no trailing newline.
     cx.set_state(
         &[
@@ -14879,12 +14984,7 @@ async fn test_multiline_completion(cx: &mut TestAppContext) {
                 } else {
                     item.label.clone()
                 };
-                let len = text.len();
-                Some(language::CodeLabel {
-                    text,
-                    runs: Vec::new(),
-                    filter_range: 0..len,
-                })
+                Some(language::CodeLabel::plain(text, None))
             })),
             ..FakeLspAdapter::default()
         },
@@ -18205,9 +18305,7 @@ fn completion_menu_entries(menu: &CompletionsMenu) -> Vec<String> {
 #[gpui::test]
 async fn test_document_format_with_prettier(cx: &mut TestAppContext) {
     init_test(cx, |settings| {
-        settings.defaults.formatter = Some(SelectedFormatter::List(FormatterList::Single(
-            Formatter::Prettier,
-        )))
+        settings.defaults.formatter = Some(FormatterList::Single(Formatter::Prettier))
     });
 
     let fs = FakeFs::new(cx.executor());
@@ -18274,7 +18372,7 @@ async fn test_document_format_with_prettier(cx: &mut TestAppContext) {
     );
 
     update_test_language_settings(cx, |settings| {
-        settings.defaults.formatter = Some(SelectedFormatter::Auto)
+        settings.defaults.formatter = Some(FormatterList::default())
     });
     let format = editor.update_in(cx, |editor, window, cx| {
         editor.perform_format(
@@ -25707,6 +25805,83 @@ async fn test_add_selection_after_moving_with_multiple_cursors(cx: &mut TestAppC
     );
 }
 
+#[gpui::test]
+async fn test_add_selection_skip_soft_wrap_option(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state(indoc!(
+        r#"ˇThis is a very long line that will be wrapped when soft wrapping is enabled
+           Second line here"#
+    ));
+
+    cx.update_editor(|editor, window, cx| {
+        // Enable soft wrapping with a narrow width to force soft wrapping and
+        // confirm that more than 2 rows are being displayed.
+        editor.set_wrap_width(Some(100.0.into()), cx);
+        assert!(editor.display_text(cx).lines().count() > 2);
+
+        editor.add_selection_below(
+            &AddSelectionBelow {
+                skip_soft_wrap: true,
+            },
+            window,
+            cx,
+        );
+
+        assert_eq!(
+            editor.selections.display_ranges(cx),
+            &[
+                DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 0),
+                DisplayPoint::new(DisplayRow(8), 0)..DisplayPoint::new(DisplayRow(8), 0),
+            ]
+        );
+
+        editor.add_selection_above(
+            &AddSelectionAbove {
+                skip_soft_wrap: true,
+            },
+            window,
+            cx,
+        );
+
+        assert_eq!(
+            editor.selections.display_ranges(cx),
+            &[DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 0)]
+        );
+
+        editor.add_selection_below(
+            &AddSelectionBelow {
+                skip_soft_wrap: false,
+            },
+            window,
+            cx,
+        );
+
+        assert_eq!(
+            editor.selections.display_ranges(cx),
+            &[
+                DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 0),
+                DisplayPoint::new(DisplayRow(1), 0)..DisplayPoint::new(DisplayRow(1), 0),
+            ]
+        );
+
+        editor.add_selection_above(
+            &AddSelectionAbove {
+                skip_soft_wrap: false,
+            },
+            window,
+            cx,
+        );
+
+        assert_eq!(
+            editor.selections.display_ranges(cx),
+            &[DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 0)]
+        );
+    });
+}
+
 #[gpui::test(iterations = 10)]
 async fn test_document_colors(cx: &mut TestAppContext) {
     let expected_color = Rgba {
@@ -25829,7 +26004,7 @@ async fn test_document_colors(cx: &mut TestAppContext) {
         .set_request_handler::<lsp::request::DocumentColor, _, _>(move |_, _| async move {
             panic!("Should not be called");
         });
-    cx.executor().advance_clock(Duration::from_millis(100));
+    cx.executor().advance_clock(FETCH_COLORS_DEBOUNCE_TIMEOUT);
     color_request_handle.next().await.unwrap();
     cx.run_until_parked();
     assert_eq!(
@@ -25913,9 +26088,9 @@ async fn test_document_colors(cx: &mut TestAppContext) {
     color_request_handle.next().await.unwrap();
     cx.run_until_parked();
     assert_eq!(
-        3,
+        2,
         requests_made.load(atomic::Ordering::Acquire),
-        "Should query for colors once per save and once per formatting after save"
+        "Should query for colors once per save (deduplicated) and once per formatting after save"
     );
 
     drop(editor);
@@ -25936,7 +26111,7 @@ async fn test_document_colors(cx: &mut TestAppContext) {
         .unwrap();
     close.await.unwrap();
     assert_eq!(
-        3,
+        2,
         requests_made.load(atomic::Ordering::Acquire),
         "After saving and closing all editors, no extra requests should be made"
     );
@@ -25956,7 +26131,7 @@ async fn test_document_colors(cx: &mut TestAppContext) {
             })
         })
         .unwrap();
-    cx.executor().advance_clock(Duration::from_millis(100));
+    cx.executor().advance_clock(FETCH_COLORS_DEBOUNCE_TIMEOUT);
     cx.run_until_parked();
     let editor = workspace
         .update(cx, |workspace, _, cx| {
@@ -25967,9 +26142,9 @@ async fn test_document_colors(cx: &mut TestAppContext) {
                 .expect("Should be an editor")
         })
         .unwrap();
-    color_request_handle.next().await.unwrap();
+
     assert_eq!(
-        3,
+        2,
         requests_made.load(atomic::Ordering::Acquire),
         "Cache should be reused on buffer close and reopen"
     );
@@ -26010,10 +26185,11 @@ async fn test_document_colors(cx: &mut TestAppContext) {
     });
     save.await.unwrap();
 
+    cx.executor().advance_clock(FETCH_COLORS_DEBOUNCE_TIMEOUT);
     empty_color_request_handle.next().await.unwrap();
     cx.run_until_parked();
     assert_eq!(
-        4,
+        3,
         requests_made.load(atomic::Ordering::Acquire),
         "Should query for colors once per save only, as formatting was not requested"
     );

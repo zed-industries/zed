@@ -1327,8 +1327,6 @@ async fn test_copy_file_into_remote_project(
     );
 }
 
-// TODO: this test fails on Windows.
-#[cfg(not(windows))]
 #[gpui::test]
 async fn test_remote_git_diffs(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
     let text_2 = "

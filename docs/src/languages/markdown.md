@@ -25,7 +25,7 @@ def fib(n):
 
 Zed supports using Prettier to automatically re-format Markdown documents. You can trigger this manually via the {#action editor::Format} action or via the {#kb editor::Format} keyboard shortcut. Alternately, you can automatically format by enabling [`format_on_save`](../configuring-zed.md#format-on-save) in your settings.json:
 
-```json
+```json [settings]
   "languages": {
     "Markdown": {
       "format_on_save": "on"
@@ -37,7 +37,7 @@ Zed supports using Prettier to automatically re-format Markdown documents. You c
 
 By default Zed will remove trailing whitespace on save. If you rely on invisible trailing whitespace being converted to `<br />` in Markdown files you can disable this behavior with:
 
-```json
+```json [settings]
   "languages": {
     "Markdown": {
       "remove_trailing_whitespace_on_save": false

@@ -18,14 +18,14 @@ pub struct ShellBuilder {
 
 impl ShellBuilder {
     /// Create a new ShellBuilder as configured.
-    pub fn new(shell: &Shell) -> Self {
+    pub fn new(shell: &Shell, is_windows: bool) -> Self {
         let (program, args) = match shell {
             Shell::System => (get_system_shell(), Vec::new()),
             Shell::Program(shell) => (shell.clone(), Vec::new()),
             Shell::WithArguments { program, args, .. } => (program.clone(), args.clone()),
         };
 
-        let kind = ShellKind::new(&program);
+        let kind = ShellKind::new(&program, is_windows);
         Self {
             program,
             args,
@@ -87,9 +87,12 @@ impl ShellBuilder {
             });
             if self.redirect_stdin {
                 match self.kind {
+                    ShellKind::Fish => {
+                        combined_command.insert_str(0, "begin; ");
+                        combined_command.push_str("; end </dev/null");
+                    }
                     ShellKind::Posix
                     | ShellKind::Nushell
-                    | ShellKind::Fish
                     | ShellKind::Csh
                     | ShellKind::Tcsh
                     | ShellKind::Rc
@@ -122,7 +125,7 @@ mod test {
     #[test]
     fn test_nu_shell_variable_substitution() {
         let shell = Shell::Program("nu".to_owned());
-        let shell_builder = ShellBuilder::new(&shell);
+        let shell_builder = ShellBuilder::new(&shell, false);
 
         let (program, args) = shell_builder.build(
             Some("echo".into()),
@@ -150,7 +153,7 @@ mod test {
     #[test]
     fn redirect_stdin_to_dev_null_precedence() {
         let shell = Shell::Program("nu".to_owned());
-        let shell_builder = ShellBuilder::new(&shell);
+        let shell_builder = ShellBuilder::new(&shell, false);
 
         let (program, args) = shell_builder
             .redirect_stdin_to_dev_null()
@@ -158,5 +161,18 @@ mod test {
 
         assert_eq!(program, "nu");
         assert_eq!(args, vec!["-i", "-c", "(echo nothing) </dev/null"]);
+    }
+
+    #[test]
+    fn redirect_stdin_to_dev_null_fish() {
+        let shell = Shell::Program("fish".to_owned());
+        let shell_builder = ShellBuilder::new(&shell, false);
+
+        let (program, args) = shell_builder
+            .redirect_stdin_to_dev_null()
+            .build(Some("echo".into()), &["test".to_string()]);
+
+        assert_eq!(program, "fish");
+        assert_eq!(args, vec!["-i", "-c", "begin; echo test; end </dev/null"]);
     }
 }

@@ -30,7 +30,7 @@ impl Render for DiagnosticIndicator {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let indicator = h_flex().gap_2();
         if !ProjectSettings::get_global(cx).diagnostics.button {
-            return indicator;
+            return indicator.hidden();
         }
 
         let diagnostic_indicator = match (self.summary.error_count, self.summary.warning_count) {

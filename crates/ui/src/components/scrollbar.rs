@@ -1102,7 +1102,6 @@ impl<T: ScrollableHandle> Element for ScrollbarElement<T> {
             .disabled()
             .not()
             .then(|| ScrollbarPrepaintState {
-                parent_bounds_hitbox: window.insert_hitbox(bounds, HitboxBehavior::Normal),
                 thumbs: {
                     let thumb_ranges = self.state.read(cx).thumb_ranges().collect::<Vec<_>>();
                     let width = self.state.read(cx).width.to_pixels();
@@ -1178,6 +1177,7 @@ impl<T: ScrollableHandle> Element for ScrollbarElement<T> {
                         })
                         .collect()
                 },
+                parent_bounds_hitbox: window.insert_hitbox(bounds, HitboxBehavior::Normal),
             });
         if prepaint_state
             .as_ref()

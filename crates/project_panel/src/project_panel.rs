@@ -676,6 +676,9 @@ impl ProjectPanel {
                     if project_panel_settings.hide_root != new_settings.hide_root {
                         this.update_visible_entries(None, false, false, window, cx);
                     }
+                    if project_panel_settings.hide_hidden != new_settings.hide_hidden {
+                        this.update_visible_entries(None, false, false, window, cx);
+                    }
                     if project_panel_settings.sticky_scroll && !new_settings.sticky_scroll {
                         this.sticky_items_count = 0;
                     }
@@ -2695,8 +2698,10 @@ impl ProjectPanel {
                             });
 
                             if item_count == 1 {
-                                // open entry if not dir, and only focus if rename is not pending
-                                if !entry.is_dir() {
+                                // open entry if not dir, setting is enabled, and only focus if rename is not pending
+                                if !entry.is_dir()
+                                    && ProjectPanelSettings::get_global(cx).open_file_on_paste
+                                {
                                     project_panel.open_entry(
                                         entry.id,
                                         disambiguation_range.is_none(),
@@ -3172,6 +3177,7 @@ impl ProjectPanel {
                 mtime: parent_entry.mtime,
                 size: parent_entry.size,
                 is_ignored: parent_entry.is_ignored,
+                is_hidden: parent_entry.is_hidden,
                 is_external: false,
                 is_private: false,
                 is_always_included: parent_entry.is_always_included,
@@ -3212,6 +3218,7 @@ impl ProjectPanel {
             .map(|worktree| worktree.read(cx).snapshot())
             .collect();
         let hide_root = settings.hide_root && visible_worktrees.len() == 1;
+        let hide_hidden = settings.hide_hidden;
         self.update_visible_entries_task = cx.spawn_in(window, async move |this, cx| {
             let new_state = cx
                 .background_spawn(async move {
@@ -3303,7 +3310,9 @@ impl ProjectPanel {
                                 }
                             }
                             auto_folded_ancestors.clear();
-                            if !hide_gitignore || !entry.is_ignored {
+                            if (!hide_gitignore || !entry.is_ignored)
+                                && (!hide_hidden || !entry.is_hidden)
+                            {
                                 visible_worktree_entries.push(entry.to_owned());
                             }
                             let precedes_new_entry = if let Some(new_entry_id) = new_entry_parent_id
@@ -3316,7 +3325,10 @@ impl ProjectPanel {
                             } else {
                                 false
                             };
-                            if precedes_new_entry && (!hide_gitignore || !entry.is_ignored) {
+                            if precedes_new_entry
+                                && (!hide_gitignore || !entry.is_ignored)
+                                && (!hide_hidden || !entry.is_hidden)
+                            {
                                 visible_worktree_entries.push(Self::create_new_git_entry(
                                     entry.entry,
                                     entry.git_summary,

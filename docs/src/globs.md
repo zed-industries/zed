@@ -57,7 +57,7 @@ When using the "Include" / "Exclude" filters on a Project Search each glob is wr
 
 Alternatively, if in your Zed settings you wanted a [`file_types`](./configuring-zed.md#file-types) override which only applied to a certain directory you must explicitly include the wildcard globs. For example, if you had a directory of template files with the `html` extension that you wanted to recognize as Jinja2 template you could use the following:
 
-```json
+```json [settings]
 {
   "file_types": {
     "C++": ["[cC]"],

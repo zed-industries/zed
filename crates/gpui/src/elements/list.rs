@@ -70,6 +70,7 @@ struct StateInner {
     #[allow(clippy::type_complexity)]
     scroll_handler: Option<Box<dyn FnMut(&ListScrollEvent, &mut Window, &mut App)>>,
     scrollbar_drag_start_height: Option<Pixels>,
+    measuring_behavior: ListMeasuringBehavior,
 }
 
 /// Whether the list is scrolling from top to bottom or bottom to top.
@@ -101,6 +102,26 @@ pub enum ListSizingBehavior {
     /// The list should not calculate a fixed size.
     #[default]
     Auto,
+}
+
+/// The measuring behavior to apply during layout.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum ListMeasuringBehavior {
+    /// Measure all items in the list.
+    /// Note: This can be expensive for the first frame in a large list.
+    Measure(bool),
+    /// Only measure visible items
+    #[default]
+    Visible,
+}
+
+impl ListMeasuringBehavior {
+    fn reset(&mut self) {
+        match self {
+            ListMeasuringBehavior::Measure(has_measured) => *has_measured = false,
+            ListMeasuringBehavior::Visible => {}
+        }
+    }
 }
 
 /// The horizontal sizing behavior to apply during layout.
@@ -203,9 +224,18 @@ impl ListState {
             scroll_handler: None,
             reset: false,
             scrollbar_drag_start_height: None,
+            measuring_behavior: ListMeasuringBehavior::default(),
         })));
         this.splice(0..0, item_count);
         this
+    }
+
+    /// Set the list to measure all items in the list in the first layout phase.
+    ///
+    /// This is useful for ensuring that the scrollbar size is correct instead of based on only rendered elements.
+    pub fn measure_all(self) -> Self {
+        self.0.borrow_mut().measuring_behavior = ListMeasuringBehavior::Measure(false);
+        self
     }
 
     /// Reset this instantiation of the list state.
@@ -215,6 +245,7 @@ impl ListState {
         let old_count = {
             let state = &mut *self.0.borrow_mut();
             state.reset = true;
+            state.measuring_behavior.reset();
             state.logical_scroll_top = None;
             state.scrollbar_drag_start_height = None;
             state.items.summary().count
@@ -524,6 +555,48 @@ impl StateInner {
         cursor.start().height + logical_scroll_top.offset_in_item
     }
 
+    fn layout_all_items(
+        &mut self,
+        available_width: Pixels,
+        render_item: &mut RenderItemFn,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        match &mut self.measuring_behavior {
+            ListMeasuringBehavior::Visible => {
+                return;
+            }
+            ListMeasuringBehavior::Measure(has_measured) => {
+                if *has_measured {
+                    return;
+                }
+                *has_measured = true;
+            }
+        }
+
+        let mut cursor = self.items.cursor::<Count>(());
+        let available_item_space = size(
+            AvailableSpace::Definite(available_width),
+            AvailableSpace::MinContent,
+        );
+
+        let mut measured_items = Vec::default();
+
+        for (ix, item) in cursor.enumerate() {
+            let size = item.size().unwrap_or_else(|| {
+                let mut element = render_item(ix, window, cx);
+                element.layout_as_root(available_item_space, window, cx)
+            });
+
+            measured_items.push(ListItem::Measured {
+                size,
+                focus_handle: item.focus_handle(),
+            });
+        }
+
+        self.items = SumTree::from_iter(measured_items, ());
+    }
+
     fn layout_items(
         &mut self,
         available_width: Option<Pixels>,
@@ -711,6 +784,13 @@ impl StateInner {
         cx: &mut App,
     ) -> Result<LayoutItemsResponse, ListOffset> {
         window.transact(|window| {
+            match self.measuring_behavior {
+                ListMeasuringBehavior::Measure(has_measured) if !has_measured => {
+                    self.layout_all_items(bounds.size.width, render_item, window, cx);
+                }
+                _ => {}
+            }
+
             let mut layout_response = self.layout_items(
                 Some(bounds.size.width),
                 bounds.size.height,

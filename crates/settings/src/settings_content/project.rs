@@ -470,8 +470,8 @@ pub enum DiagnosticSeverityContent {
     Error,
     Warning,
     Info,
-    #[serde(alias = "all")]
     Hint,
+    All,
 }
 
 /// A custom Git hosting provider.
