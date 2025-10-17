@@ -49,8 +49,8 @@ impl RangeInEditor {
     ) -> bool {
         match (self, trigger_point) {
             (Self::Text(range), TriggerPoint::Text(point)) => {
-                let point_after_start = range.start.cmp(point, &snapshot.buffer_snapshot).is_le();
-                point_after_start && range.end.cmp(point, &snapshot.buffer_snapshot).is_ge()
+                let point_after_start = range.start.cmp(point, &snapshot.buffer_snapshot()).is_le();
+                point_after_start && range.end.cmp(point, &snapshot.buffer_snapshot()).is_ge()
             }
             (Self::Inlay(highlight), TriggerPoint::InlayHint(point, _, _)) => {
                 highlight.inlay == point.inlay
@@ -131,7 +131,7 @@ impl Editor {
             Some(point) => {
                 let trigger_point = TriggerPoint::Text(
                     snapshot
-                        .buffer_snapshot
+                        .buffer_snapshot()
                         .anchor_before(point.to_offset(&snapshot.display_snapshot, Bias::Left)),
                 );
 
@@ -307,7 +307,6 @@ pub fn update_inlay_link_and_hover_points(
             buffer_snapshot.anchor_after(point_for_position.next_valid.to_point(snapshot));
         if let Some(hovered_hint) = editor
             .visible_inlay_hints(cx)
-            .into_iter()
             .skip_while(|hint| {
                 hint.position
                     .cmp(&previous_valid_anchor, &buffer_snapshot)
@@ -326,7 +325,7 @@ pub fn update_inlay_link_and_hover_points(
                 match cached_hint.resolve_state {
                     ResolveState::CanResolve(_, _) => {
                         if let Some(buffer_id) = snapshot
-                            .buffer_snapshot
+                            .buffer_snapshot()
                             .buffer_id_for_anchor(previous_valid_anchor)
                         {
                             inlay_hint_cache.spawn_hint_resolve(
@@ -494,22 +493,15 @@ pub fn show_link_definition(
     }
 
     let trigger_anchor = trigger_point.anchor();
-    let Some((buffer, buffer_position)) = editor
-        .buffer
-        .read(cx)
-        .text_anchor_for_position(*trigger_anchor, cx)
-    else {
+    let anchor = snapshot.buffer_snapshot().anchor_before(*trigger_anchor);
+    let Some(buffer) = editor.buffer().read(cx).buffer_for_anchor(anchor, cx) else {
         return;
     };
-
-    let Some((excerpt_id, _, _)) = editor
-        .buffer()
-        .read(cx)
-        .excerpt_containing(*trigger_anchor, cx)
-    else {
-        return;
-    };
-
+    let Anchor {
+        excerpt_id,
+        text_anchor,
+        ..
+    } = anchor;
     let same_kind = hovered_link_state.preferred_kind == preferred_kind
         || hovered_link_state
             .links
@@ -534,12 +526,12 @@ pub fn show_link_definition(
     let project = editor.project.clone();
     let provider = editor.semantics_provider.clone();
 
-    let snapshot = snapshot.buffer_snapshot.clone();
+    let snapshot = snapshot.buffer_snapshot().clone();
     hovered_link_state.task = Some(cx.spawn_in(window, async move |this, cx| {
         async move {
             let result = match &trigger_point {
                 TriggerPoint::Text(_) => {
-                    if let Some((url_range, url)) = find_url(&buffer, buffer_position, cx.clone()) {
+                    if let Some((url_range, url)) = find_url(&buffer, text_anchor, cx.clone()) {
                         this.read_with(cx, |_, _| {
                             let range = maybe!({
                                 let start =
@@ -551,7 +543,7 @@ pub fn show_link_definition(
                         })
                         .ok()
                     } else if let Some((filename_range, filename)) =
-                        find_file(&buffer, project.clone(), buffer_position, cx).await
+                        find_file(&buffer, project.clone(), text_anchor, cx).await
                     {
                         let range = maybe!({
                             let start =
@@ -563,7 +555,7 @@ pub fn show_link_definition(
                         Some((range, vec![HoverLink::File(filename)]))
                     } else if let Some(provider) = provider {
                         let task = cx.update(|_, cx| {
-                            provider.definitions(&buffer, buffer_position, preferred_kind, cx)
+                            provider.definitions(&buffer, text_anchor, preferred_kind, cx)
                         })?;
                         if let Some(task) = task {
                             task.await.ok().flatten().map(|definition_result| {

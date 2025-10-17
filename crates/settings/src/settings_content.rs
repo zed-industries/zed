@@ -1,5 +1,6 @@
 mod agent;
 mod editor;
+mod extension;
 mod language;
 mod language_model;
 mod project;
@@ -9,6 +10,7 @@ mod workspace;
 
 pub use agent::*;
 pub use editor::*;
+pub use extension::*;
 pub use language::*;
 pub use language_model::*;
 pub use project::*;
@@ -58,6 +60,7 @@ pub struct SettingsContent {
 
     pub tabs: Option<ItemSettingsContent>,
     pub tab_bar: Option<TabBarSettingsContent>,
+    pub status_bar: Option<StatusBarSettingsContent>,
 
     pub preview_tabs: Option<PreviewTabsSettingsContent>,
 
@@ -220,7 +223,17 @@ impl UserSettingsContent {
 ///
 /// Default: VSCode
 #[derive(
-    Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq, Default,
+    Copy,
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    Eq,
+    Default,
+    strum::VariantArray,
 )]
 pub enum BaseKeymapContent {
     #[default]
@@ -232,6 +245,19 @@ pub enum BaseKeymapContent {
     Emacs,
     Cursor,
     None,
+}
+
+impl strum::VariantNames for BaseKeymapContent {
+    const VARIANTS: &'static [&'static str] = &[
+        "VSCode",
+        "JetBrains",
+        "Sublime Text",
+        "Atom",
+        "TextMate",
+        "Emacs",
+        "Cursor",
+        "None",
+    ];
 }
 
 #[skip_serializing_none]
@@ -313,7 +339,7 @@ pub struct AudioSettingsContent {
 
 /// Control what info is collected by Zed.
 #[skip_serializing_none]
-#[derive(Default, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Debug, MergeFrom)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Debug, MergeFrom)]
 pub struct TelemetrySettingsContent {
     /// Send debug info like crash reports.
     ///
@@ -323,6 +349,15 @@ pub struct TelemetrySettingsContent {
     ///
     /// Default: true
     pub metrics: Option<bool>,
+}
+
+impl Default for TelemetrySettingsContent {
+    fn default() -> Self {
+        Self {
+            diagnostics: Some(true),
+            metrics: Some(true),
+        }
+    }
 }
 
 #[skip_serializing_none]
@@ -360,7 +395,18 @@ pub struct DebuggerSettingsContent {
 
 /// The granularity of one 'step' in the stepping requests `next`, `stepIn`, `stepOut`, and `stepBack`.
 #[derive(
-    PartialEq, Eq, Debug, Hash, Clone, Copy, Deserialize, Serialize, JsonSchema, MergeFrom,
+    PartialEq,
+    Eq,
+    Debug,
+    Hash,
+    Clone,
+    Copy,
+    Deserialize,
+    Serialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum SteppingGranularity {
@@ -374,7 +420,19 @@ pub enum SteppingGranularity {
     Instruction,
 }
 
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    Eq,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum DockPosition {
     Left,
@@ -411,21 +469,6 @@ pub struct CallSettingsContent {
     ///
     /// Default: false
     pub share_on_join: Option<bool>,
-}
-
-#[skip_serializing_none]
-#[derive(Deserialize, Serialize, PartialEq, Debug, Default, Clone, JsonSchema, MergeFrom)]
-pub struct ExtensionSettingsContent {
-    /// The extensions that should be automatically installed by Zed.
-    ///
-    /// This is used to make functionality provided by extensions (e.g., language support)
-    /// available out-of-the-box.
-    ///
-    /// Default: { "html": true }
-    #[serde(default)]
-    pub auto_install_extensions: HashMap<Arc<str>, bool>,
-    #[serde(default)]
-    pub auto_update_extensions: HashMap<Arc<str>, bool>,
 }
 
 #[skip_serializing_none]
@@ -471,7 +514,18 @@ pub struct GitPanelSettingsContent {
 }
 
 #[derive(
-    Default, Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq,
+    Default,
+    Copy,
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    Eq,
+    strum::VariantArray,
+    strum::VariantNames,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum StatusStyle {
@@ -481,7 +535,9 @@ pub enum StatusStyle {
 }
 
 #[skip_serializing_none]
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
+#[derive(
+    Copy, Clone, Default, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq,
+)]
 pub struct ScrollbarSettings {
     pub show: Option<ShowScrollbar>,
 }
@@ -563,7 +619,18 @@ pub struct FileFinderSettingsContent {
 }
 
 #[derive(
-    Debug, PartialEq, Eq, Clone, Copy, Default, Serialize, Deserialize, JsonSchema, MergeFrom,
+    Debug,
+    PartialEq,
+    Eq,
+    Clone,
+    Copy,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
 )]
 #[serde(rename_all = "lowercase")]
 pub enum FileFinderWidthContent {
@@ -706,14 +773,38 @@ pub struct OutlinePanelSettingsContent {
     pub expand_outlines_with_depth: Option<usize>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, Copy, PartialEq)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum DockSide {
     Left,
     Right,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Deserialize, Serialize, JsonSchema, MergeFrom)]
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    PartialEq,
+    Eq,
+    Deserialize,
+    Serialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum ShowIndentGuides {
     Always,
@@ -721,7 +812,9 @@ pub enum ShowIndentGuides {
 }
 
 #[skip_serializing_none]
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
+#[derive(
+    Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq, Default,
+)]
 pub struct IndentGuidesSettingsContent {
     /// When to show the scrollbar in the outline panel.
     pub show: Option<ShowIndentGuides>,
@@ -746,7 +839,19 @@ pub struct ImageViewerSettingsContent {
 }
 
 #[skip_serializing_none]
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, Default, PartialEq)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    Default,
+    PartialEq,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum ImageFileSizeUnit {
     /// Displays file size in binary units (e.g., KiB, MiB).

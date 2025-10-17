@@ -80,6 +80,20 @@ impl<'a, T: 'static> Context<'a, T> {
         })
     }
 
+    /// Observe changes to ourselves
+    pub fn observe_self(
+        &mut self,
+        mut on_event: impl FnMut(&mut T, &mut Context<T>) + 'static,
+    ) -> Subscription
+    where
+        T: 'static,
+    {
+        let this = self.entity();
+        self.app.observe(&this, move |this, cx| {
+            this.update(cx, |this, cx| on_event(this, cx))
+        })
+    }
+
     /// Subscribe to an event type from another entity
     pub fn subscribe<T2, Evt>(
         &mut self,

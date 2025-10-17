@@ -608,7 +608,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
             let buffer_row = action.range.head().buffer_row(vim, editor, window, cx)?;
             let current = editor.selections.newest::<Point>(cx);
             let target = snapshot
-                .buffer_snapshot
+                .buffer_snapshot()
                 .clip_point(Point::new(buffer_row.0, current.head().column), Bias::Left);
             editor.change_selections(Default::default(), window, cx, |s| {
                 s.select_ranges([target..target]);
@@ -630,10 +630,10 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
         vim.update_editor(cx, |vim, editor, cx| {
             let snapshot = editor.snapshot(window, cx);
             if let Ok(range) = action.range.buffer_range(vim, editor, window, cx) {
-                let end = if range.end < snapshot.buffer_snapshot.max_row() {
+                let end = if range.end < snapshot.buffer_snapshot().max_row() {
                     Point::new(range.end.0 + 1, 0)
                 } else {
-                    snapshot.buffer_snapshot.max_point()
+                    snapshot.buffer_snapshot().max_point()
                 };
                 vim.copy_ranges(
                     editor,
@@ -1069,7 +1069,7 @@ impl Position {
                     )
                 }) {
                     anchor
-                        .to_point(&snapshot.buffer_snapshot)
+                        .to_point(&snapshot.buffer_snapshot())
                         .row
                         .saturating_add_signed(*offset)
                 } else {
@@ -1085,12 +1085,12 @@ impl Position {
                 let Some(mark) = anchors.last() else {
                     anyhow::bail!("mark {name} contains empty anchors");
                 };
-                mark.to_point(&snapshot.buffer_snapshot)
+                mark.to_point(&snapshot.buffer_snapshot())
                     .row
                     .saturating_add_signed(*offset)
             }
             Position::LastLine { offset } => snapshot
-                .buffer_snapshot
+                .buffer_snapshot()
                 .max_row()
                 .0
                 .saturating_add_signed(*offset),
@@ -1098,12 +1098,12 @@ impl Position {
                 .selections
                 .newest_anchor()
                 .head()
-                .to_point(&snapshot.buffer_snapshot)
+                .to_point(&snapshot.buffer_snapshot())
                 .row
                 .saturating_add_signed(*offset),
         };
 
-        Ok(MultiBufferRow(target).min(snapshot.buffer_snapshot.max_row()))
+        Ok(MultiBufferRow(target).min(snapshot.buffer_snapshot().max_row()))
     }
 }
 
@@ -1848,7 +1848,7 @@ impl OnMatchingLines {
 
             let point_range = Point::new(range.start.0, 0)
                 ..snapshot
-                    .buffer_snapshot
+                    .buffer_snapshot()
                     .clip_point(Point::new(range.end.0 + 1, 0), Bias::Left);
             cx.spawn_in(window, async move |editor, cx| {
                 let new_selections = cx
@@ -1856,7 +1856,7 @@ impl OnMatchingLines {
                         let mut line = String::new();
                         let mut new_selections = Vec::new();
                         let chunks = snapshot
-                            .buffer_snapshot
+                            .buffer_snapshot()
                             .text_for_range(point_range)
                             .chain(["\n"]);
 

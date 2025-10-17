@@ -43,8 +43,8 @@ struct CommitMetadataFile {
     worktree_id: WorktreeId,
 }
 
-const COMMIT_METADATA_NAMESPACE: u32 = 0;
-const FILE_NAMESPACE: u32 = 1;
+const COMMIT_METADATA_SORT_PREFIX: u64 = 0;
+const FILE_NAMESPACE_SORT_PREFIX: u64 = 1;
 
 impl CommitView {
     pub fn open(
@@ -145,7 +145,7 @@ impl CommitView {
             });
             multibuffer.update(cx, |multibuffer, cx| {
                 multibuffer.set_excerpts_for_path(
-                    PathKey::namespaced(COMMIT_METADATA_NAMESPACE, file.title.as_unix_str().into()),
+                    PathKey::with_sort_prefix(COMMIT_METADATA_SORT_PREFIX, file.title.clone()),
                     buffer.clone(),
                     vec![Point::zero()..buffer.read(cx).max_point()],
                     0,
@@ -193,7 +193,7 @@ impl CommitView {
                             .collect::<Vec<_>>();
                         let path = snapshot.file().unwrap().path().clone();
                         let _is_newly_added = multibuffer.set_excerpts_for_path(
-                            PathKey::namespaced(FILE_NAMESPACE, path.as_unix_str().into()),
+                            PathKey::with_sort_prefix(FILE_NAMESPACE_SORT_PREFIX, path),
                             buffer,
                             diff_hunk_ranges,
                             multibuffer_context_lines(cx),
@@ -450,10 +450,6 @@ impl Item for CommitView {
     fn deactivated(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.editor
             .update(cx, |editor, cx| editor.deactivated(window, cx));
-    }
-
-    fn is_singleton(&self, _: &App) -> bool {
-        false
     }
 
     fn act_as_type<'a>(

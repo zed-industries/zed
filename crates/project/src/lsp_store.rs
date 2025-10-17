@@ -61,9 +61,7 @@ use language::{
     LanguageRegistry, LocalFile, LspAdapter, LspAdapterDelegate, LspInstaller, ManifestDelegate,
     ManifestName, Patch, PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16, Toolchain,
     Transaction, Unclipped,
-    language_settings::{
-        FormatOnSave, Formatter, LanguageSettings, SelectedFormatter, language_settings,
-    },
+    language_settings::{FormatOnSave, Formatter, LanguageSettings, language_settings},
     point_to_lsp,
     proto::{
         deserialize_anchor, deserialize_lsp_edit, deserialize_version, serialize_anchor,
@@ -406,15 +404,14 @@ impl LocalLspStore {
                         adapter.clone(),
                     );
 
-                    let did_change_configuration_params =
-                        Arc::new(lsp::DidChangeConfigurationParams {
-                            settings: workspace_config,
-                        });
+                    let did_change_configuration_params = lsp::DidChangeConfigurationParams {
+                        settings: workspace_config,
+                    };
                     let language_server = cx
                         .update(|cx| {
                             language_server.initialize(
                                 initialization_params,
-                                did_change_configuration_params.clone(),
+                                Arc::new(did_change_configuration_params.clone()),
                                 cx,
                             )
                         })?
@@ -430,11 +427,9 @@ impl LocalLspStore {
                             }
                         })?;
 
-                    language_server
-                        .notify::<lsp::notification::DidChangeConfiguration>(
-                            &did_change_configuration_params,
-                        )
-                        .ok();
+                    language_server.notify::<lsp::notification::DidChangeConfiguration>(
+                        did_change_configuration_params,
+                    )?;
 
                     anyhow::Ok(language_server)
                 }
@@ -1340,7 +1335,7 @@ impl LocalLspStore {
 
         // Formatter for `code_actions_on_format` that runs before
         // the rest of the formatters
-        let mut code_actions_on_format_formatter = None;
+        let mut code_actions_on_format_formatters = None;
         let should_run_code_actions_on_format = !matches!(
             (trigger, &settings.format_on_save),
             (FormatTrigger::Save, &FormatOnSave::Off)
@@ -1352,35 +1347,44 @@ impl LocalLspStore {
                 .any(|enabled| *enabled);
             if have_code_actions_to_run_on_format {
                 zlog::trace!(logger => "going to run code actions on format");
-                code_actions_on_format_formatter = Some(Formatter::CodeActions(
-                    settings.code_actions_on_format.clone(),
-                ));
+                code_actions_on_format_formatters = Some(
+                    settings
+                        .code_actions_on_format
+                        .iter()
+                        .filter_map(|(action, enabled)| enabled.then_some(action))
+                        .cloned()
+                        .map(Formatter::CodeAction)
+                        .collect::<Vec<_>>(),
+                );
             }
         }
 
         let formatters = match (trigger, &settings.format_on_save) {
             (FormatTrigger::Save, FormatOnSave::Off) => &[],
-            (FormatTrigger::Save, FormatOnSave::List(formatters)) => formatters.as_ref(),
             (FormatTrigger::Manual, _) | (FormatTrigger::Save, FormatOnSave::On) => {
-                match &settings.formatter {
-                    SelectedFormatter::Auto => {
-                        if settings.prettier.allowed {
-                            zlog::trace!(logger => "Formatter set to auto: defaulting to prettier");
-                            std::slice::from_ref(&Formatter::Prettier)
-                        } else {
-                            zlog::trace!(logger => "Formatter set to auto: defaulting to primary language server");
-                            std::slice::from_ref(&Formatter::LanguageServer { name: None })
-                        }
-                    }
-                    SelectedFormatter::List(formatter_list) => formatter_list.as_ref(),
-                }
+                settings.formatter.as_ref()
             }
         };
 
-        let formatters = code_actions_on_format_formatter.iter().chain(formatters);
+        let formatters = code_actions_on_format_formatters
+            .iter()
+            .flatten()
+            .chain(formatters);
 
         for formatter in formatters {
+            let formatter = if formatter == &Formatter::Auto {
+                if settings.prettier.allowed {
+                    zlog::trace!(logger => "Formatter set to auto: defaulting to prettier");
+                    &Formatter::Prettier
+                } else {
+                    zlog::trace!(logger => "Formatter set to auto: defaulting to primary language server");
+                    &Formatter::LanguageServer(settings::LanguageServerFormatterSpecifier::Current)
+                }
+            } else {
+                formatter
+            };
             match formatter {
+                Formatter::Auto => unreachable!("Auto resolved above"),
                 Formatter::Prettier => {
                     let logger = zlog::scoped!(logger => "prettier");
                     zlog::trace!(logger => "formatting");
@@ -1435,7 +1439,7 @@ impl LocalLspStore {
                         },
                     )?;
                 }
-                Formatter::LanguageServer { name } => {
+                Formatter::LanguageServer(specifier) => {
                     let logger = zlog::scoped!(logger => "language-server");
                     zlog::trace!(logger => "formatting");
                     let _timer = zlog::time!(logger => "Formatting buffer using language server");
@@ -1445,16 +1449,19 @@ impl LocalLspStore {
                         continue;
                     };
 
-                    let language_server = if let Some(name) = name.as_deref() {
-                        adapters_and_servers.iter().find_map(|(adapter, server)| {
-                            if adapter.name.0.as_ref() == name {
-                                Some(server.clone())
-                            } else {
-                                None
-                            }
-                        })
-                    } else {
-                        adapters_and_servers.first().map(|e| e.1.clone())
+                    let language_server = match specifier {
+                        settings::LanguageServerFormatterSpecifier::Specific { name } => {
+                            adapters_and_servers.iter().find_map(|(adapter, server)| {
+                                if adapter.name.0.as_ref() == name {
+                                    Some(server.clone())
+                                } else {
+                                    None
+                                }
+                            })
+                        }
+                        settings::LanguageServerFormatterSpecifier::Current => {
+                            adapters_and_servers.first().map(|e| e.1.clone())
+                        }
                     };
 
                     let Some(language_server) = language_server else {
@@ -1512,7 +1519,7 @@ impl LocalLspStore {
                         },
                     )?;
                 }
-                Formatter::CodeActions(code_actions) => {
+                Formatter::CodeAction(code_action_name) => {
                     let logger = zlog::scoped!(logger => "code-actions");
                     zlog::trace!(logger => "formatting");
                     let _timer = zlog::time!(logger => "Formatting buffer using code actions");
@@ -1521,371 +1528,348 @@ impl LocalLspStore {
                         zlog::warn!(logger => "Cannot format buffer that is not backed by a file on disk using code actions. Skipping");
                         continue;
                     };
-                    if code_actions.iter().filter(|(_, enabled)| **enabled).count() == 0 {
-                        zlog::trace!(logger => "No code action kinds enabled, skipping");
+
+                    let code_action_kind: CodeActionKind = code_action_name.clone().into();
+                    zlog::trace!(logger => "Attempting to resolve code actions {:?}", &code_action_kind);
+
+                    let mut actions_and_servers = Vec::new();
+
+                    for (index, (_, language_server)) in adapters_and_servers.iter().enumerate() {
+                        let actions_result = Self::get_server_code_actions_from_action_kinds(
+                            &lsp_store,
+                            language_server.server_id(),
+                            vec![code_action_kind.clone()],
+                            &buffer.handle,
+                            cx,
+                        )
+                        .await
+                        .with_context(|| {
+                            format!(
+                                "Failed to resolve code action {:?} with language server {}",
+                                code_action_kind,
+                                language_server.name()
+                            )
+                        });
+                        let Ok(actions) = actions_result else {
+                            // note: it may be better to set result to the error and break formatters here
+                            // but for now we try to execute the actions that we can resolve and skip the rest
+                            zlog::error!(
+                                logger =>
+                                "Failed to resolve code action {:?} with language server {}",
+                                code_action_kind,
+                                language_server.name()
+                            );
+                            continue;
+                        };
+                        for action in actions {
+                            actions_and_servers.push((action, index));
+                        }
+                    }
+
+                    if actions_and_servers.is_empty() {
+                        zlog::warn!(logger => "No code actions were resolved, continuing");
                         continue;
                     }
-                    // Note: this loop exists despite `Self::get_server_code_actions_from_action_kinds` taking a `Vec<CodeActionKind>`
-                    // because code actions can resolve edits when `Self::get_server_code_actions_from_action_kinds` is called, which
-                    // are not updated to reflect edits from previous actions or actions from other servers when `resolve_code_actions` is called later
-                    // which can result in conflicting edits and mangled buffer state
-                    for (code_action_name, enabled) in code_actions {
-                        if !enabled {
-                            continue;
-                        }
-                        let code_action_kind: CodeActionKind = code_action_name.clone().into();
-                        zlog::trace!(logger => "Attempting to resolve code actions {:?}", &code_action_kind);
 
-                        let mut actions_and_servers = Vec::new();
+                    'actions: for (mut action, server_index) in actions_and_servers {
+                        let server = &adapters_and_servers[server_index].1;
 
-                        for (index, (_, language_server)) in adapters_and_servers.iter().enumerate()
-                        {
-                            let actions_result = Self::get_server_code_actions_from_action_kinds(
-                                &lsp_store,
-                                language_server.server_id(),
-                                vec![code_action_kind.clone()],
-                                &buffer.handle,
-                                cx,
+                        let describe_code_action = |action: &CodeAction| {
+                            format!(
+                                "code action '{}' with title \"{}\" on server {}",
+                                action
+                                    .lsp_action
+                                    .action_kind()
+                                    .unwrap_or("unknown".into())
+                                    .as_str(),
+                                action.lsp_action.title(),
+                                server.name(),
                             )
-                            .await
-                            .with_context(|| {
-                                format!(
-                                    "Failed to resolve code action {:?} with language server {}",
-                                    code_action_kind,
-                                    language_server.name()
-                                )
-                            });
-                            let Ok(actions) = actions_result else {
-                                // note: it may be better to set result to the error and break formatters here
-                                // but for now we try to execute the actions that we can resolve and skip the rest
-                                zlog::error!(
-                                    logger =>
-                                    "Failed to resolve code action {:?} with language server {}",
-                                    code_action_kind,
-                                    language_server.name()
-                                );
-                                continue;
-                            };
-                            for action in actions {
-                                actions_and_servers.push((action, index));
-                            }
-                        }
+                        };
 
-                        if actions_and_servers.is_empty() {
-                            zlog::warn!(logger => "No code actions were resolved, continuing");
+                        zlog::trace!(logger => "Executing {}", describe_code_action(&action));
+
+                        if let Err(err) = Self::try_resolve_code_action(server, &mut action).await {
+                            zlog::error!(
+                                logger =>
+                                "Failed to resolve {}. Error: {}",
+                                describe_code_action(&action),
+                                err
+                            );
                             continue;
                         }
 
-                        'actions: for (mut action, server_index) in actions_and_servers {
-                            let server = &adapters_and_servers[server_index].1;
-
-                            let describe_code_action = |action: &CodeAction| {
-                                format!(
-                                    "code action '{}' with title \"{}\" on server {}",
-                                    action
-                                        .lsp_action
-                                        .action_kind()
-                                        .unwrap_or("unknown".into())
-                                        .as_str(),
-                                    action.lsp_action.title(),
-                                    server.name(),
-                                )
-                            };
-
-                            zlog::trace!(logger => "Executing {}", describe_code_action(&action));
-
-                            if let Err(err) =
-                                Self::try_resolve_code_action(server, &mut action).await
-                            {
-                                zlog::error!(
+                        if let Some(edit) = action.lsp_action.edit().cloned() {
+                            // NOTE: code below duplicated from `Self::deserialize_workspace_edit`
+                            // but filters out and logs warnings for code actions that require unreasonably
+                            // difficult handling on our part, such as:
+                            // - applying edits that call commands
+                            //   which can result in arbitrary workspace edits being sent from the server that
+                            //   have no way of being tied back to the command that initiated them (i.e. we
+                            //   can't know which edits are part of the format request, or if the server is done sending
+                            //   actions in response to the command)
+                            // - actions that create/delete/modify/rename files other than the one we are formatting
+                            //   as we then would need to handle such changes correctly in the local history as well
+                            //   as the remote history through the ProjectTransaction
+                            // - actions with snippet edits, as these simply don't make sense in the context of a format request
+                            // Supporting these actions is not impossible, but not supported as of yet.
+                            if edit.changes.is_none() && edit.document_changes.is_none() {
+                                zlog::trace!(
                                     logger =>
-                                    "Failed to resolve {}. Error: {}",
+                                    "No changes for code action. Skipping {}",
                                     describe_code_action(&action),
-                                    err
                                 );
                                 continue;
                             }
 
-                            if let Some(edit) = action.lsp_action.edit().cloned() {
-                                // NOTE: code below duplicated from `Self::deserialize_workspace_edit`
-                                // but filters out and logs warnings for code actions that require unreasonably
-                                // difficult handling on our part, such as:
-                                // - applying edits that call commands
-                                //   which can result in arbitrary workspace edits being sent from the server that
-                                //   have no way of being tied back to the command that initiated them (i.e. we
-                                //   can't know which edits are part of the format request, or if the server is done sending
-                                //   actions in response to the command)
-                                // - actions that create/delete/modify/rename files other than the one we are formatting
-                                //   as we then would need to handle such changes correctly in the local history as well
-                                //   as the remote history through the ProjectTransaction
-                                // - actions with snippet edits, as these simply don't make sense in the context of a format request
-                                // Supporting these actions is not impossible, but not supported as of yet.
-                                if edit.changes.is_none() && edit.document_changes.is_none() {
-                                    zlog::trace!(
-                                        logger =>
-                                        "No changes for code action. Skipping {}",
-                                        describe_code_action(&action),
-                                    );
-                                    continue;
+                            let mut operations = Vec::new();
+                            if let Some(document_changes) = edit.document_changes {
+                                match document_changes {
+                                    lsp::DocumentChanges::Edits(edits) => operations.extend(
+                                        edits.into_iter().map(lsp::DocumentChangeOperation::Edit),
+                                    ),
+                                    lsp::DocumentChanges::Operations(ops) => operations = ops,
                                 }
-
-                                let mut operations = Vec::new();
-                                if let Some(document_changes) = edit.document_changes {
-                                    match document_changes {
-                                        lsp::DocumentChanges::Edits(edits) => operations.extend(
-                                            edits
-                                                .into_iter()
-                                                .map(lsp::DocumentChangeOperation::Edit),
-                                        ),
-                                        lsp::DocumentChanges::Operations(ops) => operations = ops,
-                                    }
-                                } else if let Some(changes) = edit.changes {
-                                    operations.extend(changes.into_iter().map(|(uri, edits)| {
-                                        lsp::DocumentChangeOperation::Edit(lsp::TextDocumentEdit {
-                                            text_document:
-                                                lsp::OptionalVersionedTextDocumentIdentifier {
-                                                    uri,
-                                                    version: None,
-                                                },
-                                            edits: edits.into_iter().map(Edit::Plain).collect(),
-                                        })
-                                    }));
-                                }
-
-                                let mut edits = Vec::with_capacity(operations.len());
-
-                                if operations.is_empty() {
-                                    zlog::trace!(
-                                        logger =>
-                                        "No changes for code action. Skipping {}",
-                                        describe_code_action(&action),
-                                    );
-                                    continue;
-                                }
-                                for operation in operations {
-                                    let op = match operation {
-                                        lsp::DocumentChangeOperation::Edit(op) => op,
-                                        lsp::DocumentChangeOperation::Op(_) => {
-                                            zlog::warn!(
-                                                logger =>
-                                                "Code actions which create, delete, or rename files are not supported on format. Skipping {}",
-                                                describe_code_action(&action),
-                                            );
-                                            continue 'actions;
-                                        }
-                                    };
-                                    let Ok(file_path) = op.text_document.uri.to_file_path() else {
-                                        zlog::warn!(
-                                            logger =>
-                                            "Failed to convert URI '{:?}' to file path. Skipping {}",
-                                            &op.text_document.uri,
-                                            describe_code_action(&action),
-                                        );
-                                        continue 'actions;
-                                    };
-                                    if &file_path != buffer_path_abs {
-                                        zlog::warn!(
-                                            logger =>
-                                            "File path '{:?}' does not match buffer path '{:?}'. Skipping {}",
-                                            file_path,
-                                            buffer_path_abs,
-                                            describe_code_action(&action),
-                                        );
-                                        continue 'actions;
-                                    }
-
-                                    let mut lsp_edits = Vec::new();
-                                    for edit in op.edits {
-                                        match edit {
-                                            Edit::Plain(edit) => {
-                                                if !lsp_edits.contains(&edit) {
-                                                    lsp_edits.push(edit);
-                                                }
-                                            }
-                                            Edit::Annotated(edit) => {
-                                                if !lsp_edits.contains(&edit.text_edit) {
-                                                    lsp_edits.push(edit.text_edit);
-                                                }
-                                            }
-                                            Edit::Snippet(_) => {
-                                                zlog::warn!(
-                                                    logger =>
-                                                    "Code actions which produce snippet edits are not supported during formatting. Skipping {}",
-                                                    describe_code_action(&action),
-                                                );
-                                                continue 'actions;
-                                            }
-                                        }
-                                    }
-                                    let edits_result = lsp_store
-                                        .update(cx, |lsp_store, cx| {
-                                            lsp_store.as_local_mut().unwrap().edits_from_lsp(
-                                                &buffer.handle,
-                                                lsp_edits,
-                                                server.server_id(),
-                                                op.text_document.version,
-                                                cx,
-                                            )
-                                        })?
-                                        .await;
-                                    let Ok(resolved_edits) = edits_result else {
-                                        zlog::warn!(
-                                            logger =>
-                                            "Failed to resolve edits from LSP for buffer {:?} while handling {}",
-                                            buffer_path_abs.as_path(),
-                                            describe_code_action(&action),
-                                        );
-                                        continue 'actions;
-                                    };
-                                    edits.extend(resolved_edits);
-                                }
-
-                                if edits.is_empty() {
-                                    zlog::warn!(logger => "No edits resolved from LSP");
-                                    continue;
-                                }
-
-                                extend_formatting_transaction(
-                                    buffer,
-                                    formatting_transaction_id,
-                                    cx,
-                                    |buffer, cx| {
-                                        zlog::info!(
-                                            "Applying edits {edits:?}. Content: {:?}",
-                                            buffer.text()
-                                        );
-                                        buffer.edit(edits, None, cx);
-                                        zlog::info!(
-                                            "Applied edits. New Content: {:?}",
-                                            buffer.text()
-                                        );
-                                    },
-                                )?;
+                            } else if let Some(changes) = edit.changes {
+                                operations.extend(changes.into_iter().map(|(uri, edits)| {
+                                    lsp::DocumentChangeOperation::Edit(lsp::TextDocumentEdit {
+                                        text_document:
+                                            lsp::OptionalVersionedTextDocumentIdentifier {
+                                                uri,
+                                                version: None,
+                                            },
+                                        edits: edits.into_iter().map(Edit::Plain).collect(),
+                                    })
+                                }));
                             }
 
-                            if let Some(command) = action.lsp_action.command() {
-                                zlog::warn!(
-                                    logger =>
-                                    "Executing code action command '{}'. This may cause formatting to abort unnecessarily as well as splitting formatting into two entries in the undo history",
-                                    &command.command,
-                                );
+                            let mut edits = Vec::with_capacity(operations.len());
 
-                                // bail early if command is invalid
-                                let server_capabilities = server.capabilities();
-                                let available_commands = server_capabilities
-                                    .execute_command_provider
-                                    .as_ref()
-                                    .map(|options| options.commands.as_slice())
-                                    .unwrap_or_default();
-                                if !available_commands.contains(&command.command) {
+                            if operations.is_empty() {
+                                zlog::trace!(
+                                    logger =>
+                                    "No changes for code action. Skipping {}",
+                                    describe_code_action(&action),
+                                );
+                                continue;
+                            }
+                            for operation in operations {
+                                let op = match operation {
+                                    lsp::DocumentChangeOperation::Edit(op) => op,
+                                    lsp::DocumentChangeOperation::Op(_) => {
+                                        zlog::warn!(
+                                            logger =>
+                                            "Code actions which create, delete, or rename files are not supported on format. Skipping {}",
+                                            describe_code_action(&action),
+                                        );
+                                        continue 'actions;
+                                    }
+                                };
+                                let Ok(file_path) = op.text_document.uri.to_file_path() else {
                                     zlog::warn!(
                                         logger =>
-                                        "Cannot execute a command {} not listed in the language server capabilities of server {}",
-                                        command.command,
-                                        server.name(),
+                                        "Failed to convert URI '{:?}' to file path. Skipping {}",
+                                        &op.text_document.uri,
+                                        describe_code_action(&action),
                                     );
-                                    continue;
-                                }
-
-                                // noop so we just ensure buffer hasn't been edited since resolving code actions
-                                extend_formatting_transaction(
-                                    buffer,
-                                    formatting_transaction_id,
-                                    cx,
-                                    |_, _| {},
-                                )?;
-                                zlog::info!(logger => "Executing command {}", &command.command);
-
-                                lsp_store.update(cx, |this, _| {
-                                    this.as_local_mut()
-                                        .unwrap()
-                                        .last_workspace_edits_by_language_server
-                                        .remove(&server.server_id());
-                                })?;
-
-                                let execute_command_result = server
-                                    .request::<lsp::request::ExecuteCommand>(
-                                        lsp::ExecuteCommandParams {
-                                            command: command.command.clone(),
-                                            arguments: command
-                                                .arguments
-                                                .clone()
-                                                .unwrap_or_default(),
-                                            ..Default::default()
-                                        },
-                                    )
-                                    .await
-                                    .into_response();
-
-                                if execute_command_result.is_err() {
-                                    zlog::error!(
+                                    continue 'actions;
+                                };
+                                if &file_path != buffer_path_abs {
+                                    zlog::warn!(
                                         logger =>
-                                        "Failed to execute command '{}' as part of {}",
-                                        &command.command,
+                                        "File path '{:?}' does not match buffer path '{:?}'. Skipping {}",
+                                        file_path,
+                                        buffer_path_abs,
                                         describe_code_action(&action),
                                     );
                                     continue 'actions;
                                 }
 
-                                let mut project_transaction_command =
-                                    lsp_store.update(cx, |this, _| {
-                                        this.as_local_mut()
-                                            .unwrap()
-                                            .last_workspace_edits_by_language_server
-                                            .remove(&server.server_id())
-                                            .unwrap_or_default()
-                                    })?;
-
-                                if let Some(transaction) =
-                                    project_transaction_command.0.remove(&buffer.handle)
-                                {
-                                    zlog::trace!(
-                                        logger =>
-                                        "Successfully captured {} edits that resulted from command {}",
-                                        transaction.edit_ids.len(),
-                                        &command.command,
-                                    );
-                                    let transaction_id_project_transaction = transaction.id;
-                                    buffer.handle.update(cx, |buffer, _| {
-                                        // it may have been removed from history if push_to_history was
-                                        // false in deserialize_workspace_edit. If so push it so we
-                                        // can merge it with the format transaction
-                                        // and pop the combined transaction off the history stack
-                                        // later if push_to_history is false
-                                        if buffer.get_transaction(transaction.id).is_none() {
-                                            buffer.push_transaction(transaction, Instant::now());
+                                let mut lsp_edits = Vec::new();
+                                for edit in op.edits {
+                                    match edit {
+                                        Edit::Plain(edit) => {
+                                            if !lsp_edits.contains(&edit) {
+                                                lsp_edits.push(edit);
+                                            }
                                         }
-                                        buffer.merge_transactions(
-                                            transaction_id_project_transaction,
-                                            formatting_transaction_id,
-                                        );
-                                    })?;
-                                }
-
-                                if !project_transaction_command.0.is_empty() {
-                                    let mut extra_buffers = String::new();
-                                    for buffer in project_transaction_command.0.keys() {
-                                        buffer
-                                            .read_with(cx, |b, cx| {
-                                                if let Some(path) = b.project_path(cx) {
-                                                    if !extra_buffers.is_empty() {
-                                                        extra_buffers.push_str(", ");
-                                                    }
-                                                    extra_buffers.push_str(path.path.as_unix_str());
-                                                }
-                                            })
-                                            .ok();
+                                        Edit::Annotated(edit) => {
+                                            if !lsp_edits.contains(&edit.text_edit) {
+                                                lsp_edits.push(edit.text_edit);
+                                            }
+                                        }
+                                        Edit::Snippet(_) => {
+                                            zlog::warn!(
+                                                logger =>
+                                                "Code actions which produce snippet edits are not supported during formatting. Skipping {}",
+                                                describe_code_action(&action),
+                                            );
+                                            continue 'actions;
+                                        }
                                     }
+                                }
+                                let edits_result = lsp_store
+                                    .update(cx, |lsp_store, cx| {
+                                        lsp_store.as_local_mut().unwrap().edits_from_lsp(
+                                            &buffer.handle,
+                                            lsp_edits,
+                                            server.server_id(),
+                                            op.text_document.version,
+                                            cx,
+                                        )
+                                    })?
+                                    .await;
+                                let Ok(resolved_edits) = edits_result else {
                                     zlog::warn!(
                                         logger =>
-                                        "Unexpected edits to buffers other than the buffer actively being formatted due to command {}. Impacted buffers: [{}].",
-                                        &command.command,
-                                        extra_buffers,
+                                        "Failed to resolve edits from LSP for buffer {:?} while handling {}",
+                                        buffer_path_abs.as_path(),
+                                        describe_code_action(&action),
                                     );
-                                    // NOTE: if this case is hit, the proper thing to do is to for each buffer, merge the extra transaction
-                                    // into the existing transaction in project_transaction if there is one, and if there isn't one in project_transaction,
-                                    // add it so it's included, and merge it into the format transaction when its created later
+                                    continue 'actions;
+                                };
+                                edits.extend(resolved_edits);
+                            }
+
+                            if edits.is_empty() {
+                                zlog::warn!(logger => "No edits resolved from LSP");
+                                continue;
+                            }
+
+                            extend_formatting_transaction(
+                                buffer,
+                                formatting_transaction_id,
+                                cx,
+                                |buffer, cx| {
+                                    zlog::info!(
+                                        "Applying edits {edits:?}. Content: {:?}",
+                                        buffer.text()
+                                    );
+                                    buffer.edit(edits, None, cx);
+                                    zlog::info!("Applied edits. New Content: {:?}", buffer.text());
+                                },
+                            )?;
+                        }
+
+                        if let Some(command) = action.lsp_action.command() {
+                            zlog::warn!(
+                                logger =>
+                                "Executing code action command '{}'. This may cause formatting to abort unnecessarily as well as splitting formatting into two entries in the undo history",
+                                &command.command,
+                            );
+
+                            // bail early if command is invalid
+                            let server_capabilities = server.capabilities();
+                            let available_commands = server_capabilities
+                                .execute_command_provider
+                                .as_ref()
+                                .map(|options| options.commands.as_slice())
+                                .unwrap_or_default();
+                            if !available_commands.contains(&command.command) {
+                                zlog::warn!(
+                                    logger =>
+                                    "Cannot execute a command {} not listed in the language server capabilities of server {}",
+                                    command.command,
+                                    server.name(),
+                                );
+                                continue;
+                            }
+
+                            // noop so we just ensure buffer hasn't been edited since resolving code actions
+                            extend_formatting_transaction(
+                                buffer,
+                                formatting_transaction_id,
+                                cx,
+                                |_, _| {},
+                            )?;
+                            zlog::info!(logger => "Executing command {}", &command.command);
+
+                            lsp_store.update(cx, |this, _| {
+                                this.as_local_mut()
+                                    .unwrap()
+                                    .last_workspace_edits_by_language_server
+                                    .remove(&server.server_id());
+                            })?;
+
+                            let execute_command_result = server
+                                .request::<lsp::request::ExecuteCommand>(
+                                    lsp::ExecuteCommandParams {
+                                        command: command.command.clone(),
+                                        arguments: command.arguments.clone().unwrap_or_default(),
+                                        ..Default::default()
+                                    },
+                                )
+                                .await
+                                .into_response();
+
+                            if execute_command_result.is_err() {
+                                zlog::error!(
+                                    logger =>
+                                    "Failed to execute command '{}' as part of {}",
+                                    &command.command,
+                                    describe_code_action(&action),
+                                );
+                                continue 'actions;
+                            }
+
+                            let mut project_transaction_command =
+                                lsp_store.update(cx, |this, _| {
+                                    this.as_local_mut()
+                                        .unwrap()
+                                        .last_workspace_edits_by_language_server
+                                        .remove(&server.server_id())
+                                        .unwrap_or_default()
+                                })?;
+
+                            if let Some(transaction) =
+                                project_transaction_command.0.remove(&buffer.handle)
+                            {
+                                zlog::trace!(
+                                    logger =>
+                                    "Successfully captured {} edits that resulted from command {}",
+                                    transaction.edit_ids.len(),
+                                    &command.command,
+                                );
+                                let transaction_id_project_transaction = transaction.id;
+                                buffer.handle.update(cx, |buffer, _| {
+                                    // it may have been removed from history if push_to_history was
+                                    // false in deserialize_workspace_edit. If so push it so we
+                                    // can merge it with the format transaction
+                                    // and pop the combined transaction off the history stack
+                                    // later if push_to_history is false
+                                    if buffer.get_transaction(transaction.id).is_none() {
+                                        buffer.push_transaction(transaction, Instant::now());
+                                    }
+                                    buffer.merge_transactions(
+                                        transaction_id_project_transaction,
+                                        formatting_transaction_id,
+                                    );
+                                })?;
+                            }
+
+                            if !project_transaction_command.0.is_empty() {
+                                let mut extra_buffers = String::new();
+                                for buffer in project_transaction_command.0.keys() {
+                                    buffer
+                                        .read_with(cx, |b, cx| {
+                                            if let Some(path) = b.project_path(cx) {
+                                                if !extra_buffers.is_empty() {
+                                                    extra_buffers.push_str(", ");
+                                                }
+                                                extra_buffers.push_str(path.path.as_unix_str());
+                                            }
+                                        })
+                                        .ok();
                                 }
+                                zlog::warn!(
+                                    logger =>
+                                    "Unexpected edits to buffers other than the buffer actively being formatted due to command {}. Impacted buffers: [{}].",
+                                    &command.command,
+                                    extra_buffers,
+                                );
+                                // NOTE: if this case is hit, the proper thing to do is to for each buffer, merge the extra transaction
+                                // into the existing transaction in project_transaction if there is one, and if there isn't one in project_transaction,
+                                // add it so it's included, and merge it into the format transaction when its created later
                             }
                         }
                     }
@@ -3540,12 +3524,6 @@ struct CodeLensData {
     lens_for_version: Global,
     lens: HashMap<LanguageServerId, Vec<CodeAction>>,
     update: Option<(Global, CodeLensTask)>,
-}
-
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub enum LspFetchStrategy {
-    IgnoreCache,
-    UseCache { known_cache_version: Option<usize> },
 }
 
 #[derive(Debug)]
@@ -6545,47 +6523,35 @@ impl LspStore {
 
     pub fn document_colors(
         &mut self,
-        fetch_strategy: LspFetchStrategy,
+        known_cache_version: Option<usize>,
         buffer: Entity<Buffer>,
         cx: &mut Context<Self>,
     ) -> Option<DocumentColorTask> {
         let version_queried_for = buffer.read(cx).version();
         let buffer_id = buffer.read(cx).remote_id();
 
-        match fetch_strategy {
-            LspFetchStrategy::IgnoreCache => {}
-            LspFetchStrategy::UseCache {
-                known_cache_version,
-            } => {
-                if let Some(cached_data) = self.lsp_document_colors.get(&buffer_id)
-                    && !version_queried_for.changed_since(&cached_data.colors_for_version)
-                {
-                    let has_different_servers = self.as_local().is_some_and(|local| {
-                        local
-                            .buffers_opened_in_servers
-                            .get(&buffer_id)
-                            .cloned()
-                            .unwrap_or_default()
-                            != cached_data.colors.keys().copied().collect()
-                    });
-                    if !has_different_servers {
-                        if Some(cached_data.cache_version) == known_cache_version {
-                            return None;
-                        } else {
-                            return Some(
-                                Task::ready(Ok(DocumentColors {
-                                    colors: cached_data
-                                        .colors
-                                        .values()
-                                        .flatten()
-                                        .cloned()
-                                        .collect(),
-                                    cache_version: Some(cached_data.cache_version),
-                                }))
-                                .shared(),
-                            );
-                        }
-                    }
+        if let Some(cached_data) = self.lsp_document_colors.get(&buffer_id)
+            && !version_queried_for.changed_since(&cached_data.colors_for_version)
+        {
+            let has_different_servers = self.as_local().is_some_and(|local| {
+                local
+                    .buffers_opened_in_servers
+                    .get(&buffer_id)
+                    .cloned()
+                    .unwrap_or_default()
+                    != cached_data.colors.keys().copied().collect()
+            });
+            if !has_different_servers {
+                if Some(cached_data.cache_version) == known_cache_version {
+                    return None;
+                } else {
+                    return Some(
+                        Task::ready(Ok(DocumentColors {
+                            colors: cached_data.colors.values().flatten().cloned().collect(),
+                            cache_version: Some(cached_data.cache_version),
+                        }))
+                        .shared(),
+                    );
                 }
             }
         }
@@ -6611,13 +6577,12 @@ impl LspStore {
                     .map_err(Arc::new);
                 let fetched_colors = match fetched_colors {
                     Ok(fetched_colors) => {
-                        if fetch_strategy != LspFetchStrategy::IgnoreCache
-                            && Some(true)
-                                == buffer
-                                    .update(cx, |buffer, _| {
-                                        buffer.version() != query_version_queried_for
-                                    })
-                                    .ok()
+                        if Some(true)
+                            == buffer
+                                .update(cx, |buffer, _| {
+                                    buffer.version() != query_version_queried_for
+                                })
+                                .ok()
                         {
                             return Ok(DocumentColors::default());
                         }
@@ -7221,7 +7186,7 @@ impl LspStore {
 
             language_server
                 .notify::<lsp::notification::DidChangeTextDocument>(
-                    &lsp::DidChangeTextDocumentParams {
+                    lsp::DidChangeTextDocumentParams {
                         text_document: lsp::VersionedTextDocumentIdentifier::new(
                             uri.clone(),
                             next_version,
@@ -7258,7 +7223,7 @@ impl LspStore {
                 };
                 server
                     .notify::<lsp::notification::DidSaveTextDocument>(
-                        &lsp::DidSaveTextDocumentParams {
+                        lsp::DidSaveTextDocumentParams {
                             text_document: text_document.clone(),
                             text,
                         },
@@ -7329,7 +7294,7 @@ impl LspStore {
                                             .ok()?;
                                         server
                                             .notify::<lsp::notification::DidChangeConfiguration>(
-                                                &lsp::DidChangeConfigurationParams { settings },
+                                                lsp::DidChangeConfigurationParams { settings },
                                             )
                                             .ok()?;
                                         Some(())
@@ -8551,15 +8516,16 @@ impl LspStore {
         cx: AsyncApp,
     ) -> Result<proto::Ack> {
         let server_id = LanguageServerId(envelope.payload.language_server_id as usize);
-        lsp_store.read_with(&cx, |lsp_store, _| {
+        let task = lsp_store.read_with(&cx, |lsp_store, _| {
             if let Some(server) = lsp_store.language_server_for_id(server_id) {
-                server
-                    .notify::<lsp_store::lsp_ext_command::LspExtCancelFlycheck>(&())
-                    .context("handling lsp ext cancel flycheck")
+                Some(server.notify::<lsp_store::lsp_ext_command::LspExtCancelFlycheck>(()))
             } else {
-                anyhow::Ok(())
+                None
             }
-        })??;
+        })?;
+        if let Some(task) = task {
+            task.context("handling lsp ext cancel flycheck")?;
+        }
 
         Ok(proto::Ack {})
     }
@@ -8593,14 +8559,11 @@ impl LspStore {
                 } else {
                     None
                 };
-                server
-                    .notify::<lsp_store::lsp_ext_command::LspExtRunFlycheck>(
-                        &lsp_store::lsp_ext_command::RunFlycheckParams { text_document },
-                    )
-                    .context("handling lsp ext run flycheck")
-            } else {
-                anyhow::Ok(())
+                server.notify::<lsp_store::lsp_ext_command::LspExtRunFlycheck>(
+                    lsp_store::lsp_ext_command::RunFlycheckParams { text_document },
+                )?;
             }
+            anyhow::Ok(())
         })??;
 
         Ok(proto::Ack {})
@@ -8612,15 +8575,15 @@ impl LspStore {
         cx: AsyncApp,
     ) -> Result<proto::Ack> {
         let server_id = LanguageServerId(envelope.payload.language_server_id as usize);
-        lsp_store.read_with(&cx, |lsp_store, _| {
-            if let Some(server) = lsp_store.language_server_for_id(server_id) {
-                server
-                    .notify::<lsp_store::lsp_ext_command::LspExtClearFlycheck>(&())
-                    .context("handling lsp ext clear flycheck")
-            } else {
-                anyhow::Ok(())
-            }
-        })??;
+        lsp_store
+            .read_with(&cx, |lsp_store, _| {
+                if let Some(server) = lsp_store.language_server_for_id(server_id) {
+                    Some(server.notify::<lsp_store::lsp_ext_command::LspExtClearFlycheck>(()))
+                } else {
+                    None
+                }
+            })
+            .context("handling lsp ext clear flycheck")?;
 
         Ok(proto::Ack {})
     }
@@ -8759,7 +8722,7 @@ impl LspStore {
 
                 if filter.should_send_did_rename(&old_uri, is_dir) {
                     language_server
-                        .notify::<DidRenameFiles>(&RenameFilesParams {
+                        .notify::<DidRenameFiles>(RenameFilesParams {
                             files: vec![FileRename {
                                 old_uri: old_uri.clone(),
                                 new_uri: new_uri.clone(),
@@ -8873,7 +8836,7 @@ impl LspStore {
             if !changes.is_empty() {
                 server
                     .notify::<lsp::notification::DidChangeWatchedFiles>(
-                        &lsp::DidChangeWatchedFilesParams { changes },
+                        lsp::DidChangeWatchedFilesParams { changes },
                     )
                     .ok();
             }
@@ -9414,11 +9377,7 @@ impl LspStore {
                         name: symbol.name,
                         kind: symbol.kind,
                         range: symbol.range,
-                        label: CodeLabel {
-                            text: Default::default(),
-                            runs: Default::default(),
-                            filter_range: Default::default(),
-                        },
+                        label: CodeLabel::default(),
                     },
                     cx,
                 )
@@ -9608,11 +9567,7 @@ impl LspStore {
                     new_text: completion.new_text,
                     source: completion.source,
                     documentation: None,
-                    label: CodeLabel {
-                        text: Default::default(),
-                        runs: Default::default(),
-                        filter_range: Default::default(),
-                    },
+                    label: CodeLabel::default(),
                     insert_text_mode: None,
                     icon_path: None,
                     confirm: None,
@@ -10683,7 +10638,7 @@ impl LspStore {
                     if progress.is_cancellable {
                         server
                             .notify::<lsp::notification::WorkDoneProgressCancel>(
-                                &WorkDoneProgressCancelParams {
+                                WorkDoneProgressCancelParams {
                                     token: lsp::NumberOrString::String(token.clone()),
                                 },
                             )
@@ -10814,7 +10769,7 @@ impl LspStore {
                 };
                 if !params.changes.is_empty() {
                     server
-                        .notify::<lsp::notification::DidChangeWatchedFiles>(&params)
+                        .notify::<lsp::notification::DidChangeWatchedFiles>(params)
                         .ok();
                 }
             }
@@ -11495,9 +11450,25 @@ impl LspStore {
                         .map(serde_json::from_value)
                         .transpose()?
                     {
+                        let state = self
+                            .as_local_mut()
+                            .context("Expected LSP Store to be local")?
+                            .language_servers
+                            .get_mut(&server_id)
+                            .context("Could not obtain Language Servers state")?;
                         server.update_capabilities(|capabilities| {
                             capabilities.diagnostic_provider = Some(caps);
                         });
+                        if let LanguageServerState::Running {
+                            workspace_refresh_task,
+                            ..
+                        } = state
+                            && workspace_refresh_task.is_none()
+                        {
+                            *workspace_refresh_task =
+                                lsp_workspace_diagnostics_refresh(server.clone(), cx)
+                        }
+
                         notify_server_capabilities_updated(&server, cx);
                     }
                 }
@@ -11661,6 +11632,19 @@ impl LspStore {
                     server.update_capabilities(|capabilities| {
                         capabilities.diagnostic_provider = None;
                     });
+                    let state = self
+                        .as_local_mut()
+                        .context("Expected LSP Store to be local")?
+                        .language_servers
+                        .get_mut(&server_id)
+                        .context("Could not obtain Language Servers state")?;
+                    if let LanguageServerState::Running {
+                        workspace_refresh_task,
+                        ..
+                    } = state
+                    {
+                        _ = workspace_refresh_task.take();
+                    }
                     notify_server_capabilities_updated(&server, cx);
                 }
                 "textDocument/documentColor" => {
@@ -12770,23 +12754,20 @@ impl LspAdapterDelegate for LocalLspAdapterDelegate {
         return Ok(None);
     }
 
-    #[cfg(not(target_os = "windows"))]
     async fn which(&self, command: &OsStr) -> Option<PathBuf> {
-        let worktree_abs_path = self.worktree.abs_path();
+        let mut worktree_abs_path = self.worktree_root_path().to_path_buf();
+        if self.fs.is_file(&worktree_abs_path).await {
+            worktree_abs_path.pop();
+        }
         let shell_path = self.shell_env().await.get("PATH").cloned();
         which::which_in(command, shell_path.as_ref(), worktree_abs_path).ok()
     }
 
-    #[cfg(target_os = "windows")]
-    async fn which(&self, command: &OsStr) -> Option<PathBuf> {
-        // todo(windows) Getting the shell env variables in a current directory on Windows is more complicated than other platforms
-        //               there isn't a 'default shell' necessarily. The closest would be the default profile on the windows terminal
-        //               SEE: https://learn.microsoft.com/en-us/windows/terminal/customize-settings/startup
-        which::which(command).ok()
-    }
-
     async fn try_exec(&self, command: LanguageServerBinary) -> Result<()> {
-        let working_dir = self.worktree_root_path();
+        let mut working_dir = self.worktree_root_path().to_path_buf();
+        if self.fs.is_file(&working_dir).await {
+            working_dir.pop();
+        }
         let output = util::command::new_smol_command(&command.path)
             .args(command.arguments)
             .envs(command.env.clone().unwrap_or_default())
@@ -13083,19 +13064,19 @@ mod tests {
 
     #[test]
     fn test_multi_len_chars_normalization() {
-        let mut label = CodeLabel {
-            text: "myElˇ (parameter) myElˇ: {\n    foo: string;\n}".to_string(),
-            runs: vec![(0..6, HighlightId(1))],
-            filter_range: 0..6,
-        };
+        let mut label = CodeLabel::new(
+            "myElˇ (parameter) myElˇ: {\n    foo: string;\n}".to_string(),
+            0..6,
+            vec![(0..6, HighlightId(1))],
+        );
         ensure_uniform_list_compatible_label(&mut label);
         assert_eq!(
             label,
-            CodeLabel {
-                text: "myElˇ (parameter) myElˇ: { foo: string; }".to_string(),
-                runs: vec![(0..6, HighlightId(1))],
-                filter_range: 0..6,
-            }
+            CodeLabel::new(
+                "myElˇ (parameter) myElˇ: { foo: string; }".to_string(),
+                0..6,
+                vec![(0..6, HighlightId(1))],
+            )
         );
     }
 }

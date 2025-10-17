@@ -194,7 +194,19 @@ pub enum DefaultAgentView {
     TextThread,
 }
 
-#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
+#[derive(
+    Copy,
+    Clone,
+    Default,
+    Debug,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum NotifyWhenAgentWaiting {
     #[default]
@@ -282,6 +294,7 @@ impl From<&str> for LanguageModelProviderSetting {
 pub struct AllAgentServersSettings {
     pub gemini: Option<BuiltinAgentServerSettings>,
     pub claude: Option<BuiltinAgentServerSettings>,
+    pub codex: Option<BuiltinAgentServerSettings>,
 
     /// Custom agent servers configured by the user
     #[serde(flatten)]

@@ -1,4 +1,5 @@
 {
+  "$schema": "zed://schemas/settings",
   /// The displayed name of this project. If not set or empty, the root directory name
   /// will be displayed.
   "project_name": "",
@@ -74,8 +75,10 @@
   "ui_font_weight": 400,
   // The default font size for text in the UI
   "ui_font_size": 16,
-  // The default font size for text in the agent panel. Falls back to the UI font size if unset.
-  "agent_font_size": null,
+  // The default font size for agent responses in the agent panel. Falls back to the UI font size if unset.
+  "agent_ui_font_size": null,
+  // The default font size for user messages in the agent panel.
+  "agent_buffer_font_size": 12,
   // How much to fade out unused code.
   "unnecessary_code_fade": 0.3,
   // Active pane styling settings.
@@ -719,7 +722,11 @@
     // Whether to enable drag-and-drop operations in the project panel.
     "drag_and_drop": true,
     // Whether to hide the root entry when only one folder is open in the window.
-    "hide_root": false
+    "hide_root": false,
+    // Whether to hide the hidden entries in the project panel.
+    "hide_hidden": false,
+    // Whether to automatically open files when pasting them in the project panel.
+    "open_file_on_paste": true
   },
   "outline_panel": {
     // Whether to show the outline panel button in the status bar
@@ -901,6 +908,7 @@
           "now": true,
           "find_path": true,
           "read_file": true,
+          "open": true,
           "grep": true,
           "terminal": true,
           "thinking": true,
@@ -912,7 +920,6 @@
         // We don't know which of the context server tools are safe for the "Ask" profile, so we don't enable them by default.
         // "enable_all_context_servers": true,
         "tools": {
-          "contents": true,
           "diagnostics": true,
           "fetch": true,
           "list_directory": true,
@@ -1099,25 +1106,31 @@
   // Removes any lines containing only whitespace at the end of the file and
   // ensures just one newline at the end.
   "ensure_final_newline_on_save": true,
-  // Whether or not to perform a buffer format before saving: [on, off, prettier, language_server]
+  // Whether or not to perform a buffer format before saving: [on, off]
   // Keep in mind, if the autosave with delay is enabled, format_on_save will be ignored
   "format_on_save": "on",
-  // How to perform a buffer format. This setting can take 4 values:
+  // How to perform a buffer format. This setting can take multiple values:
   //
-  // 1. Format code using the current language server:
+  // 1. Default. Format files using Zed's Prettier integration (if applicable),
+  //    or falling back to formatting via language server:
+  //     "formatter": "auto"
+  // 2. Format code using the current language server:
   //     "formatter": "language_server"
-  // 2. Format code using an external command:
+  // 3. Format code using a specific language server:
+  //     "formatter": {"language_server": {"name": "ruff"}}
+  // 4. Format code using an external command:
   //     "formatter": {
   //       "external": {
   //         "command": "prettier",
   //         "arguments": ["--stdin-filepath", "{buffer_path}"]
   //       }
   //     }
-  // 3. Format code using Zed's Prettier integration:
+  // 5. Format code using Zed's Prettier integration:
   //     "formatter": "prettier"
-  // 4. Default. Format files using Zed's Prettier integration (if applicable),
-  //    or falling back to formatting via language server:
-  //     "formatter": "auto"
+  // 6. Format code using a code action
+  //     "formatter": {"code_action": "source.fixAll.eslint"}
+  // 7. An array of any format step specified above to apply in order
+  //     "formatter": [{"code_action": "source.fixAll.eslint"}, "prettier"]
   "formatter": "auto",
   // How to soft-wrap long lines of text.
   // Possible values:
@@ -1229,6 +1242,10 @@
     // 2. Hide the gutter
     //      "git_gutter": "hide"
     "git_gutter": "tracked_files",
+    /// Sets the debounce threshold (in milliseconds) after which changes are reflected in the git gutter.
+    ///
+    /// Default: 0
+    "gutter_debounce": 0,
     // Control whether the git blame information is shown inline,
     // in the currently focused line.
     "inline_blame": {
@@ -1305,15 +1322,18 @@
     //   "proxy": "",
     //   "proxy_no_verify": false
     // },
-    // Whether edit predictions are enabled when editing text threads.
-    // This setting has no effect if globally disabled.
-    "enabled_in_text_threads": true,
-
     "copilot": {
       "enterprise_uri": null,
       "proxy": null,
       "proxy_no_verify": null
-    }
+    },
+    "codestral": {
+      "model": null,
+      "max_tokens": null
+    },
+    // Whether edit predictions are enabled when editing text threads.
+    // This setting has no effect if globally disabled.
+    "enabled_in_text_threads": true
   },
   // Settings specific to journaling
   "journal": {
@@ -1327,6 +1347,8 @@
   },
   // Status bar-related settings.
   "status_bar": {
+    // Whether to show the status bar.
+    "experimental.show": true,
     // Whether to show the active language button in the status bar.
     "active_language_button": true,
     // Whether to show the cursor position button in the status bar.
@@ -1393,8 +1415,8 @@
     //  4. A box drawn around the following character
     //     "hollow"
     //
-    // Default: not set, defaults to "block"
-    "cursor_shape": null,
+    // Default: "block"
+    "cursor_shape": "block",
     // Set whether Alternate Scroll mode (code: ?1007) is active by default.
     // Alternate Scroll mode converts mouse scroll events into up / down key
     // presses when in the alternate screen (e.g. when running applications
@@ -1416,8 +1438,8 @@
     // Whether or not selecting text in the terminal will automatically
     // copy to the system clipboard.
     "copy_on_select": false,
-    // Whether to keep the text selection after copying it to the clipboard
-    "keep_selection_on_copy": false,
+    // Whether to keep the text selection after copying it to the clipboard.
+    "keep_selection_on_copy": true,
     // Whether to show the terminal button in the status bar
     "button": true,
     // Any key-value pairs added to this list will be added to the terminal's
@@ -1562,6 +1584,14 @@
   "auto_install_extensions": {
     "html": true
   },
+  // The capabilities granted to extensions.
+  //
+  // This list can be customized to restrict what extensions are able to do.
+  "granted_extension_capabilities": [
+    { "kind": "process:exec", "command": "*", "args": ["**"] },
+    { "kind": "download_file", "host": "*", "path": ["**"] },
+    { "kind": "npm:install", "package": "*" }
+  ],
   // Controls how completions are processed for this language.
   "completions": {
     // Controls how words are completed.
@@ -1860,21 +1890,19 @@
   // Allows to enable/disable formatting with Prettier
   // and configure default Prettier, used when no project-level Prettier installation is found.
   "prettier": {
-    // // Whether to consider prettier formatter or not when attempting to format a file.
-    "allowed": false
-    //
-    // // Use regular Prettier json configuration.
-    // // If Prettier is allowed, Zed will use this for its Prettier instance for any applicable file, if
-    // // the project has no other Prettier installed.
-    // "plugins": [],
-    //
-    // // Use regular Prettier json configuration.
-    // // If Prettier is allowed, Zed will use this for its Prettier instance for any applicable file, if
-    // // the project has no other Prettier installed.
+    // Enables or disables formatting with Prettier for any given language.
+    "allowed": false,
+    // Forces Prettier integration to use a specific parser name when formatting files with the language.
+    "plugins": [],
+    // Default Prettier options, in the format as in package.json section for Prettier.
+    // If project installs Prettier via its package.json, these options will be ignored.
     // "trailingComma": "es5",
     // "tabWidth": 4,
     // "semi": false,
     // "singleQuote": true
+    // Forces Prettier integration to use a specific parser name when formatting files with the language
+    // when set to a non-empty string.
+    "parser": ""
   },
   // Settings for auto-closing of JSX tags.
   "jsx_tag_auto_close": {
@@ -2024,7 +2052,7 @@
   // Examples:
   // "profiles": {
   //   "Presenting": {
-  //     "agent_font_size": 20.0,
+  //     "agent_ui_font_size": 20.0,
   //     "buffer_font_size": 20.0,
   //     "theme": "One Light",
   //     "ui_font_size": 20.0
@@ -2037,7 +2065,7 @@
   //     }
   //   }
   // }
-  "profiles": [],
+  "profiles": {},
 
   // A map of log scopes to the desired log level.
   // Useful for filtering out noisy logs or enabling more verbose logging.

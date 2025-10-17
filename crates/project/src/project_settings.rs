@@ -4,7 +4,7 @@ use context_server::ContextServerCommand;
 use dap::adapters::DebugAdapterName;
 use fs::Fs;
 use futures::StreamExt as _;
-use gpui::{App, AsyncApp, BorrowAppContext, Context, Entity, EventEmitter, Subscription, Task};
+use gpui::{AsyncApp, BorrowAppContext, Context, Entity, EventEmitter, Subscription, Task};
 use lsp::LanguageServerName;
 use paths::{
     EDITORCONFIG_NAME, local_debug_file_relative_path, local_settings_file_relative_path,
@@ -215,6 +215,7 @@ impl From<settings::DiagnosticSeverityContent> for DiagnosticSeverity {
             settings::DiagnosticSeverityContent::Warning => DiagnosticSeverity::Warning,
             settings::DiagnosticSeverityContent::Info => DiagnosticSeverity::Info,
             settings::DiagnosticSeverityContent::Hint => DiagnosticSeverity::Hint,
+            settings::DiagnosticSeverityContent::All => DiagnosticSeverity::Hint,
         }
     }
 }
@@ -300,8 +301,8 @@ pub struct GitSettings {
     pub git_gutter: settings::GitGutterSetting,
     /// Sets the debounce threshold (in milliseconds) after which changes are reflected in the git gutter.
     ///
-    /// Default: null
-    pub gutter_debounce: Option<u64>,
+    /// Default: 0
+    pub gutter_debounce: u64,
     /// Whether or not to show git blame data inline in
     /// the currently focused line.
     ///
@@ -437,7 +438,7 @@ pub struct LspPullDiagnosticsSettings {
 }
 
 impl Settings for ProjectSettings {
-    fn from_settings(content: &settings::SettingsContent, _cx: &mut App) -> Self {
+    fn from_settings(content: &settings::SettingsContent) -> Self {
         let project = &content.project.clone();
         let diagnostics = content.diagnostics.as_ref().unwrap();
         let lsp_pull_diagnostics = diagnostics.lsp_pull_diagnostics.as_ref().unwrap();
@@ -446,7 +447,7 @@ impl Settings for ProjectSettings {
         let git = content.git.as_ref().unwrap();
         let git_settings = GitSettings {
             git_gutter: git.git_gutter.unwrap(),
-            gutter_debounce: git.gutter_debounce,
+            gutter_debounce: git.gutter_debounce.unwrap_or_default(),
             inline_blame: {
                 let inline = git.inline_blame.unwrap();
                 InlineBlameSettings {

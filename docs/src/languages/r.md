@@ -72,7 +72,7 @@ You can configure the [R languageserver settings](https://github.com/REditorSupp
 
 For example to disable Lintr linting and suppress code snippet suggestions (both enabled by default):
 
-```json
+```json [settings]
 {
   "lsp": {
     "r_language_server": {

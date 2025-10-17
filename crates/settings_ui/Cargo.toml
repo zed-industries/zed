@@ -17,22 +17,30 @@ test-support = []
 
 [dependencies]
 anyhow.workspace = true
-command_palette_hooks.workspace = true
+bm25 = "2.3.2"
+heck.workspace = true
 editor.workspace = true
 feature_flags.workspace = true
 fs.workspace = true
 fuzzy.workspace = true
 gpui.workspace = true
 menu.workspace = true
+paths.workspace = true
 project.workspace = true
+schemars.workspace = true
+search.workspace = true
 serde.workspace = true
 settings.workspace = true
 strum.workspace = true
 theme.workspace = true
+ui_input.workspace = true
 ui.workspace = true
 util.workspace = true
 workspace-hack.workspace = true
 workspace.workspace = true
+zed_actions.workspace = true
+log.workspace = true
+title_bar.workspace = true
 
 [dev-dependencies]
 assets.workspace = true
@@ -45,7 +53,4 @@ paths.workspace = true
 session.workspace = true
 settings.workspace = true
 zlog.workspace = true
-
-[[example]]
-name = "ui"
-path = "examples/ui.rs"
+pretty_assertions.workspace = true

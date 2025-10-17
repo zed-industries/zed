@@ -30,7 +30,9 @@ pub struct ProjectPanelSettings {
     pub scrollbar: ScrollbarSettings,
     pub show_diagnostics: ShowDiagnostics,
     pub hide_root: bool,
+    pub hide_hidden: bool,
     pub drag_and_drop: bool,
+    pub open_file_on_paste: bool,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -55,7 +57,7 @@ impl ScrollbarVisibility for ProjectPanelSettings {
 }
 
 impl Settings for ProjectPanelSettings {
-    fn from_settings(content: &settings::SettingsContent, _cx: &mut ui::App) -> Self {
+    fn from_settings(content: &settings::SettingsContent) -> Self {
         let project_panel = content.project_panel.clone().unwrap();
         Self {
             button: project_panel.button.unwrap(),
@@ -79,7 +81,9 @@ impl Settings for ProjectPanelSettings {
             },
             show_diagnostics: project_panel.show_diagnostics.unwrap(),
             hide_root: project_panel.hide_root.unwrap(),
+            hide_hidden: project_panel.hide_hidden.unwrap(),
             drag_and_drop: project_panel.drag_and_drop.unwrap(),
+            open_file_on_paste: project_panel.open_file_on_paste.unwrap(),
         }
     }
 

@@ -17,7 +17,7 @@ use editor::{
 use futures::StreamExt;
 use gpui::{
     Animation, AnimationExt, AnyWindowHandle, App, AppContext, AsyncApp, Entity, Task,
-    TextStyleRefinement, WeakEntity, pulsating_between, px,
+    TextStyleRefinement, WeakEntity, pulsating_between,
 };
 use indoc::formatdoc;
 use language::{
@@ -1003,7 +1003,7 @@ impl ToolCard for EditFileToolCard {
                 font_size: Some(
                     TextSize::Small
                         .rems(cx)
-                        .to_pixels(ThemeSettings::get_global(cx).agent_font_size(cx))
+                        .to_pixels(ThemeSettings::get_global(cx).agent_ui_font_size(cx))
                         .into(),
                 ),
                 ..TextStyleRefinement::default()
@@ -1102,7 +1102,7 @@ impl ToolCard for EditFileToolCard {
                     .relative()
                     .h_full()
                     .when(!self.full_height_expanded, |editor_container| {
-                        editor_container.max_h(px(COLLAPSED_LINES as f32 * editor_line_height.0))
+                        editor_container.max_h(COLLAPSED_LINES as f32 * editor_line_height)
                     })
                     .overflow_hidden()
                     .border_t_1()
@@ -1538,7 +1538,7 @@ mod tests {
                 store.update_user_settings(cx, |settings| {
                     settings.project.all_languages.defaults.format_on_save = Some(FormatOnSave::On);
                     settings.project.all_languages.defaults.formatter =
-                        Some(language::language_settings::SelectedFormatter::Auto);
+                        Some(language::language_settings::FormatterList::default());
                 });
             });
         });

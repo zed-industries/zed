@@ -13,7 +13,7 @@ By default, Zed will try to find a `clangd` in your `$PATH` and try to use that.
 
 If you want to install a pre-release `clangd` version instead you can instruct Zed to do so by setting `pre_release` to `true` in your `settings.json`:
 
-```json
+```json [settings]
 {
   "lsp": {
     "clangd": {
@@ -27,7 +27,7 @@ If you want to install a pre-release `clangd` version instead you can instruct Z
 
 If you want to disable Zed looking for a `clangd` binary, you can set `ignore_system_version` to `true` in your `settings.json`:
 
-```json
+```json [settings]
 {
   "lsp": {
     "clangd": {
@@ -41,7 +41,7 @@ If you want to disable Zed looking for a `clangd` binary, you can set `ignore_sy
 
 If you want to use a binary in a custom location, you can specify a `path` and optional `arguments`:
 
-```json
+```json [settings]
 {
   "lsp": {
     "clangd": {
@@ -60,7 +60,7 @@ This `"path"` has to be an absolute path.
 
 You can pass any number of arguments to clangd. To see a full set of available options, run `clangd --help` from the command line. For example with `--function-arg-placeholders=0` completions contain only parentheses for function calls, while the default (`--function-arg-placeholders=1`) completions also contain placeholders for method parameters.
 
-```json
+```json [settings]
 {
   "lsp": {
     "clangd": {
@@ -93,7 +93,7 @@ See [Clang-Format Style Options](https://clang.llvm.org/docs/ClangFormatStyleOpt
 
 You can trigger formatting via {#kb editor::Format} or the `editor: format` action from the command palette or by adding `format_on_save` to your Zed settings:
 
-```json
+```json [settings]
   "languages": {
     "C++": {
       "format_on_save": "on",
@@ -137,7 +137,7 @@ You can use CodeLLDB or GDB to debug native binaries. (Make sure that your build
 
 ### Build and Debug Binary
 
-```json
+```json [debug]
 [
   {
     "label": "Debug native binary",

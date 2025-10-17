@@ -9,7 +9,9 @@ use futures::io::BufReader;
 use project::Project;
 use project::agent_server_store::AgentServerCommand;
 use serde::Deserialize;
-use util::ResultExt as _;
+use settings::{Settings as _, SettingsLocation};
+use task::Shell;
+use util::{ResultExt as _, get_default_system_shell_preferring_bash};
 
 use std::path::PathBuf;
 use std::{any::Any, cell::RefCell};
@@ -19,7 +21,9 @@ use thiserror::Error;
 use anyhow::{Context as _, Result};
 use gpui::{App, AppContext as _, AsyncApp, Entity, SharedString, Task, WeakEntity};
 
-use acp_thread::{AcpThread, AuthRequired, LoadError};
+use acp_thread::{AcpThread, AuthRequired, LoadError, TerminalProviderEvent};
+use terminal::TerminalBuilder;
+use terminal::terminal_settings::{AlternateScroll, CursorShape, TerminalSettings};
 
 #[derive(Debug, Error)]
 #[error("Unsupported version")]
@@ -79,7 +83,7 @@ impl AcpConnection {
         is_remote: bool,
         cx: &mut AsyncApp,
     ) -> Result<Self> {
-        let mut child = util::command::new_smol_command(command.path);
+        let mut child = util::command::new_smol_command(&command.path);
         child
             .args(command.args.iter().map(|arg| arg.as_str()))
             .envs(command.env.iter().flatten())
@@ -94,6 +98,11 @@ impl AcpConnection {
         let stdout = child.stdout.take().context("Failed to take stdout")?;
         let stdin = child.stdin.take().context("Failed to take stdin")?;
         let stderr = child.stderr.take().context("Failed to take stderr")?;
+        log::info!(
+            "Spawning external agent server: {:?}, {:?}",
+            command.path,
+            command.args
+        );
         log::trace!("Spawned (pid: {})", child.id());
 
         let sessions = Rc::new(RefCell::new(HashMap::default()));
@@ -160,7 +169,10 @@ impl AcpConnection {
                         meta: None,
                     },
                     terminal: true,
-                    meta: None,
+                    meta: Some(serde_json::json!({
+                        // Experimental: Allow for rendering terminal output from the agents
+                        "terminal_output": true,
+                    })),
                 },
                 meta: None,
             })
@@ -380,6 +392,10 @@ impl AgentConnection for AcpConnection {
             match result {
                 Ok(response) => Ok(response),
                 Err(err) => {
+                    if err.code == acp::ErrorCode::AUTH_REQUIRED.code {
+                        return Err(anyhow!(acp::Error::auth_required()));
+                    }
+
                     if err.code != ErrorCode::INTERNAL_ERROR.code {
                         anyhow::bail!(err)
                     }
@@ -696,9 +712,99 @@ impl acp::Client for ClientDelegate {
             }
         }
 
+        // Clone so we can inspect meta both before and after handing off to the thread
+        let update_clone = notification.update.clone();
+
+        // Pre-handle: if a ToolCall carries terminal_info, create/register a display-only terminal.
+        if let acp::SessionUpdate::ToolCall(tc) = &update_clone {
+            if let Some(meta) = &tc.meta {
+                if let Some(terminal_info) = meta.get("terminal_info") {
+                    if let Some(id_str) = terminal_info.get("terminal_id").and_then(|v| v.as_str())
+                    {
+                        let terminal_id = acp::TerminalId(id_str.into());
+                        let cwd = terminal_info
+                            .get("cwd")
+                            .and_then(|v| v.as_str().map(PathBuf::from));
+
+                        // Create a minimal display-only lower-level terminal and register it.
+                        let _ = session.thread.update(&mut self.cx.clone(), |thread, cx| {
+                            let builder = TerminalBuilder::new_display_only(
+                                CursorShape::default(),
+                                AlternateScroll::On,
+                                None,
+                                0,
+                            )?;
+                            let lower = cx.new(|cx| builder.subscribe(cx));
+                            thread.on_terminal_provider_event(
+                                TerminalProviderEvent::Created {
+                                    terminal_id: terminal_id.clone(),
+                                    label: tc.title.clone(),
+                                    cwd,
+                                    output_byte_limit: None,
+                                    terminal: lower,
+                                },
+                                cx,
+                            );
+                            anyhow::Ok(())
+                        });
+                    }
+                }
+            }
+        }
+
+        // Forward the update to the acp_thread as usual.
         session.thread.update(&mut self.cx.clone(), |thread, cx| {
-            thread.handle_session_update(notification.update, cx)
+            thread.handle_session_update(notification.update.clone(), cx)
         })??;
+
+        // Post-handle: stream terminal output/exit if present on ToolCallUpdate meta.
+        if let acp::SessionUpdate::ToolCallUpdate(tcu) = &update_clone {
+            if let Some(meta) = &tcu.meta {
+                if let Some(term_out) = meta.get("terminal_output") {
+                    if let Some(id_str) = term_out.get("terminal_id").and_then(|v| v.as_str()) {
+                        let terminal_id = acp::TerminalId(id_str.into());
+                        if let Some(s) = term_out.get("data").and_then(|v| v.as_str()) {
+                            let data = s.as_bytes().to_vec();
+                            let _ = session.thread.update(&mut self.cx.clone(), |thread, cx| {
+                                thread.on_terminal_provider_event(
+                                    TerminalProviderEvent::Output {
+                                        terminal_id: terminal_id.clone(),
+                                        data,
+                                    },
+                                    cx,
+                                );
+                            });
+                        }
+                    }
+                }
+
+                // terminal_exit
+                if let Some(term_exit) = meta.get("terminal_exit") {
+                    if let Some(id_str) = term_exit.get("terminal_id").and_then(|v| v.as_str()) {
+                        let terminal_id = acp::TerminalId(id_str.into());
+                        let status = acp::TerminalExitStatus {
+                            exit_code: term_exit
+                                .get("exit_code")
+                                .and_then(|v| v.as_u64())
+                                .map(|i| i as u32),
+                            signal: term_exit
+                                .get("signal")
+                                .and_then(|v| v.as_str().map(|s| s.to_string())),
+                            meta: None,
+                        };
+                        let _ = session.thread.update(&mut self.cx.clone(), |thread, cx| {
+                            thread.on_terminal_provider_event(
+                                TerminalProviderEvent::Exit {
+                                    terminal_id: terminal_id.clone(),
+                                    status,
+                                },
+                                cx,
+                            );
+                        });
+                    }
+                }
+            }
+        }
 
         Ok(())
     }
@@ -707,25 +813,83 @@ impl acp::Client for ClientDelegate {
         &self,
         args: acp::CreateTerminalRequest,
     ) -> Result<acp::CreateTerminalResponse, acp::Error> {
-        let terminal = self
-            .session_thread(&args.session_id)?
-            .update(&mut self.cx.clone(), |thread, cx| {
-                thread.create_terminal(
-                    args.command,
-                    args.args,
-                    args.env,
-                    args.cwd,
-                    args.output_byte_limit,
+        let thread = self.session_thread(&args.session_id)?;
+        let project = thread.read_with(&self.cx, |thread, _cx| thread.project().clone())?;
+
+        let mut env = if let Some(dir) = &args.cwd {
+            project
+                .update(&mut self.cx.clone(), |project, cx| {
+                    let worktree = project.find_worktree(dir.as_path(), cx);
+                    let shell = TerminalSettings::get(
+                        worktree.as_ref().map(|(worktree, path)| SettingsLocation {
+                            worktree_id: worktree.read(cx).id(),
+                            path: &path,
+                        }),
+                        cx,
+                    )
+                    .shell
+                    .clone();
+                    project.directory_environment(&shell, dir.clone().into(), cx)
+                })?
+                .await
+                .unwrap_or_default()
+        } else {
+            Default::default()
+        };
+        // Disables paging for `git` and hopefully other commands
+        env.insert("PAGER".into(), "".into());
+        for var in args.env {
+            env.insert(var.name, var.value);
+        }
+
+        // Use remote shell or default system shell, as appropriate
+        let shell = project
+            .update(&mut self.cx.clone(), |project, cx| {
+                project
+                    .remote_client()
+                    .and_then(|r| r.read(cx).default_system_shell())
+                    .map(Shell::Program)
+            })?
+            .unwrap_or_else(|| Shell::Program(get_default_system_shell_preferring_bash()));
+        let is_windows = project
+            .read_with(&self.cx, |project, cx| project.path_style(cx).is_windows())
+            .unwrap_or(cfg!(windows));
+        let (task_command, task_args) = task::ShellBuilder::new(&shell, is_windows)
+            .redirect_stdin_to_dev_null()
+            .build(Some(args.command.clone()), &args.args);
+
+        let terminal_entity = project
+            .update(&mut self.cx.clone(), |project, cx| {
+                project.create_terminal_task(
+                    task::SpawnInTerminal {
+                        command: Some(task_command),
+                        args: task_args,
+                        cwd: args.cwd.clone(),
+                        env,
+                        ..Default::default()
+                    },
                     cx,
                 )
             })?
             .await?;
-        Ok(
-            terminal.read_with(&self.cx, |terminal, _| acp::CreateTerminalResponse {
-                terminal_id: terminal.id().clone(),
-                meta: None,
-            })?,
-        )
+
+        // Register with renderer
+        let terminal_entity = thread.update(&mut self.cx.clone(), |thread, cx| {
+            thread.register_terminal_created(
+                acp::TerminalId(uuid::Uuid::new_v4().to_string().into()),
+                format!("{} {}", args.command, args.args.join(" ")),
+                args.cwd.clone(),
+                args.output_byte_limit,
+                terminal_entity,
+                cx,
+            )
+        })?;
+        let terminal_id =
+            terminal_entity.read_with(&self.cx, |terminal, _| terminal.id().clone())?;
+        Ok(acp::CreateTerminalResponse {
+            terminal_id,
+            meta: None,
+        })
     }
 
     async fn kill_terminal_command(
