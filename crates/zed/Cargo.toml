@@ -21,13 +21,11 @@ path = "src/main.rs"
 [dependencies]
 acp_tools.workspace = true
 activity_indicator.workspace = true
-agent.workspace = true
 agent_settings.workspace = true
 agent_ui.workspace = true
 anyhow.workspace = true
 askpass.workspace = true
 assets.workspace = true
-assistant_tools.workspace = true
 audio.workspace = true
 auto_update.workspace = true
 auto_update_ui.workspace = true
