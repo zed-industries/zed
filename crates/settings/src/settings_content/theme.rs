@@ -178,7 +178,18 @@ pub enum IconThemeSelection {
 ///
 /// `System` will select the theme based on the system's appearance.
 #[derive(
-    Debug, PartialEq, Eq, Clone, Copy, Default, Serialize, Deserialize, JsonSchema, MergeFrom,
+    Debug,
+    PartialEq,
+    Eq,
+    Clone,
+    Copy,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum ThemeMode {

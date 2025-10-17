@@ -20,7 +20,9 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     description: "Confirm before quitting Zed",
                     field: Box::new(SettingField {
                         pick: |settings_content| settings_content.workspace.confirm_quit.as_ref(),
-                        write: |settings_content, value| {  settings_content.workspace.confirm_quit = value;},
+                        write: |settings_content, value| {
+                            settings_content.workspace.confirm_quit = value;
+                        },
                     }),
                     metadata: None,
                     files: USER,
@@ -36,8 +38,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content.workspace.when_closing_with_no_tabs = value;
-
+                            settings_content.workspace.when_closing_with_no_tabs = value;
                         },
                     }),
                     metadata: None,
@@ -51,8 +52,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             settings_content.workspace.on_last_window_closed.as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content.workspace.on_last_window_closed = value;
-
+                            settings_content.workspace.on_last_window_closed = value;
                         },
                     }),
                     metadata: None,
@@ -66,8 +66,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             settings_content.workspace.use_system_path_prompts.as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content.workspace.use_system_path_prompts = value;
-
+                            settings_content.workspace.use_system_path_prompts = value;
                         },
                     }),
                     metadata: None,
@@ -81,8 +80,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             settings_content.workspace.use_system_prompts.as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content.workspace.use_system_prompts = value;
-
+                            settings_content.workspace.use_system_prompts = value;
                         },
                     }),
                     metadata: None,
@@ -96,8 +94,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             settings_content.editor.redact_private_values.as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content.editor.redact_private_values = value;
-
+                            settings_content.editor.redact_private_values = value;
                         },
                     }),
                     metadata: None,
@@ -112,8 +109,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 settings_content.project.worktree.private_files.as_ref()
                             },
                             write: |settings_content, value| {
-                                 settings_content.project.worktree.private_files = value;
-
+                                settings_content.project.worktree.private_files = value;
                             },
                         }
                         .unimplemented(),
@@ -133,11 +129,10 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .and_then(|session| session.restore_unsaved_buffers.as_ref())
                         },
                         write: |settings_content, value| {
-                             settings_content
-
+                            settings_content
                                 .session
                                 .get_or_insert_default()
-                                .restore_unsaved_buffers  = value;
+                                .restore_unsaved_buffers = value;
                         },
                     }),
                     metadata: None,
@@ -151,8 +146,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             settings_content.workspace.restore_on_startup.as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content.workspace.restore_on_startup = value;
-
+                            settings_content.workspace.restore_on_startup = value;
                         },
                     }),
                     metadata: None,
@@ -170,8 +164,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 settings_content.workspace.use_system_prompts.as_ref()
                             },
                             write: |settings_content, value| {
-                                 settings_content.workspace.use_system_prompts = value;
-
+                                settings_content.workspace.use_system_prompts = value;
                             },
                         }
                         .unimplemented(),
@@ -188,8 +181,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 settings_content.workspace.use_system_prompts.as_ref()
                             },
                             write: |settings_content, value| {
-                                 settings_content.workspace.use_system_prompts = value;
-
+                                settings_content.workspace.use_system_prompts = value;
                             },
                         }
                         .unimplemented(),
@@ -208,8 +200,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .and_then(|telemetry| telemetry.diagnostics.as_ref())
                         },
                         write: |settings_content, value| {
-                             settings_content
-
+                            settings_content
                                 .telemetry
                                 .get_or_insert_default()
                                 .diagnostics = value;
@@ -229,8 +220,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .and_then(|telemetry| telemetry.metrics.as_ref())
                         },
                         write: |settings_content, value| {
-                             settings_content.telemetry.get_or_insert_default().metrics = value;
-
+                            settings_content.telemetry.get_or_insert_default().metrics = value;
                         },
                     }),
                     metadata: None,
@@ -242,7 +232,9 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     description: "Whether or not to automatically check for updates",
                     field: Box::new(SettingField {
                         pick: |settings_content| settings_content.auto_update.as_ref(),
-                        write: |settings_content, value|{  settings_content.auto_update = value;},
+                        write: |settings_content, value| {
+                            settings_content.auto_update = value;
+                        },
                     }),
                     metadata: None,
                     files: USER,
@@ -267,7 +259,39 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                     .as_ref()?
                                     .discriminant() as usize])
                             },
-                            write: |_settings_content, _value| todo!(),
+                            write: |settings_content, value| {
+                                let Some(value) = value else {
+                                    return;
+                                };
+                                let settings_value = settings_content.theme.theme.as_mut().expect("Has Default");
+                                *settings_value = match value {
+                                    settings::ThemeSelectionDiscriminants::Static => {
+                                        let name = match settings_value {
+                                            settings::ThemeSelection::Static(_) => return,
+                                            settings::ThemeSelection::Dynamic { mode, light, dark } => {
+                                                match mode {
+                                                    theme::ThemeMode::Light => light.clone(),
+                                                    theme::ThemeMode::Dark => dark.clone(),
+                                                    theme::ThemeMode::System => dark.clone(), // no cx, can't determine correct choice
+                                                }
+                                            },
+                                        };
+                                        settings::ThemeSelection::Static(name)
+                                    },
+                                    settings::ThemeSelectionDiscriminants::Dynamic => {
+                                        let static_name = match settings_value {
+                                            settings::ThemeSelection::Static(theme_name) => theme_name.clone(),
+                                            settings::ThemeSelection::Dynamic {..} => return,
+                                        };
+
+                                        settings::ThemeSelection::Dynamic {
+                                            mode: settings::ThemeMode::System,
+                                            light: static_name.clone(),
+                                            dark: static_name.clone(),
+                                        }
+                                    },
+                                };
+                            },
                         }),
                         metadata: None,
                     },
@@ -285,7 +309,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                             pick: |settings_content| {
                                                 match settings_content.theme.theme.as_ref() {
                                                         Some(settings::ThemeSelection::Static(name)) => Some(name),
-                                                        _ => unreachable!("inactive field")
+                                                        _ => None
                                                     }
                                             },
                                             write: |settings_content, value| {
@@ -296,7 +320,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                                     .theme
                                                     .theme.as_mut() {
                                                         Some(settings::ThemeSelection::Static(theme_name)) => *theme_name = value,
-                                                        _ => unreachable!("inactive field")
+                                                        _ => return
                                                     }
                                             },
                                         }),
@@ -312,7 +336,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                             pick: |settings_content| {
                                                 match settings_content.theme.theme.as_ref() {
                                                         Some(settings::ThemeSelection::Dynamic { mode, ..}) => Some(mode),
-                                                        _ => unreachable!("inactive field")
+                                                        _ => None
                                                     }
                                             },
                                             write: |settings_content, value| {
@@ -323,7 +347,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                                     .theme
                                                     .theme.as_mut() {
                                                         Some(settings::ThemeSelection::Dynamic{ mode, ..}) => *mode = value,
-                                                        _ => unreachable!("inactive field")
+                                                        _ => return
                                                     }
                                             },
                                         }),
@@ -337,7 +361,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                                 pick: |settings_content| {
                                                     match settings_content.theme.theme.as_ref() {
                                                             Some(settings::ThemeSelection::Dynamic { light, ..}) => Some(light),
-                                                            _ => unreachable!("inactive field")
+                                                            _ => None
                                                         }
                                                 },
                                                 write: |settings_content, value| {
@@ -348,7 +372,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                                         .theme
                                                         .theme.as_mut() {
                                                             Some(settings::ThemeSelection::Dynamic{ light, ..}) => *light = value,
-                                                            _ => unreachable!("inactive field")
+                                                            _ => return
                                                         }
                                                 },
                                             }),
@@ -362,7 +386,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                                     pick: |settings_content| {
                                                         match settings_content.theme.theme.as_ref() {
                                                                 Some(settings::ThemeSelection::Dynamic { dark, ..}) => Some(dark),
-                                                                _ => unreachable!("inactive field")
+                                                                _ => None
                                                             }
                                                     },
                                                     write: |settings_content, value| {
@@ -373,7 +397,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                                             .theme
                                                             .theme.as_mut() {
                                                                 Some(settings::ThemeSelection::Dynamic{ dark, ..}) => *dark = value,
-                                                                _ => unreachable!("inactive field")
+                                                                _ => return
                                                             }
                                                     },
                                                 }),
@@ -767,7 +791,9 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     description: "The name of a base set of key bindings to use",
                     field: Box::new(SettingField {
                         pick: |settings_content| settings_content.base_keymap.as_ref(),
-                        write: |settings_content, value|{  settings_content.base_keymap = value;},
+                        write: |settings_content, value| {
+                            settings_content.base_keymap = value;
+                        },
                     }),
                     metadata: Some(Box::new(SettingsFieldMetadata {
                         should_do_titlecase: Some(false),
@@ -783,7 +809,9 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     description: "Enable vim modes and key bindings",
                     field: Box::new(SettingField {
                         pick: |settings_content| settings_content.vim_mode.as_ref(),
-                        write: |settings_content, value|{  settings_content.vim_mode = value;},
+                        write: |settings_content, value| {
+                            settings_content.vim_mode = value;
+                        },
                     }),
                     metadata: None,
                     files: USER,
@@ -793,7 +821,9 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     description: "Enable helix modes and key bindings",
                     field: Box::new(SettingField {
                         pick: |settings_content| settings_content.helix_mode.as_ref(),
-                        write: |settings_content, value|{  settings_content.helix_mode = value;},
+                        write: |settings_content, value| {
+                            settings_content.helix_mode = value;
+                        },
                     }),
                     metadata: None,
                     files: USER,
@@ -814,8 +844,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                     settings_content.workspace.autosave.as_ref()
                                 },
                                 write: |settings_content, value| {
-                                     settings_content.workspace.autosave = value;
-
+                                    settings_content.workspace.autosave = value;
                                 },
                             }
                             .unimplemented(),
@@ -832,8 +861,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 settings_content.editor.double_click_in_multibuffer.as_ref()
                             },
                             write: |settings_content, value| {
-                                 settings_content.editor.double_click_in_multibuffer = value;
-
+                                settings_content.editor.double_click_in_multibuffer = value;
                             },
                         }),
                         metadata: None,
@@ -847,8 +875,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 settings_content.editor.expand_excerpt_lines.as_ref()
                             },
                             write: |settings_content, value| {
-                                 settings_content.editor.expand_excerpt_lines = value;
-
+                                settings_content.editor.expand_excerpt_lines = value;
                             },
                         }),
                         metadata: None,
@@ -862,8 +889,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 settings_content.editor.excerpt_context_lines.as_ref()
                             },
                             write: |settings_content, value| {
-                                 settings_content.editor.excerpt_context_lines = value;
-
+                                settings_content.editor.excerpt_context_lines = value;
                             },
                         }),
                         metadata: None,
@@ -882,11 +908,10 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                     })
                             },
                             write: |settings_content, value| {
-                                 settings_content
-
+                                settings_content
                                     .outline_panel
                                     .get_or_insert_default()
-                                    .expand_outlines_with_depth= value;
+                                    .expand_outlines_with_depth = value;
                             },
                         }),
                         metadata: None,
@@ -901,8 +926,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 settings_content.editor.scroll_beyond_last_line.as_ref()
                             },
                             write: |settings_content, value| {
-                                 settings_content.editor.scroll_beyond_last_line = value;
-
+                                settings_content.editor.scroll_beyond_last_line = value;
                             },
                         }),
                         metadata: None,
@@ -916,8 +940,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 settings_content.editor.vertical_scroll_margin.as_ref()
                             },
                             write: |settings_content, value| {
-                                 settings_content.editor.vertical_scroll_margin = value;
-
+                                settings_content.editor.vertical_scroll_margin = value;
                             },
                         }),
                         metadata: None,
@@ -931,8 +954,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 settings_content.editor.horizontal_scroll_margin.as_ref()
                             },
                             write: |settings_content, value| {
-                                 settings_content.editor.horizontal_scroll_margin = value;
-
+                                settings_content.editor.horizontal_scroll_margin = value;
                             },
                         }),
                         metadata: None,
@@ -946,8 +968,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 settings_content.editor.scroll_sensitivity.as_ref()
                             },
                             write: |settings_content, value| {
-                                 settings_content.editor.scroll_sensitivity = value;
-
+                                settings_content.editor.scroll_sensitivity = value;
                             },
                         }),
                         metadata: None,
@@ -961,8 +982,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 settings_content.editor.fast_scroll_sensitivity.as_ref()
                             },
                             write: |settings_content, value| {
-                                 settings_content.editor.fast_scroll_sensitivity = value;
-
+                                settings_content.editor.fast_scroll_sensitivity = value;
                             },
                         }),
                         metadata: None,
@@ -976,8 +996,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 settings_content.editor.autoscroll_on_clicks.as_ref()
                             },
                             write: |settings_content, value| {
-                                 settings_content.editor.autoscroll_on_clicks = value;
-
+                                settings_content.editor.autoscroll_on_clicks = value;
                             },
                         }),
                         metadata: None,
@@ -992,8 +1011,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 settings_content.editor.auto_signature_help.as_ref()
                             },
                             write: |settings_content, value| {
-                                 settings_content.editor.auto_signature_help = value;
-
+                                settings_content.editor.auto_signature_help = value;
                             },
                         }),
                         metadata: None,
@@ -1010,8 +1028,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                     .as_ref()
                             },
                             write: |settings_content, value| {
-                                 settings_content.editor.show_signature_help_after_edits = value;
-
+                                settings_content.editor.show_signature_help_after_edits = value;
                             },
                         }),
                         metadata: None,
@@ -1025,8 +1042,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 settings_content.editor.snippet_sort_order.as_ref()
                             },
                             write: |settings_content, value| {
-                                 settings_content.editor.snippet_sort_order = value;
-
+                                settings_content.editor.snippet_sort_order = value;
                             },
                         }),
                         metadata: None,
@@ -1041,8 +1057,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 settings_content.editor.hover_popover_enabled.as_ref()
                             },
                             write: |settings_content, value| {
-                                 settings_content.editor.hover_popover_enabled = value;
-
+                                settings_content.editor.hover_popover_enabled = value;
                             },
                         }),
                         metadata: None,
@@ -1057,8 +1072,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 settings_content.editor.hover_popover_delay.as_ref()
                             },
                             write: |settings_content, value| {
-                                 settings_content.editor.hover_popover_delay = value;
-
+                                settings_content.editor.hover_popover_delay = value;
                             },
                         }),
                         metadata: None,
@@ -1077,13 +1091,11 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                     .and_then(|drag_and_drop| drag_and_drop.enabled.as_ref())
                             },
                             write: |settings_content, value| {
-                                 settings_content
-
+                                settings_content
                                     .editor
                                     .drag_and_drop_selection
                                     .get_or_insert_default()
-                                    .enabled
-                                    = value;
+                                    .enabled = value;
                             },
                         }),
                         metadata: None,
@@ -1101,13 +1113,11 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                     .and_then(|drag_and_drop| drag_and_drop.delay.as_ref())
                             },
                             write: |settings_content, value| {
-                                 settings_content
-
+                                settings_content
                                     .editor
                                     .drag_and_drop_selection
                                     .get_or_insert_default()
-                                    .delay
-                                    = value;
+                                    .delay = value;
                             },
                         }),
                         metadata: None,
@@ -1126,13 +1136,11 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                     .and_then(|gutter| gutter.line_numbers.as_ref())
                             },
                             write: |settings_content, value| {
-                                 settings_content
-
+                                settings_content
                                     .editor
                                     .gutter
                                     .get_or_insert_default()
-                                    .line_numbers
-                                    = value;
+                                    .line_numbers = value;
                             },
                         }),
                         metadata: None,
@@ -1146,8 +1154,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 settings_content.editor.relative_line_numbers.as_ref()
                             },
                             write: |settings_content, value| {
-                                 settings_content.editor.relative_line_numbers = value;
-
+                                settings_content.editor.relative_line_numbers = value;
                             },
                         }),
                         metadata: None,
@@ -1165,13 +1172,11 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                     .and_then(|gutter| gutter.runnables.as_ref())
                             },
                             write: |settings_content, value| {
-                                 settings_content
-
+                                settings_content
                                     .editor
                                     .gutter
                                     .get_or_insert_default()
-                                    .runnables
-                                    = value;
+                                    .runnables = value;
                             },
                         }),
                         metadata: None,
@@ -1189,13 +1194,11 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                     .and_then(|gutter| gutter.breakpoints.as_ref())
                             },
                             write: |settings_content, value| {
-                                 settings_content
-
+                                settings_content
                                     .editor
                                     .gutter
                                     .get_or_insert_default()
-                                    .breakpoints
-                                    = value;
+                                    .breakpoints = value;
                             },
                         }),
                         metadata: None,
@@ -1213,8 +1216,8 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                     .and_then(|gutter| gutter.folds.as_ref())
                             },
                             write: |settings_content, value| {
-                                 settings_content.editor.gutter.get_or_insert_default().folds = value;
-
+                                settings_content.editor.gutter.get_or_insert_default().folds =
+                                    value;
                             },
                         }),
                         metadata: None,
@@ -1232,13 +1235,11 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                     .and_then(|gutter| gutter.min_line_number_digits.as_ref())
                             },
                             write: |settings_content, value| {
-                                 settings_content
-
+                                settings_content
                                     .editor
                                     .gutter
                                     .get_or_insert_default()
-                                    .min_line_number_digits
-                                    = value;
+                                    .min_line_number_digits = value;
                             },
                         }),
                         metadata: None,
@@ -1252,8 +1253,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 settings_content.editor.inline_code_actions.as_ref()
                             },
                             write: |settings_content, value| {
-                                 settings_content.editor.inline_code_actions = value;
-
+                                settings_content.editor.inline_code_actions = value;
                             },
                         }),
                         metadata: None,
@@ -1268,13 +1268,11 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 settings_content.editor.scrollbar.as_ref()?.show.as_ref()
                             },
                             write: |settings_content, value| {
-                                 settings_content
-
+                                settings_content
                                     .editor
                                     .scrollbar
                                     .get_or_insert_default()
-                                    .show
-                                    = value;
+                                    .show = value;
                             },
                         }),
                         metadata: None,
@@ -1288,13 +1286,11 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 settings_content.editor.scrollbar.as_ref()?.cursors.as_ref()
                             },
                             write: |settings_content, value| {
-                                 settings_content
-
+                                settings_content
                                     .editor
                                     .scrollbar
                                     .get_or_insert_default()
-                                    .cursors
-                                    = value;
+                                    .cursors = value;
                             },
                         }),
                         metadata: None,
@@ -1313,13 +1309,11 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                     .as_ref()
                             },
                             write: |settings_content, value| {
-                                 settings_content
-
+                                settings_content
                                     .editor
                                     .scrollbar
                                     .get_or_insert_default()
-                                    .git_diff
-                                    = value;
+                                    .git_diff = value;
                             },
                         }),
                         metadata: None,
@@ -1338,13 +1332,11 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                     .as_ref()
                             },
                             write: |settings_content, value| {
-                                 settings_content
-
+                                settings_content
                                     .editor
                                     .scrollbar
                                     .get_or_insert_default()
-                                    .search_results
-                                    = value;
+                                    .search_results = value;
                             },
                         }),
                         metadata: None,
@@ -1363,13 +1355,11 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                     .as_ref()
                             },
                             write: |settings_content, value| {
-                                 settings_content
-
+                                settings_content
                                     .editor
                                     .scrollbar
                                     .get_or_insert_default()
-                                    .selected_text
-                                    = value;
+                                    .selected_text = value;
                             },
                         }),
                         metadata: None,
@@ -1388,13 +1378,11 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                     .as_ref()
                             },
                             write: |settings_content, value| {
-                                 settings_content
-
+                                settings_content
                                     .editor
                                     .scrollbar
                                     .get_or_insert_default()
-                                    .selected_symbol
-                                    = value;
+                                    .selected_symbol = value;
                             },
                         }),
                         metadata: None,
@@ -1413,13 +1401,11 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                     .as_ref()
                             },
                             write: |settings_content, value| {
-                                 settings_content
-
+                                settings_content
                                     .editor
                                     .scrollbar
                                     .get_or_insert_default()
-                                    .diagnostics
-                                    = value;
+                                    .diagnostics = value;
                             },
                         }),
                         metadata: None,
@@ -1440,15 +1426,13 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                     .as_ref()
                             },
                             write: |settings_content, value| {
-                                 settings_content
-
+                                settings_content
                                     .editor
                                     .scrollbar
                                     .get_or_insert_default()
                                     .axes
                                     .get_or_insert_default()
-                                    .horizontal
-                                    = value;
+                                    .horizontal = value;
                             },
                         }),
                         metadata: None,
@@ -1469,15 +1453,13 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                     .as_ref()
                             },
                             write: |settings_content, value| {
-                                 settings_content
-
+                                settings_content
                                     .editor
                                     .scrollbar
                                     .get_or_insert_default()
                                     .axes
                                     .get_or_insert_default()
-                                    .vertical
-                                    = value;
+                                    .vertical = value;
                             },
                         }),
                         metadata: None,
@@ -1492,8 +1474,8 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 settings_content.editor.minimap.as_ref()?.show.as_ref()
                             },
                             write: |settings_content, value| {
-                                 settings_content.editor.minimap.get_or_insert_default().show = value;
-
+                                settings_content.editor.minimap.get_or_insert_default().show =
+                                    value;
                             },
                         }),
                         metadata: None,
@@ -1512,13 +1494,11 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                     .as_ref()
                             },
                             write: |settings_content, value| {
-                                 settings_content
-
+                                settings_content
                                     .editor
                                     .minimap
                                     .get_or_insert_default()
-                                    .display_in
-                                    = value;
+                                    .display_in = value;
                             },
                         }),
                         metadata: None,
@@ -1532,13 +1512,11 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 settings_content.editor.minimap.as_ref()?.thumb.as_ref()
                             },
                             write: |settings_content, value| {
-                                 settings_content
-
+                                settings_content
                                     .editor
                                     .minimap
                                     .get_or_insert_default()
-                                    .thumb
-                                    = value;
+                                    .thumb = value;
                             },
                         }),
                         metadata: None,
@@ -1557,13 +1535,11 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                     .as_ref()
                             },
                             write: |settings_content, value| {
-                                 settings_content
-
+                                settings_content
                                     .editor
                                     .minimap
                                     .get_or_insert_default()
-                                    .thumb_border
-                                    = value;
+                                    .thumb_border = value;
                             },
                         }),
                         metadata: None,
@@ -1582,13 +1558,11 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                     .or(settings_content.editor.current_line_highlight.as_ref())
                             },
                             write: |settings_content, value| {
-                                 settings_content
-
+                                settings_content
                                     .editor
                                     .minimap
                                     .get_or_insert_default()
-                                    .current_line_highlight
-                                    = value;
+                                    .current_line_highlight = value;
                             },
                         }),
                         metadata: None,
@@ -1607,13 +1581,11 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                     .as_ref()
                             },
                             write: |settings_content, value| {
-                                 settings_content
-
+                                settings_content
                                     .editor
                                     .minimap
                                     .get_or_insert_default()
-                                    .max_width_columns
-                                    = value;
+                                    .max_width_columns = value;
                             },
                         }),
                         metadata: None,
@@ -1633,13 +1605,11 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                     .as_ref()
                             },
                             write: |settings_content, value| {
-                                 settings_content
-
+                                settings_content
                                     .editor
                                     .toolbar
                                     .get_or_insert_default()
-                                    .breadcrumbs
-                                    = value;
+                                    .breadcrumbs = value;
                             },
                         }),
                         metadata: None,
@@ -1658,13 +1628,11 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                     .as_ref()
                             },
                             write: |settings_content, value| {
-                                 settings_content
-
+                                settings_content
                                     .editor
                                     .toolbar
                                     .get_or_insert_default()
-                                    .quick_actions
-                                    = value;
+                                    .quick_actions = value;
                             },
                         }),
                         metadata: None,
@@ -1683,13 +1651,11 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                     .as_ref()
                             },
                             write: |settings_content, value| {
-                                 settings_content
-
+                                settings_content
                                     .editor
                                     .toolbar
                                     .get_or_insert_default()
-                                    .selections_menu
-                                    = value;
+                                    .selections_menu = value;
                             },
                         }),
                         metadata: None,
@@ -1708,13 +1674,11 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                     .as_ref()
                             },
                             write: |settings_content, value| {
-                                 settings_content
-
+                                settings_content
                                     .editor
                                     .toolbar
                                     .get_or_insert_default()
-                                    .agent_review
-                                    = value;
+                                    .agent_review = value;
                             },
                         }),
                         metadata: None,
@@ -1733,13 +1697,11 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                     .as_ref()
                             },
                             write: |settings_content, value| {
-                                 settings_content
-
+                                settings_content
                                     .editor
                                     .toolbar
                                     .get_or_insert_default()
-                                    .code_actions
-                                    = value;
+                                    .code_actions = value;
                             },
                         }),
                         metadata: None,
@@ -1992,13 +1954,11 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             settings_content.editor.search.as_ref()?.whole_word.as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content
-
+                            settings_content
                                 .editor
                                 .search
                                 .get_or_insert_default()
-                                .whole_word
-                                = value;
+                                .whole_word = value;
                         },
                     }),
                     metadata: None,
@@ -2017,13 +1977,11 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content
-
+                            settings_content
                                 .editor
                                 .search
                                 .get_or_insert_default()
-                                .case_sensitive
-                                = value;
+                                .case_sensitive = value;
                         },
                     }),
                     metadata: None,
@@ -2037,8 +1995,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             settings_content.editor.use_smartcase_search.as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content.editor.use_smartcase_search = value;
-
+                            settings_content.editor.use_smartcase_search = value;
                         },
                     }),
                     metadata: None,
@@ -2057,13 +2014,11 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content
-
+                            settings_content
                                 .editor
                                 .search
                                 .get_or_insert_default()
-                                .include_ignored
-                                = value;
+                                .include_ignored = value;
                         },
                     }),
                     metadata: None,
@@ -2077,8 +2032,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             settings_content.editor.search.as_ref()?.regex.as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content.editor.search.get_or_insert_default().regex = value;
-
+                            settings_content.editor.search.get_or_insert_default().regex = value;
                         },
                     }),
                     metadata: None,
@@ -2089,7 +2043,9 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     description: "Whether the editor search results will loop",
                     field: Box::new(SettingField {
                         pick: |settings_content| settings_content.editor.search_wrap.as_ref(),
-                        write: |settings_content, value|{  settings_content.editor.search_wrap = value;},
+                        write: |settings_content, value| {
+                            settings_content.editor.search_wrap = value;
+                        },
                     }),
                     metadata: None,
                     files: USER,
@@ -2105,8 +2061,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content.editor.seed_search_query_from_cursor = value;
-
+                            settings_content.editor.seed_search_query_from_cursor = value;
                         },
                     }),
                     metadata: None,
@@ -2127,12 +2082,10 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                     .as_ref()
                             },
                             write: |settings_content, value| {
-                                 settings_content
-
+                                settings_content
                                     .file_finder
                                     .get_or_insert_default()
-                                    .include_ignored
-                                    = value;
+                                    .include_ignored = value;
                             },
                         }
                         .unimplemented(),
@@ -2148,12 +2101,10 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             settings_content.file_finder.as_ref()?.file_icons.as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content
-
+                            settings_content
                                 .file_finder
                                 .get_or_insert_default()
-                                .file_icons
-                                = value;
+                                .file_icons = value;
                         },
                     }),
                     metadata: None,
@@ -2171,12 +2122,10 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content
-
+                            settings_content
                                 .file_finder
                                 .get_or_insert_default()
-                                .modal_max_width
-                                = value;
+                                .modal_max_width = value;
                         },
                     }),
                     metadata: None,
@@ -2194,12 +2143,10 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content
-
+                            settings_content
                                 .file_finder
                                 .get_or_insert_default()
-                                .skip_focus_for_active_in_search
-                                = value;
+                                .skip_focus_for_active_in_search = value;
                         },
                     }),
                     metadata: None,
@@ -2213,12 +2160,10 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             settings_content.file_finder.as_ref()?.git_status.as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content
-
+                            settings_content
                                 .file_finder
                                 .get_or_insert_default()
-                                .git_status
-                                = value;
+                                .git_status = value;
                         },
                     }),
                     metadata: None,
@@ -2238,8 +2183,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                     .as_ref()
                             },
                             write: |settings_content, value| {
-                                 settings_content.project.worktree.file_scan_exclusions = value;
-
+                                settings_content.project.worktree.file_scan_exclusions = value;
                             },
                         }
                         .unimplemented(),
@@ -2260,8 +2204,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                     .as_ref()
                             },
                             write: |settings_content, value| {
-                                 settings_content.project.worktree.file_scan_exclusions = value;
-
+                                settings_content.project.worktree.file_scan_exclusions = value;
                             },
                         }
                         .unimplemented(),
@@ -2277,8 +2220,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             settings_content.workspace.restore_on_file_reopen.as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content.workspace.restore_on_file_reopen = value;
-
+                            settings_content.workspace.restore_on_file_reopen = value;
                         },
                     }),
                     metadata: None,
@@ -2292,8 +2234,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             settings_content.workspace.close_on_file_delete.as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content.workspace.close_on_file_delete = value;
-
+                            settings_content.workspace.close_on_file_delete = value;
                         },
                     }),
                     metadata: None,
@@ -2313,12 +2254,10 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             settings_content.project_panel.as_ref()?.button.as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content
-
+                            settings_content
                                 .project_panel
                                 .get_or_insert_default()
-                                .button
-                                = value;
+                                .button = value;
                         },
                     }),
                     metadata: None,
@@ -2336,12 +2275,10 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content
-
+                            settings_content
                                 .status_bar
                                 .get_or_insert_default()
-                                .active_language_button
-                                = value;
+                                .active_language_button = value;
                         },
                     }),
                     metadata: None,
@@ -2359,12 +2296,10 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content
-
+                            settings_content
                                 .status_bar
                                 .get_or_insert_default()
-                                .cursor_position_button
-                                = value;
+                                .cursor_position_button = value;
                         },
                     }),
                     metadata: None,
@@ -2378,8 +2313,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             settings_content.terminal.as_ref()?.button.as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content.terminal.get_or_insert_default().button = value;
-
+                            settings_content.terminal.get_or_insert_default().button = value;
                         },
                     }),
                     metadata: None,
@@ -2393,8 +2327,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             settings_content.diagnostics.as_ref()?.button.as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content.diagnostics.get_or_insert_default().button = value;
-
+                            settings_content.diagnostics.get_or_insert_default().button = value;
                         },
                     }),
                     metadata: None,
@@ -2408,13 +2341,11 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             settings_content.editor.search.as_ref()?.button.as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content
-
+                            settings_content
                                 .editor
                                 .search
                                 .get_or_insert_default()
-                                .button
-                                = value;
+                                .button = value;
                         },
                     }),
                     metadata: None,
@@ -2428,8 +2359,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             settings_content.debugger.as_ref()?.button.as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content.debugger.get_or_insert_default().button = value;
-
+                            settings_content.debugger.get_or_insert_default().button = value;
                         },
                     }),
                     metadata: None,
@@ -2448,12 +2378,10 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content
-
+                            settings_content
                                 .title_bar
                                 .get_or_insert_default()
-                                .show_branch_icon
-                                = value;
+                                .show_branch_icon = value;
                         },
                     }),
                     metadata: None,
@@ -2471,12 +2399,10 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content
-
+                            settings_content
                                 .title_bar
                                 .get_or_insert_default()
-                                .show_branch_name
-                                = value;
+                                .show_branch_name = value;
                         },
                     }),
                     metadata: None,
@@ -2494,12 +2420,10 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content
-
+                            settings_content
                                 .title_bar
                                 .get_or_insert_default()
-                                .show_project_items
-                                = value;
+                                .show_project_items = value;
                         },
                     }),
                     metadata: None,
@@ -2517,12 +2441,10 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content
-
+                            settings_content
                                 .title_bar
                                 .get_or_insert_default()
-                                .show_onboarding_banner
-                                = value;
+                                .show_onboarding_banner = value;
                         },
                     }),
                     metadata: None,
@@ -2540,12 +2462,10 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content
-
+                            settings_content
                                 .title_bar
                                 .get_or_insert_default()
-                                .show_user_picture
-                                = value;
+                                .show_user_picture = value;
                         },
                     }),
                     metadata: None,
@@ -2559,12 +2479,10 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             settings_content.title_bar.as_ref()?.show_sign_in.as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content
-
+                            settings_content
                                 .title_bar
                                 .get_or_insert_default()
-                                .show_sign_in
-                                = value;
+                                .show_sign_in = value;
                         },
                     }),
                     metadata: None,
@@ -2578,12 +2496,10 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             settings_content.title_bar.as_ref()?.show_menus.as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content
-
+                            settings_content
                                 .title_bar
                                 .get_or_insert_default()
-                                .show_menus
-                                = value;
+                                .show_menus = value;
                         },
                     }),
                     metadata: None,
@@ -2596,8 +2512,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     field: Box::new(SettingField {
                         pick: |settings_content| settings_content.tab_bar.as_ref()?.show.as_ref(),
                         write: |settings_content, value| {
-                             settings_content.tab_bar.get_or_insert_default().show = value;
-
+                            settings_content.tab_bar.get_or_insert_default().show = value;
                         },
                     }),
                     metadata: None,
@@ -2611,8 +2526,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             settings_content.tabs.as_ref()?.git_status.as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content.tabs.get_or_insert_default().git_status = value;
-
+                            settings_content.tabs.get_or_insert_default().git_status = value;
                         },
                     }),
                     metadata: None,
@@ -2626,8 +2540,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             settings_content.tabs.as_ref()?.file_icons.as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content.tabs.get_or_insert_default().file_icons = value;
-
+                            settings_content.tabs.get_or_insert_default().file_icons = value;
                         },
                     }),
                     metadata: None,
@@ -2641,8 +2554,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             settings_content.tabs.as_ref()?.close_position.as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content.tabs.get_or_insert_default().close_position = value;
-
+                            settings_content.tabs.get_or_insert_default().close_position = value;
                         },
                     }),
                     metadata: None,
@@ -2657,7 +2569,9 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     field: Box::new(
                         SettingField {
                             pick: |settings_content| settings_content.workspace.max_tabs.as_ref(),
-                            write: |settings_content, value|{  settings_content.workspace.max_tabs = value;},
+                            write: |settings_content, value| {
+                                settings_content.workspace.max_tabs = value;
+                            },
                         }
                         .unimplemented(),
                     ),
@@ -2675,12 +2589,10 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content
-
+                            settings_content
                                 .tab_bar
                                 .get_or_insert_default()
-                                .show_nav_history_buttons
-                                = value;
+                                .show_nav_history_buttons = value;
                         },
                     }),
                     metadata: None,
@@ -2695,12 +2607,10 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             settings_content.tabs.as_ref()?.activate_on_close.as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content
-
+                            settings_content
                                 .tabs
                                 .get_or_insert_default()
-                                .activate_on_close
-                                = value;
+                                .activate_on_close = value;
                         },
                     }),
                     metadata: None,
@@ -2714,12 +2624,10 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             settings_content.tabs.as_ref()?.show_diagnostics.as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content
-
+                            settings_content
                                 .tabs
                                 .get_or_insert_default()
-                                .show_diagnostics
-                                = value;
+                                .show_diagnostics = value;
                         },
                     }),
                     metadata: None,
@@ -2733,12 +2641,10 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             settings_content.tabs.as_ref()?.show_close_button.as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content
-
+                            settings_content
                                 .tabs
                                 .get_or_insert_default()
-                                .show_close_button
-                                = value;
+                                .show_close_button = value;
                         },
                     }),
                     metadata: None,
@@ -2753,12 +2659,10 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             settings_content.preview_tabs.as_ref()?.enabled.as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content
-
+                            settings_content
                                 .preview_tabs
                                 .get_or_insert_default()
-                                .enabled
-                                = value;
+                                .enabled = value;
                         },
                     }),
                     metadata: None,
@@ -2776,12 +2680,10 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content
-
+                            settings_content
                                 .preview_tabs
                                 .get_or_insert_default()
-                                .enable_preview_from_file_finder
-                                = value;
+                                .enable_preview_from_file_finder = value;
                         },
                     }),
                     metadata: None,
@@ -2799,12 +2701,10 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content
-
+                            settings_content
                                 .preview_tabs
                                 .get_or_insert_default()
-                                .enable_preview_from_code_navigation
-                                = value;
+                                .enable_preview_from_code_navigation = value;
                         },
                     }),
                     metadata: None,
@@ -2819,8 +2719,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             settings_content.workspace.bottom_dock_layout.as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content.workspace.bottom_dock_layout = value;
-
+                            settings_content.workspace.bottom_dock_layout = value;
                         },
                     }),
                     metadata: None,
@@ -2840,13 +2739,11 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content
-
+                            settings_content
                                 .workspace
                                 .centered_layout
                                 .get_or_insert_default()
-                                .left_padding
-                                = value;
+                                .left_padding = value;
                         },
                     }),
                     metadata: None,
@@ -2865,13 +2762,11 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content
-
+                            settings_content
                                 .workspace
                                 .centered_layout
                                 .get_or_insert_default()
-                                .right_padding
-                                = value;
+                                .right_padding = value;
                         },
                     }),
                     metadata: None,
@@ -2886,8 +2781,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             settings_content.workspace.use_system_window_tabs.as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content.workspace.use_system_window_tabs = value;
-
+                            settings_content.workspace.use_system_window_tabs = value;
                         },
                     }),
                     metadata: None,
@@ -2907,13 +2801,11 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content
-
+                            settings_content
                                 .workspace
                                 .active_pane_modifiers
                                 .get_or_insert_default()
-                                .inactive_opacity
-                                = value;
+                                .inactive_opacity = value;
                         },
                     }),
                     metadata: None,
@@ -2932,13 +2824,11 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content
-
+                            settings_content
                                 .workspace
                                 .active_pane_modifiers
                                 .get_or_insert_default()
-                                .border_size
-                                = value;
+                                .border_size = value;
                         },
                     }),
                     metadata: None,
@@ -2949,7 +2839,9 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     description: "Show padding for zoomed panes",
                     field: Box::new(SettingField {
                         pick: |settings_content| settings_content.workspace.zoomed_padding.as_ref(),
-                        write: |settings_content, value|{  settings_content.workspace.zoomed_padding = value;},
+                        write: |settings_content, value| {
+                            settings_content.workspace.zoomed_padding = value;
+                        },
                     }),
                     metadata: None,
                     files: USER,
@@ -2966,8 +2858,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content.workspace.pane_split_direction_vertical = value;
-
+                            settings_content.workspace.pane_split_direction_vertical = value;
                         },
                     }),
                     metadata: None,
@@ -2984,8 +2875,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content.workspace.pane_split_direction_horizontal = value;
-
+                            settings_content.workspace.pane_split_direction_horizontal = value;
                         },
                     }),
                     metadata: None,
@@ -3005,8 +2895,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             settings_content.project_panel.as_ref()?.dock.as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content.project_panel.get_or_insert_default().dock = value;
-
+                            settings_content.project_panel.get_or_insert_default().dock = value;
                         },
                     }),
                     metadata: None,
@@ -3024,12 +2913,10 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content
-
+                            settings_content
                                 .project_panel
                                 .get_or_insert_default()
-                                .default_width
-                                = value;
+                                .default_width = value;
                         },
                     }),
                     metadata: None,
@@ -3047,12 +2934,10 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content
-
+                            settings_content
                                 .project_panel
                                 .get_or_insert_default()
-                                .hide_gitignore
-                                = value;
+                                .hide_gitignore = value;
                         },
                     }),
                     metadata: None,
@@ -3070,12 +2955,10 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content
-
+                            settings_content
                                 .project_panel
                                 .get_or_insert_default()
-                                .entry_spacing
-                                = value;
+                                .entry_spacing = value;
                         },
                     }),
                     metadata: None,
@@ -3089,12 +2972,10 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             settings_content.project_panel.as_ref()?.file_icons.as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content
-
+                            settings_content
                                 .project_panel
                                 .get_or_insert_default()
-                                .file_icons
-                                = value;
+                                .file_icons = value;
                         },
                     }),
                     metadata: None,
@@ -3112,12 +2993,10 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content
-
+                            settings_content
                                 .project_panel
                                 .get_or_insert_default()
-                                .folder_icons
-                                = value;
+                                .folder_icons = value;
                         },
                     }),
                     metadata: None,
@@ -3131,12 +3010,10 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             settings_content.project_panel.as_ref()?.git_status.as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content
-
+                            settings_content
                                 .project_panel
                                 .get_or_insert_default()
-                                .git_status
-                                = value;
+                                .git_status = value;
                         },
                     }),
                     metadata: None,
@@ -3154,12 +3031,10 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content
-
+                            settings_content
                                 .project_panel
                                 .get_or_insert_default()
-                                .indent_size
-                                = value;
+                                .indent_size = value;
                         },
                     }),
                     metadata: None,
@@ -3177,12 +3052,10 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content
-
+                            settings_content
                                 .project_panel
                                 .get_or_insert_default()
-                                .auto_reveal_entries
-                                = value;
+                                .auto_reveal_entries = value;
                         },
                     }),
                     metadata: None,
@@ -3200,12 +3073,10 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content
-
+                            settings_content
                                 .project_panel
                                 .get_or_insert_default()
-                                .starts_open
-                                = value;
+                                .starts_open = value;
                         },
                     }),
                     metadata: None,
@@ -3223,12 +3094,10 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content
-
+                            settings_content
                                 .project_panel
                                 .get_or_insert_default()
-                                .auto_fold_dirs
-                                = value;
+                                .auto_fold_dirs = value;
                         },
                     }),
                     metadata: None,
@@ -3250,14 +3119,12 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             })
                         },
                         write: |settings_content, value| {
-                             settings_content
-
+                            settings_content
                                 .project_panel
                                 .get_or_insert_default()
                                 .scrollbar
                                 .get_or_insert_default()
-                                .show
-                                = value;
+                                .show = value;
                         },
                     }),
                     metadata: None,
@@ -3275,12 +3142,10 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content
-
+                            settings_content
                                 .project_panel
                                 .get_or_insert_default()
-                                .show_diagnostics
-                                = value;
+                                .show_diagnostics = value;
                         },
                     }),
                     metadata: None,
@@ -3298,12 +3163,10 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content
-
+                            settings_content
                                 .project_panel
                                 .get_or_insert_default()
-                                .sticky_scroll
-                                = value;
+                                .sticky_scroll = value;
                         },
                     }),
                     metadata: None,
@@ -3325,14 +3188,12 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                     .as_ref()
                             },
                             write: |settings_content, value| {
-                                 settings_content
-
+                                settings_content
                                     .project_panel
                                     .get_or_insert_default()
                                     .indent_guides
                                     .get_or_insert_default()
-                                    .show
-                                    = value;
+                                    .show = value;
                             },
                         }
                         .unimplemented(),
@@ -3351,12 +3212,10 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content
-
+                            settings_content
                                 .project_panel
                                 .get_or_insert_default()
-                                .drag_and_drop
-                                = value;
+                                .drag_and_drop = value;
                         },
                     }),
                     metadata: None,
@@ -3370,12 +3229,10 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             settings_content.project_panel.as_ref()?.hide_root.as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content
-
+                            settings_content
                                 .project_panel
                                 .get_or_insert_default()
-                                .hide_root
-                                = value;
+                                .hide_root = value;
                         },
                     }),
                     metadata: None,
@@ -3393,12 +3250,10 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content
-
+                            settings_content
                                 .project_panel
                                 .get_or_insert_default()
-                                .hide_hidden
-                                = value;
+                                .hide_hidden = value;
                         },
                     }),
                     metadata: None,
@@ -3416,12 +3271,10 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content
-
+                            settings_content
                                 .project_panel
                                 .get_or_insert_default()
-                                .open_file_on_paste
-                                = value;
+                                .open_file_on_paste = value;
                         },
                     }),
                     metadata: None,
@@ -3434,8 +3287,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     field: Box::new(SettingField {
                         pick: |settings_content| settings_content.terminal.as_ref()?.dock.as_ref(),
                         write: |settings_content, value| {
-                             settings_content.terminal.get_or_insert_default().dock = value;
-
+                            settings_content.terminal.get_or_insert_default().dock = value;
                         },
                     }),
                     metadata: None,
@@ -3450,12 +3302,10 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             settings_content.outline_panel.as_ref()?.button.as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content
-
+                            settings_content
                                 .outline_panel
                                 .get_or_insert_default()
-                                .button
-                                = value;
+                                .button = value;
                         },
                     }),
                     metadata: None,
@@ -3469,8 +3319,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             settings_content.outline_panel.as_ref()?.dock.as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content.outline_panel.get_or_insert_default().dock = value;
-
+                            settings_content.outline_panel.get_or_insert_default().dock = value;
                         },
                     }),
                     metadata: None,
@@ -3488,12 +3337,10 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content
-
+                            settings_content
                                 .outline_panel
                                 .get_or_insert_default()
-                                .default_width
-                                = value;
+                                .default_width = value;
                         },
                     }),
                     metadata: None,
@@ -3507,12 +3354,10 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             settings_content.outline_panel.as_ref()?.file_icons.as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content
-
+                            settings_content
                                 .outline_panel
                                 .get_or_insert_default()
-                                .file_icons
-                                = value;
+                                .file_icons = value;
                         },
                     }),
                     metadata: None,
@@ -3530,12 +3375,10 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content
-
+                            settings_content
                                 .outline_panel
                                 .get_or_insert_default()
-                                .folder_icons
-                                = value;
+                                .folder_icons = value;
                         },
                     }),
                     metadata: None,
@@ -3549,12 +3392,10 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             settings_content.outline_panel.as_ref()?.git_status.as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content
-
+                            settings_content
                                 .outline_panel
                                 .get_or_insert_default()
-                                .git_status
-                                = value;
+                                .git_status = value;
                         },
                     }),
                     metadata: None,
@@ -3572,12 +3413,10 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content
-
+                            settings_content
                                 .outline_panel
                                 .get_or_insert_default()
-                                .indent_size
-                                = value;
+                                .indent_size = value;
                         },
                     }),
                     metadata: None,
@@ -3595,12 +3434,10 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content
-
+                            settings_content
                                 .outline_panel
                                 .get_or_insert_default()
-                                .auto_reveal_entries
-                                = value;
+                                .auto_reveal_entries = value;
                         },
                     }),
                     metadata: None,
@@ -3618,12 +3455,10 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content
-
+                            settings_content
                                 .outline_panel
                                 .get_or_insert_default()
-                                .auto_fold_dirs
-                                = value;
+                                .auto_fold_dirs = value;
                         },
                     }),
                     metadata: None,
@@ -3645,14 +3480,12 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                     .as_ref()
                             },
                             write: |settings_content, value| {
-                                 settings_content
-
+                                settings_content
                                     .outline_panel
                                     .get_or_insert_default()
                                     .indent_guides
                                     .get_or_insert_default()
-                                    .show
-                                    = value;
+                                    .show = value;
                             },
                         }
                         .unimplemented(),
@@ -3668,8 +3501,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             settings_content.git_panel.as_ref()?.button.as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content.git_panel.get_or_insert_default().button = value;
-
+                            settings_content.git_panel.get_or_insert_default().button = value;
                         },
                     }),
                     metadata: None,
@@ -3681,8 +3513,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     field: Box::new(SettingField {
                         pick: |settings_content| settings_content.git_panel.as_ref()?.dock.as_ref(),
                         write: |settings_content, value| {
-                             settings_content.git_panel.get_or_insert_default().dock = value;
-
+                            settings_content.git_panel.get_or_insert_default().dock = value;
                         },
                     }),
                     metadata: None,
@@ -3696,12 +3527,10 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             settings_content.git_panel.as_ref()?.default_width.as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content
-
+                            settings_content
                                 .git_panel
                                 .get_or_insert_default()
-                                .default_width
-                                = value;
+                                .default_width = value;
                         },
                     }),
                     metadata: None,
@@ -3715,12 +3544,10 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             settings_content.git_panel.as_ref()?.status_style.as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content
-
+                            settings_content
                                 .git_panel
                                 .get_or_insert_default()
-                                .status_style
-                                = value;
+                                .status_style = value;
                         },
                     }),
                     metadata: None,
@@ -3738,12 +3565,10 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content
-
+                            settings_content
                                 .git_panel
                                 .get_or_insert_default()
-                                .fallback_branch_name
-                                = value;
+                                .fallback_branch_name = value;
                         },
                     }),
                     metadata: None,
@@ -3757,12 +3582,10 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             settings_content.git_panel.as_ref()?.sort_by_path.as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content
-
+                            settings_content
                                 .git_panel
                                 .get_or_insert_default()
-                                .sort_by_path
-                                = value;
+                                .sort_by_path = value;
                         },
                     }),
                     metadata: None,
@@ -3780,12 +3603,10 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content
-
+                            settings_content
                                 .git_panel
                                 .get_or_insert_default()
-                                .collapse_untracked_diff
-                                = value;
+                                .collapse_untracked_diff = value;
                         },
                     }),
                     metadata: None,
@@ -3807,14 +3628,12 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             })
                         },
                         write: |settings_content, value| {
-                             settings_content
-
+                            settings_content
                                 .git_panel
                                 .get_or_insert_default()
                                 .scrollbar
                                 .get_or_insert_default()
-                                .show
-                                = value;
+                                .show = value;
                         },
                     }),
                     metadata: None,
@@ -3827,8 +3646,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     field: Box::new(SettingField {
                         pick: |settings_content| settings_content.debugger.as_ref()?.dock.as_ref(),
                         write: |settings_content, value| {
-                             settings_content.debugger.get_or_insert_default().dock = value;
-
+                            settings_content.debugger.get_or_insert_default().dock = value;
                         },
                     }),
                     metadata: None,
@@ -3847,12 +3665,10 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content
-
+                            settings_content
                                 .notification_panel
                                 .get_or_insert_default()
-                                .button
-                                = value;
+                                .button = value;
                         },
                     }),
                     metadata: None,
@@ -3866,12 +3682,10 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             settings_content.notification_panel.as_ref()?.dock.as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content
-
+                            settings_content
                                 .notification_panel
                                 .get_or_insert_default()
-                                .dock
-                                = value;
+                                .dock = value;
                         },
                     }),
                     metadata: None,
@@ -3889,12 +3703,10 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content
-
+                            settings_content
                                 .notification_panel
                                 .get_or_insert_default()
-                                .default_width
-                                = value;
+                                .default_width = value;
                         },
                     }),
                     metadata: None,
@@ -3913,12 +3725,10 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content
-
+                            settings_content
                                 .collaboration_panel
                                 .get_or_insert_default()
-                                .button
-                                = value;
+                                .button = value;
                         },
                     }),
                     metadata: None,
@@ -3932,12 +3742,10 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             settings_content.collaboration_panel.as_ref()?.dock.as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content
-
+                            settings_content
                                 .collaboration_panel
                                 .get_or_insert_default()
-                                .dock
-                                = value;
+                                .dock = value;
                         },
                     }),
                     metadata: None,
@@ -3955,12 +3763,10 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content
-
+                            settings_content
                                 .collaboration_panel
                                 .get_or_insert_default()
-                                .default_width
-                                = value;
+                                .default_width = value;
                         },
                     }),
                     metadata: None,
@@ -3973,8 +3779,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     field: Box::new(SettingField {
                         pick: |settings_content| settings_content.agent.as_ref()?.button.as_ref(),
                         write: |settings_content, value| {
-                             settings_content.agent.get_or_insert_default().button = value;
-
+                            settings_content.agent.get_or_insert_default().button = value;
                         },
                     }),
                     metadata: None,
@@ -3986,8 +3791,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     field: Box::new(SettingField {
                         pick: |settings_content| settings_content.agent.as_ref()?.dock.as_ref(),
                         write: |settings_content, value| {
-                             settings_content.agent.get_or_insert_default().dock = value;
-
+                            settings_content.agent.get_or_insert_default().dock = value;
                         },
                     }),
                     metadata: None,
@@ -4001,8 +3805,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             settings_content.agent.as_ref()?.default_width.as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content.agent.get_or_insert_default().default_width = value;
-
+                            settings_content.agent.get_or_insert_default().default_width = value;
                         },
                     }),
                     metadata: None,
@@ -4016,12 +3819,10 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             settings_content.agent.as_ref()?.default_height.as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content
-
+                            settings_content
                                 .agent
                                 .get_or_insert_default()
-                                .default_height
-                                = value;
+                                .default_height = value;
                         },
                     }),
                     metadata: None,
@@ -4045,12 +3846,10 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content
-
+                            settings_content
                                 .debugger
                                 .get_or_insert_default()
-                                .stepping_granularity
-                                = value;
+                                .stepping_granularity = value;
                         },
                     }),
                     metadata: None,
@@ -4068,12 +3867,10 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content
-
+                            settings_content
                                 .debugger
                                 .get_or_insert_default()
-                                .save_breakpoints
-                                = value;
+                                .save_breakpoints = value;
                         },
                     }),
                     metadata: None,
@@ -4087,8 +3884,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             settings_content.debugger.as_ref()?.timeout.as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content.debugger.get_or_insert_default().timeout = value;
-
+                            settings_content.debugger.get_or_insert_default().timeout = value;
                         },
                     }),
                     metadata: None,
@@ -4106,12 +3902,10 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content
-
+                            settings_content
                                 .debugger
                                 .get_or_insert_default()
-                                .log_dap_communications
-                                = value;
+                                .log_dap_communications = value;
                         },
                     }),
                     metadata: None,
@@ -4129,12 +3923,10 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content
-
+                            settings_content
                                 .debugger
                                 .get_or_insert_default()
-                                .format_dap_log_messages
-                                = value;
+                                .format_dap_log_messages = value;
                         },
                     }),
                     metadata: None,
@@ -4155,13 +3947,11 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 settings_content.terminal.as_ref()?.project.shell.as_ref()
                             },
                             write: |settings_content, value| {
-                                 settings_content
-
+                                settings_content
                                     .terminal
                                     .get_or_insert_default()
                                     .project
-                                    .shell
-                                    = value;
+                                    .shell = value;
                             },
                         }
                         .unimplemented(),
@@ -4183,13 +3973,11 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                     .as_ref()
                             },
                             write: |settings_content, value| {
-                                 settings_content
-
+                                settings_content
                                     .terminal
                                     .get_or_insert_default()
                                     .project
-                                    .working_directory
-                                    = value;
+                                    .working_directory = value;
                             },
                         }
                         .unimplemented(),
@@ -4206,13 +3994,11 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 settings_content.terminal.as_ref()?.project.env.as_ref()
                             },
                             write: |settings_content, value| {
-                                 settings_content
-
+                                settings_content
                                     .terminal
                                     .get_or_insert_default()
                                     .project
-                                    .env
-                                    = value;
+                                    .env = value;
                             },
                         }
                         .unimplemented(),
@@ -4234,13 +4020,11 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                     .as_ref()
                             },
                             write: |settings_content, value| {
-                                 settings_content
-
+                                settings_content
                                     .terminal
                                     .get_or_insert_default()
                                     .project
-                                    .detect_venv
-                                    = value;
+                                    .detect_venv = value;
                             },
                         }
                         .unimplemented(),
@@ -4261,8 +4045,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .or(settings_content.theme.buffer_font_size.as_ref())
                         },
                         write: |settings_content, value| {
-                             settings_content.terminal.get_or_insert_default().font_size = value;
-
+                            settings_content.terminal.get_or_insert_default().font_size = value;
                         },
                     }),
                     metadata: None,
@@ -4280,12 +4063,10 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .or(settings_content.theme.buffer_font_family.as_ref())
                         },
                         write: |settings_content, value| {
-                             settings_content
-
+                            settings_content
                                 .terminal
                                 .get_or_insert_default()
-                                .font_family
-                                = value;
+                                .font_family = value;
                         },
                     }),
                     metadata: None,
@@ -4304,12 +4085,10 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                     .or(settings_content.theme.buffer_font_fallbacks.as_ref())
                             },
                             write: |settings_content, value| {
-                                 settings_content
-
+                                settings_content
                                     .terminal
                                     .get_or_insert_default()
-                                    .font_fallbacks
-                                    = value;
+                                    .font_fallbacks = value;
                             },
                         }
                         .unimplemented(),
@@ -4325,12 +4104,10 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             settings_content.terminal.as_ref()?.font_weight.as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content
-
+                            settings_content
                                 .terminal
                                 .get_or_insert_default()
-                                .font_weight
-                                = value;
+                                .font_weight = value;
                         },
                     }),
                     metadata: None,
@@ -4349,12 +4126,10 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                     .or(settings_content.theme.buffer_font_features.as_ref())
                             },
                             write: |settings_content, value| {
-                                 settings_content
-
+                                settings_content
                                     .terminal
                                     .get_or_insert_default()
-                                    .font_features
-                                    = value;
+                                    .font_features = value;
                             },
                         }
                         .unimplemented(),
@@ -4372,12 +4147,10 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 settings_content.terminal.as_ref()?.line_height.as_ref()
                             },
                             write: |settings_content, value| {
-                                 settings_content
-
+                                settings_content
                                     .terminal
                                     .get_or_insert_default()
-                                    .line_height
-                                    = value;
+                                    .line_height = value;
                             },
                         }
                         .unimplemented(),
@@ -4393,12 +4166,10 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             settings_content.terminal.as_ref()?.cursor_shape.as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content
-
+                            settings_content
                                 .terminal
                                 .get_or_insert_default()
-                                .cursor_shape
-                                = value;
+                                .cursor_shape = value;
                         },
                     }),
                     metadata: None,
@@ -4412,8 +4183,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             settings_content.terminal.as_ref()?.blinking.as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content.terminal.get_or_insert_default().blinking = value;
-
+                            settings_content.terminal.get_or_insert_default().blinking = value;
                         },
                     }),
                     metadata: None,
@@ -4431,12 +4201,10 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content
-
+                            settings_content
                                 .terminal
                                 .get_or_insert_default()
-                                .alternate_scroll
-                                = value;
+                                .alternate_scroll = value;
                         },
                     }),
                     metadata: None,
@@ -4454,12 +4222,10 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content
-
+                            settings_content
                                 .terminal
                                 .get_or_insert_default()
-                                .minimum_contrast
-                                = value;
+                                .minimum_contrast = value;
                         },
                     }),
                     metadata: None,
@@ -4474,12 +4240,10 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             settings_content.terminal.as_ref()?.option_as_meta.as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content
-
+                            settings_content
                                 .terminal
                                 .get_or_insert_default()
-                                .option_as_meta
-                                = value;
+                                .option_as_meta = value;
                         },
                     }),
                     metadata: None,
@@ -4493,12 +4257,10 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             settings_content.terminal.as_ref()?.copy_on_select.as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content
-
+                            settings_content
                                 .terminal
                                 .get_or_insert_default()
-                                .copy_on_select
-                                = value;
+                                .copy_on_select = value;
                         },
                     }),
                     metadata: None,
@@ -4516,12 +4278,10 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content
-
+                            settings_content
                                 .terminal
                                 .get_or_insert_default()
-                                .keep_selection_on_copy
-                                = value;
+                                .keep_selection_on_copy = value;
                         },
                     }),
                     metadata: None,
@@ -4536,12 +4296,10 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             settings_content.terminal.as_ref()?.default_width.as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content
-
+                            settings_content
                                 .terminal
                                 .get_or_insert_default()
-                                .default_width
-                                = value;
+                                .default_width = value;
                         },
                     }),
                     metadata: None,
@@ -4555,12 +4313,10 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             settings_content.terminal.as_ref()?.default_height.as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content
-
+                            settings_content
                                 .terminal
                                 .get_or_insert_default()
-                                .default_height
-                                = value;
+                                .default_height = value;
                         },
                     }),
                     metadata: None,
@@ -4579,12 +4335,10 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content
-
+                            settings_content
                                 .terminal
                                 .get_or_insert_default()
-                                .max_scroll_history_lines
-                                = value;
+                                .max_scroll_history_lines = value;
                         },
                     }),
                     metadata: None,
@@ -4605,14 +4359,12 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content
-
+                            settings_content
                                 .terminal
                                 .get_or_insert_default()
                                 .toolbar
                                 .get_or_insert_default()
-                                .breadcrumbs
-                                = value;
+                                .breadcrumbs = value;
                         },
                     }),
                     metadata: None,
@@ -4635,14 +4387,12 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             })
                         },
                         write: |settings_content, value| {
-                             settings_content
-
+                            settings_content
                                 .terminal
                                 .get_or_insert_default()
                                 .scrollbar
                                 .get_or_insert_default()
-                                .show
-                                = value;
+                                .show = value;
                         },
                     }),
                     metadata: None,
@@ -4660,8 +4410,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     field: Box::new(SettingField {
                         pick: |settings_content| settings_content.git.as_ref()?.git_gutter.as_ref(),
                         write: |settings_content, value| {
-                             settings_content.git.get_or_insert_default().git_gutter = value;
-
+                            settings_content.git.get_or_insert_default().git_gutter = value;
                         },
                     }),
                     metadata: None,
@@ -4676,8 +4425,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             settings_content.git.as_ref()?.gutter_debounce.as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content.git.get_or_insert_default().gutter_debounce = value;
-
+                            settings_content.git.get_or_insert_default().gutter_debounce = value;
                         },
                     }),
                     metadata: None,
@@ -4698,14 +4446,12 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content
-
+                            settings_content
                                 .git
                                 .get_or_insert_default()
                                 .inline_blame
                                 .get_or_insert_default()
-                                .enabled
-                                = value;
+                                .enabled = value;
                         },
                     }),
                     metadata: None,
@@ -4725,14 +4471,12 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content
-
+                            settings_content
                                 .git
                                 .get_or_insert_default()
                                 .inline_blame
                                 .get_or_insert_default()
-                                .delay_ms
-                                = value;
+                                .delay_ms = value;
                         },
                     }),
                     metadata: None,
@@ -4752,14 +4496,12 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content
-
+                            settings_content
                                 .git
                                 .get_or_insert_default()
                                 .inline_blame
                                 .get_or_insert_default()
-                                .padding
-                                = value;
+                                .padding = value;
                         },
                     }),
                     metadata: None,
@@ -4779,14 +4521,12 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content
-
+                            settings_content
                                 .git
                                 .get_or_insert_default()
                                 .inline_blame
                                 .get_or_insert_default()
-                                .min_column
-                                = value;
+                                .min_column = value;
                         },
                     }),
                     metadata: None,
@@ -4806,14 +4546,12 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content
-
+                            settings_content
                                 .git
                                 .get_or_insert_default()
                                 .inline_blame
                                 .get_or_insert_default()
-                                .show_commit_summary
-                                = value;
+                                .show_commit_summary = value;
                         },
                     }),
                     metadata: None,
@@ -4834,14 +4572,12 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content
-
+                            settings_content
                                 .git
                                 .get_or_insert_default()
                                 .blame
                                 .get_or_insert_default()
-                                .show_avatar
-                                = value;
+                                .show_avatar = value;
                         },
                     }),
                     metadata: None,
@@ -4862,14 +4598,12 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content
-
+                            settings_content
                                 .git
                                 .get_or_insert_default()
                                 .branch_picker
                                 .get_or_insert_default()
-                                .show_author_name
-                                = value;
+                                .show_author_name = value;
                         },
                     }),
                     metadata: None,
@@ -4882,8 +4616,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     field: Box::new(SettingField {
                         pick: |settings_content| settings_content.git.as_ref()?.hunk_style.as_ref(),
                         write: |settings_content, value| {
-                             settings_content.git.get_or_insert_default().hunk_style = value;
-
+                            settings_content.git.get_or_insert_default().hunk_style = value;
                         },
                     }),
                     metadata: None,
@@ -4903,8 +4636,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             settings_content.calls.as_ref()?.mute_on_join.as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content.calls.get_or_insert_default().mute_on_join = value;
-
+                            settings_content.calls.get_or_insert_default().mute_on_join = value;
                         },
                     }),
                     metadata: None,
@@ -4918,8 +4650,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             settings_content.calls.as_ref()?.share_on_join.as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content.calls.get_or_insert_default().share_on_join = value;
-
+                            settings_content.calls.get_or_insert_default().share_on_join = value;
                         },
                     }),
                     metadata: None,
@@ -4934,8 +4665,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             settings_content.audio.as_ref()?.rodio_audio.as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content.audio.get_or_insert_default().rodio_audio = value;
-
+                            settings_content.audio.get_or_insert_default().rodio_audio = value;
                         },
                     }),
                     metadata: None,
@@ -4953,12 +4683,10 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content
-
+                            settings_content
                                 .audio
                                 .get_or_insert_default()
-                                .auto_microphone_volume
-                                = value;
+                                .auto_microphone_volume = value;
                         },
                     }),
                     metadata: None,
@@ -4976,12 +4704,10 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content
-
+                            settings_content
                                 .audio
                                 .get_or_insert_default()
-                                .auto_speaker_volume
-                                = value;
+                                .auto_speaker_volume = value;
                         },
                     }),
                     metadata: None,
@@ -4993,8 +4719,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     field: Box::new(SettingField {
                         pick: |settings_content| settings_content.audio.as_ref()?.denoise.as_ref(),
                         write: |settings_content, value| {
-                             settings_content.audio.get_or_insert_default().denoise = value;
-
+                            settings_content.audio.get_or_insert_default().denoise = value;
                         },
                     }),
                     metadata: None,
@@ -5012,12 +4737,10 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content
-
+                            settings_content
                                 .audio
                                 .get_or_insert_default()
-                                .legacy_audio_compatible
-                                = value;
+                                .legacy_audio_compatible = value;
                         },
                     }),
                     metadata: None,
@@ -5034,7 +4757,9 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     description: "Whether to disable all AI features in Zed",
                     field: Box::new(SettingField {
                         pick: |settings_content| settings_content.disable_ai.as_ref(),
-                        write: |settings_content, value|{  settings_content.disable_ai = value;},
+                        write: |settings_content, value| {
+                            settings_content.disable_ai = value;
+                        },
                     }),
                     metadata: None,
                     files: USER,
@@ -5052,12 +4777,10 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content
-
+                            settings_content
                                 .agent
                                 .get_or_insert_default()
-                                .always_allow_tool_actions
-                                = value;
+                                .always_allow_tool_actions = value;
                         },
                     }),
                     metadata: None,
@@ -5071,12 +4794,10 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             settings_content.agent.as_ref()?.single_file_review.as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content
-
+                            settings_content
                                 .agent
                                 .get_or_insert_default()
-                                .single_file_review
-                                = value;
+                                .single_file_review = value;
                         },
                     }),
                     metadata: None,
@@ -5090,12 +4811,10 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             settings_content.agent.as_ref()?.enable_feedback.as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content
-
+                            settings_content
                                 .agent
                                 .get_or_insert_default()
-                                .enable_feedback
-                                = value;
+                                .enable_feedback = value;
                         },
                     }),
                     metadata: None,
@@ -5113,12 +4832,10 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content
-
+                            settings_content
                                 .agent
                                 .get_or_insert_default()
-                                .notify_when_agent_waiting
-                                = value;
+                                .notify_when_agent_waiting = value;
                         },
                     }),
                     metadata: None,
@@ -5136,12 +4853,10 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content
-
+                            settings_content
                                 .agent
                                 .get_or_insert_default()
-                                .play_sound_when_agent_done
-                                = value;
+                                .play_sound_when_agent_done = value;
                         },
                     }),
                     metadata: None,
@@ -5155,12 +4870,10 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             settings_content.agent.as_ref()?.expand_edit_card.as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content
-
+                            settings_content
                                 .agent
                                 .get_or_insert_default()
-                                .expand_edit_card
-                                = value;
+                                .expand_edit_card = value;
                         },
                     }),
                     metadata: None,
@@ -5178,12 +4891,10 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content
-
+                            settings_content
                                 .agent
                                 .get_or_insert_default()
-                                .expand_terminal_card
-                                = value;
+                                .expand_terminal_card = value;
                         },
                     }),
                     metadata: None,
@@ -5201,12 +4912,10 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content
-
+                            settings_content
                                 .agent
                                 .get_or_insert_default()
-                                .use_modifier_to_send
-                                = value;
+                                .use_modifier_to_send = value;
                         },
                     }),
                     metadata: None,
@@ -5224,12 +4933,10 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content
-
+                            settings_content
                                 .agent
                                 .get_or_insert_default()
-                                .message_editor_min_lines
-                                = value;
+                                .message_editor_min_lines = value;
                         },
                     }),
                     metadata: None,
@@ -5248,7 +4955,9 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     field: Box::new(
                         SettingField {
                             pick: |settings_content| settings_content.proxy.as_ref(),
-                            write: |settings_content, value|{  settings_content.proxy = value;},
+                            write: |settings_content, value| {
+                                settings_content.proxy = value;
+                            },
                         }
                         .unimplemented(),
                     ),
@@ -5263,7 +4972,9 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     description: "The URL of the Zed server to connect to",
                     field: Box::new(SettingField {
                         pick: |settings_content| settings_content.server_url.as_ref(),
-                        write: |settings_content, value|{  settings_content.server_url = value;},
+                        write: |settings_content, value| {
+                            settings_content.server_url = value;
+                        },
                     }),
                     metadata: Some(Box::new(SettingsFieldMetadata {
                         placeholder: Some("https://zed.dev"),

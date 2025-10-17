@@ -442,6 +442,7 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::PaneSplitDirectionVertical>(render_dropdown)
         .add_basic_renderer::<settings::DocumentColorsRenderMode>(render_dropdown)
         .add_basic_renderer::<settings::ThemeSelectionDiscriminants>(render_dropdown)
+        .add_basic_renderer::<settings::ThemeMode>(render_dropdown)
         .add_basic_renderer::<settings::ThemeName>(render_theme_picker)
         .add_renderer::<settings::ThemeSelection>(
             |_settings_window, _settings_item, settings_field, file, _metadata, _window, cx| {
