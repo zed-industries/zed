@@ -692,7 +692,7 @@ fn render_markdown_text(parsed_new: &MarkdownParagraph, cx: &mut RenderContext) 
                 let highlights = gpui::combine_highlights(
                     parsed.highlights.iter().filter_map(|(range, highlight)| {
                         highlight
-                            .to_highlight_style(&syntax_theme, link_color)
+                            .to_highlight_style(&syntax_theme)
                             .map(|style| (range.clone(), style))
                     }),
                     parsed.regions.iter().zip(&parsed.region_ranges).filter_map(
@@ -702,6 +702,14 @@ fn render_markdown_text(parsed_new: &MarkdownParagraph, cx: &mut RenderContext) 
                                     range.clone(),
                                     HighlightStyle {
                                         background_color: Some(code_span_bg_color),
+                                        ..Default::default()
+                                    },
+                                ))
+                            } else if region.link.is_some() {
+                                Some((
+                                    range.clone(),
+                                    HighlightStyle {
+                                        color: Some(link_color),
                                         ..Default::default()
                                     },
                                 ))
