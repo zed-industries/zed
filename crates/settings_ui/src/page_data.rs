@@ -3443,8 +3443,8 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     files: USER,
-                    title: "Indent Guides Show",
-                    description: "Show indent guides in the project panel",
+                    title: "Show Indent Guides",
+                    description: "Show Indent Guides In The Project Panel",
                     field: Box::new(
                         SettingField {
                             pick: |settings_content| {
@@ -3465,8 +3465,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                     .show = value;
                             },
                         }
-                        // todo! remove
-                        .unimplemented(),
                     ),
                     metadata: None,
                 }),
@@ -3736,8 +3734,8 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     files: USER,
-                    title: "Indent Guides Show",
-                    description: "When to show indent guides in the outline panel",
+                    title: "Show Indent Guides",
+                    description: "When To Show Indent Guides In The Outline Panel",
                     field: Box::new(
                         SettingField {
                             pick: |settings_content| {
@@ -3758,7 +3756,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                     .show = value;
                             },
                         }
-                        .unimplemented(),
                     ),
                     metadata: None,
                 }),
