@@ -740,7 +740,7 @@ impl SettingsPageItem {
             }) => {
                 let file = file.to_settings();
                 let discriminant = SettingsStore::global(cx)
-                    .get_value_from_file_owned(file, *pick_discriminant)
+                    .get_value_from_file(file, *pick_discriminant)
                     .1;
                 let (discriminant_element, rendered_ok) =
                     render_setting_item_inner(discriminant_setting_item, cx);
