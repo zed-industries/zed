@@ -1,6 +1,6 @@
 use anyhow::{Result, anyhow};
 use collections::{HashMap, HashSet};
-use command_palette_hooks::CommandInterceptResult;
+use command_palette_hooks::{CommandInterceptItem, CommandInterceptResult};
 use editor::{
     Bias, Editor, EditorSettings, SelectionEffects, ToPoint,
     actions::{SortLinesCaseInsensitive, SortLinesCaseSensitive},
@@ -91,7 +91,7 @@ pub enum VimOption {
 }
 
 impl VimOption {
-    fn possible_commands(query: &str) -> Vec<CommandInterceptResult> {
+    fn possible_commands(query: &str) -> Vec<CommandInterceptItem> {
         let mut prefix_of_options = Vec::new();
         let mut options = query.split(" ").collect::<Vec<_>>();
         let prefix = options.pop().unwrap_or_default();
@@ -108,7 +108,7 @@ impl VimOption {
                 let mut options = prefix_of_options.clone();
                 options.push(possible);
 
-                CommandInterceptResult {
+                CommandInterceptItem {
                     string: format!(
                         ":set {}",
                         options.iter().map(|opt| opt.to_string()).join(" ")
@@ -1493,7 +1493,7 @@ pub fn command_interceptor(
     mut input: &str,
     workspace: WeakEntity<Workspace>,
     cx: &mut App,
-) -> Task<Vec<CommandInterceptResult>> {
+) -> Task<CommandInterceptResult> {
     while input.starts_with(':') {
         input = &input[1..];
     }
@@ -1536,7 +1536,10 @@ pub fn command_interceptor(
                 command.positions = generate_positions(&command.string, &query);
             }
         }
-        return Task::ready(commands);
+        return Task::ready(CommandInterceptResult {
+            results: commands,
+            exclusive: false,
+        });
     } else if query.starts_with('s') {
         let mut substitute = "substitute".chars().peekable();
         let mut query = query.chars().peekable();
@@ -1580,11 +1583,14 @@ pub fn command_interceptor(
     if let Some(action) = action {
         let string = input.to_string();
         let positions = generate_positions(&string, &(range_prefix + query));
-        return Task::ready(vec![CommandInterceptResult {
-            action,
-            string,
-            positions,
-        }]);
+        return Task::ready(CommandInterceptResult {
+            results: vec![CommandInterceptItem {
+                action,
+                string,
+                positions,
+            }],
+            exclusive: false,
+        });
     }
 
     let Some((mut results, filenames)) =
@@ -1601,7 +1607,7 @@ pub fn command_interceptor(
             let string = format!("{}{}{}", &display_string, &space, &parsed_query.args);
             let positions = generate_positions(&string, &(range_prefix.clone() + query));
 
-            let results = vec![CommandInterceptResult {
+            let results = vec![CommandInterceptItem {
                 action,
                 string,
                 positions,
@@ -1626,7 +1632,7 @@ pub fn command_interceptor(
             ))
         })
     else {
-        return Task::ready(Vec::new());
+        return Task::ready(CommandInterceptResult::default());
     };
 
     if let Some((cmd_idx, parsed_query, display_string, no_args_positions)) = filenames {
@@ -1668,16 +1674,22 @@ pub fn command_interceptor(
                     Ok(Some(action)) => action,
                     _ => continue,
                 };
-                results.push(CommandInterceptResult {
+                results.push(CommandInterceptItem {
                     action,
                     string,
                     positions,
                 });
             }
-            results
+            CommandInterceptResult {
+                results,
+                exclusive: true,
+            }
         })
     } else {
-        Task::ready(results)
+        Task::ready(CommandInterceptResult {
+            results,
+            exclusive: false,
+        })
     }
 }
 

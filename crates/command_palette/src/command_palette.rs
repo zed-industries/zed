@@ -9,7 +9,8 @@ use std::{
 
 use client::parse_zed_link;
 use command_palette_hooks::{
-    CommandInterceptResult, CommandPaletteFilter, GlobalCommandPaletteInterceptor,
+    CommandInterceptItem, CommandInterceptResult, CommandPaletteFilter,
+    GlobalCommandPaletteInterceptor,
 };
 
 use fuzzy::{StringMatch, StringMatchCandidate};
@@ -161,7 +162,7 @@ pub struct CommandPaletteDelegate {
     previous_focus_handle: FocusHandle,
     updating_matches: Option<(
         Task<()>,
-        postage::dispatch::Receiver<(Vec<Command>, Vec<StringMatch>, Vec<CommandInterceptResult>)>,
+        postage::dispatch::Receiver<(Vec<Command>, Vec<StringMatch>, CommandInterceptResult)>,
     )>,
 }
 
@@ -204,7 +205,7 @@ impl CommandPaletteDelegate {
         query: String,
         mut commands: Vec<Command>,
         mut matches: Vec<StringMatch>,
-        intercept_results: Vec<CommandInterceptResult>,
+        intercept_result: CommandInterceptResult,
         _: &mut Context<Picker<Self>>,
     ) {
         self.updating_matches.take();
@@ -212,11 +213,11 @@ impl CommandPaletteDelegate {
 
         let mut new_matches = Vec::new();
 
-        for CommandInterceptResult {
+        for CommandInterceptItem {
             action,
             string,
             positions,
-        } in intercept_results
+        } in intercept_result.results
         {
             if let Some(idx) = matches
                 .iter()
@@ -235,7 +236,9 @@ impl CommandPaletteDelegate {
                 score: 0.0,
             })
         }
-        new_matches.append(&mut matches);
+        if !intercept_result.exclusive {
+            new_matches.append(&mut matches);
+        }
         self.commands = commands;
         self.matches = new_matches;
         if self.matches.is_empty() {
@@ -335,24 +338,25 @@ impl PickerDelegate for CommandPaletteDelegate {
                 )
                 .await;
 
-                let intercept_results = if is_zed_link {
-                    vec![CommandInterceptResult {
-                        action: OpenZedUrl {
-                            url: query_for_link.clone(),
-                        }
-                        .boxed_clone(),
-                        string: query_for_link,
-                        positions: vec![],
-                    }]
-                } else {
-                    if let Some(task) = intercept_task {
-                        task.await
-                    } else {
-                        Vec::new()
+                let intercept_result = if is_zed_link {
+                    CommandInterceptResult {
+                        results: vec![CommandInterceptItem {
+                            action: OpenZedUrl {
+                                url: query_for_link.clone(),
+                            }
+                            .boxed_clone(),
+                            string: query_for_link,
+                            positions: vec![],
+                        }],
+                        exclusive: false,
                     }
+                } else if let Some(task) = intercept_task {
+                    task.await
+                } else {
+                    CommandInterceptResult::default()
                 };
 
-                tx.send((commands, matches, intercept_results))
+                tx.send((commands, matches, intercept_result))
                     .await
                     .log_err();
             }
@@ -361,7 +365,7 @@ impl PickerDelegate for CommandPaletteDelegate {
         self.updating_matches = Some((task, rx.clone()));
 
         cx.spawn_in(window, async move |picker, cx| {
-            let Some((commands, matches, intercept_results)) = rx.recv().await else {
+            let Some((commands, matches, intercept_result)) = rx.recv().await else {
                 return;
             };
 
@@ -369,7 +373,7 @@ impl PickerDelegate for CommandPaletteDelegate {
                 .update(cx, |picker, cx| {
                     picker
                         .delegate
-                        .matches_updated(query, commands, matches, intercept_results, cx)
+                        .matches_updated(query, commands, matches, intercept_result, cx)
                 })
                 .log_err();
         })
@@ -390,8 +394,8 @@ impl PickerDelegate for CommandPaletteDelegate {
             .background_executor()
             .block_with_timeout(duration, rx.clone().recv())
         {
-            Ok(Some((commands, matches, interceptor_results))) => {
-                self.matches_updated(query, commands, matches, interceptor_results, cx);
+            Ok(Some((commands, matches, interceptor_result))) => {
+                self.matches_updated(query, commands, matches, interceptor_result, cx);
                 true
             }
             _ => {
