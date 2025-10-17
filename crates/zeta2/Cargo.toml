@@ -34,7 +34,6 @@ serde_json.workspace = true
 thiserror.workspace = true
 util.workspace = true
 uuid.workspace = true
-workspace-hack.workspace = true
 workspace.workspace = true
 worktree.workspace = true
 

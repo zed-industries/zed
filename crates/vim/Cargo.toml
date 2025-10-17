@@ -53,7 +53,6 @@ util_macros.workspace = true
 vim_mode_setting.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
-workspace-hack.workspace = true
 
 [dev-dependencies]
 assets.workspace = true

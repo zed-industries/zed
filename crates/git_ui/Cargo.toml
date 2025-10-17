@@ -58,7 +58,6 @@ time_format.workspace = true
 ui.workspace = true
 util.workspace = true
 watch.workspace = true
-workspace-hack.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
 zeroize.workspace = true
