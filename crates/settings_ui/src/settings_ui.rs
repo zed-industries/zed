@@ -378,12 +378,6 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::OnLastWindowClosed>(render_dropdown)
         .add_basic_renderer::<settings::CloseWindowWhenNoItems>(render_dropdown)
         .add_basic_renderer::<settings::FontFamilyName>(render_font_picker)
-        // todo(settings_ui): This needs custom ui
-        // .add_renderer::<settings::BufferLineHeight>(|settings_field, file, _, window, cx| {
-        //     // todo(settings_ui): Do we want to expose the custom variant of buffer line height?
-        //     // right now there's a manual impl of strum::VariantArray
-        //     render_dropdown(*settings_field, file, window, cx)
-        // })
         .add_basic_renderer::<settings::BaseKeymapContent>(render_dropdown)
         .add_basic_renderer::<settings::MultiCursorModifier>(render_dropdown)
         .add_basic_renderer::<settings::HideMouseMode>(render_dropdown)
@@ -444,31 +438,8 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::ThemeSelectionDiscriminants>(render_dropdown)
         .add_basic_renderer::<settings::ThemeMode>(render_dropdown)
         .add_basic_renderer::<settings::ThemeName>(render_theme_picker)
-        .add_renderer::<settings::ThemeSelection>(
-            |_settings_window, _settings_item, settings_field, file, _metadata, _window, cx| {
-                // <settings::ThemeSelection as strum::IntoDiscriminant>::Discriminant
-                let store = SettingsStore::global(cx);
-                // let pick_discriminant = |content: &SettingsContent| -> &Option<usize> {
-                //     match content.theme.theme.as_ref() {
-                //         Some(theme) => &Some(theme.discriminant() as usize),
-                //         None => &None,
-                //     }
-                // };
-                // let discriminant_field = store
-                //     .get_value_from_file(file.to_settings(), settings_field.pick)
-                //     .1
-                //     .map_or(
-                //         settings::ThemeSelection::Static(settings::ThemeName(
-                //             cx.theme().name.clone().into(),
-                //         ))
-                //         .discriminant(),
-                //         strum::IntoDiscriminant::discriminant,
-                //     );
-                // render_dropdown(*settings_field, file, window, cx)
-                div().id("foo")
-            },
-        );
-    // please semicolon stay on next line
+        // please semicolon stay on next line
+        ;
 }
 
 pub fn open_settings_editor(
