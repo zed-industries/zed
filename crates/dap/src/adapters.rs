@@ -356,6 +356,7 @@ pub trait DebugAdapter: 'static + Send + Sync {
         config: &DebugTaskDefinition,
         user_installed_path: Option<PathBuf>,
         user_args: Option<Vec<String>>,
+        user_env: Option<HashMap<String, String>>,
         cx: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary>;
 
@@ -455,6 +456,7 @@ impl DebugAdapter for FakeAdapter {
         task_definition: &DebugTaskDefinition,
         _: Option<PathBuf>,
         _: Option<Vec<String>>,
+        _: Option<HashMap<String, String>>,
         _: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
         let connection = task_definition

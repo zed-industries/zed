@@ -52,12 +52,13 @@ impl JsDebugAdapter {
         task_definition: &DebugTaskDefinition,
         user_installed_path: Option<PathBuf>,
         user_args: Option<Vec<String>>,
+        user_env: Option<HashMap<String, String>>,
         _: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
         let tcp_connection = task_definition.tcp_connection.clone().unwrap_or_default();
         let (host, port, timeout) = crate::configure_tcp_connection(tcp_connection).await?;
 
-        let mut envs = HashMap::default();
+        let mut envs = user_env.unwrap_or_default();
 
         let mut configuration = task_definition.config.clone();
         if let Some(configuration) = configuration.as_object_mut() {
@@ -100,9 +101,9 @@ impl JsDebugAdapter {
             }
 
             if let Some(env) = configuration.get("env").cloned()
-                && let Ok(env) = serde_json::from_value(env)
+                && let Ok(env) = serde_json::from_value::<HashMap<String, String>>(env)
             {
-                envs = env;
+                envs.extend(env.into_iter());
             }
 
             configuration
@@ -504,6 +505,7 @@ impl DebugAdapter for JsDebugAdapter {
         config: &DebugTaskDefinition,
         user_installed_path: Option<PathBuf>,
         user_args: Option<Vec<String>>,
+        user_env: Option<HashMap<String, String>>,
         cx: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
         if self.checked.set(()).is_ok() {
@@ -521,8 +523,15 @@ impl DebugAdapter for JsDebugAdapter {
             }
         }
 
-        self.get_installed_binary(delegate, config, user_installed_path, user_args, cx)
-            .await
+        self.get_installed_binary(
+            delegate,
+            config,
+            user_installed_path,
+            user_args,
+            user_env,
+            cx,
+        )
+        .await
     }
 
     fn label_for_child_session(&self, args: &StartDebuggingRequestArguments) -> Option<String> {

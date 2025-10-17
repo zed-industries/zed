@@ -154,6 +154,8 @@ pub struct DapSettingsContent {
     pub binary: Option<String>,
     #[serde(default)]
     pub args: Option<Vec<String>>,
+    #[serde(default)]
+    pub env: Option<HashMap<String, String>>,
 }
 
 #[skip_serializing_none]

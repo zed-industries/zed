@@ -409,6 +409,7 @@ impl DebugAdapter for GoDebugAdapter {
         task_definition: &DebugTaskDefinition,
         user_installed_path: Option<PathBuf>,
         user_args: Option<Vec<String>>,
+        user_env: Option<HashMap<String, String>>,
         _cx: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
         let adapter_path = paths::debug_adapters_dir().join(&Self::ADAPTER_NAME);
@@ -460,7 +461,7 @@ impl DebugAdapter for GoDebugAdapter {
         let connection;
 
         let mut configuration = task_definition.config.clone();
-        let mut envs = HashMap::default();
+        let mut envs = user_env.unwrap_or_default();
 
         if let Some(configuration) = configuration.as_object_mut() {
             configuration
