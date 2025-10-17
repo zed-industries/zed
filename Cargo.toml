@@ -58,7 +58,7 @@ members = [
     "crates/edit_prediction_context",
     "crates/zeta2_tools",
     "crates/editor",
-    "crates/eval",
+    # "crates/eval",
     "crates/explorer_command_injector",
     "crates/extension",
     "crates/extension_api",
