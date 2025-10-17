@@ -14,6 +14,7 @@ use gpui::{
     FocusHandle, Focusable, PromptLevel, ScrollHandle, Subscription, Task, WeakEntity, Window,
     canvas,
 };
+use language::Point;
 use log::info;
 use paths::{global_ssh_config_file, user_ssh_config_file};
 use picker::Picker;
@@ -234,6 +235,15 @@ impl ProjectPicker {
                         .read_with(cx, |workspace, _| workspace.app_state().clone())
                         .ok()?;
 
+                    let remote_connection = project
+                        .read_with(cx, |project, cx| {
+                            project.remote_client()?.read(cx).connection()
+                        })
+                        .ok()??;
+
+                    let (paths, paths_with_positions) =
+                        determine_paths_with_positions(&remote_connection, paths).await;
+
                     cx.update(|_, cx| {
                         let fs = app_state.fs.clone();
                         update_settings_file(fs, cx, {
@@ -279,15 +289,6 @@ impl ProjectPicker {
                         })
                         .log_err()?;
 
-                    let remote_connection = project
-                        .read_with(cx, |project, cx| {
-                            project.remote_client()?.read(cx).connection()
-                        })
-                        .ok()??;
-
-                    let (paths, paths_with_positions) =
-                        determine_paths_with_positions(&remote_connection, paths).await;
-
                     let items = open_remote_project_with_existing_connection(
                         connection, project, paths, app_state, window, cx,
                     )
@@ -295,8 +296,29 @@ impl ProjectPicker {
                     .log_err();
 
                     if let Some(items) = items {
-
-                        // open the positions
+                        for (item, path) in items.into_iter().zip(paths_with_positions) {
+                            let Some(item) = item else {
+                                continue;
+                            };
+                            let Some(row) = path.row else {
+                                continue;
+                            };
+                            if let Some(active_editor) = item.downcast::<Editor>() {
+                                window
+                                    .update(cx, |_, window, cx| {
+                                        active_editor.update(cx, |editor, cx| {
+                                            let row = row.saturating_sub(1);
+                                            let col = path.column.unwrap_or(0).saturating_sub(1);
+                                            editor.go_to_singleton_buffer_point(
+                                                Point::new(row, col),
+                                                window,
+                                                cx,
+                                            );
+                                        });
+                                    })
+                                    .ok();
+                            }
+                        }
                     }
 
                     this.update(cx, |_, cx| {

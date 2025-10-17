@@ -15,7 +15,7 @@ use gpui::{
     TextStyleRefinement, WeakEntity,
 };
 
-use language::CursorShape;
+use language::{CursorShape, Point};
 use markdown::{Markdown, MarkdownElement, MarkdownStyle};
 use release_channel::ReleaseChannel;
 use remote::{
@@ -580,6 +580,7 @@ pub async fn open_remote_project(
     } else {
         let workspace_position = cx
             .update(|cx| {
+                // todo: These paths are wrong they may have column and line information
                 workspace::remote_workspace_position_from_db(connection_options.clone(), &paths, cx)
             })?
             .await
@@ -696,7 +697,29 @@ pub async fn open_remote_project(
                 }
             }
             Ok(items) => {
-                // handle the positions
+                for (item, path) in items.into_iter().zip(paths_with_positions) {
+                    let Some(item) = item else {
+                        continue;
+                    };
+                    let Some(row) = path.row else {
+                        continue;
+                    };
+                    if let Some(active_editor) = item.downcast::<Editor>() {
+                        window
+                            .update(cx, |_, window, cx| {
+                                active_editor.update(cx, |editor, cx| {
+                                    let row = row.saturating_sub(1);
+                                    let col = path.column.unwrap_or(0).saturating_sub(1);
+                                    editor.go_to_singleton_buffer_point(
+                                        Point::new(row, col),
+                                        window,
+                                        cx,
+                                    );
+                                });
+                            })
+                            .ok();
+                    }
+                }
             }
         }
 
