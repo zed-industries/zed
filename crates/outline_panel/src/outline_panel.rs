@@ -3192,13 +3192,13 @@ impl OutlinePanel {
             .into_iter()
             .flat_map(|excerpt| excerpt.iter_outlines())
             .flat_map(|outline| {
-                let start = multi_buffer_snapshot
-                    .anchor_in_excerpt(excerpt_id, outline.range.start)?
-                    .to_display_point(&editor_snapshot);
-                let end = multi_buffer_snapshot
-                    .anchor_in_excerpt(excerpt_id, outline.range.end)?
-                    .to_display_point(&editor_snapshot);
-                Some((start..end, outline))
+                let range = multi_buffer_snapshot
+                    .anchor_range_in_excerpt(excerpt_id, outline.range.clone())?;
+                Some((
+                    range.start.to_display_point(&editor_snapshot)
+                        ..range.end.to_display_point(&editor_snapshot),
+                    outline,
+                ))
             })
             .collect::<Vec<_>>();
 
