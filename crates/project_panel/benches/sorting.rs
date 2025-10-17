@@ -1,13 +1,15 @@
 use criterion::{Criterion, criterion_group, criterion_main};
 use project::{Entry, EntryKind, GitEntry, ProjectEntryId};
-use project_panel::par_sort_worktree_entries;
+use project_panel::{par_sort_worktree_entries, par_sort_worktree_entries_with_mode};
+use settings::ProjectPanelSortMode;
 use std::sync::Arc;
 use util::rel_path::RelPath;
 
 fn load_linux_repo_snapshot() -> Vec<GitEntry> {
-    let file = std::fs::read_to_string(
-        "/Users/hiro/Projects/zed/crates/project_panel/benches/linux_repo_snapshot.txt",
-    )
+    let file = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/benches/linux_repo_snapshot.txt"
+    ))
     .expect("Failed to read file");
     file.lines()
         .filter_map(|line| {
@@ -42,10 +44,39 @@ fn load_linux_repo_snapshot() -> Vec<GitEntry> {
 }
 fn criterion_benchmark(c: &mut Criterion) {
     let snapshot = load_linux_repo_snapshot();
-    c.bench_function("Sort linux worktree snapshot", |b| {
+    
+    // Benchmark legacy function (defaults to DirectoriesFirst)
+    c.bench_function("Sort linux worktree snapshot (legacy)", |b| {
         b.iter_batched(
             || snapshot.clone(),
             |mut snapshot| par_sort_worktree_entries(&mut snapshot),
+            criterion::BatchSize::LargeInput,
+        );
+    });
+    
+    // Benchmark DirectoriesFirst mode explicitly
+    c.bench_function("Sort linux worktree snapshot (DirectoriesFirst)", |b| {
+        b.iter_batched(
+            || snapshot.clone(),
+            |mut snapshot| par_sort_worktree_entries_with_mode(&mut snapshot, ProjectPanelSortMode::DirectoriesFirst),
+            criterion::BatchSize::LargeInput,
+        );
+    });
+    
+    // Benchmark Interleaved mode
+    c.bench_function("Sort linux worktree snapshot (Interleaved)", |b| {
+        b.iter_batched(
+            || snapshot.clone(),
+            |mut snapshot| par_sort_worktree_entries_with_mode(&mut snapshot, ProjectPanelSortMode::Interleaved),
+            criterion::BatchSize::LargeInput,
+        );
+    });
+    
+    // Benchmark MacosLike mode
+    c.bench_function("Sort linux worktree snapshot (MacosLike)", |b| {
+        b.iter_batched(
+            || snapshot.clone(),
+            |mut snapshot| par_sort_worktree_entries_with_mode(&mut snapshot, ProjectPanelSortMode::MacosLike),
             criterion::BatchSize::LargeInput,
         );
     });
