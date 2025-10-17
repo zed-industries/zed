@@ -366,7 +366,7 @@ pub fn execute_run(
     write_pid_file(&pid_file)
         .with_context(|| format!("failed to write pid file: {:?}", &pid_file))?;
 
-    let listeners = ServerListeners::new(stdin_socket, stdout_socket, stderr_socket)?;
+    let listeners = ServerListeners::new(stdin_socket.clone(), stdout_socket.clone(), stderr_socket.clone())?;
 
     let (shell_env_loaded_tx, shell_env_loaded_rx) = oneshot::channel();
     app.background_executor()
@@ -387,6 +387,76 @@ pub fn execute_run(
 
         log::info!("gpui app started, initializing server");
         let session = start_server(listeners, log_rx, cx);
+
+        // Start CLI listener to accept remote CLI commands over a side socket.
+        let mut cli_socket = pid_file.clone();
+        if let Some(parent) = cli_socket.parent().cloned() {
+            cli_socket = parent.join("cli.sock");
+        } else {
+            cli_socket = PathBuf::from("cli.sock");
+        }
+        if std::fs::remove_file(&cli_socket).is_ok() {
+            // removed stale socket
+        }
+        if let Ok(cli_listener) = smol::net::unix::UnixListener::bind(&cli_socket) {
+            let session_for_cli = session.clone();
+            cx.background_spawn(async move {
+                use smol::io::AsyncReadExt as _;
+                use smol::io::AsyncWriteExt as _;
+                loop {
+                    match cli_listener.accept().await {
+                        Ok((mut stream, _addr)) => {
+                            // Read entire JSON blob and process a single command
+                            let mut buf = Vec::new();
+                            if stream.read_to_end(&mut buf).await.is_ok() {
+                                #[derive(serde::Deserialize)]
+                                struct DiffPair { old_path: String, new_path: String }
+                                #[derive(serde::Deserialize)]
+                                struct CliOpenArgs {
+                                    paths: Vec<String>,
+                                    urls: Vec<String>,
+                                    diff_paths: Vec<DiffPair>,
+                                    wait: bool,
+                                    open_new_workspace: Option<bool>,
+                                }
+                                if let Ok(args) = serde_json::from_slice::<CliOpenArgs>(&buf) {
+                                    let response = session_for_cli
+                                        .request(proto::RemoteCliOpen {
+                                            paths: args.paths,
+                                            urls: args.urls,
+                                            diff_paths: args
+                                                .diff_paths
+                                                .into_iter()
+                                                .map(|p| proto::remote_cli_open::DiffPair {
+                                                    old_path: p.old_path,
+                                                    new_path: p.new_path,
+                                                })
+                                                .collect(),
+                                            wait: args.wait,
+                                            open_new_workspace: args.open_new_workspace,
+                                        })
+                                        .await
+                                        .unwrap_or_else(|e| proto::RemoteCliOpenResponse {
+                                            status: 1,
+                                            stderr: e.to_string(),
+                                            stdout: String::new(),
+                                        });
+                                    let _ = stream
+                                        .write_all(serde_json::to_string(&response).unwrap().as_bytes())
+                                        .await;
+                                }
+                            }
+                            let _ = stream.flush().await;
+                        }
+                        Err(_e) => break,
+                    }
+                }
+                anyhow::Ok(())
+            })
+            .detach();
+        } else {
+            log::warn!("failed to bind CLI socket at {:?}", cli_socket);
+        }
 
         client::init_settings(cx);
 
@@ -473,11 +543,15 @@ pub(crate) enum ServerPathError {
 
 #[derive(Clone, Debug)]
 struct ServerPaths {
+    server_dir: PathBuf,
     log_file: PathBuf,
     pid_file: PathBuf,
     stdin_socket: PathBuf,
     stdout_socket: PathBuf,
     stderr_socket: PathBuf,
+    cli_socket: PathBuf,
+    bin_dir: PathBuf,
+    identifier: String,
 }
 
 impl ServerPaths {
@@ -499,14 +573,20 @@ impl ServerPaths {
         let stdin_socket = server_dir.join("stdin.sock");
         let stdout_socket = server_dir.join("stdout.sock");
         let stderr_socket = server_dir.join("stderr.sock");
+        let cli_socket = server_dir.join("cli.sock");
         let log_file = logs_dir().join(format!("server-{}.log", identifier));
+        let bin_dir = server_dir.join("bin");
 
         Ok(Self {
+            server_dir,
             pid_file,
             stdin_socket,
             stdout_socket,
             stderr_socket,
+            cli_socket,
             log_file,
+            bin_dir,
+            identifier: identifier.to_string(),
         })
     }
 }
@@ -659,6 +739,7 @@ async fn kill_running_server(pid: u32, paths: &ServerPaths) -> Result<(), Execut
         &paths.stdin_socket,
         &paths.stdout_socket,
         &paths.stderr_socket,
+        &paths.cli_socket,
     ] {
         log::debug!("cleaning up file {:?} before starting new server", file);
         std::fs::remove_file(file).ok();
@@ -743,6 +824,25 @@ async fn spawn_server(paths: &ServerPaths) -> Result<(), SpawnServerError> {
         "server ready to accept connections. total time waited: {:?}",
         total_time_waited
     );
+
+    // Create a small CLI shim so remote terminals can run `zed`.
+    if std::fs::create_dir_all(&paths.bin_dir).is_ok() {
+        if let Ok(binary_path) = std::env::current_exe() {
+            let shim_path = paths.bin_dir.join("zed");
+            let script = format!(
+                "#!/bin/sh\nexec '{}' cli --identifier '{}' open \"$@\"\n",
+                binary_path.display(),
+                paths.identifier
+            );
+            if std::fs::write(&shim_path, script.as_bytes()).is_ok() {
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt as _;
+                    let _ = std::fs::set_permissions(&shim_path, std::fs::Permissions::from_mode(0o755));
+                }
+            }
+        }
+    }
 
     Ok(())
 }
