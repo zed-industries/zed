@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 use settings_macros::MergeFrom;
 
-use crate::{DockPosition, DockSide, ScrollbarSettingsContent, ShowIndentGuides};
+use crate::{DockPosition, DockSide, InactiveOpacity, ScrollbarSettingsContent, ShowIndentGuides};
 
 #[skip_serializing_none]
 #[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
@@ -256,7 +256,8 @@ pub struct ActivePaneModifiers {
     /// Values are clamped to the [0.0, 1.0] range.
     ///
     /// Default: `1.0`
-    pub inactive_opacity: Option<f32>,
+    #[schemars(range(min = 0.0, max = 1.0))]
+    pub inactive_opacity: Option<InactiveOpacity>,
 }
 
 #[derive(

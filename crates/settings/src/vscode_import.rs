@@ -843,7 +843,7 @@ impl VsCodeSettings {
         {
             Some(ActivePaneModifiers {
                 border_size: None,
-                inactive_opacity: Some(opacity),
+                inactive_opacity: Some(InactiveOpacity(opacity)),
             })
         } else {
             None

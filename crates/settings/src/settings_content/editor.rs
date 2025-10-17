@@ -803,3 +803,28 @@ impl Display for MinimumContrast {
         write!(f, "{:.1}", self.0)
     }
 }
+
+/// Opacity of the inactive panes. 0 means transparent, 1 means opaque.
+///
+/// Valid range: 0.0 to 1.0
+/// Default: 1.0
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    PartialOrd,
+    derive_more::FromStr,
+)]
+#[serde(transparent)]
+pub struct InactiveOpacity(pub f32);
+
+impl Display for InactiveOpacity {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:.1}", self.0)
+    }
+}

@@ -8,7 +8,7 @@ use std::{
 use editor::{Editor, EditorStyle};
 use gpui::{ClickEvent, Entity, FocusHandle, Focusable, FontWeight, Modifiers};
 
-use settings::{CodeFade, MinimumContrast};
+use settings::{CodeFade, InactiveOpacity, MinimumContrast};
 use ui::prelude::*;
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
@@ -76,6 +76,30 @@ impl NumberFieldType for settings::CodeFade {
     }
     fn saturating_sub(self, rhs: Self) -> Self {
         CodeFade((self.0 - rhs.0).max(Self::min_value().0))
+    }
+}
+
+impl NumberFieldType for settings::InactiveOpacity {
+    fn default_step() -> Self {
+        InactiveOpacity(0.10)
+    }
+    fn large_step() -> Self {
+        InactiveOpacity(0.20)
+    }
+    fn small_step() -> Self {
+        InactiveOpacity(0.05)
+    }
+    fn min_value() -> Self {
+        InactiveOpacity(0.0)
+    }
+    fn max_value() -> Self {
+        InactiveOpacity(1.0)
+    }
+    fn saturating_add(self, rhs: Self) -> Self {
+        InactiveOpacity((self.0 + rhs.0).min(Self::max_value().0))
+    }
+    fn saturating_sub(self, rhs: Self) -> Self {
+        InactiveOpacity((self.0 - rhs.0).max(Self::min_value().0))
     }
 }
 
