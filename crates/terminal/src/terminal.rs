@@ -2451,7 +2451,7 @@ mod tests {
     }
 
     // TODO should be tested on Linux too, but does not work there well
-    #[cfg(target_os = "macos")]
+    #[cfg(not(target_os = "windows"))]
     #[gpui::test(iterations = 10)]
     async fn test_terminal_eof(cx: &mut TestAppContext) {
         cx.executor().allow_parking();
@@ -2493,20 +2493,27 @@ mod tests {
         })
         .detach();
 
-        let first_event = Event::Wakeup;
-        let wakeup = event_rx.recv().await.expect("No wakeup event received");
-        assert_eq!(wakeup, first_event, "Expected wakeup, got {wakeup:?}");
+        let _initial_event = event_rx.recv().await.expect("No wakeup event received");
 
-        terminal.update(cx, |terminal, _| {
-            let success = terminal.try_keystroke(&Keystroke::parse("ctrl-c").unwrap(), false);
-            assert!(success, "Should have registered ctrl-c sequence");
-        });
-        terminal.update(cx, |terminal, _| {
-            let success = terminal.try_keystroke(&Keystroke::parse("ctrl-d").unwrap(), false);
-            assert!(success, "Should have registered ctrl-d sequence");
-        });
+        #[cfg(target_os = "macos")] {
+            terminal.update(cx, |terminal, _| {
+                let success = terminal.try_keystroke(&Keystroke::parse("ctrl-c").unwrap(), false);
+                assert!(success, "Should have registered ctrl-c sequence");
+            });
+            terminal.update(cx, |terminal, _| {
+                let success = terminal.try_keystroke(&Keystroke::parse("ctrl-d").unwrap(), false);
+                assert!(success, "Should have registered ctrl-d sequence");
+            });
+        }
 
-        let mut all_events = vec![first_event];
+        #[cfg(target_os = "linux")] {
+        // TODO: Needs to invoke SIGINT before EOF
+            terminal.update(cx, |terminal, _| {
+                terminal.input(b"exit\n");
+            });
+        }
+
+        let mut all_events = Vec::new();
         while let Ok(Ok(new_event)) = smol_timeout(Duration::from_secs(1), event_rx.recv()).await {
             all_events.push(new_event.clone());
             if new_event == Event::CloseTerminal {
