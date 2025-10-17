@@ -9,7 +9,9 @@ use git::{
         AskPassDelegate, Branch, CommitDetails, CommitOptions, FetchOptions, GitRepository,
         GitRepositoryCheckpoint, PushOptions, Remote, RepoPath, ResetMode,
     },
-    status::{FileStatus, GitStatus, StatusCode, TrackedStatus, UnmergedStatus},
+    status::{
+        DiffTreeType, FileStatus, GitStatus, StatusCode, TrackedStatus, TreeDiff, UnmergedStatus,
+    },
 };
 use gpui::{AsyncApp, BackgroundExecutor, SharedString, Task};
 use ignore::gitignore::GitignoreBuilder;
@@ -108,6 +110,10 @@ impl GitRepository for FakeGitRepository {
         .boxed()
     }
 
+    fn load_blob_content(&self, _: git::Oid) -> BoxFuture<'_, Result<String>> {
+        unimplemented!()
+    }
+
     fn load_commit(
         &self,
         _commit: String,
@@ -136,6 +142,12 @@ impl GitRepository for FakeGitRepository {
 
     fn remote_url(&self, _name: &str) -> Option<String> {
         None
+    }
+
+    fn diff_tree(&self, _: DiffTreeType) -> Task<Result<TreeDiff>> {
+        Task::ready(Ok(TreeDiff {
+            entries: Default::default(),
+        }))
     }
 
     fn revparse_batch(&self, revs: Vec<String>) -> BoxFuture<'_, Result<Vec<Option<String>>>> {
@@ -521,7 +533,7 @@ impl GitRepository for FakeGitRepository {
         let repository_dir_path = self.repository_dir_path.parent().unwrap().to_path_buf();
         async move {
             executor.simulate_random_delay().await;
-            let oid = Oid::random(&mut executor.rng());
+            let oid = git::Oid::random(&mut executor.rng());
             let entry = fs.entry(&repository_dir_path)?;
             checkpoints.lock().insert(oid, entry);
             Ok(GitRepositoryCheckpoint { commit_sha: oid })

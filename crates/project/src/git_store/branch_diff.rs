@@ -1,0 +1,398 @@
+use std::sync::Arc;
+
+use anyhow::Result;
+use buffer_diff::BufferDiff;
+use collections::HashSet;
+use futures::StreamExt;
+use git::{
+    repository::RepoPath,
+    status::{DiffTreeType, FileStatus, StatusCode, TrackedStatus, TreeDiff, TreeDiffStatus},
+};
+use gpui::{
+    App, AppContext, AsyncWindowContext, Context, Entity, EventEmitter, SharedString, Subscription,
+    Task, WeakEntity, Window,
+};
+
+use language::Buffer;
+use text::BufferId;
+use util::ResultExt;
+
+use crate::{
+    Project,
+    git_store::{GitStoreEvent, Repository},
+};
+
+#[derive(Debug, Clone)]
+pub enum DiffBase {
+    Head,
+    Merge { base_ref: SharedString },
+}
+
+impl DiffBase {
+    pub fn is_merge_base(&self) -> bool {
+        matches!(self, DiffBase::Merge { .. })
+    }
+}
+
+pub struct BranchDiff {
+    diff_base: DiffBase,
+    repo: Option<Entity<Repository>>,
+    project: Entity<Project>,
+    base_commit: Option<SharedString>,
+    head_commit: Option<SharedString>,
+    tree_diff: Option<TreeDiff>,
+    _subscription: Subscription,
+    update_needed: postage::watch::Sender<()>,
+    _task: Task<()>,
+}
+
+pub enum BranchDiffEvent {
+    FileListChanged,
+}
+
+impl EventEmitter<BranchDiffEvent> for BranchDiff {}
+
+impl BranchDiff {
+    pub fn new(
+        source: DiffBase,
+        project: Entity<Project>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let git_store = project.read(cx).git_store().clone();
+        let git_store_subscription = cx.subscribe_in(
+            &git_store,
+            window,
+            move |this, _git_store, event, _window, cx| match event {
+                GitStoreEvent::ActiveRepositoryChanged(_)
+                | GitStoreEvent::RepositoryUpdated(_, _, true)
+                | GitStoreEvent::ConflictsUpdated => {
+                    cx.emit(BranchDiffEvent::FileListChanged);
+                    *this.update_needed.borrow_mut() = ();
+                }
+                _ => {}
+            },
+        );
+
+        let (send, recv) = postage::watch::channel::<()>();
+        let worker = window.spawn(cx, {
+            let this = cx.weak_entity();
+            async |cx| Self::handle_status_updates(this, recv, cx).await
+        });
+        let repo = git_store.read(cx).active_repository();
+
+        Self {
+            diff_base: source,
+            repo,
+            project,
+            tree_diff: None,
+            base_commit: None,
+            head_commit: None,
+            _subscription: git_store_subscription,
+            _task: worker,
+            update_needed: send,
+        }
+    }
+
+    pub fn diff_base(&self) -> &DiffBase {
+        &self.diff_base
+    }
+
+    pub async fn handle_status_updates(
+        this: WeakEntity<Self>,
+        mut recv: postage::watch::Receiver<()>,
+        cx: &mut AsyncWindowContext,
+    ) {
+        Self::reload_tree_diff(this.clone(), cx).await.log_err();
+        while recv.next().await.is_some() {
+            let Ok(needs_update) = this.update(cx, |this, cx| {
+                let mut needs_update = false;
+                let active_repo = this
+                    .project
+                    .read(cx)
+                    .git_store()
+                    .read(cx)
+                    .active_repository();
+                if active_repo != this.repo {
+                    needs_update = true;
+                    this.repo = active_repo;
+                } else if let Some(repo) = this.repo.as_ref() {
+                    repo.update(cx, |repo, _| {
+                        if let Some(branch) = &repo.branch
+                            && let DiffBase::Merge { base_ref } = &this.diff_base
+                            && let Some(commit) = branch.most_recent_commit.as_ref()
+                            && &branch.ref_name == base_ref
+                            && this.base_commit.as_ref() != Some(&commit.sha)
+                        {
+                            this.base_commit = Some(commit.sha.clone());
+                            needs_update = true;
+                        }
+
+                        if repo.head_commit.as_ref().map(|c| &c.sha) != this.head_commit.as_ref() {
+                            this.head_commit = repo.head_commit.as_ref().map(|c| c.sha.clone());
+                            needs_update = true;
+                        }
+                    })
+                }
+                needs_update
+            }) else {
+                return;
+            };
+
+            if needs_update {
+                Self::reload_tree_diff(this.clone(), cx).await.log_err();
+            }
+        }
+    }
+
+    pub fn status_for_buffer_id(&self, buffer_id: BufferId, cx: &App) -> Option<FileStatus> {
+        let (repo, path) = self
+            .project
+            .read(cx)
+            .git_store()
+            .read(cx)
+            .repository_and_path_for_buffer_id(buffer_id, cx)?;
+        if self.repo() == Some(&repo) {
+            return self.merge_statuses(
+                repo.read(cx)
+                    .status_for_path(&path)
+                    .map(|status| status.status),
+                self.tree_diff
+                    .as_ref()
+                    .and_then(|diff| diff.entries.get(&path)),
+            );
+        }
+        None
+    }
+
+    // MERGE   |  HEAD |  INDEX  |  WORKTREE | RESULT            BRANCH_STATUS     INDEX_STATUS
+    //   --    |       |  --     |     --    |  (not shown)
+    //   --    |       |  --     |     v1    |  (created)         None | Added         Untracked
+    //   --    |       |  v1     |     v1    |  (created)         None | Added         Tracked(worktree_status: Unmodified)
+    //   --    |       |  v1     |     --    |  (not shown)       None | Added         Tracked(worktree_status: Deleted)
+    //   --    |       |  v1     |     v2    |  (created)         None | Added         Tracked(worktree_status: Modified)
+    //
+    //   --    |  v1   |  --     |     --    |  (not shown)       Added          Tracked(index_status: Deleted, worktree_status: Deleted | Unmodified)
+    //   v1    |  --   |  v2     |     --    |  (deleted)         None | Modified | Deleted         Tracked(index_status: Added, worktree_status: Deleted)
+    //   v1    |  v2   |  v3     |     --    |  (deleted)         None | Modified | Deleted
+    //   v1    |       |  --     |     v1    |  (not shown)
+    //   v1    |       |  --     |     v2    |  (modified)
+    //   v1    |       |  v1     |     v1    |  (not shown)
+    //   v1    |       |  v1     |     v2    |  (modified)
+    //   v1    |       |  v2     |     v3    |  (modified)
+    //   v1    |       |  v2     |     v1    |  (not shown)
+
+    pub fn merge_statuses(
+        &self,
+        diff_from_head: Option<FileStatus>,
+        diff_from_merge_base: Option<&TreeDiffStatus>,
+    ) -> Option<FileStatus> {
+        match (diff_from_head, diff_from_merge_base) {
+            (None, None) => None,
+            (Some(diff_from_head), None) => Some(diff_from_head),
+            (
+                Some(FileStatus::Tracked(TrackedStatus {
+                    index_status,
+                    worktree_status,
+                })),
+                Some(tree_status),
+            ) => Some(FileStatus::Tracked(TrackedStatus {
+                index_status: match tree_status {
+                    TreeDiffStatus::Added { new } => StatusCode::Added,
+                    TreeDiffStatus::Modified { old, new } => StatusCode::Modified,
+                    TreeDiffStatus::Deleted { old } => StatusCode::Modified,
+                },
+                worktree_status,
+            })),
+            (Some(FileStatus::Untracked), Some(diff_from_merge_base)) => {
+                Some(FileStatus::Tracked(TrackedStatus {
+                    index_status: StatusCode::Modified,
+                    worktree_status: StatusCode::Modified,
+                }))
+            }
+            (_, Some(diff_from_merge_base)) => {
+                Some(diff_status_to_file_status(diff_from_merge_base))
+            }
+        }
+    }
+
+    pub async fn reload_tree_diff(
+        this: WeakEntity<Self>,
+        cx: &mut AsyncWindowContext,
+    ) -> Result<()> {
+        dbg!("reload_tree_diff");
+        let task = this.update(cx, |this, cx| {
+            let DiffBase::Merge { base_ref } = this.diff_base.clone() else {
+                return None;
+            };
+            let Some(repo) = this.repo.as_ref() else {
+                this.tree_diff.take();
+                return None;
+            };
+            repo.update(cx, |repo, cx| {
+                Some(repo.diff_tree(
+                    DiffTreeType::MergeBase {
+                        base: base_ref,
+                        head: "HEAD".into(),
+                    },
+                    cx,
+                ))
+            })
+        })?;
+        let Some(task) = task else { return Ok(()) };
+
+        let diff = task.await??;
+        dbg!(&diff);
+        this.update(cx, |this, cx| {
+            this.tree_diff = Some(diff);
+            cx.emit(BranchDiffEvent::FileListChanged);
+            cx.notify();
+        })
+    }
+
+    pub fn repo(&self) -> Option<&Entity<Repository>> {
+        self.repo.as_ref()
+    }
+
+    pub fn load_buffers(&mut self, cx: &mut Context<Self>) -> Vec<DiffBuffer> {
+        let mut output = Vec::default();
+        let Some(repo) = self.repo.clone() else {
+            return output;
+        };
+
+        self.project.update(cx, |_project, cx| {
+            let mut seen = HashSet::default();
+
+            for item in repo.read(cx).cached_status() {
+                seen.insert(item.repo_path.clone());
+                let branch_diff = self
+                    .tree_diff
+                    .as_ref()
+                    .and_then(|t| t.entries.get(&item.repo_path))
+                    .cloned();
+                let status = self
+                    .merge_statuses(Some(item.status), branch_diff.as_ref())
+                    .unwrap();
+                if !status.has_changes() {
+                    continue;
+                }
+
+                let Some(project_path) =
+                    repo.read(cx).repo_path_to_project_path(&item.repo_path, cx)
+                else {
+                    continue;
+                };
+                let task = Self::load_buffer(branch_diff, project_path, repo.clone(), cx);
+
+                output.push(DiffBuffer {
+                    repo_path: item.repo_path.clone(),
+                    load: task,
+                    file_status: item.status,
+                });
+            }
+            let Some(tree_diff) = self.tree_diff.as_ref() else {
+                return;
+            };
+
+            for (path, branch_diff) in tree_diff.entries.iter() {
+                if seen.contains(&path) {
+                    continue;
+                }
+
+                let Some(project_path) = repo.read(cx).repo_path_to_project_path(&path, cx) else {
+                    continue;
+                };
+                let task =
+                    Self::load_buffer(Some(branch_diff.clone()), project_path, repo.clone(), cx);
+
+                let file_status = diff_status_to_file_status(branch_diff);
+
+                output.push(DiffBuffer {
+                    repo_path: path.clone(),
+                    load: task,
+                    file_status,
+                });
+            }
+        });
+        output
+    }
+
+    fn load_buffer(
+        branch_diff: Option<git::status::TreeDiffStatus>,
+        project_path: crate::ProjectPath,
+        repo: Entity<Repository>,
+        cx: &Context<'_, Project>,
+    ) -> Task<Result<(Entity<Buffer>, Entity<BufferDiff>)>> {
+        let task = cx.spawn(async move |project, cx| {
+            let buffer = project
+                .update(cx, |project, cx| project.open_buffer(project_path, cx))?
+                .await?;
+
+            let language_registry =
+                project.update(cx, |project, _cx| project.languages().clone())?;
+
+            let changes;
+            if let Some(entry) = branch_diff {
+                let buffer_snapshot = buffer.update(cx, |buffer, cx| buffer.snapshot())?;
+                let content = match entry {
+                    git::status::TreeDiffStatus::Added { .. } => None,
+                    git::status::TreeDiffStatus::Modified { old, .. }
+                    | git::status::TreeDiffStatus::Deleted { old } => Some(
+                        repo.update(cx, |repo, cx| repo.load_blob_content(old, cx))?
+                            .await?,
+                    ),
+                };
+
+                let buffer_diff = cx.new(|cx| BufferDiff::new(&buffer_snapshot, cx))?;
+                buffer_diff
+                    .update(cx, |buffer_diff, cx| {
+                        buffer_diff.set_base_text(
+                            content.map(Arc::new),
+                            buffer_snapshot.language().cloned(),
+                            Some(language_registry.clone()),
+                            buffer_snapshot.text,
+                            cx,
+                        )
+                    })?
+                    .await?;
+                changes = buffer_diff;
+            } else {
+                changes = project
+                    .update(cx, |project, cx| {
+                        project.open_uncommitted_diff(buffer.clone(), cx)
+                    })?
+                    .await?;
+            }
+            Ok((buffer, changes))
+        });
+        task
+    }
+}
+
+// HEAD and working tree are the same
+// but merge base and HEAD diff
+// todo!() is this right...?
+fn diff_status_to_file_status(branch_diff: &git::status::TreeDiffStatus) -> FileStatus {
+    let file_status = match branch_diff {
+        git::status::TreeDiffStatus::Added { .. } => FileStatus::Tracked(TrackedStatus {
+            index_status: StatusCode::Added,
+            worktree_status: StatusCode::Added,
+        }),
+        git::status::TreeDiffStatus::Modified { .. } => FileStatus::Tracked(TrackedStatus {
+            index_status: StatusCode::Modified,
+            worktree_status: StatusCode::Modified,
+        }),
+        git::status::TreeDiffStatus::Deleted { .. } => FileStatus::Tracked(TrackedStatus {
+            index_status: StatusCode::Deleted,
+            worktree_status: StatusCode::Deleted,
+        }),
+    };
+    file_status
+}
+
+#[derive(Debug)]
+pub struct DiffBuffer {
+    pub repo_path: RepoPath,
+    pub file_status: FileStatus,
+    pub load: Task<Result<(Entity<Buffer>, Entity<BufferDiff>)>>,
+}

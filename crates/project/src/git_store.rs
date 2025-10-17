@@ -1,3 +1,4 @@
+pub mod branch_diff;
 mod conflict_set;
 pub mod git_traversal;
 
@@ -30,7 +31,8 @@ use git::{
     },
     stash::{GitStash, StashEntry},
     status::{
-        FileStatus, GitSummary, StatusCode, TrackedStatus, UnmergedStatus, UnmergedStatusCode,
+        DiffTreeType, FileStatus, GitSummary, StatusCode, TrackedStatus, TreeDiff, UnmergedStatus,
+        UnmergedStatusCode,
     },
 };
 use gpui::{
@@ -4300,6 +4302,38 @@ impl Repository {
         })
     }
 
+    pub fn diff_tree(
+        &mut self,
+        diff_type: DiffTreeType,
+        _cx: &App,
+    ) -> oneshot::Receiver<Result<TreeDiff>> {
+        let _id = self.id;
+        self.send_job(None, move |repo, _cx| async move {
+            match repo {
+                RepositoryState::Local { backend, .. } => backend.diff_tree(diff_type).await,
+                RepositoryState::Remote { .. } => {
+                    todo!()
+                    // let response = client
+                    //     .request(proto::GitDiff {
+                    //         project_id: project_id.0,
+                    //         repository_id: id.to_proto(),
+                    //         diff_type: match diff_type {
+                    //             DiffType::HeadToIndex => {
+                    //                 proto::git_diff::DiffType::HeadToIndex.into()
+                    //             }
+                    //             DiffType::HeadToWorktree => {
+                    //                 proto::git_diff::DiffType::HeadToWorktree.into()
+                    //             }
+                    //         },
+                    //     })
+                    //     .await?;
+
+                    // Ok(response.diff)
+                }
+            }
+        })
+    }
+
     pub fn diff(&mut self, diff_type: DiffType, _cx: &App) -> oneshot::Receiver<Result<String>> {
         let id = self.id;
         self.send_job(None, move |repo, _cx| async move {
@@ -4763,6 +4797,24 @@ impl Repository {
             }
         });
 
+        cx.spawn(|_: &mut AsyncApp| async move { rx.await? })
+    }
+    fn load_blob_content(&mut self, oid: Oid, cx: &App) -> Task<Result<String>> {
+        let rx = self.send_job(None, move |state, _| async move {
+            match state {
+                RepositoryState::Local { backend, .. } => backend.load_blob_content(oid).await,
+                RepositoryState::Remote { .. } => {
+                    todo!();
+                    // let response = client
+                    //     .request(proto::OpenUnstagedDiff {
+                    //         project_id: project_id.to_proto(),
+                    //         buffer_id: buffer_id.to_proto(),
+                    //     })
+                    //     .await?;
+                    // Ok(response.staged_text)
+                }
+            }
+        });
         cx.spawn(|_: &mut AsyncApp| async move { rx.await? })
     }
 

@@ -33,7 +33,6 @@ mod lsp_ext;
 mod mouse_context_menu;
 pub mod movement;
 mod persistence;
-mod proposed_changes_editor;
 mod rust_analyzer_ext;
 pub mod scroll;
 mod selections_collection;
@@ -68,14 +67,12 @@ pub use multi_buffer::{
     Anchor, AnchorRangeExt, ExcerptId, ExcerptRange, MultiBuffer, MultiBufferSnapshot, PathKey,
     RowInfo, ToOffset, ToPoint,
 };
-pub use proposed_changes_editor::{
-    ProposedChangeLocation, ProposedChangesEditor, ProposedChangesEditorToolbar,
-};
 pub use text::Bias;
 
 use ::git::{
     Restore,
     blame::{BlameEntry, ParsedCommitMessage},
+    status::FileStatus,
 };
 use aho_corasick::AhoCorasick;
 use anyhow::{Context as _, Result, anyhow};
@@ -873,6 +870,10 @@ pub trait Addon: 'static {
         _: &Window,
         _: &App,
     ) -> Option<AnyElement> {
+        None
+    }
+
+    fn override_status_for_buffer_id(&self, buffer_id: BufferId, _: &App) -> Option<FileStatus> {
         None
     }
 
@@ -10818,6 +10819,20 @@ impl Editor {
                 editor.restore(revert_changes, window, cx);
             });
         }
+    }
+
+    pub fn status_for_buffer_id(&self, buffer_id: BufferId, cx: &App) -> Option<FileStatus> {
+        if let Some(status) = self
+            .addons
+            .iter()
+            .find_map(|(_, addon)| addon.override_status_for_buffer_id(buffer_id, cx))
+        {
+            return Some(status);
+        }
+        self.project
+            .as_ref()?
+            .read(cx)
+            .status_for_buffer_id(buffer_id, cx)
     }
 
     pub fn open_active_item_in_terminal(
@@ -21123,65 +21138,6 @@ impl Editor {
 
     pub fn searchable(&self) -> bool {
         self.searchable
-    }
-
-    fn open_proposed_changes_editor(
-        &mut self,
-        _: &OpenProposedChangesEditor,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(workspace) = self.workspace() else {
-            cx.propagate();
-            return;
-        };
-
-        let selections = self.selections.all::<usize>(cx);
-        let multi_buffer = self.buffer.read(cx);
-        let multi_buffer_snapshot = multi_buffer.snapshot(cx);
-        let mut new_selections_by_buffer = HashMap::default();
-        for selection in selections {
-            for (buffer, range, _) in
-                multi_buffer_snapshot.range_to_buffer_ranges(selection.start..selection.end)
-            {
-                let mut range = range.to_point(buffer);
-                range.start.column = 0;
-                range.end.column = buffer.line_len(range.end.row);
-                new_selections_by_buffer
-                    .entry(multi_buffer.buffer(buffer.remote_id()).unwrap())
-                    .or_insert(Vec::new())
-                    .push(range)
-            }
-        }
-
-        let proposed_changes_buffers = new_selections_by_buffer
-            .into_iter()
-            .map(|(buffer, ranges)| ProposedChangeLocation { buffer, ranges })
-            .collect::<Vec<_>>();
-        let proposed_changes_editor = cx.new(|cx| {
-            ProposedChangesEditor::new(
-                "Proposed changes",
-                proposed_changes_buffers,
-                self.project.clone(),
-                window,
-                cx,
-            )
-        });
-
-        window.defer(cx, move |window, cx| {
-            workspace.update(cx, |workspace, cx| {
-                workspace.active_pane().update(cx, |pane, cx| {
-                    pane.add_item(
-                        Box::new(proposed_changes_editor),
-                        true,
-                        true,
-                        None,
-                        window,
-                        cx,
-                    );
-                });
-            });
-        });
     }
 
     pub fn open_excerpts_in_split(

@@ -4,16 +4,15 @@ use crate::{
     git_panel_settings::GitPanelSettings,
     remote_button::{render_publish_button, render_push_button},
 };
-use anyhow::Result;
+use anyhow::{Context as _, Result, anyhow};
 use buffer_diff::{BufferDiff, DiffHunkSecondaryStatus};
 use collections::HashSet;
 use editor::{
-    Editor, EditorEvent, SelectionEffects,
+    Addon, Editor, EditorEvent, SelectionEffects,
     actions::{GoToHunk, GoToPreviousHunk},
     multibuffer_context_lines,
     scroll::Autoscroll,
 };
-use futures::StreamExt;
 use git::{
     Commit, StageAll, StageAndNext, ToggleStaged, UnstageAll, UnstageAndNext,
     repository::{Branch, RepoPath, Upstream, UpstreamTracking, UpstreamTrackingStatus},
@@ -26,12 +25,16 @@ use gpui::{
 use language::{Anchor, Buffer, Capability, OffsetRangeExt};
 use multi_buffer::{MultiBuffer, PathKey};
 use project::{
-    Project, ProjectPath,
-    git_store::{GitStore, GitStoreEvent, Repository},
+    Project, ProjectItem, ProjectPath,
+    git_store::{
+        Repository,
+        branch_diff::{self, BranchDiffEvent, DiffBase},
+    },
 };
 use settings::{Settings, SettingsStore};
 use std::any::{Any, TypeId};
 use std::ops::Range;
+use std::sync::Arc;
 use theme::ActiveTheme;
 use ui::{KeyBinding, Tooltip, prelude::*, vertical_divider};
 use util::ResultExt as _;
@@ -39,6 +42,7 @@ use workspace::{
     CloseActiveItem, ItemNavHistory, SerializableItem, ToolbarItemEvent, ToolbarItemLocation,
     ToolbarItemView, Workspace,
     item::{BreadcrumbText, Item, ItemEvent, ItemHandle, SaveOptions, TabContentParams},
+    notifications::NotifyTaskExt,
     searchable::SearchableItemHandle,
 };
 
@@ -48,29 +52,23 @@ actions!(
         /// Shows the diff between the working directory and the index.
         Diff,
         /// Adds files to the git staging area.
-        Add
+        Add,
+        /// Shows the diff between the working directory and your default
+        /// branch (typically main or master).
+        BranchDiff
     ]
 );
 
 pub struct ProjectDiff {
     project: Entity<Project>,
     multibuffer: Entity<MultiBuffer>,
+    branch_diff: Entity<branch_diff::BranchDiff>,
     editor: Entity<Editor>,
-    git_store: Entity<GitStore>,
     workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
-    update_needed: postage::watch::Sender<()>,
     pending_scroll: Option<PathKey>,
     _task: Task<Result<()>>,
     _subscription: Subscription,
-}
-
-#[derive(Debug)]
-struct DiffBuffer {
-    path_key: PathKey,
-    buffer: Entity<Buffer>,
-    diff: Entity<BufferDiff>,
-    file_status: FileStatus,
 }
 
 const CONFLICT_SORT_PREFIX: u64 = 1;
@@ -80,6 +78,7 @@ const NEW_SORT_PREFIX: u64 = 3;
 impl ProjectDiff {
     pub(crate) fn register(workspace: &mut Workspace, cx: &mut Context<Workspace>) {
         workspace.register_action(Self::deploy);
+        workspace.register_action(Self::deploy_branch_diff);
         workspace.register_action(|workspace, _: &Add, window, cx| {
             Self::deploy(workspace, &Diff, window, cx);
         });
@@ -93,6 +92,32 @@ impl ProjectDiff {
         cx: &mut Context<Workspace>,
     ) {
         Self::deploy_at(workspace, None, window, cx)
+    }
+
+    fn deploy_branch_diff(
+        workspace: &mut Workspace,
+        _: &BranchDiff,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) {
+        let project = workspace.project().clone();
+        let workspace = cx.entity();
+        // todo!() only open one at a time
+        window
+            .spawn(cx, async move |cx| {
+                let this = cx
+                    .update(|window, cx| {
+                        Self::new_with_default_branch(project, workspace.clone(), window, cx)
+                    })?
+                    .await?;
+                workspace
+                    .update_in(cx, |workspace, window, cx| {
+                        workspace.add_item_to_active_pane(Box::new(this), None, true, window, cx);
+                    })
+                    .ok();
+                anyhow::Ok(())
+            })
+            .detach_and_notify_err(window, cx);
     }
 
     pub fn deploy_at(
@@ -109,6 +134,7 @@ impl ProjectDiff {
                 "Action"
             }
         );
+        // todo!() don't de-dupe with the branch diff
         let project_diff = if let Some(existing) = workspace.item_of_type::<Self>(cx) {
             workspace.activate_item(&existing, true, true, window, cx);
             existing
@@ -138,7 +164,50 @@ impl ProjectDiff {
         })
     }
 
+    fn new_with_default_branch(
+        project: Entity<Project>,
+        workspace: Entity<Workspace>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Task<Result<Entity<Self>>> {
+        let Some(repo) = project.read(cx).git_store().read(cx).active_repository() else {
+            return Task::ready(Err(anyhow!("No active repository")));
+        };
+        let main_branch = repo.update(cx, |repo, _| repo.default_branch());
+        window.spawn(cx, async move |cx| {
+            let main_branch = main_branch
+                .await??
+                .context("Could not determine default branch")?;
+
+            let branch_diff = cx.new_window_entity(|window, cx| {
+                branch_diff::BranchDiff::new(
+                    DiffBase::Merge {
+                        base_ref: main_branch,
+                    },
+                    project.clone(),
+                    window,
+                    cx,
+                )
+            })?;
+            cx.new_window_entity(|window, cx| {
+                Self::new_impl(branch_diff, project, workspace, window, cx)
+            })
+        })
+    }
+
     fn new(
+        project: Entity<Project>,
+        workspace: Entity<Workspace>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let branch_diff =
+            cx.new(|cx| branch_diff::BranchDiff::new(DiffBase::Head, project.clone(), window, cx));
+        Self::new_impl(branch_diff, project, workspace, window, cx)
+    }
+
+    fn new_impl(
+        branch_diff: Entity<branch_diff::BranchDiff>,
         project: Entity<Project>,
         workspace: Entity<Workspace>,
         window: &mut Window,
@@ -152,9 +221,25 @@ impl ProjectDiff {
                 Editor::for_multibuffer(multibuffer.clone(), Some(project.clone()), window, cx);
             diff_display_editor.disable_diagnostics(cx);
             diff_display_editor.set_expand_all_diff_hunks(cx);
-            diff_display_editor.register_addon(GitPanelAddon {
-                workspace: workspace.downgrade(),
-            });
+
+            match branch_diff.read(cx).diff_base() {
+                DiffBase::Head => {
+                    diff_display_editor.register_addon(GitPanelAddon {
+                        workspace: workspace.downgrade(),
+                    });
+                }
+                DiffBase::Merge { .. } => {
+                    diff_display_editor.register_addon(BranchDiffAddon {
+                        branch_diff: branch_diff.clone(),
+                    });
+                    diff_display_editor.start_temporary_diff_override();
+                    diff_display_editor.set_render_diff_hunk_controls(
+                        Arc::new(|_, _, _, _, _, _, _, _| gpui::Empty.into_any_element()),
+                        cx,
+                    );
+                    //
+                }
+            }
             diff_display_editor
         });
         window.defer(cx, {
@@ -171,56 +256,58 @@ impl ProjectDiff {
         cx.subscribe_in(&editor, window, Self::handle_editor_event)
             .detach();
 
-        let git_store = project.read(cx).git_store().clone();
-        let git_store_subscription = cx.subscribe_in(
-            &git_store,
+        let branch_diff_subscription = cx.subscribe_in(
+            &branch_diff,
             window,
-            move |this, _git_store, event, _window, _cx| match event {
-                GitStoreEvent::ActiveRepositoryChanged(_)
-                | GitStoreEvent::RepositoryUpdated(_, _, true)
-                | GitStoreEvent::ConflictsUpdated => {
-                    *this.update_needed.borrow_mut() = ();
+            move |this, _git_store, event, window, cx| match event {
+                BranchDiffEvent::FileListChanged => {
+                    this._task = {
+                        window.spawn(cx, {
+                            let this = cx.weak_entity();
+                            async |cx| Self::refresh(this, cx).await
+                        })
+                    }
                 }
-                _ => {}
             },
         );
 
         let mut was_sort_by_path = GitPanelSettings::get_global(cx).sort_by_path;
         let mut was_collapse_untracked_diff =
             GitPanelSettings::get_global(cx).collapse_untracked_diff;
-        cx.observe_global::<SettingsStore>(move |this, cx| {
+        cx.observe_global_in::<SettingsStore>(window, move |this, window, cx| {
             let is_sort_by_path = GitPanelSettings::get_global(cx).sort_by_path;
             let is_collapse_untracked_diff =
                 GitPanelSettings::get_global(cx).collapse_untracked_diff;
             if is_sort_by_path != was_sort_by_path
                 || is_collapse_untracked_diff != was_collapse_untracked_diff
             {
-                *this.update_needed.borrow_mut() = ();
+                this._task = {
+                    window.spawn(cx, {
+                        let this = cx.weak_entity();
+                        async |cx| Self::refresh(this, cx).await
+                    })
+                }
             }
             was_sort_by_path = is_sort_by_path;
             was_collapse_untracked_diff = is_collapse_untracked_diff;
         })
         .detach();
 
-        let (mut send, recv) = postage::watch::channel::<()>();
-        let worker = window.spawn(cx, {
+        let task = window.spawn(cx, {
             let this = cx.weak_entity();
-            async |cx| Self::handle_status_updates(this, recv, cx).await
+            async |cx| Self::refresh(this, cx).await
         });
-        // Kick off a refresh immediately
-        *send.borrow_mut() = ();
 
         Self {
             project,
-            git_store: git_store.clone(),
             workspace: workspace.downgrade(),
+            branch_diff,
             focus_handle,
             editor,
             multibuffer,
             pending_scroll: None,
-            update_needed: send,
-            _task: worker,
-            _subscription: git_store_subscription,
+            _task: task,
+            _subscription: branch_diff_subscription,
         }
     }
 
@@ -230,7 +317,7 @@ impl ProjectDiff {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(git_repo) = self.git_store.read(cx).active_repository() else {
+        let Some(git_repo) = self.branch_diff.read(cx).repo() else {
             return;
         };
         let repo = git_repo.read(cx);
@@ -360,69 +447,20 @@ impl ProjectDiff {
         }
     }
 
-    fn load_buffers(&mut self, cx: &mut Context<Self>) -> Vec<Task<Result<DiffBuffer>>> {
-        let Some(repo) = self.git_store.read(cx).active_repository() else {
-            self.multibuffer.update(cx, |multibuffer, cx| {
-                multibuffer.clear(cx);
-            });
-            return vec![];
-        };
-
-        let mut previous_paths = self.multibuffer.read(cx).paths().collect::<HashSet<_>>();
-
-        let mut result = vec![];
-        repo.update(cx, |repo, cx| {
-            for entry in repo.cached_status() {
-                if !entry.status.has_changes() {
-                    continue;
-                }
-                let Some(project_path) = repo.repo_path_to_project_path(&entry.repo_path, cx)
-                else {
-                    continue;
-                };
-                let sort_prefix = sort_prefix(repo, &entry.repo_path, entry.status, cx);
-                let path_key = PathKey::with_sort_prefix(sort_prefix, entry.repo_path.0.clone());
-
-                previous_paths.remove(&path_key);
-                let load_buffer = self
-                    .project
-                    .update(cx, |project, cx| project.open_buffer(project_path, cx));
-
-                let project = self.project.clone();
-                result.push(cx.spawn(async move |_, cx| {
-                    let buffer = load_buffer.await?;
-                    let changes = project
-                        .update(cx, |project, cx| {
-                            project.open_uncommitted_diff(buffer.clone(), cx)
-                        })?
-                        .await?;
-                    Ok(DiffBuffer {
-                        path_key,
-                        buffer,
-                        diff: changes,
-                        file_status: entry.status,
-                    })
-                }));
-            }
-        });
-        self.multibuffer.update(cx, |multibuffer, cx| {
-            for path in previous_paths {
-                multibuffer.remove_excerpts_for_path(path, cx);
-            }
-        });
-        result
-    }
-
     fn register_buffer(
         &mut self,
-        diff_buffer: DiffBuffer,
+        path_key: PathKey,
+        file_status: FileStatus,
+        buffer: Entity<Buffer>,
+        diff: Entity<BufferDiff>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let path_key = diff_buffer.path_key;
-        let buffer = diff_buffer.buffer;
-        let diff = diff_buffer.diff;
-
+        if self.branch_diff.read(cx).diff_base().is_merge_base() {
+            self.multibuffer.update(cx, |multibuffer, cx| {
+                multibuffer.add_diff(diff.clone(), cx);
+            });
+        }
         let conflict_addon = self
             .editor
             .read(cx)
@@ -443,6 +481,7 @@ impl ProjectDiff {
         let excerpt_ranges = merge_anchor_ranges(diff_hunk_ranges, conflicts, &snapshot)
             .map(|range| range.to_point(&snapshot))
             .collect::<Vec<_>>();
+        dbg!(&excerpt_ranges.len(), &path_key);
 
         let (was_empty, is_excerpt_newly_added) = self.multibuffer.update(cx, |multibuffer, cx| {
             let was_empty = multibuffer.is_empty();
@@ -464,8 +503,8 @@ impl ProjectDiff {
                 });
             }
             if is_excerpt_newly_added
-                && (diff_buffer.file_status.is_deleted()
-                    || (diff_buffer.file_status.is_untracked()
+                && (file_status.is_deleted()
+                    || (file_status.is_untracked()
                         && GitPanelSettings::get_global(cx).collapse_untracked_diff))
             {
                 editor.fold_buffer(snapshot.text.remote_id(), cx)
@@ -490,26 +529,50 @@ impl ProjectDiff {
         }
     }
 
-    pub async fn handle_status_updates(
-        this: WeakEntity<Self>,
-        mut recv: postage::watch::Receiver<()>,
-        cx: &mut AsyncWindowContext,
-    ) -> Result<()> {
-        while (recv.next().await).is_some() {
-            let buffers_to_load = this.update(cx, |this, cx| this.load_buffers(cx))?;
-            for buffer_to_load in buffers_to_load {
-                if let Some(buffer) = buffer_to_load.await.log_err() {
-                    cx.update(|window, cx| {
-                        this.update(cx, |this, cx| this.register_buffer(buffer, window, cx))
-                            .ok();
-                    })?;
+    pub async fn refresh(this: WeakEntity<Self>, cx: &mut AsyncWindowContext) -> Result<()> {
+        let mut path_keys = Vec::new();
+        let buffers_to_load = this.update(cx, |this, cx| {
+            let (repo, buffers_to_load) = this.branch_diff.update(cx, |branch_diff, cx| {
+                let load_buffers = branch_diff.load_buffers(cx);
+                (branch_diff.repo().cloned(), load_buffers)
+            });
+            let mut previous_paths = this.multibuffer.read(cx).paths().collect::<HashSet<_>>();
+
+            if let Some(repo) = repo {
+                let repo = repo.read(cx);
+
+                path_keys = Vec::with_capacity(buffers_to_load.len());
+                for entry in buffers_to_load.iter() {
+                    let sort_prefix = sort_prefix(&repo, &entry.repo_path, entry.file_status, cx);
+                    let path_key =
+                        PathKey::with_sort_prefix(sort_prefix, entry.repo_path.0.clone());
+                    previous_paths.remove(&path_key);
+                    path_keys.push(path_key)
                 }
             }
-            this.update(cx, |this, cx| {
-                this.pending_scroll.take();
-                cx.notify();
-            })?;
+
+            this.multibuffer.update(cx, |multibuffer, cx| {
+                for path in previous_paths {
+                    multibuffer.remove_excerpts_for_path(path, cx);
+                }
+            });
+            buffers_to_load
+        })?;
+
+        for (entry, path_key) in buffers_to_load.into_iter().zip(path_keys.into_iter()) {
+            if let Some((buffer, diff)) = entry.load.await.log_err() {
+                cx.update(|window, cx| {
+                    this.update(cx, |this, cx| {
+                        this.register_buffer(path_key, entry.file_status, buffer, diff, window, cx)
+                    })
+                    .ok();
+                })?;
+            }
         }
+        this.update(cx, |this, cx| {
+            this.pending_scroll.take();
+            cx.notify();
+        })?;
 
         Ok(())
     }
@@ -1340,6 +1403,26 @@ fn merge_anchor_ranges<'a>(
 
         Some(next_range)
     })
+}
+
+struct BranchDiffAddon {
+    branch_diff: Entity<branch_diff::BranchDiff>,
+}
+
+impl Addon for BranchDiffAddon {
+    fn to_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn override_status_for_buffer_id(
+        &self,
+        buffer_id: language::BufferId,
+        cx: &App,
+    ) -> Option<FileStatus> {
+        self.branch_diff
+            .read(cx)
+            .status_for_buffer_id(buffer_id, cx)
+    }
 }
 
 #[cfg(test)]
