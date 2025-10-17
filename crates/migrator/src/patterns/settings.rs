@@ -105,6 +105,6 @@ pub const SETTINGS_DUPLICATED_AGENT_PATTERN: &str = r#"(document
             value: (_)
         )
     )
-    (#eq? @agent1 "agent")
-    (#eq? @agent "agent")
+    (#eq? @agent1 "agent2")
+    (#eq? @agent2 "agent")
 )"#;
