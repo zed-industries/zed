@@ -82,6 +82,8 @@ pub struct ExtensionManifest {
     #[serde(default)]
     pub context_servers: BTreeMap<Arc<str>, ContextServerManifestEntry>,
     #[serde(default)]
+    pub agent_servers: BTreeMap<Arc<str>, AgentServerManifestEntry>,
+    #[serde(default)]
     pub slash_commands: BTreeMap<Arc<str>, SlashCommandManifestEntry>,
     #[serde(default)]
     pub snippets: Option<PathBuf>,
@@ -136,6 +138,59 @@ pub fn build_debug_adapter_schema_path(
 pub struct LibManifestEntry {
     pub kind: Option<ExtensionLibraryKind>,
     pub version: Option<SemanticVersion>,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
+pub struct AgentServerManifestEntry {
+    pub launcher: AgentServerLauncher,
+    #[serde(default)]
+    pub env: HashMap<String, String>,
+    #[serde(default)]
+    pub args: Vec<String>,
+    #[serde(default)]
+    pub login: Option<AgentServerLogin>,
+    #[serde(default)]
+    pub windows: Option<AgentServerWindows>,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
+#[serde(untagged)]
+pub enum AgentServerLauncher {
+    Npm {
+        package: String,
+        entrypoint: String,
+        #[serde(default)]
+        min_version: Option<String>,
+        // pass_experimental_acp removed; extensions should supply flags in args
+    },
+    GithubRelease {
+        repo: String,
+        asset_pattern: String,
+        #[serde(default)]
+        binary_name: Option<String>,
+        // pass_experimental_acp removed; extensions should supply flags in args
+    },
+    Binary {
+        bin_name: String,
+        // pass_experimental_acp removed; extensions should supply flags in args
+    },
+}
+
+#[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
+pub struct AgentServerLogin {
+    pub label: String,
+    #[serde(default)]
+    pub command: Option<String>,
+    #[serde(default)]
+    pub args: Vec<String>,
+    #[serde(default)]
+    pub env: HashMap<String, String>,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
+pub struct AgentServerWindows {
+    #[serde(default)]
+    pub ignore_system_version: bool,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
@@ -266,6 +321,7 @@ fn manifest_from_old_manifest(
             .collect(),
         language_servers: Default::default(),
         context_servers: BTreeMap::default(),
+        agent_servers: BTreeMap::default(),
         slash_commands: BTreeMap::default(),
         snippets: None,
         capabilities: Vec::new(),
@@ -298,6 +354,7 @@ mod tests {
             grammars: BTreeMap::default(),
             language_servers: BTreeMap::default(),
             context_servers: BTreeMap::default(),
+            agent_servers: BTreeMap::default(),
             slash_commands: BTreeMap::default(),
             snippets: None,
             capabilities: vec![],
@@ -403,5 +460,42 @@ mod tests {
                 .is_ok()
         );
         assert!(manifest.allow_exec("docker", &["ps"]).is_err()); // wrong first arg
+    }
+    #[test]
+    fn parse_manifest_with_agent_server_npm_launcher() {
+        let toml_src = r#"
+id = "example.agent-server-ext"
+name = "Agent Server Example"
+version = "1.0.0"
+schema_version = 0
+
+[agent_servers.foo]
+[agent_servers.foo.launcher.Npm]
+package = "@example/agent-server"
+entrypoint = "node_modules/@example/agent-server/dist/index.js"
+min_version = "1.0.0"
+# removed: experimental flag should be provided by extension args if needed
+"#;
+
+        let manifest: ExtensionManifest = toml::from_str(toml_src).expect("manifest should parse");
+        assert_eq!(manifest.id.as_ref(), "example.agent-server-ext");
+        assert!(manifest.agent_servers.get("foo").is_some());
+        let entry = manifest.agent_servers.get("foo").unwrap();
+        match &entry.launcher {
+            AgentServerLauncher::Npm {
+                package,
+                entrypoint,
+                min_version,
+            } => {
+                assert_eq!(package, "@example/agent-server");
+                assert_eq!(
+                    entrypoint,
+                    "node_modules/@example/agent-server/dist/index.js"
+                );
+                assert_eq!(min_version.as_deref(), Some("1.0.0"));
+                assert!(entry.args.is_empty());
+            }
+            _ => panic!("expected Npm launcher"),
+        }
     }
 }
