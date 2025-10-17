@@ -1925,6 +1925,11 @@
   // DAP Specific settings.
   "dap": {
     // Specify the DAP name as a key here.
+    "CodeLLDB": {
+      "envs": {
+        "RUST_LOG": "info"
+      }
+    }
   },
   // Common language server settings.
   "global_lsp_settings": {
