@@ -8927,6 +8927,7 @@ async fn test_ignored_dirs_events(cx: &mut gpui::TestAppContext) {
         );
     });
 
+    cx.run_until_parked();
     assert_eq!(
         repository_updates.lock().drain(..).collect::<Vec<_>>(),
         vec![
