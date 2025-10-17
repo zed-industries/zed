@@ -1281,31 +1281,25 @@ impl RemoteServerProjects {
                         let secondary_confirm = e.modifiers().platform;
                         callback(this, secondary_confirm, window, cx)
                     }))
-                    .when(
-                        is_from_zed && matches!(server_ix, ServerIndex::Ssh(_)),
-                        |server_list_item| {
-                            let ServerIndex::Ssh(server_ix) = server_ix else {
-                                unreachable!()
-                            };
-                            server_list_item.end_hover_slot::<AnyElement>(Some(
-                                div()
-                                    .mr_2()
-                                    .child({
-                                        let project = project.clone();
-                                        // Right-margin to offset it from the Scrollbar
-                                        IconButton::new("remove-remote-project", IconName::Trash)
-                                            .icon_size(IconSize::Small)
-                                            .shape(IconButtonShape::Square)
-                                            .size(ButtonSize::Large)
-                                            .tooltip(Tooltip::text("Delete Remote Project"))
-                                            .on_click(cx.listener(move |this, _, _, cx| {
-                                                this.delete_ssh_project(server_ix, &project, cx)
-                                            }))
-                                    })
-                                    .into_any_element(),
-                            ))
-                        },
-                    ),
+                    .when(is_from_zed, |server_list_item| {
+                        server_list_item.end_hover_slot::<AnyElement>(Some(
+                            div()
+                                .mr_2()
+                                .child({
+                                    let project = project.clone();
+                                    // Right-margin to offset it from the Scrollbar
+                                    IconButton::new("remove-remote-project", IconName::Trash)
+                                        .icon_size(IconSize::Small)
+                                        .shape(IconButtonShape::Square)
+                                        .size(ButtonSize::Large)
+                                        .tooltip(Tooltip::text("Delete Remote Project"))
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            this.delete_remote_project(server_ix, &project, cx)
+                                        }))
+                                })
+                                .into_any_element(),
+                        ))
+                    }),
             )
     }
 
@@ -1332,6 +1326,22 @@ impl RemoteServerProjects {
         });
     }
 
+    fn delete_remote_project(
+        &mut self,
+        server: ServerIndex,
+        project: &SshProject,
+        cx: &mut Context<Self>,
+    ) {
+        match server {
+            ServerIndex::Ssh(server) => {
+                self.delete_ssh_project(server, project, cx);
+            }
+            ServerIndex::Wsl(server) => {
+                self.delete_wsl_project(server, project, cx);
+            }
+        }
+    }
+
     fn delete_ssh_project(
         &mut self,
         server: SshServerIndex,
@@ -1350,6 +1360,24 @@ impl RemoteServerProjects {
         });
     }
 
+    fn delete_wsl_project(
+        &mut self,
+        server: WslServerIndex,
+        project: &SshProject,
+        cx: &mut Context<Self>,
+    ) {
+        let project = project.clone();
+        self.update_settings_file(cx, move |setting, _| {
+            if let Some(server) = setting
+                .wsl_connections
+                .as_mut()
+                .and_then(|connections| connections.get_mut(server.0))
+            {
+                server.projects.remove(&project);
+            }
+        });
+    }
+
     #[cfg(target_os = "windows")]
     fn add_wsl_distro(
         &mut self,
@@ -1357,14 +1385,21 @@ impl RemoteServerProjects {
         cx: &mut Context<Self>,
     ) {
         self.update_settings_file(cx, move |setting, _| {
-            setting
-                .wsl_connections
-                .get_or_insert(Default::default())
-                .push(settings::WslConnection {
-                    distro_name: SharedString::from(connection_options.distro_name),
-                    user: connection_options.user,
+            let connections = setting.wsl_connections.get_or_insert(Default::default());
+
+            let distro_name = SharedString::from(connection_options.distro_name);
+            let user = connection_options.user;
+
+            if !connections
+                .iter()
+                .any(|conn| conn.distro_name == distro_name && conn.user == user)
+            {
+                connections.push(settings::WslConnection {
+                    distro_name,
+                    user,
                     projects: BTreeSet::new(),
                 })
+            }
         });
     }
 

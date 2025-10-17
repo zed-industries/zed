@@ -121,14 +121,19 @@ async fn build_remote_server_from_source(
     delegate: &dyn crate::RemoteClientDelegate,
     cx: &mut AsyncApp,
 ) -> Result<Option<std::path::PathBuf>> {
-    use std::path::Path;
-
-    let Some(build_remote_server) = std::env::var("ZED_BUILD_REMOTE_SERVER").ok() else {
-        return Ok(None);
-    };
-
     use smol::process::{Command, Stdio};
     use std::env::VarError;
+    use std::path::Path;
+
+    let build_remote_server = std::env::var("ZED_BUILD_REMOTE_SERVER").unwrap_or_default();
+
+    if build_remote_server == "false"
+        || build_remote_server == "no"
+        || build_remote_server == "off"
+        || build_remote_server == "0"
+    {
+        return Ok(None);
+    }
 
     async fn run_cmd(command: &mut Command) -> Result<()> {
         let output = command
@@ -192,50 +197,6 @@ async fn build_remote_server_from_source(
                 .env("RUSTFLAGS", &rust_flags),
         )
         .await?;
-    } else if build_remote_server.contains("cross") {
-        use util::paths::SanitizedPath;
-
-        delegate.set_status(Some("Installing cross.rs for cross-compilation"), cx);
-        log::info!("installing cross");
-        run_cmd(Command::new("cargo").args([
-            "install",
-            "cross",
-            "--git",
-            "https://github.com/cross-rs/cross",
-        ]))
-        .await?;
-
-        delegate.set_status(
-            Some(&format!(
-                "Building remote server binary from source for {} with Docker",
-                &triple
-            )),
-            cx,
-        );
-        log::info!("building remote server binary from source for {}", &triple);
-
-        let src = SanitizedPath::new(&smol::fs::canonicalize("target").await?).to_string();
-
-        run_cmd(
-            Command::new("cross")
-                .args([
-                    "build",
-                    "--package",
-                    "remote_server",
-                    "--features",
-                    "debug-embed",
-                    "--target-dir",
-                    "target/remote_server",
-                    "--target",
-                    &triple,
-                ])
-                .env(
-                    "CROSS_CONTAINER_OPTS",
-                    format!("--mount type=bind,src={src},dst=/app/target"),
-                )
-                .env("RUSTFLAGS", &rust_flags),
-        )
-        .await?;
     } else {
         let which = cx
             .background_spawn(async move { which::which("zig") })
@@ -245,13 +206,13 @@ async fn build_remote_server_from_source(
             #[cfg(not(target_os = "windows"))]
             {
                 anyhow::bail!(
-                    "zig not found on $PATH, install zig (see https://ziglang.org/learn/getting-started or use zigup) or pass ZED_BUILD_REMOTE_SERVER=cross to use cross"
+                    "zig not found on $PATH, install zig (see https://ziglang.org/learn/getting-started or use zigup)"
                 )
             }
             #[cfg(target_os = "windows")]
             {
                 anyhow::bail!(
-                    "zig not found on $PATH, install zig (use `winget install -e --id zig.zig` or see https://ziglang.org/learn/getting-started or use zigup) or pass ZED_BUILD_REMOTE_SERVER=cross to use cross"
+                    "zig not found on $PATH, install zig (use `winget install -e --id zig.zig` or see https://ziglang.org/learn/getting-started or use zigup)"
                 )
             }
         }

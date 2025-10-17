@@ -54,6 +54,12 @@ const TYPESCRIPT_VITEST_PACKAGE_PATH_VARIABLE: VariableName =
 const TYPESCRIPT_JASMINE_PACKAGE_PATH_VARIABLE: VariableName =
     VariableName::Custom(Cow::Borrowed("TYPESCRIPT_JASMINE_PACKAGE_PATH"));
 
+const TYPESCRIPT_BUN_PACKAGE_PATH_VARIABLE: VariableName =
+    VariableName::Custom(Cow::Borrowed("TYPESCRIPT_BUN_PACKAGE_PATH"));
+
+const TYPESCRIPT_NODE_PACKAGE_PATH_VARIABLE: VariableName =
+    VariableName::Custom(Cow::Borrowed("TYPESCRIPT_NODE_PACKAGE_PATH"));
+
 #[derive(Clone, Debug, Default)]
 struct PackageJsonContents(Arc<RwLock<HashMap<PathBuf, PackageJson>>>);
 
@@ -216,6 +222,65 @@ impl PackageJsonData {
                     "tsx-test".to_owned(),
                 ],
                 cwd: Some(TYPESCRIPT_JASMINE_PACKAGE_PATH_VARIABLE.template_value()),
+                ..TaskTemplate::default()
+            });
+        }
+
+        if self.bun_package_path.is_some() {
+            task_templates.0.push(TaskTemplate {
+                label: format!("{} file test", "bun test".to_owned()),
+                command: "bun".to_owned(),
+                args: vec!["test".to_owned(), VariableName::File.template_value()],
+                cwd: Some(TYPESCRIPT_BUN_PACKAGE_PATH_VARIABLE.template_value()),
+                ..TaskTemplate::default()
+            });
+            task_templates.0.push(TaskTemplate {
+                label: format!("bun test {}", VariableName::Symbol.template_value(),),
+                command: "bun".to_owned(),
+                args: vec![
+                    "test".to_owned(),
+                    "--test-name-pattern".to_owned(),
+                    format!("\"{}\"", VariableName::Symbol.template_value()),
+                    VariableName::File.template_value(),
+                ],
+                tags: vec![
+                    "ts-test".to_owned(),
+                    "js-test".to_owned(),
+                    "tsx-test".to_owned(),
+                ],
+                cwd: Some(TYPESCRIPT_BUN_PACKAGE_PATH_VARIABLE.template_value()),
+                ..TaskTemplate::default()
+            });
+        }
+
+        if self.node_package_path.is_some() {
+            task_templates.0.push(TaskTemplate {
+                label: format!("{} file test", "node test".to_owned()),
+                command: "node".to_owned(),
+                args: vec!["--test".to_owned(), VariableName::File.template_value()],
+                tags: vec![
+                    "ts-test".to_owned(),
+                    "js-test".to_owned(),
+                    "tsx-test".to_owned(),
+                ],
+                cwd: Some(TYPESCRIPT_NODE_PACKAGE_PATH_VARIABLE.template_value()),
+                ..TaskTemplate::default()
+            });
+            task_templates.0.push(TaskTemplate {
+                label: format!("node test {}", VariableName::Symbol.template_value()),
+                command: "node".to_owned(),
+                args: vec![
+                    "--test".to_owned(),
+                    "--test-name-pattern".to_owned(),
+                    format!("\"{}\"", VariableName::Symbol.template_value()),
+                    VariableName::File.template_value(),
+                ],
+                tags: vec![
+                    "ts-test".to_owned(),
+                    "js-test".to_owned(),
+                    "tsx-test".to_owned(),
+                ],
+                cwd: Some(TYPESCRIPT_NODE_PACKAGE_PATH_VARIABLE.template_value()),
                 ..TaskTemplate::default()
             });
         }
@@ -493,6 +558,26 @@ impl ContextProvider for TypeScriptContextProvider {
                                 .to_string(),
                         );
                     }
+
+                    if let Some(path) = package_json_data.bun_package_path {
+                        vars.insert(
+                            TYPESCRIPT_BUN_PACKAGE_PATH_VARIABLE,
+                            path.parent()
+                                .unwrap_or(Path::new(""))
+                                .to_string_lossy()
+                                .to_string(),
+                        );
+                    }
+
+                    if let Some(path) = package_json_data.node_package_path {
+                        vars.insert(
+                            TYPESCRIPT_NODE_PACKAGE_PATH_VARIABLE,
+                            path.parent()
+                                .unwrap_or(Path::new(""))
+                                .to_string_lossy()
+                                .to_string(),
+                        );
+                    }
                 }
             }
             Ok(vars)
@@ -692,16 +777,11 @@ impl LspAdapter for TypeScriptLspAdapter {
         } else {
             item.label.clone()
         };
-        let filter_range = item
-            .filter_text
-            .as_deref()
-            .and_then(|filter| text.find(filter).map(|ix| ix..ix + filter.len()))
-            .unwrap_or(0..len);
-        Some(language::CodeLabel {
+        Some(language::CodeLabel::filtered(
             text,
-            runs: vec![(0..len, highlight_id)],
-            filter_range,
-        })
+            item.filter_text.as_deref(),
+            vec![(0..len, highlight_id)],
+        ))
     }
 
     async fn initialization_options(
@@ -1178,6 +1258,8 @@ mod tests {
                 mocha_package_path: Some(Path::new(path!("/root/package.json")).into()),
                 vitest_package_path: Some(Path::new(path!("/root/sub/package.json")).into()),
                 jasmine_package_path: None,
+                bun_package_path: None,
+                node_package_path: None,
                 scripts: [
                     (
                         Path::new(path!("/root/package.json")).into(),
@@ -1231,6 +1313,7 @@ mod tests {
             ]
         );
     }
+
     #[test]
     fn test_escaping_name() {
         let cases = [
@@ -1263,5 +1346,111 @@ mod tests {
         for (input, expected) in cases {
             assert_eq!(replace_test_name_parameters(input), expected);
         }
+    }
+
+    // The order of test runner tasks is based on inferred user preference:
+    // 1. Dedicated test runners (e.g., Jest, Vitest, Mocha, Jasmine) are prioritized.
+    // 2. Bun's built-in test runner (`bun test`) comes next.
+    // 3. Node.js's built-in test runner (`node --test`) is last.
+    // This hierarchy assumes that if a dedicated test framework is installed, it is the
+    // preferred testing mechanism. Between runtime-specific options, `bun test` is
+    // typically preferred over `node --test` when @types/bun is present.
+    #[gpui::test]
+    async fn test_task_ordering_with_multiple_test_runners(
+        executor: BackgroundExecutor,
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(|cx| {
+            settings::init(cx);
+            Project::init_settings(cx);
+            language_settings::init(cx);
+        });
+
+        // Test case with all test runners present
+        let package_json_all_runners = json!({
+            "devDependencies": {
+                "@types/bun": "1.0.0",
+                "@types/node": "^20.0.0",
+                "jest": "29.0.0",
+                "mocha": "10.0.0",
+                "vitest": "1.0.0",
+                "jasmine": "5.0.0",
+            },
+            "scripts": {
+                "test": "jest"
+            }
+        })
+        .to_string();
+
+        let fs = FakeFs::new(executor);
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "package.json": package_json_all_runners,
+                "file.js": "",
+            }),
+        )
+        .await;
+
+        let provider = TypeScriptContextProvider::new(fs.clone());
+
+        let package_json_data = cx
+            .update(|cx| {
+                provider.combined_package_json_data(
+                    fs.clone(),
+                    path!("/root").as_ref(),
+                    rel_path("file.js"),
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+
+        assert!(package_json_data.jest_package_path.is_some());
+        assert!(package_json_data.mocha_package_path.is_some());
+        assert!(package_json_data.vitest_package_path.is_some());
+        assert!(package_json_data.jasmine_package_path.is_some());
+        assert!(package_json_data.bun_package_path.is_some());
+        assert!(package_json_data.node_package_path.is_some());
+
+        let mut task_templates = TaskTemplates::default();
+        package_json_data.fill_task_templates(&mut task_templates);
+
+        let test_tasks: Vec<_> = task_templates
+            .0
+            .iter()
+            .filter(|template| {
+                template.tags.contains(&"ts-test".to_owned())
+                    || template.tags.contains(&"js-test".to_owned())
+            })
+            .map(|template| &template.label)
+            .collect();
+
+        let node_test_index = test_tasks
+            .iter()
+            .position(|label| label.contains("node test"));
+        let jest_test_index = test_tasks.iter().position(|label| label.contains("jest"));
+        let bun_test_index = test_tasks
+            .iter()
+            .position(|label| label.contains("bun test"));
+
+        assert!(
+            node_test_index.is_some(),
+            "Node test tasks should be present"
+        );
+        assert!(
+            jest_test_index.is_some(),
+            "Jest test tasks should be present"
+        );
+        assert!(bun_test_index.is_some(), "Bun test tasks should be present");
+
+        assert!(
+            jest_test_index.unwrap() < bun_test_index.unwrap(),
+            "Jest should come before Bun"
+        );
+        assert!(
+            bun_test_index.unwrap() < node_test_index.unwrap(),
+            "Bun should come before Node"
+        );
     }
 }

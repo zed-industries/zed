@@ -13,8 +13,10 @@ use gpui::{AppContext, AsyncApp};
 use language::OffsetRangeExt;
 use language::{BufferSnapshot, Point};
 use ordered_float::OrderedFloat;
+use polars::prelude::*;
 use project::{Project, ProjectEntryId, ProjectPath, Worktree};
 use serde::{Deserialize, Serialize};
+use std::fs;
 use std::{
     cmp::Reverse,
     collections::{HashMap, HashSet},
@@ -163,16 +165,23 @@ pub async fn retrieval_stats(
     }
     let files_hash = hasher.finish();
     let file_snapshots = Arc::new(file_snapshots);
+    let target_cli_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/zeta_cli");
+    fs::create_dir_all(&target_cli_dir).unwrap();
+    let target_cli_dir = target_cli_dir.canonicalize().unwrap();
 
-    let lsp_definitions_path = std::env::current_dir()?.join(format!(
-        "target/zeta2-lsp-definitions-{:x}.jsonl",
+    let lsp_cache_dir = target_cli_dir.join("cache");
+    fs::create_dir_all(&lsp_cache_dir).unwrap();
+
+    let lsp_definitions_path = lsp_cache_dir.join(format!(
+        "{}-{:x}.jsonl",
+        worktree_path.file_stem().unwrap_or_default().display(),
         files_hash
     ));
 
     let mut lsp_definitions = HashMap::default();
     let mut lsp_files = 0;
 
-    if std::fs::exists(&lsp_definitions_path)? {
+    if fs::exists(&lsp_definitions_path)? {
         log::info!(
             "Using cached LSP definitions from {}",
             lsp_definitions_path.display()
@@ -246,8 +255,7 @@ pub async fn retrieval_stats(
     let files_len = files.len().min(file_limit.unwrap_or(usize::MAX));
     let done_count = Arc::new(AtomicUsize::new(0));
 
-    let (output_tx, mut output_rx) = mpsc::unbounded::<RetrievalStatsResult>();
-    let mut output = std::fs::File::create("target/zeta-retrieval-stats.txt")?;
+    let (output_tx, output_rx) = mpsc::unbounded::<ReferenceRetrievalResult>();
 
     let tasks = files
         .into_iter()
@@ -270,8 +278,6 @@ pub async fn retrieval_stats(
                     ReferenceRegion::Nearby,
                     &snapshot,
                 );
-
-                println!("references: {}", references.len(),);
 
                 let imports = if options.context.use_imports {
                     Imports::gather(&snapshot, Some(&project_file.parent_abs_path))
@@ -309,65 +315,13 @@ pub async fn retrieval_stats(
                     )
                     .await?;
 
-                    // TODO: LSP returns things like locals, this filters out some of those, but potentially
-                    // hides some retrieval issues.
-                    if retrieve_result.definitions.is_empty() {
-                        continue;
-                    }
-
-                    let mut best_match = None;
-                    let mut has_external_definition = false;
-                    let mut in_excerpt = false;
-                    for (index, retrieved_definition) in
-                        retrieve_result.definitions.iter().enumerate()
-                    {
-                        for lsp_definition in &lsp_definitions {
-                            let SourceRange {
-                                path,
-                                point_range,
-                                offset_range,
-                            } = lsp_definition;
-                            let lsp_point_range =
-                                SerializablePoint::into_language_point_range(point_range.clone());
-                            has_external_definition = has_external_definition
-                                || path.is_absolute()
-                                || path
-                                    .components()
-                                    .any(|component| component.as_os_str() == "node_modules");
-                            let is_match = path.as_path()
-                                == retrieved_definition.path.as_std_path()
-                                && retrieved_definition
-                                    .range
-                                    .contains_inclusive(&lsp_point_range);
-                            if is_match {
-                                if best_match.is_none() {
-                                    best_match = Some(index);
-                                }
-                            }
-                            in_excerpt = in_excerpt
-                                || retrieve_result.excerpt_range.as_ref().is_some_and(
-                                    |excerpt_range| excerpt_range.contains_inclusive(&offset_range),
-                                );
-                        }
-                    }
-
-                    let outcome = if let Some(best_match) = best_match {
-                        RetrievalOutcome::Match { best_match }
-                    } else if has_external_definition {
-                        RetrievalOutcome::NoMatchDueToExternalLspDefinitions
-                    } else if in_excerpt {
-                        RetrievalOutcome::ProbablyLocal
-                    } else {
-                        RetrievalOutcome::NoMatch
-                    };
-
-                    let result = RetrievalStatsResult {
-                        outcome,
-                        path: path.clone(),
+                    let result = ReferenceRetrievalResult {
+                        cursor_path: path.clone(),
                         identifier: reference.identifier,
-                        point: query_point,
+                        cursor_point: query_point,
                         lsp_definitions,
                         retrieved_definitions: retrieve_result.definitions,
+                        excerpt_range: retrieve_result.excerpt_range,
                     };
 
                     output_tx.unbounded_send(result).ok();
@@ -386,139 +340,610 @@ pub async fn retrieval_stats(
 
     drop(output_tx);
 
-    let results_task = cx.background_spawn(async move {
-        let mut results = Vec::new();
-        while let Some(result) = output_rx.next().await {
-            output
-                .write_all(format!("{:#?}\n", result).as_bytes())
-                .log_err();
-            results.push(result)
-        }
-        results
-    });
+    let df_task = cx.background_spawn(build_dataframe(output_rx));
 
     futures::future::try_join_all(tasks).await?;
-    println!("Tasks completed");
-    let results = results_task.await;
-    println!("Results received");
+    let mut df = df_task.await?;
 
-    let mut references_count = 0;
+    let run_id = format!(
+        "{}-{}",
+        worktree_path.file_stem().unwrap_or_default().display(),
+        chrono::Local::now().format("%Y%m%d_%H%M%S")
+    );
+    let run_dir = target_cli_dir.join(run_id);
+    fs::create_dir(&run_dir).unwrap();
 
-    let mut included_count = 0;
-    let mut both_absent_count = 0;
+    let parquet_path = run_dir.join("stats.parquet");
+    let mut parquet_file = fs::File::create(&parquet_path)?;
 
-    let mut retrieved_count = 0;
-    let mut top_match_count = 0;
-    let mut non_top_match_count = 0;
-    let mut ranking_involved_top_match_count = 0;
+    ParquetWriter::new(&mut parquet_file)
+        .finish(&mut df)
+        .unwrap();
 
-    let mut no_match_count = 0;
-    let mut no_match_none_retrieved = 0;
-    let mut no_match_wrong_retrieval = 0;
+    let stats = SummaryStats::from_dataframe(df)?;
 
-    let mut expected_no_match_count = 0;
-    let mut in_excerpt_count = 0;
-    let mut external_definition_count = 0;
+    let stats_path = run_dir.join("stats.txt");
+    fs::write(&stats_path, format!("{}", stats))?;
 
-    for result in results {
-        references_count += 1;
-        match &result.outcome {
-            RetrievalOutcome::Match { best_match } => {
-                included_count += 1;
-                retrieved_count += 1;
-                let multiple = result.retrieved_definitions.len() > 1;
-                if *best_match == 0 {
-                    top_match_count += 1;
-                    if multiple {
-                        ranking_involved_top_match_count += 1;
-                    }
-                } else {
-                    non_top_match_count += 1;
-                }
+    println!("{}", stats);
+    println!("\nWrote:");
+    println!("- {}", relativize_path(&parquet_path).display());
+    println!("- {}", relativize_path(&stats_path).display());
+    println!("- {}", relativize_path(&lsp_definitions_path).display());
+
+    Ok("".to_string())
+}
+
+async fn build_dataframe(
+    mut output_rx: mpsc::UnboundedReceiver<ReferenceRetrievalResult>,
+) -> Result<DataFrame> {
+    use soa_rs::{Soa, Soars};
+
+    #[derive(Default, Soars)]
+    struct Row {
+        ref_id: u32,
+        cursor_path: String,
+        cursor_row: u32,
+        cursor_column: u32,
+        cursor_identifier: String,
+        gold_in_excerpt: bool,
+        gold_path: String,
+        gold_row: u32,
+        gold_column: u32,
+        gold_is_external: bool,
+        candidate_count: u32,
+        candidate_path: Option<String>,
+        candidate_row: Option<u32>,
+        candidate_column: Option<u32>,
+        candidate_is_gold: Option<bool>,
+        candidate_rank: Option<u32>,
+        candidate_is_same_file: Option<bool>,
+        candidate_is_referenced_nearby: Option<bool>,
+        candidate_is_referenced_in_breadcrumb: Option<bool>,
+        candidate_reference_count: Option<u32>,
+        candidate_same_file_declaration_count: Option<u32>,
+        candidate_declaration_count: Option<u32>,
+        candidate_reference_line_distance: Option<u32>,
+        candidate_declaration_line_distance: Option<u32>,
+        candidate_excerpt_vs_item_jaccard: Option<f32>,
+        candidate_excerpt_vs_signature_jaccard: Option<f32>,
+        candidate_adjacent_vs_item_jaccard: Option<f32>,
+        candidate_adjacent_vs_signature_jaccard: Option<f32>,
+        candidate_excerpt_vs_item_weighted_overlap: Option<f32>,
+        candidate_excerpt_vs_signature_weighted_overlap: Option<f32>,
+        candidate_adjacent_vs_item_weighted_overlap: Option<f32>,
+        candidate_adjacent_vs_signature_weighted_overlap: Option<f32>,
+        candidate_path_import_match_count: Option<u32>,
+        candidate_wildcard_path_import_match_count: Option<u32>,
+        candidate_import_similarity: Option<f32>,
+        candidate_max_import_similarity: Option<f32>,
+        candidate_normalized_import_similarity: Option<f32>,
+        candidate_wildcard_import_similarity: Option<f32>,
+        candidate_normalized_wildcard_import_similarity: Option<f32>,
+        candidate_included_by_others: Option<u32>,
+        candidate_includes_others: Option<u32>,
+    }
+    let mut rows = Soa::<Row>::new();
+    let mut next_ref_id = 0;
+
+    while let Some(result) = output_rx.next().await {
+        let mut gold_is_external = false;
+        let mut gold_in_excerpt = false;
+        let cursor_path = result.cursor_path.as_unix_str();
+        let cursor_row = result.cursor_point.row + 1;
+        let cursor_column = result.cursor_point.column + 1;
+        let cursor_identifier = result.identifier.name.to_string();
+        let ref_id = next_ref_id;
+        next_ref_id += 1;
+
+        for lsp_definition in result.lsp_definitions {
+            let SourceRange {
+                path: gold_path,
+                point_range: gold_point_range,
+                offset_range: gold_offset_range,
+            } = lsp_definition;
+            let lsp_point_range =
+                SerializablePoint::into_language_point_range(gold_point_range.clone());
+
+            gold_is_external = gold_is_external
+                || gold_path.is_absolute()
+                || gold_path
+                    .components()
+                    .any(|component| component.as_os_str() == "node_modules");
+
+            gold_in_excerpt = gold_in_excerpt
+                || result.excerpt_range.as_ref().is_some_and(|excerpt_range| {
+                    excerpt_range.contains_inclusive(&gold_offset_range)
+                });
+
+            let gold_row = gold_point_range.start.row;
+            let gold_column = gold_point_range.start.column;
+            let candidate_count = result.retrieved_definitions.len() as u32;
+
+            for (candidate_rank, retrieved_definition) in
+                result.retrieved_definitions.iter().enumerate()
+            {
+                let candidate_is_gold = gold_path.as_path()
+                    == retrieved_definition.path.as_std_path()
+                    && retrieved_definition
+                        .range
+                        .contains_inclusive(&lsp_point_range);
+
+                let candidate_row = retrieved_definition.range.start.row + 1;
+                let candidate_column = retrieved_definition.range.start.column + 1;
+
+                let DeclarationScoreComponents {
+                    is_same_file,
+                    is_referenced_nearby,
+                    is_referenced_in_breadcrumb,
+                    reference_count,
+                    same_file_declaration_count,
+                    declaration_count,
+                    reference_line_distance,
+                    declaration_line_distance,
+                    excerpt_vs_item_jaccard,
+                    excerpt_vs_signature_jaccard,
+                    adjacent_vs_item_jaccard,
+                    adjacent_vs_signature_jaccard,
+                    excerpt_vs_item_weighted_overlap,
+                    excerpt_vs_signature_weighted_overlap,
+                    adjacent_vs_item_weighted_overlap,
+                    adjacent_vs_signature_weighted_overlap,
+                    path_import_match_count,
+                    wildcard_path_import_match_count,
+                    import_similarity,
+                    max_import_similarity,
+                    normalized_import_similarity,
+                    wildcard_import_similarity,
+                    normalized_wildcard_import_similarity,
+                    included_by_others,
+                    includes_others,
+                } = retrieved_definition.components;
+
+                rows.push(Row {
+                    ref_id,
+                    cursor_path: cursor_path.to_string(),
+                    cursor_row,
+                    cursor_column,
+                    cursor_identifier: cursor_identifier.clone(),
+                    gold_in_excerpt,
+                    gold_path: gold_path.to_string_lossy().to_string(),
+                    gold_row,
+                    gold_column,
+                    gold_is_external,
+                    candidate_count,
+                    candidate_path: Some(retrieved_definition.path.as_unix_str().to_string()),
+                    candidate_row: Some(candidate_row),
+                    candidate_column: Some(candidate_column),
+                    candidate_is_gold: Some(candidate_is_gold),
+                    candidate_rank: Some(candidate_rank as u32),
+                    candidate_is_same_file: Some(is_same_file),
+                    candidate_is_referenced_nearby: Some(is_referenced_nearby),
+                    candidate_is_referenced_in_breadcrumb: Some(is_referenced_in_breadcrumb),
+                    candidate_reference_count: Some(reference_count as u32),
+                    candidate_same_file_declaration_count: Some(same_file_declaration_count as u32),
+                    candidate_declaration_count: Some(declaration_count as u32),
+                    candidate_reference_line_distance: Some(reference_line_distance),
+                    candidate_declaration_line_distance: Some(declaration_line_distance),
+                    candidate_excerpt_vs_item_jaccard: Some(excerpt_vs_item_jaccard),
+                    candidate_excerpt_vs_signature_jaccard: Some(excerpt_vs_signature_jaccard),
+                    candidate_adjacent_vs_item_jaccard: Some(adjacent_vs_item_jaccard),
+                    candidate_adjacent_vs_signature_jaccard: Some(adjacent_vs_signature_jaccard),
+                    candidate_excerpt_vs_item_weighted_overlap: Some(
+                        excerpt_vs_item_weighted_overlap,
+                    ),
+                    candidate_excerpt_vs_signature_weighted_overlap: Some(
+                        excerpt_vs_signature_weighted_overlap,
+                    ),
+                    candidate_adjacent_vs_item_weighted_overlap: Some(
+                        adjacent_vs_item_weighted_overlap,
+                    ),
+                    candidate_adjacent_vs_signature_weighted_overlap: Some(
+                        adjacent_vs_signature_weighted_overlap,
+                    ),
+                    candidate_path_import_match_count: Some(path_import_match_count as u32),
+                    candidate_wildcard_path_import_match_count: Some(
+                        wildcard_path_import_match_count as u32,
+                    ),
+                    candidate_import_similarity: Some(import_similarity),
+                    candidate_max_import_similarity: Some(max_import_similarity),
+                    candidate_normalized_import_similarity: Some(normalized_import_similarity),
+                    candidate_wildcard_import_similarity: Some(wildcard_import_similarity),
+                    candidate_normalized_wildcard_import_similarity: Some(
+                        normalized_wildcard_import_similarity,
+                    ),
+                    candidate_included_by_others: Some(included_by_others as u32),
+                    candidate_includes_others: Some(includes_others as u32),
+                });
             }
-            RetrievalOutcome::NoMatch => {
-                if result.lsp_definitions.is_empty() {
-                    included_count += 1;
-                    both_absent_count += 1;
-                } else {
-                    no_match_count += 1;
-                    if result.retrieved_definitions.is_empty() {
-                        no_match_none_retrieved += 1;
-                    } else {
-                        no_match_wrong_retrieval += 1;
-                    }
-                }
-            }
-            RetrievalOutcome::NoMatchDueToExternalLspDefinitions => {
-                expected_no_match_count += 1;
-                external_definition_count += 1;
-            }
-            RetrievalOutcome::ProbablyLocal => {
-                included_count += 1;
-                in_excerpt_count += 1;
+
+            if result.retrieved_definitions.is_empty() {
+                rows.push(Row {
+                    ref_id,
+                    cursor_path: cursor_path.to_string(),
+                    cursor_row,
+                    cursor_column,
+                    cursor_identifier: cursor_identifier.clone(),
+                    gold_in_excerpt,
+                    gold_path: gold_path.to_string_lossy().to_string(),
+                    gold_row,
+                    gold_column,
+                    gold_is_external,
+                    candidate_count,
+                    ..Default::default()
+                });
             }
         }
     }
+    let slices = rows.slices();
 
-    fn count_and_percentage(part: usize, total: usize) -> String {
-        format!("{} ({:.2}%)", part, (part as f64 / total as f64) * 100.0)
+    let RowSlices {
+        ref_id,
+        cursor_path,
+        cursor_row,
+        cursor_column,
+        cursor_identifier,
+        gold_in_excerpt,
+        gold_path,
+        gold_row,
+        gold_column,
+        gold_is_external,
+        candidate_path,
+        candidate_row,
+        candidate_column,
+        candidate_is_gold,
+        candidate_rank,
+        candidate_count,
+        candidate_is_same_file,
+        candidate_is_referenced_nearby,
+        candidate_is_referenced_in_breadcrumb,
+        candidate_reference_count,
+        candidate_same_file_declaration_count,
+        candidate_declaration_count,
+        candidate_reference_line_distance,
+        candidate_declaration_line_distance,
+        candidate_excerpt_vs_item_jaccard,
+        candidate_excerpt_vs_signature_jaccard,
+        candidate_adjacent_vs_item_jaccard,
+        candidate_adjacent_vs_signature_jaccard,
+        candidate_excerpt_vs_item_weighted_overlap,
+        candidate_excerpt_vs_signature_weighted_overlap,
+        candidate_adjacent_vs_item_weighted_overlap,
+        candidate_adjacent_vs_signature_weighted_overlap,
+        candidate_path_import_match_count,
+        candidate_wildcard_path_import_match_count,
+        candidate_import_similarity,
+        candidate_max_import_similarity,
+        candidate_normalized_import_similarity,
+        candidate_wildcard_import_similarity,
+        candidate_normalized_wildcard_import_similarity,
+        candidate_included_by_others,
+        candidate_includes_others,
+    } = slices;
+
+    let df = DataFrame::new(vec![
+        Series::new(PlSmallStr::from_str("ref_id"), ref_id).into(),
+        Series::new(PlSmallStr::from_str("cursor_path"), cursor_path).into(),
+        Series::new(PlSmallStr::from_str("cursor_row"), cursor_row).into(),
+        Series::new(PlSmallStr::from_str("cursor_column"), cursor_column).into(),
+        Series::new(PlSmallStr::from_str("cursor_identifier"), cursor_identifier).into(),
+        Series::new(PlSmallStr::from_str("gold_in_excerpt"), gold_in_excerpt).into(),
+        Series::new(PlSmallStr::from_str("gold_path"), gold_path).into(),
+        Series::new(PlSmallStr::from_str("gold_row"), gold_row).into(),
+        Series::new(PlSmallStr::from_str("gold_column"), gold_column).into(),
+        Series::new(PlSmallStr::from_str("gold_is_external"), gold_is_external).into(),
+        Series::new(PlSmallStr::from_str("candidate_count"), candidate_count).into(),
+        Series::new(PlSmallStr::from_str("candidate_path"), candidate_path).into(),
+        Series::new(PlSmallStr::from_str("candidate_row"), candidate_row).into(),
+        Series::new(PlSmallStr::from_str("candidate_column"), candidate_column).into(),
+        Series::new(PlSmallStr::from_str("candidate_is_gold"), candidate_is_gold).into(),
+        Series::new(PlSmallStr::from_str("candidate_rank"), candidate_rank).into(),
+        Series::new(
+            PlSmallStr::from_str("candidate_is_same_file"),
+            candidate_is_same_file,
+        )
+        .into(),
+        Series::new(
+            PlSmallStr::from_str("candidate_is_referenced_nearby"),
+            candidate_is_referenced_nearby,
+        )
+        .into(),
+        Series::new(
+            PlSmallStr::from_str("candidate_is_referenced_in_breadcrumb"),
+            candidate_is_referenced_in_breadcrumb,
+        )
+        .into(),
+        Series::new(
+            PlSmallStr::from_str("candidate_reference_count"),
+            candidate_reference_count,
+        )
+        .into(),
+        Series::new(
+            PlSmallStr::from_str("candidate_same_file_declaration_count"),
+            candidate_same_file_declaration_count,
+        )
+        .into(),
+        Series::new(
+            PlSmallStr::from_str("candidate_declaration_count"),
+            candidate_declaration_count,
+        )
+        .into(),
+        Series::new(
+            PlSmallStr::from_str("candidate_reference_line_distance"),
+            candidate_reference_line_distance,
+        )
+        .into(),
+        Series::new(
+            PlSmallStr::from_str("candidate_declaration_line_distance"),
+            candidate_declaration_line_distance,
+        )
+        .into(),
+        Series::new(
+            PlSmallStr::from_str("candidate_excerpt_vs_item_jaccard"),
+            candidate_excerpt_vs_item_jaccard,
+        )
+        .into(),
+        Series::new(
+            PlSmallStr::from_str("candidate_excerpt_vs_signature_jaccard"),
+            candidate_excerpt_vs_signature_jaccard,
+        )
+        .into(),
+        Series::new(
+            PlSmallStr::from_str("candidate_adjacent_vs_item_jaccard"),
+            candidate_adjacent_vs_item_jaccard,
+        )
+        .into(),
+        Series::new(
+            PlSmallStr::from_str("candidate_adjacent_vs_signature_jaccard"),
+            candidate_adjacent_vs_signature_jaccard,
+        )
+        .into(),
+        Series::new(
+            PlSmallStr::from_str("candidate_excerpt_vs_item_weighted_overlap"),
+            candidate_excerpt_vs_item_weighted_overlap,
+        )
+        .into(),
+        Series::new(
+            PlSmallStr::from_str("candidate_excerpt_vs_signature_weighted_overlap"),
+            candidate_excerpt_vs_signature_weighted_overlap,
+        )
+        .into(),
+        Series::new(
+            PlSmallStr::from_str("candidate_adjacent_vs_item_weighted_overlap"),
+            candidate_adjacent_vs_item_weighted_overlap,
+        )
+        .into(),
+        Series::new(
+            PlSmallStr::from_str("candidate_adjacent_vs_signature_weighted_overlap"),
+            candidate_adjacent_vs_signature_weighted_overlap,
+        )
+        .into(),
+        Series::new(
+            PlSmallStr::from_str("candidate_path_import_match_count"),
+            candidate_path_import_match_count,
+        )
+        .into(),
+        Series::new(
+            PlSmallStr::from_str("candidate_wildcard_path_import_match_count"),
+            candidate_wildcard_path_import_match_count,
+        )
+        .into(),
+        Series::new(
+            PlSmallStr::from_str("candidate_import_similarity"),
+            candidate_import_similarity,
+        )
+        .into(),
+        Series::new(
+            PlSmallStr::from_str("candidate_max_import_similarity"),
+            candidate_max_import_similarity,
+        )
+        .into(),
+        Series::new(
+            PlSmallStr::from_str("candidate_normalized_import_similarity"),
+            candidate_normalized_import_similarity,
+        )
+        .into(),
+        Series::new(
+            PlSmallStr::from_str("candidate_wildcard_import_similarity"),
+            candidate_wildcard_import_similarity,
+        )
+        .into(),
+        Series::new(
+            PlSmallStr::from_str("candidate_normalized_wildcard_import_similarity"),
+            candidate_normalized_wildcard_import_similarity,
+        )
+        .into(),
+        Series::new(
+            PlSmallStr::from_str("candidate_included_by_others"),
+            candidate_included_by_others,
+        )
+        .into(),
+        Series::new(
+            PlSmallStr::from_str("candidate_includes_others"),
+            candidate_includes_others,
+        )
+        .into(),
+    ])?;
+
+    Ok(df)
+}
+
+fn relativize_path(path: &Path) -> &Path {
+    path.strip_prefix(std::env::current_dir().unwrap())
+        .unwrap_or(path)
+}
+
+struct SummaryStats {
+    references_count: u32,
+    retrieved_count: u32,
+    top_match_count: u32,
+    non_top_match_count: u32,
+    ranking_involved_top_match_count: u32,
+    missing_none_retrieved: u32,
+    missing_wrong_retrieval: u32,
+    missing_external: u32,
+    in_excerpt_count: u32,
+}
+
+impl SummaryStats {
+    fn from_dataframe(df: DataFrame) -> Result<Self> {
+        // TODO: use lazy more
+        let unique_refs =
+            df.unique::<(), ()>(Some(&["ref_id".into()]), UniqueKeepStrategy::Any, None)?;
+        let references_count = unique_refs.height() as u32;
+
+        let gold_mask = df.column("candidate_is_gold")?.bool()?;
+        let gold_df = df.filter(&gold_mask)?;
+        let retrieved_count = gold_df.height() as u32;
+
+        let top_match_mask = gold_df.column("candidate_rank")?.u32()?.equal(0);
+        let top_match_df = gold_df.filter(&top_match_mask)?;
+        let top_match_count = top_match_df.height() as u32;
+
+        let ranking_involved_top_match_count = top_match_df
+            .column("candidate_count")?
+            .u32()?
+            .gt(1)
+            .sum()
+            .unwrap_or_default();
+
+        let non_top_match_count = (!top_match_mask).sum().unwrap_or(0);
+
+        let not_retrieved_df = df
+            .lazy()
+            .group_by(&[col("ref_id"), col("candidate_count")])
+            .agg(&[
+                col("candidate_is_gold")
+                    .fill_null(false)
+                    .sum()
+                    .alias("gold_count"),
+                col("gold_in_excerpt").sum().alias("gold_in_excerpt_count"),
+                col("gold_is_external")
+                    .sum()
+                    .alias("gold_is_external_count"),
+            ])
+            .filter(col("gold_count").eq(lit(0)))
+            .collect()?;
+
+        let in_excerpt_mask = not_retrieved_df
+            .column("gold_in_excerpt_count")?
+            .u32()?
+            .gt(0);
+        let in_excerpt_count = in_excerpt_mask.sum().unwrap_or(0);
+
+        let missing_df = not_retrieved_df.filter(&!in_excerpt_mask)?;
+
+        let missing_none_retrieved_mask = missing_df.column("candidate_count")?.u32()?.equal(0);
+        let missing_none_retrieved = missing_none_retrieved_mask.sum().unwrap_or(0);
+        let external_mask = missing_df.column("gold_is_external_count")?.u32()?.gt(0);
+        let missing_external = (missing_none_retrieved_mask & external_mask)
+            .sum()
+            .unwrap_or(0);
+
+        let missing_wrong_retrieval = missing_df
+            .column("candidate_count")?
+            .u32()?
+            .gt(0)
+            .sum()
+            .unwrap_or(0);
+
+        Ok(SummaryStats {
+            references_count,
+            retrieved_count,
+            top_match_count,
+            non_top_match_count,
+            ranking_involved_top_match_count,
+            missing_none_retrieved,
+            missing_wrong_retrieval,
+            missing_external,
+            in_excerpt_count,
+        })
     }
 
-    println!("");
-    println!("╮ references: {}", references_count);
-    println!(
-        "├─╮ included: {}",
-        count_and_percentage(included_count, references_count),
-    );
-    println!(
-        "│ ├─╮ retrieved: {}",
-        count_and_percentage(retrieved_count, references_count)
-    );
-    println!(
-        "│ │ ├─╮ top match : {}",
-        count_and_percentage(top_match_count, retrieved_count)
-    );
-    println!(
-        "│ │ │ ╰─╴ involving ranking: {}",
-        count_and_percentage(ranking_involved_top_match_count, top_match_count)
-    );
-    println!(
-        "│ │ ╰─╴ non-top match: {}",
-        count_and_percentage(non_top_match_count, retrieved_count)
-    );
-    println!(
-        "│ ├─╴ both absent: {}",
-        count_and_percentage(both_absent_count, included_count)
-    );
-    println!(
-        "│ ╰─╴ in excerpt: {}",
-        count_and_percentage(in_excerpt_count, included_count)
-    );
-    println!(
-        "├─╮ no match: {}",
-        count_and_percentage(no_match_count, references_count)
-    );
-    println!(
-        "│ ├─╴ none retrieved: {}",
-        count_and_percentage(no_match_none_retrieved, no_match_count)
-    );
-    println!(
-        "│ ╰─╴ wrong retrieval: {}",
-        count_and_percentage(no_match_wrong_retrieval, no_match_count)
-    );
-    println!(
-        "╰─╮ expected no match: {}",
-        count_and_percentage(expected_no_match_count, references_count)
-    );
-    println!(
-        "  ╰─╴ external definition: {}",
-        count_and_percentage(external_definition_count, expected_no_match_count)
-    );
+    fn count_and_percentage(part: u32, total: u32) -> String {
+        format!("{} ({:.2}%)", part, (part as f64 / total as f64) * 100.0)
+    }
+}
 
-    println!("");
-    println!("LSP definition cache at {}", lsp_definitions_path.display());
+impl std::fmt::Display for SummaryStats {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let included = self.in_excerpt_count + self.retrieved_count;
+        let missing = self.references_count - included;
+        writeln!(f)?;
+        writeln!(f, "╮ references: {}", self.references_count)?;
+        writeln!(
+            f,
+            "├─╮ included: {}",
+            Self::count_and_percentage(included, self.references_count),
+        )?;
+        writeln!(
+            f,
+            "│ ├─╮ retrieved: {}",
+            Self::count_and_percentage(self.retrieved_count, self.references_count)
+        )?;
+        writeln!(
+            f,
+            "│ │ ├─╮ top match : {}",
+            Self::count_and_percentage(self.top_match_count, self.retrieved_count)
+        )?;
+        writeln!(
+            f,
+            "│ │ │ ╰─╴ involving ranking: {}",
+            Self::count_and_percentage(self.ranking_involved_top_match_count, self.top_match_count)
+        )?;
+        writeln!(
+            f,
+            "│ │ ╰─╴ non-top match: {}",
+            Self::count_and_percentage(self.non_top_match_count, self.retrieved_count)
+        )?;
+        writeln!(
+            f,
+            "│ ╰─╴ in excerpt: {}",
+            Self::count_and_percentage(self.in_excerpt_count, included)
+        )?;
+        writeln!(
+            f,
+            "╰─╮ missing: {}",
+            Self::count_and_percentage(missing, self.references_count)
+        )?;
+        writeln!(
+            f,
+            "  ├─╮ none retrieved: {}",
+            Self::count_and_percentage(self.missing_none_retrieved, missing)
+        )?;
+        writeln!(
+            f,
+            "  │ ╰─╴ external (expected): {}",
+            Self::count_and_percentage(self.missing_external, missing)
+        )?;
+        writeln!(
+            f,
+            "  ╰─╴ wrong retrieval: {}",
+            Self::count_and_percentage(self.missing_wrong_retrieval, missing)
+        )?;
+        Ok(())
+    }
+}
 
-    Ok("".to_string())
+#[derive(Debug)]
+struct ReferenceRetrievalResult {
+    cursor_path: Arc<RelPath>,
+    cursor_point: Point,
+    identifier: Identifier,
+    excerpt_range: Option<Range<usize>>,
+    lsp_definitions: Vec<SourceRange>,
+    retrieved_definitions: Vec<RetrievedDefinition>,
+}
+
+#[derive(Debug)]
+struct RetrievedDefinition {
+    path: Arc<RelPath>,
+    range: Range<Point>,
+    score: f32,
+    #[allow(dead_code)]
+    retrieval_score: f32,
+    #[allow(dead_code)]
+    components: DeclarationScoreComponents,
 }
 
 struct RetrieveResult {
@@ -827,40 +1252,4 @@ impl From<SerializablePoint> for Point {
             column: serializable.column.saturating_sub(1),
         }
     }
-}
-
-#[derive(Debug)]
-struct RetrievalStatsResult {
-    outcome: RetrievalOutcome,
-    #[allow(dead_code)]
-    path: Arc<RelPath>,
-    #[allow(dead_code)]
-    identifier: Identifier,
-    #[allow(dead_code)]
-    point: Point,
-    #[allow(dead_code)]
-    lsp_definitions: Vec<SourceRange>,
-    retrieved_definitions: Vec<RetrievedDefinition>,
-}
-
-#[derive(Debug)]
-enum RetrievalOutcome {
-    Match {
-        /// Lowest index within retrieved_definitions that matches an LSP definition.
-        best_match: usize,
-    },
-    ProbablyLocal,
-    NoMatch,
-    NoMatchDueToExternalLspDefinitions,
-}
-
-#[derive(Debug)]
-struct RetrievedDefinition {
-    path: Arc<RelPath>,
-    range: Range<Point>,
-    score: f32,
-    #[allow(dead_code)]
-    retrieval_score: f32,
-    #[allow(dead_code)]
-    components: DeclarationScoreComponents,
 }

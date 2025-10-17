@@ -28,7 +28,7 @@ use editor::Editor;
 use editor::{Anchor, SelectionEffects};
 use editor::{Bias, ToPoint};
 use editor::{display_map::ToDisplayPoint, movement};
-use gpui::{Action, Context, Window, actions};
+use gpui::{Context, Window, actions};
 use language::{Point, SelectionGoal};
 use log::error;
 use multi_buffer::MultiBufferRow;
@@ -123,8 +123,6 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, Vim::toggle_comments);
     Vim::action(editor, cx, Vim::paste);
     Vim::action(editor, cx, Vim::show_location);
-    Vim::action(editor, cx, Vim::go_to_tab);
-    Vim::action(editor, cx, Vim::go_to_previous_tab);
 
     Vim::action(editor, cx, |vim, _: &DeleteLeft, window, cx| {
         vim.record_current_action(cx);
@@ -681,7 +679,7 @@ impl Vim {
                 editor.edit_with_autoindent(edits, cx);
                 editor.change_selections(Default::default(), window, cx, |s| {
                     s.move_cursors_with(|map, cursor, _| {
-                        let previous_line = motion::start_of_relative_buffer_row(map, cursor, -1);
+                        let previous_line = map.start_of_relative_buffer_row(cursor, -1);
                         let insert_point = motion::end_of_line(map, false, previous_line, 1);
                         (insert_point, SelectionGoal::None)
                     });
@@ -1014,55 +1012,8 @@ impl Vim {
             self.switch_mode(Mode::Insert, true, window, cx);
         }
     }
-
-    fn go_to_tab(&mut self, _: &GoToTab, window: &mut Window, cx: &mut Context<Self>) {
-        let count = Vim::take_count(cx);
-        Vim::take_forced_motion(cx);
-
-        if let Some(tab_index) = count {
-            // <count>gt goes to tab <count> (1-based).
-            let zero_based_index = tab_index.saturating_sub(1);
-            window.dispatch_action(
-                workspace::pane::ActivateItem(zero_based_index).boxed_clone(),
-                cx,
-            );
-        } else {
-            // If no count is provided, go to the next tab.
-            window.dispatch_action(workspace::pane::ActivateNextItem.boxed_clone(), cx);
-        }
-    }
-
-    fn go_to_previous_tab(
-        &mut self,
-        _: &GoToPreviousTab,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let count = Vim::take_count(cx);
-        Vim::take_forced_motion(cx);
-
-        if let Some(count) = count {
-            // gT with count goes back that many tabs with wraparound (not the same as gt!).
-            if let Some(workspace) = self.workspace(window) {
-                let pane = workspace.read(cx).active_pane().read(cx);
-                let item_count = pane.items().count();
-                if item_count > 0 {
-                    let current_index = pane.active_item_index();
-                    let target_index = (current_index as isize - count as isize)
-                        .rem_euclid(item_count as isize)
-                        as usize;
-                    window.dispatch_action(
-                        workspace::pane::ActivateItem(target_index).boxed_clone(),
-                        cx,
-                    );
-                }
-            }
-        } else {
-            // No count provided, go to the previous tab.
-            window.dispatch_action(workspace::pane::ActivatePreviousItem.boxed_clone(), cx);
-        }
-    }
 }
+
 #[cfg(test)]
 mod test {
     use gpui::{KeyBinding, TestAppContext, UpdateGlobal};

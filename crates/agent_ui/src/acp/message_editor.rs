@@ -141,7 +141,9 @@ impl MessageEditor {
 
         subscriptions.push(cx.subscribe_in(&editor, window, {
             move |this, editor, event, window, cx| {
-                if let EditorEvent::Edited { .. } = event {
+                if let EditorEvent::Edited { .. } = event
+                    && !editor.read(cx).read_only(cx)
+                {
                     let snapshot = editor.update(cx, |editor, cx| {
                         let new_hints = this
                             .command_hint(editor.buffer(), cx)
@@ -823,11 +825,18 @@ impl MessageEditor {
         });
     }
 
-    fn send(&mut self, _: &Chat, _: &mut Window, cx: &mut Context<Self>) {
+    pub fn send(&mut self, cx: &mut Context<Self>) {
         if self.is_empty(cx) {
             return;
         }
+        self.editor.update(cx, |editor, cx| {
+            editor.clear_inlay_hints(cx);
+        });
         cx.emit(MessageEditorEvent::Send)
+    }
+
+    fn chat(&mut self, _: &Chat, _: &mut Window, cx: &mut Context<Self>) {
+        self.send(cx);
     }
 
     fn cancel(&mut self, _: &editor::actions::Cancel, _: &mut Window, cx: &mut Context<Self>) {
@@ -1288,7 +1297,7 @@ impl Render for MessageEditor {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .key_context("MessageEditor")
-            .on_action(cx.listener(Self::send))
+            .on_action(cx.listener(Self::chat))
             .on_action(cx.listener(Self::cancel))
             .capture_action(cx.listener(Self::paste))
             .flex_1()
@@ -2012,20 +2021,10 @@ mod tests {
         editor.update_in(&mut cx, |editor, _window, cx| {
             assert_eq!(editor.text(cx), "/say-hello ");
             assert_eq!(editor.display_text(cx), "/say-hello <name>");
-            assert!(editor.has_visible_completions_menu());
-
-            assert_eq!(
-                current_completion_labels_with_documentation(editor),
-                &[("say-hello".into(), "Say hello to whoever you want".into())]
-            );
+            assert!(!editor.has_visible_completions_menu());
         });
 
         cx.simulate_input("GPT5");
-
-        editor.update_in(&mut cx, |editor, window, cx| {
-            assert!(editor.has_visible_completions_menu());
-            editor.confirm_completion(&editor::actions::ConfirmCompletion::default(), window, cx);
-        });
 
         cx.run_until_parked();
 
@@ -2035,7 +2034,7 @@ mod tests {
             assert!(!editor.has_visible_completions_menu());
 
             // Delete argument
-            for _ in 0..4 {
+            for _ in 0..5 {
                 editor.backspace(&editor::actions::Backspace, window, cx);
             }
         });
@@ -2043,12 +2042,11 @@ mod tests {
         cx.run_until_parked();
 
         editor.update_in(&mut cx, |editor, window, cx| {
-            assert_eq!(editor.text(cx), "/say-hello ");
+            assert_eq!(editor.text(cx), "/say-hello");
             // Hint is visible because argument was deleted
             assert_eq!(editor.display_text(cx), "/say-hello <name>");
 
             // Delete last command letter
-            editor.backspace(&editor::actions::Backspace, window, cx);
             editor.backspace(&editor::actions::Backspace, window, cx);
         });
 

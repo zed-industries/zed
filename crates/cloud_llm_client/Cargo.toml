@@ -25,3 +25,4 @@ workspace-hack.workspace = true
 
 [dev-dependencies]
 pretty_assertions.workspace = true
+indoc.workspace = true

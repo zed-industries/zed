@@ -74,6 +74,7 @@ fn run_migrations(text: &str, migrations: &[MigrationType]) -> Result<Option<Str
 
     let mut current_text = text.to_string();
     let mut result: Option<String> = None;
+    let json_indent_size = settings::infer_json_indent_size(&current_text);
     for migration in migrations.iter() {
         let migrated_text = match migration {
             MigrationType::TreeSitter(patterns, query) => migrate(&current_text, patterns, query)?,
@@ -92,7 +93,7 @@ fn run_migrations(text: &str, migrations: &[MigrationType]) -> Result<Option<Str
                     settings::update_value_in_json_text(
                         &mut current,
                         &mut vec![],
-                        2,
+                        json_indent_size,
                         &old_value,
                         &new_value,
                         &mut edits,
@@ -204,16 +205,13 @@ pub fn migrate_settings(text: &str) -> Result<Option<String>> {
             migrations::m_2025_07_08::SETTINGS_PATTERNS,
             &SETTINGS_QUERY_2025_07_08,
         ),
-        MigrationType::TreeSitter(
-            migrations::m_2025_10_01::SETTINGS_PATTERNS,
-            &SETTINGS_QUERY_2025_10_01,
-        ),
+        MigrationType::Json(migrations::m_2025_10_01::flatten_code_actions_formatters),
         MigrationType::Json(migrations::m_2025_10_02::remove_formatters_on_save),
         MigrationType::TreeSitter(
             migrations::m_2025_10_03::SETTINGS_PATTERNS,
             &SETTINGS_QUERY_2025_10_03,
         ),
-        MigrationType::Json(migrations::m_2025_10_10::remove_code_actions_on_format),
+        MigrationType::Json(migrations::m_2025_10_16::restore_code_actions_on_format),
     ];
     run_migrations(text, migrations)
 }
@@ -329,10 +327,6 @@ define_query!(
     migrations::m_2025_07_08::SETTINGS_PATTERNS
 );
 define_query!(
-    SETTINGS_QUERY_2025_10_01,
-    migrations::m_2025_10_01::SETTINGS_PATTERNS
-);
-define_query!(
     SETTINGS_QUERY_2025_10_03,
     migrations::m_2025_10_03::SETTINGS_PATTERNS
 );
@@ -351,10 +345,11 @@ mod tests {
     use super::*;
     use unindent::Unindent as _;
 
+    #[track_caller]
     fn assert_migrated_correctly(migrated: Option<String>, expected: Option<&str>) {
         match (&migrated, &expected) {
             (Some(migrated), Some(expected)) => {
-                pretty_assertions::assert_str_eq!(migrated, expected);
+                pretty_assertions::assert_str_eq!(expected, migrated);
             }
             _ => {
                 pretty_assertions::assert_eq!(migrated.as_deref(), expected);
@@ -367,11 +362,13 @@ mod tests {
         pretty_assertions::assert_eq!(migrated.as_deref(), output);
     }
 
+    #[track_caller]
     fn assert_migrate_settings(input: &str, output: Option<&str>) {
         let migrated = migrate_settings(input).unwrap();
         assert_migrated_correctly(migrated, output);
     }
 
+    #[track_caller]
     fn assert_migrate_settings_with_migrations(
         migrations: &[MigrationType],
         input: &str,
@@ -1341,26 +1338,33 @@ mod tests {
 
     #[test]
     fn test_flatten_code_action_formatters_basic_array() {
-        assert_migrate_settings(
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2025_10_01::flatten_code_actions_formatters,
+            )],
             &r#"{
-                "formatter": [
-                  {
-                      "code_actions": {
-                          "included-1": true,
-                          "included-2": true,
-                          "excluded": false,
-                      }
-                  }
-                ]
-            }"#
+        "formatter": [
+          {
+            "code_actions": {
+              "included-1": true,
+              "included-2": true,
+              "excluded": false,
+            }
+          }
+        ]
+      }"#
             .unindent(),
             Some(
                 &r#"{
-                "formatter": [
-                  { "code_action": "included-1" },
-                  { "code_action": "included-2" }
-                ]
-            }"#
+        "formatter": [
+          {
+            "code_action": "included-1"
+          },
+          {
+            "code_action": "included-2"
+          }
+        ]
+      }"#
                 .unindent(),
             ),
         );
@@ -1368,23 +1372,30 @@ mod tests {
 
     #[test]
     fn test_flatten_code_action_formatters_basic_object() {
-        assert_migrate_settings(
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2025_10_01::flatten_code_actions_formatters,
+            )],
             &r#"{
-                "formatter": {
-                    "code_actions": {
-                        "included-1": true,
-                        "excluded": false,
-                        "included-2": true
-                    }
-                }
-            }"#
+        "formatter": {
+          "code_actions": {
+            "included-1": true,
+            "excluded": false,
+            "included-2": true
+          }
+        }
+      }"#
             .unindent(),
             Some(
                 &r#"{
-                    "formatter": [
-                      { "code_action": "included-1" },
-                      { "code_action": "included-2" }
-                    ]
+                  "formatter": [
+                    {
+                      "code_action": "included-1"
+                    },
+                    {
+                      "code_action": "included-2"
+                    }
+                  ]
                 }"#
                 .unindent(),
             ),
@@ -1394,47 +1405,57 @@ mod tests {
     #[test]
     fn test_flatten_code_action_formatters_array_with_multiple_action_blocks() {
         assert_migrate_settings(
-            r#"{
-                "formatter": [
-                  {
-                      "code_actions": {
-                          "included-1": true,
-                          "included-2": true,
-                          "excluded": false,
-                      }
-                  },
-                  {
-                    "language_server": "ruff"
-                  },
-                  {
-                      "code_actions": {
-                          "excluded": false,
-                          "excluded-2": false,
-                      }
-                  }
-                  // some comment
-                  ,
-                  {
-                      "code_actions": {
-                        "excluded": false,
-                        "included-3": true,
-                        "included-4": true,
-                      }
-                  },
-                ]
-            }"#,
+            &r#"{
+          "formatter": [
+            {
+               "code_actions": {
+                  "included-1": true,
+                  "included-2": true,
+                  "excluded": false,
+               }
+            },
+            {
+              "language_server": "ruff"
+            },
+            {
+               "code_actions": {
+                  "excluded": false,
+                  "excluded-2": false,
+               }
+            }
+            // some comment
+            ,
+            {
+               "code_actions": {
+                "excluded": false,
+                "included-3": true,
+                "included-4": true,
+               }
+            },
+          ]
+        }"#
+            .unindent(),
             Some(
-                r#"{
-                "formatter": [
-                  { "code_action": "included-1" },
-                  { "code_action": "included-2" },
-                  {
-                    "language_server": "ruff"
-                  },
-                  { "code_action": "included-3" },
-                  { "code_action": "included-4" },
-                ]
-            }"#,
+                &r#"{
+        "formatter": [
+          {
+            "code_action": "included-1"
+          },
+          {
+            "code_action": "included-2"
+          },
+          {
+            "language_server": "ruff"
+          },
+          {
+            "code_action": "included-3"
+          },
+          {
+            "code_action": "included-4"
+          }
+        ]
+      }"#
+                .unindent(),
             ),
         );
     }
@@ -1443,55 +1464,63 @@ mod tests {
     fn test_flatten_code_action_formatters_array_with_multiple_action_blocks_in_languages() {
         assert_migrate_settings(
             &r#"{
-                "languages": {
-                    "Rust": {
-                        "formatter": [
-                          {
-                              "code_actions": {
-                                  "included-1": true,
-                                  "included-2": true,
-                                  "excluded": false,
-                              }
-                          },
-                          {
-                              "language_server": "ruff"
-                          },
-                          {
-                              "code_actions": {
-                                  "excluded": false,
-                                  "excluded-2": false,
-                              }
-                          }
-                          // some comment
-                          ,
-                          {
-                              "code_actions": {
-                                  "excluded": false,
-                                  "included-3": true,
-                                  "included-4": true,
-                              }
-                          },
-                        ]
-                    }
+        "languages": {
+          "Rust": {
+            "formatter": [
+              {
+                "code_actions": {
+                  "included-1": true,
+                  "included-2": true,
+                  "excluded": false,
                 }
-            }"#
+              },
+              {
+                "language_server": "ruff"
+              },
+              {
+                "code_actions": {
+                  "excluded": false,
+                  "excluded-2": false,
+                }
+              }
+              // some comment
+              ,
+              {
+                "code_actions": {
+                  "excluded": false,
+                  "included-3": true,
+                  "included-4": true,
+                }
+              },
+            ]
+          }
+        }
+      }"#
             .unindent(),
             Some(
                 &r#"{
-                    "languages": {
-                        "Rust": {
-                            "formatter": [
-                              { "code_action": "included-1" },
-                              { "code_action": "included-2" },
-                              {
-                                  "language_server": "ruff"
-                              },
-                              { "code_action": "included-3" },
-                              { "code_action": "included-4" },
-                            ]
-                        }
-                    }
-                }"#
+          "languages": {
+            "Rust": {
+              "formatter": [
+                {
+                  "code_action": "included-1"
+                },
+                {
+                  "code_action": "included-2"
+                },
+                {
+                  "language_server": "ruff"
+                },
+                {
+                  "code_action": "included-3"
+                },
+                {
+                  "code_action": "included-4"
+                }
+              ]
+            }
+          }
+        }"#
                 .unindent(),
             ),
         );
@@ -1500,102 +1529,125 @@ mod tests {
     #[test]
     fn test_flatten_code_action_formatters_array_with_multiple_action_blocks_in_defaults_and_multiple_languages()
      {
-        assert_migrate_settings(
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2025_10_01::flatten_code_actions_formatters,
+            )],
             &r#"{
-                "formatter": {
-                    "code_actions": {
-                        "default-1": true,
-                        "default-2": true,
-                        "default-3": true,
-                        "default-4": true,
-                    }
-                },
-                "languages": {
-                    "Rust": {
-                        "formatter": [
-                          {
-                              "code_actions": {
-                                  "included-1": true,
-                                  "included-2": true,
-                                  "excluded": false,
-                              }
-                          },
-                          {
-                              "language_server": "ruff"
-                          },
-                          {
-                              "code_actions": {
-                                  "excluded": false,
-                                  "excluded-2": false,
-                              }
-                          }
-                          // some comment
-                          ,
-                          {
-                              "code_actions": {
-                                  "excluded": false,
-                                  "included-3": true,
-                                  "included-4": true,
-                              }
-                          },
-                        ]
-                    },
-                    "Python": {
-                        "formatter": [
-                          {
-                              "language_server": "ruff"
-                          },
-                          {
-                              "code_actions": {
-                                  "excluded": false,
-                                  "excluded-2": false,
-                              }
-                          }
-                          // some comment
-                          ,
-                          {
-                              "code_actions": {
-                                  "excluded": false,
-                                  "included-3": true,
-                                  "included-4": true,
-                              }
-                          },
-                        ]
-                    }
+        "formatter": {
+          "code_actions": {
+            "default-1": true,
+            "default-2": true,
+            "default-3": true,
+            "default-4": true,
+          }
+        },
+        "languages": {
+          "Rust": {
+            "formatter": [
+              {
+                "code_actions": {
+                  "included-1": true,
+                  "included-2": true,
+                  "excluded": false,
                 }
-            }"#
+              },
+              {
+                "language_server": "ruff"
+              },
+              {
+                "code_actions": {
+                  "excluded": false,
+                  "excluded-2": false,
+                }
+              }
+              // some comment
+              ,
+              {
+                "code_actions": {
+                  "excluded": false,
+                  "included-3": true,
+                  "included-4": true,
+                }
+              },
+            ]
+          },
+          "Python": {
+            "formatter": [
+              {
+                "language_server": "ruff"
+              },
+              {
+                "code_actions": {
+                  "excluded": false,
+                  "excluded-2": false,
+                }
+              }
+              // some comment
+              ,
+              {
+                "code_actions": {
+                  "excluded": false,
+                  "included-3": true,
+                  "included-4": true,
+                }
+              },
+            ]
+          }
+        }
+      }"#
             .unindent(),
             Some(
                 &r#"{
-                    "formatter": [
-                      { "code_action": "default-1" },
-                      { "code_action": "default-2" },
-                      { "code_action": "default-3" },
-                      { "code_action": "default-4" }
-                    ],
-                    "languages": {
-                        "Rust": {
-                            "formatter": [
-                              { "code_action": "included-1" },
-                              { "code_action": "included-2" },
-                              {
-                                  "language_server": "ruff"
-                              },
-                              { "code_action": "included-3" },
-                              { "code_action": "included-4" },
-                            ]
-                        },
-                        "Python": {
-                            "formatter": [
-                              {
-                                  "language_server": "ruff"
-                              },
-                              { "code_action": "included-3" },
-                              { "code_action": "included-4" },
-                            ]
-                        }
-                    }
-                }"#
+          "formatter": [
+            {
+              "code_action": "default-1"
+            },
+            {
+              "code_action": "default-2"
+            },
+            {
+              "code_action": "default-3"
+            },
+            {
+              "code_action": "default-4"
+            }
+          ],
+          "languages": {
+            "Rust": {
+              "formatter": [
+                {
+                  "code_action": "included-1"
+                },
+                {
+                  "code_action": "included-2"
+                },
+                {
+                  "language_server": "ruff"
+                },
+                {
+                  "code_action": "included-3"
+                },
+                {
+                  "code_action": "included-4"
+                }
+              ]
+            },
+            "Python": {
+              "formatter": [
+                {
+                  "language_server": "ruff"
+                },
+                {
+                  "code_action": "included-3"
+                },
+                {
+                  "code_action": "included-4"
+                }
+              ]
+            }
+          }
+        }"#
                 .unindent(),
             ),
         );
@@ -1604,153 +1656,185 @@ mod tests {
     #[test]
     fn test_flatten_code_action_formatters_array_with_format_on_save_and_multiple_languages() {
         assert_migrate_settings_with_migrations(
-            &[MigrationType::TreeSitter(
-                migrations::m_2025_10_01::SETTINGS_PATTERNS,
-                &SETTINGS_QUERY_2025_10_01,
+            &[MigrationType::Json(
+                migrations::m_2025_10_01::flatten_code_actions_formatters,
             )],
             &r#"{
-                "formatter": {
-                    "code_actions": {
-                        "default-1": true,
-                        "default-2": true,
-                        "default-3": true,
-                        "default-4": true,
-                    }
-                },
-                "format_on_save": [
-                  {
-                      "code_actions": {
-                          "included-1": true,
-                          "included-2": true,
-                          "excluded": false,
-                      }
-                  },
-                  {
-                      "language_server": "ruff"
-                  },
-                  {
-                      "code_actions": {
-                          "excluded": false,
-                          "excluded-2": false,
-                      }
-                  }
-                  // some comment
-                  ,
-                  {
-                      "code_actions": {
-                          "excluded": false,
-                          "included-3": true,
-                          "included-4": true,
-                      }
-                  },
-                ],
-                "languages": {
-                    "Rust": {
-                        "format_on_save": "prettier",
-                        "formatter": [
-                          {
-                              "code_actions": {
-                                  "included-1": true,
-                                  "included-2": true,
-                                  "excluded": false,
-                              }
-                          },
-                          {
-                              "language_server": "ruff"
-                          },
-                          {
-                              "code_actions": {
-                                  "excluded": false,
-                                  "excluded-2": false,
-                              }
-                          }
-                          // some comment
-                          ,
-                          {
-                              "code_actions": {
-                                  "excluded": false,
-                                  "included-3": true,
-                                  "included-4": true,
-                              }
-                          },
-                        ]
-                    },
-                    "Python": {
-                        "format_on_save": {
-                            "code_actions": {
-                                "on-save-1": true,
-                                "on-save-2": true,
-                            }
-                        },
-                        "formatter": [
-                          {
-                              "language_server": "ruff"
-                          },
-                          {
-                              "code_actions": {
-                                  "excluded": false,
-                                  "excluded-2": false,
-                              }
-                          }
-                          // some comment
-                          ,
-                          {
-                              "code_actions": {
-                                  "excluded": false,
-                                  "included-3": true,
-                                  "included-4": true,
-                              }
-                          },
-                        ]
-                    }
+        "formatter": {
+          "code_actions": {
+            "default-1": true,
+            "default-2": true,
+            "default-3": true,
+            "default-4": true,
+          }
+        },
+        "format_on_save": [
+          {
+            "code_actions": {
+              "included-1": true,
+              "included-2": true,
+              "excluded": false,
+            }
+          },
+          {
+            "language_server": "ruff"
+          },
+          {
+            "code_actions": {
+              "excluded": false,
+              "excluded-2": false,
+            }
+          }
+          // some comment
+          ,
+          {
+            "code_actions": {
+              "excluded": false,
+              "included-3": true,
+              "included-4": true,
+            }
+          },
+        ],
+        "languages": {
+          "Rust": {
+            "format_on_save": "prettier",
+            "formatter": [
+              {
+                "code_actions": {
+                  "included-1": true,
+                  "included-2": true,
+                  "excluded": false,
                 }
-            }"#
+              },
+              {
+                "language_server": "ruff"
+              },
+              {
+                "code_actions": {
+                  "excluded": false,
+                  "excluded-2": false,
+                }
+              }
+              // some comment
+              ,
+              {
+                "code_actions": {
+                  "excluded": false,
+                  "included-3": true,
+                  "included-4": true,
+                }
+              },
+            ]
+          },
+          "Python": {
+            "format_on_save": {
+              "code_actions": {
+                "on-save-1": true,
+                "on-save-2": true,
+              }
+            },
+            "formatter": [
+              {
+                "language_server": "ruff"
+              },
+              {
+                "code_actions": {
+                  "excluded": false,
+                  "excluded-2": false,
+                }
+              }
+              // some comment
+              ,
+              {
+                "code_actions": {
+                  "excluded": false,
+                  "included-3": true,
+                  "included-4": true,
+                }
+              },
+            ]
+          }
+        }
+      }"#
             .unindent(),
             Some(
-                &r#"{
-                    "formatter": [
-                      { "code_action": "default-1" },
-                      { "code_action": "default-2" },
-                      { "code_action": "default-3" },
-                      { "code_action": "default-4" }
-                    ],
-                    "format_on_save": [
-                      { "code_action": "included-1" },
-                      { "code_action": "included-2" },
-                      {
-                          "language_server": "ruff"
-                      },
-                      { "code_action": "included-3" },
-                      { "code_action": "included-4" },
-                    ],
-                    "languages": {
-                        "Rust": {
-                            "format_on_save": "prettier",
-                            "formatter": [
-                              { "code_action": "included-1" },
-                              { "code_action": "included-2" },
-                              {
-                                  "language_server": "ruff"
-                              },
-                              { "code_action": "included-3" },
-                              { "code_action": "included-4" },
-                            ]
-                        },
-                        "Python": {
-                            "format_on_save": [
-                              { "code_action": "on-save-1" },
-                              { "code_action": "on-save-2" }
-                            ],
-                            "formatter": [
-                              {
-                                  "language_server": "ruff"
-                              },
-                              { "code_action": "included-3" },
-                              { "code_action": "included-4" },
-                            ]
-                        }
-                    }
-                }"#
+                &r#"
+        {
+          "formatter": [
+            {
+              "code_action": "default-1"
+            },
+            {
+              "code_action": "default-2"
+            },
+            {
+              "code_action": "default-3"
+            },
+            {
+              "code_action": "default-4"
+            }
+          ],
+          "format_on_save": [
+            {
+              "code_action": "included-1"
+            },
+            {
+              "code_action": "included-2"
+            },
+            {
+              "language_server": "ruff"
+            },
+            {
+              "code_action": "included-3"
+            },
+            {
+              "code_action": "included-4"
+            }
+          ],
+          "languages": {
+            "Rust": {
+              "format_on_save": "prettier",
+              "formatter": [
+                {
+                  "code_action": "included-1"
+                },
+                {
+                  "code_action": "included-2"
+                },
+                {
+                  "language_server": "ruff"
+                },
+                {
+                  "code_action": "included-3"
+                },
+                {
+                  "code_action": "included-4"
+                }
+              ]
+            },
+            "Python": {
+              "format_on_save": [
+                {
+                  "code_action": "on-save-1"
+                },
+                {
+                  "code_action": "on-save-2"
+                }
+              ],
+              "formatter": [
+                {
+                  "language_server": "ruff"
+                },
+                {
+                  "code_action": "included-3"
+                },
+                {
+                  "code_action": "included-4"
+                }
+              ]
+            }
+          }
+        }"#
                 .unindent(),
             ),
         );
@@ -1916,297 +2000,91 @@ mod tests {
     }
 
     #[test]
-    fn test_code_actions_on_format_migration_basic() {
+    fn test_restore_code_actions_on_format() {
         assert_migrate_settings_with_migrations(
             &[MigrationType::Json(
-                migrations::m_2025_10_10::remove_code_actions_on_format,
+                migrations::m_2025_10_16::restore_code_actions_on_format,
             )],
             &r#"{
-                "code_actions_on_format": {
-                    "source.organizeImports": true,
-                    "source.fixAll": true
+                "formatter": {
+                    "code_action": "foo"
                 }
             }"#
             .unindent(),
             Some(
                 &r#"{
-                    "formatter": [
-                        {
-                            "code_action": "source.organizeImports"
-                        },
-                        {
-                            "code_action": "source.fixAll"
-                        }
-                    ]
+                    "code_actions_on_format": {
+                        "foo": true
+                    }
                 }
                 "#
                 .unindent(),
             ),
         );
-    }
 
-    #[test]
-    fn test_code_actions_on_format_migration_filters_false_values() {
         assert_migrate_settings_with_migrations(
             &[MigrationType::Json(
-                migrations::m_2025_10_10::remove_code_actions_on_format,
+                migrations::m_2025_10_16::restore_code_actions_on_format,
             )],
             &r#"{
-                "code_actions_on_format": {
-                    "a": true,
-                    "b": false,
-                    "c": true
-                }
-            }"#
-            .unindent(),
-            Some(
-                &r#"{
-                    "formatter": [
-                        {
-                            "code_action": "a"
-                        },
-                        {
-                            "code_action": "c"
-                        }
-                    ]
-                }
-                "#
-                .unindent(),
-            ),
-        );
-    }
-
-    #[test]
-    fn test_code_actions_on_format_migration_with_existing_formatter_object() {
-        assert_migrate_settings_with_migrations(
-            &[MigrationType::Json(
-                migrations::m_2025_10_10::remove_code_actions_on_format,
-            )],
-            &r#"{
-              "formatter": "prettier",
-              "code_actions_on_format": {
-                "source.organizeImports": true
-              }
-            }"#
-            .unindent(),
-            Some(
-                &r#"{
-                  "formatter": [
-                    {
-                      "code_action": "source.organizeImports"
-                    },
-                    "prettier"
-                  ]
-                }"#
-                .unindent(),
-            ),
-        );
-    }
-
-    #[test]
-    fn test_code_actions_on_format_migration_with_existing_formatter_array() {
-        assert_migrate_settings_with_migrations(
-            &[MigrationType::Json(
-                migrations::m_2025_10_10::remove_code_actions_on_format,
-            )],
-            &r#"{
-              "formatter": ["prettier", {"language_server": "eslint"}],
-              "code_actions_on_format": {
-                "source.organizeImports": true,
-                "source.fixAll": true
-              }
-            }"#
-            .unindent(),
-            Some(
-                &r#"{
-                  "formatter": [
-                    {
-                      "code_action": "source.organizeImports"
-                    },
-                    {
-                      "code_action": "source.fixAll"
-                    },
-                    "prettier",
-                    {
-                      "language_server": "eslint"
-                    }
-                  ]
-                }"#
-                .unindent(),
-            ),
-        );
-    }
-
-    #[test]
-    fn test_code_actions_on_format_migration_in_languages() {
-        assert_migrate_settings_with_migrations(
-            &[MigrationType::Json(
-                migrations::m_2025_10_10::remove_code_actions_on_format,
-            )],
-            &r#"{
-                "languages": {
-                    "JavaScript": {
-                        "code_actions_on_format": {
-                            "source.fixAll.eslint": true
-                        }
-                    },
-                    "Go": {
-                        "code_actions_on_format": {
-                            "source.organizeImports": true
-                        }
-                    }
-                }
-            }"#
-            .unindent(),
-            Some(
-                &r#"{
-                    "languages": {
-                        "JavaScript": {
-                            "formatter": [
-                                {
-                                    "code_action": "source.fixAll.eslint"
-                                }
-                            ]
-                        },
-                        "Go": {
-                            "formatter": [
-                                {
-                                    "code_action": "source.organizeImports"
-                                }
-                            ]
-                        }
-                    }
-                }"#
-                .unindent(),
-            ),
-        );
-    }
-
-    #[test]
-    fn test_code_actions_on_format_migration_in_languages_with_existing_formatter() {
-        assert_migrate_settings_with_migrations(
-            &[MigrationType::Json(
-                migrations::m_2025_10_10::remove_code_actions_on_format,
-            )],
-            &r#"{
-              "languages": {
-                "JavaScript": {
-                  "formatter": "prettier",
-                  "code_actions_on_format": {
-                    "source.fixAll.eslint": true,
-                    "source.organizeImports": false
-                  }
-                }
-              }
-            }"#
-            .unindent(),
-            Some(
-                &r#"{
-                  "languages": {
-                    "JavaScript": {
-                      "formatter": [
-                        {
-                          "code_action": "source.fixAll.eslint"
-                        },
-                        "prettier"
-                      ]
-                    }
-                  }
-                }"#
-                .unindent(),
-            ),
-        );
-    }
-
-    #[test]
-    fn test_code_actions_on_format_migration_mixed_global_and_languages() {
-        assert_migrate_settings_with_migrations(
-            &[MigrationType::Json(
-                migrations::m_2025_10_10::remove_code_actions_on_format,
-            )],
-            &r#"{
-              "formatter": "prettier",
-              "code_actions_on_format": {
-                "source.fixAll": true
-              },
-              "languages": {
-                "Rust": {
-                  "formatter": "rust-analyzer",
-                  "code_actions_on_format": {
-                    "source.organizeImports": true
-                  }
-                },
-                "Python": {
-                  "code_actions_on_format": {
-                    "source.organizeImports": true,
-                    "source.fixAll": false
-                  }
-                }
-              }
-            }"#
-            .unindent(),
-            Some(
-                &r#"{
-                  "formatter": [
-                    {
-                      "code_action": "source.fixAll"
-                    },
-                    "prettier"
-                  ],
-                  "languages": {
-                    "Rust": {
-                      "formatter": [
-                        {
-                          "code_action": "source.organizeImports"
-                        },
-                        "rust-analyzer"
-                      ]
-                    },
-                    "Python": {
-                            "formatter": [
-                                {
-                                    "code_action": "source.organizeImports"
-                                }
-                            ]
-                        }
-                  }
-                }"#
-                .unindent(),
-            ),
-        );
-    }
-
-    #[test]
-    fn test_code_actions_on_format_no_migration_when_not_present() {
-        assert_migrate_settings_with_migrations(
-            &[MigrationType::Json(
-                migrations::m_2025_10_10::remove_code_actions_on_format,
-            )],
-            &r#"{
-              "formatter": ["prettier"]
+                "formatter": [
+                    { "code_action": "foo" },
+                    "auto"
+                ]
             }"#
             .unindent(),
             None,
         );
-    }
 
-    #[test]
-    fn test_code_actions_on_format_migration_all_false_values() {
         assert_migrate_settings_with_migrations(
             &[MigrationType::Json(
-                migrations::m_2025_10_10::remove_code_actions_on_format,
+                migrations::m_2025_10_16::restore_code_actions_on_format,
             )],
             &r#"{
-                "code_actions_on_format": {
-                    "a": false,
-                    "b": false
+                "formatter": {
+                    "code_action": "foo"
                 },
-                "formatter": "prettier"
+                "code_actions_on_format": {
+                    "bar": true,
+                    "baz": false
+                }
             }"#
             .unindent(),
             Some(
                 &r#"{
-                    "formatter": "prettier"
+                    "code_actions_on_format": {
+                        "foo": true,
+                        "bar": true,
+                        "baz": false
+                    }
+                }"#
+                .unindent(),
+            ),
+        );
+
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2025_10_16::restore_code_actions_on_format,
+            )],
+            &r#"{
+                "formatter": [
+                    { "code_action": "foo" },
+                    { "code_action": "qux" },
+                ],
+                "code_actions_on_format": {
+                    "bar": true,
+                    "baz": false
+                }
+            }"#
+            .unindent(),
+            Some(
+                &r#"{
+                    "code_actions_on_format": {
+                        "foo": true,
+                        "qux": true,
+                        "bar": true,
+                        "baz": false
+                    }
                 }"#
                 .unindent(),
             ),

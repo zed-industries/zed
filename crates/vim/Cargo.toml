@@ -26,6 +26,7 @@ db.workspace = true
 editor.workspace = true
 env_logger.workspace = true
 futures.workspace = true
+fuzzy.workspace = true
 gpui.workspace = true
 itertools.workspace = true
 language.workspace = true

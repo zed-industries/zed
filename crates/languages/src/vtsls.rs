@@ -201,16 +201,11 @@ impl LspAdapter for VtslsLspAdapter {
         } else {
             item.label.clone()
         };
-        let filter_range = item
-            .filter_text
-            .as_deref()
-            .and_then(|filter| text.find(filter).map(|ix| ix..ix + filter.len()))
-            .unwrap_or(0..len);
-        Some(language::CodeLabel {
+        Some(language::CodeLabel::filtered(
             text,
-            runs: vec![(0..len, highlight_id)],
-            filter_range,
-        })
+            item.filter_text.as_deref(),
+            vec![(0..len, highlight_id)],
+        ))
     }
 
     async fn workspace_configuration(
