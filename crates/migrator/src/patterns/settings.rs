@@ -101,10 +101,10 @@ pub const SETTINGS_DUPLICATED_AGENT_PATTERN: &str = r#"(document
             value: (_)
         ) @pair1
         (pair
-            key: (string (string_content) @agent2)
+            key: (string (string_content) @agent)
             value: (_)
         )
     )
     (#eq? @agent1 "agent")
-    (#eq? @agent2 "agent")
+    (#eq? @agent "agent")
 )"#;

@@ -9,8 +9,8 @@ use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use agent::{HistoryEntry, HistoryEntryId, HistoryStore};
 use agent_client_protocol as acp;
-use agent2::{HistoryEntry, HistoryEntryId, HistoryStore};
 use anyhow::{Result, anyhow};
 use collections::HashSet;
 pub use completion_provider::ContextPickerCompletionProvider;
@@ -488,7 +488,7 @@ impl ContextPicker {
                     return Task::ready(Err(anyhow!("thread store not available")));
                 };
                 let load_thread_task =
-                    agent2::load_agent_thread(thread.id, thread_store, project, cx);
+                    agent::load_agent_thread(thread.id, thread_store, project, cx);
                 cx.spawn(async move |this, cx| {
                     let thread = load_thread_task.await?;
                     context_store.update(cx, |context_store, cx| {

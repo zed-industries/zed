@@ -1,7 +1,7 @@
 use std::{collections::BTreeMap, sync::Arc};
 
+use agent::ContextServerRegistry;
 use agent_settings::{AgentProfileId, AgentProfileSettings};
-use agent2::ContextServerRegistry;
 use fs::Fs;
 use gpui::{App, Context, DismissEvent, Entity, EventEmitter, Focusable, Task, WeakEntity, Window};
 use picker::{Picker, PickerDelegate};

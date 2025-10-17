@@ -63,9 +63,9 @@ const PROMPT_PATHS = [
   "assets/prompts/terminal_assistant_prompt.hbs",
   "crates/agent_settings/src/prompts/summarize_thread_detailed_prompt.txt",
   "crates/agent_settings/src/prompts/summarize_thread_prompt.txt",
-  "crates/agent2/src/templates/create_file_prompt.hbs",
-  "crates/agent2/src/templates/edit_file_prompt_xml.hbs",
-  "crates/agent2/src/templates/edit_file_prompt_diff_fenced.hbs",
+  "crates/agent/src/templates/create_file_prompt.hbs",
+  "crates/agent/src/templates/edit_file_prompt_xml.hbs",
+  "crates/agent/src/templates/edit_file_prompt_diff_fenced.hbs",
   "crates/git_ui/src/commit_message_prompt.txt",
 ];
 

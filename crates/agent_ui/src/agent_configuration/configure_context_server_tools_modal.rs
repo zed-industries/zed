@@ -1,4 +1,4 @@
-use agent2::ContextServerRegistry;
+use agent::ContextServerRegistry;
 use collections::HashMap;
 use context_server::ContextServerId;
 use gpui::{

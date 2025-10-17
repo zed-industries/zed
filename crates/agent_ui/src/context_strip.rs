@@ -8,7 +8,7 @@ use crate::{
     context::AgentContextHandle,
     context_store::{ContextStore, SuggestedContext},
 };
-use agent2::HistoryStore;
+use agent::HistoryStore;
 use collections::HashSet;
 use editor::Editor;
 use gpui::{

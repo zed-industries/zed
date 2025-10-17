@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
-use agent2::{HistoryEntry, HistoryStore};
+use agent::{HistoryEntry, HistoryStore};
 use anyhow::Result;
 use editor::{CompletionProvider, Editor, ExcerptId, ToOffset as _};
 use file_icons::FileIcons;
@@ -432,7 +432,7 @@ impl ContextPickerCompletionProvider {
                 move |window, cx| match &thread_entry {
                     HistoryEntry::AcpThread(thread) => {
                         let context_store = context_store.clone();
-                        let load_thread_task = agent2::load_agent_thread(
+                        let load_thread_task = agent::load_agent_thread(
                             thread.id.clone(),
                             thread_store.clone(),
                             project.clone(),

@@ -2,7 +2,7 @@
 /// The tests in this file assume that server_cx is running on Windows too.
 /// We neead to find a way to test Windows-Non-Windows interactions.
 use crate::headless_project::HeadlessProject;
-use agent2::{AgentTool, ReadFileTool, ReadFileToolInput, ToolCallEventStream};
+use agent::{AgentTool, ReadFileTool, ReadFileToolInput, ToolCallEventStream};
 use client::{Client, UserStore};
 use clock::FakeSystemClock;
 use collections::{HashMap, HashSet};

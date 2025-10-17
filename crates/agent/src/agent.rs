@@ -1,8 +1,24 @@
-use crate::{
-    ContextServerRegistry, Thread, ThreadEvent, ThreadsDatabase, ToolCallAuthorization,
-    UserMessageContent, templates::Templates,
-};
-use crate::{HistoryStore, TerminalHandle, ThreadEnvironment, TitleUpdated, TokenUsageUpdated};
+mod db;
+mod edit_agent;
+mod history_store;
+mod legacy_thread;
+mod native_agent_server;
+pub mod outline;
+mod templates;
+mod thread;
+mod tool_schema;
+mod tools;
+
+#[cfg(test)]
+mod tests;
+
+pub use db::*;
+pub use history_store::*;
+pub use native_agent_server::NativeAgentServer;
+pub use templates::*;
+pub use thread::*;
+pub use tools::*;
+
 use acp_thread::{AcpThread, AgentModelSelector};
 use agent_client_protocol as acp;
 use anyhow::{Context as _, Result, anyhow};
@@ -18,7 +34,7 @@ use gpui::{
 use language_model::{LanguageModel, LanguageModelProvider, LanguageModelRegistry};
 use project::{Project, ProjectItem, ProjectPath, Worktree};
 use prompt_store::{
-    ProjectContext, PromptId, PromptStore, RulesFileContext, UserRulesContext, WorktreeContext,
+    ProjectContext, PromptStore, RulesFileContext, UserRulesContext, WorktreeContext,
 };
 use serde::{Deserialize, Serialize};
 use settings::{LanguageModelSelection, update_settings_file};
@@ -427,8 +443,8 @@ impl NativeAgent {
                 .flat_map(|(contents, prompt_metadata)| match contents {
                     Ok(contents) => Some(UserRulesContext {
                         uuid: match prompt_metadata.id {
-                            PromptId::User { uuid } => uuid,
-                            PromptId::EditWorkflow => return None,
+                            prompt_store::PromptId::User { uuid } => uuid,
+                            prompt_store::PromptId::EditWorkflow => return None,
                         },
                         title: prompt_metadata.title.map(|title| title.to_string()),
                         contents,
@@ -1239,7 +1255,7 @@ impl TerminalHandle for AcpTerminalHandle {
 }
 
 #[cfg(test)]
-mod tests {
+mod internal_tests {
     use crate::HistoryEntryId;
 
     use super::*;

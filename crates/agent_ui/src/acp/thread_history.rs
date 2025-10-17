@@ -1,6 +1,6 @@
 use crate::acp::AcpThreadView;
 use crate::{AgentPanel, RemoveSelectedThread};
-use agent2::{HistoryEntry, HistoryStore};
+use agent::{HistoryEntry, HistoryStore};
 use chrono::{Datelike as _, Local, NaiveDate, TimeDelta};
 use editor::{Editor, EditorEvent};
 use fuzzy::StringMatchCandidate;
@@ -59,7 +59,7 @@ impl EventEmitter<ThreadHistoryEvent> for AcpThreadHistory {}
 
 impl AcpThreadHistory {
     pub(crate) fn new(
-        history_store: Entity<agent2::HistoryStore>,
+        history_store: Entity<agent::HistoryStore>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {

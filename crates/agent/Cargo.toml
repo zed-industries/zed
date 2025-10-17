@@ -1,12 +1,12 @@
 [package]
-name = "agent2"
+name = "agent"
 version = "0.1.0"
 edition.workspace = true
 publish.workspace = true
 license = "GPL-3.0-or-later"
 
 [lib]
-path = "src/agent2.rs"
+path = "src/agent.rs"
 
 [features]
 test-support = ["db/test-support"]

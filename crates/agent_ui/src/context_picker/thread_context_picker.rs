@@ -5,7 +5,7 @@ use crate::{
     context_picker::ContextPicker,
     context_store::{self, ContextStore},
 };
-use agent2::{HistoryEntry, HistoryStore};
+use agent::{HistoryEntry, HistoryStore};
 use fuzzy::StringMatchCandidate;
 use gpui::{App, DismissEvent, Entity, FocusHandle, Focusable, Task, WeakEntity};
 use picker::{Picker, PickerDelegate};
@@ -141,7 +141,7 @@ impl PickerDelegate for ThreadContextPickerDelegate {
         match entry {
             HistoryEntry::AcpThread(thread) => {
                 let load_thread_task =
-                    agent2::load_agent_thread(thread.id.clone(), thread_store, project, cx);
+                    agent::load_agent_thread(thread.id.clone(), thread_store, project, cx);
 
                 cx.spawn(async move |this, cx| {
                     let thread = load_thread_task.await?;

@@ -1,5 +1,5 @@
 use crate::context_store::ContextStore;
-use agent2::HistoryStore;
+use agent::HistoryStore;
 use collections::VecDeque;
 use editor::actions::Paste;
 use editor::display_map::EditorMargins;

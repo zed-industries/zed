@@ -178,7 +178,7 @@ impl ContextStore {
 
     pub fn add_thread(
         &mut self,
-        thread: Entity<agent2::Thread>,
+        thread: Entity<agent::Thread>,
         remove_if_exists: bool,
         cx: &mut Context<Self>,
     ) -> Option<AgentContextHandle> {

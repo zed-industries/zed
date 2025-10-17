@@ -4,7 +4,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use acp_thread::AcpThread;
-use agent2::{ContextServerRegistry, DbThreadMetadata, HistoryEntry, HistoryStore};
+use agent::{ContextServerRegistry, DbThreadMetadata, HistoryEntry, HistoryStore};
 use db::kvp::{Dismissable, KEY_VALUE_STORE};
 use project::agent_server_store::{
     AgentServerCommand, AllAgentServersSettings, CLAUDE_CODE_NAME, CODEX_NAME, GEMINI_NAME,
@@ -279,7 +279,7 @@ impl ActiveView {
     pub fn native_agent(
         fs: Arc<dyn Fs>,
         prompt_store: Option<Entity<PromptStore>>,
-        history_store: Entity<agent2::HistoryStore>,
+        history_store: Entity<agent::HistoryStore>,
         project: Entity<Project>,
         workspace: WeakEntity<Workspace>,
         window: &mut Window,
@@ -304,7 +304,7 @@ impl ActiveView {
 
     pub fn text_thread(
         context_editor: Entity<TextThreadEditor>,
-        acp_history_store: Entity<agent2::HistoryStore>,
+        acp_history_store: Entity<agent::HistoryStore>,
         language_registry: Arc<LanguageRegistry>,
         window: &mut Window,
         cx: &mut App,
@@ -377,7 +377,7 @@ impl ActiveView {
                                     .replace_recently_opened_text_thread(old_path, new_path, cx);
                             } else {
                                 history_store.push_recently_opened_entry(
-                                    agent2::HistoryEntryId::TextThread(new_path.clone()),
+                                    agent::HistoryEntryId::TextThread(new_path.clone()),
                                     cx,
                                 );
                             }
@@ -411,7 +411,7 @@ pub struct AgentPanel {
     fs: Arc<dyn Fs>,
     language_registry: Arc<LanguageRegistry>,
     acp_history: Entity<AcpThreadHistory>,
-    history_store: Entity<agent2::HistoryStore>,
+    history_store: Entity<agent::HistoryStore>,
     text_thread_store: Entity<assistant_context::ContextStore>,
     prompt_store: Option<Entity<PromptStore>>,
     context_server_registry: Entity<ContextServerRegistry>,
@@ -530,7 +530,7 @@ impl AgentPanel {
         let context_server_registry =
             cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
 
-        let history_store = cx.new(|cx| agent2::HistoryStore::new(text_thread_store.clone(), cx));
+        let history_store = cx.new(|cx| agent::HistoryStore::new(text_thread_store.clone(), cx));
         let acp_history = cx.new(|cx| AcpThreadHistory::new(history_store.clone(), window, cx));
         cx.subscribe_in(
             &acp_history,
@@ -1176,7 +1176,7 @@ impl AgentPanel {
         }
     }
 
-    pub(crate) fn active_native_agent_thread(&self, cx: &App) -> Option<Entity<agent2::Thread>> {
+    pub(crate) fn active_native_agent_thread(&self, cx: &App) -> Option<Entity<agent::Thread>> {
         match &self.active_view {
             ActiveView::ExternalAgentThread { thread_view, .. } => {
                 thread_view.read(cx).as_native_thread(cx)
@@ -1212,7 +1212,7 @@ impl AgentPanel {
                 self.history_store.update(cx, |store, cx| {
                     if let Some(path) = context_editor.read(cx).context().read(cx).path() {
                         store.push_recently_opened_entry(
-                            agent2::HistoryEntryId::TextThread(path.clone()),
+                            agent::HistoryEntryId::TextThread(path.clone()),
                             cx,
                         )
                     }
@@ -1266,14 +1266,14 @@ impl AgentPanel {
                         let entry = entry.clone();
                         panel
                             .update(cx, move |this, cx| match &entry {
-                                agent2::HistoryEntry::AcpThread(entry) => this.external_thread(
+                                agent::HistoryEntry::AcpThread(entry) => this.external_thread(
                                     Some(ExternalAgent::NativeAgent),
                                     Some(entry.clone()),
                                     None,
                                     window,
                                     cx,
                                 ),
-                                agent2::HistoryEntry::TextThread(entry) => this
+                                agent::HistoryEntry::TextThread(entry) => this
                                     .open_saved_text_thread(entry.path.clone(), window, cx)
                                     .detach_and_log_err(cx),
                             })

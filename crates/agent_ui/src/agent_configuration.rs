@@ -6,7 +6,7 @@ mod tool_picker;
 
 use std::{ops::Range, sync::Arc};
 
-use agent2::ContextServerRegistry;
+use agent::ContextServerRegistry;
 use anyhow::Result;
 use cloud_llm_client::{Plan, PlanV1, PlanV2};
 use collections::HashMap;

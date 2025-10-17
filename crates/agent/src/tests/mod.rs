@@ -1864,7 +1864,7 @@ async fn test_agent_connection(cx: &mut TestAppContext) {
     let selector_opt = connection.model_selector(&session_id);
     assert!(
         selector_opt.is_some(),
-        "agent2 should always support ModelSelector"
+        "agent should always support ModelSelector"
     );
     let selector = selector_opt.unwrap();
 

@@ -6,8 +6,8 @@ use crate::{
     },
     terminal_codegen::{CLEAR_INPUT, CodegenEvent, TerminalCodegen},
 };
+use agent::HistoryStore;
 use agent_settings::AgentSettings;
-use agent2::HistoryStore;
 use anyhow::{Context as _, Result};
 use client::telemetry::Telemetry;
 use cloud_llm_client::CompletionIntent;

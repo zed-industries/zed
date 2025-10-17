@@ -1,4 +1,4 @@
-use agent2::outline;
+use agent::outline;
 use assistant_context::AssistantContext;
 use futures::future;
 use futures::{FutureExt, future::Shared};
@@ -533,7 +533,7 @@ impl Display for FetchedUrlContext {
 
 #[derive(Debug, Clone)]
 pub struct ThreadContextHandle {
-    pub thread: Entity<agent2::Thread>,
+    pub thread: Entity<agent::Thread>,
     pub context_id: ContextId,
 }
 

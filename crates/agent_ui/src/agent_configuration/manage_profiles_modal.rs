@@ -2,8 +2,8 @@ mod profile_modal_header;
 
 use std::sync::Arc;
 
+use agent::ContextServerRegistry;
 use agent_settings::{AgentProfile, AgentProfileId, AgentSettings, builtin_profiles};
-use agent2::ContextServerRegistry;
 use editor::Editor;
 use fs::Fs;
 use gpui::{DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Subscription, prelude::*};
@@ -228,7 +228,7 @@ impl ManageProfilesModal {
         let tool_picker = cx.new(|cx| {
             let delegate = ToolPickerDelegate::builtin_tools(
                 //todo: This causes the web search tool to show up even it only works when using zed hosted models
-                agent2::built_in_tool_names()
+                agent::built_in_tool_names()
                     .map(|s| s.into())
                     .collect::<Vec<_>>(),
                 self.fs.clone(),
