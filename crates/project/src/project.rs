@@ -22,11 +22,10 @@ pub mod worktree_store;
 #[cfg(test)]
 mod project_tests;
 
-mod direnv;
 mod environment;
 use buffer_diff::BufferDiff;
 use context_server_store::ContextServerStore;
-pub use environment::{EnvironmentErrorMessage, ProjectEnvironmentEvent};
+pub use environment::ProjectEnvironmentEvent;
 use git::repository::get_git_committer;
 use git_store::{Repository, RepositoryId};
 pub mod search_history;
@@ -1050,7 +1049,7 @@ impl Project {
             let context_server_store =
                 cx.new(|cx| ContextServerStore::new(worktree_store.clone(), weak_self, cx));
 
-            let environment = cx.new(|_| ProjectEnvironment::new(env));
+            let environment = cx.new(|cx| ProjectEnvironment::new(env, cx));
             let manifest_tree = ManifestTree::new(worktree_store.clone(), cx);
             let toolchain_store = cx.new(|cx| {
                 ToolchainStore::local(
@@ -1284,7 +1283,7 @@ impl Project {
             cx.subscribe(&settings_observer, Self::on_settings_observer_event)
                 .detach();
 
-            let environment = cx.new(|_| ProjectEnvironment::new(None));
+            let environment = cx.new(|cx| ProjectEnvironment::new(None, cx));
 
             let lsp_store = cx.new(|cx| {
                 LspStore::new_remote(
@@ -1497,7 +1496,7 @@ impl Project {
             ImageStore::remote(worktree_store.clone(), client.clone().into(), remote_id, cx)
         })?;
 
-        let environment = cx.new(|_| ProjectEnvironment::new(None))?;
+        let environment = cx.new(|cx| ProjectEnvironment::new(None, cx))?;
 
         let breakpoint_store =
             cx.new(|_| BreakpointStore::remote(remote_id, client.clone().into()))?;
@@ -1914,10 +1913,7 @@ impl Project {
         })
     }
 
-    pub fn peek_environment_error<'a>(
-        &'a self,
-        cx: &'a App,
-    ) -> Option<&'a EnvironmentErrorMessage> {
+    pub fn peek_environment_error<'a>(&'a self, cx: &'a App) -> Option<&'a String> {
         self.environment.read(cx).peek_environment_error()
     }
 
