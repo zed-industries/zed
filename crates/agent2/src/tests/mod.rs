@@ -2291,6 +2291,76 @@ async fn test_send_max_retries_exceeded(cx: &mut TestAppContext) {
     ));
 }
 
+#[gpui::test]
+async fn test_system_prompt_only_includes_enabled_tools(cx: &mut TestAppContext) {
+    let ThreadTest {
+        model, thread, fs, ..
+    } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+
+    // Register multiple tools on the thread
+    thread.update(cx, |thread, _cx| {
+        thread.add_tool(EchoTool);
+        thread.add_tool(DelayTool);
+        thread.add_tool(WordListTool);
+        thread.add_tool(GrepTool::new(thread.project().clone()));
+        thread.add_tool(InfiniteTool);
+    });
+
+    // Override profile to only enable some tools
+    fs.insert_file(
+        paths::settings_file(),
+        json!({
+            "agent": {
+                "profiles": {
+                    "test-selective": {
+                        "name": "Test Selective Profile",
+                        "tools": {
+                            EchoTool::name(): true,
+                            DelayTool::name(): false,
+                            WordListTool::name(): true,
+                            GrepTool::name(): true,
+                            InfiniteTool::name(): false,
+                        }
+                    }
+                }
+            }
+        })
+        .to_string()
+        .into_bytes(),
+    )
+    .await;
+    cx.run_until_parked();
+
+    thread.update(cx, |thread, _| {
+        thread.set_profile(AgentProfileId("test-selective".into()))
+    });
+
+    // Send a message to trigger completion request
+    thread
+        .update(cx, |thread, cx| {
+            thread.send(UserMessageId::new(), ["test"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    let mut pending_completions = fake_model.pending_completions();
+    assert_eq!(pending_completions.len(), 1);
+    let completion = pending_completions.pop().unwrap();
+
+    // Verify the tools array only contains enabled tools
+    let tool_names: Vec<String> = completion
+        .tools
+        .iter()
+        .map(|tool| tool.name.clone())
+        .collect();
+    assert_eq!(
+        tool_names,
+        vec![EchoTool::name(), GrepTool::name(), WordListTool::name()],
+        "Only enabled tools should be in the completion request"
+    );
+}
+
 /// Filters out the stop events for asserting against in tests
 fn stop_events(result_events: Vec<Result<ThreadEvent>>) -> Vec<acp::StopReason> {
     result_events
