@@ -8,6 +8,7 @@ use client::{Client, UserStore};
 use cloud_llm_client::predict_edits_v3::{DeclarationScoreComponents, PromptFormat};
 use collections::HashMap;
 use editor::{Editor, EditorEvent, EditorMode, ExcerptRange, MultiBuffer};
+use feature_flags::FeatureFlagAppExt as _;
 use futures::{StreamExt as _, channel::oneshot};
 use gpui::{
     CursorStyle, Entity, EventEmitter, FocusHandle, Focusable, Subscription, Task, WeakEntity,
@@ -20,7 +21,7 @@ use ui::{ContextMenu, ContextMenuEntry, DropdownMenu, prelude::*};
 use ui_input::SingleLineInput;
 use util::{ResultExt, paths::PathStyle, rel_path::RelPath};
 use workspace::{Item, SplitDirection, Workspace};
-use zeta2::{PredictionDebugInfo, Zeta, ZetaOptions};
+use zeta2::{PredictionDebugInfo, Zeta, Zeta2FeatureFlag, ZetaOptions};
 
 use edit_prediction_context::{
     DeclarationStyle, EditPredictionContextOptions, EditPredictionExcerptOptions,
@@ -676,15 +677,23 @@ impl Zeta2Inspector {
     }
 
     fn render_content(&self, cx: &mut Context<Self>) -> AnyElement {
+        if !cx.has_flag::<Zeta2FeatureFlag>() {
+            return Self::render_message("`zeta2` feature flag is not enabled");
+        }
+
         match self.last_prediction.as_ref() {
-            None => v_flex()
-                .size_full()
-                .justify_center()
-                .items_center()
-                .child(Label::new("No prediction").size(LabelSize::Large))
-                .into_any(),
+            None => Self::render_message("No prediction"),
             Some(prediction) => self.render_last_prediction(prediction, cx).into_any(),
         }
+    }
+
+    fn render_message(message: impl Into<SharedString>) -> AnyElement {
+        v_flex()
+            .size_full()
+            .justify_center()
+            .items_center()
+            .child(Label::new(message).size(LabelSize::Large))
+            .into_any()
     }
 
     fn render_last_prediction(&self, prediction: &LastPrediction, cx: &mut Context<Self>) -> Div {
