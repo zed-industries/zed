@@ -1041,22 +1041,86 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
             items: {
                 let mut items = vec![
                     SettingsPageItem::SectionHeader("Auto Save"),
-                    SettingsPageItem::SettingItem(SettingItem {
-                        title: "Auto Save Mode",
-                        description: "When to Auto Save Buffer Changes",
-                        field: Box::new(
-                            SettingField {
+                    SettingsPageItem::DynamicItem(DynamicItem {
+                        discriminant: SettingItem {
+                            files: USER,
+                            title: "Auto Save Mode",
+                            description: "When to Auto Save Buffer Changes",
+                            field: Box::new(SettingField {
                                 pick: |settings_content| {
-                                    settings_content.workspace.autosave.as_ref()
+                                    Some(&dynamic_variants::<settings::AutosaveSetting>()[
+                                        settings_content
+                                            .workspace
+                                            .autosave
+                                            .as_ref()?
+                                            .discriminant() as usize])
                                 },
                                 write: |settings_content, value| {
-                                    settings_content.workspace.autosave = value;
+                                    let Some(value) = value else {
+                                        return;
+                                    };
+                                    let settings_value = settings_content.workspace.autosave.get_or_insert_with(|| {
+                                        settings::AutosaveSetting::Off
+                                    });
+                                    *settings_value = match value {
+                                        settings::AutosaveSettingDiscriminants::Off => {
+                                            settings::AutosaveSetting::Off
+                                        },
+                                        settings::AutosaveSettingDiscriminants::AfterDelay => {
+                                            let milliseconds = match settings_value {
+                                                settings::AutosaveSetting::AfterDelay { milliseconds } => *milliseconds,
+                                                _ => 1000,
+                                            };
+                                            settings::AutosaveSetting::AfterDelay { milliseconds }
+                                        },
+                                        settings::AutosaveSettingDiscriminants::OnFocusChange => {
+                                            settings::AutosaveSetting::OnFocusChange
+                                        },
+                                        settings::AutosaveSettingDiscriminants::OnWindowChange => {
+                                            settings::AutosaveSetting::OnWindowChange
+                                        },
+                                    };
                                 },
+                            }),
+                            metadata: None,
+                        },
+                        pick_discriminant: |settings_content| {
+                            Some(settings_content.workspace.autosave.as_ref()?.discriminant() as usize)
+                        },
+                        fields: dynamic_variants::<settings::AutosaveSetting>().into_iter().map(|variant| {
+                            match variant {
+                                settings::AutosaveSettingDiscriminants::Off => vec![],
+                                settings::AutosaveSettingDiscriminants::AfterDelay => vec![
+                                    SettingItem {
+                                        files: USER,
+                                        title: "Delay (milliseconds)",
+                                        description: "Save after inactivity period (in milliseconds)",
+                                        field: Box::new(SettingField {
+                                            pick: |settings_content| {
+                                                match settings_content.workspace.autosave.as_ref() {
+                                                    Some(settings::AutosaveSetting::AfterDelay { milliseconds }) => Some(milliseconds),
+                                                    _ => None
+                                                }
+                                            },
+                                            write: |settings_content, value| {
+                                                let Some(value) = value else {
+                                                    return;
+                                                };
+                                                match settings_content
+                                                    .workspace
+                                                    .autosave.as_mut() {
+                                                        Some(settings::AutosaveSetting::AfterDelay { milliseconds }) => *milliseconds = value,
+                                                        _ => return
+                                                    }
+                                            },
+                                        }),
+                                        metadata: None,
+                                    }
+                                ],
+                                settings::AutosaveSettingDiscriminants::OnFocusChange => vec![],
+                                settings::AutosaveSettingDiscriminants::OnWindowChange => vec![],
                             }
-                            .unimplemented(),
-                        ),
-                        metadata: None,
-                        files: USER,
+                        }).collect(),
                     }),
                     SettingsPageItem::SectionHeader("Multibuffer"),
                     SettingsPageItem::SettingItem(SettingItem {
