@@ -70,10 +70,6 @@ pub trait Settings: 'static + Send + Sync + Sized {
     /// and you should add a default to default.json for documentation.
     fn from_settings(content: &SettingsContent) -> Self;
 
-    /// Use [the helpers in the vscode_import module](crate::vscode_import) to apply known
-    /// equivalent settings from a vscode config to our config
-    fn import_from_vscode(_vscode: &VsCodeSettings, _current: &mut SettingsContent) {}
-
     #[track_caller]
     fn register(cx: &mut App)
     where
@@ -208,11 +204,6 @@ trait AnySettingValue: 'static + Send + Sync {
     fn all_local_values(&self) -> Vec<(WorktreeId, Arc<RelPath>, &dyn Any)>;
     fn set_global_value(&mut self, value: Box<dyn Any>);
     fn set_local_value(&mut self, root_id: WorktreeId, path: Arc<RelPath>, value: Box<dyn Any>);
-    fn import_from_vscode(
-        &self,
-        vscode_settings: &VsCodeSettings,
-        settings_content: &mut SettingsContent,
-    );
 }
 
 impl SettingsStore {
@@ -614,10 +605,8 @@ impl SettingsStore {
     }
 
     pub fn get_vscode_edits(&self, old_text: String, vscode: &VsCodeSettings) -> String {
-        self.new_text_for_update(old_text, |settings_content| {
-            for v in self.setting_values.values() {
-                v.import_from_vscode(vscode, settings_content)
-            }
+        self.new_text_for_update(old_text, |content| {
+            content.merge_from(&vscode.settings_content())
         })
     }
 
@@ -1129,14 +1118,6 @@ impl<T: Settings> AnySettingValue for SettingValue<T> {
             Err(ix) => self.local_values.insert(ix, (root_id, path, value)),
         }
     }
-
-    fn import_from_vscode(
-        &self,
-        vscode_settings: &VsCodeSettings,
-        settings_content: &mut SettingsContent,
-    ) {
-        T::import_from_vscode(vscode_settings, settings_content);
-    }
 }
 
 #[cfg(test)]
@@ -1179,19 +1160,6 @@ mod tests {
                 git_status: content.git_status.unwrap(),
             }
         }
-
-        fn import_from_vscode(vscode: &VsCodeSettings, content: &mut SettingsContent) {
-            let mut show = None;
-
-            vscode.bool_setting("workbench.editor.decorations.colors", &mut show);
-            if let Some(show) = show {
-                content
-                    .tabs
-                    .get_or_insert_default()
-                    .git_status
-                    .replace(show);
-            }
-        }
     }
 
     #[derive(Debug, PartialEq)]
@@ -1206,18 +1174,6 @@ mod tests {
             DefaultLanguageSettings {
                 tab_size: content.tab_size.unwrap(),
                 preferred_line_length: content.preferred_line_length.unwrap(),
-            }
-        }
-
-        fn import_from_vscode(vscode: &VsCodeSettings, content: &mut SettingsContent) {
-            let content = &mut content.project.all_languages.defaults;
-
-            if let Some(size) = vscode
-                .read_value("editor.tabSize")
-                .and_then(|v| v.as_u64())
-                .and_then(|n| NonZeroU32::new(n as u32))
-            {
-                content.tab_size = Some(size);
             }
         }
     }
@@ -1235,16 +1191,6 @@ mod tests {
                 buffer_font_family: content.buffer_font_family.unwrap(),
                 buffer_font_fallbacks: content.buffer_font_fallbacks.unwrap(),
             }
-        }
-
-        fn import_from_vscode(vscode: &VsCodeSettings, content: &mut SettingsContent) {
-            let content = &mut content.theme;
-
-            vscode.font_family_setting(
-                "editor.fontFamily",
-                &mut content.buffer_font_family,
-                &mut content.buffer_font_fallbacks,
-            );
         }
     }
 
@@ -1581,6 +1527,7 @@ mod tests {
             .unindent(),
             r#" { "editor.tabSize": 37 } "#.to_owned(),
             r#"{
+              "base_keymap": "VSCode",
               "tab_size": 37
             }
             "#
@@ -1598,6 +1545,7 @@ mod tests {
             .unindent(),
             r#"{ "editor.tabSize": 42 }"#.to_owned(),
             r#"{
+                "base_keymap": "VSCode",
                 "tab_size": 42,
                 "preferred_line_length": 99,
             }
@@ -1617,6 +1565,7 @@ mod tests {
             .unindent(),
             r#"{}"#.to_owned(),
             r#"{
+                "base_keymap": "VSCode",
                 "preferred_line_length": 99,
                 "tab_size": 42
             }
@@ -1632,8 +1581,15 @@ mod tests {
             }
             "#
             .unindent(),
-            r#"{ "workbench.editor.decorations.colors": true }"#.to_owned(),
+            r#"{ "git.decorations.enabled": true }"#.to_owned(),
             r#"{
+              "project_panel": {
+                "git_status": true
+              },
+              "outline_panel": {
+                "git_status": true
+              },
+              "base_keymap": "VSCode",
               "tabs": {
                 "git_status": true
               }
@@ -1652,6 +1608,7 @@ mod tests {
             .unindent(),
             r#"{ "editor.fontFamily": "Cascadia Code, 'Consolas', Courier New" }"#.to_owned(),
             r#"{
+              "base_keymap": "VSCode",
               "buffer_font_fallbacks": [
                 "Consolas",
                 "Courier New"
