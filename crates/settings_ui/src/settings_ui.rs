@@ -1116,16 +1116,8 @@ impl SettingsWindow {
 
         let expanded = &mut self.navbar_entries[nav_entry_index].expanded;
         *expanded = !*expanded;
-        let expanded = *expanded;
-
-        let toggle_page_index = self.page_index_from_navbar_index(nav_entry_index);
-        let selected_page_index = self.page_index_from_navbar_index(self.navbar_entry);
-        // if currently selected page is a child of the parent page we are folding,
-        // set the current page to the parent page
-        if !expanded && selected_page_index == toggle_page_index {
-            self.navbar_entry = nav_entry_index;
-            // note: not opening page. Toggling does not change content just selected page
-        }
+        self.navbar_entry = nav_entry_index;
+        self.reset_list_state();
     }
 
     fn build_navbar(&mut self, cx: &App) {
@@ -1961,9 +1953,6 @@ impl SettingsWindow {
                                                 .on_toggle(cx.listener(
                                                     move |this, _, window, cx| {
                                                         this.toggle_navbar_entry(ix);
-                                                        // Update selection state immediately before cx.notify
-                                                        // to prevent double selection flash
-                                                        this.navbar_entry = ix;
                                                         window.focus(
                                                             &this.navbar_entries[ix].focus_handle,
                                                         );
