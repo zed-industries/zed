@@ -55,7 +55,7 @@ impl Vim {
                     editor.dismiss_menus_and_popups(false, window, cx);
                 });
                 self.switch_mode(Mode::HelixNormal, false, window, cx);
-                return
+                return;
             }
 
             self.update_editor(cx, |_, editor, cx| {
