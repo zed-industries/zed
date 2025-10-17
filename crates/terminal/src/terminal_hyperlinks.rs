@@ -64,6 +64,10 @@ impl RegexSearches {
     }
 
     fn regex_path_match<T>(&self, term: &Term<T>, point: AlacPoint) -> Option<(String, Match)> {
+        if self.path_hyperlink_regexes.is_empty() {
+            return None;
+        }
+
         let advance_point_by_str = |mut point: AlacPoint, s: &str| -> AlacPoint {
             for _ in 0..s.chars().count() {
                 point = term
@@ -176,9 +180,7 @@ pub(super) fn find_from_grid_point<T: EventListener>(
         let url = term.bounds_to_string(*url_match.start(), *url_match.end());
         let (sanitized_url, sanitized_match) = sanitize_url_punctuation(url, url_match, term);
         Some((sanitized_url, true, sanitized_match))
-    } else if !regex_searches.path_hyperlink_regexes.is_empty()
-        && let Some((path, path_match)) = regex_searches.regex_path_match(&term, point)
-    {
+    } else if let Some((path, path_match)) = regex_searches.regex_path_match(&term, point) {
         Some((path, false, path_match))
     } else if let Some(word_match) = regex_match_at(term, point, &mut regex_searches.word_regex) {
         let file_path = term.bounds_to_string(*word_match.start(), *word_match.end());
