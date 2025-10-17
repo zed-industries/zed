@@ -1,4 +1,4 @@
-use gpui::{Context, Element, Entity, Render, Subscription, WeakEntity, Window, div};
+use gpui::{div, Context, Element, Entity, FontWeight, Render, Subscription, WeakEntity, Window};
 use ui::text_for_keystrokes;
 use workspace::{StatusItemView, item::ItemHandle, ui::prelude::*};
 
@@ -93,13 +93,33 @@ impl Render for ModeIndicator {
         };
 
         let vim_readable = vim.read(cx);
-        let label = if let Some(label) = vim_readable.status_label.clone() {
+        let status_label = vim_readable.status_label.clone();
+        let temp_mode = vim_readable.temp_mode;
+        let mode = vim_readable.mode.clone();
+
+        let theme = cx.theme();
+        let colors = theme.colors();
+        let system_transparent = gpui::hsla(0.0, 0.0, 0.0, 0.0);
+        let vim_mode_text = colors.vim_mode_text;
+        let text_muted = colors.text_muted;
+        let bg_color = match mode {
+            crate::state::Mode::Normal => colors.vim_normal_background,
+            crate::state::Mode::Insert => colors.vim_insert_background,
+            crate::state::Mode::Replace => colors.vim_replace_background,
+            crate::state::Mode::Visual => colors.vim_visual_background,
+            crate::state::Mode::VisualLine => colors.vim_visual_line_background,
+            crate::state::Mode::VisualBlock => colors.vim_visual_block_background,
+            crate::state::Mode::HelixNormal => colors.vim_helix_normal_background,
+            crate::state::Mode::HelixSelect => colors.vim_helix_select_background,
+        };
+
+        let label = if let Some(label) = status_label {
             label
         } else {
-            let mode = if vim_readable.temp_mode {
-                format!("(insert) {}", vim_readable.mode)
+            let mode_str = if temp_mode {
+                format!("(insert) {}", mode)
             } else {
-                vim_readable.mode.to_string()
+                mode.to_string()
             };
 
             let current_operators_description = self.current_operators_description(vim.clone(), cx);
@@ -107,13 +127,35 @@ impl Render for ModeIndicator {
                 .pending_keys
                 .as_ref()
                 .unwrap_or(&current_operators_description);
-            format!("{} -- {} --", pending, mode).into()
+            if bg_color != system_transparent {
+                format!("{} {} ", pending, mode_str).into()
+            } else {
+                format!("--{} {} --", pending, mode_str).into()
+            }
         };
 
-        Label::new(label)
-            .size(LabelSize::Small)
-            .line_height_style(LineHeightStyle::UiLabel)
-            .into_any_element()
+        let mut div_elem = div();
+        if bg_color != system_transparent {
+            div_elem = div_elem.px_2();
+        }
+        div_elem
+            .py_1()
+            .rounded_sm()
+            .bg(bg_color)
+            .child(
+                Label::new(label)
+                    .size(LabelSize::Small)
+                    .line_height_style(LineHeightStyle::UiLabel)
+                    .weight(FontWeight::MEDIUM)
+                    .color(
+                        if bg_color == system_transparent {
+                            text_muted.into()
+                        } else {
+                            vim_mode_text.into()
+                        }
+                    )
+            )
+            .into_any()
     }
 }
 

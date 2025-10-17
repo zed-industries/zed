@@ -756,6 +756,42 @@ pub fn theme_colors_refinement(
             .as_ref()
             .or(this.version_control_conflict_theirs_background.as_ref())
             .and_then(|color| try_parse_color(color).ok()),
+        vim_normal_background: this
+            .vim_normal_background
+            .as_ref()
+            .and_then(|color| try_parse_color(color).ok()),
+        vim_insert_background: this
+            .vim_insert_background
+            .as_ref()
+            .and_then(|color| try_parse_color(color).ok()),
+        vim_replace_background: this
+            .vim_replace_background
+            .as_ref()
+            .and_then(|color| try_parse_color(color).ok()),
+        vim_visual_background: this
+            .vim_visual_background
+            .as_ref()
+            .and_then(|color| try_parse_color(color).ok()),
+        vim_visual_line_background: this
+            .vim_visual_line_background
+            .as_ref()
+            .and_then(|color| try_parse_color(color).ok()),
+        vim_visual_block_background: this
+            .vim_visual_block_background
+            .as_ref()
+            .and_then(|color| try_parse_color(color).ok()),
+        vim_helix_normal_background: this
+            .vim_helix_normal_background
+            .as_ref()
+            .and_then(|color| try_parse_color(color).ok()),
+        vim_helix_select_background: this
+            .vim_helix_select_background
+            .as_ref()
+            .and_then(|color| try_parse_color(color).ok()),
+        vim_mode_text: this
+            .vim_mode_text
+            .as_ref()
+            .and_then(|color| try_parse_color(color).ok()),
     }
 }
 
