@@ -20,6 +20,7 @@ cloud_llm_client.workspace = true
 cloud_zeta2_prompt.workspace = true
 edit_prediction.workspace = true
 edit_prediction_context.workspace = true
+feature_flags.workspace = true
 futures.workspace = true
 gpui.workspace = true
 indoc.workspace = true

@@ -11,6 +11,7 @@ use edit_prediction_context::{
     DeclarationId, DeclarationStyle, EditPredictionContext, EditPredictionContextOptions,
     EditPredictionExcerptOptions, EditPredictionScoreOptions, SyntaxIndex, SyntaxIndexState,
 };
+use feature_flags::FeatureFlag;
 use futures::AsyncReadExt as _;
 use futures::channel::{mpsc, oneshot};
 use gpui::http_client::{AsyncBody, Method};
@@ -65,6 +66,16 @@ pub const DEFAULT_OPTIONS: ZetaOptions = ZetaOptions {
     prompt_format: PromptFormat::DEFAULT,
     file_indexing_parallelism: 1,
 };
+
+pub struct Zeta2FeatureFlag;
+
+impl FeatureFlag for Zeta2FeatureFlag {
+    const NAME: &'static str = "zeta2";
+
+    fn enabled_for_staff() -> bool {
+        false
+    }
+}
 
 #[derive(Clone)]
 struct ZetaGlobal(Entity<Zeta>);
