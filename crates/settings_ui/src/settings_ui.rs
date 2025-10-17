@@ -6,10 +6,10 @@ use editor::{Editor, EditorEvent};
 use feature_flags::FeatureFlag;
 use fuzzy::StringMatchCandidate;
 use gpui::{
-    Action, App, Div, Entity, FocusHandle, Focusable, FontWeight, Global, ListState,
-    ReadGlobal as _, ScrollHandle, Stateful, Subscription, Task, TitlebarOptions,
-    UniformListScrollHandle, Window, WindowBounds, WindowHandle, WindowOptions, actions, div, list,
-    point, prelude::*, px, size, uniform_list,
+    Action, App, Div, Entity, FocusHandle, Focusable, Global, ListState, ReadGlobal as _,
+    ScrollHandle, Stateful, Subscription, Task, TitlebarOptions, UniformListScrollHandle, Window,
+    WindowBounds, WindowHandle, WindowOptions, actions, div, list, point, prelude::*, px, size,
+    uniform_list,
 };
 use heck::ToTitleCase as _;
 use project::WorktreeId;
@@ -84,8 +84,8 @@ actions!(
 struct FocusFile(pub u32);
 
 struct SettingField<T: 'static> {
-    pick: fn(&SettingsContent) -> &Option<T>,
-    pick_mut: fn(&mut SettingsContent) -> &mut Option<T>,
+    pick: fn(&SettingsContent) -> Option<&T>,
+    write: fn(&mut SettingsContent, Option<T>),
 }
 
 impl<T: 'static> Clone for SettingField<T> {
@@ -98,7 +98,7 @@ impl<T: 'static> Clone for SettingField<T> {
 impl<T: 'static> Copy for SettingField<T> {}
 
 /// Helper for unimplemented settings, used in combination with `SettingField::unimplemented`
-/// to keep the setting around in the UI with valid pick and pick_mut implementations, but don't actually try to render it.
+/// to keep the setting around in the UI with valid pick and write implementations, but don't actually try to render it.
 /// TODO(settings_ui): In non-dev builds (`#[cfg(not(debug_assertions))]`) make this render as edit-in-json
 #[derive(Clone, Copy)]
 struct UnimplementedSettingField;
@@ -114,8 +114,8 @@ impl<T: 'static> SettingField<T> {
     #[allow(unused)]
     fn unimplemented(self) -> SettingField<UnimplementedSettingField> {
         SettingField {
-            pick: |_| &Some(UnimplementedSettingField),
-            pick_mut: |_| unreachable!(),
+            pick: |_| Some(&UnimplementedSettingField),
+            write: |_, _| unreachable!(),
         }
     }
 }
@@ -163,12 +163,15 @@ impl<T: PartialEq + Clone + Send + Sync + 'static> AnySettingField for SettingFi
         if file_set_in == &settings::SettingsFile::Default {
             return None;
         }
+        if file_set_in != &current_file.to_settings() {
+            return None;
+        }
         let this = *self;
         let store = SettingsStore::global(cx);
         let default_value = (this.pick)(store.raw_default_settings());
         let is_default = store
             .get_content_for_file(file_set_in.clone())
-            .map_or(&None, this.pick)
+            .map_or(None, this.pick)
             == default_value;
         if is_default {
             return None;
@@ -183,12 +186,12 @@ impl<T: PartialEq + Clone + Send + Sync + 'static> AnySettingField for SettingFi
                 .0
                 != settings::SettingsFile::Default;
             let value_to_set = if is_set_somewhere_other_than_default {
-                default_value.clone()
+                default_value.cloned()
             } else {
                 None
             };
             update_settings_file(current_file.clone(), cx, move |settings, _| {
-                *(this.pick_mut)(settings) = value_to_set;
+                (this.write)(settings, value_to_set);
             })
             // todo(settings_ui): Don't log err
             .log_err();
@@ -374,12 +377,6 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::OnLastWindowClosed>(render_dropdown)
         .add_basic_renderer::<settings::CloseWindowWhenNoItems>(render_dropdown)
         .add_basic_renderer::<settings::FontFamilyName>(render_font_picker)
-        // todo(settings_ui): This needs custom ui
-        // .add_renderer::<settings::BufferLineHeight>(|settings_field, file, _, window, cx| {
-        //     // todo(settings_ui): Do we want to expose the custom variant of buffer line height?
-        //     // right now there's a manual impl of strum::VariantArray
-        //     render_dropdown(*settings_field, file, window, cx)
-        // })
         .add_basic_renderer::<settings::BaseKeymapContent>(render_dropdown)
         .add_basic_renderer::<settings::MultiCursorModifier>(render_dropdown)
         .add_basic_renderer::<settings::HideMouseMode>(render_dropdown)
@@ -420,7 +417,7 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<NonZero<usize>>(render_number_field)
         .add_basic_renderer::<NonZeroU32>(render_number_field)
         .add_basic_renderer::<settings::CodeFade>(render_number_field)
-        .add_basic_renderer::<FontWeight>(render_number_field)
+        .add_basic_renderer::<gpui::FontWeight>(render_number_field)
         .add_basic_renderer::<settings::MinimumContrast>(render_number_field)
         .add_basic_renderer::<settings::ShowScrollbar>(render_dropdown)
         .add_basic_renderer::<settings::ScrollbarDiagnostics>(render_dropdown)
@@ -430,17 +427,18 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::MinimapThumbBorder>(render_dropdown)
         .add_basic_renderer::<settings::SteppingGranularity>(render_dropdown)
         .add_basic_renderer::<settings::NotifyWhenAgentWaiting>(render_dropdown)
+        .add_basic_renderer::<settings::NotifyWhenAgentWaiting>(render_dropdown)
         .add_basic_renderer::<settings::ImageFileSizeUnit>(render_dropdown)
         .add_basic_renderer::<settings::StatusStyle>(render_dropdown)
         .add_basic_renderer::<settings::PaneSplitDirectionHorizontal>(render_dropdown)
         .add_basic_renderer::<settings::PaneSplitDirectionVertical>(render_dropdown)
         .add_basic_renderer::<settings::PaneSplitDirectionVertical>(render_dropdown)
         .add_basic_renderer::<settings::DocumentColorsRenderMode>(render_dropdown)
-    // please semicolon stay on next line
-    ;
-    // .add_renderer::<ThemeSelection>(|settings_field, file, _, window, cx| {
-    //     render_dropdown(*settings_field, file, window, cx)
-    // });
+        .add_basic_renderer::<settings::ThemeSelectionDiscriminants>(render_dropdown)
+        .add_basic_renderer::<settings::ThemeMode>(render_dropdown)
+        .add_basic_renderer::<settings::ThemeName>(render_theme_picker)
+        // please semicolon stay on next line
+        ;
 }
 
 pub fn open_settings_editor(
@@ -500,7 +498,7 @@ pub fn open_settings_editor(
 /// If this is empty the selected page is rendered,
 /// otherwise the last sub page gets rendered.
 ///
-/// Global so that `pick` and `pick_mut` callbacks can access it
+/// Global so that `pick` and `write` callbacks can access it
 /// and use it to dynamically render sub pages (e.g. for language settings)
 static SUB_PAGE_STACK: LazyLock<RwLock<Vec<SubPage>>> = LazyLock::new(|| RwLock::new(Vec::new()));
 
@@ -584,6 +582,7 @@ enum SettingsPageItem {
     SectionHeader(&'static str),
     SettingItem(SettingItem),
     SubPageLink(SubPageLink),
+    DynamicItem(DynamicItem),
 }
 
 impl std::fmt::Debug for SettingsPageItem {
@@ -595,6 +594,9 @@ impl std::fmt::Debug for SettingsPageItem {
             }
             SettingsPageItem::SubPageLink(sub_page_link) => {
                 write!(f, "SubPageLink({})", sub_page_link.title)
+            }
+            SettingsPageItem::DynamicItem(dynamic_item) => {
+                write!(f, "DynamicItem({})", dynamic_item.discriminant.title)
             }
         }
     }
@@ -610,19 +612,17 @@ impl SettingsPageItem {
         cx: &mut Context<SettingsWindow>,
     ) -> AnyElement {
         let file = settings_window.current_file.clone();
-        match self {
-            SettingsPageItem::SectionHeader(header) => v_flex()
-                .w_full()
-                .gap_1p5()
-                .child(
-                    Label::new(SharedString::new_static(header))
-                        .size(LabelSize::Small)
-                        .color(Color::Muted)
-                        .buffer_font(cx),
-                )
-                .child(Divider::horizontal().color(DividerColor::BorderFaded))
-                .into_any_element(),
-            SettingsPageItem::SettingItem(setting_item) => {
+        let border_variant = cx.theme().colors().border_variant;
+        let apply_padding = |element: Stateful<Div>| -> Stateful<Div> {
+            let element = element.pt_4();
+            if is_last {
+                element.pb_10()
+            } else {
+                element.pb_4().border_b_1().border_color(border_variant)
+            }
+        };
+        let mut render_setting_item_inner =
+            |setting_item: &SettingItem, cx: &mut Context<SettingsWindow>| {
                 let renderer = cx.default_global::<SettingFieldRenderer>().clone();
                 let (_, found) = setting_item.field.file_set_in(file.clone(), cx);
 
@@ -642,7 +642,7 @@ impl SettingsPageItem {
                     Ok(field_renderer) => field_renderer(
                         settings_window,
                         setting_item,
-                        file,
+                        file.clone(),
                         setting_item.metadata.as_deref(),
                         window,
                         cx,
@@ -650,7 +650,7 @@ impl SettingsPageItem {
                     Err(warning) => render_settings_item(
                         settings_window,
                         setting_item,
-                        file,
+                        file.clone(),
                         Button::new("error-warning", warning)
                             .style(ButtonStyle::Outlined)
                             .size(ButtonSize::Medium)
@@ -665,17 +665,23 @@ impl SettingsPageItem {
                     ),
                 };
 
-                field
-                    .pt_4()
-                    .map(|this| {
-                        if is_last {
-                            this.pb_10()
-                        } else {
-                            this.pb_4()
-                                .border_b_1()
-                                .border_color(cx.theme().colors().border_variant)
-                        }
-                    })
+                (field.map(apply_padding), field_renderer_or_warning.is_ok())
+            };
+        match self {
+            SettingsPageItem::SectionHeader(header) => v_flex()
+                .w_full()
+                .gap_1p5()
+                .child(
+                    Label::new(SharedString::new_static(header))
+                        .size(LabelSize::Small)
+                        .color(Color::Muted)
+                        .buffer_font(cx),
+                )
+                .child(Divider::horizontal().color(DividerColor::BorderFaded))
+                .into_any_element(),
+            SettingsPageItem::SettingItem(setting_item) => {
+                render_setting_item_inner(setting_item, cx)
+                    .0
                     .into_any_element()
             }
             SettingsPageItem::SubPageLink(sub_page_link) => h_flex()
@@ -684,16 +690,7 @@ impl SettingsPageItem {
                 .min_w_0()
                 .gap_2()
                 .justify_between()
-                .pt_4()
-                .map(|this| {
-                    if is_last {
-                        this.pb_10()
-                    } else {
-                        this.pb_4()
-                            .border_b_1()
-                            .border_color(cx.theme().colors().border_variant)
-                    }
-                })
+                .map(apply_padding)
                 .child(
                     v_flex()
                         .w_full()
@@ -736,6 +733,32 @@ impl SettingsPageItem {
                     }),
                 )
                 .into_any_element(),
+            SettingsPageItem::DynamicItem(DynamicItem {
+                discriminant: discriminant_setting_item,
+                pick_discriminant,
+                fields,
+            }) => {
+                let file = file.to_settings();
+                let discriminant = SettingsStore::global(cx)
+                    .get_value_from_file(file, *pick_discriminant)
+                    .1;
+                let (discriminant_element, rendered_ok) =
+                    render_setting_item_inner(discriminant_setting_item, cx);
+                let mut content = v_flex()
+                    .gap_2()
+                    .id("dynamic-item")
+                    .child(discriminant_element);
+                if rendered_ok {
+                    let discriminant =
+                        discriminant.expect("This should be Some if rendered_ok is true");
+                    let sub_fields = &fields[discriminant];
+                    for field in sub_fields {
+                        content = content.child(render_setting_item_inner(field, cx).0.pl_6());
+                    }
+                }
+
+                return content.into_any_element();
+            }
         }
     }
 }
@@ -767,8 +790,7 @@ fn render_settings_item(
                         .when_some(
                             setting_item
                                 .field
-                                .reset_to_default_fn(&file, &found_in_file, cx)
-                                .filter(|_| file_set_in.as_ref() == Some(&file)),
+                                .reset_to_default_fn(&file, &found_in_file, cx),
                             |this, reset_to_default| {
                                 this.child(
                                     IconButton::new("reset-to-default-btn", IconName::Undo)
@@ -814,6 +836,18 @@ struct SettingItem {
     field: Box<dyn AnySettingField>,
     metadata: Option<Box<SettingsFieldMetadata>>,
     files: FileMask,
+}
+
+struct DynamicItem {
+    discriminant: SettingItem,
+    pick_discriminant: fn(&SettingsContent) -> Option<usize>,
+    fields: Vec<Vec<SettingItem>>,
+}
+
+impl PartialEq for DynamicItem {
+    fn eq(&self, other: &Self) -> bool {
+        self.discriminant == other.discriminant && self.fields == other.fields
+    }
 }
 
 #[derive(PartialEq, Eq, Clone, Copy)]
@@ -1204,7 +1238,11 @@ impl SettingsWindow {
                         any_found_since_last_header = false;
                     }
                     SettingsPageItem::SettingItem(SettingItem { files, .. })
-                    | SettingsPageItem::SubPageLink(SubPageLink { files, .. }) => {
+                    | SettingsPageItem::SubPageLink(SubPageLink { files, .. })
+                    | SettingsPageItem::DynamicItem(DynamicItem {
+                        discriminant: SettingItem { files, .. },
+                        ..
+                    }) => {
                         if !files.contains(current_file) {
                             page_filter[index] = false;
                         } else {
@@ -1375,7 +1413,10 @@ impl SettingsWindow {
             for (item_index, item) in page.items.iter().enumerate() {
                 let key_index = key_lut.len();
                 match item {
-                    SettingsPageItem::SettingItem(item) => {
+                    SettingsPageItem::DynamicItem(DynamicItem {
+                        discriminant: item, ..
+                    })
+                    | SettingsPageItem::SettingItem(item) => {
                         documents.push(bm25::Document {
                             id: key_index,
                             contents: [page.title, header_str, item.title, item.description]
@@ -2687,7 +2728,7 @@ fn render_text_field<T: From<String> + Into<String> + AsRef<str> + Clone>(
         .on_confirm({
             move |new_text, cx| {
                 update_settings_file(file.clone(), cx, move |settings, _cx| {
-                    *(field.pick_mut)(settings) = new_text.map(Into::into);
+                    (field.write)(settings, new_text.map(Into::into));
                 })
                 .log_err(); // todo(settings_ui) don't log err
             }
@@ -2716,7 +2757,7 @@ fn render_toggle_button<B: Into<bool> + From<bool> + Copy>(
             move |state, _window, cx| {
                 let state = *state == ui::ToggleState::Selected;
                 update_settings_file(file.clone(), cx, move |settings, _cx| {
-                    *(field.pick_mut)(settings) = Some(state.into());
+                    (field.write)(settings, Some(state.into()));
                 })
                 .log_err(); // todo(settings_ui) don't log err
             }
@@ -2744,7 +2785,7 @@ fn render_font_picker(
             current_value.clone().into(),
             move |font_name, cx| {
                 update_settings_file(file.clone(), cx, move |settings, _cx| {
-                    *(field.pick_mut)(settings) = Some(font_name.into());
+                    (field.write)(settings, Some(font_name.into()));
                 })
                 .log_err(); // todo(settings_ui) don't log err
             },
@@ -2788,7 +2829,7 @@ fn render_number_field<T: NumberFieldType + Send + Sync>(
             move |value, _window, cx| {
                 let value = *value;
                 update_settings_file(file.clone(), cx, move |settings, _cx| {
-                    *(field.pick_mut)(settings) = Some(value);
+                    (field.write)(settings, Some(value));
                 })
                 .log_err(); // todo(settings_ui) don't log err
             }
@@ -2843,7 +2884,58 @@ where
                             return;
                         }
                         update_settings_file(file.clone(), cx, move |settings, _cx| {
-                            *(field.pick_mut)(settings) = Some(value);
+                            (field.write)(settings, Some(value));
+                        })
+                        .log_err(); // todo(settings_ui) don't log err
+                    },
+                );
+            }
+            menu
+        }),
+    )
+    .trigger_size(ButtonSize::Medium)
+    .style(DropdownStyle::Outlined)
+    .offset(gpui::Point {
+        x: px(0.0),
+        y: px(2.0),
+    })
+    .tab_index(0)
+    .into_any_element()
+}
+
+fn render_theme_picker(
+    field: SettingField<settings::ThemeName>,
+    file: SettingsUiFile,
+    _metadata: Option<&SettingsFieldMetadata>,
+    window: &mut Window,
+    cx: &mut App,
+) -> AnyElement {
+    let (_, value) = SettingsStore::global(cx).get_value_from_file(file.to_settings(), field.pick);
+    let current_value = value
+        .cloned()
+        .map(|theme_name| theme_name.0.into())
+        .unwrap_or_else(|| cx.theme().name.clone());
+
+    DropdownMenu::new(
+        "font-picker",
+        current_value.clone(),
+        ContextMenu::build(window, cx, move |mut menu, _, cx| {
+            let all_theme_names = theme::ThemeRegistry::global(cx).list_names();
+            for theme_name in all_theme_names {
+                let file = file.clone();
+                let selected = theme_name.as_ref() == current_value.as_ref();
+                menu = menu.toggleable_entry(
+                    theme_name.clone(),
+                    selected,
+                    IconPosition::End,
+                    None,
+                    move |_, cx| {
+                        if selected {
+                            return;
+                        }
+                        let theme_name = theme_name.clone();
+                        update_settings_file(file.clone(), cx, move |settings, _cx| {
+                            (field.write)(settings, Some(settings::ThemeName(theme_name.into())));
                         })
                         .log_err(); // todo(settings_ui) don't log err
                     },

@@ -5230,8 +5230,30 @@ impl MultiBufferSnapshot {
         }
     }
 
+    /// Wraps the [`text::Anchor`] in a [`multi_buffer::Anchor`] if this multi-buffer is a singleton.
+    pub fn as_singleton_anchor(&self, text_anchor: text::Anchor) -> Option<Anchor> {
+        let (excerpt, buffer, _) = self.as_singleton()?;
+        Some(Anchor::in_buffer(*excerpt, buffer, text_anchor))
+    }
+
     /// Returns an anchor for the given excerpt and text anchor,
-    /// returns None if the excerpt_id is no longer valid.
+    /// Returns [`None`] if the excerpt_id is no longer valid or the text anchor range is out of excerpt's bounds.
+    pub fn anchor_range_in_excerpt(
+        &self,
+        excerpt_id: ExcerptId,
+        text_anchor: Range<text::Anchor>,
+    ) -> Option<Range<Anchor>> {
+        let excerpt_id = self.latest_excerpt_id(excerpt_id);
+        let excerpt = self.excerpt(excerpt_id)?;
+
+        Some(
+            self.anchor_in_excerpt_(excerpt, text_anchor.start)?
+                ..self.anchor_in_excerpt_(excerpt, text_anchor.end)?,
+        )
+    }
+
+    /// Returns an anchor for the given excerpt and text anchor,
+    /// Returns [`None`] if the excerpt_id is no longer valid or the text anchor range is out of excerpt's bounds.
     pub fn anchor_in_excerpt(
         &self,
         excerpt_id: ExcerptId,
@@ -5239,8 +5261,32 @@ impl MultiBufferSnapshot {
     ) -> Option<Anchor> {
         let excerpt_id = self.latest_excerpt_id(excerpt_id);
         let excerpt = self.excerpt(excerpt_id)?;
+        self.anchor_in_excerpt_(excerpt, text_anchor)
+    }
+
+    fn anchor_in_excerpt_(&self, excerpt: &Excerpt, text_anchor: text::Anchor) -> Option<Anchor> {
+        match text_anchor.buffer_id {
+            Some(buffer_id) if buffer_id == excerpt.buffer_id => (),
+            Some(_) => return None,
+            None if text_anchor == text::Anchor::MAX || text_anchor == text::Anchor::MIN => {
+                return Some(Anchor::in_buffer(
+                    excerpt.id,
+                    excerpt.buffer_id,
+                    text_anchor,
+                ));
+            }
+            None => return None,
+        }
+
+        let context = &excerpt.range.context;
+        if context.start.cmp(&text_anchor, &excerpt.buffer).is_gt()
+            || context.end.cmp(&text_anchor, &excerpt.buffer).is_lt()
+        {
+            return None;
+        }
+
         Some(Anchor::in_buffer(
-            excerpt_id,
+            excerpt.id,
             excerpt.buffer_id,
             text_anchor,
         ))
@@ -6075,22 +6121,15 @@ impl MultiBufferSnapshot {
                 .flat_map(|item| {
                     Some(OutlineItem {
                         depth: item.depth,
-                        range: self.anchor_in_excerpt(*excerpt_id, item.range.start)?
-                            ..self.anchor_in_excerpt(*excerpt_id, item.range.end)?,
+                        range: self.anchor_range_in_excerpt(*excerpt_id, item.range)?,
                         text: item.text,
                         highlight_ranges: item.highlight_ranges,
                         name_ranges: item.name_ranges,
                         body_range: item.body_range.and_then(|body_range| {
-                            Some(
-                                self.anchor_in_excerpt(*excerpt_id, body_range.start)?
-                                    ..self.anchor_in_excerpt(*excerpt_id, body_range.end)?,
-                            )
+                            self.anchor_range_in_excerpt(*excerpt_id, body_range)
                         }),
                         annotation_range: item.annotation_range.and_then(|annotation_range| {
-                            Some(
-                                self.anchor_in_excerpt(*excerpt_id, annotation_range.start)?
-                                    ..self.anchor_in_excerpt(*excerpt_id, annotation_range.end)?,
-                            )
+                            self.anchor_range_in_excerpt(*excerpt_id, annotation_range)
                         }),
                     })
                 })

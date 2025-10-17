@@ -222,7 +222,7 @@ members = [
 
     "tooling/perf",
     "tooling/workspace-hack",
-    "tooling/xtask",
+    "tooling/xtask", "crates/fs_benchmarks", "crates/worktree_benchmarks",
 ]
 default-members = ["crates/zed"]
 
@@ -455,6 +455,7 @@ async-compat = "0.2.1"
 async-compression = { version = "0.4", features = ["gzip", "futures-io"] }
 async-dispatcher = "0.1"
 async-fs = "2.1"
+async-lock = "2.1"
 async-pipe = { git = "https://github.com/zed-industries/async-pipe-rs", rev = "82d00a04211cf4e1236029aa03e6b6ce2a74c553" }
 async-recursion = "1.0.0"
 async-tar = "0.5.0"
@@ -650,7 +651,7 @@ sqlformat = "0.2"
 stacksafe = "0.1"
 streaming-iterator = "0.1"
 strsim = "0.11"
-strum = { version = "0.27.0", features = ["derive"] }
+strum = { version = "0.27.2", features = ["derive"] }
 subtle = "2.5.0"
 syn = { version = "2.0.101", features = ["full", "extra-traits", "visit-mut"] }
 sys-locale = "0.3.1"
