@@ -5989,15 +5989,8 @@ impl Editor {
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let newest_anchor = self.selections.newest_anchor();
         let replace_range_multibuffer = {
-            let excerpt = snapshot.excerpt_containing(newest_anchor.range()).unwrap();
-            let multibuffer_anchor = snapshot
-                .anchor_in_excerpt(excerpt.id(), buffer.anchor_before(replace_range.start))
-                .unwrap()
-                ..snapshot
-                    .anchor_in_excerpt(excerpt.id(), buffer.anchor_before(replace_range.end))
-                    .unwrap();
-            multibuffer_anchor.start.to_offset(&snapshot)
-                ..multibuffer_anchor.end.to_offset(&snapshot)
+            let mut excerpt = snapshot.excerpt_containing(newest_anchor.range()).unwrap();
+            excerpt.map_range_from_buffer(replace_range.clone())
         };
         if snapshot.buffer_id_for_anchor(newest_anchor.head()) != Some(buffer.remote_id()) {
             return None;
@@ -7981,9 +7974,10 @@ impl Editor {
         let edits = edits
             .into_iter()
             .flat_map(|(range, new_text)| {
-                let start = multibuffer.anchor_in_excerpt(excerpt_id, range.start)?;
-                let end = multibuffer.anchor_in_excerpt(excerpt_id, range.end)?;
-                Some((start..end, new_text))
+                Some((
+                    multibuffer.anchor_range_in_excerpt(excerpt_id, range)?,
+                    new_text,
+                ))
             })
             .collect::<Vec<_>>();
         if edits.is_empty() {

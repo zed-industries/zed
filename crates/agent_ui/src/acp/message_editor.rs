@@ -292,15 +292,10 @@ impl MessageEditor {
         let snapshot = self
             .editor
             .update(cx, |editor, cx| editor.snapshot(window, cx));
-        let Some((excerpt_id, _, _)) = snapshot.buffer_snapshot().as_singleton() else {
+        let Some(start_anchor) = snapshot.buffer_snapshot().as_singleton_anchor(start) else {
             return Task::ready(());
         };
-        let Some(start_anchor) = snapshot
-            .buffer_snapshot()
-            .anchor_in_excerpt(*excerpt_id, start)
-        else {
-            return Task::ready(());
-        };
+        let excerpt_id = start_anchor.excerpt_id;
         let end_anchor = snapshot
             .buffer_snapshot()
             .anchor_before(start_anchor.to_offset(&snapshot.buffer_snapshot()) + content_len + 1);
@@ -332,7 +327,7 @@ impl MessageEditor {
                 })
                 .shared();
             insert_crease_for_mention(
-                *excerpt_id,
+                excerpt_id,
                 start,
                 content_len,
                 mention_uri.name().into(),
@@ -344,7 +339,7 @@ impl MessageEditor {
             )
         } else {
             insert_crease_for_mention(
-                *excerpt_id,
+                excerpt_id,
                 start,
                 content_len,
                 crease_text,
@@ -546,10 +541,7 @@ impl MessageEditor {
         cx: &mut Context<Self>,
     ) {
         let snapshot = self.editor.read(cx).buffer().read(cx).snapshot(cx);
-        let Some((&excerpt_id, _, _)) = snapshot.as_singleton() else {
-            return;
-        };
-        let Some(start) = snapshot.anchor_in_excerpt(excerpt_id, source_range.start) else {
+        let Some(start) = snapshot.as_singleton_anchor(source_range.start) else {
             return;
         };
 
@@ -1694,13 +1686,10 @@ mod tests {
 
         editor.update_in(cx, |editor, window, cx| {
             let snapshot = editor.buffer().read(cx).snapshot(cx);
-            let start = snapshot
-                .anchor_in_excerpt(excerpt_id, completion.replace_range.start)
+            let range = snapshot
+                .anchor_range_in_excerpt(excerpt_id, completion.replace_range)
                 .unwrap();
-            let end = snapshot
-                .anchor_in_excerpt(excerpt_id, completion.replace_range.end)
-                .unwrap();
-            editor.edit([(start..end, completion.new_text)], cx);
+            editor.edit([(range, completion.new_text)], cx);
             (completion.confirm.unwrap())(CompletionIntent::Complete, window, cx);
         });
 

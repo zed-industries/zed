@@ -251,25 +251,14 @@ impl Editor {
                                     {
                                         continue;
                                     }
-                                    let Some(color_start_anchor) = multi_buffer_snapshot
-                                        .anchor_in_excerpt(
-                                            *excerpt_id,
-                                            buffer_snapshot.anchor_before(
-                                                buffer_snapshot
-                                                    .clip_point_utf16(color_start, Bias::Left),
-                                            ),
-                                        )
-                                    else {
-                                        continue;
-                                    };
-                                    let Some(color_end_anchor) = multi_buffer_snapshot
-                                        .anchor_in_excerpt(
-                                            *excerpt_id,
-                                            buffer_snapshot.anchor_after(
-                                                buffer_snapshot
-                                                    .clip_point_utf16(color_end, Bias::Right),
-                                            ),
-                                        )
+                                    let start = buffer_snapshot.anchor_before(
+                                        buffer_snapshot.clip_point_utf16(color_start, Bias::Left),
+                                    );
+                                    let end = buffer_snapshot.anchor_after(
+                                        buffer_snapshot.clip_point_utf16(color_end, Bias::Right),
+                                    );
+                                    let Some(range) = multi_buffer_snapshot
+                                        .anchor_range_in_excerpt(*excerpt_id, start..end)
                                     else {
                                         continue;
                                     };
@@ -285,16 +274,14 @@ impl Editor {
                                         new_buffer_colors.binary_search_by(|(probe, _)| {
                                             probe
                                                 .start
-                                                .cmp(&color_start_anchor, &multi_buffer_snapshot)
+                                                .cmp(&range.start, &multi_buffer_snapshot)
                                                 .then_with(|| {
-                                                    probe.end.cmp(
-                                                        &color_end_anchor,
-                                                        &multi_buffer_snapshot,
-                                                    )
+                                                    probe
+                                                        .end
+                                                        .cmp(&range.end, &multi_buffer_snapshot)
                                                 })
                                         });
-                                    new_buffer_colors
-                                        .insert(i, (color_start_anchor..color_end_anchor, color));
+                                    new_buffer_colors.insert(i, (range, color));
                                     break;
                                 }
                             }

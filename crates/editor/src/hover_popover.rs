@@ -467,13 +467,10 @@ fn show_hover(
                 let range = hover_result
                     .range
                     .and_then(|range| {
-                        let start = snapshot
+                        let range = snapshot
                             .buffer_snapshot()
-                            .anchor_in_excerpt(excerpt_id, range.start)?;
-                        let end = snapshot
-                            .buffer_snapshot()
-                            .anchor_in_excerpt(excerpt_id, range.end)?;
-                        Some(start..end)
+                            .anchor_range_in_excerpt(excerpt_id, range)?;
+                        Some(range)
                     })
                     .or_else(|| {
                         let snapshot = &snapshot.buffer_snapshot();
