@@ -595,6 +595,12 @@ pub fn main() {
 
         audio::init(cx);
         workspace::init(app_state.clone(), cx);
+        // Allow remote terminals to open files in this local Zed via remote_server CLI.
+        zed::open_listener::register_remote_cli_bridge(
+            app_state.clone(),
+            app_state.client.clone(),
+            cx,
+        );
         ui_prompt::init(cx);
 
         go_to_line::init(cx);
