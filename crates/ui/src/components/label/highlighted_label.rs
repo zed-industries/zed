@@ -15,9 +15,16 @@ impl HighlightedLabel {
     /// Constructs a label with the given characters highlighted.
     /// Characters are identified by UTF-8 byte position.
     pub fn new(label: impl Into<SharedString>, highlight_indices: Vec<usize>) -> Self {
+        let label = label.into();
+        for &run in &highlight_indices {
+            assert!(
+                label.is_char_boundary(run),
+                "highlight index {run} is not a valid UTF-8 boundary"
+            );
+        }
         Self {
             base: LabelLike::new(),
-            label: label.into(),
+            label,
             highlight_indices,
         }
     }
