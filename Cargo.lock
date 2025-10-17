@@ -2064,7 +2064,7 @@ dependencies = [
  "bitflags 2.9.4",
  "cexpr",
  "clang-sys",
- "itertools 0.10.5",
+ "itertools 0.11.0",
  "log",
  "prettyplease",
  "proc-macro2",
@@ -2084,7 +2084,7 @@ dependencies = [
  "bitflags 2.9.4",
  "cexpr",
  "clang-sys",
- "itertools 0.10.5",
+ "itertools 0.11.0",
  "log",
  "prettyplease",
  "proc-macro2",
@@ -7367,12 +7367,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "hashbrown"
-version = "0.16.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5419bdc4f6a9207fbeba6d11b604d481addf78ecd10c11ad51e76c2f6482748d"
-
-[[package]]
 name = "hashlink"
 version = "0.8.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7803,7 +7797,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "pin-project-lite",
- "socket2 0.5.10",
+ "socket2 0.6.1",
  "tokio",
  "tower-service",
  "tracing",
@@ -8069,7 +8063,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4b0f83760fb341a774ed326568e19f5a863af4a952def8c39f9ab92fd95b88e5"
 dependencies = [
  "equivalent",
- "hashbrown 0.16.0",
+ "hashbrown 0.15.5",
  "serde",
  "serde_core",
 ]
@@ -13250,7 +13244,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash 2.1.1",
  "rustls 0.23.33",
- "socket2 0.5.10",
+ "socket2 0.6.1",
  "thiserror 2.0.17",
  "tokio",
  "tracing",
@@ -13287,7 +13281,7 @@ dependencies = [
  "cfg_aliases 0.2.1",
  "libc",
  "once_cell",
- "socket2 0.5.10",
+ "socket2 0.6.1",
  "tracing",
  "windows-sys 0.59.0",
 ]
@@ -14493,7 +14487,7 @@ dependencies = [
  "rustls-webpki 0.103.7",
  "security-framework 3.5.1",
  "security-framework-sys",
- "webpki-root-certs 0.26.11",
+ "webpki-root-certs",
  "windows-sys 0.59.0",
 ]
 
@@ -15754,7 +15748,7 @@ dependencies = [
  "tracing",
  "url",
  "uuid",
- "webpki-roots 0.26.11",
+ "webpki-roots",
 ]
 
 [[package]]
@@ -19357,36 +19351,18 @@ dependencies = [
 
 [[package]]
 name = "webpki-root-certs"
-version = "0.26.11"
+version = "0.26.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "75c7f0ef91146ebfb530314f5f1d24528d7f0767efbfd31dce919275413e393e"
-dependencies = [
- "webpki-root-certs 1.0.3",
-]
-
-[[package]]
-name = "webpki-root-certs"
-version = "1.0.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "05d651ec480de84b762e7be71e6efa7461699c19d9e2c272c8d93455f567786e"
+checksum = "09aed61f5e8d2c18344b3faa33a4c837855fe56642757754775548fee21386c4"
 dependencies = [
  "rustls-pki-types",
 ]
 
 [[package]]
 name = "webpki-roots"
-version = "0.26.11"
+version = "0.26.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "521bc38abb08001b01866da9f51eb7c5d647a19260e00054a8c7fd5f9e57f7a9"
-dependencies = [
- "webpki-roots 1.0.3",
-]
-
-[[package]]
-name = "webpki-roots"
-version = "1.0.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "32b130c0d2d49f8b6889abc456e795e82525204f27c42cf767cf0d7734e089b8"
+checksum = "2210b291f7ea53617fbafcc4939f10914214ec15aace5ba62293a668f322c5c9"
 dependencies = [
  "rustls-pki-types",
 ]
@@ -20757,9 +20733,9 @@ checksum = "cfe53a6657fd280eaa890a3bc59152892ffa3e30101319d168b781ed6529b049"
 
 [[package]]
 name = "yawc"
-version = "0.2.7"
+version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6f6a46c0f189bbef59a24169b1a6e4d8bc1e476f6ea05bc657cf8e67aa3fbb0c"
+checksum = "19a5d82922135b4ae73a079a4ffb5501e9aadb4d785b8c660eaa0a8b899028c5"
 dependencies = [
  "base64 0.22.1",
  "bytes 1.10.1",
@@ -20773,7 +20749,7 @@ dependencies = [
  "pin-project",
  "rand 0.8.5",
  "sha1",
- "thiserror 2.0.17",
+ "thiserror 1.0.69",
  "tokio",
  "tokio-rustls 0.26.2",
  "tokio-util",
@@ -20781,7 +20757,7 @@ dependencies = [
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
- "webpki-roots 1.0.3",
+ "webpki-roots",
 ]
 
 [[package]]
