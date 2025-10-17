@@ -52,13 +52,13 @@ impl JsDebugAdapter {
         task_definition: &DebugTaskDefinition,
         user_installed_path: Option<PathBuf>,
         user_args: Option<Vec<String>>,
-        user_envs: Option<HashMap<String, String>>,
+        user_env: Option<HashMap<String, String>>,
         _: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
         let tcp_connection = task_definition.tcp_connection.clone().unwrap_or_default();
         let (host, port, timeout) = crate::configure_tcp_connection(tcp_connection).await?;
 
-        let mut envs = user_envs.unwrap_or_default();
+        let mut envs = user_env.unwrap_or_default();
 
         let mut configuration = task_definition.config.clone();
         if let Some(configuration) = configuration.as_object_mut() {
@@ -505,7 +505,7 @@ impl DebugAdapter for JsDebugAdapter {
         config: &DebugTaskDefinition,
         user_installed_path: Option<PathBuf>,
         user_args: Option<Vec<String>>,
-        user_envs: Option<HashMap<String, String>>,
+        user_env: Option<HashMap<String, String>>,
         cx: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
         if self.checked.set(()).is_ok() {
@@ -528,7 +528,7 @@ impl DebugAdapter for JsDebugAdapter {
             config,
             user_installed_path,
             user_args,
-            user_envs,
+            user_env,
             cx,
         )
         .await

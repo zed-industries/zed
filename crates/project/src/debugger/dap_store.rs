@@ -264,7 +264,7 @@ impl DapStore {
                     DapBinary::Custom(binary) => Some(PathBuf::from(binary)),
                 });
                 let user_args = dap_settings.map(|s| s.args.clone());
-                let user_envs = dap_settings.map(|s| s.envs.clone());
+                let user_env = dap_settings.map(|s| s.env.clone());
 
                 let delegate = self.delegate(worktree, console, cx);
                 let cwd: Arc<Path> = worktree.read(cx).abs_path().as_ref().into();
@@ -276,7 +276,7 @@ impl DapStore {
                             &definition,
                             user_installed_path,
                             user_args,
-                            user_envs,
+                            user_env,
                             cx,
                         )
                         .await?;

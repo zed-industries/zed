@@ -92,8 +92,8 @@ impl DebugAdapter for ExtensionDapAdapter {
         user_installed_path: Option<PathBuf>,
         // TODO support user args in the extension API
         _user_args: Option<Vec<String>>,
-        // TODO support user envs in the extension API
-        _user_envs: Option<HashMap<String, String>>,
+        // TODO support user env in the extension API
+        _user_env: Option<HashMap<String, String>>,
         _cx: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
         self.extension

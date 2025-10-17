@@ -312,7 +312,7 @@ impl PythonDebugAdapter {
         config: &DebugTaskDefinition,
         user_installed_path: Option<PathBuf>,
         user_args: Option<Vec<String>>,
-        user_envs: Option<HashMap<String, String>>,
+        user_env: Option<HashMap<String, String>>,
         python_from_toolchain: Option<String>,
     ) -> Result<DebugAdapterBinary> {
         let tcp_connection = config.tcp_connection.clone().unwrap_or_default();
@@ -350,7 +350,7 @@ impl PythonDebugAdapter {
                 timeout,
             }),
             cwd: Some(delegate.worktree_root_path().to_path_buf()),
-            envs: user_envs.unwrap_or_default(),
+            envs: user_env.unwrap_or_default(),
             request_args: self.request_args(delegate, config).await?,
         })
     }
@@ -745,7 +745,7 @@ impl DebugAdapter for PythonDebugAdapter {
         config: &DebugTaskDefinition,
         user_installed_path: Option<PathBuf>,
         user_args: Option<Vec<String>>,
-        user_envs: Option<HashMap<String, String>>,
+        user_env: Option<HashMap<String, String>>,
         cx: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
         if let Some(local_path) = &user_installed_path {
@@ -759,7 +759,7 @@ impl DebugAdapter for PythonDebugAdapter {
                     config,
                     Some(local_path.clone()),
                     user_args,
-                    user_envs,
+                    user_env,
                     None,
                 )
                 .await;
@@ -799,13 +799,13 @@ impl DebugAdapter for PythonDebugAdapter {
                     config,
                     None,
                     user_args,
-                    user_envs,
+                    user_env,
                     Some(toolchain.path.to_string()),
                 )
                 .await;
         }
 
-        self.get_installed_binary(delegate, config, None, user_args, user_envs, None)
+        self.get_installed_binary(delegate, config, None, user_args, user_env, None)
             .await
     }
 

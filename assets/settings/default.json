@@ -1926,7 +1926,7 @@
   "dap": {
     // Specify the DAP name as a key here.
     "CodeLLDB": {
-      "envs": {
+      "env": {
         "RUST_LOG": "info"
       }
     }

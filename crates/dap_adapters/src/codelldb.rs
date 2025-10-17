@@ -330,7 +330,7 @@ impl DebugAdapter for CodeLldbDebugAdapter {
         config: &DebugTaskDefinition,
         user_installed_path: Option<PathBuf>,
         user_args: Option<Vec<String>>,
-        user_envs: Option<HashMap<String, String>>,
+        user_env: Option<HashMap<String, String>>,
         _: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
         let mut command = user_installed_path
@@ -404,7 +404,7 @@ impl DebugAdapter for CodeLldbDebugAdapter {
             request_args: self
                 .request_args(delegate, json_config, &config.label)
                 .await?,
-            envs: user_envs.unwrap_or_default(),
+            envs: user_env.unwrap_or_default(),
             connection: None,
         })
     }

@@ -1215,7 +1215,7 @@ pub fn local_settings_kind_to_proto(kind: LocalSettingsKind) -> proto::LocalSett
 pub struct DapSettings {
     pub binary: DapBinary,
     pub args: Vec<String>,
-    pub envs: HashMap<String, String>,
+    pub env: HashMap<String, String>,
 }
 
 impl From<DapSettingsContent> for DapSettings {
@@ -1225,7 +1225,7 @@ impl From<DapSettingsContent> for DapSettings {
                 .binary
                 .map_or_else(|| DapBinary::Default, |binary| DapBinary::Custom(binary)),
             args: content.args.unwrap_or_default(),
-            envs: content.envs.unwrap_or_default(),
+            env: content.env.unwrap_or_default(),
         }
     }
 }
