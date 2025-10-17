@@ -1,6 +1,5 @@
 use agent2::outline;
 use assistant_context::AssistantContext;
-use collections::HashSet;
 use futures::future;
 use futures::{FutureExt, future::Shared};
 use gpui::{App, AppContext as _, ElementId, Entity, SharedString, Task};
@@ -180,7 +179,7 @@ impl FileContextHandle {
         })
     }
 
-    fn load(self, cx: &App) -> Task<Option<(AgentContext, Vec<Entity<Buffer>>)>> {
+    fn load(self, cx: &App) -> Task<Option<AgentContext>> {
         let buffer_ref = self.buffer.read(cx);
         let Some(file) = buffer_ref.file() else {
             log::error!("file context missing path");
@@ -205,7 +204,7 @@ impl FileContextHandle {
                 text: buffer_content.text.into(),
                 is_outline: buffer_content.is_outline,
             });
-            Some((context, vec![buffer]))
+            Some(context)
         })
     }
 }
@@ -255,11 +254,7 @@ impl DirectoryContextHandle {
         self.entry_id.hash(state)
     }
 
-    fn load(
-        self,
-        project: Entity<Project>,
-        cx: &mut App,
-    ) -> Task<Option<(AgentContext, Vec<Entity<Buffer>>)>> {
+    fn load(self, project: Entity<Project>, cx: &mut App) -> Task<Option<AgentContext>> {
         let Some(worktree) = project.read(cx).worktree_for_entry(self.entry_id, cx) else {
             return Task::ready(None);
         };
@@ -306,7 +301,7 @@ impl DirectoryContextHandle {
             });
 
             cx.background_spawn(async move {
-                let (rope, buffer) = rope_task.await?;
+                let (rope, _buffer) = rope_task.await?;
                 let fenced_codeblock = MarkdownCodeBlock {
                     tag: &codeblock_tag(&full_path, None),
                     text: &rope.to_string(),
@@ -317,18 +312,22 @@ impl DirectoryContextHandle {
                     rel_path,
                     fenced_codeblock,
                 };
-                Some((descendant, buffer))
+                Some(descendant)
             })
         }));
 
         cx.background_spawn(async move {
-            let (descendants, buffers) = descendants_future.await.into_iter().flatten().unzip();
+            let descendants = descendants_future
+                .await
+                .into_iter()
+                .flatten()
+                .collect::<Vec<_>>();
             let context = AgentContext::Directory(DirectoryContext {
                 handle: self,
                 full_path: directory_full_path,
                 descendants,
             });
-            Some((context, buffers))
+            Some(context)
         })
     }
 }
@@ -396,7 +395,7 @@ impl SymbolContextHandle {
             .into()
     }
 
-    fn load(self, cx: &App) -> Task<Option<(AgentContext, Vec<Entity<Buffer>>)>> {
+    fn load(self, cx: &App) -> Task<Option<AgentContext>> {
         let buffer_ref = self.buffer.read(cx);
         let Some(file) = buffer_ref.file() else {
             log::error!("symbol context's file has no path");
@@ -405,14 +404,13 @@ impl SymbolContextHandle {
         let full_path = file.full_path(cx).to_string_lossy().into_owned();
         let line_range = self.enclosing_range.to_point(&buffer_ref.snapshot());
         let text = self.text(cx);
-        let buffer = self.buffer.clone();
         let context = AgentContext::Symbol(SymbolContext {
             handle: self,
             full_path,
             line_range,
             text,
         });
-        Task::ready(Some((context, vec![buffer])))
+        Task::ready(Some(context))
     }
 }
 
@@ -467,13 +465,12 @@ impl SelectionContextHandle {
             .into()
     }
 
-    fn load(self, cx: &App) -> Task<Option<(AgentContext, Vec<Entity<Buffer>>)>> {
+    fn load(self, cx: &App) -> Task<Option<AgentContext>> {
         let Some(full_path) = self.full_path(cx) else {
             log::error!("selection context's file has no path");
             return Task::ready(None);
         };
         let text = self.text(cx);
-        let buffer = self.buffer.clone();
         let context = AgentContext::Selection(SelectionContext {
             full_path: full_path.to_string_lossy().into_owned(),
             line_range: self.line_range(cx),
@@ -481,7 +478,7 @@ impl SelectionContextHandle {
             handle: self,
         });
 
-        Task::ready(Some((context, vec![buffer])))
+        Task::ready(Some(context))
     }
 }
 
@@ -522,8 +519,8 @@ impl FetchedUrlContext {
         }))
     }
 
-    pub fn load(self) -> Task<Option<(AgentContext, Vec<Entity<Buffer>>)>> {
-        Task::ready(Some((AgentContext::FetchedUrl(self), vec![])))
+    pub fn load(self) -> Task<Option<AgentContext>> {
+        Task::ready(Some(AgentContext::FetchedUrl(self)))
     }
 }
 
@@ -560,7 +557,7 @@ impl ThreadContextHandle {
         self.thread.read(cx).title()
     }
 
-    fn load(self, cx: &mut App) -> Task<Option<(AgentContext, Vec<Entity<Buffer>>)>> {
+    fn load(self, cx: &mut App) -> Task<Option<AgentContext>> {
         let task = self.thread.update(cx, |thread, cx| thread.summary(cx));
         let title = self.title(cx);
         cx.background_spawn(async move {
@@ -570,7 +567,7 @@ impl ThreadContextHandle {
                 text,
                 handle: self,
             });
-            Some((context, vec![]))
+            Some(context)
         })
     }
 }
@@ -609,7 +606,7 @@ impl TextThreadContextHandle {
         self.context.read(cx).summary().or_default()
     }
 
-    fn load(self, cx: &App) -> Task<Option<(AgentContext, Vec<Entity<Buffer>>)>> {
+    fn load(self, cx: &App) -> Task<Option<AgentContext>> {
         let title = self.title(cx);
         let text = self.context.read(cx).to_xml(cx);
         let context = AgentContext::TextThread(TextThreadContext {
@@ -617,7 +614,7 @@ impl TextThreadContextHandle {
             text: text.into(),
             handle: self,
         });
-        Task::ready(Some((context, vec![])))
+        Task::ready(Some(context))
     }
 }
 
@@ -663,7 +660,7 @@ impl RulesContextHandle {
         self,
         prompt_store: &Option<Entity<PromptStore>>,
         cx: &App,
-    ) -> Task<Option<(AgentContext, Vec<Entity<Buffer>>)>> {
+    ) -> Task<Option<AgentContext>> {
         let Some(prompt_store) = prompt_store.as_ref() else {
             return Task::ready(None);
         };
@@ -682,7 +679,7 @@ impl RulesContextHandle {
                 title,
                 text,
             });
-            Some((context, vec![]))
+            Some(context)
         })
     }
 }
@@ -745,32 +742,21 @@ impl ImageContext {
         }
     }
 
-    pub fn load(self, cx: &App) -> Task<Option<(AgentContext, Vec<Entity<Buffer>>)>> {
+    pub fn load(self, cx: &App) -> Task<Option<AgentContext>> {
         cx.background_spawn(async move {
             self.image_task.clone().await;
-            Some((AgentContext::Image(self), vec![]))
+            Some(AgentContext::Image(self))
         })
     }
 }
 
 #[derive(Debug, Clone, Default)]
-pub struct ContextLoadResult {
-    pub loaded_context: LoadedContext,
-    pub referenced_buffers: HashSet<Entity<Buffer>>,
-}
-
-#[derive(Debug, Clone, Default)]
 pub struct LoadedContext {
-    pub contexts: Vec<AgentContext>,
     pub text: String,
     pub images: Vec<LanguageModelImage>,
 }
 
 impl LoadedContext {
-    pub fn is_empty(&self) -> bool {
-        self.text.is_empty() && self.images.is_empty()
-    }
-
     pub fn add_to_request_message(&self, request_message: &mut LanguageModelRequestMessage) {
         if !self.text.is_empty() {
             request_message
@@ -801,7 +787,7 @@ pub fn load_context(
     project: &Entity<Project>,
     prompt_store: &Option<Entity<PromptStore>>,
     cx: &mut App,
-) -> Task<ContextLoadResult> {
+) -> Task<LoadedContext> {
     let load_tasks: Vec<_> = contexts
         .into_iter()
         .map(|context| match context {
@@ -822,13 +808,10 @@ pub fn load_context(
 
         let mut contexts = Vec::new();
         let mut text = String::new();
-        let mut referenced_buffers = HashSet::default();
         for context in load_results {
-            let Some((context, buffers)) = context else {
-                continue;
-            };
-            contexts.push(context);
-            referenced_buffers.extend(buffers);
+            if let Some(context) = context {
+                contexts.push(context);
+            }
         }
 
         let mut file_context = Vec::new();
@@ -865,14 +848,7 @@ pub fn load_context(
             && text_thread_context.is_empty()
             && rules_context.is_empty()
         {
-            return ContextLoadResult {
-                loaded_context: LoadedContext {
-                    contexts,
-                    text,
-                    images,
-                },
-                referenced_buffers,
-            };
+            return LoadedContext { text, images };
         }
 
         text.push_str(
@@ -958,14 +934,7 @@ pub fn load_context(
 
         text.push_str("</context>\n");
 
-        ContextLoadResult {
-            loaded_context: LoadedContext {
-                contexts,
-                text,
-                images,
-            },
-            referenced_buffers,
-        }
+        LoadedContext { text, images }
     })
 }
 
@@ -1128,11 +1097,13 @@ mod tests {
 
         assert!(content_len > outline::AUTO_OUTLINE_SIZE);
 
-        let file_context = file_context_for(large_content, cx).await;
+        let file_context = load_context_for("file.txt", large_content, cx).await;
 
         assert!(
-            file_context.is_outline,
-            "Large file should use outline format"
+            file_context
+                .text
+                .contains("# File outline for test/file.txt"),
+            "Large files should not get an outline"
         );
 
         assert!(
@@ -1150,29 +1121,38 @@ mod tests {
 
         assert!(content_len < outline::AUTO_OUTLINE_SIZE);
 
-        let file_context = file_context_for(small_content.to_string(), cx).await;
+        let file_context = load_context_for("file.txt", small_content.to_string(), cx).await;
 
         assert!(
-            !file_context.is_outline,
+            !file_context
+                .text
+                .contains("# File outline for test/file.txt"),
             "Small files should not get an outline"
         );
 
-        assert_eq!(file_context.text, small_content);
+        assert!(
+            file_context.text.contains(small_content),
+            "Small files should use full content"
+        );
     }
 
-    async fn file_context_for(content: String, cx: &mut TestAppContext) -> FileContext {
+    async fn load_context_for(
+        filename: &str,
+        content: String,
+        cx: &mut TestAppContext,
+    ) -> LoadedContext {
         // Create a test project with the file
         let project = create_test_project(
             cx,
             json!({
-                "file.txt": content,
+                filename: content,
             }),
         )
         .await;
 
         // Open the buffer
         let buffer_path = project
-            .read_with(cx, |project, cx| project.find_project_path("file.txt", cx))
+            .read_with(cx, |project, cx| project.find_project_path(filename, cx))
             .unwrap();
 
         let buffer = project
@@ -1187,16 +1167,5 @@ mod tests {
 
         cx.update(|cx| load_context(vec![context_handle], &project, &None, cx))
             .await
-            .loaded_context
-            .contexts
-            .into_iter()
-            .find_map(|ctx| {
-                if let AgentContext::File(file_ctx) = ctx {
-                    Some(file_ctx)
-                } else {
-                    None
-                }
-            })
-            .expect("Should have found a file context")
     }
 }

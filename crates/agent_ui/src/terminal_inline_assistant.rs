@@ -281,7 +281,6 @@ impl TerminalInlineAssistant {
 
             context_load_task
                 .await
-                .loaded_context
                 .add_to_request_message(&mut request_message);
 
             request_message.content.push(prompt.into());
