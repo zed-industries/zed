@@ -142,12 +142,12 @@ mod tests {
     use std::time::Duration;
 
     use crate::{
-        RodioExt,
         test::{recording_of_davids_voice, sine},
+        RodioExt,
     };
     use itertools::Itertools;
-    use rodio::{Source, nz};
-    use spectrum_analyzer::{FrequencyLimit, scaling::divide_by_N_sqrt};
+    use rodio::{nz, Source};
+    use spectrum_analyzer::{scaling::divide_by_N_sqrt, FrequencyLimit};
 
     #[derive(Debug)]
     struct PeakPitch {
@@ -214,7 +214,7 @@ mod tests {
 
     #[test]
     fn constant_samplerate_preserves_length() {
-        let test_signal = recording_of_davids_voice(nz!(3), nz!(32_000));
+        let test_signal = recording_of_davids_voice(nz!(3), nz!(48_000));
         let resampled = test_signal.clone().constant_samplerate(nz!(16_000));
 
         let diff_in_length = test_signal

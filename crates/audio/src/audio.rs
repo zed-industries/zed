@@ -183,7 +183,6 @@ impl Audio {
         voip_parts: VoipParts,
         raw_mic_input: impl Source,
     ) -> anyhow::Result<impl Source> {
-
         let stream = raw_mic_input
             .possibly_disconnected_channels_to_mono()
             .constant_samplerate(SAMPLE_RATE)
@@ -214,8 +213,9 @@ impl Audio {
                 agc_source
                     .set_enabled(LIVE_SETTINGS.auto_microphone_volume.load(Ordering::Relaxed));
                 let denoise = agc_source.inner_mut();
-                denoise.set_enabled(LIVE_SETTINGS.denoise.load(Ordering::Relaxed)).unwrap(); // todo make this log?
-                agc_source.set_enabled(LIVE_SETTINGS.denoise.load(Ordering::Relaxed));
+                denoise
+                    .set_enabled(LIVE_SETTINGS.denoise.load(Ordering::Relaxed))
+                    .unwrap(); // todo make this log?
             });
 
         let stream = if voip_parts.legacy_audio_compatible {
