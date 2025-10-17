@@ -14,7 +14,6 @@ use agent_settings::{
     SUMMARIZE_THREAD_DETAILED_PROMPT, SUMMARIZE_THREAD_PROMPT,
 };
 use anyhow::{Context as _, Result, anyhow};
-use assistant_tool::adapt_schema_to_format;
 use chrono::{DateTime, Utc};
 use client::{ModelRequestUsage, RequestUsage, UserStore};
 use cloud_llm_client::{CompletionIntent, CompletionRequestStatus, Plan, UsageLimit};
@@ -1061,6 +1060,7 @@ impl Thread {
             self.project.clone(),
             cx.weak_entity(),
             language_registry,
+            Templates::new(),
         ));
         self.add_tool(FetchTool::new(self.project.read(cx).client().http_client()));
         self.add_tool(FindPathTool::new(self.project.clone()));
@@ -2172,7 +2172,7 @@ where
 
     fn name() -> &'static str;
 
-    fn description(&self) -> SharedString {
+    fn description() -> SharedString {
         let schema = schemars::schema_for!(Self::Input);
         SharedString::new(
             schema
@@ -2192,7 +2192,7 @@ where
     ) -> SharedString;
 
     /// Returns the JSON schema that describes the tool's input.
-    fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Schema {
+    fn input_schema(format: LanguageModelToolSchemaFormat) -> Schema {
         crate::tool_schema::root_schema_for::<Self::Input>(format)
     }
 
@@ -2266,7 +2266,7 @@ where
     }
 
     fn description(&self) -> SharedString {
-        self.0.description()
+        T::description()
     }
 
     fn kind(&self) -> agent_client_protocol::ToolKind {
@@ -2279,8 +2279,8 @@ where
     }
 
     fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value> {
-        let mut json = serde_json::to_value(self.0.input_schema(format))?;
-        adapt_schema_to_format(&mut json, format)?;
+        let mut json = serde_json::to_value(T::input_schema(format))?;
+        crate::tool_schema::adapt_schema_to_format(&mut json, format)?;
         Ok(json)
     }
 
@@ -2422,7 +2422,7 @@ pub struct ToolCallEventStream {
 }
 
 impl ToolCallEventStream {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub fn test() -> (Self, ToolCallEventStreamReceiver) {
         let (events_tx, events_rx) = mpsc::unbounded::<Result<ThreadEvent>>();
 
@@ -2525,10 +2525,10 @@ impl ToolCallEventStream {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 pub struct ToolCallEventStreamReceiver(mpsc::UnboundedReceiver<Result<ThreadEvent>>);
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 impl ToolCallEventStreamReceiver {
     pub async fn expect_authorization(&mut self) -> ToolCallAuthorization {
         let event = self.0.next().await;
@@ -2576,7 +2576,7 @@ impl ToolCallEventStreamReceiver {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 impl std::ops::Deref for ToolCallEventStreamReceiver {
     type Target = mpsc::UnboundedReceiver<Result<ThreadEvent>>;
 
@@ -2585,7 +2585,7 @@ impl std::ops::Deref for ToolCallEventStreamReceiver {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 impl std::ops::DerefMut for ToolCallEventStreamReceiver {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0

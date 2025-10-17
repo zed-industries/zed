@@ -5,10 +5,9 @@ use crate::{
 use acp_thread::{MentionUri, selection_name};
 use agent_client_protocol as acp;
 use agent_servers::{AgentServer, AgentServerDelegate};
-use agent2::HistoryStore;
+use agent2::{HistoryStore, outline};
 use anyhow::{Result, anyhow};
 use assistant_slash_commands::codeblock_fence_for_path;
-use assistant_tool::outline;
 use collections::{HashMap, HashSet};
 use editor::{
     Addon, Anchor, AnchorRangeExt, ContextMenuOptions, ContextMenuPlacement, Editor, EditorElement,
@@ -1598,9 +1597,8 @@ mod tests {
 
     use acp_thread::MentionUri;
     use agent_client_protocol as acp;
-    use agent2::HistoryStore;
+    use agent2::{HistoryStore, outline};
     use assistant_context::ContextStore;
-    use assistant_tool::outline;
     use editor::{AnchorRangeExt as _, Editor, EditorMode};
     use fs::FakeFs;
     use futures::StreamExt as _;

@@ -975,9 +975,9 @@ async fn test_mcp_tools(cx: &mut TestAppContext) {
         vec![context_server::types::Tool {
             name: "echo".into(),
             description: None,
-            input_schema: serde_json::to_value(
-                EchoTool.input_schema(LanguageModelToolSchemaFormat::JsonSchema),
-            )
+            input_schema: serde_json::to_value(EchoTool::input_schema(
+                LanguageModelToolSchemaFormat::JsonSchema,
+            ))
             .unwrap(),
             output_schema: None,
             annotations: None,
@@ -1149,9 +1149,9 @@ async fn test_mcp_tool_truncation(cx: &mut TestAppContext) {
             context_server::types::Tool {
                 name: "echo".into(), // Conflicts with native EchoTool
                 description: None,
-                input_schema: serde_json::to_value(
-                    EchoTool.input_schema(LanguageModelToolSchemaFormat::JsonSchema),
-                )
+                input_schema: serde_json::to_value(EchoTool::input_schema(
+                    LanguageModelToolSchemaFormat::JsonSchema,
+                ))
                 .unwrap(),
                 output_schema: None,
                 annotations: None,
@@ -1174,9 +1174,9 @@ async fn test_mcp_tool_truncation(cx: &mut TestAppContext) {
             context_server::types::Tool {
                 name: "echo".into(), // Also conflicts with native EchoTool
                 description: None,
-                input_schema: serde_json::to_value(
-                    EchoTool.input_schema(LanguageModelToolSchemaFormat::JsonSchema),
-                )
+                input_schema: serde_json::to_value(EchoTool::input_schema(
+                    LanguageModelToolSchemaFormat::JsonSchema,
+                ))
                 .unwrap(),
                 output_schema: None,
                 annotations: None,

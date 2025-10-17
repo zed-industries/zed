@@ -1,7 +1,6 @@
 use action_log::ActionLog;
 use agent_client_protocol::{self as acp, ToolCallUpdateFields};
 use anyhow::{Context as _, Result, anyhow};
-use assistant_tool::outline;
 use gpui::{App, Entity, SharedString, Task};
 use indoc::formatdoc;
 use language::Point;
@@ -13,7 +12,7 @@ use settings::Settings;
 use std::sync::Arc;
 use util::markdown::MarkdownCodeBlock;
 
-use crate::{AgentTool, ToolCallEventStream};
+use crate::{AgentTool, ToolCallEventStream, outline};
 
 /// Reads the content of the given file in the project.
 ///

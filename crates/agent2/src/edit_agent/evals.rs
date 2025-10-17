@@ -1,12 +1,8 @@
 use super::*;
 use crate::{
-    ReadFileToolInput,
-    edit_file_tool::{EditFileMode, EditFileToolInput},
-    grep_tool::GrepToolInput,
-    list_directory_tool::ListDirectoryToolInput,
+    EditFileMode, EditFileToolInput, GrepToolInput, ListDirectoryToolInput, ReadFileToolInput,
 };
 use Role::*;
-use assistant_tool::ToolRegistry;
 use client::{Client, UserStore};
 use collections::HashMap;
 use fs::FakeFs;
@@ -15,11 +11,11 @@ use gpui::{AppContext, TestAppContext, Timer};
 use http_client::StatusCode;
 use indoc::{formatdoc, indoc};
 use language_model::{
-    LanguageModelRegistry, LanguageModelRequestTool, LanguageModelToolResult,
-    LanguageModelToolResultContent, LanguageModelToolUse, LanguageModelToolUseId, SelectedModel,
+    LanguageModelRegistry, LanguageModelToolResult, LanguageModelToolResultContent,
+    LanguageModelToolUse, LanguageModelToolUseId, SelectedModel,
 };
 use project::Project;
-use prompt_store::{ModelContext, ProjectContext, PromptBuilder, WorktreeContext};
+use prompt_store::{ProjectContext, WorktreeContext};
 use rand::prelude::*;
 use reqwest_client::ReqwestClient;
 use serde_json::json;
@@ -121,6 +117,7 @@ fn eval_delete_run_git_blame() {
     // gemini-2.5-pro-06-05        | 1.0  (2025-06-16)
     // gemini-2.5-flash            |
     // gpt-4.1                     |
+
     let input_file_path = "root/blame.rs";
     let input_file_content = include_str!("evals/fixtures/delete_run_git_blame/before.rs");
     let output_file_content = include_str!("evals/fixtures/delete_run_git_blame/after.rs");
@@ -184,6 +181,7 @@ fn eval_translate_doc_comments() {
     //  gemini-2.5-pro-preview-03-25   |  1.0  (2025-05-22)
     //  gemini-2.5-flash-preview-04-17 |
     //  gpt-4.1                        |
+
     let input_file_path = "root/canvas.rs";
     let input_file_content = include_str!("evals/fixtures/translate_doc_comments/before.rs");
     let edit_description = "Translate all doc comments to Italian";
@@ -246,6 +244,7 @@ fn eval_use_wasi_sdk_in_compile_parser_to_wasm() {
     //  gemini-2.5-pro-preview-latest  |  0.99 (2025-06-16)
     //  gemini-2.5-flash-preview-04-17 |
     //  gpt-4.1                        |
+
     let input_file_path = "root/lib.rs";
     let input_file_content =
         include_str!("evals/fixtures/use_wasi_sdk_in_compile_parser_to_wasm/before.rs");
@@ -371,6 +370,7 @@ fn eval_disable_cursor_blinking() {
     //  gemini-2.5-pro                 |  0.95 (2025-07-14)
     //  gemini-2.5-flash-preview-04-17 |  0.78 (2025-07-14)
     //  gpt-4.1                        |  0.00 (2025-07-14) (follows edit_description too literally)
+
     let input_file_path = "root/editor.rs";
     let input_file_content = include_str!("evals/fixtures/disable_cursor_blinking/before.rs");
     let edit_description = "Comment out the call to `BlinkManager::enable`";
@@ -463,6 +463,7 @@ fn eval_from_pixels_constructor() {
     //  claude-3.7-sonnet              | 2025-06-14  | 0.88
     //  gemini-2.5-pro-preview-06-05   | 2025-06-16  | 0.98
     //  gpt-4.1                        |
+
     let input_file_path = "root/canvas.rs";
     let input_file_content = include_str!("evals/fixtures/from_pixels_constructor/before.rs");
     let edit_description = "Implement from_pixels constructor and add tests.";
@@ -665,6 +666,7 @@ fn eval_zode() {
     //  gemini-2.5-pro-preview-03-25   |  1.0 (2025-05-22)
     //  gemini-2.5-flash-preview-04-17 |  1.0 (2025-05-22)
     //  gpt-4.1                        |  1.0 (2025-05-22)
+
     let input_file_path = "root/zode.py";
     let input_content = None;
     let edit_description = "Create the main Zode CLI script";
@@ -771,6 +773,7 @@ fn eval_add_overwrite_test() {
     //  gemini-2.5-pro-preview-03-25   |  0.35 (2025-05-22)
     //  gemini-2.5-flash-preview-04-17 |
     //  gpt-4.1                        |
+
     let input_file_path = "root/action_log.rs";
     let input_file_content = include_str!("evals/fixtures/add_overwrite_test/before.rs");
     let edit_description = "Add a new test for overwriting a file in action_log.rs";
@@ -1010,7 +1013,7 @@ fn eval_create_empty_file() {
     //
     // TODO: gpt-4.1-mini errored 38 times:
     // "data did not match any variant of untagged enum ResponseStreamResult"
-    //
+
     let input_file_content = None;
     let expected_output_content = String::new();
     eval(
@@ -1475,19 +1478,16 @@ impl EditAgentTest {
             language::init(cx);
             language_model::init(client.clone(), cx);
             language_models::init(user_store, client.clone(), cx);
-            crate::init(client.http_client(), cx);
         });
 
         fs.insert_tree("/root", json!({})).await;
         let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
         let agent_model = SelectedModel::from_str(
-            &std::env::var("ZED_AGENT_MODEL")
-                .unwrap_or("anthropic/claude-3-7-sonnet-latest".into()),
+            &std::env::var("ZED_AGENT_MODEL").unwrap_or("anthropic/claude-4-sonnet-latest".into()),
         )
         .unwrap();
         let judge_model = SelectedModel::from_str(
-            &std::env::var("ZED_JUDGE_MODEL")
-                .unwrap_or("anthropic/claude-3-7-sonnet-latest".into()),
+            &std::env::var("ZED_JUDGE_MODEL").unwrap_or("anthropic/claude-4-sonnet-latest".into()),
         )
         .unwrap();
         let (agent_model, judge_model) = cx
@@ -1553,39 +1553,27 @@ impl EditAgentTest {
             .update(cx, |project, cx| project.open_buffer(path, cx))
             .await
             .unwrap();
-        let tools = cx.update(|cx| {
-            ToolRegistry::default_global(cx)
-                .tools()
-                .into_iter()
-                .filter_map(|tool| {
-                    let input_schema = tool
-                        .input_schema(self.agent.model.tool_input_format())
-                        .ok()?;
-                    Some(LanguageModelRequestTool {
-                        name: tool.name(),
-                        description: tool.description(),
-                        input_schema,
-                    })
-                })
-                .collect::<Vec<_>>()
-        });
-        let tool_names = tools
-            .iter()
-            .map(|tool| tool.name.clone())
-            .collect::<Vec<_>>();
-        let worktrees = vec![WorktreeContext {
-            root_name: "root".to_string(),
-            abs_path: Path::new("/path/to/root").into(),
-            rules_file: None,
-        }];
-        let prompt_builder = PromptBuilder::new(None)?;
-        let project_context = ProjectContext::new(worktrees, Vec::default());
-        let system_prompt = prompt_builder.generate_assistant_system_prompt(
-            &project_context,
-            &ModelContext {
+
+        let tools = crate::built_in_tools().collect::<Vec<_>>();
+
+        let system_prompt = {
+            let worktrees = vec![WorktreeContext {
+                root_name: "root".to_string(),
+                abs_path: Path::new("/path/to/root").into(),
+                rules_file: None,
+            }];
+            let project_context = ProjectContext::new(worktrees, Vec::default());
+            let tool_names = tools
+                .iter()
+                .map(|tool| tool.name.clone().into())
+                .collect::<Vec<_>>();
+            let template = crate::SystemPromptTemplate {
+                project: &project_context,
                 available_tools: tool_names,
-            },
-        )?;
+            };
+            let templates = Templates::new();
+            template.render(&templates).unwrap()
+        };
 
         let has_system_prompt = eval
             .conversation

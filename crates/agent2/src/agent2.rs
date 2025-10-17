@@ -1,8 +1,10 @@
 mod agent;
 mod db;
+mod edit_agent;
 mod history_store;
 mod legacy_thread;
 mod native_agent_server;
+pub mod outline;
 mod templates;
 mod thread;
 mod tool_schema;

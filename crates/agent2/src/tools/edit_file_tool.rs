@@ -1,8 +1,10 @@
-use crate::{AgentTool, Thread, ToolCallEventStream};
+use crate::{
+    AgentTool, Templates, Thread, ToolCallEventStream,
+    edit_agent::{EditAgent, EditAgentOutput, EditAgentOutputEvent, EditFormat},
+};
 use acp_thread::Diff;
 use agent_client_protocol::{self as acp, ToolCallLocation, ToolCallUpdateFields};
 use anyhow::{Context as _, Result, anyhow};
-use assistant_tools::edit_agent::{EditAgent, EditAgentOutput, EditAgentOutputEvent, EditFormat};
 use cloud_llm_client::CompletionIntent;
 use collections::HashSet;
 use gpui::{App, AppContext, AsyncApp, Entity, Task, WeakEntity};
@@ -34,7 +36,7 @@ const DEFAULT_UI_TEXT: &str = "Editing file";
 ///
 /// 2. Verify the directory path is correct (only applicable when creating new files):
 ///    - Use the `list_directory` tool to verify the parent directory exists and is the correct location
-#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct EditFileToolInput {
     /// A one-line, user-friendly markdown description of the edit. This will be shown in the UI and also passed to another model to perform the edit.
     ///
@@ -75,7 +77,7 @@ pub struct EditFileToolInput {
     pub mode: EditFileMode,
 }
 
-#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 struct EditFileToolPartialInput {
     #[serde(default)]
     path: String,
@@ -123,6 +125,7 @@ pub struct EditFileTool {
     thread: WeakEntity<Thread>,
     language_registry: Arc<LanguageRegistry>,
     project: Entity<Project>,
+    templates: Arc<Templates>,
 }
 
 impl EditFileTool {
@@ -130,11 +133,13 @@ impl EditFileTool {
         project: Entity<Project>,
         thread: WeakEntity<Thread>,
         language_registry: Arc<LanguageRegistry>,
+        templates: Arc<Templates>,
     ) -> Self {
         Self {
             project,
             thread,
             language_registry,
+            templates,
         }
     }
 
@@ -294,8 +299,7 @@ impl AgentTool for EditFileTool {
                 model,
                 project.clone(),
                 action_log.clone(),
-                // TODO: move edit agent to this crate so we can use our templates
-                assistant_tools::templates::Templates::new(),
+                self.templates.clone(),
                 edit_format,
             );
 
@@ -599,6 +603,7 @@ mod tests {
                     project,
                     thread.downgrade(),
                     language_registry,
+                    Templates::new(),
                 ))
                 .run(input, ToolCallEventStream::test().0, cx)
             })
@@ -807,6 +812,7 @@ mod tests {
                     project.clone(),
                     thread.downgrade(),
                     language_registry.clone(),
+                    Templates::new(),
                 ))
                 .run(input, ToolCallEventStream::test().0, cx)
             });
@@ -865,6 +871,7 @@ mod tests {
                     project.clone(),
                     thread.downgrade(),
                     language_registry,
+                    Templates::new(),
                 ))
                 .run(input, ToolCallEventStream::test().0, cx)
             });
@@ -951,6 +958,7 @@ mod tests {
                     project.clone(),
                     thread.downgrade(),
                     language_registry.clone(),
+                    Templates::new(),
                 ))
                 .run(input, ToolCallEventStream::test().0, cx)
             });
@@ -1005,6 +1013,7 @@ mod tests {
                     project.clone(),
                     thread.downgrade(),
                     language_registry,
+                    Templates::new(),
                 ))
                 .run(input, ToolCallEventStream::test().0, cx)
             });
@@ -1057,6 +1066,7 @@ mod tests {
             project.clone(),
             thread.downgrade(),
             language_registry,
+            Templates::new(),
         ));
         fs.insert_tree("/root", json!({})).await;
 
@@ -1197,6 +1207,7 @@ mod tests {
             project.clone(),
             thread.downgrade(),
             language_registry,
+            Templates::new(),
         ));
 
         // Test global config paths - these should require confirmation if they exist and are outside the project
@@ -1309,6 +1320,7 @@ mod tests {
             project.clone(),
             thread.downgrade(),
             language_registry,
+            Templates::new(),
         ));
 
         // Test files in different worktrees
@@ -1393,6 +1405,7 @@ mod tests {
             project.clone(),
             thread.downgrade(),
             language_registry,
+            Templates::new(),
         ));
 
         // Test edge cases
@@ -1482,6 +1495,7 @@ mod tests {
             project.clone(),
             thread.downgrade(),
             language_registry,
+            Templates::new(),
         ));
 
         // Test different EditFileMode values
@@ -1566,6 +1580,7 @@ mod tests {
             project,
             thread.downgrade(),
             language_registry,
+            Templates::new(),
         ));
 
         cx.update(|cx| {
@@ -1653,6 +1668,7 @@ mod tests {
                 project.clone(),
                 thread.downgrade(),
                 languages.clone(),
+                Templates::new(),
             ));
             let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
             let edit = cx.update(|cx| {
@@ -1682,6 +1698,7 @@ mod tests {
                 project.clone(),
                 thread.downgrade(),
                 languages.clone(),
+                Templates::new(),
             ));
             let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
             let edit = cx.update(|cx| {
@@ -1709,6 +1726,7 @@ mod tests {
                 project.clone(),
                 thread.downgrade(),
                 languages.clone(),
+                Templates::new(),
             ));
             let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
             let edit = cx.update(|cx| {

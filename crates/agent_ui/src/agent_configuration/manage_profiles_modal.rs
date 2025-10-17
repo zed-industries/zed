@@ -228,7 +228,7 @@ impl ManageProfilesModal {
         let tool_picker = cx.new(|cx| {
             let delegate = ToolPickerDelegate::builtin_tools(
                 //todo: This causes the web search tool to show up even it only works when using zed hosted models
-                agent2::default_tool_names()
+                agent2::built_in_tool_names()
                     .map(|s| s.into())
                     .collect::<Vec<_>>(),
                 self.fs.clone(),

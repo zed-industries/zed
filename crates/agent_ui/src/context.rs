@@ -1,5 +1,5 @@
+use agent2::outline;
 use assistant_context::AssistantContext;
-use assistant_tool::outline;
 use collections::HashSet;
 use futures::future;
 use futures::{FutureExt, future::Shared};

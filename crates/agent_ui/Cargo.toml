@@ -28,7 +28,6 @@ arrayvec.workspace = true
 assistant_context.workspace = true
 assistant_slash_command.workspace = true
 assistant_slash_commands.workspace = true
-assistant_tool.workspace = true
 audio.workspace = true
 buffer_diff.workspace = true
 chrono.workspace = true
@@ -105,7 +104,6 @@ zed_actions.workspace = true
 acp_thread = { workspace = true, features = ["test-support"] }
 agent2 = { workspace = true, features = ["test-support"] }
 assistant_context = { workspace = true, features = ["test-support"] }
-assistant_tools.workspace = true
 buffer_diff = { workspace = true, features = ["test-support"] }
 db = { workspace = true, features = ["test-support"] }
 editor = { workspace = true, features = ["test-support"] }

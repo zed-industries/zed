@@ -26,7 +26,6 @@ agent_ui.workspace = true
 anyhow.workspace = true
 askpass.workspace = true
 assets.workspace = true
-assistant_tools.workspace = true
 audio.workspace = true
 auto_update.workspace = true
 auto_update_ui.workspace = true

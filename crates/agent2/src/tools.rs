@@ -16,28 +16,8 @@ mod terminal_tool;
 mod thinking_tool;
 mod web_search_tool;
 
-/// A list of all built in tool names, for use in deduplicating MCP tool names
-pub fn default_tool_names() -> impl Iterator<Item = &'static str> {
-    [
-        CopyPathTool::name(),
-        CreateDirectoryTool::name(),
-        DeletePathTool::name(),
-        DiagnosticsTool::name(),
-        EditFileTool::name(),
-        FetchTool::name(),
-        FindPathTool::name(),
-        GrepTool::name(),
-        ListDirectoryTool::name(),
-        MovePathTool::name(),
-        NowTool::name(),
-        OpenTool::name(),
-        ReadFileTool::name(),
-        TerminalTool::name(),
-        ThinkingTool::name(),
-        WebSearchTool::name(),
-    ]
-    .into_iter()
-}
+use crate::AgentTool;
+use language_model::{LanguageModelRequestTool, LanguageModelToolSchemaFormat};
 
 pub use context_server_registry::*;
 pub use copy_path_tool::*;
@@ -57,4 +37,52 @@ pub use terminal_tool::*;
 pub use thinking_tool::*;
 pub use web_search_tool::*;
 
-use crate::AgentTool;
+macro_rules! tools {
+    ($($tool:ty),* $(,)?) => {
+        /// A list of all built-in tool names
+        pub fn built_in_tool_names() -> impl Iterator<Item = String> {
+            [
+                $(
+                    <$tool>::name().to_string(),
+                )*
+            ]
+            .into_iter()
+        }
+
+        /// A list of all built-in tools
+        pub fn built_in_tools() -> impl Iterator<Item = LanguageModelRequestTool> {
+            fn language_model_tool<T: AgentTool>() -> LanguageModelRequestTool {
+                LanguageModelRequestTool {
+                    name: T::name().to_string(),
+                    description: T::description().to_string(),
+                    input_schema: T::input_schema(LanguageModelToolSchemaFormat::JsonSchema).to_value(),
+                }
+            }
+            [
+                $(
+                    language_model_tool::<$tool>(),
+                )*
+            ]
+            .into_iter()
+        }
+    };
+}
+
+tools! {
+    CopyPathTool,
+    CreateDirectoryTool,
+    DeletePathTool,
+    DiagnosticsTool,
+    EditFileTool,
+    FetchTool,
+    FindPathTool,
+    GrepTool,
+    ListDirectoryTool,
+    MovePathTool,
+    NowTool,
+    OpenTool,
+    ReadFileTool,
+    TerminalTool,
+    ThinkingTool,
+    WebSearchTool,
+}
