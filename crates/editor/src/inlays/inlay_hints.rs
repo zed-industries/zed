@@ -188,6 +188,13 @@ impl LspInlayHintData {
             }
         }
     }
+
+    pub(crate) fn removed_buffers(&mut self, removed_buffer_ids: &[BufferId]) {
+        for buffer_id in removed_buffer_ids {
+            self.hint_refresh_tasks.remove(buffer_id);
+            self.hint_chunk_fetched.remove(buffer_id);
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -689,7 +696,6 @@ impl Editor {
         buffer_id: BufferId,
         query_version: Global,
         invalidate_cache: InvalidationStrategy,
-        excerpts_queried: Vec<ExcerptId>,
         new_hints: Vec<(Range<BufferRow>, anyhow::Result<CacheInlayHints>)>,
         cx: &mut Context<Self>,
     ) {
@@ -716,6 +722,7 @@ impl Editor {
             hints_to_remove.extend(visible_inlay_hint_ids);
         }
 
+        let excerpts = self.buffer.read(cx).excerpt_ids();
         let hints_to_insert = new_hints
             .into_iter()
             .filter_map(|(chunk_range, hints_result)| match hints_result {
@@ -746,7 +753,7 @@ impl Editor {
                         .insert(hint_id, lsp_hint.kind)
                         .is_none()
                 {
-                    let position = excerpts_queried.iter().find_map(|excerpt_id| {
+                    let position = excerpts.iter().find_map(|excerpt_id| {
                         multi_buffer_snapshot.anchor_in_excerpt(*excerpt_id, lsp_hint.position)
                     })?;
                     return Some(Inlay::hint(hint_id, position, &lsp_hint));
@@ -779,7 +786,6 @@ fn spawn_editor_hints_refresh(
             cx.background_executor().timer(debounce).await;
         }
 
-        let excerpts_queried = buffer_excerpts.excerpts.clone();
         let query_version = buffer_excerpts.buffer_version.clone();
         let Some(hint_tasks) = editor
             .update(cx, |editor, cx| {
@@ -805,7 +811,6 @@ fn spawn_editor_hints_refresh(
                     buffer_id,
                     query_version,
                     invalidate_cache,
-                    excerpts_queried,
                     new_hints,
                     cx,
                 );
@@ -2362,36 +2367,28 @@ pub mod tests {
         cx.executor().run_until_parked();
         editor
             .update(cx, |editor, _window, cx| {
+                let expected_hints = vec![
+                    "main hint(edited) #0".to_string(),
+                    "main hint(edited) #1".to_string(),
+                    "main hint(edited) #2".to_string(),
+                    "main hint(edited) #3".to_string(),
+                    "main hint(edited) #4".to_string(),
+                    "main hint(edited) #5".to_string(),
+                    "other hint(edited) #0".to_string(),
+                    "other hint(edited) #1".to_string(),
+                    "other hint(edited) #2".to_string(),
+                    "other hint(edited) #3".to_string(),
+                ];
                 assert_eq!(
-                    vec![
-                        "main hint(edited) #0".to_string(),
-                        "main hint(edited) #1".to_string(),
-                        "main hint(edited) #2".to_string(),
-                        "main hint(edited) #3".to_string(),
-                        "main hint(edited) #4".to_string(),
-                        "main hint(edited) #5".to_string(),
-                        "other hint(edited) #0".to_string(),
-                        "other hint(edited) #1".to_string(),
-                        "other hint(edited) #2".to_string(),
-                        "other hint(edited) #3".to_string(),
-                    ],
+                    expected_hints,
                     sorted_cached_hint_labels(editor, cx),
                     "After multibuffer edit, editor gets scrolled back to the last selection; \
                 all hints should be invalidated and required for all of its visible excerpts"
                 );
                 assert_eq!(
-                    vec![
-                        "main hint(edited) #0".to_string(),
-                        "main hint(edited) #1".to_string(),
-                        "main hint(edited) #2".to_string(),
-                        "main hint(edited) #3".to_string(),
-                        "main hint(edited) #4".to_string(),
-                        "main hint(edited) #5".to_string(),
-                        "other hint(edited) #0".to_string(),
-                        "other hint(edited) #1".to_string(),
-                    ],
+                    expected_hints,
                     visible_hint_labels(editor, cx),
-                    "Only the visible hints should be shown after editing + in multi buffers, only where the selections are, the hints are shown"
+                    "All excerpts should get their hints"
                 );
             })
             .unwrap();
