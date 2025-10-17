@@ -541,7 +541,6 @@ pub struct SettingsWindow {
     content_focus_handle: Entity<NonFocusableHandle>,
     files_focus_handle: FocusHandle,
     search_index: Option<Arc<SearchIndex>>,
-    visible_items: Vec<usize>,
     list_state: ListState,
 }
 
@@ -1074,7 +1073,6 @@ impl SettingsWindow {
                 .tab_index(HEADER_CONTAINER_TAB_INDEX)
                 .tab_stop(false),
             search_index: None,
-            visible_items: Vec::default(),
             list_state,
         };
 
@@ -1116,16 +1114,8 @@ impl SettingsWindow {
 
         let expanded = &mut self.navbar_entries[nav_entry_index].expanded;
         *expanded = !*expanded;
-        let expanded = *expanded;
-
-        let toggle_page_index = self.page_index_from_navbar_index(nav_entry_index);
-        let selected_page_index = self.page_index_from_navbar_index(self.navbar_entry);
-        // if currently selected page is a child of the parent page we are folding,
-        // set the current page to the parent page
-        if !expanded && selected_page_index == toggle_page_index {
-            self.navbar_entry = nav_entry_index;
-            // note: not opening page. Toggling does not change content just selected page
-        }
+        self.navbar_entry = nav_entry_index;
+        self.reset_list_state();
     }
 
     fn build_navbar(&mut self, cx: &App) {
@@ -1480,14 +1470,14 @@ impl SettingsWindow {
 
     fn reset_list_state(&mut self) {
         // plus one for the title
-        self.visible_items = self.visible_page_items().map(|(index, _)| index).collect();
+        let mut visible_items_count = self.visible_page_items().count();
 
-        if self.visible_items.is_empty() {
-            self.list_state.reset(0);
-        } else {
+        if visible_items_count > 0 {
             // show page title if page is non empty
-            self.list_state.reset(self.visible_items.len() + 1);
+            visible_items_count += 1;
         }
+
+        self.list_state.reset(visible_items_count);
     }
 
     fn build_ui(&mut self, window: &mut Window, cx: &mut Context<SettingsWindow>) {
@@ -1961,9 +1951,6 @@ impl SettingsWindow {
                                                 .on_toggle(cx.listener(
                                                     move |this, _, window, cx| {
                                                         this.toggle_navbar_entry(ix);
-                                                        // Update selection state immediately before cx.notify
-                                                        // to prevent double selection flash
-                                                        this.navbar_entry = ix;
                                                         window.focus(
                                                             &this.navbar_entries[ix].focus_handle,
                                                         );
@@ -2134,7 +2121,7 @@ impl SettingsWindow {
         let mut page_content = v_flex().id("settings-ui-page").size_full();
 
         let has_active_search = !self.search_bar.read(cx).is_empty(cx);
-        let has_no_results = self.visible_items.len() == 0 && has_active_search;
+        let has_no_results = self.visible_page_items().next().is_none() && has_active_search;
 
         if has_no_results {
             let search_query = self.search_bar.read(cx).text(cx);
@@ -2153,16 +2140,12 @@ impl SettingsWindow {
                     ),
             )
         } else {
-            let items = &self.current_page().items;
-
             let last_non_header_index = self
-                .visible_items
-                .iter()
-                .map(|index| &items[*index])
-                .enumerate()
-                .rev()
-                .find(|(_, item)| !matches!(item, SettingsPageItem::SectionHeader(_)))
-                .map(|(index, _)| index);
+                .visible_page_items()
+                .filter_map(|(index, item)| {
+                    (!matches!(item, SettingsPageItem::SectionHeader(_))).then_some(index)
+                })
+                .last();
 
             let root_nav_label = self
                 .navbar_entries
@@ -2184,20 +2167,16 @@ impl SettingsWindow {
                             })
                             .into_any_element();
                     }
+                    let mut visible_items = this.visible_page_items();
+                    let Some((actual_item_index, item)) = visible_items.nth(index - 1) else {
+                        return gpui::Empty.into_any_element();
+                    };
 
-                    let index = index - 1;
-                    let actual_item_index = this.visible_items[index];
-                    let item: &SettingsPageItem = &this.current_page().items[actual_item_index];
-
-                    let no_bottom_border = this
-                        .visible_items
-                        .get(index + 1)
-                        .map(|item_index| {
-                            let item = &this.current_page().items[*item_index];
-                            matches!(item, SettingsPageItem::SectionHeader(_))
-                        })
+                    let no_bottom_border = visible_items
+                        .next()
+                        .map(|(_, item)| matches!(item, SettingsPageItem::SectionHeader(_)))
                         .unwrap_or(false);
-                    let is_last = Some(index) == last_non_header_index;
+                    let is_last = Some(actual_item_index) == last_non_header_index;
 
                     v_flex()
                         .id(("settings-page-item", actual_item_index))
@@ -3073,7 +3052,6 @@ mod test {
             ),
             files_focus_handle: cx.focus_handle(),
             search_index: None,
-            visible_items: Vec::default(),
             list_state: ListState::new(0, gpui::ListAlignment::Top, px(0.0)),
         };
 
@@ -3231,11 +3209,11 @@ mod test {
         ",
         toggle_page: "General Page",
         after: r"
-        > General Page
+        > General Page*
         v Project
         - Worktree Settings Content
         v AI
-        - General*
+        - General
         > Appearance & Behavior
         "
     );
@@ -3254,13 +3232,13 @@ mod test {
         ",
         toggle_page: "General Page",
         after: r"
-        v General Page
+        v General Page*
         - General
         - Privacy
         v Project
         - Worktree Settings Content
         v AI
-        - General*
+        - General
         > Appearance & Behavior
         "
     );
