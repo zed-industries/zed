@@ -174,6 +174,7 @@ fn parse_path_in_wsl(source: &str, wsl: &str) -> Result<String> {
     let output = command
         .arg("--distribution")
         .arg(distro_name)
+        .arg("--exec")
         .arg("wslpath")
         .arg("-m")
         .arg(&source.path)
