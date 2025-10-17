@@ -253,11 +253,11 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         field: Box::new(SettingField {
                             pick: |settings_content| {
                                 Some(&<<settings::ThemeSelection as strum::IntoDiscriminant>::Discriminant as strum::VariantArray>::VARIANTS[
-                                settings_content
-                                    .theme
-                                    .theme
-                                    .as_ref()?
-                                    .discriminant() as usize])
+                                    settings_content
+                                        .theme
+                                        .theme
+                                        .as_ref()?
+                                        .discriminant() as usize])
                             },
                             write: |settings_content, value| {
                                 let Some(value) = value else {
@@ -302,107 +302,107 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         match variant {
                             settings::ThemeSelectionDiscriminants::Static => vec![
                                 SettingItem {
-                                        files: USER,
-                                        title: "Theme Name",
-                                        description: "The Name Of The Theme To Use",
-                                        field: Box::new(SettingField {
-                                            pick: |settings_content| {
-                                                match settings_content.theme.theme.as_ref() {
-                                                        Some(settings::ThemeSelection::Static(name)) => Some(name),
-                                                        _ => None
-                                                    }
-                                            },
-                                            write: |settings_content, value| {
-                                                let Some(value) = value else {
-                                                    return;
-                                                };
-                                                match settings_content
-                                                    .theme
-                                                    .theme.as_mut() {
-                                                        Some(settings::ThemeSelection::Static(theme_name)) => *theme_name = value,
-                                                        _ => return
-                                                    }
-                                            },
-                                        }),
-                                        metadata: None,
-                                    }
-                                    ],
+                                    files: USER,
+                                    title: "Theme Name",
+                                    description: "The Name Of The Theme To Use",
+                                    field: Box::new(SettingField {
+                                        pick: |settings_content| {
+                                            match settings_content.theme.theme.as_ref() {
+                                                Some(settings::ThemeSelection::Static(name)) => Some(name),
+                                                _ => None
+                                            }
+                                        },
+                                        write: |settings_content, value| {
+                                            let Some(value) = value else {
+                                                return;
+                                            };
+                                            match settings_content
+                                                .theme
+                                                .theme.as_mut() {
+                                                    Some(settings::ThemeSelection::Static(theme_name)) => *theme_name = value,
+                                                    _ => return
+                                                }
+                                        },
+                                    }),
+                                    metadata: None,
+                                }
+                            ],
                             settings::ThemeSelectionDiscriminants::Dynamic => vec![
                                 SettingItem {
-                                        files: USER,
-                                        title: "Mode",
-                                        description: "How To Determine Whether to Use a Light or Dark Theme",
-                                        field: Box::new(SettingField {
-                                            pick: |settings_content| {
-                                                match settings_content.theme.theme.as_ref() {
-                                                        Some(settings::ThemeSelection::Dynamic { mode, ..}) => Some(mode),
-                                                        _ => None
-                                                    }
-                                            },
-                                            write: |settings_content, value| {
-                                                let Some(value) = value else {
-                                                    return;
-                                                };
-                                                match settings_content
-                                                    .theme
-                                                    .theme.as_mut() {
-                                                        Some(settings::ThemeSelection::Dynamic{ mode, ..}) => *mode = value,
-                                                        _ => return
-                                                    }
-                                            },
-                                        }),
-                                        metadata: None,
-                                },
-                                    SettingItem {
-                                            files: USER,
-                                            title: "Light Theme",
-                                            description: "The Theme To Use When Mode Is Set To Light, Or When Mode Is Set To System And The System Is In Light Mode",
-                                            field: Box::new(SettingField {
-                                                pick: |settings_content| {
-                                                    match settings_content.theme.theme.as_ref() {
-                                                            Some(settings::ThemeSelection::Dynamic { light, ..}) => Some(light),
-                                                            _ => None
-                                                        }
-                                                },
-                                                write: |settings_content, value| {
-                                                    let Some(value) = value else {
-                                                        return;
-                                                    };
-                                                    match settings_content
-                                                        .theme
-                                                        .theme.as_mut() {
-                                                            Some(settings::ThemeSelection::Dynamic{ light, ..}) => *light = value,
-                                                            _ => return
-                                                        }
-                                                },
-                                            }),
-                                            metadata: None,
-                                    },
-                                        SettingItem {
-                                                files: USER,
-                                                title: "Dark Theme",
-                                                description: "The Theme To Use When Mode Is Set To Dark, Or When Mode Is Set To System And The System Is In Dark Mode",
-                                                field: Box::new(SettingField {
-                                                    pick: |settings_content| {
-                                                        match settings_content.theme.theme.as_ref() {
-                                                                Some(settings::ThemeSelection::Dynamic { dark, ..}) => Some(dark),
-                                                                _ => None
-                                                            }
-                                                    },
-                                                    write: |settings_content, value| {
-                                                        let Some(value) = value else {
-                                                            return;
-                                                        };
-                                                        match settings_content
-                                                            .theme
-                                                            .theme.as_mut() {
-                                                                Some(settings::ThemeSelection::Dynamic{ dark, ..}) => *dark = value,
-                                                                _ => return
-                                                            }
-                                                    },
-                                                }),
-                                                metadata: None,
+                                    files: USER,
+                                    title: "Mode",
+                                    description: "How To Determine Whether to Use a Light or Dark Theme",
+                                    field: Box::new(SettingField {
+                                        pick: |settings_content| {
+                                            match settings_content.theme.theme.as_ref() {
+                                                Some(settings::ThemeSelection::Dynamic { mode, ..}) => Some(mode),
+                                                _ => None
                                             }
+                                        },
+                                        write: |settings_content, value| {
+                                            let Some(value) = value else {
+                                                return;
+                                            };
+                                            match settings_content
+                                                .theme
+                                                .theme.as_mut() {
+                                                    Some(settings::ThemeSelection::Dynamic{ mode, ..}) => *mode = value,
+                                                    _ => return
+                                                }
+                                        },
+                                    }),
+                                    metadata: None,
+                                },
+                                SettingItem {
+                                    files: USER,
+                                    title: "Light Theme",
+                                    description: "The Theme To Use When Mode Is Set To Light, Or When Mode Is Set To System And The System Is In Light Mode",
+                                    field: Box::new(SettingField {
+                                        pick: |settings_content| {
+                                            match settings_content.theme.theme.as_ref() {
+                                                Some(settings::ThemeSelection::Dynamic { light, ..}) => Some(light),
+                                                _ => None
+                                            }
+                                        },
+                                        write: |settings_content, value| {
+                                            let Some(value) = value else {
+                                                return;
+                                            };
+                                            match settings_content
+                                                .theme
+                                                .theme.as_mut() {
+                                                    Some(settings::ThemeSelection::Dynamic{ light, ..}) => *light = value,
+                                                    _ => return
+                                                }
+                                        },
+                                    }),
+                                    metadata: None,
+                                },
+                                SettingItem {
+                                    files: USER,
+                                    title: "Dark Theme",
+                                    description: "The Theme To Use When Mode Is Set To Dark, Or When Mode Is Set To System And The System Is In Dark Mode",
+                                    field: Box::new(SettingField {
+                                        pick: |settings_content| {
+                                            match settings_content.theme.theme.as_ref() {
+                                                Some(settings::ThemeSelection::Dynamic { dark, ..}) => Some(dark),
+                                                _ => None
+                                            }
+                                        },
+                                        write: |settings_content, value| {
+                                            let Some(value) = value else {
+                                                return;
+                                            };
+                                            match settings_content
+                                                .theme
+                                                .theme.as_mut() {
+                                                    Some(settings::ThemeSelection::Dynamic{ dark, ..}) => *dark = value,
+                                                    _ => return
+                                                }
+                                        },
+                                    }),
+                                    metadata: None,
+                                }
                             ],
                         }
                     }).collect(),
@@ -464,7 +464,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 settings_content.theme.buffer_line_height.as_ref()
                             },
                             write: |settings_content, value| {
-                                 settings_content.theme.buffer_line_height = value;
+                                settings_content.theme.buffer_line_height = value;
 
                             },
                         }
@@ -482,7 +482,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 settings_content.theme.buffer_font_features.as_ref()
                             },
                             write: |settings_content, value| {
-                                 settings_content.theme.buffer_font_features = value;
+                                settings_content.theme.buffer_font_features = value;
 
                             },
                         }
@@ -500,7 +500,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 settings_content.theme.buffer_font_fallbacks.as_ref()
                             },
                             write: |settings_content, value| {
-                                 settings_content.theme.buffer_font_fallbacks = value;
+                                settings_content.theme.buffer_font_fallbacks = value;
 
                             },
                         }
@@ -549,7 +549,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 settings_content.theme.ui_font_features.as_ref()
                             },
                             write: |settings_content, value| {
-                                 settings_content.theme.ui_font_features = value;
+                                settings_content.theme.ui_font_features = value;
 
                             },
                         }
@@ -567,7 +567,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 settings_content.theme.ui_font_fallbacks.as_ref()
                             },
                             write: |settings_content, value| {
-                                 settings_content.theme.ui_font_fallbacks = value;
+                                settings_content.theme.ui_font_fallbacks = value;
 
                             },
                         }
@@ -604,7 +604,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .or(settings_content.theme.buffer_font_size.as_ref())
                         },
                         write: |settings_content, value| {
-                             settings_content.theme.agent_buffer_font_size = value;
+                            settings_content.theme.agent_buffer_font_size = value;
 
                         },
                     }),
@@ -620,7 +620,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             settings_content.editor.multi_cursor_modifier.as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content.editor.multi_cursor_modifier = value;
+                            settings_content.editor.multi_cursor_modifier = value;
 
                         },
                     }),
@@ -666,7 +666,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             settings_content.theme.unnecessary_code_fade.as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content.theme.unnecessary_code_fade = value;
+                            settings_content.theme.unnecessary_code_fade = value;
 
                         },
                     }),
@@ -681,7 +681,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             settings_content.editor.current_line_highlight.as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content.editor.current_line_highlight = value;
+                            settings_content.editor.current_line_highlight = value;
 
                         },
                     }),
@@ -696,7 +696,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             settings_content.editor.selection_highlight.as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content.editor.selection_highlight = value;
+                            settings_content.editor.selection_highlight = value;
 
                         },
                     }),
@@ -724,7 +724,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content.editor.minimum_contrast_for_highlights = value;
+                            settings_content.editor.minimum_contrast_for_highlights = value;
 
                         },
                     }),
@@ -745,7 +745,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 .as_ref()
                         },
                         write: |settings_content, value| {
-                             settings_content
+                            settings_content
 
                                 .project
                                 .all_languages
@@ -771,7 +771,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                     .as_ref()
                             },
                             write: |settings_content, value| {
-                                 settings_content.project.all_languages.defaults.wrap_guides = value;
+                                settings_content.project.all_languages.defaults.wrap_guides = value;
 
                             },
                         }
@@ -1728,7 +1728,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                     settings_content.project.all_languages.file_types.as_ref()
                                 },
                                 write: |settings_content, value| {
-                                     settings_content.project.all_languages.file_types = value;
+                                    settings_content.project.all_languages.file_types = value;
 
                                 },
                             }
@@ -1747,7 +1747,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         field: Box::new(SettingField {
                             pick: |settings_content| settings_content.editor.diagnostics_max_severity.as_ref(),
                             write: |settings_content, value| {
-                                 settings_content.editor.diagnostics_max_severity = value;
+                                settings_content.editor.diagnostics_max_severity = value;
 
                             },
                         }),
@@ -1762,7 +1762,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 settings_content.diagnostics.as_ref()?.include_warnings.as_ref()
                             },
                             write: |settings_content, value| {
-                                 settings_content
+                                settings_content
 
                                     .diagnostics
                                     .get_or_insert_default()
@@ -1782,7 +1782,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 settings_content.diagnostics.as_ref()?.inline.as_ref()?.enabled.as_ref()
                             },
                             write: |settings_content, value| {
-                                 settings_content
+                                settings_content
 
                                     .diagnostics
                                     .get_or_insert_default()
@@ -1803,7 +1803,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 settings_content.diagnostics.as_ref()?.inline.as_ref()?.update_debounce_ms.as_ref()
                             },
                             write: |settings_content, value| {
-                                 settings_content
+                                settings_content
 
                                     .diagnostics
                                     .get_or_insert_default()
@@ -1824,7 +1824,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 settings_content.diagnostics.as_ref()?.inline.as_ref()?.padding.as_ref()
                             },
                             write: |settings_content, value| {
-                                 settings_content
+                                settings_content
 
                                     .diagnostics
                                     .get_or_insert_default()
@@ -1845,7 +1845,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 settings_content.diagnostics.as_ref()?.inline.as_ref()?.min_column.as_ref()
                             },
                             write: |settings_content, value| {
-                                 settings_content
+                                settings_content
 
                                     .diagnostics
                                     .get_or_insert_default()
@@ -1867,7 +1867,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 settings_content.diagnostics.as_ref()?.lsp_pull_diagnostics.as_ref()?.enabled.as_ref()
                             },
                             write: |settings_content, value| {
-                                 settings_content
+                                settings_content
 
                                     .diagnostics
                                     .get_or_insert_default()
@@ -1889,7 +1889,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 settings_content.diagnostics.as_ref()?.lsp_pull_diagnostics.as_ref()?.debounce_ms.as_ref()
                             },
                             write: |settings_content, value| {
-                                 settings_content
+                                settings_content
 
                                     .diagnostics
                                     .get_or_insert_default()
@@ -1909,7 +1909,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         field: Box::new(SettingField {
                             pick: |settings_content| settings_content.editor.lsp_highlight_debounce.as_ref(),
                             write: |settings_content, value| {
-                                 settings_content.editor.lsp_highlight_debounce = value;
+                                settings_content.editor.lsp_highlight_debounce = value;
 
                             },
                         }),
@@ -5873,7 +5873,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
                 write: |settings_content, value| {
                     language_settings_field_mut(settings_content, value, |language, value| {
-                         language.tasks.get_or_insert_default().enabled = value;
+                        language.tasks.get_or_insert_default().enabled = value;
 
                     })
                 },
@@ -5893,7 +5893,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                     },
                     write: |settings_content, value| {
                         language_settings_field_mut(settings_content, value, |language, value| {
-                             language.tasks.get_or_insert_default().variables = value;
+                            language.tasks.get_or_insert_default().variables = value;
 
                         })
                     },
@@ -5914,7 +5914,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
                 write: |settings_content, value| {
                     language_settings_field_mut(settings_content, value, |language, value| {
-                         language.tasks.get_or_insert_default().prefer_lsp = value;
+                        language.tasks.get_or_insert_default().prefer_lsp = value;
 
                     })
                 },
@@ -5933,7 +5933,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                     },
                     write: |settings_content, value| {
                         language_settings_field_mut(settings_content, value, |language, value| {
-                             language.debuggers = value;
+                            language.debuggers = value;
 
                         })
                     },
@@ -5964,7 +5964,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
                 write: |settings_content, value| {
                     language_settings_field_mut(settings_content, value, |language, value| {
-                         language.extend_comment_on_newline = value;
+                        language.extend_comment_on_newline = value;
 
                     })
                 },
@@ -5984,7 +5984,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                         settings_content.image_viewer.as_ref().and_then(|image_viewer| image_viewer.unit.as_ref())
                     },
                     write: |settings_content, value| {
-                         settings_content.image_viewer.get_or_insert_default().unit = value;
+                        settings_content.image_viewer.get_or_insert_default().unit = value;
 
                     },
                 }),
@@ -5999,7 +5999,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                         settings_content.message_editor.as_ref().and_then(|message_editor| message_editor.auto_replace_emoji_shortcode.as_ref())
                     },
                     write: |settings_content, value| {
-                         settings_content.message_editor.get_or_insert_default().auto_replace_emoji_shortcode = value;
+                        settings_content.message_editor.get_or_insert_default().auto_replace_emoji_shortcode = value;
 
                     },
                 }),
@@ -6014,7 +6014,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                         settings_content.workspace.drop_target_size.as_ref()
                     },
                     write: |settings_content, value| {
-                         settings_content.workspace.drop_target_size = value;
+                        settings_content.workspace.drop_target_size = value;
 
                     },
                 }),
