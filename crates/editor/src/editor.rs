@@ -22933,10 +22933,10 @@ impl CodeActionProvider for Entity<Project> {
 fn snippet_completions(
     project: &Project,
     buffer: &Entity<Buffer>,
-    buffer_position: text::Anchor,
+    buffer_anchor: text::Anchor,
     cx: &mut App,
 ) -> Task<Result<CompletionResponse>> {
-    let languages = buffer.read(cx).languages_at(buffer_position);
+    let languages = buffer.read(cx).languages_at(buffer_anchor);
     let snippet_store = project.snippets().read(cx);
 
     let scopes: Vec<_> = languages
@@ -22967,116 +22967,185 @@ fn snippet_completions(
     cx.background_spawn(async move {
         let mut is_incomplete = false;
         let mut completions: Vec<Completion> = Vec::new();
+
+        const MAX_PREFIX_LEN: usize = 128;
+        let buffer_offset = text::ToOffset::to_offset(&buffer_anchor, &snapshot);
+        let window_start = buffer_offset.saturating_sub(MAX_PREFIX_LEN);
+        let max_buffer_window: String = snapshot
+            .text_for_range(window_start.to_anchor(&snapshot)..buffer_anchor)
+            .collect();
+
+        if max_buffer_window.is_empty() {
+            return Ok(CompletionResponse {
+                completions: vec![],
+                display_options: CompletionDisplayOptions::default(),
+                is_incomplete: true,
+            });
+        }
+
         for (scope, snippets) in scopes.into_iter() {
-            let classifier =
-                CharClassifier::new(Some(scope)).scope_context(Some(CharScopeContext::Completion));
+            let max_snippet_words = snippets
+                .iter()
+                .flat_map(|snippet| &snippet.prefix)
+                .map(|prefix| snippet_match_points(prefix).count())
+                .max()
+                .unwrap_or(0);
 
-            const MAX_WORD_PREFIX_LEN: usize = 128;
-            let last_word: String = snapshot
-                .reversed_chars_for_range(text::Anchor::MIN..buffer_position)
-                .take(MAX_WORD_PREFIX_LEN)
-                .take_while(|c| classifier.is_word(*c))
-                .collect::<String>()
-                .chars()
-                .rev()
-                .collect();
+            let mut sorted_snippet_candidates = snippets
+                .iter()
+                .enumerate()
+                .flat_map(|(snippet_ix, snippet)| {
+                    snippet
+                        .prefix
+                        .iter()
+                        .map(|prefix| (snippet_ix, prefix, snippet_match_points(prefix).count()))
+                })
+                .collect_vec();
 
-            if last_word.is_empty() {
-                return Ok(CompletionResponse {
-                    completions: vec![],
-                    display_options: CompletionDisplayOptions::default(),
-                    is_incomplete: true,
-                });
+            sorted_snippet_candidates.sort_unstable_by_key(|(_, _, match_points)| match_points);
+
+            let buffer_windows = snippet_match_points(&max_buffer_window)
+                .take(
+                    sorted_snippet_candidates
+                        .last()
+                        .map(|(_, _, match_points)| *match_points)
+                        .unwrap_or_default(),
+                )
+                .collect_vec();
+
+            const MAX_RESULTS: usize = 100;
+            // Each match also remembers how many characters from the buffer it consumed
+            let mut matches: Vec<(StringMatch, usize)> = vec![];
+
+            let mut snippet_list_cutoff_index = 0;
+            for (word_count, buffer_window) in (1..=buffer_windows.len()).rev().zip(buffer_windows)
+            {
+                // Increase `snippet_list_cutoff_index` until we have all of the
+                // snippets with sufficiently many words.
+                while sorted_snippet_candidates
+                    .get(snippet_list_cutoff_index)
+                    .is_some_and(|(_ix, _prefix, snippet_word_count)| {
+                        *snippet_word_count >= word_count
+                    })
+                {
+                    snippet_list_cutoff_index += 1;
+                }
+
+                let snippet_candidates_at_word_len =
+                    &sorted_snippet_candidates[..snippet_list_cutoff_index];
+
+                let candidates = snippet_candidates_at_word_len
+                    .iter()
+                    // First char must match
+                    .filter(|(_ix, prefix, _snippet_word_count)| {
+                        itertools::equal(
+                            prefix
+                                .chars()
+                                .next()
+                                .into_iter()
+                                .flat_map(|c| c.to_lowercase()),
+                            buffer_window
+                                .chars()
+                                .next()
+                                .into_iter()
+                                .flat_map(|c| c.to_lowercase()),
+                        )
+                    })
+                    .map(|(ix, prefix, _snippet_word_count)| StringMatchCandidate::new(*ix, prefix))
+                    .collect::<Vec<StringMatchCandidate>>();
+
+                // TODO: ok to match same snippet multiple times?
+                matches.extend(
+                    fuzzy::match_strings(
+                        &candidates,
+                        &buffer_window,
+                        buffer_window.chars().any(|c| c.is_uppercase()),
+                        true,
+                        MAX_RESULTS - matches.len(), // always prioritize longer snippets
+                        &Default::default(),
+                        executor.clone(),
+                    )
+                    .await
+                    .into_iter()
+                    .map(|string_match| (string_match, buffer_window.len())),
+                );
+
+                if matches.len() == MAX_RESULTS {
+                    break;
+                }
             }
 
-            let as_offset = text::ToOffset::to_offset(&buffer_position, &snapshot);
             let to_lsp = |point: &text::Anchor| {
                 let end = text::ToPointUtf16::to_point_utf16(point, &snapshot);
                 point_to_lsp(end)
             };
-            let lsp_end = to_lsp(&buffer_position);
-
-            let candidates = snippets
-                .iter()
-                .enumerate()
-                .flat_map(|(ix, snippet)| {
-                    snippet
-                        .prefix
-                        .iter()
-                        .map(move |prefix| StringMatchCandidate::new(ix, prefix))
-                })
-                .collect::<Vec<StringMatchCandidate>>();
-
-            const MAX_RESULTS: usize = 100;
-            let mut matches = fuzzy::match_strings(
-                &candidates,
-                &last_word,
-                last_word.chars().any(|c| c.is_uppercase()),
-                true,
-                MAX_RESULTS,
-                &Default::default(),
-                executor.clone(),
-            )
-            .await;
+            let lsp_end = to_lsp(&buffer_anchor);
 
             if matches.len() >= MAX_RESULTS {
                 is_incomplete = true;
             }
 
-            // Remove all candidates where the query's start does not match the start of any word in the candidate
-            if let Some(query_start) = last_word.chars().next() {
-                matches.retain(|string_match| {
-                    split_words(&string_match.string).any(|word| {
-                        // Check that the first codepoint of the word as lowercase matches the first
-                        // codepoint of the query as lowercase
-                        word.chars()
-                            .flat_map(|codepoint| codepoint.to_lowercase())
-                            .zip(query_start.to_lowercase())
-                            .all(|(word_cp, query_cp)| word_cp == query_cp)
-                    })
-                });
-            }
+            // TODO: ok to match the same snippet multiple times with different prefixes? (probably yes)
+            // TODO: ok to match the same prefix multiple times with different start points? (probably no)
 
-            let matched_strings = matches
-                .into_iter()
-                .map(|m| m.string)
-                .collect::<HashSet<_>>();
-
-            completions.extend(snippets.iter().filter_map(|snippet| {
-                let matching_prefix = snippet
-                    .prefix
+            completions.extend(
+                matches
                     .iter()
-                    .find(|prefix| matched_strings.contains(*prefix))?;
-                let start = as_offset - last_word.len();
-                let start = snapshot.anchor_before(start);
-                let range = start..buffer_position;
-                let lsp_start = to_lsp(&start);
-                let lsp_range = lsp::Range {
-                    start: lsp_start,
-                    end: lsp_end,
-                };
-                Some(Completion {
-                    replace_range: range,
-                    new_text: snippet.body.clone(),
-                    source: CompletionSource::Lsp {
-                        insert_range: None,
-                        server_id: LanguageServerId(usize::MAX),
-                        resolved: true,
-                        lsp_completion: Box::new(lsp::CompletionItem {
-                            label: snippet.prefix.first().unwrap().clone(),
-                            kind: Some(CompletionItemKind::SNIPPET),
-                            label_details: snippet.description.as_ref().map(|description| {
-                                lsp::CompletionItemLabelDetails {
-                                    detail: Some(description.clone()),
-                                    description: None,
-                                }
-                            }),
-                            insert_text_format: Some(InsertTextFormat::SNIPPET),
-                            text_edit: Some(lsp::CompletionTextEdit::InsertAndReplace(
-                                lsp::InsertReplaceEdit {
-                                    new_text: snippet.body.clone(),
-                                    insert: lsp_range,
-                                    replace: lsp_range,
+                    .filter_map(|(string_match, buffer_window_len)| {
+                        let snippet_index = string_match.candidate_id;
+                        let snippet = &snippets[snippet_index];
+                        let matching_prefix = todo!();
+                        let start = buffer_offset - buffer_window_len;
+                        let start = snapshot.anchor_before(start);
+                        let range = start..buffer_anchor;
+                        let lsp_start = to_lsp(&start);
+                        let lsp_range = lsp::Range {
+                            start: lsp_start,
+                            end: lsp_end,
+                        };
+                        Some(Completion {
+                            replace_range: range,
+                            new_text: snippet.body.clone(),
+                            source: CompletionSource::Lsp {
+                                insert_range: None,
+                                server_id: LanguageServerId(usize::MAX),
+                                resolved: true,
+                                lsp_completion: Box::new(lsp::CompletionItem {
+                                    label: snippet.prefix.first().unwrap().clone(),
+                                    kind: Some(CompletionItemKind::SNIPPET),
+                                    label_details: snippet.description.as_ref().map(
+                                        |description| lsp::CompletionItemLabelDetails {
+                                            detail: Some(description.clone()),
+                                            description: None,
+                                        },
+                                    ),
+                                    insert_text_format: Some(InsertTextFormat::SNIPPET),
+                                    text_edit: Some(lsp::CompletionTextEdit::InsertAndReplace(
+                                        lsp::InsertReplaceEdit {
+                                            new_text: snippet.body.clone(),
+                                            insert: lsp_range,
+                                            replace: lsp_range,
+                                        },
+                                    )),
+                                    filter_text: Some(snippet.body.clone()),
+                                    sort_text: Some(char::MAX.to_string()),
+                                    ..lsp::CompletionItem::default()
+                                }),
+                                lsp_defaults: None,
+                            },
+                            label: CodeLabel {
+                                text: matching_prefix.clone(),
+                                runs: Vec::new(),
+                                filter_range: 0..matching_prefix.len(),
+                            },
+                            icon_path: None,
+                            documentation: Some(
+                                CompletionDocumentation::SingleLineAndMultiLinePlainText {
+                                    single_line: snippet.name.clone().into(),
+                                    plain_text: snippet
+                                        .description
+                                        .clone()
+                                        .map(|description| description.into()),
                                 },
                             )),
                             filter_text: Some(snippet.body.clone()),
@@ -23094,10 +23163,7 @@ fn snippet_completions(
                             .clone()
                             .map(|description| description.into()),
                     }),
-                    insert_text_mode: None,
-                    confirm: None,
-                })
-            }))
+            )
         }
 
         Ok(CompletionResponse {
@@ -24345,6 +24411,28 @@ pub(crate) fn split_words(text: &str) -> impl std::iter::Iterator<Item = &str> +
                 Some(chunk)
             } else {
                 None
+            }
+        })
+}
+
+/// Given a string of text immediately before the cursor, iterates over possible
+/// strings a snippet could match to. More precisely: returns an iterator over
+/// suffixes of `text` created by splitting at word boundaries (for a particular
+/// definition of "word").
+pub(crate) fn snippet_match_points(text: &str) -> impl std::iter::Iterator<Item = &str> {
+    let mut prev_index = 0;
+    let mut prev_codepoint: Option<char> = None;
+    let is_word_char = |c: char| c.is_alphanumeric() || c == '_';
+    text.char_indices()
+        .chain([(text.len(), '\0')])
+        .filter_map(move |(index, codepoint)| {
+            let prev_codepoint = prev_codepoint.replace(codepoint)?;
+            if is_word_char(prev_codepoint) && is_word_char(codepoint) {
+                None
+            } else {
+                let chunk = &text[prev_index..]; // go to end of string
+                prev_index = index;
+                Some(chunk)
             }
         })
 }

@@ -16998,6 +16998,26 @@ fn test_split_words() {
     assert_eq!(split(":do_the_thing"), &[":", "do_", "the_", "thing"]);
 }
 
+#[test]
+fn test_split_words_for_snippet_prefix() {
+    fn split(text: &str) -> Vec<&str> {
+        snippet_match_points(text).collect()
+    }
+
+    assert_eq!(split("HelloWorld"), &["HelloWorld"]);
+    assert_eq!(split("hello_world"), &["hello_world"]);
+    assert_eq!(split("_hello_world_"), &["_hello_world_"]);
+    assert_eq!(split("Hello_World"), &["Hello_World"]);
+    assert_eq!(split("helloWOrld"), &["helloWOrld"]);
+    assert_eq!(split("helloworld"), &["helloworld"]);
+    assert_eq!(
+        split("this@is!@#$^many   . symbols"),
+        &[
+            "this", "@", "is", "!", "@", "#", "$", "^", "many", " ", " ", " ", ".", " ", "symbols"
+        ],
+    );
+}
+
 #[gpui::test]
 async fn test_move_to_enclosing_bracket(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
