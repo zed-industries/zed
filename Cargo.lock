@@ -678,7 +678,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
- "strum 0.27.1",
+ "strum 0.27.2",
  "thiserror 2.0.12",
  "workspace-hack",
 ]
@@ -2198,7 +2198,7 @@ dependencies = [
  "schemars 1.0.1",
  "serde",
  "serde_json",
- "strum 0.27.1",
+ "strum 0.27.2",
  "thiserror 2.0.12",
  "workspace-hack",
 ]
@@ -3388,7 +3388,7 @@ dependencies = [
  "pretty_assertions",
  "serde",
  "serde_json",
- "strum 0.27.1",
+ "strum 0.27.2",
  "uuid",
  "workspace-hack",
 ]
@@ -3403,7 +3403,7 @@ dependencies = [
  "ordered-float 2.10.1",
  "rustc-hash 2.1.1",
  "serde",
- "strum 0.27.1",
+ "strum 0.27.2",
  "workspace-hack",
 ]
 
@@ -3598,7 +3598,7 @@ dependencies = [
  "sha2",
  "smol",
  "sqlx",
- "strum 0.27.1",
+ "strum 0.27.2",
  "subtle",
  "supermaven_api",
  "task",
@@ -3783,7 +3783,7 @@ dependencies = [
  "gpui",
  "inventory",
  "parking_lot",
- "strum 0.27.1",
+ "strum 0.27.2",
  "theme",
  "workspace-hack",
 ]
@@ -5462,7 +5462,7 @@ dependencies = [
  "serde_json",
  "settings",
  "slotmap",
- "strum 0.27.1",
+ "strum 0.27.2",
  "text",
  "tree-sitter",
  "tree-sitter-c",
@@ -6074,7 +6074,7 @@ dependencies = [
  "serde",
  "settings",
  "smallvec",
- "strum 0.27.1",
+ "strum 0.27.2",
  "telemetry",
  "theme",
  "ui",
@@ -7195,7 +7195,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
- "strum 0.27.1",
+ "strum 0.27.2",
  "telemetry",
  "theme",
  "time",
@@ -7301,7 +7301,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
- "strum 0.27.1",
+ "strum 0.27.2",
  "workspace-hack",
 ]
 
@@ -7408,7 +7408,7 @@ dependencies = [
  "smallvec",
  "smol",
  "stacksafe",
- "strum 0.27.1",
+ "strum 0.27.2",
  "sum_tree",
  "taffy",
  "thiserror 2.0.12",
@@ -8059,7 +8059,7 @@ name = "icons"
 version = "0.1.0"
 dependencies = [
  "serde",
- "strum 0.27.1",
+ "strum 0.27.2",
  "workspace-hack",
 ]
 
@@ -9041,7 +9041,7 @@ dependencies = [
  "serde_json",
  "settings",
  "smol",
- "strum 0.27.1",
+ "strum 0.27.2",
  "thiserror 2.0.12",
  "tiktoken-rs",
  "tokio",
@@ -10192,7 +10192,7 @@ dependencies = [
  "schemars 1.0.1",
  "serde",
  "serde_json",
- "strum 0.27.1",
+ "strum 0.27.2",
  "workspace-hack",
 ]
 
@@ -11109,7 +11109,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
- "strum 0.27.1",
+ "strum 0.27.2",
  "workspace-hack",
 ]
 
@@ -11124,7 +11124,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
- "strum 0.27.1",
+ "strum 0.27.2",
  "thiserror 2.0.12",
  "workspace-hack",
 ]
@@ -14418,7 +14418,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
- "strum 0.27.1",
+ "strum 0.27.2",
  "tracing",
  "util",
  "workspace-hack",
@@ -15427,7 +15427,7 @@ dependencies = [
  "serde_with",
  "settings_macros",
  "smallvec",
- "strum 0.27.1",
+ "strum 0.27.2",
  "tree-sitter",
  "tree-sitter-json",
  "unindent",
@@ -15494,7 +15494,7 @@ dependencies = [
  "serde",
  "session",
  "settings",
- "strum 0.27.1",
+ "strum 0.27.2",
  "theme",
  "title_bar",
  "ui",
@@ -16253,7 +16253,7 @@ dependencies = [
  "settings",
  "simplelog",
  "story",
- "strum 0.27.1",
+ "strum 0.27.2",
  "theme",
  "title_bar",
  "ui",
@@ -16355,9 +16355,9 @@ dependencies = [
 
 [[package]]
 name = "strum"
-version = "0.27.1"
+version = "0.27.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f64def088c51c9510a8579e3c5d67c65349dcf755e5479ad3d010aa6454e2c32"
+checksum = "af23d6f6c1a224baef9d3f61e287d2761385a5b88fdab4eb4c6f11aeb54c4bcf"
 dependencies = [
  "strum_macros 0.27.1",
 ]
@@ -17232,7 +17232,7 @@ dependencies = [
  "serde_json",
  "serde_json_lenient",
  "settings",
- "strum 0.27.1",
+ "strum 0.27.2",
  "thiserror 2.0.12",
  "util",
  "uuid",
@@ -17266,7 +17266,7 @@ dependencies = [
  "serde_json",
  "serde_json_lenient",
  "simplelog",
- "strum 0.27.1",
+ "strum 0.27.2",
  "theme",
  "vscode_theme",
  "workspace-hack",
@@ -18330,7 +18330,7 @@ dependencies = [
  "settings",
  "smallvec",
  "story",
- "strum 0.27.1",
+ "strum 0.27.2",
  "theme",
  "ui_macros",
  "util",
@@ -18714,7 +18714,7 @@ dependencies = [
  "anyhow",
  "schemars 1.0.1",
  "serde",
- "strum 0.27.1",
+ "strum 0.27.2",
  "workspace-hack",
 ]
 
@@ -20655,7 +20655,7 @@ dependencies = [
  "settings",
  "smallvec",
  "sqlez",
- "strum 0.27.1",
+ "strum 0.27.2",
  "task",
  "telemetry",
  "tempfile",
@@ -20980,7 +20980,7 @@ dependencies = [
  "anyhow",
  "schemars 1.0.1",
  "serde",
- "strum 0.27.1",
+ "strum 0.27.2",
  "workspace-hack",
 ]
 
@@ -21751,7 +21751,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
- "strum 0.27.1",
+ "strum 0.27.2",
  "telemetry",
  "telemetry_events",
  "theme",
