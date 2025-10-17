@@ -605,7 +605,9 @@ impl SettingsStore {
     }
 
     pub fn get_vscode_edits(&self, old_text: String, vscode: &VsCodeSettings) -> String {
-        self.new_text_for_update(old_text, |settings_content| vscode.import(settings_content))
+        self.new_text_for_update(old_text, |content| {
+            content.merge_from(&vscode.settings_content())
+        })
     }
 
     /// Updates the value of a setting in a JSON file, returning a list

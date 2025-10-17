@@ -10,7 +10,7 @@ use std::{
     sync::Arc,
 };
 
-use crate::*;
+use crate::{merge_from::MergeFrom, *};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum VsCodeSettingsSource {
@@ -113,6 +113,12 @@ impl VsCodeSettings {
         self.read_value(setting).and_then(|v| v.as_u64())
     }
 
+    pub fn read_usize(&self, setting: &str) -> Option<usize> {
+        self.read_value(setting)
+            .and_then(|v| v.as_u64())
+            .and_then(|v| v.try_into().ok())
+    }
+
     pub fn read_u32(&self, setting: &str) -> Option<u32> {
         self.read_value(setting)
             .and_then(|v| v.as_u64())
@@ -176,14 +182,9 @@ impl VsCodeSettings {
         self.content.get(key).and_then(Value::as_str).and_then(f)
     }
 
-    pub fn font_family_setting(
-        &self,
-        key: &str,
-        font_family: &mut Option<FontFamilyName>,
-        font_fallbacks: &mut Option<Vec<FontFamilyName>>,
-    ) {
+    pub fn read_fonts(&self, key: &str) -> (Option<FontFamilyName>, Option<Vec<FontFamilyName>>) {
         let Some(css_name) = self.content.get(key).and_then(Value::as_str) else {
-            return;
+            return (None, None);
         };
 
         let mut name_buffer = String::new();
@@ -216,13 +217,10 @@ impl VsCodeSettings {
         }
 
         add_font(&mut name_buffer);
-
-        let mut iter = fonts.into_iter();
-        *font_family = iter.next();
-        let fallbacks: Vec<_> = iter.collect();
-        if !fallbacks.is_empty() {
-            *font_fallbacks = Some(fallbacks);
+        if fonts.is_empty() {
+            return (None, None);
         }
+        (Some(fonts.remove(0)), skip_default(fonts))
     }
 
     pub fn settings_content(&self) -> SettingsContent {
@@ -253,7 +251,7 @@ impl VsCodeSettings {
             node: self.node_binary_settings(),
             notification_panel: None,
             outline_panel: self.outline_panel_settings_content(),
-            preview_tabs: None,
+            preview_tabs: self.preview_tabs_settings_content(),
             project: self.project_settings_content(),
             project_panel: self.project_panel_settings_content(),
             proxy: self.read_string("http.proxy"),
@@ -261,16 +259,16 @@ impl VsCodeSettings {
             repl: None,
             server_url: None,
             session: None,
-            status_bar: None,
-            tab_bar: None,
+            status_bar: self.status_bar_settings_content(),
+            tab_bar: self.tab_bar_settings_content(),
             tabs: self.item_settings_content(),
             telemetry: self.telemetry_settings_content(),
-            terminal: None,
-            theme: Box::new(ThemeSettingsContent::default()),
+            terminal: self.terminal_settings_content(),
+            theme: Box::new(self.theme_settings_content()),
             title_bar: None,
             vim: None,
             vim_mode: None,
-            workspace: WorkspaceSettingsContent::default(),
+            workspace: self.workspace_settings_content(),
         }
     }
 
@@ -637,8 +635,64 @@ impl VsCodeSettings {
 
     fn item_settings_content(&self) -> Option<ItemSettingsContent> {
         skip_default(ItemSettingsContent {
-            git_status: self.read_bool("workbench.editor.decorations.colors"),
-            ..Default::default()
+            git_status: self.read_bool("git.decorations.enabled"),
+            close_position: self.read_enum("workbench.editor.tabActionLocation", |s| match s {
+                "right" => Some(ClosePosition::Right),
+                "left" => Some(ClosePosition::Left),
+                _ => None,
+            }),
+            file_icons: self.read_bool("workbench.editor.showIcons"),
+            activate_on_close: self
+                .read_bool("workbench.editor.focusRecentEditorAfterClose")
+                .map(|b| {
+                    if b {
+                        ActivateOnClose::History
+                    } else {
+                        ActivateOnClose::LeftNeighbour
+                    }
+                }),
+            show_diagnostics: None,
+            show_close_button: self
+                .read_bool("workbench.editor.tabActionCloseVisibility")
+                .map(|b| {
+                    if b {
+                        ShowCloseButton::Always
+                    } else {
+                        ShowCloseButton::Hidden
+                    }
+                }),
+        })
+    }
+
+    fn preview_tabs_settings_content(&self) -> Option<PreviewTabsSettingsContent> {
+        skip_default(PreviewTabsSettingsContent {
+            enabled: self.read_bool("workbench.editor.enablePreview"),
+            enable_preview_from_file_finder: self
+                .read_bool("workbench.editor.enablePreviewFromQuickOpen"),
+            enable_preview_from_code_navigation: self
+                .read_bool("workbench.editor.enablePreviewFromCodeNavigation"),
+        })
+    }
+
+    fn tab_bar_settings_content(&self) -> Option<TabBarSettingsContent> {
+        skip_default(TabBarSettingsContent {
+            show: self.read_enum("workbench.editor.showTabs", |s| match s {
+                "multiple" => Some(true),
+                "single" | "none" => Some(false),
+                _ => None,
+            }),
+            show_nav_history_buttons: None,
+            show_tab_bar_buttons: self
+                .read_str("workbench.editor.editorActionsLocation")
+                .and_then(|str| if str == "hidden" { Some(false) } else { None }),
+        })
+    }
+
+    fn status_bar_settings_content(&self) -> Option<StatusBarSettingsContent> {
+        skip_default(StatusBarSettingsContent {
+            show: self.read_bool("workbench.statusBar.visible"),
+            active_language_button: None,
+            cursor_position_button: None,
         })
     }
 
@@ -694,47 +748,49 @@ impl VsCodeSettings {
         })
     }
 
-    pub fn import(&self, current: &mut SettingsContent) {
-        // terminal settings
-        let mut default = TerminalSettingsContent::default();
-        let current_terminal = current.terminal.as_mut().unwrap_or(&mut default);
-        let name = |s| format!("terminal.integrated.{s}");
-
-        self.f32_setting(&name("fontSize"), &mut current_terminal.font_size);
-        self.font_family_setting(
-            &name("fontFamily"),
-            &mut current_terminal.font_family,
-            &mut current_terminal.font_fallbacks,
-        );
-        self.bool_setting(
-            &name("copyOnSelection"),
-            &mut current_terminal.copy_on_select,
-        );
-        self.bool_setting("macOptionIsMeta", &mut current_terminal.option_as_meta);
-        self.usize_setting("scrollback", &mut current_terminal.max_scroll_history_lines);
-        match self.read_bool(&name("cursorBlinking")) {
-            Some(true) => current_terminal.blinking = Some(TerminalBlink::On),
-            Some(false) => current_terminal.blinking = Some(TerminalBlink::Off),
-            None => {}
-        }
-        self.enum_setting(
-            &name("cursorStyle"),
-            &mut current_terminal.cursor_shape,
-            |s| match s {
+    fn terminal_settings_content(&self) -> Option<TerminalSettingsContent> {
+        let (font_family, font_fallbacks) = self.read_fonts("terminal.integrated.fontFamily");
+        skip_default(TerminalSettingsContent {
+            alternate_scroll: None,
+            blinking: self
+                .read_bool("terminal.integrated.cursorBlinking")
+                .map(|b| {
+                    if b {
+                        TerminalBlink::On
+                    } else {
+                        TerminalBlink::Off
+                    }
+                }),
+            button: None,
+            copy_on_select: self.read_bool("terminal.integrated.copyOnSelection"),
+            cursor_shape: self.read_enum("terminal.integrated.cursorStyle", |s| match s {
                 "block" => Some(CursorShapeContent::Block),
                 "line" => Some(CursorShapeContent::Bar),
                 "underline" => Some(CursorShapeContent::Underline),
                 _ => None,
-            },
-        );
-        // they also have "none" and "outline" as options but just for the "Inactive" variant
-        if let Some(height) = self
-            .read_value(&name("lineHeight"))
-            .and_then(|v| v.as_f64())
-        {
-            current_terminal.line_height = Some(TerminalLineHeight::Custom(height as f32))
-        }
+            }),
+            default_height: None,
+            default_width: None,
+            dock: None,
+            font_fallbacks,
+            font_family,
+            font_features: None,
+            font_size: self.read_f32("terminal.integrated.fontSize"),
+            font_weight: None,
+            keep_selection_on_copy: None,
+            line_height: self
+                .read_f32("terminal.integrated.lineHeight")
+                .map(|lh| TerminalLineHeight::Custom(lh)),
+            max_scroll_history_lines: self.read_usize("terminal.integrated.scrollback"),
+            minimum_contrast: None,
+            option_as_meta: self.read_bool("terminal.integrated.macOptionIsMeta"),
+            project: self.project_terminal_settings_content(),
+            scrollbar: None,
+            toolbar: None,
+        })
+    }
 
+    fn project_terminal_settings_content(&self) -> ProjectTerminalSettingsContent {
         #[cfg(target_os = "windows")]
         let platform = "windows";
         #[cfg(target_os = "linux")]
@@ -743,217 +799,139 @@ impl VsCodeSettings {
         let platform = "osx";
         #[cfg(target_os = "freebsd")]
         let platform = "freebsd";
-
-        // TODO: handle arguments
-        let shell_name = format!("{platform}Exec");
-        if let Some(s) = self.read_str(&name(&shell_name)) {
-            current_terminal.project.shell = Some(Shell::Program(s.to_owned()))
-        }
-
-        if let Some(env) = self
-            .read_value(&name(&format!("env.{platform}")))
+        let env = self
+            .read_value(&format!("terminal.integrated.env.{platform}"))
             .and_then(|v| v.as_object())
-        {
-            for (k, v) in env {
-                if v.is_null()
-                    && let Some(zed_env) = current_terminal.project.env.as_mut()
-                {
-                    zed_env.remove(k);
-                }
-                let Some(v) = v.as_str() else { continue };
-                if let Some(zed_env) = current_terminal.project.env.as_mut() {
-                    zed_env.insert(k.clone(), v.to_owned());
-                } else {
-                    current_terminal.project.env =
-                        Some([(k.clone(), v.to_owned())].into_iter().collect())
-                }
-            }
+            .map(|v| v.iter().map(|(k, v)| (k.clone(), v.to_string())).collect());
+
+        ProjectTerminalSettingsContent {
+            // TODO: handle arguments
+            shell: self
+                .read_string(&format!("terminal.integrated.{platform}Exec"))
+                .map(|s| Shell::Program(s)),
+            working_directory: None,
+            env,
+            detect_venv: None,
         }
-        if current.terminal.is_none() && default != TerminalSettingsContent::default() {
-            current.terminal = Some(default)
+    }
+
+    fn theme_settings_content(&self) -> ThemeSettingsContent {
+        let (buffer_font_family, buffer_font_fallbacks) = self.read_fonts("editor.fontFamily");
+        ThemeSettingsContent {
+            ui_font_size: None,
+            ui_font_family: None,
+            ui_font_fallbacks: None,
+            ui_font_features: None,
+            ui_font_weight: None,
+            buffer_font_family,
+            buffer_font_fallbacks,
+            buffer_font_size: self.read_f32("editor.fontSize").map(|size| size.into()),
+            buffer_font_weight: self.read_f32("editor.fontWeight").map(|w| w.into()),
+            buffer_line_height: None,
+            buffer_font_features: None,
+            agent_ui_font_size: None,
+            agent_buffer_font_size: None,
+            theme: None,
+            icon_theme: None,
+            ui_density: None,
+            unnecessary_code_fade: None,
+            experimental_theme_overrides: None,
+            theme_overrides: Default::default(),
         }
+    }
 
-        // theme settings
-
-        self.from_f32_setting("editor.fontWeight", &mut current.theme.buffer_font_weight);
-        self.from_f32_setting("editor.fontSize", &mut current.theme.buffer_font_size);
-        self.font_family_setting(
-            "editor.fontFamily",
-            &mut current.theme.buffer_font_family,
-            &mut current.theme.buffer_font_fallbacks,
-        );
-        // TODO: possibly map editor.fontLigatures to buffer_font_features?
-
-        // workspace settings
-
-        if self
-            .read_bool("accessibility.dimUnfocused.enabled")
-            .unwrap_or_default()
-            && let Some(opacity) = self
-                .read_value("accessibility.dimUnfocused.opacity")
-                .and_then(|v| v.as_f64())
-        {
-            current
-                .workspace
-                .active_pane_modifiers
-                .get_or_insert_default()
-                .inactive_opacity = Some(opacity as f32);
-        }
-
-        self.enum_setting(
-            "window.confirmBeforeClose",
-            &mut current.workspace.confirm_quit,
-            |s| match s {
+    fn workspace_settings_content(&self) -> WorkspaceSettingsContent {
+        WorkspaceSettingsContent {
+            active_pane_modifiers: self.active_pane_modifiers(),
+            autosave: self.read_enum("files.autoSave", |s| match s {
+                "off" => Some(AutosaveSetting::Off),
+                "afterDelay" => Some(AutosaveSetting::AfterDelay {
+                    milliseconds: self
+                        .read_value("files.autoSaveDelay")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(1000),
+                }),
+                "onFocusChange" => Some(AutosaveSetting::OnFocusChange),
+                "onWindowChange" => Some(AutosaveSetting::OnWindowChange),
+                _ => None,
+            }),
+            bottom_dock_layout: None,
+            centered_layout: None,
+            close_on_file_delete: None,
+            command_aliases: Default::default(),
+            confirm_quit: self.read_enum("window.confirmBeforeClose", |s| match s {
                 "always" | "keyboardOnly" => Some(true),
                 "never" => Some(false),
                 _ => None,
-            },
-        );
-
-        self.bool_setting(
-            "workbench.editor.restoreViewState",
-            &mut current.workspace.restore_on_file_reopen,
-        );
-
-        if let Some(b) = self.read_bool("window.closeWhenEmpty") {
-            current.workspace.when_closing_with_no_tabs = Some(if b {
-                CloseWindowWhenNoItems::CloseWindow
-            } else {
-                CloseWindowWhenNoItems::KeepWindowOpen
-            });
-        }
-
-        if let Some(b) = self.read_bool("files.simpleDialog.enable") {
-            current.workspace.use_system_path_prompts = Some(!b);
-        }
-
-        if let Some(v) = self.read_enum("files.autoSave", |s| match s {
-            "off" => Some(AutosaveSetting::Off),
-            "afterDelay" => Some(AutosaveSetting::AfterDelay {
-                milliseconds: self
-                    .read_value("files.autoSaveDelay")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(1000),
             }),
-            "onFocusChange" => Some(AutosaveSetting::OnFocusChange),
-            "onWindowChange" => Some(AutosaveSetting::OnWindowChange),
-            _ => None,
-        }) {
-            current.workspace.autosave = Some(v);
-        }
-
-        // workbench.editor.limit contains "enabled", "value", and "perEditorGroup"
-        // our semantics match if those are set to true, some N, and true respectively.
-        // we'll ignore "perEditorGroup" for now since we only support a global max
-        if let Some(n) = self
-            .read_value("workbench.editor.limit.value")
-            .and_then(|v| v.as_u64())
-            .and_then(|n| NonZeroUsize::new(n as usize))
-            && self
-                .read_bool("workbench.editor.limit.enabled")
-                .unwrap_or_default()
-        {
-            current.workspace.max_tabs = Some(n)
-        }
-
-        if let Some(b) = self.read_bool("window.nativeTabs") {
-            current.workspace.use_system_window_tabs = Some(b);
-        }
-
-        // some combination of "window.restoreWindows" and "workbench.startupEditor" might
-        // map to our "restore_on_startup"
-
-        // there doesn't seem to be a way to read whether the bottom dock's "justified"
-        // setting is enabled in vscode. that'd be our equivalent to "bottom_dock_layout"
-
-        if let Some(b) = self.read_enum("workbench.editor.showTabs", |s| match s {
-            "multiple" => Some(true),
-            "single" | "none" => Some(false),
-            _ => None,
-        }) {
-            current.tab_bar.get_or_insert_default().show = Some(b);
-        }
-        if Some("hidden") == self.read_str("workbench.editor.editorActionsLocation") {
-            current.tab_bar.get_or_insert_default().show_tab_bar_buttons = Some(false)
-        }
-
-        if let Some(show) = self.read_bool("workbench.statusBar.visible") {
-            current.status_bar.get_or_insert_default().show = Some(show);
-        }
-
-        if let Some(b) = self.read_bool("workbench.editor.tabActionCloseVisibility") {
-            current.tabs.get_or_insert_default().show_close_button = Some(if b {
-                ShowCloseButton::Always
+            drop_target_size: None,
+            // workbench.editor.limit contains "enabled", "value", and "perEditorGroup"
+            // our semantics match if those are set to true, some N, and true respectively.
+            // we'll ignore "perEditorGroup" for now since we only support a global max
+            max_tabs: if self.read_bool("workbench.editor.limit.enabled") == Some(true) {
+                self.read_usize("workbench.editor.limit.value")
+                    .and_then(|n| NonZeroUsize::new(n as usize))
             } else {
-                ShowCloseButton::Hidden
+                None
+            },
+            on_last_window_closed: None,
+            pane_split_direction_horizontal: None,
+            pane_split_direction_vertical: None,
+            resize_all_panels_in_dock: None,
+            restore_on_file_reopen: self.read_bool("workbench.editor.restoreViewState"),
+            restore_on_startup: None,
+            show_call_status_icon: None,
+            use_system_path_prompts: self.read_bool("files.simpleDialog.enable"),
+            use_system_prompts: None,
+            use_system_window_tabs: self.read_bool("window.nativeTabs"),
+            when_closing_with_no_tabs: self.read_bool("window.closeWhenEmpty").map(|b| {
+                if b {
+                    CloseWindowWhenNoItems::CloseWindow
+                } else {
+                    CloseWindowWhenNoItems::KeepWindowOpen
+                }
+            }),
+            zoomed_padding: None,
+        }
+    }
+
+    fn active_pane_modifiers(&self) -> Option<ActivePaneModifiers> {
+        if self.read_bool("accessibility.dimUnfocused.enabled") == Some(true)
+            && let Some(opacity) = self.read_f32("accessibility.dimUnfocused.opacity")
+        {
+            Some(ActivePaneModifiers {
+                border_size: None,
+                inactive_opacity: Some(opacity),
             })
+        } else {
+            None
         }
-        if let Some(s) = self.read_enum("workbench.editor.tabActionLocation", |s| match s {
-            "right" => Some(ClosePosition::Right),
-            "left" => Some(ClosePosition::Left),
-            _ => None,
-        }) {
-            current.tabs.get_or_insert_default().close_position = Some(s)
-        }
-        if let Some(b) = self.read_bool("workbench.editor.focusRecentEditorAfterClose") {
-            current.tabs.get_or_insert_default().activate_on_close = Some(if b {
-                ActivateOnClose::History
-            } else {
-                ActivateOnClose::LeftNeighbour
-            })
-        }
+    }
 
-        if let Some(b) = self.read_bool("workbench.editor.showIcons") {
-            current.tabs.get_or_insert_default().file_icons = Some(b);
-        };
-        if let Some(b) = self.read_bool("git.decorations.enabled") {
-            current.tabs.get_or_insert_default().git_status = Some(b);
-        }
-
-        if let Some(enabled) = self.read_bool("workbench.editor.enablePreview") {
-            current.preview_tabs.get_or_insert_default().enabled = Some(enabled);
-        }
-        if let Some(enable_preview_from_code_navigation) =
-            self.read_bool("workbench.editor.enablePreviewFromCodeNavigation")
-        {
-            current
-                .preview_tabs
-                .get_or_insert_default()
-                .enable_preview_from_code_navigation = Some(enable_preview_from_code_navigation)
-        }
-        if let Some(enable_preview_from_file_finder) =
-            self.read_bool("workbench.editor.enablePreviewFromQuickOpen")
-        {
-            current
-                .preview_tabs
-                .get_or_insert_default()
-                .enable_preview_from_file_finder = Some(enable_preview_from_file_finder)
-        }
-
-        // worktree settings
-
-        if let Some(inclusions) = self
-            .read_value("files.watcherInclude")
-            .and_then(|v| v.as_array())
-            .and_then(|v| v.iter().map(|n| n.as_str().map(str::to_owned)).collect())
-        {
-            if let Some(old) = current.project.worktree.file_scan_inclusions.as_mut() {
-                old.extend(inclusions)
-            } else {
-                current.project.worktree.file_scan_inclusions = Some(inclusions)
-            }
-        }
-        if let Some(exclusions) = self
-            .read_value("files.watcherExclude")
-            .and_then(|v| v.as_array())
-            .and_then(|v| v.iter().map(|n| n.as_str().map(str::to_owned)).collect())
-        {
-            if let Some(old) = current.project.worktree.file_scan_exclusions.as_mut() {
-                old.extend(exclusions)
-            } else {
-                current.project.worktree.file_scan_exclusions = Some(exclusions)
-            }
-        }
+    fn worktree_settings_content(&self) -> Option<WorktreeSettingsContent> {
+        skip_default(WorktreeSettingsContent {
+            project_name: None,
+            file_scan_exclusions: self
+                .read_value("files.watcherExclude")
+                .and_then(|v| v.as_array())
+                .map(|v| {
+                    v.iter()
+                        .filter_map(|n| n.as_str().map(str::to_owned))
+                        .collect::<Vec<_>>()
+                })
+                .filter(|r| !r.is_empty()),
+            ,
+            file_scan_inclusions: self
+                .read_value("files.watcherInclude")
+                .and_then(|v| v.as_array())
+                .map(|v| {
+                    v.iter()
+                        .filter_map(|n| n.as_str().map(str::to_owned))
+                        .collect::<Vec<_>>()
+                })
+                .filter(|r| !r.is_empty()),
+            private_files: None,
+        })
     }
 }
 
