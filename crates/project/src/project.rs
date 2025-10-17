@@ -985,12 +985,6 @@ impl settings::Settings for DisableAiSettings {
             disable_ai: content.disable_ai.unwrap().0,
         }
     }
-
-    fn import_from_vscode(
-        _vscode: &settings::VsCodeSettings,
-        _current: &mut settings::SettingsContent,
-    ) {
-    }
 }
 
 impl Project {
