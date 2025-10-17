@@ -1718,6 +1718,7 @@ impl Thread {
 
                 this.update(cx, |this, cx| {
                     this.summary = Some(summary.clone());
+                    this.pending_summary_generation = None;
                     cx.notify()
                 })
                 .ok()?;

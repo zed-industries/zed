@@ -623,11 +623,11 @@ impl NativeAgent {
         }
     }
 
-    pub fn open_thread(
+    pub fn load_thread(
         &mut self,
         id: acp::SessionId,
         cx: &mut Context<Self>,
-    ) -> Task<Result<Entity<AcpThread>>> {
+    ) -> Task<Result<Entity<Thread>>> {
         let database_future = ThreadsDatabase::connect(cx);
         cx.spawn(async move |this, cx| {
             let database = database_future.await.map_err(|err| anyhow!(err))?;
@@ -636,9 +636,13 @@ impl NativeAgent {
                 .await?
                 .with_context(|| format!("no thread found with ID: {id:?}"))?;
 
-            let thread = this.update(cx, |this, cx| {
+            this.update(cx, |this, cx| {
+                let summarization_model = LanguageModelRegistry::read_global(cx)
+                    .thread_summary_model()
+                    .map(|c| c.model);
+
                 cx.new(|cx| {
-                    Thread::from_db(
+                    let mut thread = Thread::from_db(
                         id.clone(),
                         db_thread,
                         this.project.clone(),
@@ -646,9 +650,22 @@ impl NativeAgent {
                         this.context_server_registry.clone(),
                         this.templates.clone(),
                         cx,
-                    )
+                    );
+                    thread.set_summarization_model(summarization_model, cx);
+                    thread
                 })
-            })?;
+            })
+        })
+    }
+
+    pub fn open_thread(
+        &mut self,
+        id: acp::SessionId,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Entity<AcpThread>>> {
+        let task = self.load_thread(id, cx);
+        cx.spawn(async move |this, cx| {
+            let thread = task.await?;
             let acp_thread =
                 this.update(cx, |this, cx| this.register_session(thread.clone(), cx))?;
             let events = thread.update(cx, |thread, cx| thread.replay(cx))?;
@@ -717,6 +734,10 @@ impl NativeAgentConnection {
             .sessions
             .get(session_id)
             .map(|session| session.thread.clone())
+    }
+
+    pub fn load_thread(&self, id: acp::SessionId, cx: &mut App) -> Task<Result<Entity<Thread>>> {
+        self.0.update(cx, |this, cx| this.load_thread(id, cx))
     }
 
     fn run_turn(
