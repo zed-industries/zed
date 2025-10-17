@@ -659,13 +659,7 @@ impl VsCodeSettings {
             scrollbar: None,
             show_diagnostics: self
                 .read_bool("problems.decorations.enabled")
-                .and_then(|b| {
-                    if b == false {
-                        Some(ShowDiagnostics::Off)
-                    } else {
-                        None
-                    }
-                }),
+                .and_then(|b| if b { Some(ShowDiagnostics::Off) } else { None }),
             starts_open: None,
             sticky_scroll: None,
         };
@@ -773,7 +767,7 @@ impl VsCodeSettings {
             ui_font_weight: None,
             buffer_font_family,
             buffer_font_fallbacks,
-            buffer_font_size: self.read_f32("editor.fontSize").map(|size| size.into()),
+            buffer_font_size: self.read_f32("editor.fontSize"),
             buffer_font_weight: self.read_f32("editor.fontWeight").map(|w| w.into()),
             buffer_line_height: None,
             buffer_font_features: None,
@@ -818,7 +812,7 @@ impl VsCodeSettings {
             // we'll ignore "perEditorGroup" for now since we only support a global max
             max_tabs: if self.read_bool("workbench.editor.limit.enabled") == Some(true) {
                 self.read_usize("workbench.editor.limit.value")
-                    .and_then(|n| NonZeroUsize::new(n as usize))
+                    .and_then(|n| NonZeroUsize::new(n))
             } else {
                 None
             },
