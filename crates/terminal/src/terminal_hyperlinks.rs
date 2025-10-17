@@ -86,6 +86,11 @@ impl RegexSearches {
          -> Option<(String, Match)> {
             let path_start = advance_point_by_str(start, &input[..path.start]);
             let path_end = advance_point_by_str(path_start, &input[path.clone()]);
+            let path_match = path_start..=path_end.sub(term, Boundary::Grid, 1);
+            if !path_match.contains(&point) {
+                return None;
+            }
+
             Some((
                 {
                     let mut path = input[path].to_string();
@@ -97,7 +102,7 @@ impl RegexSearches {
                     }
                     path
                 },
-                path_start..=path_end.sub(term, Boundary::Grid, 1),
+                path_match,
             ))
         };
 
@@ -601,10 +606,10 @@ mod tests {
             // Python
             test_path!("‹«awe👉some.py»›");
 
-            test_path!("    F👉ile \"‹«/awesome.py»›\", line «42»: Wat?");
+            test_path!("    ‹«F👉ile»› \"/awesome.py\", line 42: Wat?");
             test_path!("    File \"‹«/awe👉some.py»›\", line «42»");
-            test_path!("    File \"‹«/awesome.py»›👉\", line «42»: Wat?");
-            test_path!("    File \"‹«/awesome.py»›\", line «4👉2»");
+            test_path!("    File \"/awesome.py👉\", line 42: Wat?");
+            test_path!("    File \"/awesome.py\", line ‹«4👉2»›");
         }
 
         #[test]
@@ -1453,12 +1458,16 @@ mod tests {
             Some((hyperlink_word, true, hyperlink_match)) => {
                 check_hyperlink_match.check_iri_and_match(hyperlink_word, &hyperlink_match);
             }
-            _ => {
-                assert!(
-                    false,
-                    "No hyperlink found\n     at {source_location}:\n{}",
-                    check_hyperlink_match.format_renderable_content()
-                )
+            None => {
+                if expected_hyperlink.hyperlink_match.start()
+                    != expected_hyperlink.hyperlink_match.end()
+                {
+                    assert!(
+                        false,
+                        "No hyperlink found\n     at {source_location}:\n{}",
+                        check_hyperlink_match.format_renderable_content()
+                    )
+                }
             }
         }
     }
