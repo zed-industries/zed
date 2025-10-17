@@ -67,7 +67,8 @@ struct MacTextSystemState {
     font_ids_by_postscript_name: HashMap<String, FontId>,
     font_ids_by_font_key: HashMap<FontKey, SmallVec<[FontId; 4]>>,
     postscript_names_by_font_id: HashMap<FontId, String>,
-    zwnjs_scratch_space: Vec<(usize, usize)>,
+    /// UTF-16 indices of ZWNJS
+    zwnjs_scratch_space: Vec<usize>,
 }
 
 impl MacTextSystem {
@@ -449,7 +450,6 @@ impl MacTextSystemState {
                 // to prevent core text from forming ligatures between them
                 let needs_zwnj = last_font_run.replace(run.font_id) == Some(run.font_id);
 
-                let n_zwnjs = self.zwnjs_scratch_space.len(); // from previous loop
                 let utf16_start = string.char_len(); // insert at end of string
                 ix_converter.advance_to_utf8_ix(ix_converter.utf8_ix + run.len);
 
@@ -457,7 +457,7 @@ impl MacTextSystemState {
                 string.replace_str(&CFString::new(text), CFRange::init(utf16_start, 0));
                 if needs_zwnj {
                     let zwnjs_pos = string.char_len();
-                    self.zwnjs_scratch_space.push((n_zwnjs, zwnjs_pos as usize));
+                    self.zwnjs_scratch_space.push(zwnjs_pos as usize);
                     string.replace_str(
                         &CFString::from_static_string(ZWNJ_STR),
                         CFRange::init(zwnjs_pos, 0),
@@ -516,7 +516,7 @@ impl MacTextSystemState {
                 let mut glyph_utf16_ix = usize::try_from(glyph_utf16_ix).unwrap();
                 let r = self
                     .zwnjs_scratch_space
-                    .binary_search_by(|&(_, it)| it.cmp(&glyph_utf16_ix));
+                    .binary_search_by(|&it| it.cmp(&glyph_utf16_ix));
                 match r {
                     // this glyph is a ZWNJ, skip it
                     Ok(_) => continue,

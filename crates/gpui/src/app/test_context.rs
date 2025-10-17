@@ -888,7 +888,9 @@ impl VisualTestContext {
         // safety: on_quit will be called after the test has finished.
         // the executor will ensure that all tasks related to the test have stopped.
         // so there is no way for cx to be accessed after on_quit is called.
-        let cx = Box::leak(unsafe { Box::from_raw(ptr) });
+        // todo: This is unsound under stacked borrows (also tree borrows probably?)
+        // the mutable reference invalidates `ptr` which is later used in the closure
+        let cx = unsafe { &mut *ptr };
         cx.on_quit(move || unsafe {
             drop(Box::from_raw(ptr));
         });

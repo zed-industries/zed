@@ -678,7 +678,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
- "strum 0.27.1",
+ "strum 0.27.2",
  "thiserror 2.0.12",
  "workspace-hack",
 ]
@@ -1166,7 +1166,7 @@ version = "2.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "09f7e37c0ed80b2a977691c47dae8625cfb21e205827106c64f7c588766b2e50"
 dependencies = [
- "async-lock",
+ "async-lock 3.4.1",
  "blocking",
  "futures-lite 2.6.0",
 ]
@@ -1180,7 +1180,7 @@ dependencies = [
  "async-channel 2.3.1",
  "async-executor",
  "async-io",
- "async-lock",
+ "async-lock 3.4.1",
  "blocking",
  "futures-lite 2.6.0",
  "once_cell",
@@ -1192,7 +1192,7 @@ version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "19634d6336019ef220f09fd31168ce5c184b295cbf80345437cc36094ef223ca"
 dependencies = [
- "async-lock",
+ "async-lock 3.4.1",
  "cfg-if",
  "concurrent-queue",
  "futures-io",
@@ -1202,6 +1202,15 @@ dependencies = [
  "rustix 1.0.7",
  "slab",
  "windows-sys 0.60.2",
+]
+
+[[package]]
+name = "async-lock"
+version = "2.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "287272293e9d8c41773cec55e365490fe034813a2f172f502d6ddcf75b2f582b"
+dependencies = [
+ "event-listener 2.5.3",
 ]
 
 [[package]]
@@ -1243,7 +1252,7 @@ checksum = "63255f1dc2381611000436537bbedfe83183faa303a5a0edaf191edef06526bb"
 dependencies = [
  "async-channel 2.3.1",
  "async-io",
- "async-lock",
+ "async-lock 3.4.1",
  "async-signal",
  "async-task",
  "blocking",
@@ -1272,7 +1281,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "637e00349800c0bdf8bfc21ebbc0b6524abea702b0da4168ac00d070d0c0b9f3"
 dependencies = [
  "async-io",
- "async-lock",
+ "async-lock 3.4.1",
  "atomic-waker",
  "cfg-if",
  "futures-core",
@@ -1293,7 +1302,7 @@ dependencies = [
  "async-channel 1.9.0",
  "async-global-executor",
  "async-io",
- "async-lock",
+ "async-lock 3.4.1",
  "async-process",
  "crossbeam-utils",
  "futures-channel",
@@ -2189,7 +2198,7 @@ dependencies = [
  "schemars 1.0.1",
  "serde",
  "serde_json",
- "strum 0.27.1",
+ "strum 0.27.2",
  "thiserror 2.0.12",
  "workspace-hack",
 ]
@@ -3379,7 +3388,7 @@ dependencies = [
  "pretty_assertions",
  "serde",
  "serde_json",
- "strum 0.27.1",
+ "strum 0.27.2",
  "uuid",
  "workspace-hack",
 ]
@@ -3394,7 +3403,7 @@ dependencies = [
  "ordered-float 2.10.1",
  "rustc-hash 2.1.1",
  "serde",
- "strum 0.27.1",
+ "strum 0.27.2",
  "workspace-hack",
 ]
 
@@ -3589,7 +3598,7 @@ dependencies = [
  "sha2",
  "smol",
  "sqlx",
- "strum 0.27.1",
+ "strum 0.27.2",
  "subtle",
  "supermaven_api",
  "task",
@@ -3746,6 +3755,7 @@ dependencies = [
  "collections",
  "derive_more",
  "gpui",
+ "workspace",
  "workspace-hack",
 ]
 
@@ -3773,7 +3783,7 @@ dependencies = [
  "gpui",
  "inventory",
  "parking_lot",
- "strum 0.27.1",
+ "strum 0.27.2",
  "theme",
  "workspace-hack",
 ]
@@ -5452,7 +5462,7 @@ dependencies = [
  "serde_json",
  "settings",
  "slotmap",
- "strum 0.27.1",
+ "strum 0.27.2",
  "text",
  "tree-sitter",
  "tree-sitter-c",
@@ -6064,7 +6074,7 @@ dependencies = [
  "serde",
  "settings",
  "smallvec",
- "strum 0.27.1",
+ "strum 0.27.2",
  "telemetry",
  "theme",
  "ui",
@@ -6527,6 +6537,15 @@ checksum = "8640e34b88f7652208ce9e88b1a37a2ae95227d84abec377ccd3c5cfeb141ed4"
 dependencies = [
  "rustix 1.0.7",
  "windows-sys 0.59.0",
+]
+
+[[package]]
+name = "fs_benchmarks"
+version = "0.1.0"
+dependencies = [
+ "fs",
+ "gpui",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -7176,7 +7195,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
- "strum 0.27.1",
+ "strum 0.27.2",
  "telemetry",
  "theme",
  "time",
@@ -7282,7 +7301,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
- "strum 0.27.1",
+ "strum 0.27.2",
  "workspace-hack",
 ]
 
@@ -7371,6 +7390,7 @@ dependencies = [
  "parking",
  "parking_lot",
  "pathfinder_geometry",
+ "pin-project",
  "postage",
  "pretty_assertions",
  "profiling",
@@ -7388,7 +7408,7 @@ dependencies = [
  "smallvec",
  "smol",
  "stacksafe",
- "strum 0.27.1",
+ "strum 0.27.2",
  "sum_tree",
  "taffy",
  "thiserror 2.0.12",
@@ -8039,7 +8059,7 @@ name = "icons"
 version = "0.1.0"
 dependencies = [
  "serde",
- "strum 0.27.1",
+ "strum 0.27.2",
  "workspace-hack",
 ]
 
@@ -9021,7 +9041,7 @@ dependencies = [
  "serde_json",
  "settings",
  "smol",
- "strum 0.27.1",
+ "strum 0.27.2",
  "thiserror 2.0.12",
  "tiktoken-rs",
  "tokio",
@@ -10172,7 +10192,7 @@ dependencies = [
  "schemars 1.0.1",
  "serde",
  "serde_json",
- "strum 0.27.1",
+ "strum 0.27.2",
  "workspace-hack",
 ]
 
@@ -11035,7 +11055,7 @@ dependencies = [
  "ashpd 0.12.0",
  "async-fs",
  "async-io",
- "async-lock",
+ "async-lock 3.4.1",
  "blocking",
  "cbc",
  "cipher",
@@ -11089,7 +11109,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
- "strum 0.27.1",
+ "strum 0.27.2",
  "workspace-hack",
 ]
 
@@ -11104,7 +11124,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
- "strum 0.27.1",
+ "strum 0.27.2",
  "thiserror 2.0.12",
  "workspace-hack",
 ]
@@ -14398,7 +14418,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
- "strum 0.27.1",
+ "strum 0.27.2",
  "tracing",
  "util",
  "workspace-hack",
@@ -15407,7 +15427,7 @@ dependencies = [
  "serde_with",
  "settings_macros",
  "smallvec",
- "strum 0.27.1",
+ "strum 0.27.2",
  "tree-sitter",
  "tree-sitter-json",
  "unindent",
@@ -15474,7 +15494,7 @@ dependencies = [
  "serde",
  "session",
  "settings",
- "strum 0.27.1",
+ "strum 0.27.2",
  "theme",
  "title_bar",
  "ui",
@@ -15736,7 +15756,7 @@ dependencies = [
  "async-executor",
  "async-fs",
  "async-io",
- "async-lock",
+ "async-lock 3.4.1",
  "async-net",
  "async-process",
  "blocking",
@@ -16233,7 +16253,7 @@ dependencies = [
  "settings",
  "simplelog",
  "story",
- "strum 0.27.1",
+ "strum 0.27.2",
  "theme",
  "title_bar",
  "ui",
@@ -16335,9 +16355,9 @@ dependencies = [
 
 [[package]]
 name = "strum"
-version = "0.27.1"
+version = "0.27.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f64def088c51c9510a8579e3c5d67c65349dcf755e5479ad3d010aa6454e2c32"
+checksum = "af23d6f6c1a224baef9d3f61e287d2761385a5b88fdab4eb4c6f11aeb54c4bcf"
 dependencies = [
  "strum_macros 0.27.1",
 ]
@@ -17212,7 +17232,7 @@ dependencies = [
  "serde_json",
  "serde_json_lenient",
  "settings",
- "strum 0.27.1",
+ "strum 0.27.2",
  "thiserror 2.0.12",
  "util",
  "uuid",
@@ -17246,7 +17266,7 @@ dependencies = [
  "serde_json",
  "serde_json_lenient",
  "simplelog",
- "strum 0.27.1",
+ "strum 0.27.2",
  "theme",
  "vscode_theme",
  "workspace-hack",
@@ -18310,7 +18330,7 @@ dependencies = [
  "settings",
  "smallvec",
  "story",
- "strum 0.27.1",
+ "strum 0.27.2",
  "theme",
  "ui_macros",
  "util",
@@ -18694,7 +18714,7 @@ dependencies = [
  "anyhow",
  "schemars 1.0.1",
  "serde",
- "strum 0.27.1",
+ "strum 0.27.2",
  "workspace-hack",
 ]
 
@@ -18725,6 +18745,7 @@ dependencies = [
  "editor",
  "env_logger 0.11.8",
  "futures 0.3.31",
+ "fuzzy",
  "git_ui",
  "gpui",
  "indoc",
@@ -20634,7 +20655,7 @@ dependencies = [
  "settings",
  "smallvec",
  "sqlez",
- "strum 0.27.1",
+ "strum 0.27.2",
  "task",
  "telemetry",
  "tempfile",
@@ -20850,6 +20871,7 @@ name = "worktree"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-lock 2.8.0",
  "clock",
  "collections",
  "fs",
@@ -20878,6 +20900,17 @@ dependencies = [
  "util",
  "workspace-hack",
  "zlog",
+]
+
+[[package]]
+name = "worktree_benchmarks"
+version = "0.1.0"
+dependencies = [
+ "fs",
+ "gpui",
+ "settings",
+ "workspace-hack",
+ "worktree",
 ]
 
 [[package]]
@@ -20947,7 +20980,7 @@ dependencies = [
  "anyhow",
  "schemars 1.0.1",
  "serde",
- "strum 0.27.1",
+ "strum 0.27.2",
  "workspace-hack",
 ]
 
@@ -21151,7 +21184,7 @@ dependencies = [
  "async-broadcast",
  "async-executor",
  "async-io",
- "async-lock",
+ "async-lock 3.4.1",
  "async-process",
  "async-recursion",
  "async-task",
@@ -21718,7 +21751,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
- "strum 0.27.1",
+ "strum 0.27.2",
  "telemetry",
  "telemetry_events",
  "theme",
@@ -21748,6 +21781,7 @@ dependencies = [
  "cloud_zeta2_prompt",
  "edit_prediction",
  "edit_prediction_context",
+ "feature_flags",
  "futures 0.3.31",
  "gpui",
  "indoc",
@@ -21758,6 +21792,7 @@ dependencies = [
  "pretty_assertions",
  "project",
  "release_channel",
+ "serde",
  "serde_json",
  "settings",
  "thiserror 2.0.12",
@@ -21779,6 +21814,7 @@ dependencies = [
  "collections",
  "edit_prediction_context",
  "editor",
+ "feature_flags",
  "futures 0.3.31",
  "gpui",
  "indoc",

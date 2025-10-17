@@ -761,15 +761,10 @@ impl TitleBar {
                 .into()
             })
             .map(|this| {
-                if is_signed_in {
+                if is_signed_in && TitleBarSettings::get_global(cx).show_user_picture {
                     this.trigger_with_tooltip(
-                        ButtonLike::new("user-menu").children(
-                            TitleBarSettings::get_global(cx)
-                                .show_user_picture
-                                .then(|| user_avatar.clone())
-                                .flatten()
-                                .map(|avatar| Avatar::new(avatar)),
-                        ),
+                        ButtonLike::new("user-menu")
+                            .children(user_avatar.clone().map(|avatar| Avatar::new(avatar))),
                         Tooltip::text("Toggle User Menu"),
                     )
                 } else {
