@@ -1660,52 +1660,150 @@ impl Thread {
         let Some(model) = self.summarization_model.clone() else {
             return Task::ready(Err(anyhow!("No summarization model available")));
         };
-        let mut request = LanguageModelRequest {
+
+        // Build the full request first.
+        let mut full_request = LanguageModelRequest {
             intent: Some(CompletionIntent::ThreadContextSummarization),
             temperature: AgentSettings::temperature_for_model(&model, cx),
             ..Default::default()
         };
-
         for message in &self.messages {
-            request.messages.extend(message.to_request());
+            full_request.messages.extend(message.to_request());
         }
-
-        request.messages.push(LanguageModelRequestMessage {
+        full_request.messages.push(LanguageModelRequestMessage {
             role: Role::User,
             content: vec![SUMMARIZE_THREAD_DETAILED_PROMPT.into()],
             cache: false,
         });
-        cx.spawn(async move |this, cx| {
-            let mut summary = String::new();
-            let mut messages = model.stream_completion(request, cx).await?;
-            while let Some(event) = messages.next().await {
-                let event = event?;
-                let text = match event {
-                    LanguageModelCompletionEvent::Text(text) => text,
-                    LanguageModelCompletionEvent::StatusUpdate(
-                        CompletionRequestStatus::UsageUpdated { amount, limit },
-                    ) => {
-                        this.update(cx, |thread, cx| {
-                            thread.update_model_request_usage(amount, limit, cx);
-                        })?;
-                        continue;
-                    }
-                    _ => continue,
-                };
 
-                let mut lines = text.lines();
-                summary.extend(lines.next());
+        cx.spawn(async move |this, cx| {
+            // Helper to stream a summary for a given request, returning the single-line summary.
+            async fn run_summary_request(
+                this: &Entity<Thread>,
+                model: &Arc<dyn LanguageModel>,
+                mut request: LanguageModelRequest,
+                cx: &mut gpui::AsyncApp,
+            ) -> Result<String> {
+                let mut acc = String::new();
+                let mut stream = model.stream_completion(request.clone(), cx).await?;
+                while let Some(event) = stream.next().await {
+                    let event = event?;
+                    let text = match event {
+                        LanguageModelCompletionEvent::Text(t) => t,
+                        LanguageModelCompletionEvent::StatusUpdate(
+                            CompletionRequestStatus::UsageUpdated { amount, limit },
+                        ) => {
+                            this.update(cx, |thread, cx| {
+                                thread.update_model_request_usage(amount, limit, cx);
+                            })?;
+                            continue;
+                        }
+                        _ => continue,
+                    };
+                    let mut lines = text.lines();
+                    acc.extend(lines.next());
+                    // Stop if model produced multiple lines quickly.
+                    if lines.next().is_some() {
+                        break;
+                    }
+                }
+                Ok(acc)
             }
 
-            log::debug!("Setting summary: {}", summary);
-            let summary = SharedString::from(summary);
+            // Decide whether we need multi‑pass based on token count.
+            let need_split = {
+                let max_tokens = model.max_token_count() as u64;
+                // count_tokens may fail; treat failure as not needing a split.
+                if let Ok(count_future) = cx.update(|app| model.count_tokens(full_request.clone(), app)) {
+                    if let Ok(token_count) = count_future.await {
+                        token_count > max_tokens
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                }
+            };
 
+            let final_summary = if need_split {
+                // Split messages (excluding the final prompt message we appended).
+                let prompt_msg = full_request.messages.pop();
+                let all = &full_request.messages;
+                if all.is_empty() {
+                    // Fallback to single pass if nothing to split.
+                    let mut req = full_request.clone();
+                    if let Some(p) = prompt_msg.clone() {
+                        req.messages.push(p);
+                    }
+                    run_summary_request(this, &model, req, cx).await?
+                } else {
+                    let n = all.len();
+                    let overlap = (n / 10).clamp(1, 4); // small overlap window
+                    let mid = n / 2;
+                    let left_end = mid.saturating_sub(1);
+                    let right_start = mid.saturating_sub(overlap.min(mid));
+                    let left_overlap_end = (left_end + overlap.min(n - left_end - 1)).min(n - 1);
+
+                    let part1_range_end = left_overlap_end.min(n - 1);
+                    let part2_range_start = right_start.min(n - 1);
+
+                    let build_part_request = |slice: &[LanguageModelRequestMessage]| {
+                        let mut req = LanguageModelRequest {
+                            intent: Some(CompletionIntent::ThreadContextSummarization),
+                            temperature: full_request.temperature,
+                            ..Default::default()
+                        };
+                        req.messages.extend_from_slice(slice);
+                        req.messages.push(LanguageModelRequestMessage {
+                            role: Role::User,
+                            content: vec![SUMMARIZE_THREAD_DETAILED_PROMPT.into()],
+                            cache: false,
+                        });
+                        req
+                    };
+
+                    let part1_msgs = &all[..=part1_range_end];
+                    let part2_msgs = &all[part2_range_start..];
+
+                    let req1 = build_part_request(part1_msgs);
+                    let req2 = build_part_request(part2_msgs);
+
+                    // First two passes in parallel.
+                    let (s1, s2) = futures::join!(
+                        run_summary_request(this, &model, req1, cx),
+                        run_summary_request(this, &model, req2, cx)
+                    );
+                    let (s1, s2) = (s1.unwrap_or_default(), s2.unwrap_or_default());
+
+                    // Third pass: merge summaries.
+                    let merge_prompt = format!(
+                        "Partial summary A:\n{}\n\nPartial summary B:\n{}\n\nCombine these into one concise, comprehensive summary without duplication.",
+                        s1, s2
+                    );
+                    let mut merge_req = LanguageModelRequest {
+                        intent: Some(CompletionIntent::ThreadContextSummarization),
+                        temperature: full_request.temperature,
+                        ..Default::default()
+                    };
+                    merge_req.messages.push(LanguageModelRequestMessage {
+                        role: Role::User,
+                        content: vec![merge_prompt.into()],
+                        cache: false,
+                    });
+                    run_summary_request(this, &model, merge_req, cx).await?
+                }
+            } else {
+                // Single pass as before.
+                run_summary_request(this, &model, full_request.clone(), cx).await?
+            };
+
+            log::debug!("Setting summary: {}", final_summary);
+            let shared = SharedString::from(final_summary);
             this.update(cx, |this, cx| {
-                this.summary = Some(summary.clone());
+                this.summary = Some(shared.clone());
                 cx.notify()
             })?;
-
-            Ok(summary)
+            Ok(shared)
         })
     }
 
