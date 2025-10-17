@@ -122,13 +122,19 @@ async fn test_basic_following(
         editor.handle_input("b", window, cx);
         editor.handle_input("c", window, cx);
         editor.select_left(&Default::default(), window, cx);
-        assert_eq!(editor.selections.ranges(cx), vec![3..2]);
+        assert_eq!(
+            editor.selections.ranges(&editor.display_snapshot(cx)),
+            vec![3..2]
+        );
     });
     editor_a2.update_in(cx_a, |editor, window, cx| {
         editor.handle_input("d", window, cx);
         editor.handle_input("e", window, cx);
         editor.select_left(&Default::default(), window, cx);
-        assert_eq!(editor.selections.ranges(cx), vec![2..1]);
+        assert_eq!(
+            editor.selections.ranges(&editor.display_snapshot(cx)),
+            vec![2..1]
+        );
     });
 
     // When client B starts following client A, only the active view state is replicated to client B.
@@ -149,11 +155,15 @@ async fn test_basic_following(
         Some((worktree_id, rel_path("2.txt")).into())
     );
     assert_eq!(
-        editor_b2.update(cx_b, |editor, cx| editor.selections.ranges(cx)),
+        editor_b2.update(cx_b, |editor, cx| editor
+            .selections
+            .ranges(&editor.display_snapshot(cx))),
         vec![2..1]
     );
     assert_eq!(
-        editor_b1.update(cx_b, |editor, cx| editor.selections.ranges(cx)),
+        editor_b1.update(cx_b, |editor, cx| editor
+            .selections
+            .ranges(&editor.display_snapshot(cx))),
         vec![3..3]
     );
 
@@ -384,7 +394,10 @@ async fn test_basic_following(
     cx_b.background_executor.run_until_parked();
 
     editor_b1.update(cx_b, |editor, cx| {
-        assert_eq!(editor.selections.ranges(cx), &[1..1, 2..2]);
+        assert_eq!(
+            editor.selections.ranges(&editor.display_snapshot(cx)),
+            &[1..1, 2..2]
+        );
     });
 
     editor_a1.update_in(cx_a, |editor, window, cx| {
@@ -402,7 +415,10 @@ async fn test_basic_following(
     executor.advance_clock(workspace::item::LEADER_UPDATE_THROTTLE);
     executor.run_until_parked();
     editor_b1.update(cx_b, |editor, cx| {
-        assert_eq!(editor.selections.ranges(cx), &[3..3]);
+        assert_eq!(
+            editor.selections.ranges(&editor.display_snapshot(cx)),
+            &[3..3]
+        );
     });
 
     // After unfollowing, client B stops receiving updates from client A.
@@ -1679,7 +1695,10 @@ async fn test_following_stops_on_unshare(cx_a: &mut TestAppContext, cx_b: &mut T
         .advance_clock(workspace::item::LEADER_UPDATE_THROTTLE);
     cx_a.run_until_parked();
     editor_b.update(cx_b, |editor, cx| {
-        assert_eq!(editor.selections.ranges(cx), vec![1..1])
+        assert_eq!(
+            editor.selections.ranges(&editor.display_snapshot(cx)),
+            vec![1..1]
+        )
     });
 
     // a unshares the project
@@ -1701,7 +1720,10 @@ async fn test_following_stops_on_unshare(cx_a: &mut TestAppContext, cx_b: &mut T
         .advance_clock(workspace::item::LEADER_UPDATE_THROTTLE);
     cx_a.run_until_parked();
     editor_b.update(cx_b, |editor, cx| {
-        assert_eq!(editor.selections.ranges(cx), vec![1..1])
+        assert_eq!(
+            editor.selections.ranges(&editor.display_snapshot(cx)),
+            vec![1..1]
+        )
     });
     cx_b.update(|_, cx| {
         let room = ActiveCall::global(cx).read(cx).room().unwrap().read(cx);
@@ -1799,13 +1821,19 @@ async fn test_following_into_excluded_file(
         editor.handle_input("b", window, cx);
         editor.handle_input("c", window, cx);
         editor.select_left(&Default::default(), window, cx);
-        assert_eq!(editor.selections.ranges(cx), vec![3..2]);
+        assert_eq!(
+            editor.selections.ranges(&editor.display_snapshot(cx)),
+            vec![3..2]
+        );
     });
     editor_for_excluded_a.update_in(cx_a, |editor, window, cx| {
         editor.select_all(&Default::default(), window, cx);
         editor.handle_input("new commit message", window, cx);
         editor.select_left(&Default::default(), window, cx);
-        assert_eq!(editor.selections.ranges(cx), vec![18..17]);
+        assert_eq!(
+            editor.selections.ranges(&editor.display_snapshot(cx)),
+            vec![18..17]
+        );
     });
 
     // When client B starts following client A, currently visible file is replicated
@@ -1827,7 +1855,9 @@ async fn test_following_into_excluded_file(
         Some((worktree_id, rel_path(".git/COMMIT_EDITMSG")).into())
     );
     assert_eq!(
-        editor_for_excluded_b.update(cx_b, |editor, cx| editor.selections.ranges(cx)),
+        editor_for_excluded_b.update(cx_b, |editor, cx| editor
+            .selections
+            .ranges(&editor.display_snapshot(cx))),
         vec![18..17]
     );
 
@@ -2037,7 +2067,12 @@ async fn test_following_to_channel_notes_without_a_shared_project(
         assert_eq!(notes.channel(cx).unwrap().name, "channel-1");
         notes.editor.update(cx, |editor, cx| {
             assert_eq!(editor.text(cx), "Hello from A.");
-            assert_eq!(editor.selections.ranges::<usize>(cx), &[3..4]);
+            assert_eq!(
+                editor
+                    .selections
+                    .ranges::<usize>(&editor.display_snapshot(cx)),
+                &[3..4]
+            );
         })
     });
 

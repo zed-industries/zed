@@ -206,7 +206,13 @@ impl Lamport {
 
 impl fmt::Debug for Lamport {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Lamport {{{}: {}}}", self.replica_id, self.value)
+        if *self == Self::MAX {
+            write!(f, "Lamport {{MAX}}")
+        } else if *self == Self::MIN {
+            write!(f, "Lamport {{MIN}}")
+        } else {
+            write!(f, "Lamport {{{}: {}}}", self.replica_id, self.value)
+        }
     }
 }
 
@@ -219,6 +225,8 @@ impl fmt::Debug for Global {
             }
             if timestamp.replica_id == LOCAL_BRANCH_REPLICA_ID {
                 write!(f, "<branch>: {}", timestamp.value)?;
+            } else if timestamp.replica_id == AGENT_REPLICA_ID {
+                write!(f, "<agent>: {}", timestamp.value)?;
             } else {
                 write!(f, "{}: {}", timestamp.replica_id, timestamp.value)?;
             }

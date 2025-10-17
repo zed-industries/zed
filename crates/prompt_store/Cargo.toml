@@ -32,4 +32,3 @@ serde_json.workspace = true
 text.workspace = true
 util.workspace = true
 uuid.workspace = true
-workspace-hack.workspace = true

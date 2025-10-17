@@ -525,9 +525,7 @@ where
                 "local task dropped by a thread that didn't spawn it. Task spawned at {}",
                 self.location
             );
-            unsafe {
-                ManuallyDrop::drop(&mut self.inner);
-            }
+            unsafe { ManuallyDrop::drop(&mut self.inner) };
         }
     }
 
