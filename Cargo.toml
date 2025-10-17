@@ -218,7 +218,7 @@ members = [
     #
 
     "tooling/perf",
-    "tooling/xtask", "crates/fs_benchmarks", "crates/worktree_benchmarks",
+    "tooling/xtask",
 ]
 default-members = ["crates/zed"]
 
