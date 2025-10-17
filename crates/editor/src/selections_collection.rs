@@ -392,6 +392,11 @@ impl SelectionsCollection {
             .collect()
     }
 
+    /// Attempts to build a selection in the provided `DisplayRow` within the
+    /// same range as the provided range of `Pixels`.
+    /// Returns `None` if the range is not empty but it starts past the line's
+    /// length, meaning that the line isn't long enough to be contained within
+    /// part of the provided range.
     pub fn build_columnar_selection(
         &mut self,
         display_map: &DisplaySnapshot,
@@ -610,21 +615,32 @@ impl<'a> MutableSelectionsCollection<'a> {
         self.select(selections);
     }
 
-    pub fn select<T>(&mut self, mut selections: Vec<Selection<T>>)
+    pub fn select<T>(&mut self, selections: Vec<Selection<T>>)
     where
-        T: ToOffset + ToPoint + Ord + std::marker::Copy + std::fmt::Debug,
+        T: ToOffset + std::marker::Copy + std::fmt::Debug,
     {
         let buffer = self.buffer.read(self.cx).snapshot(self.cx);
+        let mut selections = selections
+            .into_iter()
+            .map(|selection| selection.map(|it| it.to_offset(&buffer)))
+            .map(|mut selection| {
+                if selection.start > selection.end {
+                    mem::swap(&mut selection.start, &mut selection.end);
+                    selection.reversed = true
+                }
+                selection
+            })
+            .collect::<Vec<_>>();
         selections.sort_unstable_by_key(|s| s.start);
         // Merge overlapping selections.
         let mut i = 1;
         while i < selections.len() {
-            if selections[i - 1].end >= selections[i].start {
+            if selections[i].start <= selections[i - 1].end {
                 let removed = selections.remove(i);
                 if removed.start < selections[i - 1].start {
                     selections[i - 1].start = removed.start;
                 }
-                if removed.end > selections[i - 1].end {
+                if selections[i - 1].end < removed.end {
                     selections[i - 1].end = removed.end;
                 }
             } else {
@@ -968,13 +984,10 @@ impl DerefMut for MutableSelectionsCollection<'_> {
     }
 }
 
-fn selection_to_anchor_selection<T>(
-    selection: Selection<T>,
+fn selection_to_anchor_selection(
+    selection: Selection<usize>,
     buffer: &MultiBufferSnapshot,
-) -> Selection<Anchor>
-where
-    T: ToOffset + Ord,
-{
+) -> Selection<Anchor> {
     let end_bias = if selection.start == selection.end {
         Bias::Right
     } else {
@@ -1012,7 +1025,7 @@ fn resolve_selections_point<'a>(
     })
 }
 
-// Panics if passed selections are not in order
+/// Panics if passed selections are not in order
 fn resolve_selections_display<'a>(
     selections: impl 'a + IntoIterator<Item = &'a Selection<Anchor>>,
     map: &'a DisplaySnapshot,
@@ -1044,7 +1057,7 @@ fn resolve_selections_display<'a>(
     coalesce_selections(selections)
 }
 
-// Panics if passed selections are not in order
+/// Panics if passed selections are not in order
 pub(crate) fn resolve_selections<'a, D, I>(
     selections: I,
     map: &'a DisplaySnapshot,

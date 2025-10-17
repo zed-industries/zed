@@ -27,8 +27,7 @@ pub struct AllLanguageSettingsContent {
     pub languages: LanguageToSettingsMap,
     /// Settings for associating file extensions and filenames
     /// with languages.
-    #[serde(default)]
-    pub file_types: HashMap<Arc<str>, ExtendingVec<String>>,
+    pub file_types: Option<HashMap<Arc<str>, ExtendingVec<String>>>,
 }
 
 impl merge_from::MergeFrom for AllLanguageSettingsContent {
@@ -319,6 +318,11 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: true
     pub use_on_type_format: Option<bool>,
+    /// Which code actions to run on save after the formatter.
+    /// These are not run if formatting is off.
+    ///
+    /// Default: {} (or {"source.organizeImports": true} for Go).
+    pub code_actions_on_format: Option<HashMap<String, bool>>,
     /// Whether to perform linked edits of associated ranges, if the language server supports it.
     /// For example, when editing opening <html> tag, the contents of the closing </html> tag will be edited as well.
     ///

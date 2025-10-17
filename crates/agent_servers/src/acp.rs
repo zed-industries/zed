@@ -9,6 +9,7 @@ use futures::io::BufReader;
 use project::Project;
 use project::agent_server_store::AgentServerCommand;
 use serde::Deserialize;
+use settings::{Settings as _, SettingsLocation};
 use task::Shell;
 use util::{ResultExt as _, get_default_system_shell_preferring_bash};
 
@@ -22,7 +23,7 @@ use gpui::{App, AppContext as _, AsyncApp, Entity, SharedString, Task, WeakEntit
 
 use acp_thread::{AcpThread, AuthRequired, LoadError, TerminalProviderEvent};
 use terminal::TerminalBuilder;
-use terminal::terminal_settings::{AlternateScroll, CursorShape};
+use terminal::terminal_settings::{AlternateScroll, CursorShape, TerminalSettings};
 
 #[derive(Debug, Error)]
 #[error("Unsupported version")]
@@ -97,7 +98,7 @@ impl AcpConnection {
         let stdout = child.stdout.take().context("Failed to take stdout")?;
         let stdin = child.stdin.take().context("Failed to take stdin")?;
         let stderr = child.stderr.take().context("Failed to take stderr")?;
-        log::info!(
+        log::debug!(
             "Spawning external agent server: {:?}, {:?}",
             command.path,
             command.args
@@ -818,13 +819,25 @@ impl acp::Client for ClientDelegate {
         let mut env = if let Some(dir) = &args.cwd {
             project
                 .update(&mut self.cx.clone(), |project, cx| {
-                    project.directory_environment(&task::Shell::System, dir.clone().into(), cx)
+                    let worktree = project.find_worktree(dir.as_path(), cx);
+                    let shell = TerminalSettings::get(
+                        worktree.as_ref().map(|(worktree, path)| SettingsLocation {
+                            worktree_id: worktree.read(cx).id(),
+                            path: &path,
+                        }),
+                        cx,
+                    )
+                    .shell
+                    .clone();
+                    project.directory_environment(&shell, dir.clone().into(), cx)
                 })?
                 .await
                 .unwrap_or_default()
         } else {
             Default::default()
         };
+        // Disables paging for `git` and hopefully other commands
+        env.insert("PAGER".into(), "".into());
         for var in args.env {
             env.insert(var.name, var.value);
         }

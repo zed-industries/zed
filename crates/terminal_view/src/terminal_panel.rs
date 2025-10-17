@@ -29,9 +29,9 @@ use util::{ResultExt, TryFutureExt};
 use workspace::{
     ActivateNextPane, ActivatePane, ActivatePaneDown, ActivatePaneLeft, ActivatePaneRight,
     ActivatePaneUp, ActivatePreviousPane, DraggedSelection, DraggedTab, ItemId, MoveItemToPane,
-    MoveItemToPaneInDirection, NewTerminal, Pane, PaneGroup, SplitDirection, SplitDown, SplitLeft,
-    SplitRight, SplitUp, SwapPaneDown, SwapPaneLeft, SwapPaneRight, SwapPaneUp, ToggleZoom,
-    Workspace,
+    MoveItemToPaneInDirection, MovePaneDown, MovePaneLeft, MovePaneRight, MovePaneUp, NewTerminal,
+    Pane, PaneGroup, SplitDirection, SplitDown, SplitLeft, SplitRight, SplitUp, SwapPaneDown,
+    SwapPaneLeft, SwapPaneRight, SwapPaneUp, ToggleZoom, Workspace,
     dock::{DockPosition, Panel, PanelEvent, PanelHandle},
     item::SerializableItem,
     move_active_item, move_item, pane,
@@ -1055,6 +1055,16 @@ impl TerminalPanel {
             cx.notify();
         }
     }
+
+    fn move_pane_to_border(&mut self, direction: SplitDirection, cx: &mut Context<Self>) {
+        if self
+            .center
+            .move_to_border(&self.active_pane, direction)
+            .unwrap()
+        {
+            cx.notify();
+        }
+    }
 }
 
 fn is_enabled_in_workspace(workspace: &Workspace, cx: &App) -> bool {
@@ -1403,6 +1413,18 @@ impl Render for TerminalPanel {
                 }))
                 .on_action(cx.listener(|terminal_panel, _: &SwapPaneDown, _, cx| {
                     terminal_panel.swap_pane_in_direction(SplitDirection::Down, cx);
+                }))
+                .on_action(cx.listener(|terminal_panel, _: &MovePaneLeft, _, cx| {
+                    terminal_panel.move_pane_to_border(SplitDirection::Left, cx);
+                }))
+                .on_action(cx.listener(|terminal_panel, _: &MovePaneRight, _, cx| {
+                    terminal_panel.move_pane_to_border(SplitDirection::Right, cx);
+                }))
+                .on_action(cx.listener(|terminal_panel, _: &MovePaneUp, _, cx| {
+                    terminal_panel.move_pane_to_border(SplitDirection::Up, cx);
+                }))
+                .on_action(cx.listener(|terminal_panel, _: &MovePaneDown, _, cx| {
+                    terminal_panel.move_pane_to_border(SplitDirection::Down, cx);
                 }))
                 .on_action(
                     cx.listener(|terminal_panel, action: &MoveItemToPane, window, cx| {

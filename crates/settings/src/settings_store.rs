@@ -33,6 +33,7 @@ pub type EditorconfigProperties = ec4rs::Properties;
 use crate::{
     ActiveSettingsProfileName, FontFamilyName, IconThemeName, LanguageSettingsContent,
     LanguageToSettingsMap, SettingsJsonSchemaParams, ThemeName, VsCodeSettings, WorktreeId,
+    infer_json_indent_size,
     merge_from::MergeFrom,
     parse_json_with_comments,
     settings_content::{
@@ -534,30 +535,30 @@ impl SettingsStore {
     /// Returns the first file found that contains the value.
     /// The value will only be None if no file contains the value.
     /// I.e. if no file contains the value, returns `(File::Default, None)`
-    pub fn get_value_from_file<T>(
-        &self,
+    pub fn get_value_from_file<'a, T: 'a>(
+        &'a self,
         target_file: SettingsFile,
-        pick: fn(&SettingsContent) -> &Option<T>,
-    ) -> (SettingsFile, Option<&T>) {
+        pick: fn(&'a SettingsContent) -> Option<T>,
+    ) -> (SettingsFile, Option<T>) {
         self.get_value_from_file_inner(target_file, pick, true)
     }
 
     /// Same as `Self::get_value_from_file` except that it does not include the current file.
     /// Therefore it returns the value that was potentially overloaded by the target file.
-    pub fn get_value_up_to_file<T>(
-        &self,
+    pub fn get_value_up_to_file<'a, T: 'a>(
+        &'a self,
         target_file: SettingsFile,
-        pick: fn(&SettingsContent) -> &Option<T>,
-    ) -> (SettingsFile, Option<&T>) {
+        pick: fn(&'a SettingsContent) -> Option<T>,
+    ) -> (SettingsFile, Option<T>) {
         self.get_value_from_file_inner(target_file, pick, false)
     }
 
-    fn get_value_from_file_inner<T>(
-        &self,
+    fn get_value_from_file_inner<'a, T: 'a>(
+        &'a self,
         target_file: SettingsFile,
-        pick: fn(&SettingsContent) -> &Option<T>,
+        pick: fn(&'a SettingsContent) -> Option<T>,
         include_target_file: bool,
-    ) -> (SettingsFile, Option<&T>) {
+    ) -> (SettingsFile, Option<T>) {
         // todo(settings_ui): Add a metadata field for overriding the "overrides" tag, for contextually different settings
         //  e.g. disable AI isn't overridden, or a vec that gets extended instead or some such
 
@@ -587,7 +588,7 @@ impl SettingsStore {
             let Some(content) = self.get_content_for_file(file.clone()) else {
                 continue;
             };
-            if let Some(value) = pick(content).as_ref() {
+            if let Some(value) = pick(content) {
                 return (file, Some(value));
             }
         }
@@ -637,7 +638,7 @@ impl SettingsStore {
 
         let mut key_path = Vec::new();
         let mut edits = Vec::new();
-        let tab_size = self.json_tab_size();
+        let tab_size = infer_json_indent_size(&text);
         let mut text = text.to_string();
         update_value_in_json_text(
             &mut text,
@@ -648,10 +649,6 @@ impl SettingsStore {
             &mut edits,
         );
         edits
-    }
-
-    pub fn json_tab_size(&self) -> usize {
-        2
     }
 
     /// Sets the default settings via a JSON string.
@@ -1540,9 +1537,9 @@ mod tests {
                 })
             },
             r#"{
-                "tabs": {
-                    "git_status": true
-                }
+              "tabs": {
+                "git_status": true
+              }
             }
             "#
             .unindent(),
@@ -1557,9 +1554,9 @@ mod tests {
             .unindent(),
             |settings| settings.title_bar.get_or_insert_default().show_branch_name = Some(true),
             r#"{
-                "title_bar": {
-                    "show_branch_name": true
-                }
+              "title_bar": {
+                "show_branch_name": true
+              }
             }
             "#
             .unindent(),
@@ -1584,7 +1581,7 @@ mod tests {
             .unindent(),
             r#" { "editor.tabSize": 37 } "#.to_owned(),
             r#"{
-                "tab_size": 37
+              "tab_size": 37
             }
             "#
             .unindent(),
@@ -1637,9 +1634,9 @@ mod tests {
             .unindent(),
             r#"{ "workbench.editor.decorations.colors": true }"#.to_owned(),
             r#"{
-                "tabs": {
-                    "git_status": true
-                }
+              "tabs": {
+                "git_status": true
+              }
             }
             "#
             .unindent(),
@@ -1655,11 +1652,11 @@ mod tests {
             .unindent(),
             r#"{ "editor.fontFamily": "Cascadia Code, 'Consolas', Courier New" }"#.to_owned(),
             r#"{
-                "buffer_font_fallbacks": [
-                    "Consolas",
-                    "Courier New"
-                ],
-                "buffer_font_family": "Cascadia Code"
+              "buffer_font_fallbacks": [
+                "Consolas",
+                "Courier New"
+              ],
+              "buffer_font_family": "Cascadia Code"
             }
             "#
             .unindent(),
@@ -1695,16 +1692,16 @@ mod tests {
                 .get_or_insert_default()
                 .enabled = Some(true);
         });
-        assert_eq!(
+        pretty_assertions::assert_str_eq!(
             actual,
             r#"{
-            "git": {
+              "git": {
                 "inline_blame": {
-                    "enabled": true
+                  "enabled": true
                 }
+              }
             }
-        }
-        "#
+            "#
             .unindent()
         );
     }
@@ -1777,11 +1774,16 @@ mod tests {
             )
             .unwrap();
 
-        fn get(content: &SettingsContent) -> &Option<u32> {
-            &content.project.all_languages.defaults.preferred_line_length
+        fn get(content: &SettingsContent) -> Option<&u32> {
+            content
+                .project
+                .all_languages
+                .defaults
+                .preferred_line_length
+                .as_ref()
         }
 
-        let default_value = get(&store.default_settings).unwrap();
+        let default_value = *get(&store.default_settings).unwrap();
 
         assert_eq!(
             store.get_value_from_file(SettingsFile::Project(local.clone()), get),
@@ -1844,8 +1846,13 @@ mod tests {
             .into_arc(),
         );
 
-        fn get(content: &SettingsContent) -> &Option<u32> {
-            &content.project.all_languages.defaults.preferred_line_length
+        fn get(content: &SettingsContent) -> Option<&u32> {
+            content
+                .project
+                .all_languages
+                .defaults
+                .preferred_line_length
+                .as_ref()
         }
 
         store

@@ -1333,12 +1333,43 @@ impl LocalLspStore {
             })?;
         }
 
+        // Formatter for `code_actions_on_format` that runs before
+        // the rest of the formatters
+        let mut code_actions_on_format_formatters = None;
+        let should_run_code_actions_on_format = !matches!(
+            (trigger, &settings.format_on_save),
+            (FormatTrigger::Save, &FormatOnSave::Off)
+        );
+        if should_run_code_actions_on_format {
+            let have_code_actions_to_run_on_format = settings
+                .code_actions_on_format
+                .values()
+                .any(|enabled| *enabled);
+            if have_code_actions_to_run_on_format {
+                zlog::trace!(logger => "going to run code actions on format");
+                code_actions_on_format_formatters = Some(
+                    settings
+                        .code_actions_on_format
+                        .iter()
+                        .filter_map(|(action, enabled)| enabled.then_some(action))
+                        .cloned()
+                        .map(Formatter::CodeAction)
+                        .collect::<Vec<_>>(),
+                );
+            }
+        }
+
         let formatters = match (trigger, &settings.format_on_save) {
             (FormatTrigger::Save, FormatOnSave::Off) => &[],
             (FormatTrigger::Manual, _) | (FormatTrigger::Save, FormatOnSave::On) => {
                 settings.formatter.as_ref()
             }
         };
+
+        let formatters = code_actions_on_format_formatters
+            .iter()
+            .flatten()
+            .chain(formatters);
 
         for formatter in formatters {
             let formatter = if formatter == &Formatter::Auto {
@@ -3493,12 +3524,6 @@ struct CodeLensData {
     lens_for_version: Global,
     lens: HashMap<LanguageServerId, Vec<CodeAction>>,
     update: Option<(Global, CodeLensTask)>,
-}
-
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub enum LspFetchStrategy {
-    IgnoreCache,
-    UseCache { known_cache_version: Option<usize> },
 }
 
 #[derive(Debug)]
@@ -6498,47 +6523,35 @@ impl LspStore {
 
     pub fn document_colors(
         &mut self,
-        fetch_strategy: LspFetchStrategy,
+        known_cache_version: Option<usize>,
         buffer: Entity<Buffer>,
         cx: &mut Context<Self>,
     ) -> Option<DocumentColorTask> {
         let version_queried_for = buffer.read(cx).version();
         let buffer_id = buffer.read(cx).remote_id();
 
-        match fetch_strategy {
-            LspFetchStrategy::IgnoreCache => {}
-            LspFetchStrategy::UseCache {
-                known_cache_version,
-            } => {
-                if let Some(cached_data) = self.lsp_document_colors.get(&buffer_id)
-                    && !version_queried_for.changed_since(&cached_data.colors_for_version)
-                {
-                    let has_different_servers = self.as_local().is_some_and(|local| {
-                        local
-                            .buffers_opened_in_servers
-                            .get(&buffer_id)
-                            .cloned()
-                            .unwrap_or_default()
-                            != cached_data.colors.keys().copied().collect()
-                    });
-                    if !has_different_servers {
-                        if Some(cached_data.cache_version) == known_cache_version {
-                            return None;
-                        } else {
-                            return Some(
-                                Task::ready(Ok(DocumentColors {
-                                    colors: cached_data
-                                        .colors
-                                        .values()
-                                        .flatten()
-                                        .cloned()
-                                        .collect(),
-                                    cache_version: Some(cached_data.cache_version),
-                                }))
-                                .shared(),
-                            );
-                        }
-                    }
+        if let Some(cached_data) = self.lsp_document_colors.get(&buffer_id)
+            && !version_queried_for.changed_since(&cached_data.colors_for_version)
+        {
+            let has_different_servers = self.as_local().is_some_and(|local| {
+                local
+                    .buffers_opened_in_servers
+                    .get(&buffer_id)
+                    .cloned()
+                    .unwrap_or_default()
+                    != cached_data.colors.keys().copied().collect()
+            });
+            if !has_different_servers {
+                if Some(cached_data.cache_version) == known_cache_version {
+                    return None;
+                } else {
+                    return Some(
+                        Task::ready(Ok(DocumentColors {
+                            colors: cached_data.colors.values().flatten().cloned().collect(),
+                            cache_version: Some(cached_data.cache_version),
+                        }))
+                        .shared(),
+                    );
                 }
             }
         }
@@ -6564,13 +6577,12 @@ impl LspStore {
                     .map_err(Arc::new);
                 let fetched_colors = match fetched_colors {
                     Ok(fetched_colors) => {
-                        if fetch_strategy != LspFetchStrategy::IgnoreCache
-                            && Some(true)
-                                == buffer
-                                    .update(cx, |buffer, _| {
-                                        buffer.version() != query_version_queried_for
-                                    })
-                                    .ok()
+                        if Some(true)
+                            == buffer
+                                .update(cx, |buffer, _| {
+                                    buffer.version() != query_version_queried_for
+                                })
+                                .ok()
                         {
                             return Ok(DocumentColors::default());
                         }
@@ -9365,11 +9377,7 @@ impl LspStore {
                         name: symbol.name,
                         kind: symbol.kind,
                         range: symbol.range,
-                        label: CodeLabel {
-                            text: Default::default(),
-                            runs: Default::default(),
-                            filter_range: Default::default(),
-                        },
+                        label: CodeLabel::default(),
                     },
                     cx,
                 )
@@ -9559,11 +9567,7 @@ impl LspStore {
                     new_text: completion.new_text,
                     source: completion.source,
                     documentation: None,
-                    label: CodeLabel {
-                        text: Default::default(),
-                        runs: Default::default(),
-                        filter_range: Default::default(),
-                    },
+                    label: CodeLabel::default(),
                     insert_text_mode: None,
                     icon_path: None,
                     confirm: None,
@@ -12750,7 +12754,6 @@ impl LspAdapterDelegate for LocalLspAdapterDelegate {
         return Ok(None);
     }
 
-    #[cfg(not(target_os = "windows"))]
     async fn which(&self, command: &OsStr) -> Option<PathBuf> {
         let mut worktree_abs_path = self.worktree_root_path().to_path_buf();
         if self.fs.is_file(&worktree_abs_path).await {
@@ -12758,14 +12761,6 @@ impl LspAdapterDelegate for LocalLspAdapterDelegate {
         }
         let shell_path = self.shell_env().await.get("PATH").cloned();
         which::which_in(command, shell_path.as_ref(), worktree_abs_path).ok()
-    }
-
-    #[cfg(target_os = "windows")]
-    async fn which(&self, command: &OsStr) -> Option<PathBuf> {
-        // todo(windows) Getting the shell env variables in a current directory on Windows is more complicated than other platforms
-        //               there isn't a 'default shell' necessarily. The closest would be the default profile on the windows terminal
-        //               SEE: https://learn.microsoft.com/en-us/windows/terminal/customize-settings/startup
-        which::which(command).ok()
     }
 
     async fn try_exec(&self, command: LanguageServerBinary) -> Result<()> {
@@ -13069,19 +13064,19 @@ mod tests {
 
     #[test]
     fn test_multi_len_chars_normalization() {
-        let mut label = CodeLabel {
-            text: "myElˇ (parameter) myElˇ: {\n    foo: string;\n}".to_string(),
-            runs: vec![(0..6, HighlightId(1))],
-            filter_range: 0..6,
-        };
+        let mut label = CodeLabel::new(
+            "myElˇ (parameter) myElˇ: {\n    foo: string;\n}".to_string(),
+            0..6,
+            vec![(0..6, HighlightId(1))],
+        );
         ensure_uniform_list_compatible_label(&mut label);
         assert_eq!(
             label,
-            CodeLabel {
-                text: "myElˇ (parameter) myElˇ: { foo: string; }".to_string(),
-                runs: vec![(0..6, HighlightId(1))],
-                filter_range: 0..6,
-            }
+            CodeLabel::new(
+                "myElˇ (parameter) myElˇ: { foo: string; }".to_string(),
+                0..6,
+                vec![(0..6, HighlightId(1))],
+            )
         );
     }
 }

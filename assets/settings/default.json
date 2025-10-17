@@ -724,7 +724,9 @@
     // Whether to hide the root entry when only one folder is open in the window.
     "hide_root": false,
     // Whether to hide the hidden entries in the project panel.
-    "hide_hidden": false
+    "hide_hidden": false,
+    // Whether to automatically open files when pasting them in the project panel.
+    "open_file_on_paste": true
   },
   "outline_panel": {
     // Whether to show the outline panel button in the status bar
@@ -1527,6 +1529,7 @@
     // A value of 45 preserves colorful themes while ensuring legibility.
     "minimum_contrast": 45
   },
+  "code_actions_on_format": {},
   // Settings related to running tasks.
   "tasks": {
     "variables": {},
@@ -1696,7 +1699,9 @@
       "preferred_line_length": 72
     },
     "Go": {
-      "formatter": [{ "code_action": "source.organizeImports" }, "language_server"],
+      "code_actions_on_format": {
+        "source.organizeImports": true
+      },
       "debuggers": ["Delve"]
     },
     "GraphQL": {

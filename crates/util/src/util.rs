@@ -279,7 +279,11 @@ fn load_shell_from_passwd() -> Result<()> {
     );
 
     let shell = unsafe { std::ffi::CStr::from_ptr(entry.pw_shell).to_str().unwrap() };
-    if env::var("SHELL").map_or(true, |shell_env| shell_env != shell) {
+    let should_set_shell = env::var("SHELL").map_or(true, |shell_env| {
+        shell_env != shell && !std::path::Path::new(&shell_env).exists()
+    });
+
+    if should_set_shell {
         log::info!(
             "updating SHELL environment variable to value from passwd entry: {:?}",
             shell,
