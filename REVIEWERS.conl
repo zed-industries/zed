@@ -21,5 +21,11 @@ gpui
 git
   = @cole-miller
 
+linux
+  = @dvdsk
+
 pickers
-  = @dvd
+  = @dvdsk
+
+audio
+  = @dvdsk
