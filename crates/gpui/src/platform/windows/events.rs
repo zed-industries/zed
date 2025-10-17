@@ -1307,10 +1307,10 @@ where
     F: FnOnce(Keystroke) -> PlatformInput,
 {
     let virtual_key = VIRTUAL_KEY(wparam.loword());
-    let mut modifiers = current_modifiers();
+    let modifiers = current_modifiers();
 
     match virtual_key {
-        VK_SHIFT | VK_CONTROL | VK_MENU | VK_LWIN | VK_RWIN => {
+        VK_SHIFT | VK_CONTROL | VK_MENU | VK_LMENU | VK_RMENU | VK_LWIN | VK_RWIN => {
             if state
                 .last_reported_modifiers
                 .is_some_and(|prev_modifiers| prev_modifiers == modifiers)
@@ -1462,11 +1462,12 @@ fn is_virtual_key_pressed(vkey: VIRTUAL_KEY) -> bool {
 
 #[inline]
 pub(crate) fn current_modifiers() -> Modifiers {
-    let altgr = is_virtual_key_pressed(VK_RMENU) && is_virtual_key_pressed(VK_LCONTROL);
+    let lmenu_pressed = is_virtual_key_pressed(VK_LMENU);
+    let rmenu_pressed = is_virtual_key_pressed(VK_RMENU);
 
     Modifiers {
-        control: is_virtual_key_pressed(VK_CONTROL) && !altgr,
-        alt: is_virtual_key_pressed(VK_MENU) && !altgr,
+        control: is_virtual_key_pressed(VK_CONTROL),
+        alt: lmenu_pressed || rmenu_pressed,
         shift: is_virtual_key_pressed(VK_SHIFT),
         platform: is_virtual_key_pressed(VK_LWIN) || is_virtual_key_pressed(VK_RWIN),
         function: false,

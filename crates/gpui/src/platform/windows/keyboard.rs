@@ -110,6 +110,37 @@ impl WindowsKeyboardLayout {
             name: "unknown".to_string(),
         }
     }
+
+    pub(crate) fn uses_altgr(&self) -> bool {
+        // Check if this is a known AltGr layout by examining the layout ID
+        // The layout ID is a hex string like "00000409" (US) or "00000407" (German)
+        // Extract the language ID (last 4 digits)
+        if self.id.len() >= 4 {
+            let lang_id = &self.id[self.id.len() - 4..];
+            // List of keyboard layouts that use AltGr (non-exhaustive)
+            matches!(
+                lang_id,
+                "0407" | // German
+                "040C" | // French
+                "040A" | // Spanish
+                "0415" | // Polish
+                "0413" | // Dutch
+                "0816" | // Portuguese
+                "041D" | // Swedish
+                "0414" | // Norwegian
+                "040B" | // Finnish
+                "041F" | // Turkish
+                "0419" | // Russian
+                "0405" | // Czech
+                "040E" | // Hungarian
+                "0424" | // Slovenian
+                "041B" | // Slovak
+                "0418" // Romanian
+            )
+        } else {
+            false
+        }
+    }
 }
 
 impl WindowsKeyboardMapper {
