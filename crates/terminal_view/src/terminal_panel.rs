@@ -22,8 +22,8 @@ use settings::{Settings, TerminalDockPosition};
 use task::{RevealStrategy, RevealTarget, Shell, ShellBuilder, SpawnInTerminal, TaskId};
 use terminal::{Terminal, terminal_settings::TerminalSettings};
 use ui::{
-    ButtonCommon, ButtonLike, Clickable, ContextMenu, FluentBuilder, PopoverMenu, SplitButton,
-    Toggleable, Tooltip, prelude::*,
+    ButtonLike, Clickable, ContextMenu, FluentBuilder, PopoverMenu, SplitButton, Toggleable,
+    Tooltip, prelude::*,
 };
 use util::{ResultExt, TryFutureExt};
 use workspace::{
@@ -35,7 +35,6 @@ use workspace::{
     dock::{DockPosition, Panel, PanelEvent, PanelHandle},
     item::SerializableItem,
     move_active_item, move_item, pane,
-    ui::IconName,
 };
 
 use anyhow::{Result, anyhow};
@@ -1308,97 +1307,56 @@ impl Focusable for FailedToSpawnTerminal {
 
 impl Render for FailedToSpawnTerminal {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let error_message = h_flex()
-            .justify_center()
-            .child(Label::new("Failed to spawn terminal").color(Color::Error));
-
-        let detail_message = h_flex()
-            .id(("failed-to-spawn-terminal-error-message", cx.entity_id()))
-            .w_full()
-            .max_h_full()
-            .justify_center()
-            .child(
-                div()
-                    .child(Label::new(self.error.to_string()).size(LabelSize::Small))
-                    .max_h_full()
-                    .max_w_3_4(),
-            );
-
-        let popover_menu = self.render_button_popover_menu(
-            (
-                "failed-to-spawn-terminal-settings-button-popover-menu",
-                cx.entity_id(),
-            ),
-            Some(self.focus_handle.clone()),
-            &cx,
-        );
-        let button = SplitButton::new(
-            ButtonLike::new(("failed-to-spawn-terminal-settings-button", cx.entity_id()))
-                .child(Label::new("Edit settings").size(LabelSize::Small))
-                .on_click(|_, window, cx| {
-                    window.dispatch_action(zed_actions::OpenSettings.boxed_clone(), cx);
-                }),
-            popover_menu.into_any_element(),
-        );
-
-        let button = h_flex().child(button).justify_around();
+        let popover_menu = PopoverMenu::new("settings-popover")
+            .trigger(
+                IconButton::new("icon-button-popover", IconName::ChevronDown)
+                    .icon_size(IconSize::XSmall),
+            )
+            .menu(move |window, cx| {
+                Some(ContextMenu::build(window, cx, |context_menu, _, _| {
+                    context_menu
+                        .action("Open Settings", zed_actions::OpenSettings.boxed_clone())
+                        .action(
+                            "Edit settings.json",
+                            zed_actions::OpenSettingsFile.boxed_clone(),
+                        )
+                }))
+            })
+            .anchor(Corner::TopRight)
+            .offset(gpui::Point {
+                x: px(0.0),
+                y: px(2.0),
+            });
 
         v_flex()
             .track_focus(&self.focus_handle)
-            .p_4()
-            .justify_center()
             .size_full()
-            .gap_4()
-            .child(error_message)
-            .child(detail_message)
-            .child(button)
-    }
-}
-
-impl FailedToSpawnTerminal {
-    fn render_button_popover_menu(
-        &self,
-        id: impl Into<ElementId>,
-        keybinding_target: Option<FocusHandle>,
-        cx: &Context<FailedToSpawnTerminal>,
-    ) -> impl IntoElement {
-        PopoverMenu::new(id.into())
-            .trigger(
-                ui::ButtonLike::new_rounded_right((
-                    "failed-to-spawn-terminal-settings-button-popover-menu-popover",
-                    cx.entity_id(),
-                ))
-                .layer(ui::ElevationIndex::ModalSurface)
-                .size(ui::ButtonSize::None)
-                .child(
-                    div()
-                        .px_1()
-                        .child(Icon::new(IconName::ChevronDown).size(IconSize::XSmall)),
-                ),
+            .p_4()
+            .items_center()
+            .justify_center()
+            .bg(cx.theme().colors().editor_background)
+            .child(
+                v_flex()
+                    .max_w_112()
+                    .items_center()
+                    .justify_center()
+                    .text_center()
+                    .child(Label::new("Failed to spawn terminal"))
+                    .child(
+                        Label::new(self.error.to_string())
+                            .size(LabelSize::Small)
+                            .color(Color::Muted)
+                            .mb_4(),
+                    )
+                    .child(SplitButton::new(
+                        ButtonLike::new("open-settings-ui")
+                            .child(Label::new("Edit Settings").size(LabelSize::Small))
+                            .on_click(|_, window, cx| {
+                                window.dispatch_action(zed_actions::OpenSettings.boxed_clone(), cx);
+                            }),
+                        popover_menu.into_any_element(),
+                    )),
             )
-            .when(
-                true, // TODO(cameron): fix this?
-                |this| {
-                    this.menu(move |window, cx| {
-                        Some(ContextMenu::build(window, cx, |context_menu, _, _| {
-                            context_menu
-                                .when_some(keybinding_target.clone(), |el, keybinding_target| {
-                                    el.context(keybinding_target)
-                                })
-                                .action("Open settings", zed_actions::OpenSettings.boxed_clone())
-                                // TODO(cameron): do we need a second `when_some` call?
-                                .when_some(keybinding_target.clone(), |el, keybinding_target| {
-                                    el.context(keybinding_target)
-                                })
-                                .action(
-                                    "Edit settings.json",
-                                    zed_actions::OpenSettingsFile.boxed_clone(),
-                                )
-                        }))
-                    })
-                },
-            )
-            .anchor(Corner::TopRight)
     }
 }
 
