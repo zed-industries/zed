@@ -838,11 +838,16 @@ struct SettingItem {
     files: FileMask,
 }
 
-#[derive(PartialEq)]
 struct DynamicItem {
     discriminant: SettingItem,
     pick_discriminant: fn(&SettingsContent) -> Option<usize>,
     fields: Vec<Vec<SettingItem>>,
+}
+
+impl PartialEq for DynamicItem {
+    fn eq(&self, other: &Self) -> bool {
+        self.discriminant == other.discriminant && self.fields == other.fields
+    }
 }
 
 #[derive(PartialEq, Eq, Clone, Copy)]
