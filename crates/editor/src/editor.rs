@@ -23147,23 +23147,12 @@ fn snippet_completions(
                                         .clone()
                                         .map(|description| description.into()),
                                 },
-                            )),
-                            filter_text: Some(snippet.body.clone()),
-                            sort_text: Some(char::MAX.to_string()),
-                            ..lsp::CompletionItem::default()
-                        }),
-                        lsp_defaults: None,
-                    },
-                    label: CodeLabel::plain(matching_prefix.clone(), None),
-                    icon_path: None,
-                    documentation: Some(CompletionDocumentation::SingleLineAndMultiLinePlainText {
-                        single_line: snippet.name.clone().into(),
-                        plain_text: snippet
-                            .description
-                            .clone()
-                            .map(|description| description.into()),
+                            ),
+                            insert_text_mode: None,
+                            confirm: None,
+                        })
                     }),
-            )
+            );
         }
 
         Ok(CompletionResponse {
