@@ -1154,7 +1154,7 @@ impl AgentPanel {
                     });
                 }
 
-                self.new_thread(&NewThread::default(), window, cx);
+                self.new_thread(&NewThread, window, cx);
                 if let Some((thread, model)) = self
                     .active_native_agent_thread(cx)
                     .zip(provider.default_model(cx))
@@ -1806,7 +1806,7 @@ impl AgentPanel {
                             })
                             .item(
                                 ContextMenuEntry::new("New Thread")
-                                    .action(NewThread::default().boxed_clone())
+                                    .action(NewThread.boxed_clone())
                                     .icon(IconName::Thread)
                                     .icon_color(Color::Muted)
                                     .handler({

@@ -31,7 +31,7 @@ pub fn load_agent_thread(
 
     let server = Rc::new(crate::NativeAgentServer::new(
         project.read(cx).fs().clone(),
-        history_store.clone(),
+        history_store,
     ));
     let delegate = AgentServerDelegate::new(
         project.read(cx).agent_server_store().clone(),

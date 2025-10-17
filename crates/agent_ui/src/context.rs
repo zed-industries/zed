@@ -806,13 +806,7 @@ pub fn load_context(
     cx.background_spawn(async move {
         let load_results = future::join_all(load_tasks).await;
 
-        let mut contexts = Vec::new();
         let mut text = String::new();
-        for context in load_results {
-            if let Some(context) = context {
-                contexts.push(context);
-            }
-        }
 
         let mut file_context = Vec::new();
         let mut directory_context = Vec::new();
@@ -823,7 +817,7 @@ pub fn load_context(
         let mut text_thread_context = Vec::new();
         let mut rules_context = Vec::new();
         let mut images = Vec::new();
-        for context in &contexts {
+        for context in load_results.into_iter().flatten() {
             match context {
                 AgentContext::File(context) => file_context.push(context),
                 AgentContext::Directory(context) => directory_context.push(context),

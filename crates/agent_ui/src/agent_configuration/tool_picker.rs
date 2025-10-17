@@ -88,7 +88,7 @@ impl ToolPickerDelegate {
                 tool_names
                     .into_iter()
                     .map(|name| PickerItem::Tool {
-                        name: name.clone().into(),
+                        name,
                         server_id: None,
                     })
                     .collect(),
@@ -115,7 +115,7 @@ impl ToolPickerDelegate {
             items.push(PickerItem::ContextServer {
                 server_id: server_id.clone(),
             });
-            items.extend(tools.into_iter().map(|(tool_name, _)| PickerItem::Tool {
+            items.extend(tools.keys().map(|tool_name| PickerItem::Tool {
                 name: tool_name.clone().into(),
                 server_id: Some(server_id.clone()),
             }));
