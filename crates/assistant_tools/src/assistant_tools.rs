@@ -1,3 +1,4 @@
+mod command_safety;
 mod copy_path_tool;
 mod create_directory_tool;
 mod delete_path_tool;
@@ -30,6 +31,7 @@ use std::sync::Arc;
 use web_search_tool::WebSearchTool;
 
 pub(crate) use templates::*;
+pub use command_safety::*;
 
 use crate::create_directory_tool::CreateDirectoryTool;
 use crate::delete_path_tool::DeletePathTool;
