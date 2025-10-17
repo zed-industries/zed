@@ -2358,7 +2358,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                     .include_ignored = value;
                             },
                         }
-                        .unimplemented(),
                     ),
                     metadata: None,
                     files: USER,
@@ -3466,6 +3465,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                     .show = value;
                             },
                         }
+                        // todo! remove
                         .unimplemented(),
                     ),
                     metadata: None,

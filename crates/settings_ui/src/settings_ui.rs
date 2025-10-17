@@ -444,6 +444,7 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::IconThemeName>(render_icon_theme_picker)
         .add_basic_renderer::<settings::BufferLineHeightDiscriminants>(render_dropdown)
         .add_basic_renderer::<settings::AutosaveSettingDiscriminants>(render_dropdown)
+        .add_basic_renderer::<settings::IncludeIgnoredContent>(render_dropdown)
         // please semicolon stay on next line
         ;
 }
