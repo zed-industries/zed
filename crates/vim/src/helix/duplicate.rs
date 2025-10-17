@@ -56,7 +56,8 @@ impl Vim {
         let times = times.unwrap_or(1);
         self.update_editor(cx, |_, editor, cx| {
             let mut selections = Vec::new();
-            let (map, mut original_selections) = editor.selections.all_display(cx);
+            let map = editor.display_snapshot(cx);
+            let mut original_selections = editor.selections.all_display(&map);
             // The order matters, because it is recorded when the selections are added.
             if above {
                 original_selections.reverse();

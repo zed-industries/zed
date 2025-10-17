@@ -652,7 +652,9 @@ impl ContextPickerCompletionProvider {
             .active_item(cx)
             .and_then(|item| item.downcast::<Editor>())
             .is_some_and(|editor| {
-                editor.update(cx, |editor, cx| editor.has_non_empty_selection(cx))
+                editor.update(cx, |editor, cx| {
+                    editor.has_non_empty_selection(&editor.display_snapshot(cx))
+                })
             });
         if has_selection {
             entries.push(ContextPickerEntry::Action(

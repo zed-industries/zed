@@ -265,7 +265,10 @@ impl EditorTestContext {
 
     pub fn pixel_position_for(&mut self, display_point: DisplayPoint) -> Point<Pixels> {
         self.update_editor(|editor, window, cx| {
-            let newest_point = editor.selections.newest_display(cx).head();
+            let newest_point = editor
+                .selections
+                .newest_display(&editor.display_snapshot(cx))
+                .head();
             let pixel_position = editor.pixel_position_of_newest_cursor.unwrap();
             let line_height = editor
                 .style()
@@ -590,7 +593,7 @@ impl EditorTestContext {
     fn editor_selections(&mut self) -> Vec<Range<usize>> {
         self.editor
             .update(&mut self.cx, |editor, cx| {
-                editor.selections.all::<usize>(cx)
+                editor.selections.all::<usize>(&editor.display_snapshot(cx))
             })
             .into_iter()
             .map(|s| {
@@ -688,9 +691,12 @@ pub fn assert_state_with_diff(
     expected_diff_text: &str,
 ) {
     let (snapshot, selections) = editor.update_in(cx, |editor, window, cx| {
+        let snapshot = editor.snapshot(window, cx);
         (
-            editor.snapshot(window, cx).buffer_snapshot().clone(),
-            editor.selections.ranges::<usize>(cx),
+            snapshot.buffer_snapshot().clone(),
+            editor
+                .selections
+                .ranges::<usize>(&snapshot.display_snapshot),
         )
     });
 
