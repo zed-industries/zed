@@ -420,13 +420,16 @@ impl std::fmt::Display for PerfReport {
         for (cat, delta) in sorted.into_iter().rev() {
             const SIGN_POS: &str = "↑";
             const SIGN_NEG: &str = "↓";
-            const SIGN_NEUTRAL: &str = "±";
+            const SIGN_NEUTRAL_POS: &str = "±↑";
+            const SIGN_NEUTRAL_NEG: &str = "±↓";
 
             let prettify = |time: f64| {
                 let sign = if time > 0.05 {
                     SIGN_POS
-                } else if time < 0.05 && time > -0.05 {
-                    SIGN_NEUTRAL
+                } else if time > 0. {
+                    SIGN_NEUTRAL_POS
+                } else if time > -0.05 {
+                    SIGN_NEUTRAL_NEG
                 } else {
                     SIGN_NEG
                 };
