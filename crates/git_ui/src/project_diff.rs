@@ -642,8 +642,8 @@ impl Item for ProjectDiff {
         Some("Project Diff".into())
     }
 
-    fn tab_content(&self, params: TabContentParams, _window: &Window, _: &App) -> AnyElement {
-        Label::new("Uncommitted Changes")
+    fn tab_content(&self, params: TabContentParams, _window: &Window, cx: &App) -> AnyElement {
+        Label::new(self.tab_content_text(0, cx))
             .color(if params.selected {
                 Color::Default
             } else {
@@ -652,8 +652,11 @@ impl Item for ProjectDiff {
             .into_any_element()
     }
 
-    fn tab_content_text(&self, _detail: usize, _: &App) -> SharedString {
-        "Uncommitted Changes".into()
+    fn tab_content_text(&self, _detail: usize, cx: &App) -> SharedString {
+        match self.branch_diff.read(cx).diff_base() {
+            DiffBase::Head => "Uncommitted Changes".into(),
+            DiffBase::Merge { base_ref } => format!("Changes since {}", base_ref).into(),
+        }
     }
 
     fn telemetry_event_text(&self) -> Option<&'static str> {
