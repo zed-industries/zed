@@ -119,7 +119,7 @@ use inlay_hint_cache::{InlayHintCache, InlaySplice, InvalidationStrategy};
 use itertools::{Either, Itertools};
 use language::{
     AutoindentMode, BlockCommentConfig, BracketMatch, BracketPair, Buffer, BufferRow,
-    BufferSnapshot, Capability, CharClassifier, CharKind, CharScopeContext, CodeLabel, CursorShape,
+    BufferSnapshot, Capability, CharKind, CharScopeContext, CodeLabel, CursorShape,
     DiagnosticEntryRef, DiffOptions, EditPredictionsMode, EditPreview, HighlightedText, IndentKind,
     IndentSize, Language, OffsetRangeExt, Point, Runnable, RunnableRange, Selection, SelectionGoal,
     TextObject, TransactionId, TreeSitterOptions, WordsQuery,
@@ -5772,6 +5772,7 @@ impl Editor {
                 replace_range: word_replace_range.clone(),
                 new_text: word.clone(),
                 label: CodeLabel::plain(word, None),
+                buffer_match: None,
                 icon_path: None,
                 documentation: None,
                 source: CompletionSource::BufferWord {
@@ -22997,6 +22998,8 @@ fn snippet_completions(
         const MAX_PREFIX_LEN: usize = 128;
         let buffer_offset = text::ToOffset::to_offset(&buffer_anchor, &snapshot);
         let window_start = buffer_offset.saturating_sub(MAX_PREFIX_LEN);
+        let window_start = snapshot.clip_offset(window_start, Bias::Left);
+
         let max_buffer_window: String = snapshot
             .text_for_range(window_start..buffer_offset)
             .collect();
@@ -23015,17 +23018,13 @@ fn snippet_completions(
                 .iter()
                 .enumerate()
                 .flat_map(|(snippet_ix, snippet)| {
-                    snippet
-                        .prefix
-                        .iter()
-                        .enumerate()
-                        .map(move |(prefix_ix, prefix)| {
-                            (
-                                (snippet_ix, prefix_ix),
-                                prefix,
-                                snippet_candidate_suffixes(prefix).count(),
-                            )
-                        })
+                    snippet.prefix.iter().map(move |prefix| {
+                        (
+                            snippet_ix,
+                            prefix,
+                            snippet_candidate_suffixes(prefix).count(),
+                        )
+                    })
                 })
                 .collect_vec();
             sorted_snippet_candidates
@@ -23066,9 +23065,10 @@ fn snippet_completions(
 
                 let candidates = snippet_candidates_at_word_len
                     .iter()
+                    .map(|(snippet_ix, prefix, snippet_word_count)| prefix)
                     .enumerate() // index in `sorted_snippet_candidates`
                     // First char must match
-                    .filter(|(_ix, (_, prefix, _snippet_word_count))| {
+                    .filter(|(_ix, prefix)| {
                         itertools::equal(
                             prefix
                                 .chars()
@@ -23083,12 +23083,8 @@ fn snippet_completions(
                         )
                     })
                     // Match each prefix only once
-                    .filter(|(ix, (_, _prefix, _snippet_word_count))| {
-                        sorted_snippet_candidates_seen.insert(*ix)
-                    })
-                    .map(|(ix, (_, prefix, _snippet_word_count))| {
-                        StringMatchCandidate::new(ix, prefix)
-                    })
+                    .filter(|(ix, _prefix)| sorted_snippet_candidates_seen.insert(*ix))
+                    .map(|(ix, prefix)| StringMatchCandidate::new(ix, prefix))
                     .collect::<Vec<StringMatchCandidate>>();
 
                 matches.extend(
@@ -23128,10 +23124,9 @@ fn snippet_completions(
                 matches
                     .iter()
                     .filter_map(|(string_match, buffer_window_len)| {
-                        let (snippet_index, prefix_index) =
-                            sorted_snippet_candidates[string_match.candidate_id].0;
+                        let (snippet_index, matching_prefix) =
+                            sorted_snippet_candidates[string_match.candidate_id];
                         let snippet = &snippets[snippet_index];
-                        let matching_prefix = &snippet.prefix[prefix_index];
                         let start = buffer_offset - buffer_window_len;
                         let start = snapshot.anchor_before(start);
                         let range = start..buffer_anchor;
@@ -23187,6 +23182,7 @@ fn snippet_completions(
                             ),
                             insert_text_mode: None,
                             confirm: None,
+                            buffer_match: Some(string_match.clone()),
                         })
                     }),
             );

@@ -305,6 +305,7 @@ impl CompletionBuilder {
             icon_path: None,
             insert_text_mode: None,
             confirm: None,
+            buffer_match: None,
         }
     }
 }

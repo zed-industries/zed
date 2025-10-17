@@ -2931,6 +2931,7 @@ impl CompletionProvider for KeyContextCompletionProvider {
                     documentation: None,
                     source: project::CompletionSource::Custom,
                     icon_path: None,
+                    buffer_match: None,
                     insert_text_mode: None,
                     confirm: None,
                 })

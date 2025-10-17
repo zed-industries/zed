@@ -34,8 +34,8 @@ use util::ResultExt;
 use crate::CodeActionSource;
 use crate::hover_popover::{hover_markdown_style, open_markdown_url};
 use crate::{
-    CodeActionProvider, CompletionId, CompletionItemKind, CompletionProvider, DisplayRow, Editor,
-    EditorStyle, ResolvedTasks,
+    CodeActionProvider, CompletionId, CompletionProvider, DisplayRow, Editor, EditorStyle,
+    ResolvedTasks,
     actions::{ConfirmCodeAction, ConfirmCompletion},
     split_words, styled_runs_for_code_label,
 };
@@ -217,7 +217,10 @@ pub struct CompletionsMenu {
     pub is_incomplete: bool,
     pub buffer: Entity<Buffer>,
     pub completions: Rc<RefCell<Box<[Completion]>>>,
+    /// Match candidates for completions that have `buffer_match = None`
     match_candidates: Arc<[StringMatchCandidate]>,
+    /// Precomputed `buffer_match` for candidates that have it
+    precomputed_entries: Arc<[StringMatch]>,
     pub entries: Rc<RefCell<Box<[StringMatch]>>>,
     pub selected_item: usize,
     filter_task: Task<()>,
@@ -281,7 +284,17 @@ impl CompletionsMenu {
         let match_candidates = completions
             .iter()
             .enumerate()
+            .filter(|(_id, completion)| completion.buffer_match.is_none())
             .map(|(id, completion)| StringMatchCandidate::new(id, completion.label.filter_text()))
+            .collect();
+        let precomputed_entries = completions
+            .iter()
+            .enumerate()
+            .filter_map(|(id, completion)| {
+                let mut m = completion.buffer_match.clone()?;
+                m.candidate_id = id;
+                Some(m)
+            })
             .collect();
 
         let completions_menu = Self {
@@ -295,6 +308,7 @@ impl CompletionsMenu {
             show_completion_documentation,
             completions: RefCell::new(completions).into(),
             match_candidates,
+            precomputed_entries,
             entries: Rc::new(RefCell::new(Box::new([]))),
             selected_item: 0,
             filter_task: Task::ready(()),
@@ -329,6 +343,7 @@ impl CompletionsMenu {
                 replace_range: selection.start.text_anchor..selection.end.text_anchor,
                 new_text: choice.to_string(),
                 label: CodeLabel::plain(choice.to_string(), None),
+                buffer_match: None,
                 icon_path: None,
                 documentation: None,
                 confirm: None,
@@ -361,6 +376,7 @@ impl CompletionsMenu {
             is_incomplete: false,
             buffer,
             completions: RefCell::new(completions).into(),
+            precomputed_entries: Arc::new([]),
             match_candidates,
             entries: RefCell::new(entries).into(),
             selected_item: 0,
@@ -912,7 +928,7 @@ impl CompletionsMenu {
         }
 
         let mat = &self.entries.borrow()[self.selected_item];
-        let completions = self.completions.borrow_mut();
+        let completions = self.completions.borrow();
         let multiline_docs = match completions[mat.candidate_id].documentation.as_ref() {
             Some(CompletionDocumentation::MultiLinePlainText(text)) => div().child(text.clone()),
             Some(CompletionDocumentation::SingleLineAndMultiLinePlainText {
@@ -1027,10 +1043,11 @@ impl CompletionsMenu {
         let matches_task = cx.background_spawn({
             let query = query.clone();
             let match_candidates = self.match_candidates.clone();
+            let precomputed_entries = self.precomputed_entries.clone();
             let cancel_filter = self.cancel_filter.clone();
             let background_executor = cx.background_executor().clone();
             async move {
-                fuzzy::match_strings(
+                let mut matches = fuzzy::match_strings(
                     &match_candidates,
                     &query,
                     query.chars().any(|c| c.is_uppercase()),
@@ -1039,7 +1056,9 @@ impl CompletionsMenu {
                     &cancel_filter,
                     background_executor,
                 )
-                .await
+                .await;
+                matches.extend(precomputed_entries.iter().cloned());
+                matches
             }
         });
 
@@ -1074,6 +1093,7 @@ impl CompletionsMenu {
                 positions: Default::default(),
                 string: candidate.string.clone(),
             })
+            .chain(self.precomputed_entries.iter().cloned())
             .collect();
 
         if self.sort_completions {
@@ -1130,27 +1150,11 @@ impl CompletionsMenu {
             .and_then(|c| c.to_lowercase().next());
 
         if snippet_sort_order == SnippetSortOrder::None {
-            matches.retain(|string_match| {
-                let completion = &completions[string_match.candidate_id];
-
-                let is_snippet = matches!(
-                    &completion.source,
-                    CompletionSource::Lsp { lsp_completion, .. }
-                    if lsp_completion.kind == Some(CompletionItemKind::SNIPPET)
-                );
-
-                !is_snippet
-            });
+            matches.retain(|string_match| !completions[string_match.candidate_id].is_snippet());
         }
 
         matches.sort_unstable_by_key(|string_match| {
             let completion = &completions[string_match.candidate_id];
-
-            let is_snippet = matches!(
-                &completion.source,
-                CompletionSource::Lsp { lsp_completion, .. }
-                if lsp_completion.kind == Some(CompletionItemKind::SNIPPET)
-            );
 
             let sort_text = match &completion.source {
                 CompletionSource::Lsp { lsp_completion, .. } => lsp_completion.sort_text.as_deref(),
@@ -1163,14 +1167,17 @@ impl CompletionsMenu {
             let score = string_match.score;
             let sort_score = Reverse(OrderedFloat(score));
 
-            let query_start_doesnt_match_split_words = query_start_lower
-                .map(|query_char| {
-                    !split_words(&string_match.string).any(|word| {
-                        word.chars().next().and_then(|c| c.to_lowercase().next())
-                            == Some(query_char)
+            // Snippets do their own first-letter matching logic elsewhere.
+            let is_snippet = completion.is_snippet();
+            let query_start_doesnt_match_split_words = !is_snippet
+                && query_start_lower
+                    .map(|query_char| {
+                        !split_words(&string_match.string).any(|word| {
+                            word.chars().next().and_then(|c| c.to_lowercase().next())
+                                == Some(query_char)
+                        })
                     })
-                })
-                .unwrap_or(false);
+                    .unwrap_or(false);
 
             if query_start_doesnt_match_split_words {
                 MatchTier::OtherMatch { sort_score }

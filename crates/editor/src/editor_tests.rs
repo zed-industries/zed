@@ -11088,13 +11088,13 @@ async fn test_snippet_with_multi_word_prefix(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
     let mut cx = EditorTestContext::new(cx).await;
-    cx.update_editor(|editor, window, cx| {
+    cx.update_editor(|editor, _, cx| {
         editor.project().unwrap().update(cx, |project, cx| {
             project.snippets().update(cx, |snippets, cx| {
                 let snippet = project::snippet_provider::Snippet {
-                    prefix: "multi word".to_string(),
+                    prefix: vec!["multi word".to_string()],
                     body: "this is many words".to_string(),
-                    description: "description".to_string(),
+                    description: Some("description".to_string()),
                     name: "multi-word snippet test".to_string(),
                 };
                 snippets.add_snippet_for_test(
@@ -11107,21 +11107,25 @@ async fn test_snippet_with_multi_word_prefix(cx: &mut TestAppContext) {
         })
     });
 
-    cx.set_state("mˇ");
-    cx.simulate_input("u");
+    cx.set_state("ˇ");
+    // cx.simulate_input("m");
+    // cx.simulate_input("m ");
+    // cx.simulate_input("m w");
+    // cx.simulate_input("aa m w");
+    cx.simulate_input("aa m g"); // fails correctly
 
-    cx.update_editor(|editor, window, cx| {
-        let CodeContextMenu::Completions(context_menu) = editor.context_menu.borrow().unwrap()
+    cx.update_editor(|editor, _, _| {
+        let Some(CodeContextMenu::Completions(context_menu)) = &*editor.context_menu.borrow()
         else {
-            panic!("expected completion menu")
+            panic!("expected completion menu");
         };
         assert!(context_menu.visible());
-        let completions = context_menu;
+        let completions = context_menu.completions.borrow();
 
         assert!(
             completions
                 .iter()
-                .any(|c| c.string.as_str() == "multi word"),
+                .any(|c| c.new_text == "this is many words"),
             "Expected to find 'multi word' snippet in completions"
         );
     });
