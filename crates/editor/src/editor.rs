@@ -2331,6 +2331,19 @@ impl Editor {
         editor.tasks_update_task = Some(editor.refresh_runnables(window, cx));
         editor._subscriptions.extend(project_subscriptions);
 
+        // Register singleton buffers with LSP servers to start language servers
+        if let Some(project) = editor.project.as_ref() {
+            if let Some(buffer) = multi_buffer.read(cx).as_singleton() {
+                let buffer_id = buffer.read(cx).remote_id();
+                project.update(cx, |project, cx| {
+                    editor.registered_buffers.insert(
+                        buffer_id,
+                        project.register_buffer_with_language_servers(&buffer, cx),
+                    );
+                });
+            }
+        }
+
         // Initialize rainbow variable color cache (lock-free with DashMap)
         let rainbow_config = EditorSettings::get_global(cx).rainbow_highlighting;
         if rainbow_config.enabled {
