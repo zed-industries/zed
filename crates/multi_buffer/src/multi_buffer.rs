@@ -5231,7 +5231,7 @@ impl MultiBufferSnapshot {
     }
 
     /// Returns an anchor for the given excerpt and text anchor,
-    /// returns None if the excerpt_id is no longer valid.
+    /// Returns [`None`] if the excerpt_id is no longer valid or the text anchor range is out of excerpt's bounds.
     pub fn anchor_in_excerpt(
         &self,
         excerpt_id: ExcerptId,
@@ -5239,6 +5239,18 @@ impl MultiBufferSnapshot {
     ) -> Option<Anchor> {
         let excerpt_id = self.latest_excerpt_id(excerpt_id);
         let excerpt = self.excerpt(excerpt_id)?;
+
+        // todo(lw): consider buffer id being None -> min or max anchor needs special handling
+        let context = &excerpt.range.context;
+        if text_anchor
+            .buffer_id
+            .is_some_and(|buffer_id| buffer_id != excerpt.buffer_id)
+            || context.start.cmp(&text_anchor, &excerpt.buffer).is_gt()
+            || context.end.cmp(&text_anchor, &excerpt.buffer).is_lt()
+        {
+            return None;
+        }
+
         Some(Anchor::in_buffer(
             excerpt_id,
             excerpt.buffer_id,

@@ -367,7 +367,9 @@ impl FollowableItem for Editor {
         let Some((excerpt_id, _, _)) = buffer.as_singleton() else {
             return;
         };
-        let position = buffer.anchor_in_excerpt(*excerpt_id, location).unwrap();
+        let Some(position) = buffer.anchor_in_excerpt(*excerpt_id, location) else {
+            return;
+        };
         let selection = Selection {
             id: 0,
             reversed: false,

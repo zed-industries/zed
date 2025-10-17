@@ -321,27 +321,15 @@ fn update_conflict_highlighting(
     buffer: &editor::MultiBufferSnapshot,
     excerpt_id: editor::ExcerptId,
     cx: &mut Context<Editor>,
-) {
+) -> Option<()> {
     log::debug!("update conflict highlighting for {conflict:?}");
 
-    let outer_start = buffer
-        .anchor_in_excerpt(excerpt_id, conflict.range.start)
-        .unwrap();
-    let outer_end = buffer
-        .anchor_in_excerpt(excerpt_id, conflict.range.end)
-        .unwrap();
-    let our_start = buffer
-        .anchor_in_excerpt(excerpt_id, conflict.ours.start)
-        .unwrap();
-    let our_end = buffer
-        .anchor_in_excerpt(excerpt_id, conflict.ours.end)
-        .unwrap();
-    let their_start = buffer
-        .anchor_in_excerpt(excerpt_id, conflict.theirs.start)
-        .unwrap();
-    let their_end = buffer
-        .anchor_in_excerpt(excerpt_id, conflict.theirs.end)
-        .unwrap();
+    let outer_start = buffer.anchor_in_excerpt(excerpt_id, conflict.range.start)?;
+    let outer_end = buffer.anchor_in_excerpt(excerpt_id, conflict.range.end)?;
+    let our_start = buffer.anchor_in_excerpt(excerpt_id, conflict.ours.start)?;
+    let our_end = buffer.anchor_in_excerpt(excerpt_id, conflict.ours.end)?;
+    let their_start = buffer.anchor_in_excerpt(excerpt_id, conflict.theirs.start)?;
+    let their_end = buffer.anchor_in_excerpt(excerpt_id, conflict.theirs.end)?;
 
     let ours_background = cx.theme().colors().version_control_conflict_marker_ours;
     let theirs_background = cx.theme().colors().version_control_conflict_marker_theirs;
@@ -378,6 +366,8 @@ fn update_conflict_highlighting(
         options,
         cx,
     );
+
+    Some(())
 }
 
 fn render_conflict_buttons(
@@ -488,12 +478,9 @@ pub(crate) fn resolve_conflict(
                     })
                     .ok()?;
                 let &(_, block_id) = &state.block_ids[ix];
-                let start = snapshot
-                    .anchor_in_excerpt(excerpt_id, resolved_conflict.range.start)
-                    .unwrap();
-                let end = snapshot
-                    .anchor_in_excerpt(excerpt_id, resolved_conflict.range.end)
-                    .unwrap();
+                let start =
+                    snapshot.anchor_in_excerpt(excerpt_id, resolved_conflict.range.start)?;
+                let end = snapshot.anchor_in_excerpt(excerpt_id, resolved_conflict.range.end)?;
 
                 editor.remove_gutter_highlights::<ConflictsOuter>(vec![start..end], cx);
 
