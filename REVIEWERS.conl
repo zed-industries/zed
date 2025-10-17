@@ -16,6 +16,7 @@
 vim
   = @ConradIrwin
   = @probably-neb
+  = @p1n3appl3
 
 gpui
   = @mikayla-maki
@@ -27,6 +28,7 @@ linux
   = @dvdsk
 
 pickers
+  = @p1n3appl3
   = @dvdsk
 
 audio
@@ -45,4 +47,7 @@ extension
   = @kubkon
 
 settings_ui
-    = @probably-neb
+  = @probably-neb
+
+crashes
+  = @p1n3appl3
