@@ -12640,6 +12640,7 @@ async fn test_strip_whitespace_and_format_via_lsp(cx: &mut TestAppContext) {
                 );
             }
         });
+    cx.run_until_parked();
 
     // Handle formatting requests to the language server.
     cx.lsp
