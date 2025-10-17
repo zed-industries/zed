@@ -12,8 +12,8 @@ use db::kvp::KEY_VALUE_STORE;
 use futures::{channel::oneshot, future::join_all};
 use gpui::{
     Action, AnyView, App, AsyncApp, AsyncWindowContext, Context, Corner, Entity, EventEmitter,
-    ExternalPaths, FocusHandle, Focusable, IntoElement, ParentElement, Pixels, Render,
-    Styled, Task, WeakEntity, Window, actions,
+    ExternalPaths, FocusHandle, Focusable, IntoElement, ParentElement, Pixels, Render, Styled,
+    Task, WeakEntity, Window, actions,
 };
 use itertools::Itertools;
 use project::{Fs, Project, ProjectEntryId};
@@ -1365,7 +1365,7 @@ impl FailedToSpawnTerminal {
         PopoverMenu::new(id.into())
             .trigger(
                 ui::ButtonLike::new_rounded_right((
-                    "failed-to-spawn-terminal-settings-button-popover-menu",
+                    "failed-to-spawn-terminal-settings-button-popover-menu-popover",
                     cx.entity_id(),
                 ))
                 .layer(ui::ElevationIndex::ModalSurface)
