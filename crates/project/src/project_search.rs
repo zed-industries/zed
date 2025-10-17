@@ -11,7 +11,7 @@ use std::{
 use anyhow::Context;
 use collections::HashSet;
 use fs::Fs;
-use futures::{SinkExt, StreamExt, select_biased};
+use futures::{SinkExt, StreamExt, select_biased, stream::FuturesOrdered};
 use gpui::{App, AsyncApp, Entity, Task};
 use language::{Buffer, BufferSnapshot};
 use postage::oneshot;
@@ -254,16 +254,15 @@ impl Search {
         let mut rx = pin!(rx.ready_chunks(64));
         _ = maybe!(async move {
             while let Some(requested_paths) = rx.next().await {
-                let buffers = self.buffer_store.update(&mut cx, |this, cx| {
+                let mut buffers = self.buffer_store.update(&mut cx, |this, cx| {
                     requested_paths
                         .into_iter()
                         .map(|path| this.open_buffer(path, cx))
-                        .collect::<Vec<_>>()
+                        .collect::<FuturesOrdered<_>>()
                 })?;
-                let buffers = futures::future::join_all(buffers).await;
 
-                for b in buffers {
-                    if let Some(buffer) = b.log_err() {
+                while let Some(buffer) = buffers.next().await {
+                    if let Some(buffer) = buffer.log_err() {
                         find_all_matches_tx.send(buffer).await?;
                     }
                 }
