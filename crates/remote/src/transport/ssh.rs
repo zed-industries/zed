@@ -170,26 +170,9 @@ impl RemoteConnection for SshRemoteConnection {
         dest_path: RemotePathBuf,
         cx: &App,
     ) -> Task<Result<()>> {
-        let mut command = util::command::new_smol_command("scp");
-        let output = self
-            .socket
-            .ssh_options(&mut command, false)
-            .args(
-                self.socket
-                    .connection_options
-                    .port
-                    .map(|port| vec!["-P".to_string(), port.to_string()])
-                    .unwrap_or_default(),
-            )
-            .arg("-C")
-            .arg("-r")
-            .arg(&src_path)
-            .arg(format!(
-                "{}:{}",
-                self.socket.connection_options.scp_url(),
-                dest_path
-            ))
-            .output();
+        let dest_path_str = dest_path.to_string();
+        let mut command = self.build_scp_command(&src_path, &dest_path_str, true, true);
+        let output = command.output();
 
         cx.background_spawn(async move {
             let output = output.await?;
@@ -198,7 +181,7 @@ impl RemoteConnection for SshRemoteConnection {
                 output.status.success(),
                 "failed to upload directory {} -> {}: {}",
                 src_path.display(),
-                dest_path,
+                dest_path_str,
                 String::from_utf8_lossy(&output.stderr)
             );
 
@@ -643,35 +626,54 @@ impl SshRemoteConnection {
         Ok(())
     }
 
+    fn build_scp_command(
+        &self,
+        src_path: &Path,
+        dest_path_str: &str,
+        compression: bool,
+        recursive: bool,
+    ) -> process::Command {
+        let mut command = util::command::new_smol_command("scp");
+        self.socket.ssh_options(&mut command, false).args(
+            self.socket
+                .connection_options
+                .port
+                .map(|port| vec!["-P".to_string(), port.to_string()])
+                .unwrap_or_default(),
+        );
+
+        if compression {
+            command.arg("-C");
+        }
+        if recursive {
+            command.arg("-r");
+        }
+
+        command.arg(src_path).arg(format!(
+            "{}:{}",
+            self.socket.connection_options.scp_url(),
+            dest_path_str
+        ));
+
+        command
+    }
+
     async fn upload_file(&self, src_path: &Path, dest_path: &RelPath) -> Result<()> {
         log::debug!("uploading file {:?} to {:?}", src_path, dest_path);
-        let mut command = util::command::new_smol_command("scp");
-        let output = self
-            .socket
-            .ssh_options(&mut command, false)
-            .args(
-                self.socket
-                    .connection_options
-                    .port
-                    .map(|port| vec!["-P".to_string(), port.to_string()])
-                    .unwrap_or_default(),
-            )
-            .arg(src_path)
-            .arg(format!(
-                "{}:{}",
-                self.socket.connection_options.scp_url(),
-                dest_path.display(self.path_style())
-            ))
-            .output()
-            .await?;
+
+        let dest_path_str = dest_path.display(self.path_style());
+        let mut command = self.build_scp_command(src_path, &dest_path_str, false, false);
+
+        let output = command.output().await?;
 
         anyhow::ensure!(
             output.status.success(),
             "failed to upload file {} -> {}: {}",
             src_path.display(),
-            dest_path.display(self.path_style()),
+            dest_path_str,
             String::from_utf8_lossy(&output.stderr)
         );
+
         Ok(())
     }
 }
