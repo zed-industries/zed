@@ -475,7 +475,7 @@ pub(crate) fn resolve_conflict(
                 editor.remove_highlighted_rows::<ConflictsOurs>(vec![range.clone()], cx);
                 editor.remove_highlighted_rows::<ConflictsTheirs>(vec![range.clone()], cx);
                 editor.remove_highlighted_rows::<ConflictsOursMarker>(vec![range.clone()], cx);
-                editor.remove_highlighted_rows::<ConflictsTheirsMarker>(vec![range.clone()], cx);
+                editor.remove_highlighted_rows::<ConflictsTheirsMarker>(vec![range], cx);
                 editor.remove_blocks(HashSet::from_iter([block_id]), None, cx);
                 Some((workspace, project, multibuffer, buffer))
             })

@@ -1878,10 +1878,7 @@ impl CodeActionProvider for AssistantCodeActionProvider {
                         }
 
                         let multibuffer_snapshot = multibuffer.read(cx);
-                        Some(
-                            multibuffer_snapshot
-                                .anchor_range_in_excerpt(excerpt_id, action.range)?,
-                        )
+                        multibuffer_snapshot.anchor_range_in_excerpt(excerpt_id, action.range)
                     })
                 })?
                 .context("invalid range")?;

@@ -5238,34 +5238,6 @@ impl MultiBufferSnapshot {
 
     /// Returns an anchor for the given excerpt and text anchor,
     /// Returns [`None`] if the excerpt_id is no longer valid or the text anchor range is out of excerpt's bounds.
-    pub fn anchor_in_excerpt(
-        &self,
-        excerpt_id: ExcerptId,
-        text_anchor: text::Anchor,
-    ) -> Option<Anchor> {
-        let excerpt_id = self.latest_excerpt_id(excerpt_id);
-        let excerpt = self.excerpt(excerpt_id)?;
-
-        // todo(lw): consider buffer id being None -> min or max anchor needs special handling
-        let context = &excerpt.range.context;
-        if text_anchor
-            .buffer_id
-            .is_some_and(|buffer_id| buffer_id != excerpt.buffer_id)
-            || context.start.cmp(&text_anchor, &excerpt.buffer).is_gt()
-            || context.end.cmp(&text_anchor, &excerpt.buffer).is_lt()
-        {
-            return None;
-        }
-
-        Some(Anchor::in_buffer(
-            excerpt_id,
-            excerpt.buffer_id,
-            text_anchor,
-        ))
-    }
-
-    /// Returns an anchor for the given excerpt and text anchor,
-    /// Returns [`None`] if the excerpt_id is no longer valid or the text anchor range is out of excerpt's bounds.
     pub fn anchor_range_in_excerpt(
         &self,
         excerpt_id: ExcerptId,
@@ -5274,31 +5246,50 @@ impl MultiBufferSnapshot {
         let excerpt_id = self.latest_excerpt_id(excerpt_id);
         let excerpt = self.excerpt(excerpt_id)?;
 
-        // todo(lw): consider buffer id being None -> min or max anchor needs special handling
+        Some(
+            self.anchor_in_excerpt_(excerpt, text_anchor.start)?
+                ..self.anchor_in_excerpt_(excerpt, text_anchor.end)?,
+        )
+    }
+
+    /// Returns an anchor for the given excerpt and text anchor,
+    /// Returns [`None`] if the excerpt_id is no longer valid or the text anchor range is out of excerpt's bounds.
+    pub fn anchor_in_excerpt(
+        &self,
+        excerpt_id: ExcerptId,
+        text_anchor: text::Anchor,
+    ) -> Option<Anchor> {
+        let excerpt_id = self.latest_excerpt_id(excerpt_id);
+        let excerpt = self.excerpt(excerpt_id)?;
+        self.anchor_in_excerpt_(excerpt, text_anchor)
+    }
+
+    fn anchor_in_excerpt_(&self, excerpt: &Excerpt, text_anchor: text::Anchor) -> Option<Anchor> {
+        match text_anchor.buffer_id {
+            Some(buffer_id) if buffer_id == excerpt.buffer_id => (),
+            Some(_) => return None,
+            None if text_anchor == text::Anchor::MAX || text_anchor == text::Anchor::MIN => {
+                return Some(Anchor::in_buffer(
+                    excerpt.id,
+                    excerpt.buffer_id,
+                    text_anchor,
+                ));
+            }
+            None => return None,
+        }
+
         let context = &excerpt.range.context;
-        if text_anchor
-            .start
-            .buffer_id
-            .is_some_and(|buffer_id| buffer_id != excerpt.buffer_id)
-            || text_anchor
-                .start
-                .buffer_id
-                .is_some_and(|buffer_id| buffer_id != excerpt.buffer_id)
-            || context
-                .start
-                .cmp(&text_anchor.start, &excerpt.buffer)
-                .is_gt()
-            || context.end.cmp(&text_anchor.start, &excerpt.buffer).is_lt()
-            || context.start.cmp(&text_anchor.end, &excerpt.buffer).is_gt()
-            || context.end.cmp(&text_anchor.end, &excerpt.buffer).is_lt()
+        if context.start.cmp(&text_anchor, &excerpt.buffer).is_gt()
+            || context.end.cmp(&text_anchor, &excerpt.buffer).is_lt()
         {
             return None;
         }
 
-        Some(
-            Anchor::in_buffer(excerpt_id, excerpt.buffer_id, text_anchor.start)
-                ..Anchor::in_buffer(excerpt_id, excerpt.buffer_id, text_anchor.end),
-        )
+        Some(Anchor::in_buffer(
+            excerpt.id,
+            excerpt.buffer_id,
+            text_anchor,
+        ))
     }
 
     pub fn context_range_for_excerpt(&self, excerpt_id: ExcerptId) -> Option<Range<text::Anchor>> {
