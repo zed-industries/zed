@@ -251,17 +251,22 @@ impl Search {
         find_all_matches_tx: Sender<Entity<Buffer>>,
         mut cx: AsyncApp,
     ) {
+        let mut rx = pin!(rx.ready_chunks(64));
         _ = maybe!(async move {
-            while let Ok(requested_path) = rx.recv().await {
-                let Some(buffer) = self
-                    .buffer_store
-                    .update(&mut cx, |this, cx| this.open_buffer(requested_path, cx))?
-                    .await
-                    .log_err()
-                else {
-                    continue;
-                };
-                find_all_matches_tx.send(buffer).await?;
+            while let Some(requested_paths) = rx.next().await {
+                let buffers = self.buffer_store.update(&mut cx, |this, cx| {
+                    requested_paths
+                        .into_iter()
+                        .map(|path| this.open_buffer(path, cx))
+                        .collect::<Vec<_>>()
+                })?;
+                let buffers = futures::future::join_all(buffers).await;
+
+                for b in buffers {
+                    if let Some(buffer) = b.log_err() {
+                        find_all_matches_tx.send(buffer).await?;
+                    }
+                }
             }
             Result::<_, anyhow::Error>::Ok(())
         })
