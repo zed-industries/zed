@@ -12,6 +12,7 @@
   = @maxdeviant
   = @SomeoneToIgnore
   = @probably-neb
+  = @danilo-leal
 
 vim
   = @ConradIrwin
@@ -23,6 +24,7 @@ gpui
 
 git
   = @cole-miller
+  = @danilo-leal
 
 linux
   = @dvdsk
@@ -51,3 +53,9 @@ settings_ui
 
 crashes
   = @p1n3appl3
+
+ai
+  = @danilo-leal
+
+design
+  = @danilo-leal
