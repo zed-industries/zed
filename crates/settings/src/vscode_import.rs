@@ -1,3 +1,4 @@
+use crate::*;
 use anyhow::{Context as _, Result, anyhow};
 use collections::HashMap;
 use fs::Fs;
@@ -9,8 +10,6 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-
-use crate::{merge_from::MergeFrom, *};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum VsCodeSettingsSource {
@@ -85,104 +84,51 @@ impl VsCodeSettings {
         })
     }
 
-    pub fn read_value(&self, setting: &str) -> Option<&Value> {
+    fn read_value(&self, setting: &str) -> Option<&Value> {
         self.content.get(setting)
     }
 
-    pub fn read_str(&self, setting: &str) -> Option<&str> {
+    fn read_str(&self, setting: &str) -> Option<&str> {
         self.read_value(setting).and_then(|v| v.as_str())
     }
 
-    pub fn read_string(&self, setting: &str) -> Option<String> {
+    fn read_string(&self, setting: &str) -> Option<String> {
         self.read_value(setting)
             .and_then(|v| v.as_str())
             .map(|s| s.to_owned())
     }
 
-    pub fn read_bool(&self, setting: &str) -> Option<bool> {
+    fn read_bool(&self, setting: &str) -> Option<bool> {
         self.read_value(setting).and_then(|v| v.as_bool())
     }
 
-    pub fn read_f32(&self, setting: &str) -> Option<f32> {
+    fn read_f32(&self, setting: &str) -> Option<f32> {
         self.read_value(setting)
             .and_then(|v| v.as_f64())
             .map(|v| v as f32)
     }
 
-    pub fn read_u64(&self, setting: &str) -> Option<u64> {
+    fn read_u64(&self, setting: &str) -> Option<u64> {
         self.read_value(setting).and_then(|v| v.as_u64())
     }
 
-    pub fn read_usize(&self, setting: &str) -> Option<usize> {
+    fn read_usize(&self, setting: &str) -> Option<usize> {
         self.read_value(setting)
             .and_then(|v| v.as_u64())
             .and_then(|v| v.try_into().ok())
     }
 
-    pub fn read_u32(&self, setting: &str) -> Option<u32> {
+    fn read_u32(&self, setting: &str) -> Option<u32> {
         self.read_value(setting)
             .and_then(|v| v.as_u64())
             .and_then(|v| v.try_into().ok())
     }
 
-    pub fn string_setting(&self, key: &str, setting: &mut Option<String>) {
-        if let Some(s) = self.content.get(key).and_then(Value::as_str) {
-            *setting = Some(s.to_owned())
-        }
-    }
-
-    pub fn bool_setting(&self, key: &str, setting: &mut Option<bool>) {
-        if let Some(s) = self.content.get(key).and_then(Value::as_bool) {
-            *setting = Some(s)
-        }
-    }
-
-    pub fn u32_setting(&self, key: &str, setting: &mut Option<u32>) {
-        if let Some(s) = self.content.get(key).and_then(Value::as_u64) {
-            *setting = Some(s as u32)
-        }
-    }
-
-    pub fn u64_setting(&self, key: &str, setting: &mut Option<u64>) {
-        if let Some(s) = self.content.get(key).and_then(Value::as_u64) {
-            *setting = Some(s)
-        }
-    }
-
-    pub fn usize_setting(&self, key: &str, setting: &mut Option<usize>) {
-        if let Some(s) = self.content.get(key).and_then(Value::as_u64) {
-            *setting = Some(s.try_into().unwrap())
-        }
-    }
-
-    pub fn f32_setting(&self, key: &str, setting: &mut Option<f32>) {
-        if let Some(s) = self.content.get(key).and_then(Value::as_f64) {
-            *setting = Some(s as f32)
-        }
-    }
-
-    pub fn from_f32_setting<T: From<f32>>(&self, key: &str, setting: &mut Option<T>) {
-        if let Some(s) = self.content.get(key).and_then(Value::as_f64) {
-            *setting = Some(T::from(s as f32))
-        }
-    }
-
-    pub fn enum_setting<T>(
-        &self,
-        key: &str,
-        setting: &mut Option<T>,
-        f: impl FnOnce(&str) -> Option<T>,
-    ) {
-        if let Some(s) = self.content.get(key).and_then(Value::as_str).and_then(f) {
-            *setting = Some(s)
-        }
-    }
-
-    pub fn read_enum<T>(&self, key: &str, f: impl FnOnce(&str) -> Option<T>) -> Option<T> {
+    fn read_enum<T>(&self, key: &str, f: impl FnOnce(&str) -> Option<T>) -> Option<T> {
         self.content.get(key).and_then(Value::as_str).and_then(f)
     }
 
-    pub fn read_fonts(&self, key: &str) -> (Option<FontFamilyName>, Option<Vec<FontFamilyName>>) {
+    fn read_fonts(&self, key: &str) -> (Option<FontFamilyName>, Option<Vec<FontFamilyName>>) {
         let Some(css_name) = self.content.get(key).and_then(Value::as_str) else {
             return (None, None);
         };
@@ -402,17 +348,13 @@ impl VsCodeSettings {
     }
 
     fn minimap_content(&self) -> Option<MinimapContent> {
-        // todo!() this enables minimap for all vscode users?
-        let minimap_enabled = self.read_bool("editor.minimap.enabled").unwrap_or(true);
+        let minimap_enabled = self.read_bool("editor.minimap.enabled");
         let autohide = self.read_bool("editor.minimap.autohide");
-        let show = if minimap_enabled {
-            if let Some(false) = autohide {
-                Some(ShowMinimap::Always)
-            } else {
-                Some(ShowMinimap::Auto)
-            }
-        } else {
-            Some(ShowMinimap::Never)
+        let show = match (minimap_enabled, autohide) {
+            (Some(true), Some(false)) => Some(ShowMinimap::Always),
+            (Some(true), _) => Some(ShowMinimap::Auto),
+            (Some(false), _) => Some(ShowMinimap::Never),
+            _ => None,
         };
 
         skip_default(MinimapContent {
@@ -446,7 +388,7 @@ impl VsCodeSettings {
                 languages: Default::default(),
                 file_types: self.file_types(),
             },
-            worktree: Default::default(),
+            worktree: self.worktree_settings_content(),
             lsp: Default::default(),
             terminal: None,
             dap: Default::default(),
@@ -740,11 +682,17 @@ impl VsCodeSettings {
     }
 
     fn telemetry_settings_content(&self) -> Option<TelemetrySettingsContent> {
-        skip_default(TelemetrySettingsContent {
-            metrics: self.read_enum("telemetry.telemetryLevel", |s| Some(s == "all")),
-            diagnostics: self.read_enum("telemetry.telemetryLevel", |s| {
-                Some(matches!(s, "all" | "error" | "crash"))
-            }),
+        self.read_enum("telemetry.telemetryLevel", |level| {
+            let (metrics, diagnostics) = match level {
+                "all" => (true, true),
+                "error" | "crash" => (false, true),
+                "off" => (false, false),
+                _ => return None,
+            };
+            Some(TelemetrySettingsContent {
+                metrics: Some(metrics),
+                diagnostics: Some(diagnostics),
+            })
         })
     }
 
@@ -908,8 +856,8 @@ impl VsCodeSettings {
         }
     }
 
-    fn worktree_settings_content(&self) -> Option<WorktreeSettingsContent> {
-        skip_default(WorktreeSettingsContent {
+    fn worktree_settings_content(&self) -> WorktreeSettingsContent {
+        WorktreeSettingsContent {
             project_name: None,
             file_scan_exclusions: self
                 .read_value("files.watcherExclude")
@@ -920,7 +868,6 @@ impl VsCodeSettings {
                         .collect::<Vec<_>>()
                 })
                 .filter(|r| !r.is_empty()),
-            ,
             file_scan_inclusions: self
                 .read_value("files.watcherInclude")
                 .and_then(|v| v.as_array())
@@ -931,7 +878,7 @@ impl VsCodeSettings {
                 })
                 .filter(|r| !r.is_empty()),
             private_files: None,
-        })
+        }
     }
 }
 

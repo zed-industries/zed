@@ -1527,6 +1527,7 @@ mod tests {
             .unindent(),
             r#" { "editor.tabSize": 37 } "#.to_owned(),
             r#"{
+              "base_keymap": "VSCode",
               "tab_size": 37
             }
             "#
@@ -1544,6 +1545,7 @@ mod tests {
             .unindent(),
             r#"{ "editor.tabSize": 42 }"#.to_owned(),
             r#"{
+                "base_keymap": "VSCode",
                 "tab_size": 42,
                 "preferred_line_length": 99,
             }
@@ -1563,6 +1565,7 @@ mod tests {
             .unindent(),
             r#"{}"#.to_owned(),
             r#"{
+                "base_keymap": "VSCode",
                 "preferred_line_length": 99,
                 "tab_size": 42
             }
@@ -1578,8 +1581,15 @@ mod tests {
             }
             "#
             .unindent(),
-            r#"{ "workbench.editor.decorations.colors": true }"#.to_owned(),
+            r#"{ "git.decorations.enabled": true }"#.to_owned(),
             r#"{
+              "project_panel": {
+                "git_status": true
+              },
+              "outline_panel": {
+                "git_status": true
+              },
+              "base_keymap": "VSCode",
               "tabs": {
                 "git_status": true
               }
@@ -1598,6 +1608,7 @@ mod tests {
             .unindent(),
             r#"{ "editor.fontFamily": "Cascadia Code, 'Consolas', Courier New" }"#.to_owned(),
             r#"{
+              "base_keymap": "VSCode",
               "buffer_font_fallbacks": [
                 "Consolas",
                 "Courier New"
