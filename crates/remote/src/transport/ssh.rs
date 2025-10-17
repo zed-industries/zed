@@ -40,6 +40,7 @@ pub(crate) struct SshRemoteConnection {
     ssh_path_style: PathStyle,
     ssh_shell: String,
     ssh_default_system_shell: String,
+    sftp_available: Mutex<Option<bool>>,
     _temp_dir: TempDir,
 }
 
@@ -171,16 +172,44 @@ impl RemoteConnection for SshRemoteConnection {
         cx: &App,
     ) -> Task<Result<()>> {
         let dest_path_str = dest_path.to_string();
-        let mut command = self.build_scp_command(&src_path, &dest_path_str, true, true);
-        let output = command.output();
+        let src_path_display = src_path.display().to_string();
+
+        let sftp_available = self.check_sftp_available();
+        let mut sftp_command = self.build_sftp_command(&src_path, &dest_path_str, true);
+        let sftp_batch = format!("put -r {} {}\n", src_path.display(), dest_path_str);
+
+        let mut scp_command = self.build_scp_command(&src_path, &dest_path_str, true, true);
+        let scp_output = scp_command.output();
 
         cx.background_spawn(async move {
-            let output = output.await?;
+            if sftp_available.await {
+                log::debug!("using SFTP for directory upload");
+                let mut child = sftp_command.spawn()?;
+                if let Some(mut stdin) = child.stdin.take() {
+                    use futures::AsyncWriteExt;
+                    stdin.write_all(sftp_batch.as_bytes()).await?;
+                    drop(stdin);
+                }
+
+                let output = child.output().await?;
+                anyhow::ensure!(
+                    output.status.success(),
+                    "failed to upload directory via SFTP {} -> {}: {}",
+                    src_path_display,
+                    dest_path_str,
+                    String::from_utf8_lossy(&output.stderr)
+                );
+
+                return Ok(());
+            }
+
+            log::debug!("using SCP for directory upload");
+            let output = scp_output.await?;
 
             anyhow::ensure!(
                 output.status.success(),
-                "failed to upload directory {} -> {}: {}",
-                src_path.display(),
+                "failed to upload directory via SCP {} -> {}: {}",
+                src_path_display,
                 dest_path_str,
                 String::from_utf8_lossy(&output.stderr)
             );
@@ -374,6 +403,7 @@ impl SshRemoteConnection {
             ssh_platform,
             ssh_shell,
             ssh_default_system_shell,
+            sftp_available: Mutex::new(None),
         };
 
         let (release_channel, version, commit) = cx.update(|cx| {
@@ -658,17 +688,78 @@ impl SshRemoteConnection {
         command
     }
 
+    fn build_sftp_command(
+        &self,
+        src_path: &Path,
+        dest_path_str: &str,
+        recursive: bool,
+    ) -> process::Command {
+        let mut command = util::command::new_smol_command("sftp");
+        self.socket.ssh_options(&mut command).args(
+            self.socket
+                .connection_options
+                .port
+                .map(|port| vec!["-P".to_string(), port.to_string()])
+                .unwrap_or_default(),
+        );
+
+        command.arg("-b").arg("-");
+        command.arg(self.socket.connection_options.scp_url());
+
+        command.stdin(Stdio::piped());
+
+        command
+    }
+
+    async fn check_sftp_available(&self) -> bool {
+        {
+            let cached = self.sftp_available.lock();
+            if let Some(available) = *cached {
+                return available;
+            }
+        }
+
+        let available = self.socket.run_command("which", &["sftp"]).await.is_ok();
+        *self.sftp_available.lock() = Some(available);
+        available
+    }
+
     async fn upload_file(&self, src_path: &Path, dest_path: &RelPath) -> Result<()> {
         log::debug!("uploading file {:?} to {:?}", src_path, dest_path);
 
         let dest_path_str = dest_path.display(self.path_style());
-        let mut command = self.build_scp_command(src_path, &dest_path_str, false, false);
 
+        if self.check_sftp_available().await {
+            log::debug!("using SFTP for file upload");
+            let mut command = self.build_sftp_command(src_path, &dest_path_str, false);
+            let sftp_batch = format!("put {} {}\n", src_path.display(), dest_path_str);
+
+            let mut child = command.spawn()?;
+            if let Some(mut stdin) = child.stdin.take() {
+                use futures::AsyncWriteExt;
+                stdin.write_all(sftp_batch.as_bytes()).await?;
+                drop(stdin);
+            }
+
+            let output = child.output().await?;
+            anyhow::ensure!(
+                output.status.success(),
+                "failed to upload file via SFTP {} -> {}: {}",
+                src_path.display(),
+                dest_path_str,
+                String::from_utf8_lossy(&output.stderr)
+            );
+
+            return Ok(());
+        }
+
+        log::debug!("using SCP for file upload");
+        let mut command = self.build_scp_command(src_path, &dest_path_str, false, false);
         let output = command.output().await?;
 
         anyhow::ensure!(
             output.status.success(),
-            "failed to upload file {} -> {}: {}",
+            "failed to upload file via SCP {} -> {}: {}",
             src_path.display(),
             dest_path_str,
             String::from_utf8_lossy(&output.stderr)
