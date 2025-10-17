@@ -1869,15 +1869,12 @@ impl Editor {
                     project::Event::LanguageServerBufferRegistered { buffer_id, .. } => {
                         let buffer_id = *buffer_id;
                         if editor.buffer().read(cx).buffer(buffer_id).is_some() {
-                            let registered = editor.register_buffer(buffer_id, cx);
-                            if registered {
-                                editor.update_lsp_data(Some(buffer_id), window, cx);
-                                editor
-                                    .refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
-                                refresh_linked_ranges(editor, window, cx);
-                                editor.refresh_code_actions(window, cx);
-                                editor.refresh_document_highlights(cx);
-                            }
+                            editor.register_buffer(buffer_id, cx);
+                            editor.update_lsp_data(Some(buffer_id), window, cx);
+                            editor.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
+                            refresh_linked_ranges(editor, window, cx);
+                            editor.refresh_code_actions(window, cx);
+                            editor.refresh_document_highlights(cx);
                         }
                     }
 
@@ -21774,7 +21771,7 @@ impl Editor {
         }
     }
 
-    fn register_buffer(&mut self, buffer_id: BufferId, cx: &mut Context<Self>) -> bool {
+    fn register_buffer(&mut self, buffer_id: BufferId, cx: &mut Context<Self>) {
         if !self.registered_buffers.contains_key(&buffer_id)
             && let Some(project) = self.project.as_ref()
         {
@@ -21785,13 +21782,10 @@ impl Editor {
                         project.register_buffer_with_language_servers(&buffer, cx),
                     );
                 });
-                return true;
             } else {
                 self.registered_buffers.remove(&buffer_id);
             }
         }
-
-        false
     }
 
     fn ignore_lsp_data(&self) -> bool {
