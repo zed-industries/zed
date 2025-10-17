@@ -51,7 +51,6 @@ ui.workspace = true
 util.workspace = true
 uuid.workspace = true
 workspace.workspace = true
-workspace-hack.workspace = true
 zed_env_vars.workspace = true
 
 [dev-dependencies]

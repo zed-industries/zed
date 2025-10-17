@@ -16,4 +16,3 @@ clap = { workspace = true, features = ["derive"] }
 toml.workspace = true
 indoc.workspace = true
 toml_edit.workspace = true
-workspace-hack.workspace = true

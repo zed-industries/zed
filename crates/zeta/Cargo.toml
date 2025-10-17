@@ -55,7 +55,6 @@ thiserror.workspace = true
 ui.workspace = true
 util.workspace = true
 uuid.workspace = true
-workspace-hack.workspace = true
 workspace.workspace = true
 worktree.workspace = true
 zed_actions.workspace = true

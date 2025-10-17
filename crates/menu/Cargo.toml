@@ -14,4 +14,3 @@ doctest = false
 
 [dependencies]
 gpui.workspace = true
-workspace-hack.workspace = true

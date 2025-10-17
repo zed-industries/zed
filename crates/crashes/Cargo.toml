@@ -17,7 +17,6 @@ smol.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 system_specs.workspace = true
-workspace-hack.workspace = true
 zstd.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]

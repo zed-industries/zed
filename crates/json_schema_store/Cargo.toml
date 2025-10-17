@@ -30,7 +30,6 @@ snippet_provider.workspace = true
 task.workspace = true
 theme.workspace = true
 util.workspace = true
-workspace-hack.workspace = true
 
 
 

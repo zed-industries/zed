@@ -15,4 +15,3 @@ doctest = false
 
 [dependencies]
 derive_refineable.workspace = true
-workspace-hack.workspace = true

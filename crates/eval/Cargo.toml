@@ -68,4 +68,3 @@ unindent.workspace = true
 util.workspace = true
 uuid.workspace = true
 watch.workspace = true
-workspace-hack.workspace = true

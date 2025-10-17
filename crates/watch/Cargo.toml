@@ -14,7 +14,6 @@ doctest = true
 
 [dependencies]
 parking_lot.workspace = true
-workspace-hack.workspace = true
 
 [dev-dependencies]
 ctor.workspace = true

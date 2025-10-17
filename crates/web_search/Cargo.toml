@@ -17,4 +17,3 @@ cloud_llm_client.workspace = true
 collections.workspace = true
 gpui.workspace = true
 serde.workspace = true
-workspace-hack.workspace = true

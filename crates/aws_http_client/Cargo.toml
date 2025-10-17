@@ -18,4 +18,3 @@ default = []
 aws-smithy-runtime-api.workspace = true
 aws-smithy-types.workspace = true
 http_client.workspace = true
-workspace-hack.workspace = true

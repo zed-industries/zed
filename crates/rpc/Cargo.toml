@@ -36,7 +36,6 @@ strum.workspace = true
 tracing = { version = "0.1.34", features = ["log"] }
 util.workspace = true
 zstd.workspace = true
-workspace-hack.workspace = true
 
 [dev-dependencies]
 collections = { workspace = true, features = ["test-support"] }

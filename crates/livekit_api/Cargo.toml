@@ -22,7 +22,6 @@ prost.workspace = true
 prost-types.workspace = true
 reqwest.workspace = true
 serde.workspace = true
-workspace-hack.workspace = true
 
 [build-dependencies]
 prost-build.workspace = true

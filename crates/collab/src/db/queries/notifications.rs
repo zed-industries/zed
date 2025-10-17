@@ -17,7 +17,7 @@ impl Database {
                     .any(|existing| existing.name == **kind)
             })
             .map(|kind| notification_kind::ActiveModel {
-                name: ActiveValue::Set(kind.to_string()),
+                name: ActiveValue::Set((*kind).to_owned()),
                 ..Default::default()
             })
             .collect();
@@ -260,7 +260,7 @@ pub fn model_to_proto(this: &Database, row: notification::Model) -> Result<proto
         .context("Unknown notification kind")?;
     Ok(proto::Notification {
         id: row.id.to_proto(),
-        kind: kind.to_string(),
+        kind: (*kind).to_owned(),
         timestamp: row.created_at.assume_utc().unix_timestamp() as u64,
         is_read: row.is_read,
         response: row.response,

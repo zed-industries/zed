@@ -22,5 +22,4 @@ picker.workspace = true
 settings.workspace = true
 ui.workspace = true
 util.workspace = true
-workspace-hack.workspace = true
 workspace.workspace = true

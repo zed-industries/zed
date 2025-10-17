@@ -63,7 +63,6 @@ anyhow.workspace = true
 gpui.workspace = true
 ui.workspace = true
 util.workspace = true
-workspace-hack.workspace = true
 
 # Uncomment other workspace dependencies as needed
 # assistant.workspace = true

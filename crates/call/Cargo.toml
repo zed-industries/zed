@@ -41,7 +41,6 @@ telemetry.workspace = true
 util.workspace = true
 gpui_tokio.workspace = true
 livekit_client.workspace = true
-workspace-hack.workspace = true
 
 [dev-dependencies]
 client = { workspace = true, features = ["test-support"] }

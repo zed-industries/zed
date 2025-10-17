@@ -32,7 +32,6 @@ util.workspace = true
 telemetry.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
-workspace-hack.workspace = true
 
 [dev-dependencies]
 ctor.workspace = true

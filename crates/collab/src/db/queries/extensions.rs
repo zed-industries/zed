@@ -255,7 +255,7 @@ impl Database {
 
                 let insert = extension::Entity::insert(extension::ActiveModel {
                     name: ActiveValue::Set(latest_version.name.clone()),
-                    external_id: ActiveValue::Set(external_id.to_string()),
+                    external_id: ActiveValue::Set((*external_id).to_owned()),
                     id: ActiveValue::NotSet,
                     latest_version: ActiveValue::Set(latest_version.version.to_string()),
                     total_download_count: ActiveValue::NotSet,
