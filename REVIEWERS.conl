@@ -1,0 +1,24 @@
+; This file contains a list of people who're interested in reviewing pull requests
+; to certain parts of the code-base.
+;
+; This is mostly used internally for PR assignment, and may change over time.
+;
+; If you have permission to merge PRs (mostly equivalent to "do you work at Zed Industries"),
+; we strongly encourage you to put your name in the "all" bucket, but you can also add yourself
+; to other areas too.
+
+<all>
+  = @ConradIrwin
+  = @SomeoneToIgnore
+
+vim
+  = @ConradIrwin
+
+gpui
+  = @MikaylaMaki
+
+git
+  = @cole-miller
+
+pickers
+  = @dvd
