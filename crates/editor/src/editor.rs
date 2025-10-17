@@ -6887,7 +6887,8 @@ impl Editor {
                                 continue;
                             }
 
-                            let range = Anchor::range_in_buffer(excerpt_id, buffer_id, start..end);
+                            let range =
+                                Anchor::range_in_buffer(excerpt_id, buffer_id, *start..*end);
                             if highlight.kind == lsp::DocumentHighlightKind::WRITE {
                                 write_ranges.push(range);
                             } else {
