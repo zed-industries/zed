@@ -76,7 +76,10 @@ use project::{
     debugger::{breakpoint_store::BreakpointStoreEvent, session::ThreadStatus},
     toolchain_store::ToolchainStoreEvent,
 };
-use remote::{RemoteClientDelegate, RemoteConnectionOptions, remote_client::ConnectionIdentifier};
+use remote::{
+    RemoteClientDelegate, RemoteConnection, RemoteConnectionOptions,
+    remote_client::ConnectionIdentifier,
+};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use session::AppSession;
@@ -7441,22 +7444,23 @@ pub fn create_and_open_local_file(
 
 pub fn open_remote_project_with_new_connection(
     window: WindowHandle<Workspace>,
-    connection_options: RemoteConnectionOptions,
+    remote_connection: Arc<dyn RemoteConnection>,
     cancel_rx: oneshot::Receiver<()>,
     delegate: Arc<dyn RemoteClientDelegate>,
     app_state: Arc<AppState>,
     paths: Vec<PathBuf>,
     cx: &mut App,
-) -> Task<Result<()>> {
+) -> Task<Result<Vec<Option<Box<dyn ItemHandle>>>>> {
     cx.spawn(async move |cx| {
         let (workspace_id, serialized_workspace) =
-            serialize_remote_project(connection_options.clone(), paths.clone(), cx).await?;
+            serialize_remote_project(remote_connection.connection_options(), paths.clone(), cx)
+                .await?;
 
         let session = match cx
             .update(|cx| {
                 remote::RemoteClient::new(
                     ConnectionIdentifier::Workspace(workspace_id.0),
-                    connection_options,
+                    remote_connection,
                     cancel_rx,
                     delegate,
                     cx,
@@ -7465,7 +7469,7 @@ pub fn open_remote_project_with_new_connection(
             .await?
         {
             Some(result) => result,
-            None => return Ok(()),
+            None => return Ok(Vec::new()),
         };
 
         let project = cx.update(|cx| {
@@ -7500,7 +7504,7 @@ pub fn open_remote_project_with_existing_connection(
     app_state: Arc<AppState>,
     window: WindowHandle<Workspace>,
     cx: &mut AsyncApp,
-) -> Task<Result<()>> {
+) -> Task<Result<Vec<Option<Box<dyn ItemHandle>>>>> {
     cx.spawn(async move |cx| {
         let (workspace_id, serialized_workspace) =
             serialize_remote_project(connection_options.clone(), paths.clone(), cx).await?;
@@ -7526,7 +7530,7 @@ async fn open_remote_project_inner(
     app_state: Arc<AppState>,
     window: WindowHandle<Workspace>,
     cx: &mut AsyncApp,
-) -> Result<()> {
+) -> Result<Vec<Option<Box<dyn ItemHandle>>>> {
     let toolchains = DB.toolchains(workspace_id).await?;
     for (toolchain, worktree_id, path) in toolchains {
         project
@@ -7583,7 +7587,7 @@ async fn open_remote_project_inner(
         });
     })?;
 
-    window
+    let items = window
         .update(cx, |_, window, cx| {
             window.activate_window();
             open_items(serialized_workspace, project_paths_to_open, window, cx)
@@ -7602,7 +7606,7 @@ async fn open_remote_project_inner(
         }
     })?;
 
-    Ok(())
+    Ok(items.into_iter().map(|item| item?.ok()).collect())
 }
 
 fn serialize_remote_project(
