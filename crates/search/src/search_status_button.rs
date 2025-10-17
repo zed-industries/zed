@@ -18,7 +18,7 @@ impl Render for SearchButton {
         let button = div();
 
         if !EditorSettings::get_global(cx).search.button {
-            return button.w_0().invisible();
+            return button.hidden();
         }
 
         button.child(

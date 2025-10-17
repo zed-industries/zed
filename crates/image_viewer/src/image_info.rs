@@ -47,7 +47,7 @@ impl Render for ImageInfo {
         let settings = ImageViewerSettings::get_global(cx);
 
         let Some(metadata) = self.metadata.as_ref() else {
-            return div();
+            return div().hidden();
         };
 
         let mut components = Vec::new();

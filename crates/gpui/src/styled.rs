@@ -53,6 +53,13 @@ pub trait Styled: Sized {
         self
     }
 
+    /// Sets the display type of the element to `none`.
+    /// [Docs](https://tailwindcss.com/docs/display)
+    fn hidden(mut self) -> Self {
+        self.style().display = Some(Display::None);
+        self
+    }
+
     /// Sets the whitespace of the element to `normal`.
     /// [Docs](https://tailwindcss.com/docs/whitespace#normal)
     fn whitespace_normal(mut self) -> Self {

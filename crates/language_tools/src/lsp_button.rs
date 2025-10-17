@@ -1011,7 +1011,7 @@ impl StatusItemView for LspButton {
 impl Render for LspButton {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl ui::IntoElement {
         if self.server_state.read(cx).language_servers.is_empty() || self.lsp_menu.is_none() {
-            return div();
+            return div().hidden();
         }
 
         let mut has_errors = false;
