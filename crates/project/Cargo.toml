@@ -90,7 +90,6 @@ which.workspace = true
 worktree.workspace = true
 zeroize.workspace = true
 zlog.workspace = true
-workspace-hack.workspace = true
 
 [dev-dependencies]
 client = { workspace = true, features = ["test-support"] }

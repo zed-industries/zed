@@ -1359,7 +1359,10 @@ impl Vim {
             return;
         };
         let newest_selection_empty = editor.update(cx, |editor, cx| {
-            editor.selections.newest::<usize>(cx).is_empty()
+            editor
+                .selections
+                .newest::<usize>(&editor.display_snapshot(cx))
+                .is_empty()
         });
         let editor = editor.read(cx);
         let editor_mode = editor.mode();
@@ -1455,9 +1458,11 @@ impl Vim {
         cx: &mut Context<Self>,
     ) -> Option<String> {
         self.update_editor(cx, |_, editor, cx| {
-            let selection = editor.selections.newest::<usize>(cx);
+            let snapshot = &editor.snapshot(window, cx);
+            let selection = editor
+                .selections
+                .newest::<usize>(&snapshot.display_snapshot);
 
-            let snapshot = editor.snapshot(window, cx);
             let snapshot = snapshot.buffer_snapshot();
             let (range, kind) =
                 snapshot.surrounding_word(selection.start, Some(CharScopeContext::Completion));
@@ -1484,9 +1489,11 @@ impl Vim {
 
                 let selections = self.editor().map(|editor| {
                     editor.update(cx, |editor, cx| {
+                        let snapshot = editor.display_snapshot(cx);
+
                         (
-                            editor.selections.oldest::<Point>(cx),
-                            editor.selections.newest::<Point>(cx),
+                            editor.selections.oldest::<Point>(&snapshot),
+                            editor.selections.newest::<Point>(&snapshot),
                         )
                     })
                 });

@@ -1543,6 +1543,7 @@
     // Timeout for hover and Cmd-click path hyperlink discovery in milliseconds.
     "path_hyperlink_timeout_ms": 10
   },
+  "code_actions_on_format": {},
   // Settings related to running tasks.
   "tasks": {
     "variables": {},
@@ -1712,7 +1713,9 @@
       "preferred_line_length": 72
     },
     "Go": {
-      "formatter": [{ "code_action": "source.organizeImports" }, "language_server"],
+      "code_actions_on_format": {
+        "source.organizeImports": true
+      },
       "debuggers": ["Delve"]
     },
     "GraphQL": {
@@ -1936,6 +1939,11 @@
   // DAP Specific settings.
   "dap": {
     // Specify the DAP name as a key here.
+    "CodeLLDB": {
+      "env": {
+        "RUST_LOG": "info"
+      }
+    }
   },
   // Common language server settings.
   "global_lsp_settings": {

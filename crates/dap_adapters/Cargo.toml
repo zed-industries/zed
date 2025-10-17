@@ -39,7 +39,6 @@ shlex.workspace = true
 smol.workspace = true
 task.workspace = true
 util.workspace = true
-workspace-hack.workspace = true
 
 [dev-dependencies]
 dap = { workspace = true, features = ["test-support"] }
