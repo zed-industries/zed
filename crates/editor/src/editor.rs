@@ -3331,6 +3331,33 @@ impl Editor {
         Subscription::join(other_subscription, this_subscription)
     }
 
+    fn unfold_buffers_with_selections(&mut self, cx: &mut Context<Self>) {
+        if self.buffer().read(cx).is_singleton() {
+            return;
+        }
+
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let buffers_to_unfold: Vec<BufferId> = self
+            .selections
+            .disjoint_anchor_ranges()
+            .flat_map(|range| {
+                // Check all buffers that this selection spans
+                let start_offset = range.start.to_offset(&snapshot);
+                let end_offset = range.end.to_offset(&snapshot);
+                snapshot.buffer_ids_for_range(start_offset..end_offset)
+            })
+            .filter(|buffer_id| self.is_buffer_folded(*buffer_id, cx))
+            .collect::<std::collections::HashSet<_>>()
+            .into_iter()
+            .collect();
+
+        if !buffers_to_unfold.is_empty() {
+            self.display_map.update(cx, |display_map, cx| {
+                display_map.unfold_buffers(buffers_to_unfold.iter().copied(), cx);
+            });
+        }
+    }
+
     /// Changes selections using the provided mutation function. Changes to `self.selections` occur
     /// immediately, but when run within `transact` or `with_selection_effects_deferred` other
     /// effects of selection change occur at the end of the transaction.
@@ -4066,6 +4093,8 @@ impl Editor {
         }
 
         self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
+
+        self.unfold_buffers_with_selections(cx);
 
         let selections = self.selections.all_adjusted(&self.display_snapshot(cx));
         let mut bracket_inserted = false;
@@ -18667,10 +18696,16 @@ impl Editor {
         if self.buffer().read(cx).is_singleton() || self.is_buffer_folded(buffer_id, cx) {
             return;
         }
+
         let folded_excerpts = self.buffer().read(cx).excerpts_for_buffer(buffer_id, cx);
         self.display_map.update(cx, |display_map, cx| {
             display_map.fold_buffers([buffer_id], cx)
         });
+
+        self.selections.change_with(cx, |selections| {
+            selections.remove_selections_from_buffer(buffer_id);
+        });
+
         cx.emit(EditorEvent::BufferFoldToggled {
             ids: folded_excerpts.iter().map(|&(id, _)| id).collect(),
             folded: true,
