@@ -43,6 +43,8 @@ use workspace::{
 };
 use zed_actions::ToggleFocus;
 
+const DEBUG_PANEL_KEY: &str = "DebugPanel";
+
 pub struct DebugPanel {
     size: Pixels,
     active_session: Option<Entity<DebugSession>>,
@@ -1414,6 +1416,10 @@ impl Panel for DebugPanel {
         "DebugPanel"
     }
 
+    fn panel_key() -> &'static str {
+        DEBUG_PANEL_KEY
+    }
+    
     fn position(&self, _window: &Window, cx: &App) -> DockPosition {
         DebuggerSettings::get_global(cx).dock.into()
     }

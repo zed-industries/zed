@@ -6367,6 +6367,24 @@ impl Render for Workspace {
             }
         }
 
+        if self.left_dock.read(cx).is_open() {
+            if let Some(active_panel) = self.left_dock.read(cx).active_panel() {
+                context.set("left_dock", active_panel.panel_key());
+            }
+        }
+
+        if self.right_dock.read(cx).is_open() {
+            if let Some(active_panel) = self.right_dock.read(cx).active_panel() {
+                context.set("right_dock", active_panel.panel_key());
+            }
+        }
+
+        if self.bottom_dock.read(cx).is_open() {
+            if let Some(active_panel) = self.bottom_dock.read(cx).active_panel() {
+                context.set("bottom_dock", active_panel.panel_key());
+            }
+        }
+
         let centered_layout = self.centered_layout
             && self.center.panes().len() == 1
             && self.active_item(cx).is_some();
