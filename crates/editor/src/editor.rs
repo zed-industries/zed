@@ -82,7 +82,7 @@ use anyhow::{Context as _, Result, anyhow};
 use blink_manager::BlinkManager;
 use buffer_diff::DiffHunkStatus;
 use client::{Collaborator, ParticipantIndex, parse_zed_link};
-use clock::{AGENT_REPLICA_ID, ReplicaId};
+use clock::ReplicaId;
 use code_context_menus::{
     AvailableCodeAction, CodeActionContents, CodeActionsItem, CodeActionsMenu, CodeContextMenu,
     CompletionsMenu, ContextMenuOrigin,
@@ -1301,7 +1301,7 @@ enum SelectionHistoryMode {
 
 #[derive(Clone, PartialEq, Eq, Hash)]
 struct HoveredCursor {
-    replica_id: u16,
+    replica_id: ReplicaId,
     selection_id: usize,
 }
 
@@ -23482,7 +23482,7 @@ impl EditorSnapshot {
         self.buffer_snapshot()
             .selections_in_range(range, false)
             .filter_map(move |(replica_id, line_mode, cursor_shape, selection)| {
-                if replica_id == AGENT_REPLICA_ID {
+                if replica_id == ReplicaId::AGENT {
                     Some(RemoteSelection {
                         replica_id,
                         selection,

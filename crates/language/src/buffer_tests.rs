@@ -70,7 +70,13 @@ fn test_line_endings(cx: &mut gpui::App) {
 fn test_set_line_ending(cx: &mut TestAppContext) {
     let base = cx.new(|cx| Buffer::local("one\ntwo\nthree\n", cx));
     let base_replica = cx.new(|cx| {
-        Buffer::from_proto(1, Capability::ReadWrite, base.read(cx).to_proto(cx), None).unwrap()
+        Buffer::from_proto(
+            ReplicaId::new(1),
+            Capability::ReadWrite,
+            base.read(cx).to_proto(cx),
+            None,
+        )
+        .unwrap()
     });
     base.update(cx, |_buffer, cx| {
         cx.subscribe(&base_replica, |this, _, event, cx| {
@@ -397,7 +403,7 @@ fn test_edit_events(cx: &mut gpui::App) {
     let buffer2 = cx.new(|cx| {
         Buffer::remote(
             BufferId::from(cx.entity_id().as_non_zero_u64()),
-            1,
+            ReplicaId::new(1),
             Capability::ReadWrite,
             "abcdef",
         )
@@ -2775,7 +2781,8 @@ fn test_serialization(cx: &mut gpui::App) {
         .background_executor()
         .block(buffer1.read(cx).serialize_ops(None, cx));
     let buffer2 = cx.new(|cx| {
-        let mut buffer = Buffer::from_proto(1, Capability::ReadWrite, state, None).unwrap();
+        let mut buffer =
+            Buffer::from_proto(ReplicaId::new(1), Capability::ReadWrite, state, None).unwrap();
         buffer.apply_ops(
             ops.into_iter()
                 .map(|op| proto::deserialize_operation(op).unwrap()),
@@ -2794,7 +2801,13 @@ fn test_branch_and_merge(cx: &mut TestAppContext) {
 
     // Create a remote replica of the base buffer.
     let base_replica = cx.new(|cx| {
-        Buffer::from_proto(1, Capability::ReadWrite, base.read(cx).to_proto(cx), None).unwrap()
+        Buffer::from_proto(
+            ReplicaId::new(1),
+            Capability::ReadWrite,
+            base.read(cx).to_proto(cx),
+            None,
+        )
+        .unwrap()
     });
     base.update(cx, |_buffer, cx| {
         cx.subscribe(&base_replica, |this, _, event, cx| {
@@ -3108,7 +3121,8 @@ fn test_random_collaboration(cx: &mut App, mut rng: StdRng) {
                 .background_executor()
                 .block(base_buffer.read(cx).serialize_ops(None, cx));
             let mut buffer =
-                Buffer::from_proto(i as ReplicaId, Capability::ReadWrite, state, None).unwrap();
+                Buffer::from_proto(ReplicaId::new(i as u16), Capability::ReadWrite, state, None)
+                    .unwrap();
             buffer.apply_ops(
                 ops.into_iter()
                     .map(|op| proto::deserialize_operation(op).unwrap()),
@@ -3133,9 +3147,9 @@ fn test_random_collaboration(cx: &mut App, mut rng: StdRng) {
         });
 
         buffers.push(buffer);
-        replica_ids.push(i as ReplicaId);
-        network.lock().add_peer(i as ReplicaId);
-        log::info!("Adding initial peer with replica id {}", i);
+        replica_ids.push(ReplicaId::new(i as u16));
+        network.lock().add_peer(ReplicaId::new(i as u16));
+        log::info!("Adding initial peer with replica id {:?}", replica_ids[i]);
     }
 
     log::info!("initial text: {:?}", base_text);
@@ -3155,14 +3169,14 @@ fn test_random_collaboration(cx: &mut App, mut rng: StdRng) {
                     buffer.start_transaction_at(now);
                     buffer.randomly_edit(&mut rng, 5, cx);
                     buffer.end_transaction_at(now, cx);
-                    log::info!("buffer {} text: {:?}", buffer.replica_id(), buffer.text());
+                    log::info!("buffer {:?} text: {:?}", buffer.replica_id(), buffer.text());
                 });
                 mutation_count -= 1;
             }
             30..=39 if mutation_count != 0 => {
                 buffer.update(cx, |buffer, cx| {
                     if rng.random_bool(0.2) {
-                        log::info!("peer {} clearing active selections", replica_id);
+                        log::info!("peer {:?} clearing active selections", replica_id);
                         active_selections.remove(&replica_id);
                         buffer.remove_active_selections(cx);
                     } else {
@@ -3179,7 +3193,7 @@ fn test_random_collaboration(cx: &mut App, mut rng: StdRng) {
                         }
                         let selections: Arc<[Selection<Anchor>]> = selections.into();
                         log::info!(
-                            "peer {} setting active selections: {:?}",
+                            "peer {:?} setting active selections: {:?}",
                             replica_id,
                             selections
                         );
@@ -3189,7 +3203,7 @@ fn test_random_collaboration(cx: &mut App, mut rng: StdRng) {
                 });
                 mutation_count -= 1;
             }
-            40..=49 if mutation_count != 0 && replica_id == 0 => {
+            40..=49 if mutation_count != 0 && replica_id == ReplicaId::REMOTE_SERVER => {
                 let entry_count = rng.random_range(1..=5);
                 buffer.update(cx, |buffer, cx| {
                     let diagnostics = DiagnosticSet::new(
@@ -3207,7 +3221,11 @@ fn test_random_collaboration(cx: &mut App, mut rng: StdRng) {
                         }),
                         buffer,
                     );
-                    log::info!("peer {} setting diagnostics: {:?}", replica_id, diagnostics);
+                    log::info!(
+                        "peer {:?} setting diagnostics: {:?}",
+                        replica_id,
+                        diagnostics
+                    );
                     buffer.update_diagnostics(LanguageServerId(0), diagnostics, cx);
                 });
                 mutation_count -= 1;
@@ -3217,12 +3235,13 @@ fn test_random_collaboration(cx: &mut App, mut rng: StdRng) {
                 let old_buffer_ops = cx
                     .background_executor()
                     .block(buffer.read(cx).serialize_ops(None, cx));
-                let new_replica_id = (0..=replica_ids.len() as ReplicaId)
+                let new_replica_id = (0..=replica_ids.len() as u16)
+                    .map(ReplicaId::new)
                     .filter(|replica_id| *replica_id != buffer.read(cx).replica_id())
                     .choose(&mut rng)
                     .unwrap();
                 log::info!(
-                    "Adding new replica {} (replicating from {})",
+                    "Adding new replica {:?} (replicating from {:?})",
                     new_replica_id,
                     replica_id
                 );
@@ -3241,7 +3260,7 @@ fn test_random_collaboration(cx: &mut App, mut rng: StdRng) {
                         cx,
                     );
                     log::info!(
-                        "New replica {} text: {:?}",
+                        "New replica {:?} text: {:?}",
                         new_buffer.replica_id(),
                         new_buffer.text()
                     );
@@ -3264,7 +3283,7 @@ fn test_random_collaboration(cx: &mut App, mut rng: StdRng) {
                 }));
                 network.lock().replicate(replica_id, new_replica_id);
 
-                if new_replica_id as usize == replica_ids.len() {
+                if new_replica_id.as_u16() as usize == replica_ids.len() {
                     replica_ids.push(new_replica_id);
                 } else {
                     let new_buffer = new_buffer.take().unwrap();
@@ -3276,7 +3295,7 @@ fn test_random_collaboration(cx: &mut App, mut rng: StdRng) {
                             .map(|op| proto::deserialize_operation(op).unwrap());
                         if ops.len() > 0 {
                             log::info!(
-                                "peer {} (version: {:?}) applying {} ops from the network. {:?}",
+                                "peer {:?} (version: {:?}) applying {} ops from the network. {:?}",
                                 new_replica_id,
                                 buffer.read(cx).version(),
                                 ops.len(),
@@ -3287,13 +3306,13 @@ fn test_random_collaboration(cx: &mut App, mut rng: StdRng) {
                             });
                         }
                     }
-                    buffers[new_replica_id as usize] = new_buffer;
+                    buffers[new_replica_id.as_u16() as usize] = new_buffer;
                 }
             }
             60..=69 if mutation_count != 0 => {
                 buffer.update(cx, |buffer, cx| {
                     buffer.randomly_undo_redo(&mut rng, cx);
-                    log::info!("buffer {} text: {:?}", buffer.replica_id(), buffer.text());
+                    log::info!("buffer {:?} text: {:?}", buffer.replica_id(), buffer.text());
                 });
                 mutation_count -= 1;
             }
@@ -3305,7 +3324,7 @@ fn test_random_collaboration(cx: &mut App, mut rng: StdRng) {
                     .map(|op| proto::deserialize_operation(op).unwrap());
                 if ops.len() > 0 {
                     log::info!(
-                        "peer {} (version: {:?}) applying {} ops from the network. {:?}",
+                        "peer {:?} (version: {:?}) applying {} ops from the network. {:?}",
                         replica_id,
                         buffer.read(cx).version(),
                         ops.len(),
@@ -3335,13 +3354,13 @@ fn test_random_collaboration(cx: &mut App, mut rng: StdRng) {
         assert_eq!(
             buffer.version(),
             first_buffer.version(),
-            "Replica {} version != Replica 0 version",
+            "Replica {:?} version != Replica 0 version",
             buffer.replica_id()
         );
         assert_eq!(
             buffer.text(),
             first_buffer.text(),
-            "Replica {} text != Replica 0 text",
+            "Replica {:?} text != Replica 0 text",
             buffer.replica_id()
         );
         assert_eq!(
@@ -3351,7 +3370,7 @@ fn test_random_collaboration(cx: &mut App, mut rng: StdRng) {
             first_buffer
                 .diagnostics_in_range::<_, usize>(0..first_buffer.len(), false)
                 .collect::<Vec<_>>(),
-            "Replica {} diagnostics != Replica 0 diagnostics",
+            "Replica {:?} diagnostics != Replica 0 diagnostics",
             buffer.replica_id()
         );
     }
@@ -3370,7 +3389,7 @@ fn test_random_collaboration(cx: &mut App, mut rng: StdRng) {
         assert_eq!(
             actual_remote_selections,
             expected_remote_selections,
-            "Replica {} remote selections != expected selections",
+            "Replica {:?} remote selections != expected selections",
             buffer.replica_id()
         );
     }

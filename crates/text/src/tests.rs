@@ -16,7 +16,7 @@ fn init_logger() {
 
 #[test]
 fn test_edit() {
-    let mut buffer = Buffer::new(0, BufferId::new(1).unwrap(), "abc");
+    let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "abc");
     assert_eq!(buffer.text(), "abc");
     buffer.edit([(3..3, "def")]);
     assert_eq!(buffer.text(), "abcdef");
@@ -40,7 +40,11 @@ fn test_random_edits(mut rng: StdRng) {
     let mut reference_string = RandomCharIter::new(&mut rng)
         .take(reference_string_len)
         .collect::<String>();
-    let mut buffer = Buffer::new(0, BufferId::new(1).unwrap(), reference_string.clone());
+    let mut buffer = Buffer::new(
+        ReplicaId::LOCAL,
+        BufferId::new(1).unwrap(),
+        reference_string.clone(),
+    );
     LineEnding::normalize(&mut reference_string);
 
     buffer.set_group_interval(Duration::from_millis(rng.random_range(0..=200)));
@@ -176,7 +180,11 @@ fn test_line_endings() {
         LineEnding::Windows
     );
 
-    let mut buffer = Buffer::new(0, BufferId::new(1).unwrap(), "one\r\ntwo\rthree");
+    let mut buffer = Buffer::new(
+        ReplicaId::LOCAL,
+        BufferId::new(1).unwrap(),
+        "one\r\ntwo\rthree",
+    );
     assert_eq!(buffer.text(), "one\ntwo\nthree");
     assert_eq!(buffer.line_ending(), LineEnding::Windows);
     buffer.check_invariants();
@@ -190,7 +198,7 @@ fn test_line_endings() {
 
 #[test]
 fn test_line_len() {
-    let mut buffer = Buffer::new(0, BufferId::new(1).unwrap(), "");
+    let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "");
     buffer.edit([(0..0, "abcd\nefg\nhij")]);
     buffer.edit([(12..12, "kl\nmno")]);
     buffer.edit([(18..18, "\npqrs\n")]);
@@ -207,7 +215,7 @@ fn test_line_len() {
 #[test]
 fn test_common_prefix_at_position() {
     let text = "a = str; b = δα";
-    let buffer = Buffer::new(0, BufferId::new(1).unwrap(), text);
+    let buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), text);
 
     let offset1 = offset_after(text, "str");
     let offset2 = offset_after(text, "δα");
@@ -256,7 +264,7 @@ fn test_common_prefix_at_position() {
 #[test]
 fn test_text_summary_for_range() {
     let buffer = Buffer::new(
-        0,
+        ReplicaId::LOCAL,
         BufferId::new(1).unwrap(),
         "ab\nefg\nhklm\nnopqrs\ntuvwxyz",
     );
@@ -348,7 +356,7 @@ fn test_text_summary_for_range() {
 
 #[test]
 fn test_chars_at() {
-    let mut buffer = Buffer::new(0, BufferId::new(1).unwrap(), "");
+    let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "");
     buffer.edit([(0..0, "abcd\nefgh\nij")]);
     buffer.edit([(12..12, "kl\nmno")]);
     buffer.edit([(18..18, "\npqrs")]);
@@ -370,7 +378,7 @@ fn test_chars_at() {
     assert_eq!(chars.collect::<String>(), "PQrs");
 
     // Regression test:
-    let mut buffer = Buffer::new(0, BufferId::new(1).unwrap(), "");
+    let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "");
     buffer.edit([(0..0, "[workspace]\nmembers = [\n    \"xray_core\",\n    \"xray_server\",\n    \"xray_cli\",\n    \"xray_wasm\",\n]\n")]);
     buffer.edit([(60..60, "\n")]);
 
@@ -380,7 +388,7 @@ fn test_chars_at() {
 
 #[test]
 fn test_anchors() {
-    let mut buffer = Buffer::new(0, BufferId::new(1).unwrap(), "");
+    let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "");
     buffer.edit([(0..0, "abc")]);
     let left_anchor = buffer.anchor_before(2);
     let right_anchor = buffer.anchor_after(2);
@@ -498,7 +506,7 @@ fn test_anchors() {
 
 #[test]
 fn test_anchors_at_start_and_end() {
-    let mut buffer = Buffer::new(0, BufferId::new(1).unwrap(), "");
+    let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "");
     let before_start_anchor = buffer.anchor_before(0);
     let after_end_anchor = buffer.anchor_after(0);
 
@@ -521,7 +529,7 @@ fn test_anchors_at_start_and_end() {
 
 #[test]
 fn test_undo_redo() {
-    let mut buffer = Buffer::new(0, BufferId::new(1).unwrap(), "1234");
+    let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "1234");
     // Set group interval to zero so as to not group edits in the undo stack.
     buffer.set_group_interval(Duration::from_secs(0));
 
@@ -558,7 +566,7 @@ fn test_undo_redo() {
 #[test]
 fn test_history() {
     let mut now = Instant::now();
-    let mut buffer = Buffer::new(0, BufferId::new(1).unwrap(), "123456");
+    let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "123456");
     buffer.set_group_interval(Duration::from_millis(300));
 
     let transaction_1 = buffer.start_transaction_at(now).unwrap();
@@ -625,7 +633,7 @@ fn test_history() {
 #[test]
 fn test_finalize_last_transaction() {
     let now = Instant::now();
-    let mut buffer = Buffer::new(0, BufferId::new(1).unwrap(), "123456");
+    let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "123456");
     buffer.history.group_interval = Duration::from_millis(1);
 
     buffer.start_transaction_at(now);
@@ -661,7 +669,7 @@ fn test_finalize_last_transaction() {
 #[test]
 fn test_edited_ranges_for_transaction() {
     let now = Instant::now();
-    let mut buffer = Buffer::new(0, BufferId::new(1).unwrap(), "1234567");
+    let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "1234567");
 
     buffer.start_transaction_at(now);
     buffer.edit([(2..4, "cd")]);
@@ -700,9 +708,9 @@ fn test_edited_ranges_for_transaction() {
 fn test_concurrent_edits() {
     let text = "abcdef";
 
-    let mut buffer1 = Buffer::new(1, BufferId::new(1).unwrap(), text);
-    let mut buffer2 = Buffer::new(2, BufferId::new(1).unwrap(), text);
-    let mut buffer3 = Buffer::new(3, BufferId::new(1).unwrap(), text);
+    let mut buffer1 = Buffer::new(ReplicaId::new(1), BufferId::new(1).unwrap(), text);
+    let mut buffer2 = Buffer::new(ReplicaId::new(2), BufferId::new(1).unwrap(), text);
+    let mut buffer3 = Buffer::new(ReplicaId::new(3), BufferId::new(1).unwrap(), text);
 
     let buf1_op = buffer1.edit([(1..2, "12")]);
     assert_eq!(buffer1.text(), "a12cdef");
@@ -741,11 +749,15 @@ fn test_random_concurrent_edits(mut rng: StdRng) {
     let mut network = Network::new(rng.clone());
 
     for i in 0..peers {
-        let mut buffer = Buffer::new(i as ReplicaId, BufferId::new(1).unwrap(), base_text.clone());
+        let mut buffer = Buffer::new(
+            ReplicaId::new(i as u16),
+            BufferId::new(1).unwrap(),
+            base_text.clone(),
+        );
         buffer.history.group_interval = Duration::from_millis(rng.random_range(0..=200));
         buffers.push(buffer);
-        replica_ids.push(i as u16);
-        network.add_peer(i as u16);
+        replica_ids.push(ReplicaId::new(i as u16));
+        network.add_peer(ReplicaId::new(i as u16));
     }
 
     log::info!("initial text: {:?}", base_text);
@@ -759,7 +771,7 @@ fn test_random_concurrent_edits(mut rng: StdRng) {
             0..=50 if mutation_count != 0 => {
                 let op = buffer.randomly_edit(&mut rng, 5).1;
                 network.broadcast(buffer.replica_id, vec![op]);
-                log::info!("buffer {} text: {:?}", buffer.replica_id, buffer.text());
+                log::info!("buffer {:?} text: {:?}", buffer.replica_id, buffer.text());
                 mutation_count -= 1;
             }
             51..=70 if mutation_count != 0 => {
@@ -771,7 +783,7 @@ fn test_random_concurrent_edits(mut rng: StdRng) {
                 let ops = network.receive(replica_id);
                 if !ops.is_empty() {
                     log::info!(
-                        "peer {} applying {} ops from the network.",
+                        "peer {:?} applying {} ops from the network.",
                         replica_id,
                         ops.len()
                     );
@@ -792,7 +804,7 @@ fn test_random_concurrent_edits(mut rng: StdRng) {
         assert_eq!(
             buffer.text(),
             first_buffer.text(),
-            "Replica {} text != Replica 0 text",
+            "Replica {:?} text != Replica 0 text",
             buffer.replica_id
         );
         buffer.check_invariants();

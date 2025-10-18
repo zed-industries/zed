@@ -78,7 +78,9 @@ fn test_remote(cx: &mut App) {
         let ops = cx
             .background_executor()
             .block(host_buffer.read(cx).serialize_ops(None, cx));
-        let mut buffer = Buffer::from_proto(1, Capability::ReadWrite, state, None).unwrap();
+        let mut buffer =
+            Buffer::from_proto(ReplicaId::REMOTE_SERVER, Capability::ReadWrite, state, None)
+                .unwrap();
         buffer.apply_ops(
             ops.into_iter()
                 .map(|op| language::proto::deserialize_operation(op).unwrap()),
@@ -3636,7 +3638,7 @@ fn assert_position_translation(snapshot: &MultiBufferSnapshot) {
 fn assert_line_indents(snapshot: &MultiBufferSnapshot) {
     let max_row = snapshot.max_point().row;
     let buffer_id = snapshot.excerpts().next().unwrap().1.remote_id();
-    let text = text::Buffer::new(0, buffer_id, snapshot.text());
+    let text = text::Buffer::new(ReplicaId::LOCAL, buffer_id, snapshot.text());
     let mut line_indents = text
         .line_indents_in_row_range(0..max_row + 1)
         .collect::<Vec<_>>();

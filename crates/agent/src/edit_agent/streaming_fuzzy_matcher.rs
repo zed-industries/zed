@@ -308,12 +308,13 @@ mod tests {
     use indoc::indoc;
     use language::{BufferId, TextBuffer};
     use rand::prelude::*;
+    use text::ReplicaId;
     use util::test::{generate_marked_text, marked_text_ranges};
 
     #[test]
     fn test_empty_query() {
         let buffer = TextBuffer::new(
-            0,
+            ReplicaId::LOCAL,
             BufferId::new(1).unwrap(),
             "Hello world\nThis is a test\nFoo bar baz",
         );
@@ -327,7 +328,7 @@ mod tests {
     #[test]
     fn test_streaming_exact_match() {
         let buffer = TextBuffer::new(
-            0,
+            ReplicaId::LOCAL,
             BufferId::new(1).unwrap(),
             "Hello world\nThis is a test\nFoo bar baz",
         );
@@ -351,7 +352,7 @@ mod tests {
     #[test]
     fn test_streaming_fuzzy_match() {
         let buffer = TextBuffer::new(
-            0,
+            ReplicaId::LOCAL,
             BufferId::new(1).unwrap(),
             indoc! {"
                 function foo(a, b) {
@@ -385,7 +386,7 @@ mod tests {
     #[test]
     fn test_incremental_improvement() {
         let buffer = TextBuffer::new(
-            0,
+            ReplicaId::LOCAL,
             BufferId::new(1).unwrap(),
             "Line 1\nLine 2\nLine 3\nLine 4\nLine 5",
         );
@@ -410,7 +411,7 @@ mod tests {
     #[test]
     fn test_incomplete_lines_buffering() {
         let buffer = TextBuffer::new(
-            0,
+            ReplicaId::LOCAL,
             BufferId::new(1).unwrap(),
             indoc! {"
                 The quick brown fox
@@ -437,7 +438,7 @@ mod tests {
     #[test]
     fn test_multiline_fuzzy_match() {
         let buffer = TextBuffer::new(
-            0,
+            ReplicaId::LOCAL,
             BufferId::new(1).unwrap(),
             indoc! {r#"
                 impl Display for User {
@@ -691,7 +692,11 @@ mod tests {
             }
         "#};
 
-        let buffer = TextBuffer::new(0, BufferId::new(1).unwrap(), text.to_string());
+        let buffer = TextBuffer::new(
+            ReplicaId::LOCAL,
+            BufferId::new(1).unwrap(),
+            text.to_string(),
+        );
         let snapshot = buffer.snapshot();
         let mut matcher = StreamingFuzzyMatcher::new(snapshot.clone());
 
@@ -724,7 +729,7 @@ mod tests {
     #[track_caller]
     fn assert_location_resolution(text_with_expected_range: &str, query: &str, rng: &mut StdRng) {
         let (text, expected_ranges) = marked_text_ranges(text_with_expected_range, false);
-        let buffer = TextBuffer::new(0, BufferId::new(1).unwrap(), text.clone());
+        let buffer = TextBuffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), text.clone());
         let snapshot = buffer.snapshot();
 
         let mut matcher = StreamingFuzzyMatcher::new(snapshot);

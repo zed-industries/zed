@@ -25,7 +25,7 @@ use rpc::{
 };
 use smol::channel::Receiver;
 use std::{io, pin::pin, sync::Arc, time::Instant};
-use text::BufferId;
+use text::{BufferId, ReplicaId};
 use util::{ResultExt as _, TryFutureExt, debug_panic, maybe, rel_path::RelPath};
 use worktree::{File, PathChange, ProjectEntryId, Worktree, WorktreeId};
 
@@ -158,7 +158,7 @@ impl RemoteBufferStore {
     pub fn handle_create_buffer_for_peer(
         &mut self,
         envelope: TypedEnvelope<proto::CreateBufferForPeer>,
-        replica_id: u16,
+        replica_id: ReplicaId,
         capability: Capability,
         cx: &mut Context<BufferStore>,
     ) -> Result<Option<Entity<Buffer>>> {
@@ -626,7 +626,9 @@ impl LocalBufferStore {
             cx.spawn(async move |_, cx| {
                 let loaded = load_file.await?;
                 let text_buffer = cx
-                    .background_spawn(async move { text::Buffer::new(0, buffer_id, loaded.text) })
+                    .background_spawn(async move {
+                        text::Buffer::new(ReplicaId::LOCAL, buffer_id, loaded.text)
+                    })
                     .await;
                 cx.insert_entity(reservation, |_| {
                     Buffer::build(text_buffer, Some(loaded.file), Capability::ReadWrite)
@@ -639,7 +641,7 @@ impl LocalBufferStore {
                 Ok(buffer) => Ok(buffer),
                 Err(error) if is_not_found_error(&error) => cx.new(|cx| {
                     let buffer_id = BufferId::from(cx.entity_id().as_non_zero_u64());
-                    let text_buffer = text::Buffer::new(0, buffer_id, "");
+                    let text_buffer = text::Buffer::new(ReplicaId::LOCAL, buffer_id, "");
                     Buffer::build(
                         text_buffer,
                         Some(Arc::new(File {
@@ -917,7 +919,7 @@ impl BufferStore {
             path: file.path.clone(),
             worktree_id: file.worktree_id(cx),
         });
-        let is_remote = buffer.replica_id() != 0;
+        let is_remote = buffer.replica_id().is_remote();
         let open_buffer = OpenBuffer::Complete {
             buffer: buffer_entity.downgrade(),
         };
@@ -1317,7 +1319,7 @@ impl BufferStore {
     pub fn handle_create_buffer_for_peer(
         &mut self,
         envelope: TypedEnvelope<proto::CreateBufferForPeer>,
-        replica_id: u16,
+        replica_id: ReplicaId,
         capability: Capability,
         cx: &mut Context<Self>,
     ) -> Result<()> {

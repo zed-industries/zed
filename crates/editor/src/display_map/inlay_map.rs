@@ -1278,7 +1278,7 @@ mod tests {
                 Anchor::min(),
                 &InlayHint {
                     label: InlayHintLabel::String("a".to_string()),
-                    position: text::Anchor::default(),
+                    position: text::Anchor::MIN,
                     padding_left: false,
                     padding_right: false,
                     tooltip: None,
@@ -1298,7 +1298,7 @@ mod tests {
                 Anchor::min(),
                 &InlayHint {
                     label: InlayHintLabel::String("a".to_string()),
-                    position: text::Anchor::default(),
+                    position: text::Anchor::MIN,
                     padding_left: true,
                     padding_right: true,
                     tooltip: None,
@@ -1318,7 +1318,7 @@ mod tests {
                 Anchor::min(),
                 &InlayHint {
                     label: InlayHintLabel::String(" a ".to_string()),
-                    position: text::Anchor::default(),
+                    position: text::Anchor::MIN,
                     padding_left: false,
                     padding_right: false,
                     tooltip: None,
@@ -1338,7 +1338,7 @@ mod tests {
                 Anchor::min(),
                 &InlayHint {
                     label: InlayHintLabel::String(" a ".to_string()),
-                    position: text::Anchor::default(),
+                    position: text::Anchor::MIN,
                     padding_left: true,
                     padding_right: true,
                     tooltip: None,
@@ -1361,7 +1361,7 @@ mod tests {
                 Anchor::min(),
                 &InlayHint {
                     label: InlayHintLabel::String("🎨".to_string()),
-                    position: text::Anchor::default(),
+                    position: text::Anchor::MIN,
                     padding_left: true,
                     padding_right: true,
                     tooltip: None,

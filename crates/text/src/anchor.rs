@@ -6,7 +6,7 @@ use std::{cmp::Ordering, fmt::Debug, ops::Range};
 use sum_tree::{Bias, Dimensions};
 
 /// A timestamped position in a buffer
-#[derive(Copy, Clone, Eq, PartialEq, Debug, Hash, Default)]
+#[derive(Copy, Clone, Eq, PartialEq, Debug, Hash)]
 pub struct Anchor {
     pub timestamp: clock::Lamport,
     /// The byte offset in the buffer

@@ -8,7 +8,7 @@ use gpui::{
 };
 use language::{
     Anchor, Buffer, Capability, DiskState, File, LanguageRegistry, LineEnding, OffsetRangeExt as _,
-    Point, Rope, TextBuffer,
+    Point, ReplicaId, Rope, TextBuffer,
 };
 use multi_buffer::PathKey;
 use project::{Project, WorktreeId, git_store::Repository};
@@ -135,7 +135,7 @@ impl CommitView {
             });
             let buffer = cx.new(|cx| {
                 let buffer = TextBuffer::new_normalized(
-                    0,
+                    ReplicaId::LOCAL,
                     cx.entity_id().as_non_zero_u64().into(),
                     LineEnding::default(),
                     format_commit(&commit).into(),
@@ -316,7 +316,7 @@ async fn build_buffer(
     };
     let buffer = cx.new(|cx| {
         let buffer = TextBuffer::new_normalized(
-            0,
+            ReplicaId::LOCAL,
             cx.entity_id().as_non_zero_u64().into(),
             line_ending,
             text,

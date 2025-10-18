@@ -666,7 +666,7 @@ impl MultiBuffer {
             paths_by_excerpt: Default::default(),
             buffer_changed_since_sync: Default::default(),
             history: History {
-                next_transaction_id: clock::Lamport::default(),
+                next_transaction_id: clock::Lamport::MIN,
                 undo_stack: Vec::new(),
                 redo_stack: Vec::new(),
                 transaction_depth: 0,
