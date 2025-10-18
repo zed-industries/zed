@@ -57,7 +57,7 @@ impl WindowControlType {
     ///
     /// Will take a [PlatformStyle] in the future to return a different
     /// icon name based on the platform.
-    pub fn icon(&self) -> IconName {
+    pub const fn icon(&self) -> IconName {
         match self {
             WindowControlType::Minimize => IconName::GenericMinimize,
             WindowControlType::Restore => IconName::GenericRestore,

@@ -34,7 +34,7 @@ pub struct FetchTool {
 }
 
 impl FetchTool {
-    pub fn new(http_client: Arc<HttpClientWithUrl>) -> Self {
+    pub const fn new(http_client: Arc<HttpClientWithUrl>) -> Self {
         Self { http_client }
     }
 

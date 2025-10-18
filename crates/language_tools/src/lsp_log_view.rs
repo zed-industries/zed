@@ -668,7 +668,7 @@ impl LspLogView {
     }
 }
 
-fn log_type(log_kind: LogKind) -> Option<LogType> {
+const fn log_type(log_kind: LogKind) -> Option<LogType> {
     match log_kind {
         LogKind::Rpc => Some(LogType::Rpc),
         LogKind::Trace => Some(LogType::Trace),
@@ -1275,7 +1275,7 @@ const SERVER_TRACE: &str = "Server Trace";
 const SERVER_INFO: &str = "Server Info";
 
 impl LspLogToolbarItemView {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             log_view: None,
             _log_view_subscription: None,

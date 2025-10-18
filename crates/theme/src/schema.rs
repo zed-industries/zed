@@ -20,7 +20,7 @@ fn ensure_non_opaque(color: Hsla) -> Hsla {
     }
 }
 
-fn ensure_opaque(color: Hsla) -> Hsla {
+const fn ensure_opaque(color: Hsla) -> Hsla {
     Hsla { a: 1.0, ..color }
 }
 

@@ -11,7 +11,7 @@ pub struct UsageCallout {
 }
 
 impl UsageCallout {
-    pub fn new(plan: Plan, usage: ModelRequestUsage) -> Self {
+    pub const fn new(plan: Plan, usage: ModelRequestUsage) -> Self {
         Self { plan, usage }
     }
 }

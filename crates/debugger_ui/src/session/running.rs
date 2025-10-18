@@ -82,11 +82,11 @@ pub struct RunningState {
 }
 
 impl RunningState {
-    pub(crate) fn thread_id(&self) -> Option<ThreadId> {
+    pub(crate) const fn thread_id(&self) -> Option<ThreadId> {
         self.thread_id
     }
 
-    pub(crate) fn active_pane(&self) -> &Entity<Pane> {
+    pub(crate) const fn active_pane(&self) -> &Entity<Pane> {
         &self.active_pane
     }
 }
@@ -217,7 +217,7 @@ impl SubView {
         this
     }
 
-    pub(crate) fn view_kind(&self) -> DebuggerPaneItem {
+    pub(crate) const fn view_kind(&self) -> DebuggerPaneItem {
         self.kind
     }
     pub(crate) fn with_indicator(&mut self, indicator: Box<dyn Fn(&App) -> bool>) {
@@ -1447,11 +1447,11 @@ impl RunningState {
         self.variable_list.read(cx).has_open_context_menu()
     }
 
-    pub fn session(&self) -> &Entity<Session> {
+    pub const fn session(&self) -> &Entity<Session> {
         &self.session
     }
 
-    pub fn session_id(&self) -> SessionId {
+    pub const fn session_id(&self) -> SessionId {
         self.session_id
     }
 
@@ -1459,7 +1459,7 @@ impl RunningState {
         self.stack_frame_list.read(cx).opened_stack_frame_id()
     }
 
-    pub(crate) fn stack_frame_list(&self) -> &Entity<StackFrameList> {
+    pub(crate) const fn stack_frame_list(&self) -> &Entity<StackFrameList> {
         &self.stack_frame_list
     }
 
@@ -1532,7 +1532,7 @@ impl RunningState {
         }
     }
 
-    pub fn selected_thread_id(&self) -> Option<ThreadId> {
+    pub const fn selected_thread_id(&self) -> Option<ThreadId> {
         self.thread_id
     }
 

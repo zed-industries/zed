@@ -224,14 +224,14 @@ impl Session {
         }
     }
 
-    fn is_staff(&self) -> bool {
+    const fn is_staff(&self) -> bool {
         match &self.principal {
             Principal::User(user) => user.admin,
             Principal::Impersonated { .. } => true,
         }
     }
 
-    fn user_id(&self) -> UserId {
+    const fn user_id(&self) -> UserId {
         match &self.principal {
             Principal::User(user) => user.id,
             Principal::Impersonated { user, .. } => user.id,
@@ -2809,7 +2809,7 @@ async fn remove_contact(
     Ok(())
 }
 
-fn should_auto_subscribe_to_channels(version: ZedVersion) -> bool {
+const fn should_auto_subscribe_to_channels(version: ZedVersion) -> bool {
     version.0.minor() < 139
 }
 

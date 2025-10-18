@@ -389,7 +389,7 @@ pub enum DiskState {
 
 impl DiskState {
     /// Returns the file's last known modification time on disk.
-    pub fn mtime(self) -> Option<MTime> {
+    pub const fn mtime(self) -> Option<MTime> {
         match self {
             DiskState::New => None,
             DiskState::Present { mtime } => Some(mtime),
@@ -397,7 +397,7 @@ impl DiskState {
         }
     }
 
-    pub fn exists(&self) -> bool {
+    pub const fn exists(&self) -> bool {
         match self {
             DiskState::New => false,
             DiskState::Present { .. } => true,
@@ -954,7 +954,7 @@ impl Buffer {
     }
 
     /// Returns the [`Capability`] of this buffer.
-    pub fn capability(&self) -> Capability {
+    pub const fn capability(&self) -> Capability {
         self.capability
     }
 
@@ -1252,12 +1252,12 @@ impl Buffer {
     }
 
     /// The version of the buffer that was last saved or reloaded from disk.
-    pub fn saved_version(&self) -> &clock::Global {
+    pub const fn saved_version(&self) -> &clock::Global {
         &self.saved_version
     }
 
     /// The mtime of the buffer's file when the buffer was last saved or reloaded from disk.
-    pub fn saved_mtime(&self) -> Option<MTime> {
+    pub const fn saved_mtime(&self) -> Option<MTime> {
         self.saved_mtime
     }
 
@@ -1423,7 +1423,7 @@ impl Buffer {
     }
 
     /// Returns the primary [`Language`] assigned to this [`Buffer`].
-    pub fn language(&self) -> Option<&Arc<Language>> {
+    pub const fn language(&self) -> Option<&Arc<Language>> {
         self.language.as_ref()
     }
 
@@ -1479,7 +1479,7 @@ impl Buffer {
 
     /// An integer version number that accounts for all updates besides
     /// the buffer's text itself (which is versioned via a version vector).
-    pub fn non_text_state_update_count(&self) -> usize {
+    pub const fn non_text_state_update_count(&self) -> usize {
         self.non_text_state_update_count
     }
 
@@ -2859,7 +2859,7 @@ impl Buffer {
 
     /// Returns a list of strings which trigger a completion menu for this language.
     /// Usually this is driven by LSP server which returns a list of trigger characters for completions.
-    pub fn completion_triggers(&self) -> &BTreeSet<String> {
+    pub const fn completion_triggers(&self) -> &BTreeSet<String> {
         &self.completion_triggers
     }
 
@@ -3380,7 +3380,7 @@ impl BufferSnapshot {
     }
 
     /// Returns the main [`Language`].
-    pub fn language(&self) -> Option<&Arc<Language>> {
+    pub const fn language(&self) -> Option<&Arc<Language>> {
         self.language.as_ref()
     }
 
@@ -4564,7 +4564,7 @@ impl BufferSnapshot {
 
     /// Raw access to the diagnostic sets. Typically `diagnostic_groups` or `diagnostic_group`
     /// should be used instead.
-    pub fn diagnostic_sets(&self) -> &SmallVec<[(LanguageServerId, DiagnosticSet); 2]> {
+    pub const fn diagnostic_sets(&self) -> &SmallVec<[(LanguageServerId, DiagnosticSet); 2]> {
         &self.diagnostics
     }
 
@@ -4616,12 +4616,12 @@ impl BufferSnapshot {
 
     /// An integer version number that accounts for all updates besides
     /// the buffer's text itself (which is versioned via a version vector).
-    pub fn non_text_state_update_count(&self) -> usize {
+    pub const fn non_text_state_update_count(&self) -> usize {
         self.non_text_state_update_count
     }
 
     /// An integer version that changes when the buffer's syntax changes.
-    pub fn syntax_update_count(&self) -> usize {
+    pub const fn syntax_update_count(&self) -> usize {
         self.syntax.update_count()
     }
 
@@ -4866,7 +4866,7 @@ impl<'a> BufferChunks<'a> {
     }
 
     /// The current byte offset in the buffer.
-    pub fn offset(&self) -> usize {
+    pub const fn offset(&self) -> usize {
         self.range.start
     }
 
@@ -4874,7 +4874,7 @@ impl<'a> BufferChunks<'a> {
         self.range.clone()
     }
 
-    fn update_diagnostic_depths(&mut self, endpoint: DiagnosticEndpoint) {
+    const fn update_diagnostic_depths(&mut self, endpoint: DiagnosticEndpoint) {
         let depth = match endpoint.severity {
             DiagnosticSeverity::ERROR => &mut self.error_depth,
             DiagnosticSeverity::WARNING => &mut self.warning_depth,
@@ -4897,7 +4897,7 @@ impl<'a> BufferChunks<'a> {
         }
     }
 
-    fn current_diagnostic_severity(&self) -> Option<DiagnosticSeverity> {
+    const fn current_diagnostic_severity(&self) -> Option<DiagnosticSeverity> {
         if self.error_depth > 0 {
             Some(DiagnosticSeverity::ERROR)
         } else if self.warning_depth > 0 {
@@ -4911,7 +4911,7 @@ impl<'a> BufferChunks<'a> {
         }
     }
 
-    fn current_code_is_unnecessary(&self) -> bool {
+    const fn current_code_is_unnecessary(&self) -> bool {
         self.unnecessary_depth > 0
     }
 }
@@ -5061,7 +5061,7 @@ impl Default for Diagnostic {
 
 impl IndentSize {
     /// Returns an [`IndentSize`] representing the given spaces.
-    pub fn spaces(len: u32) -> Self {
+    pub const fn spaces(len: u32) -> Self {
         Self {
             len,
             kind: IndentKind::Space,
@@ -5069,7 +5069,7 @@ impl IndentSize {
     }
 
     /// Returns an [`IndentSize`] representing a tab.
-    pub fn tab() -> Self {
+    pub const fn tab() -> Self {
         Self {
             len: 1,
             kind: IndentKind::Tab,
@@ -5082,7 +5082,7 @@ impl IndentSize {
     }
 
     /// The character representation of this [`IndentSize`].
-    pub fn char(&self) -> char {
+    pub const fn char(&self) -> char {
         match self.kind {
             IndentKind::Space => ' ',
             IndentKind::Tab => '\t',
@@ -5110,7 +5110,7 @@ impl IndentSize {
         self
     }
 
-    pub fn len_with_expanded_tabs(&self, tab_size: NonZeroU32) -> usize {
+    pub const fn len_with_expanded_tabs(&self, tab_size: NonZeroU32) -> usize {
         match self.kind {
             IndentKind::Space => self.len as usize,
             IndentKind::Tab => self.len as usize * tab_size.get() as usize,
@@ -5222,7 +5222,7 @@ pub struct CharClassifier {
 }
 
 impl CharClassifier {
-    pub fn new(scope: Option<LanguageScope>) -> Self {
+    pub const fn new(scope: Option<LanguageScope>) -> Self {
         Self {
             scope,
             scope_context: None,

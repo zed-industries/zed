@@ -418,7 +418,7 @@ enum RemoteEntry {
 }
 
 impl RemoteEntry {
-    fn is_from_zed(&self) -> bool {
+    const fn is_from_zed(&self) -> bool {
         matches!(self, Self::Project { .. })
     }
 
@@ -538,7 +538,7 @@ enum ViewServerOptionsState {
 }
 
 impl ViewServerOptionsState {
-    fn entries(&self) -> &[NavigableEntry] {
+    const fn entries(&self) -> &[NavigableEntry] {
         match self {
             Self::Ssh { entries, .. } => entries,
             Self::Wsl { entries, .. } => entries,

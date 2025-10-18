@@ -36,7 +36,7 @@ enum ThemePreviewPage {
 }
 
 impl ThemePreviewPage {
-    pub fn name(&self) -> &'static str {
+    pub const fn name(&self) -> &'static str {
         match self {
             Self::Overview => "Overview",
             Self::Typography => "Typography",

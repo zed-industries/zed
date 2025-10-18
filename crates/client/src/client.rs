@@ -283,11 +283,11 @@ pub enum Status {
 }
 
 impl Status {
-    pub fn is_connected(&self) -> bool {
+    pub const fn is_connected(&self) -> bool {
         matches!(self, Self::Connected { .. })
     }
 
-    pub fn was_connected(&self) -> bool {
+    pub const fn was_connected(&self) -> bool {
         matches!(
             self,
             Self::ConnectionLost
@@ -298,18 +298,18 @@ impl Status {
     }
 
     /// Returns whether the client is currently connected or was connected at some point.
-    pub fn is_or_was_connected(&self) -> bool {
+    pub const fn is_or_was_connected(&self) -> bool {
         self.is_connected() || self.was_connected()
     }
 
-    pub fn is_signing_in(&self) -> bool {
+    pub const fn is_signing_in(&self) -> bool {
         matches!(
             self,
             Self::Authenticating | Self::Reauthenticating | Self::Connecting | Self::Reconnecting
         )
     }
 
-    pub fn is_signed_out(&self) -> bool {
+    pub const fn is_signed_out(&self) -> bool {
         matches!(self, Self::SignedOut | Self::UpgradeRequired)
     }
 }
@@ -1692,7 +1692,7 @@ impl Client {
         .ok();
     }
 
-    pub fn telemetry(&self) -> &Arc<Telemetry> {
+    pub const fn telemetry(&self) -> &Arc<Telemetry> {
         &self.telemetry
     }
 }

@@ -32,7 +32,7 @@ impl ProcessIdGetter {
         Some(Pid::from_u32(pid as u32))
     }
 
-    pub fn fallback_pid(&self) -> u32 {
+    pub const fn fallback_pid(&self) -> u32 {
         self.fallback_pid
     }
 }
@@ -104,7 +104,7 @@ impl PtyProcessInfo {
         }
     }
 
-    pub fn pid_getter(&self) -> &ProcessIdGetter {
+    pub const fn pid_getter(&self) -> &ProcessIdGetter {
         &self.pid_getter
     }
 

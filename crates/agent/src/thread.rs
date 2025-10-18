@@ -102,7 +102,7 @@ pub enum Message {
 }
 
 impl Message {
-    pub fn as_agent_message(&self) -> Option<&AgentMessage> {
+    pub const fn as_agent_message(&self) -> Option<&AgentMessage> {
         match self {
             Message::Agent(agent_message) => Some(agent_message),
             _ => None,
@@ -129,7 +129,7 @@ impl Message {
         }
     }
 
-    pub fn role(&self) -> Role {
+    pub const fn role(&self) -> Role {
         match self {
             Message::User(_) | Message::Resume => Role::User,
             Message::Agent(_) => Role::Assistant,
@@ -672,7 +672,7 @@ impl Thread {
         }
     }
 
-    pub fn id(&self) -> &acp::SessionId {
+    pub const fn id(&self) -> &acp::SessionId {
         &self.id
     }
 
@@ -975,19 +975,19 @@ impl Thread {
         })
     }
 
-    pub fn project_context(&self) -> &Entity<ProjectContext> {
+    pub const fn project_context(&self) -> &Entity<ProjectContext> {
         &self.project_context
     }
 
-    pub fn project(&self) -> &Entity<Project> {
+    pub const fn project(&self) -> &Entity<Project> {
         &self.project
     }
 
-    pub fn action_log(&self) -> &Entity<ActionLog> {
+    pub const fn action_log(&self) -> &Entity<ActionLog> {
         &self.action_log
     }
 
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.messages.is_empty() && self.title.is_none()
     }
 
@@ -1020,7 +1020,7 @@ impl Thread {
         cx.notify()
     }
 
-    pub fn completion_mode(&self) -> CompletionMode {
+    pub const fn completion_mode(&self) -> CompletionMode {
         self.completion_mode
     }
 
@@ -1086,7 +1086,7 @@ impl Thread {
         self.tools.remove(name).is_some()
     }
 
-    pub fn profile(&self) -> &AgentProfileId {
+    pub const fn profile(&self) -> &AgentProfileId {
         &self.profile_id
     }
 
@@ -1658,7 +1658,7 @@ impl Thread {
         self.title.clone().unwrap_or("New Thread".into())
     }
 
-    pub fn is_generating_summary(&self) -> bool {
+    pub const fn is_generating_summary(&self) -> bool {
         self.pending_summary_generation.is_some()
     }
 

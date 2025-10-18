@@ -375,7 +375,7 @@ impl NativeAgent {
         acp_thread
     }
 
-    pub fn models(&self) -> &LanguageModels {
+    pub const fn models(&self) -> &LanguageModels {
         &self.models
     }
 

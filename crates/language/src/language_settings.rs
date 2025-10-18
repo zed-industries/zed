@@ -459,7 +459,7 @@ impl AllLanguageSettings {
     }
 
     /// Returns the edit predictions preview mode for the given language and path.
-    pub fn edit_predictions_mode(&self) -> EditPredictionsMode {
+    pub const fn edit_predictions_mode(&self) -> EditPredictionsMode {
         self.edit_predictions.mode
     }
 }

@@ -109,7 +109,7 @@ struct ExcerptQuery {
 }
 
 impl InvalidationStrategy {
-    fn should_invalidate(&self) -> bool {
+    const fn should_invalidate(&self) -> bool {
         matches!(
             self,
             InvalidationStrategy::RefreshRequested | InvalidationStrategy::BufferEdited
@@ -660,7 +660,7 @@ impl InlayHintCache {
     }
 }
 
-fn debounce_value(debounce_ms: u64) -> Option<Duration> {
+const fn debounce_value(debounce_ms: u64) -> Option<Duration> {
     if debounce_ms > 0 {
         Some(Duration::from_millis(debounce_ms))
     } else {
@@ -751,7 +751,7 @@ struct QueryRanges {
 }
 
 impl QueryRanges {
-    fn is_empty(&self) -> bool {
+    const fn is_empty(&self) -> bool {
         self.before_visible.is_empty() && self.visible.is_empty() && self.after_visible.is_empty()
     }
 

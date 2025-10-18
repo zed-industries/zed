@@ -27,7 +27,7 @@ enum ParserState {
 }
 
 impl CreateFileParser {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         CreateFileParser {
             state: ParserState::Pending,
             buffer: String::new(),

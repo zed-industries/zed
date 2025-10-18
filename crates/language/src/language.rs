@@ -951,7 +951,7 @@ impl<T> Default for Override<T> {
 }
 
 impl<T> Override<T> {
-    fn as_option<'a>(this: Option<&'a Self>, original: Option<&'a T>) -> Option<&'a T> {
+    const fn as_option<'a>(this: Option<&'a Self>, original: Option<&'a T>) -> Option<&'a T> {
         match this {
             Some(Self::Set(value)) => Some(value),
             Some(Self::Remove { remove: true }) => None,
@@ -1010,7 +1010,7 @@ pub struct WrapCharactersConfig {
     pub end_suffix: String,
 }
 
-fn auto_indent_using_last_non_empty_line_default() -> bool {
+const fn auto_indent_using_last_non_empty_line_default() -> bool {
     true
 }
 
@@ -1251,7 +1251,7 @@ impl TextObject {
         }
     }
 
-    pub fn around(&self) -> Option<Self> {
+    pub const fn around(&self) -> Option<Self> {
         match self {
             TextObject::InsideFunction => Some(TextObject::AroundFunction),
             TextObject::InsideClass => Some(TextObject::AroundClass),
@@ -1352,7 +1352,7 @@ impl Language {
         Self::new_with_id(LanguageId::new(), config, ts_language)
     }
 
-    pub fn id(&self) -> LanguageId {
+    pub const fn id(&self) -> LanguageId {
         self.id
     }
 
@@ -1929,7 +1929,7 @@ impl Language {
     pub fn name(&self) -> LanguageName {
         self.config.name.clone()
     }
-    pub fn manifest(&self) -> Option<&ManifestName> {
+    pub const fn manifest(&self) -> Option<&ManifestName> {
         self.manifest_name.as_ref()
     }
 
@@ -1997,7 +1997,7 @@ impl Language {
         }
     }
 
-    pub fn grammar(&self) -> Option<&Arc<Grammar>> {
+    pub const fn grammar(&self) -> Option<&Arc<Grammar>> {
         self.grammar.as_ref()
     }
 
@@ -2016,7 +2016,7 @@ impl Language {
         self.config.prettier_parser_name.as_deref()
     }
 
-    pub fn config(&self) -> &LanguageConfig {
+    pub const fn config(&self) -> &LanguageConfig {
         &self.config
     }
 }
@@ -2188,7 +2188,7 @@ impl Debug for Language {
 }
 
 impl Grammar {
-    pub fn id(&self) -> GrammarId {
+    pub const fn id(&self) -> GrammarId {
         self.id
     }
 
@@ -2224,11 +2224,11 @@ impl Grammar {
         Some(self.highlight_map.lock().get(capture_id))
     }
 
-    pub fn debug_variables_config(&self) -> Option<&DebugVariablesConfig> {
+    pub const fn debug_variables_config(&self) -> Option<&DebugVariablesConfig> {
         self.debug_variables_config.as_ref()
     }
 
-    pub fn imports_config(&self) -> Option<&ImportsConfig> {
+    pub const fn imports_config(&self) -> Option<&ImportsConfig> {
         self.imports_config.as_ref()
     }
 }
@@ -2357,7 +2357,7 @@ impl CodeLabel {
         }
     }
 
-    pub fn text(&self) -> &str {
+    pub const fn text(&self) -> &str {
         self.text.as_str()
     }
 
@@ -2568,7 +2568,7 @@ pub fn point_to_lsp(point: PointUtf16) -> lsp::Position {
     lsp::Position::new(point.row, point.column)
 }
 
-pub fn point_from_lsp(point: lsp::Position) -> Unclipped<PointUtf16> {
+pub const fn point_from_lsp(point: lsp::Position) -> Unclipped<PointUtf16> {
     Unclipped(PointUtf16::new(point.line, point.character))
 }
 

@@ -33,11 +33,11 @@ pub struct AgentProfile {
 pub type AvailableProfiles = IndexMap<AgentProfileId, SharedString>;
 
 impl AgentProfile {
-    pub fn new(id: AgentProfileId) -> Self {
+    pub const fn new(id: AgentProfileId) -> Self {
         Self { id }
     }
 
-    pub fn id(&self) -> &AgentProfileId {
+    pub const fn id(&self) -> &AgentProfileId {
         &self.id
     }
 

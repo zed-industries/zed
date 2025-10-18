@@ -76,7 +76,7 @@ impl Default for MarkdownListItem {
 }
 
 impl<'a> MarkdownParser<'a> {
-    fn new(
+    const fn new(
         tokens: Vec<(Event<'a>, Range<usize>)>,
         file_location_directory: Option<PathBuf>,
         language_registry: Option<Arc<LanguageRegistry>>,
@@ -90,7 +90,7 @@ impl<'a> MarkdownParser<'a> {
         }
     }
 
-    fn eof(&self) -> bool {
+    const fn eof(&self) -> bool {
         if self.tokens.is_empty() {
             return true;
         }
@@ -119,7 +119,7 @@ impl<'a> MarkdownParser<'a> {
         self.current().map(|(event, _)| event)
     }
 
-    fn is_text_like(event: &Event) -> bool {
+    const fn is_text_like(event: &Event) -> bool {
         match event {
             Event::Text(_)
             // Represent an inline code block
@@ -515,7 +515,7 @@ impl<'a> MarkdownParser<'a> {
         }
     }
 
-    fn convert_alignment(alignment: &Alignment) -> ParsedMarkdownTableAlignment {
+    const fn convert_alignment(alignment: &Alignment) -> ParsedMarkdownTableAlignment {
         match alignment {
             Alignment::None => ParsedMarkdownTableAlignment::None,
             Alignment::Left => ParsedMarkdownTableAlignment::Left,

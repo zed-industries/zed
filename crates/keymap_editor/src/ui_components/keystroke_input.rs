@@ -102,7 +102,7 @@ impl KeystrokeInput {
         self.keystrokes_changed(cx);
     }
 
-    pub fn set_search(&mut self, search: bool) {
+    pub const fn set_search(&mut self, search: bool) {
         self.search = search;
     }
 

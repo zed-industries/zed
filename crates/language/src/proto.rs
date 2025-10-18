@@ -14,7 +14,7 @@ pub use proto::{BufferState, File, Operation};
 use super::{point_from_lsp, point_to_lsp};
 
 /// Deserializes a `[text::LineEnding]` from the RPC representation.
-pub fn deserialize_line_ending(message: proto::LineEnding) -> text::LineEnding {
+pub const fn deserialize_line_ending(message: proto::LineEnding) -> text::LineEnding {
     match message {
         proto::LineEnding::Unix => text::LineEnding::Unix,
         proto::LineEnding::Windows => text::LineEnding::Windows,
@@ -22,7 +22,7 @@ pub fn deserialize_line_ending(message: proto::LineEnding) -> text::LineEnding {
 }
 
 /// Serializes a [`text::LineEnding`] to be sent over RPC.
-pub fn serialize_line_ending(message: text::LineEnding) -> proto::LineEnding {
+pub const fn serialize_line_ending(message: text::LineEnding) -> proto::LineEnding {
     match message {
         text::LineEnding::Unix => proto::LineEnding::Unix,
         text::LineEnding::Windows => proto::LineEnding::Windows,
@@ -184,7 +184,7 @@ pub fn serialize_selection(selection: &Selection<Anchor>) -> proto::Selection {
 }
 
 /// Serializes a [`CursorShape`] to be sent over RPC.
-pub fn serialize_cursor_shape(cursor_shape: &CursorShape) -> proto::CursorShape {
+pub const fn serialize_cursor_shape(cursor_shape: &CursorShape) -> proto::CursorShape {
     match cursor_shape {
         CursorShape::Bar => proto::CursorShape::CursorBar,
         CursorShape::Block => proto::CursorShape::CursorBlock,
@@ -194,7 +194,7 @@ pub fn serialize_cursor_shape(cursor_shape: &CursorShape) -> proto::CursorShape 
 }
 
 /// Deserializes a [`CursorShape`] from the RPC representation.
-pub fn deserialize_cursor_shape(cursor_shape: proto::CursorShape) -> CursorShape {
+pub const fn deserialize_cursor_shape(cursor_shape: proto::CursorShape) -> CursorShape {
     match cursor_shape {
         proto::CursorShape::CursorBar => CursorShape::Bar,
         proto::CursorShape::CursorBlock => CursorShape::Block,
@@ -557,7 +557,7 @@ pub fn deserialize_transaction(transaction: proto::Transaction) -> Result<Transa
 }
 
 /// Serializes a [`clock::Lamport`] timestamp to be sent over RPC.
-pub fn serialize_timestamp(timestamp: clock::Lamport) -> proto::LamportTimestamp {
+pub const fn serialize_timestamp(timestamp: clock::Lamport) -> proto::LamportTimestamp {
     proto::LamportTimestamp {
         replica_id: timestamp.replica_id as u32,
         value: timestamp.value,
@@ -565,7 +565,7 @@ pub fn serialize_timestamp(timestamp: clock::Lamport) -> proto::LamportTimestamp
 }
 
 /// Deserializes a [`clock::Lamport`] timestamp from the RPC representation.
-pub fn deserialize_timestamp(timestamp: proto::LamportTimestamp) -> clock::Lamport {
+pub const fn deserialize_timestamp(timestamp: proto::LamportTimestamp) -> clock::Lamport {
     clock::Lamport {
         replica_id: timestamp.replica_id as ReplicaId,
         value: timestamp.value,
@@ -573,7 +573,7 @@ pub fn deserialize_timestamp(timestamp: proto::LamportTimestamp) -> clock::Lampo
 }
 
 /// Serializes a range of [`FullOffset`]s to be sent over RPC.
-pub fn serialize_range(range: &Range<FullOffset>) -> proto::Range {
+pub const fn serialize_range(range: &Range<FullOffset>) -> proto::Range {
     proto::Range {
         start: range.start.0 as u64,
         end: range.end.0 as u64,
@@ -581,7 +581,7 @@ pub fn serialize_range(range: &Range<FullOffset>) -> proto::Range {
 }
 
 /// Deserializes a range of [`FullOffset`]s from the RPC representation.
-pub fn deserialize_range(range: proto::Range) -> Range<FullOffset> {
+pub const fn deserialize_range(range: proto::Range) -> Range<FullOffset> {
     FullOffset(range.start as usize)..FullOffset(range.end as usize)
 }
 

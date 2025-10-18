@@ -15,7 +15,7 @@ pub struct CustomAgentServer {
 }
 
 impl CustomAgentServer {
-    pub fn new(name: SharedString) -> Self {
+    pub const fn new(name: SharedString) -> Self {
         Self { name }
     }
 }

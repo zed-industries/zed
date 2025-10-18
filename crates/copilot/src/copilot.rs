@@ -183,11 +183,11 @@ pub enum Status {
 }
 
 impl Status {
-    pub fn is_authorized(&self) -> bool {
+    pub const fn is_authorized(&self) -> bool {
         matches!(self, Status::Authorized)
     }
 
-    pub fn is_configured(&self) -> bool {
+    pub const fn is_configured(&self) -> bool {
         matches!(
             self,
             Status::Starting { .. }
@@ -712,7 +712,7 @@ impl Copilot {
         start_task
     }
 
-    pub fn language_server(&self) -> Option<&Arc<LanguageServer>> {
+    pub const fn language_server(&self) -> Option<&Arc<LanguageServer>> {
         if let CopilotServer::Running(server) = &self.server {
             Some(&server.lsp)
         } else {

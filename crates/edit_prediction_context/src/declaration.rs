@@ -39,35 +39,35 @@ pub enum Declaration {
 const ITEM_TEXT_TRUNCATION_LENGTH: usize = 1024;
 
 impl Declaration {
-    pub fn identifier(&self) -> &Identifier {
+    pub const fn identifier(&self) -> &Identifier {
         match self {
             Declaration::File { declaration, .. } => &declaration.identifier,
             Declaration::Buffer { declaration, .. } => &declaration.identifier,
         }
     }
 
-    pub fn parent(&self) -> Option<DeclarationId> {
+    pub const fn parent(&self) -> Option<DeclarationId> {
         match self {
             Declaration::File { declaration, .. } => declaration.parent,
             Declaration::Buffer { declaration, .. } => declaration.parent,
         }
     }
 
-    pub fn as_buffer(&self) -> Option<&BufferDeclaration> {
+    pub const fn as_buffer(&self) -> Option<&BufferDeclaration> {
         match self {
             Declaration::File { .. } => None,
             Declaration::Buffer { declaration, .. } => Some(declaration),
         }
     }
 
-    pub fn as_file(&self) -> Option<&FileDeclaration> {
+    pub const fn as_file(&self) -> Option<&FileDeclaration> {
         match self {
             Declaration::Buffer { .. } => None,
             Declaration::File { declaration, .. } => Some(declaration),
         }
     }
 
-    pub fn project_entry_id(&self) -> ProjectEntryId {
+    pub const fn project_entry_id(&self) -> ProjectEntryId {
         match self {
             Declaration::File {
                 project_entry_id, ..
@@ -78,7 +78,7 @@ impl Declaration {
         }
     }
 
-    pub fn cached_path(&self) -> &CachedDeclarationPath {
+    pub const fn cached_path(&self) -> &CachedDeclarationPath {
         match self {
             Declaration::File { cached_path, .. } => cached_path,
             Declaration::Buffer { cached_path, .. } => cached_path,

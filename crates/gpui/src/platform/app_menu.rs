@@ -75,12 +75,12 @@ pub enum MenuItem {
 
 impl MenuItem {
     /// Creates a new menu item that is a separator
-    pub fn separator() -> Self {
+    pub const fn separator() -> Self {
         Self::Separator
     }
 
     /// Creates a new menu item that is a submenu
-    pub fn submenu(menu: Menu) -> Self {
+    pub const fn submenu(menu: Menu) -> Self {
         Self::Submenu(menu)
     }
 

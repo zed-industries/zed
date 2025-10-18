@@ -26,7 +26,7 @@ pub struct CloudApiClient {
 }
 
 impl CloudApiClient {
-    pub fn new(http_client: Arc<HttpClientWithUrl>) -> Self {
+    pub const fn new(http_client: Arc<HttpClientWithUrl>) -> Self {
         Self {
             credentials: RwLock::new(None),
             http_client,

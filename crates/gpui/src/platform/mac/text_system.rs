@@ -558,7 +558,7 @@ struct StringIndexConverter<'a> {
 }
 
 impl<'a> StringIndexConverter<'a> {
-    fn new(text: &'a str) -> Self {
+    const fn new(text: &'a str) -> Self {
         Self {
             text,
             utf8_ix: 0,

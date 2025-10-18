@@ -31,7 +31,7 @@ pub enum Axis {
 
 impl Axis {
     /// Swap this axis to the opposite axis.
-    pub fn invert(self) -> Self {
+    pub const fn invert(self) -> Self {
         match self {
             Axis::Vertical => Axis::Horizontal,
             Axis::Horizontal => Axis::Vertical,
@@ -405,7 +405,7 @@ pub struct Size<T: Clone + Debug + Default + PartialEq> {
 
 impl<T: Clone + Debug + Default + PartialEq> Size<T> {
     /// Create a new Size, a synonym for [`size`]
-    pub fn new(width: T, height: T) -> Self {
+    pub const fn new(width: T, height: T) -> Self {
         size(width, height)
     }
 }
@@ -723,7 +723,7 @@ impl Size<Length> {
     /// # Returns
     ///
     /// A `Size<Length>` with width and height set to `Length::Auto`.
-    pub fn auto() -> Self {
+    pub const fn auto() -> Self {
         Self {
             width: Length::Auto,
             height: Length::Auto,
@@ -759,7 +759,7 @@ pub struct Bounds<T: Clone + Debug + Default + PartialEq> {
 }
 
 /// Create a bounds with the given origin and size
-pub fn bounds<T: Clone + Debug + Default + PartialEq>(
+pub const fn bounds<T: Clone + Debug + Default + PartialEq>(
     origin: Point<T>,
     size: Size<T>,
 ) -> Bounds<T> {
@@ -810,7 +810,7 @@ where
     /// # Returns
     ///
     /// Returns a `Bounds<T>` that has the given origin and size.
-    pub fn new(origin: Point<T>, size: Size<T>) -> Self {
+    pub const fn new(origin: Point<T>, size: Size<T>) -> Self {
         Bounds { origin, size }
     }
 }
@@ -1865,7 +1865,7 @@ impl Edges<Length> {
     /// assert_eq!(auto_edges.bottom, Length::Auto);
     /// assert_eq!(auto_edges.left, Length::Auto);
     /// ```
-    pub fn auto() -> Self {
+    pub const fn auto() -> Self {
         Self {
             top: Length::Auto,
             right: Length::Auto,
@@ -2137,7 +2137,7 @@ impl Corner {
     /// assert_eq!(Corner::TopLeft.opposite_corner(), Corner::BottomRight);
     /// ```
     #[must_use]
-    pub fn opposite_corner(self) -> Self {
+    pub const fn opposite_corner(self) -> Self {
         match self {
             Corner::TopLeft => Corner::BottomRight,
             Corner::TopRight => Corner::BottomLeft,
@@ -2156,7 +2156,7 @@ impl Corner {
     /// assert_eq!(result, Corner::TopRight);
     /// ```
     #[must_use]
-    pub fn other_side_corner_along(self, axis: Axis) -> Self {
+    pub const fn other_side_corner_along(self, axis: Axis) -> Self {
         match axis {
             Axis::Vertical => match self {
                 Corner::TopLeft => Corner::BottomLeft,
@@ -2492,7 +2492,7 @@ impl From<Pixels> for Corners<Pixels> {
 pub struct Radians(pub f32);
 
 /// Create a `Radian` from a raw value
-pub fn radians(value: f32) -> Radians {
+pub const fn radians(value: f32) -> Radians {
     Radians(value)
 }
 
@@ -2675,7 +2675,7 @@ impl Pixels {
     /// # Returns
     ///
     /// Returns a new `Pixels` instance with the floored value.
-    pub fn floor(&self) -> Self {
+    pub const fn floor(&self) -> Self {
         Self(self.0.floor())
     }
 
@@ -2684,7 +2684,7 @@ impl Pixels {
     /// # Returns
     ///
     /// Returns a new `Pixels` instance with the rounded value.
-    pub fn round(&self) -> Self {
+    pub const fn round(&self) -> Self {
         Self(self.0.round())
     }
 
@@ -2693,7 +2693,7 @@ impl Pixels {
     /// # Returns
     ///
     /// Returns a new `Pixels` instance with the ceiling value.
-    pub fn ceil(&self) -> Self {
+    pub const fn ceil(&self) -> Self {
         Self(self.0.ceil())
     }
 
@@ -2728,7 +2728,7 @@ impl Pixels {
     /// # Returns
     ///
     /// A new `Pixels` instance with the absolute value of the original `Pixels`.
-    pub fn abs(&self) -> Self {
+    pub const fn abs(&self) -> Self {
         Self(self.0.abs())
     }
 
@@ -2739,7 +2739,7 @@ impl Pixels {
     /// Returns:
     /// * `1.0` if the value is positive
     /// * `-1.0` if the value is negative
-    pub fn signum(&self) -> f32 {
+    pub const fn signum(&self) -> f32 {
         self.0.signum()
     }
 
@@ -2748,7 +2748,7 @@ impl Pixels {
     /// # Returns
     ///
     /// A f64 value of the `Pixels`.
-    pub fn to_f64(self) -> f64 {
+    pub const fn to_f64(self) -> f64 {
         self.0 as f64
     }
 }
@@ -2883,7 +2883,7 @@ impl DevicePixels {
     /// let total_bytes = pixels.to_bytes(bytes_per_pixel);
     /// assert_eq!(total_bytes, 40); // 10 pixels * 4 bytes/pixel = 40 bytes
     /// ```
-    pub fn to_bytes(self, bytes_per_pixel: u8) -> u32 {
+    pub const fn to_bytes(self, bytes_per_pixel: u8) -> u32 {
         self.0 as u32 * bytes_per_pixel as u32
     }
 }
@@ -2959,7 +2959,7 @@ impl ScaledPixels {
     /// # Returns
     ///
     /// Returns a new `ScaledPixels` instance with the floored value.
-    pub fn floor(&self) -> Self {
+    pub const fn floor(&self) -> Self {
         Self(self.0.floor())
     }
 
@@ -2968,7 +2968,7 @@ impl ScaledPixels {
     /// # Returns
     ///
     /// Returns a new `ScaledPixels` instance with the rounded value.
-    pub fn round(&self) -> Self {
+    pub const fn round(&self) -> Self {
         Self(self.0.round())
     }
 
@@ -2977,7 +2977,7 @@ impl ScaledPixels {
     /// # Returns
     ///
     /// Returns a new `ScaledPixels` instance with the ceiled value.
-    pub fn ceil(&self) -> Self {
+    pub const fn ceil(&self) -> Self {
         Self(self.0.ceil())
     }
 }
@@ -3569,7 +3569,7 @@ pub const fn relative(fraction: f32) -> DefiniteLength {
 }
 
 /// Returns the Golden Ratio, i.e. `~(1.0 + sqrt(5.0)) / 2.0`.
-pub fn phi() -> DefiniteLength {
+pub const fn phi() -> DefiniteLength {
     relative(1.618_034)
 }
 
@@ -3582,7 +3582,7 @@ pub fn phi() -> DefiniteLength {
 /// # Returns
 ///
 /// A `Rems` representing the specified number of rems.
-pub fn rems(rems: f32) -> Rems {
+pub const fn rems(rems: f32) -> Rems {
     Rems(rems)
 }
 
@@ -3610,7 +3610,7 @@ pub const fn px(pixels: f32) -> Pixels {
 /// # Returns
 ///
 /// A `Length` variant set to `Auto`.
-pub fn auto() -> Length {
+pub const fn auto() -> Length {
     Length::Auto
 }
 

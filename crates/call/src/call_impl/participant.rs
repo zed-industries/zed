@@ -41,7 +41,7 @@ pub struct LocalParticipant {
 }
 
 impl LocalParticipant {
-    pub fn can_write(&self) -> bool {
+    pub const fn can_write(&self) -> bool {
         matches!(
             self.role,
             proto::ChannelRole::Admin | proto::ChannelRole::Member
@@ -67,7 +67,7 @@ impl RemoteParticipant {
         !self.video_tracks.is_empty()
     }
 
-    pub fn can_write(&self) -> bool {
+    pub const fn can_write(&self) -> bool {
         matches!(
             self.role,
             proto::ChannelRole::Admin | proto::ChannelRole::Member

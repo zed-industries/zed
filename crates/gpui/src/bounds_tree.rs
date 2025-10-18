@@ -216,14 +216,14 @@ impl<U> Node<U>
 where
     U: Clone + Debug + Default + PartialEq,
 {
-    fn bounds(&self) -> &Bounds<U> {
+    const fn bounds(&self) -> &Bounds<U> {
         match self {
             Node::Leaf { bounds, .. } => bounds,
             Node::Internal { bounds, .. } => bounds,
         }
     }
 
-    fn max_ordering(&self) -> u32 {
+    const fn max_ordering(&self) -> u32 {
         match self {
             Node::Leaf {
                 order: ordering, ..

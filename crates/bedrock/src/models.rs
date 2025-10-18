@@ -357,7 +357,7 @@ impl Model {
         }
     }
 
-    pub fn max_token_count(&self) -> u64 {
+    pub const fn max_token_count(&self) -> u64 {
         match self {
             Self::Claude3_5SonnetV2
             | Self::Claude3Opus
@@ -421,7 +421,7 @@ impl Model {
         }
     }
 
-    pub fn supports_tool_use(&self) -> bool {
+    pub const fn supports_tool_use(&self) -> bool {
         match self {
             // Anthropic Claude 3 models (all support tool use)
             Self::Claude3Opus
@@ -458,7 +458,7 @@ impl Model {
         }
     }
 
-    pub fn supports_caching(&self) -> bool {
+    pub const fn supports_caching(&self) -> bool {
         match self {
             // Only Claude models on Bedrock support caching
             // Nova models support only text caching
@@ -514,7 +514,7 @@ impl Model {
         }
     }
 
-    pub fn mode(&self) -> BedrockModelMode {
+    pub const fn mode(&self) -> BedrockModelMode {
         match self {
             Model::Claude3_7SonnetThinking => BedrockModelMode::Thinking {
                 budget_tokens: Some(4096),

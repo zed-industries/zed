@@ -259,7 +259,7 @@ fn get_line_range(map: &DisplaySnapshot, point: Point) -> Range<Point> {
     start..end
 }
 
-fn get_visible_line_range(line_range: &Range<Point>) -> Range<Point> {
+const fn get_visible_line_range(line_range: &Range<Point>) -> Range<Point> {
     let end_column = line_range.end.column.saturating_sub(1);
     line_range.start..Point::new(line_range.end.row, end_column)
 }
@@ -448,7 +448,7 @@ impl Vim {
 }
 
 impl Object {
-    pub fn is_multiline(self) -> bool {
+    pub const fn is_multiline(self) -> bool {
         match self {
             Object::Word { .. }
             | Object::Subword { .. }
@@ -476,7 +476,7 @@ impl Object {
         }
     }
 
-    pub fn always_expands_both_ways(self) -> bool {
+    pub const fn always_expands_both_ways(self) -> bool {
         match self {
             Object::Word { .. }
             | Object::Subword { .. }
@@ -1367,7 +1367,7 @@ fn sentence(
     Some(range)
 }
 
-fn is_possible_sentence_start(character: char) -> bool {
+const fn is_possible_sentence_start(character: char) -> bool {
     !character.is_whitespace() && character != '.'
 }
 

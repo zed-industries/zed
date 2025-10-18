@@ -65,7 +65,7 @@ pub enum Sound {
 }
 
 impl Sound {
-    fn file(&self) -> &'static str {
+    const fn file(&self) -> &'static str {
         match self {
             Self::Joined => "joined_call",
             Self::GuestJoined => "guest_joined_call",

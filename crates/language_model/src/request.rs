@@ -145,7 +145,7 @@ impl LanguageModelImage {
         })
     }
 
-    pub fn estimate_tokens(&self) -> usize {
+    pub const fn estimate_tokens(&self) -> usize {
         let width = self.size.width.0.unsigned_abs() as usize;
         let height = self.size.height.0.unsigned_abs() as usize;
 

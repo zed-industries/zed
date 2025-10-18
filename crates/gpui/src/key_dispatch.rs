@@ -107,7 +107,7 @@ impl ReusedSubtree {
         DispatchNodeId((node_id.0 - self.old_range.start) + self.new_range.start)
     }
 
-    pub fn contains_focus(&self) -> bool {
+    pub const fn contains_focus(&self) -> bool {
         self.contains_focus
     }
 }
@@ -158,7 +158,7 @@ impl DispatchTree {
         self.view_node_ids.clear();
     }
 
-    pub fn len(&self) -> usize {
+    pub const fn len(&self) -> usize {
         self.nodes.len()
     }
 

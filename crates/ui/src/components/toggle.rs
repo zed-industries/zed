@@ -69,13 +69,13 @@ impl Checkbox {
     }
 
     /// Sets the disabled state of the [`Checkbox`].
-    pub fn disabled(mut self, disabled: bool) -> Self {
+    pub const fn disabled(mut self, disabled: bool) -> Self {
         self.disabled = disabled;
         self
     }
 
     /// Sets the disabled state of the [`Checkbox`].
-    pub fn placeholder(mut self, placeholder: bool) -> Self {
+    pub const fn placeholder(mut self, placeholder: bool) -> Self {
         self.placeholder = placeholder;
         self
     }
@@ -100,19 +100,19 @@ impl Checkbox {
     }
 
     /// Sets the `fill` setting of the checkbox, indicating whether it should be filled.
-    pub fn fill(mut self) -> Self {
+    pub const fn fill(mut self) -> Self {
         self.filled = true;
         self
     }
 
     /// Sets the style of the checkbox using the specified [`ToggleStyle`].
-    pub fn style(mut self, style: ToggleStyle) -> Self {
+    pub const fn style(mut self, style: ToggleStyle) -> Self {
         self.style = style;
         self
     }
 
     /// Match the style of the checkbox to the current elevation using [`ToggleStyle::ElevationBased`].
-    pub fn elevation(mut self, elevation: ElevationIndex) -> Self {
+    pub const fn elevation(mut self, elevation: ElevationIndex) -> Self {
         self.style = ToggleStyle::ElevationBased(elevation);
         self
     }
@@ -156,7 +156,7 @@ impl Checkbox {
     }
 
     /// container size
-    pub fn container_size() -> Pixels {
+    pub const fn container_size() -> Pixels {
         px(20.0)
     }
 }
@@ -286,24 +286,24 @@ impl CheckboxWithLabel {
     }
 
     /// Sets the style of the checkbox using the specified [`ToggleStyle`].
-    pub fn style(mut self, style: ToggleStyle) -> Self {
+    pub const fn style(mut self, style: ToggleStyle) -> Self {
         self.style = style;
         self
     }
 
     /// Match the style of the checkbox to the current elevation using [`ToggleStyle::ElevationBased`].
-    pub fn elevation(mut self, elevation: ElevationIndex) -> Self {
+    pub const fn elevation(mut self, elevation: ElevationIndex) -> Self {
         self.style = ToggleStyle::ElevationBased(elevation);
         self
     }
 
     /// Sets the `fill` setting of the checkbox, indicating whether it should be filled.
-    pub fn fill(mut self) -> Self {
+    pub const fn fill(mut self) -> Self {
         self.filled = true;
         self
     }
 
-    pub fn checkbox_position(mut self, position: IconPosition) -> Self {
+    pub const fn checkbox_position(mut self, position: IconPosition) -> Self {
         self.checkbox_position = position;
         self
     }
@@ -443,13 +443,13 @@ impl Switch {
     }
 
     /// Sets the color of the switch using the specified [`SwitchColor`].
-    pub fn color(mut self, color: SwitchColor) -> Self {
+    pub const fn color(mut self, color: SwitchColor) -> Self {
         self.color = color;
         self
     }
 
     /// Sets the disabled state of the [`Switch`].
-    pub fn disabled(mut self, disabled: bool) -> Self {
+    pub const fn disabled(mut self, disabled: bool) -> Self {
         self.disabled = disabled;
         self
     }
@@ -632,14 +632,14 @@ impl SwitchField {
         self
     }
 
-    pub fn disabled(mut self, disabled: bool) -> Self {
+    pub const fn disabled(mut self, disabled: bool) -> Self {
         self.disabled = disabled;
         self
     }
 
     /// Sets the color of the switch using the specified [`SwitchColor`].
     /// This changes the color scheme of the switch when it's in the "on" state.
-    pub fn color(mut self, color: SwitchColor) -> Self {
+    pub const fn color(mut self, color: SwitchColor) -> Self {
         self.color = color;
         self
     }
@@ -649,7 +649,7 @@ impl SwitchField {
         self
     }
 
-    pub fn tab_index(mut self, tab_index: isize) -> Self {
+    pub const fn tab_index(mut self, tab_index: isize) -> Self {
         self.tab_index = Some(tab_index);
         self
     }

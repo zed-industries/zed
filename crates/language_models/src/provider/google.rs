@@ -75,7 +75,7 @@ static API_KEY_ENV_VAR: LazyLock<EnvVar> = LazyLock::new(|| {
 });
 
 impl State {
-    fn is_authenticated(&self) -> bool {
+    const fn is_authenticated(&self) -> bool {
         self.api_key_state.has_key()
     }
 
@@ -715,7 +715,7 @@ pub fn count_google_tokens(
     .boxed()
 }
 
-fn update_usage(usage: &mut UsageMetadata, new: &UsageMetadata) {
+const fn update_usage(usage: &mut UsageMetadata, new: &UsageMetadata) {
     if let Some(prompt_token_count) = new.prompt_token_count {
         usage.prompt_token_count = Some(prompt_token_count);
     }

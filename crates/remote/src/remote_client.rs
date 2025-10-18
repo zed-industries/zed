@@ -147,7 +147,7 @@ impl State {
         }
     }
 
-    fn can_reconnect(&self) -> bool {
+    const fn can_reconnect(&self) -> bool {
         match self {
             Self::Connected { .. }
             | Self::HeartbeatMissed { .. }
@@ -159,19 +159,19 @@ impl State {
         }
     }
 
-    fn is_reconnect_failed(&self) -> bool {
+    const fn is_reconnect_failed(&self) -> bool {
         matches!(self, Self::ReconnectFailed { .. })
     }
 
-    fn is_reconnect_exhausted(&self) -> bool {
+    const fn is_reconnect_exhausted(&self) -> bool {
         matches!(self, Self::ReconnectExhausted { .. })
     }
 
-    fn is_server_not_running(&self) -> bool {
+    const fn is_server_not_running(&self) -> bool {
         matches!(self, Self::ServerNotRunning)
     }
 
-    fn is_reconnecting(&self) -> bool {
+    const fn is_reconnecting(&self) -> bool {
         matches!(self, Self::Reconnecting { .. })
     }
 
@@ -880,7 +880,7 @@ impl RemoteClient {
         self.connection_state() == ConnectionState::Disconnected
     }
 
-    pub fn path_style(&self) -> PathStyle {
+    pub const fn path_style(&self) -> PathStyle {
         self.path_style
     }
 

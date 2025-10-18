@@ -346,7 +346,7 @@ pub fn read_no_proxy_from_env() -> Option<String> {
 pub struct BlockedHttpClient;
 
 impl BlockedHttpClient {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         BlockedHttpClient
     }
 }

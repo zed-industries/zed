@@ -60,7 +60,7 @@ impl Connection {
         Self::open(&in_memory_path, false).expect("Could not create fallback in memory db")
     }
 
-    pub fn persistent(&self) -> bool {
+    pub const fn persistent(&self) -> bool {
         self.persistent
     }
 

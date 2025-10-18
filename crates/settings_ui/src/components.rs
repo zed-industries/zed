@@ -28,7 +28,7 @@ impl SettingsEditor {
         self
     }
 
-    pub fn with_placeholder(mut self, placeholder: &'static str) -> Self {
+    pub const fn with_placeholder(mut self, placeholder: &'static str) -> Self {
         self.placeholder = Some(placeholder);
         self
     }
@@ -38,7 +38,7 @@ impl SettingsEditor {
         self
     }
 
-    pub(crate) fn tab_index(mut self, arg: isize) -> Self {
+    pub(crate) const fn tab_index(mut self, arg: isize) -> Self {
         self.tab_index = Some(arg);
         self
     }

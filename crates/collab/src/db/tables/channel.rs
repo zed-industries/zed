@@ -20,7 +20,7 @@ impl Model {
         self.ancestors().last()
     }
 
-    pub fn is_root(&self) -> bool {
+    pub const fn is_root(&self) -> bool {
         self.parent_path.is_empty()
     }
 

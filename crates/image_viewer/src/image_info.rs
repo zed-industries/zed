@@ -14,7 +14,7 @@ pub struct ImageInfo {
 }
 
 impl ImageInfo {
-    pub fn new(_workspace: &Workspace) -> Self {
+    pub const fn new(_workspace: &Workspace) -> Self {
         Self {
             metadata: None,
             _observe_active_image: None,

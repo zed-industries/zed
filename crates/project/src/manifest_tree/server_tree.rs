@@ -455,7 +455,7 @@ impl ServerTreeRebase {
         )
     }
 
-    pub(crate) fn server_tree(&mut self) -> &mut LanguageServerTree {
+    pub(crate) const fn server_tree(&mut self) -> &mut LanguageServerTree {
         &mut self.new_tree
     }
 }

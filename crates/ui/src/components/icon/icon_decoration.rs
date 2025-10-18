@@ -36,7 +36,7 @@ pub enum IconDecorationKind {
 }
 
 impl IconDecorationKind {
-    fn fg(&self) -> KnockoutIconName {
+    const fn fg(&self) -> KnockoutIconName {
         match self {
             Self::X => KnockoutIconName::XFg,
             Self::Dot => KnockoutIconName::DotFg,
@@ -44,7 +44,7 @@ impl IconDecorationKind {
         }
     }
 
-    fn bg(&self) -> KnockoutIconName {
+    const fn bg(&self) -> KnockoutIconName {
         match self {
             Self::X => KnockoutIconName::XBg,
             Self::Dot => KnockoutIconName::DotBg,
@@ -84,13 +84,13 @@ impl IconDecoration {
     }
 
     /// Sets the kind of decoration.
-    pub fn kind(mut self, kind: IconDecorationKind) -> Self {
+    pub const fn kind(mut self, kind: IconDecorationKind) -> Self {
         self.kind = kind;
         self
     }
 
     /// Sets the color of the decoration.
-    pub fn color(mut self, color: Hsla) -> Self {
+    pub const fn color(mut self, color: Hsla) -> Self {
         self.color = color;
         self
     }
@@ -99,19 +99,19 @@ impl IconDecoration {
     ///
     /// Match this to the background of the element the icon will be rendered
     /// on.
-    pub fn knockout_color(mut self, color: Hsla) -> Self {
+    pub const fn knockout_color(mut self, color: Hsla) -> Self {
         self.knockout_color = color;
         self
     }
 
     /// Sets the color of the decoration that is used on hover.
-    pub fn knockout_hover_color(mut self, color: Hsla) -> Self {
+    pub const fn knockout_hover_color(mut self, color: Hsla) -> Self {
         self.knockout_hover_color = color;
         self
     }
 
     /// Sets the position of the decoration.
-    pub fn position(mut self, position: Point<Pixels>) -> Self {
+    pub const fn position(mut self, position: Point<Pixels>) -> Self {
         self.position = position;
         self
     }

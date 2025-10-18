@@ -451,31 +451,31 @@ impl SelectionsCollection {
         (mutable_collection.selections_changed, result)
     }
 
-    pub fn next_selection_id(&self) -> usize {
+    pub const fn next_selection_id(&self) -> usize {
         self.next_selection_id
     }
 
-    pub fn line_mode(&self) -> bool {
+    pub const fn line_mode(&self) -> bool {
         self.line_mode
     }
 
-    pub fn set_line_mode(&mut self, line_mode: bool) {
+    pub const fn set_line_mode(&mut self, line_mode: bool) {
         self.line_mode = line_mode;
     }
 
-    pub fn select_mode(&self) -> &SelectMode {
+    pub const fn select_mode(&self) -> &SelectMode {
         &self.select_mode
     }
 
-    pub fn set_select_mode(&mut self, select_mode: SelectMode) {
+    pub const fn set_select_mode(&mut self, select_mode: SelectMode) {
         self.select_mode = select_mode;
     }
 
-    pub fn is_extending(&self) -> bool {
+    pub const fn is_extending(&self) -> bool {
         self.is_extending
     }
 
-    pub fn set_is_extending(&mut self, is_extending: bool) {
+    pub const fn set_is_extending(&mut self, is_extending: bool) {
         self.is_extending = is_extending;
     }
 }
@@ -524,7 +524,7 @@ impl<'a> MutableSelectionsCollection<'a> {
         self.selections_changed |= changed;
     }
 
-    pub fn clear_pending(&mut self) {
+    pub const fn clear_pending(&mut self) {
         if self.collection.pending.is_some() {
             self.collection.pending = None;
             self.selections_changed = true;
@@ -556,7 +556,7 @@ impl<'a> MutableSelectionsCollection<'a> {
         self.selections_changed = true;
     }
 
-    pub(crate) fn set_pending(&mut self, selection: Selection<Anchor>, mode: SelectMode) {
+    pub(crate) const fn set_pending(&mut self, selection: Selection<Anchor>, mode: SelectMode) {
         self.collection.pending = Some(PendingSelection { selection, mode });
         self.selections_changed = true;
     }

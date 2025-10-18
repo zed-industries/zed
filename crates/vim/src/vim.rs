@@ -1296,7 +1296,7 @@ impl Vim {
         !(self.mode == Mode::Insert && self.last_mode == Mode::VisualBlock)
     }
 
-    pub fn clip_at_line_ends(&self) -> bool {
+    pub const fn clip_at_line_ends(&self) -> bool {
         match self.mode {
             Mode::Insert
             | Mode::Visual

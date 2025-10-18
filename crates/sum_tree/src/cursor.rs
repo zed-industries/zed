@@ -11,7 +11,7 @@ struct StackEntry<'a, T: Item, D> {
 
 impl<'a, T: Item, D> StackEntry<'a, T, D> {
     #[inline]
-    fn index(&self) -> usize {
+    const fn index(&self) -> usize {
         self.index as usize
     }
 }
@@ -78,7 +78,7 @@ where
         self.position = D::zero(self.cx);
     }
 
-    pub fn start(&self) -> &D {
+    pub const fn start(&self) -> &D {
         &self.position
     }
 
@@ -655,7 +655,7 @@ where
         }
     }
 
-    pub fn start(&self) -> &D {
+    pub const fn start(&self) -> &D {
         self.cursor.start()
     }
 
@@ -799,7 +799,7 @@ where
 struct End<D>(PhantomData<D>);
 
 impl<D> End<D> {
-    fn new() -> Self {
+    const fn new() -> Self {
         Self(PhantomData)
     }
 }

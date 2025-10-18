@@ -63,7 +63,7 @@ impl PromptId {
         UserPromptId::new().into()
     }
 
-    pub fn is_built_in(&self) -> bool {
+    pub const fn is_built_in(&self) -> bool {
         !matches!(self, PromptId::User { .. })
     }
 }

@@ -4,7 +4,7 @@ pub(crate) struct ReversibleIterable<It> {
 }
 
 impl<T> ReversibleIterable<T> {
-    pub(crate) fn new(it: T, reverse: bool) -> Self {
+    pub(crate) const fn new(it: T, reverse: bool) -> Self {
         Self { it, reverse }
     }
 }

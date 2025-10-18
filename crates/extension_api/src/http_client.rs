@@ -6,7 +6,7 @@ pub use crate::wit::zed::extension::http_client::{
 
 impl HttpRequest {
     /// Returns a builder for an [`HttpRequest`].
-    pub fn builder() -> HttpRequestBuilder {
+    pub const fn builder() -> HttpRequestBuilder {
         HttpRequestBuilder::new()
     }
 
@@ -39,7 +39,7 @@ impl Default for HttpRequestBuilder {
 
 impl HttpRequestBuilder {
     /// Returns a new [`HttpRequestBuilder`].
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         HttpRequestBuilder {
             method: None,
             url: None,
@@ -50,7 +50,7 @@ impl HttpRequestBuilder {
     }
 
     /// Sets the HTTP method for the request.
-    pub fn method(mut self, method: HttpMethod) -> Self {
+    pub const fn method(mut self, method: HttpMethod) -> Self {
         self.method = Some(method);
         self
     }
@@ -80,7 +80,7 @@ impl HttpRequestBuilder {
     }
 
     /// Sets the redirect policy for the request.
-    pub fn redirect_policy(mut self, policy: RedirectPolicy) -> Self {
+    pub const fn redirect_policy(mut self, policy: RedirectPolicy) -> Self {
         self.redirect_policy = policy;
         self
     }

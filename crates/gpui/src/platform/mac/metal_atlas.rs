@@ -233,11 +233,11 @@ impl MetalAtlasTexture {
         }
     }
 
-    fn decrement_ref_count(&mut self) {
+    const fn decrement_ref_count(&mut self) {
         self.live_atlas_keys -= 1;
     }
 
-    fn is_unreferenced(&mut self) -> bool {
+    const fn is_unreferenced(&mut self) -> bool {
         self.live_atlas_keys == 0
     }
 }

@@ -144,7 +144,7 @@ pub enum LspFormatTarget {
 pub type OpenLspBufferHandle = Entity<Entity<Buffer>>;
 
 impl FormatTrigger {
-    fn from_proto(value: i32) -> FormatTrigger {
+    const fn from_proto(value: i32) -> FormatTrigger {
         match value {
             0 => FormatTrigger::Save,
             1 => FormatTrigger::Manual,
@@ -3477,7 +3477,7 @@ pub(crate) enum LspStoreMode {
 }
 
 impl LspStoreMode {
-    fn is_local(&self) -> bool {
+    const fn is_local(&self) -> bool {
         matches!(self, LspStoreMode::Local(_))
     }
 }
@@ -3649,21 +3649,21 @@ impl LspStore {
         );
     }
 
-    pub fn as_remote(&self) -> Option<&RemoteLspStore> {
+    pub const fn as_remote(&self) -> Option<&RemoteLspStore> {
         match &self.mode {
             LspStoreMode::Remote(remote_lsp_store) => Some(remote_lsp_store),
             _ => None,
         }
     }
 
-    pub fn as_local(&self) -> Option<&LocalLspStore> {
+    pub const fn as_local(&self) -> Option<&LocalLspStore> {
         match &self.mode {
             LspStoreMode::Local(local_lsp_store) => Some(local_lsp_store),
             _ => None,
         }
     }
 
-    pub fn as_local_mut(&mut self) -> Option<&mut LocalLspStore> {
+    pub const fn as_local_mut(&mut self) -> Option<&mut LocalLspStore> {
         match &mut self.mode {
             LspStoreMode::Local(local_lsp_store) => Some(local_lsp_store),
             _ => None,
@@ -4262,7 +4262,7 @@ impl LspStore {
         self.buffer_store.clone()
     }
 
-    pub fn set_active_entry(&mut self, active_entry: Option<ProjectEntryId>) {
+    pub const fn set_active_entry(&mut self, active_entry: Option<ProjectEntryId>) {
         self.active_entry = active_entry;
     }
 
@@ -12444,7 +12444,7 @@ impl DiagnosticSummary {
         this
     }
 
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.error_count == 0 && self.warning_count == 0
     }
 

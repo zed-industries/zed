@@ -437,7 +437,7 @@ impl DapStore {
         }
     }
 
-    fn as_local(&self) -> Option<&LocalDapStore> {
+    const fn as_local(&self) -> Option<&LocalDapStore> {
         match &self.mode {
             DapStoreMode::Local(local_dap_store) => Some(local_dap_store),
             _ => None,
@@ -560,11 +560,11 @@ impl DapStore {
             .map(|client| client.read(cx).capabilities.clone())
     }
 
-    pub fn breakpoint_store(&self) -> &Entity<BreakpointStore> {
+    pub const fn breakpoint_store(&self) -> &Entity<BreakpointStore> {
         &self.breakpoint_store
     }
 
-    pub fn worktree_store(&self) -> &Entity<WorktreeStore> {
+    pub const fn worktree_store(&self) -> &Entity<WorktreeStore> {
         &self.worktree_store
     }
 
@@ -929,7 +929,7 @@ impl DapStore {
         self.adapter_options.get(name).cloned()
     }
 
-    pub fn all_adapter_options(&self) -> &BTreeMap<DebugAdapterName, Arc<PersistedAdapterOptions>> {
+    pub const fn all_adapter_options(&self) -> &BTreeMap<DebugAdapterName, Arc<PersistedAdapterOptions>> {
         &self.adapter_options
     }
 }

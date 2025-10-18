@@ -162,7 +162,7 @@ impl MetalRenderer {
             .new_library_with_data(SHADERS_METALLIB)
             .expect("error building metal library");
 
-        fn to_float2_bits(point: PointF) -> u64 {
+        const fn to_float2_bits(point: PointF) -> u64 {
             let mut output = point.y.to_bits() as u64;
             output <<= 32;
             output |= point.x.to_bits() as u64;
@@ -285,7 +285,7 @@ impl MetalRenderer {
         self.layer.as_ptr()
     }
 
-    pub fn sprite_atlas(&self) -> &Arc<MetalAtlas> {
+    pub const fn sprite_atlas(&self) -> &Arc<MetalAtlas> {
         &self.sprite_atlas
     }
 
@@ -342,11 +342,11 @@ impl MetalRenderer {
         }
     }
 
-    pub fn update_transparency(&self, _transparent: bool) {
+    pub const fn update_transparency(&self, _transparent: bool) {
         // todo(mac)?
     }
 
-    pub fn destroy(&self) {
+    pub const fn destroy(&self) {
         // nothing to do
     }
 
@@ -1291,7 +1291,7 @@ fn build_path_rasterization_pipeline_state(
 }
 
 // Align to multiples of 256 make Metal happy.
-fn align_offset(offset: &mut usize) {
+const fn align_offset(offset: &mut usize) {
     *offset = (*offset).div_ceil(256) * 256;
 }
 

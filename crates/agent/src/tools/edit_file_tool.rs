@@ -129,7 +129,7 @@ pub struct EditFileTool {
 }
 
 impl EditFileTool {
-    pub fn new(
+    pub const fn new(
         project: Entity<Project>,
         thread: WeakEntity<Thread>,
         language_registry: Arc<LanguageRegistry>,

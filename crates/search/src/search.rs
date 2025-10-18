@@ -91,11 +91,11 @@ pub(crate) enum SearchSource<'a, 'b> {
 }
 
 impl SearchOption {
-    pub fn as_options(&self) -> SearchOptions {
+    pub const fn as_options(&self) -> SearchOptions {
         SearchOptions::from_bits(1 << *self as u8).unwrap()
     }
 
-    pub fn label(&self) -> &'static str {
+    pub const fn label(&self) -> &'static str {
         match self {
             SearchOption::WholeWord => "Match Whole Words",
             SearchOption::CaseSensitive => "Match Case Sensitivity",
@@ -165,7 +165,7 @@ impl SearchOption {
 }
 
 impl SearchOptions {
-    pub fn none() -> SearchOptions {
+    pub const fn none() -> SearchOptions {
         SearchOptions::NONE
     }
 

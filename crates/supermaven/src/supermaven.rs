@@ -113,7 +113,7 @@ impl Supermaven {
         *self = Self::Starting;
     }
 
-    pub fn is_enabled(&self) -> bool {
+    pub const fn is_enabled(&self) -> bool {
         matches!(self, Self::Spawned { .. })
     }
 

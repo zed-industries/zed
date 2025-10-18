@@ -812,7 +812,7 @@ impl Default for DefaultPrettier {
 }
 
 impl DefaultPrettier {
-    pub fn instance(&self) -> Option<&PrettierInstance> {
+    pub const fn instance(&self) -> Option<&PrettierInstance> {
         if let PrettierInstallation::Installed(instance) = &self.prettier {
             Some(instance)
         } else {

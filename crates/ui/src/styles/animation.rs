@@ -12,7 +12,7 @@ pub enum AnimationDuration {
 }
 
 impl AnimationDuration {
-    pub fn duration(&self) -> Duration {
+    pub const fn duration(&self) -> Duration {
         Duration::from_millis(*self as u64)
     }
 }

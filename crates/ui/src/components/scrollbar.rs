@@ -83,7 +83,7 @@ pub mod scrollbars {
     pub struct ScrollbarAutoHide(pub bool);
 
     impl ScrollbarAutoHide {
-        pub fn should_hide(&self) -> bool {
+        pub const fn should_hide(&self) -> bool {
             self.0
         }
     }
@@ -342,11 +342,11 @@ impl ReservedSpace {
         *self != ReservedSpace::None
     }
 
-    fn needs_scroll_track(&self) -> bool {
+    const fn needs_scroll_track(&self) -> bool {
         matches!(self, ReservedSpace::Track(_))
     }
 
-    fn track_color(&self) -> Option<Hsla> {
+    const fn track_color(&self) -> Option<Hsla> {
         match self {
             ReservedSpace::Track(color) => Some(*color),
             _ => None,
@@ -363,7 +363,7 @@ enum ScrollbarWidth {
 }
 
 impl ScrollbarWidth {
-    fn to_pixels(&self) -> Pixels {
+    const fn to_pixels(&self) -> Pixels {
         match self {
             ScrollbarWidth::Normal => px(8.),
             ScrollbarWidth::Small => px(6.),
@@ -425,13 +425,13 @@ impl<ScrollHandle: ScrollableHandle> Scrollbars<ScrollHandle> {
     }
 
     /// Notify the current context whenever this scrollbar gets a scroll event
-    pub fn notify_content(mut self) -> Self {
+    pub const fn notify_content(mut self) -> Self {
         self.tracked_entity = Some(None);
         self
     }
 
     /// Set a parent model which should be notified whenever this scrollbar gets a scroll event.
-    pub fn tracked_entity(mut self, entity_id: EntityId) -> Self {
+    pub const fn tracked_entity(mut self, entity_id: EntityId) -> Self {
         self.tracked_entity = Some(Some(entity_id));
         self
     }
@@ -469,12 +469,12 @@ impl<ScrollHandle: ScrollableHandle> Scrollbars<ScrollHandle> {
         self
     }
 
-    pub fn width_sm(mut self) -> Self {
+    pub const fn width_sm(mut self) -> Self {
         self.scrollbar_width = ScrollbarWidth::Small;
         self
     }
 
-    pub fn width_xs(mut self) -> Self {
+    pub const fn width_xs(mut self) -> Self {
         self.scrollbar_width = ScrollbarWidth::XSmall;
         self
     }
@@ -513,7 +513,7 @@ impl VisibilityState {
         }
     }
 
-    fn is_visible(&self) -> bool {
+    const fn is_visible(&self) -> bool {
         matches!(self, Self::Visible | Self::Animating { .. })
     }
 
@@ -522,7 +522,7 @@ impl VisibilityState {
         *self == VisibilityState::Disabled
     }
 
-    fn animation_progress(&self) -> Option<(f32, Duration, bool)> {
+    const fn animation_progress(&self) -> Option<(f32, Duration, bool)> {
         match self {
             Self::Animating { showing, delta } => Some((
                 *delta,
@@ -690,7 +690,7 @@ impl<T: ScrollableHandle> ScrollbarState<T> {
     }
 
     #[inline]
-    fn visible_axes(&self) -> Option<ScrollAxes> {
+    const fn visible_axes(&self) -> Option<ScrollAxes> {
         match (&self.visibility.x, &self.visibility.y) {
             (ReservedSpace::None, ReservedSpace::None) => None,
             (ReservedSpace::None, _) => Some(ScrollAxes::Vertical),
@@ -721,7 +721,7 @@ impl<T: ScrollableHandle> ScrollbarState<T> {
             .flatten()
     }
 
-    fn scroll_handle(&self) -> &T {
+    const fn scroll_handle(&self) -> &T {
         &self.scroll_handle
     }
 
@@ -731,7 +731,7 @@ impl<T: ScrollableHandle> ScrollbarState<T> {
         cx.notify();
     }
 
-    fn is_dragging(&self) -> bool {
+    const fn is_dragging(&self) -> bool {
         self.thumb_state.is_dragging()
     }
 
@@ -850,7 +850,7 @@ impl<T: ScrollableHandle> ScrollbarState<T> {
             })
     }
 
-    fn visible(&self) -> bool {
+    const fn visible(&self) -> bool {
         self.show_state.is_visible()
     }
 
@@ -889,7 +889,7 @@ enum ThumbState {
 }
 
 impl ThumbState {
-    fn is_dragging(&self) -> bool {
+    const fn is_dragging(&self) -> bool {
         matches!(*self, ThumbState::Dragging(..))
     }
 }

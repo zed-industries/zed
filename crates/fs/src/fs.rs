@@ -229,7 +229,7 @@ impl MTime {
     /// Returns the value wrapped by this `MTime`, for presentation to the user. The name including
     /// "_for_user" is to discourage misuse - this method should not be used when making decisions
     /// about file dirtiness.
-    pub fn timestamp_for_user(self) -> SystemTime {
+    pub const fn timestamp_for_user(self) -> SystemTime {
         self.0
     }
 
@@ -328,7 +328,7 @@ impl FileHandle for std::fs::File {
 pub struct RealWatcher {}
 
 impl RealFs {
-    pub fn new(git_binary_path: Option<PathBuf>, executor: BackgroundExecutor) -> Self {
+    pub const fn new(git_binary_path: Option<PathBuf>, executor: BackgroundExecutor) -> Self {
         Self {
             bundled_git_binary_path: git_binary_path,
             executor,

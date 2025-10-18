@@ -526,7 +526,7 @@ impl ContextStore {
             .collect()
     }
 
-    pub fn thread_ids(&self) -> &HashSet<acp::SessionId> {
+    pub const fn thread_ids(&self) -> &HashSet<acp::SessionId> {
         &self.context_thread_ids
     }
 }
@@ -549,7 +549,7 @@ pub enum SuggestedContext {
 }
 
 impl SuggestedContext {
-    pub fn name(&self) -> &SharedString {
+    pub const fn name(&self) -> &SharedString {
         match self {
             Self::File { name, .. } => name,
             // Self::Thread { name, .. } => name,
@@ -565,7 +565,7 @@ impl SuggestedContext {
         }
     }
 
-    pub fn kind(&self) -> ContextKind {
+    pub const fn kind(&self) -> ContextKind {
         match self {
             Self::File { .. } => ContextKind::File,
             // Self::Thread { .. } => ContextKind::Thread,

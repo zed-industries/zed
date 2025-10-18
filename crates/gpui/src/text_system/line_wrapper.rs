@@ -165,7 +165,7 @@ impl LineWrapper {
 
     /// Any character in this list should be treated as a word character,
     /// meaning it can be part of a word that should not be wrapped.
-    pub(crate) fn is_word_char(c: char) -> bool {
+    pub(crate) const fn is_word_char(c: char) -> bool {
         // ASCII alphanumeric characters, for English, numbers: `Hello123`, etc.
         c.is_ascii_alphanumeric() ||
         // Latin script in Unicode for French, German, Spanish, etc.
@@ -255,12 +255,12 @@ pub enum LineFragment<'a> {
 
 impl<'a> LineFragment<'a> {
     /// Creates a new text fragment from the given text.
-    pub fn text(text: &'a str) -> Self {
+    pub const fn text(text: &'a str) -> Self {
         LineFragment::Text { text }
     }
 
     /// Creates a new non-text element with the given width and UTF-8 encoded length.
-    pub fn element(width: Pixels, len_utf8: usize) -> Self {
+    pub const fn element(width: Pixels, len_utf8: usize) -> Self {
         LineFragment::Element { width, len_utf8 }
     }
 
@@ -288,7 +288,7 @@ enum WrapBoundaryCandidate {
 }
 
 impl WrapBoundaryCandidate {
-    pub fn len_utf8(&self) -> usize {
+    pub const fn len_utf8(&self) -> usize {
         match self {
             WrapBoundaryCandidate::Char { character } => character.len_utf8(),
             WrapBoundaryCandidate::Element { len_utf8: len, .. } => *len,
@@ -306,7 +306,7 @@ pub struct Boundary {
 }
 
 impl Boundary {
-    fn new(ix: usize, next_indent: u32) -> Self {
+    const fn new(ix: usize, next_indent: u32) -> Self {
         Self { ix, next_indent }
     }
 }

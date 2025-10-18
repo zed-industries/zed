@@ -625,7 +625,7 @@ fn declaration_score_density(declaration: &ReferencedDeclaration, style: Declara
     declaration_score(declaration, style) / declaration_size(declaration, style) as f32
 }
 
-fn declaration_score(declaration: &ReferencedDeclaration, style: DeclarationStyle) -> f32 {
+const fn declaration_score(declaration: &ReferencedDeclaration, style: DeclarationStyle) -> f32 {
     match style {
         DeclarationStyle::Signature => declaration.signature_score,
         DeclarationStyle::Declaration => declaration.declaration_score,

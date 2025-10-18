@@ -235,11 +235,11 @@ impl Zeta {
         debug_watch_rx
     }
 
-    pub fn options(&self) -> &ZetaOptions {
+    pub const fn options(&self) -> &ZetaOptions {
         &self.options
     }
 
-    pub fn set_options(&mut self, options: ZetaOptions) {
+    pub const fn set_options(&mut self, options: ZetaOptions) {
         self.options = options;
     }
 

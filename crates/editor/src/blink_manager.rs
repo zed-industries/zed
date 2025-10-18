@@ -30,7 +30,7 @@ impl BlinkManager {
         }
     }
 
-    fn next_blink_epoch(&mut self) -> usize {
+    const fn next_blink_epoch(&mut self) -> usize {
         self.blink_epoch += 1;
         self.blink_epoch
     }
@@ -95,12 +95,12 @@ impl BlinkManager {
         self.blink_cursors(self.blink_epoch, cx);
     }
 
-    pub fn disable(&mut self, _cx: &mut Context<Self>) {
+    pub const fn disable(&mut self, _cx: &mut Context<Self>) {
         self.visible = false;
         self.enabled = false;
     }
 
-    pub fn visible(&self) -> bool {
+    pub const fn visible(&self) -> bool {
         self.visible
     }
 }

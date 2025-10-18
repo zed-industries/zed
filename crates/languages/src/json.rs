@@ -135,7 +135,7 @@ pub struct JsonLspAdapter {
 impl JsonLspAdapter {
     const PACKAGE_NAME: &str = "vscode-langservers-extracted";
 
-    pub fn new(node: NodeRuntime) -> Self {
+    pub const fn new(node: NodeRuntime) -> Self {
         Self { node }
     }
 }

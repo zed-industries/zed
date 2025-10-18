@@ -161,7 +161,7 @@ impl<M: ManagedView> PopoverMenu<M> {
         }
     }
 
-    pub fn full_width(mut self, full_width: bool) -> Self {
+    pub const fn full_width(mut self, full_width: bool) -> Self {
         self.full_width = full_width;
         self
     }
@@ -219,19 +219,19 @@ impl<M: ManagedView> PopoverMenu<M> {
 
     /// Defines which corner of the menu to anchor to the attachment point.
     /// By default, it uses the cursor position. Also see the `attach` method.
-    pub fn anchor(mut self, anchor: Corner) -> Self {
+    pub const fn anchor(mut self, anchor: Corner) -> Self {
         self.anchor = anchor;
         self
     }
 
     /// Defines which corner of the handle to attach the menu's anchor to.
-    pub fn attach(mut self, attach: Corner) -> Self {
+    pub const fn attach(mut self, attach: Corner) -> Self {
         self.attach = Some(attach);
         self
     }
 
     /// Offsets the position of the content by that many pixels.
-    pub fn offset(mut self, offset: Point<Pixels>) -> Self {
+    pub const fn offset(mut self, offset: Point<Pixels>) -> Self {
         self.offset = Some(offset);
         self
     }

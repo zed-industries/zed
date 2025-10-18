@@ -43,7 +43,7 @@ pub enum ToolchainScope {
 }
 
 impl ToolchainScope {
-    pub fn label(&self) -> &'static str {
+    pub const fn label(&self) -> &'static str {
         match self {
             ToolchainScope::Subproject(_, _) => "Subproject",
             ToolchainScope::Project => "Project",
@@ -51,7 +51,7 @@ impl ToolchainScope {
         }
     }
 
-    pub fn description(&self) -> &'static str {
+    pub const fn description(&self) -> &'static str {
         match self {
             ToolchainScope::Subproject(_, _) => {
                 "Available only in the subproject you're currently in."

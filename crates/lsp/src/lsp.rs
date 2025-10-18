@@ -121,11 +121,11 @@ pub enum LanguageServerSelector {
 pub struct LanguageServerId(pub usize);
 
 impl LanguageServerId {
-    pub fn from_proto(id: u64) -> Self {
+    pub const fn from_proto(id: u64) -> Self {
         Self(id as usize)
     }
 
-    pub fn to_proto(self) -> u64 {
+    pub const fn to_proto(self) -> u64 {
         self.0 as u64
     }
 }
@@ -279,7 +279,7 @@ struct LspRequest<F> {
 }
 
 impl<F> LspRequest<F> {
-    pub fn new(id: i32, request: F) -> Self {
+    pub const fn new(id: i32, request: F) -> Self {
         Self { id, request }
     }
 }
@@ -1176,12 +1176,12 @@ impl LanguageServer {
     }
 
     /// Get the id of the running language server.
-    pub fn server_id(&self) -> LanguageServerId {
+    pub const fn server_id(&self) -> LanguageServerId {
         self.server_id
     }
 
     /// Language server's binary information.
-    pub fn binary(&self) -> &LanguageServerBinary {
+    pub const fn binary(&self) -> &LanguageServerBinary {
         &self.binary
     }
 

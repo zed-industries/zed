@@ -240,7 +240,7 @@ impl AgentType {
         }
     }
 
-    fn icon(&self) -> Option<IconName> {
+    const fn icon(&self) -> Option<IconName> {
         match self {
             Self::NativeAgent | Self::TextThread => None,
             Self::Gemini => Some(IconName::AiGemini),
@@ -264,7 +264,7 @@ impl From<ExternalAgent> for AgentType {
 }
 
 impl ActiveView {
-    pub fn which_font_size_used(&self) -> WhichFontSize {
+    pub const fn which_font_size_used(&self) -> WhichFontSize {
         match self {
             ActiveView::ExternalAgentThread { .. } | ActiveView::History => {
                 WhichFontSize::AgentFont
@@ -676,23 +676,23 @@ impl AgentPanel {
         }
     }
 
-    pub(crate) fn prompt_store(&self) -> &Option<Entity<PromptStore>> {
+    pub(crate) const fn prompt_store(&self) -> &Option<Entity<PromptStore>> {
         &self.prompt_store
     }
 
-    pub(crate) fn inline_assist_context_store(&self) -> &Entity<ContextStore> {
+    pub(crate) const fn inline_assist_context_store(&self) -> &Entity<ContextStore> {
         &self.inline_assist_context_store
     }
 
-    pub(crate) fn thread_store(&self) -> &Entity<HistoryStore> {
+    pub(crate) const fn thread_store(&self) -> &Entity<HistoryStore> {
         &self.history_store
     }
 
-    pub(crate) fn context_server_registry(&self) -> &Entity<ContextServerRegistry> {
+    pub(crate) const fn context_server_registry(&self) -> &Entity<ContextServerRegistry> {
         &self.context_server_registry
     }
 
-    fn active_thread_view(&self) -> Option<&Entity<AcpThreadView>> {
+    const fn active_thread_view(&self) -> Option<&Entity<AcpThreadView>> {
         match &self.active_view {
             ActiveView::ExternalAgentThread { thread_view, .. } => Some(thread_view),
             ActiveView::TextThread { .. } | ActiveView::History | ActiveView::Configuration => None,
@@ -2484,7 +2484,7 @@ struct PromptLibraryInlineAssist {
 }
 
 impl PromptLibraryInlineAssist {
-    pub fn new(workspace: WeakEntity<Workspace>) -> Self {
+    pub const fn new(workspace: WeakEntity<Workspace>) -> Self {
         Self { workspace }
     }
 }

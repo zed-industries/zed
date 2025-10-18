@@ -76,11 +76,11 @@ impl Model {
         self.display_name.as_ref().unwrap_or(&self.name)
     }
 
-    pub fn max_token_count(&self) -> u64 {
+    pub const fn max_token_count(&self) -> u64 {
         self.max_tokens
     }
 
-    pub fn supports_tool_calls(&self) -> bool {
+    pub const fn supports_tool_calls(&self) -> bool {
         self.supports_tool_calls
     }
 }
@@ -138,7 +138,7 @@ pub enum MessageContent {
 }
 
 impl MessageContent {
-    pub fn empty() -> Self {
+    pub const fn empty() -> Self {
         MessageContent::Multipart(vec![])
     }
 

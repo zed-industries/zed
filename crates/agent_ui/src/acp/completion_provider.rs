@@ -76,7 +76,7 @@ pub struct ContextPickerCompletionProvider {
 }
 
 impl ContextPickerCompletionProvider {
-    pub fn new(
+    pub const fn new(
         message_editor: WeakEntity<MessageEditor>,
         workspace: WeakEntity<Workspace>,
         history_store: Entity<HistoryStore>,

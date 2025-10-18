@@ -32,7 +32,7 @@ impl Svg {
 
     /// Transform the SVG element with the given transformation.
     /// Note that this won't effect the hitbox or layout of the element, only the rendering.
-    pub fn with_transformation(mut self, transformation: Transformation) -> Self {
+    pub const fn with_transformation(mut self, transformation: Transformation) -> Self {
         self.transformation = Some(transformation);
         self
     }
@@ -165,7 +165,7 @@ impl Default for Transformation {
 
 impl Transformation {
     /// Create a new Transformation with the specified scale along each axis.
-    pub fn scale(scale: Size<f32>) -> Self {
+    pub const fn scale(scale: Size<f32>) -> Self {
         Self {
             scale,
             translate: point(px(0.0), px(0.0)),
@@ -174,7 +174,7 @@ impl Transformation {
     }
 
     /// Create a new Transformation with the specified translation.
-    pub fn translate(translate: Point<Pixels>) -> Self {
+    pub const fn translate(translate: Point<Pixels>) -> Self {
         Self {
             scale: size(1.0, 1.0),
             translate,
@@ -193,13 +193,13 @@ impl Transformation {
     }
 
     /// Update the scaling factor of this transformation.
-    pub fn with_scaling(mut self, scale: Size<f32>) -> Self {
+    pub const fn with_scaling(mut self, scale: Size<f32>) -> Self {
         self.scale = scale;
         self
     }
 
     /// Update the translation value of this transformation.
-    pub fn with_translation(mut self, translate: Point<Pixels>) -> Self {
+    pub const fn with_translation(mut self, translate: Point<Pixels>) -> Self {
         self.translate = translate;
         self
     }

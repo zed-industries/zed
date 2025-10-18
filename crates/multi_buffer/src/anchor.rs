@@ -16,14 +16,14 @@ pub struct Anchor {
 }
 
 impl Anchor {
-    pub fn with_diff_base_anchor(self, diff_base_anchor: text::Anchor) -> Self {
+    pub const fn with_diff_base_anchor(self, diff_base_anchor: text::Anchor) -> Self {
         Self {
             diff_base_anchor: Some(diff_base_anchor),
             ..self
         }
     }
 
-    pub fn in_buffer(
+    pub const fn in_buffer(
         excerpt_id: ExcerptId,
         buffer_id: BufferId,
         text_anchor: text::Anchor,
@@ -36,7 +36,7 @@ impl Anchor {
         }
     }
 
-    pub fn range_in_buffer(
+    pub const fn range_in_buffer(
         excerpt_id: ExcerptId,
         buffer_id: BufferId,
         range: Range<text::Anchor>,
@@ -45,7 +45,7 @@ impl Anchor {
             ..Self::in_buffer(excerpt_id, buffer_id, range.end)
     }
 
-    pub fn min() -> Self {
+    pub const fn min() -> Self {
         Self {
             buffer_id: None,
             excerpt_id: ExcerptId::min(),
@@ -54,7 +54,7 @@ impl Anchor {
         }
     }
 
-    pub fn max() -> Self {
+    pub const fn max() -> Self {
         Self {
             buffer_id: None,
             excerpt_id: ExcerptId::max(),
@@ -108,7 +108,7 @@ impl Anchor {
         Ordering::Equal
     }
 
-    pub fn bias(&self) -> Bias {
+    pub const fn bias(&self) -> Bias {
         self.text_anchor.bias
     }
 

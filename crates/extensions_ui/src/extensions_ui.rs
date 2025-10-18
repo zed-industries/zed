@@ -181,7 +181,7 @@ pub fn init(cx: &mut App) {
     .detach();
 }
 
-fn extension_provides_label(provides: ExtensionProvides) -> &'static str {
+const fn extension_provides_label(provides: ExtensionProvides) -> &'static str {
     match provides {
         ExtensionProvides::Themes => "Themes",
         ExtensionProvides::IconThemes => "Icon Themes",
@@ -213,7 +213,7 @@ enum ExtensionFilter {
 }
 
 impl ExtensionFilter {
-    pub fn include_dev_extensions(&self) -> bool {
+    pub const fn include_dev_extensions(&self) -> bool {
         match self {
             Self::All | Self::Installed => true,
             Self::NotInstalled => false,

@@ -318,7 +318,7 @@ impl SettingsStore {
     ///
     /// For user-facing functionality use the typed setting interface.
     /// (e.g. ProjectSettings::get_global(cx))
-    pub fn raw_user_settings(&self) -> Option<&UserSettingsContent> {
+    pub const fn raw_user_settings(&self) -> Option<&UserSettingsContent> {
         self.user_settings.as_ref()
     }
 

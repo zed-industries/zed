@@ -80,32 +80,32 @@ impl ContextMenuEntry {
         }
     }
 
-    pub fn toggleable(mut self, toggle_position: IconPosition, toggled: bool) -> Self {
+    pub const fn toggleable(mut self, toggle_position: IconPosition, toggled: bool) -> Self {
         self.toggle = Some((toggle_position, toggled));
         self
     }
 
-    pub fn icon(mut self, icon: IconName) -> Self {
+    pub const fn icon(mut self, icon: IconName) -> Self {
         self.icon = Some(icon);
         self
     }
 
-    pub fn icon_position(mut self, position: IconPosition) -> Self {
+    pub const fn icon_position(mut self, position: IconPosition) -> Self {
         self.icon_position = position;
         self
     }
 
-    pub fn icon_size(mut self, icon_size: IconSize) -> Self {
+    pub const fn icon_size(mut self, icon_size: IconSize) -> Self {
         self.icon_size = icon_size;
         self
     }
 
-    pub fn icon_color(mut self, icon_color: Color) -> Self {
+    pub const fn icon_color(mut self, icon_color: Color) -> Self {
         self.icon_color = Some(icon_color);
         self
     }
 
-    pub fn toggle(mut self, toggle_position: IconPosition, toggled: bool) -> Self {
+    pub const fn toggle(mut self, toggle_position: IconPosition, toggled: bool) -> Self {
         self.toggle = Some((toggle_position, toggled));
         self
     }
@@ -120,7 +120,7 @@ impl ContextMenuEntry {
         self
     }
 
-    pub fn disabled(mut self, disabled: bool) -> Self {
+    pub const fn disabled(mut self, disabled: bool) -> Self {
         self.disabled = disabled;
         self
     }
@@ -584,7 +584,7 @@ impl ContextMenu {
         self
     }
 
-    pub fn keep_open_on_confirm(mut self, keep_open: bool) -> Self {
+    pub const fn keep_open_on_confirm(mut self, keep_open: bool) -> Self {
         self.keep_open_on_confirm = keep_open;
         self
     }
@@ -602,7 +602,7 @@ impl ContextMenu {
         handler(None, window, cx);
     }
 
-    pub fn fixed_width(mut self, width: DefiniteLength) -> Self {
+    pub const fn fixed_width(mut self, width: DefiniteLength) -> Self {
         self.fixed_width = Some(width);
         self
     }
@@ -658,7 +658,7 @@ impl ContextMenu {
         cx.notify();
     }
 
-    pub fn clear_selected(&mut self) {
+    pub const fn clear_selected(&mut self) {
         self.selected_index = None;
     }
 

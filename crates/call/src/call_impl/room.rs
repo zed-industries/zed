@@ -92,7 +92,7 @@ pub struct Room {
 impl EventEmitter<Event> for Room {}
 
 impl Room {
-    pub fn channel_id(&self) -> Option<ChannelId> {
+    pub const fn channel_id(&self) -> Option<ChannelId> {
         self.channel_id
     }
 
@@ -520,15 +520,15 @@ impl Room {
         })
     }
 
-    pub fn id(&self) -> u64 {
+    pub const fn id(&self) -> u64 {
         self.id
     }
 
-    pub fn status(&self) -> RoomStatus {
+    pub const fn status(&self) -> RoomStatus {
         self.status
     }
 
-    pub fn local_participant(&self) -> &LocalParticipant {
+    pub const fn local_participant(&self) -> &LocalParticipant {
         &self.local_participant
     }
 
@@ -536,7 +536,7 @@ impl Room {
         self.user_store.read(cx).current_user()
     }
 
-    pub fn remote_participants(&self) -> &BTreeMap<u64, RemoteParticipant> {
+    pub const fn remote_participants(&self) -> &BTreeMap<u64, RemoteParticipant> {
         &self.remote_participants
     }
 
@@ -1304,7 +1304,7 @@ impl Room {
         self.live_kit.as_ref().map(|live_kit| live_kit.deafened)
     }
 
-    pub fn can_use_microphone(&self) -> bool {
+    pub const fn can_use_microphone(&self) -> bool {
         use proto::ChannelRole::*;
 
         match self.local_participant.role {
@@ -1313,7 +1313,7 @@ impl Room {
         }
     }
 
-    pub fn can_share_projects(&self) -> bool {
+    pub const fn can_share_projects(&self) -> bool {
         use proto::ChannelRole::*;
         match self.local_participant.role {
             Admin | Member => true,
@@ -1708,11 +1708,11 @@ pub enum RoomStatus {
 }
 
 impl RoomStatus {
-    pub fn is_offline(&self) -> bool {
+    pub const fn is_offline(&self) -> bool {
         matches!(self, RoomStatus::Offline)
     }
 
-    pub fn is_online(&self) -> bool {
+    pub const fn is_online(&self) -> bool {
         matches!(self, RoomStatus::Online)
     }
 }

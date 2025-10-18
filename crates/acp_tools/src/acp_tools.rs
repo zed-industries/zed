@@ -531,7 +531,7 @@ pub struct AcpToolsToolbarItemView {
 }
 
 impl AcpToolsToolbarItemView {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             acp_tools: None,
             just_copied: false,

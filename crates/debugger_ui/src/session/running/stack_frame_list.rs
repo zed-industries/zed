@@ -199,7 +199,7 @@ impl StackFrameList {
         self.list_filter
     }
 
-    pub fn opened_stack_frame_id(&self) -> Option<StackFrameId> {
+    pub const fn opened_stack_frame_id(&self) -> Option<StackFrameId> {
         self.opened_stack_frame_id
     }
 

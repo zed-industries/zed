@@ -36,11 +36,11 @@ pub struct PaneRenderResult {
 }
 
 impl PaneGroup {
-    pub fn with_root(root: Member) -> Self {
+    pub const fn with_root(root: Member) -> Self {
         Self { root }
     }
 
-    pub fn new(pane: Entity<Pane>) -> Self {
+    pub const fn new(pane: Entity<Pane>) -> Self {
         Self {
             root: Member::Pane(pane),
         }
@@ -271,7 +271,7 @@ pub struct ActivePaneDecorator<'a> {
 }
 
 impl<'a> ActivePaneDecorator<'a> {
-    pub fn new(active_pane: &'a Entity<Pane>, workspace: &'a WeakEntity<Workspace>) -> Self {
+    pub const fn new(active_pane: &'a Entity<Pane>, workspace: &'a WeakEntity<Workspace>) -> Self {
         Self {
             active_pane,
             workspace,
@@ -902,7 +902,7 @@ impl std::fmt::Display for SplitDirection {
 }
 
 impl SplitDirection {
-    pub fn all() -> [Self; 4] {
+    pub const fn all() -> [Self; 4] {
         [Self::Up, Self::Down, Self::Left, Self::Right]
     }
 
@@ -950,14 +950,14 @@ impl SplitDirection {
         }
     }
 
-    pub fn axis(&self) -> Axis {
+    pub const fn axis(&self) -> Axis {
         match self {
             Self::Up | Self::Down => Axis::Vertical,
             Self::Left | Self::Right => Axis::Horizontal,
         }
     }
 
-    pub fn increasing(&self) -> bool {
+    pub const fn increasing(&self) -> bool {
         match self {
             Self::Left | Self::Up => false,
             Self::Down | Self::Right => true,
@@ -1040,7 +1040,7 @@ mod element {
     }
 
     impl PaneAxisElement {
-        pub fn with_active_pane(mut self, active_pane_ix: Option<usize>) -> Self {
+        pub const fn with_active_pane(mut self, active_pane_ix: Option<usize>) -> Self {
             self.active_pane_ix = active_pane_ix;
             self
         }

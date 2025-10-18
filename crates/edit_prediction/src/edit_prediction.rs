@@ -40,15 +40,15 @@ pub enum DataCollectionState {
 }
 
 impl DataCollectionState {
-    pub fn is_supported(&self) -> bool {
+    pub const fn is_supported(&self) -> bool {
         !matches!(self, DataCollectionState::Unsupported)
     }
 
-    pub fn is_enabled(&self) -> bool {
+    pub const fn is_enabled(&self) -> bool {
         matches!(self, DataCollectionState::Enabled { .. })
     }
 
-    pub fn is_project_open_source(&self) -> bool {
+    pub const fn is_project_open_source(&self) -> bool {
         match self {
             Self::Enabled {
                 is_project_open_source,

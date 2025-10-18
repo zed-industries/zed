@@ -7,11 +7,11 @@ pub struct BurnModeTooltip {
 }
 
 impl BurnModeTooltip {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self { selected: false }
     }
 
-    pub fn selected(mut self, selected: bool) -> Self {
+    pub const fn selected(mut self, selected: bool) -> Self {
         self.selected = selected;
         self
     }

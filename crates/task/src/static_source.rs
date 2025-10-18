@@ -113,7 +113,7 @@ impl<T: PartialEq + 'static + Sync> TrackedFile<T> {
 
 impl StaticSource {
     /// Initializes the static source, reacting on tasks config changes.
-    pub fn new(tasks: TrackedFile<TaskTemplates>) -> Self {
+    pub const fn new(tasks: TrackedFile<TaskTemplates>) -> Self {
         Self { tasks }
     }
     /// Returns current list of tasks

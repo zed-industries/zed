@@ -10,7 +10,7 @@ pub struct CapabilityGranter {
 }
 
 impl CapabilityGranter {
-    pub fn new(
+    pub const fn new(
         granted_capabilities: Vec<ExtensionCapability>,
         manifest: Arc<ExtensionManifest>,
     ) -> Self {

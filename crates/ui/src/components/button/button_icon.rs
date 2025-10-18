@@ -64,7 +64,7 @@ impl ButtonIcon {
         self
     }
 
-    pub fn indicator_border_color(mut self, color: Option<Hsla>) -> Self {
+    pub const fn indicator_border_color(mut self, color: Option<Hsla>) -> Self {
         self.indicator_border_color = color;
         self
     }

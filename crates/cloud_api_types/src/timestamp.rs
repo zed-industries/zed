@@ -6,7 +6,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 pub struct Timestamp(pub DateTime<Utc>);
 
 impl Timestamp {
-    pub fn new(datetime: DateTime<Utc>) -> Self {
+    pub const fn new(datetime: DateTime<Utc>) -> Self {
         Self(datetime)
     }
 }

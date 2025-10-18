@@ -1602,7 +1602,7 @@ unsafe fn drop_window_state(object: &Object) {
     }
 }
 
-extern "C" fn yes(_: &Object, _: Sel) -> BOOL {
+const extern "C" fn yes(_: &Object, _: Sel) -> BOOL {
     YES
 }
 

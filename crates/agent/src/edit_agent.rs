@@ -747,14 +747,14 @@ enum IndentDelta {
 }
 
 impl IndentDelta {
-    fn character(&self) -> char {
+    const fn character(&self) -> char {
         match self {
             IndentDelta::Spaces(_) => ' ',
             IndentDelta::Tabs(_) => '\t',
         }
     }
 
-    fn len(&self) -> isize {
+    const fn len(&self) -> isize {
         match self {
             IndentDelta::Spaces(n) => *n,
             IndentDelta::Tabs(n) => *n,

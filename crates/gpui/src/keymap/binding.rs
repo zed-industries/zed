@@ -75,13 +75,13 @@ impl KeyBinding {
     }
 
     /// Set the metadata for this binding.
-    pub fn with_meta(mut self, meta: KeyBindingMetaIndex) -> Self {
+    pub const fn with_meta(mut self, meta: KeyBindingMetaIndex) -> Self {
         self.meta = Some(meta);
         self
     }
 
     /// Set the metadata for this binding.
-    pub fn set_meta(&mut self, meta: KeyBindingMetaIndex) {
+    pub const fn set_meta(&mut self, meta: KeyBindingMetaIndex) {
         self.meta = Some(meta);
     }
 
@@ -116,7 +116,7 @@ impl KeyBinding {
     }
 
     /// Get the metadata for this binding
-    pub fn meta(&self) -> Option<KeyBindingMetaIndex> {
+    pub const fn meta(&self) -> Option<KeyBindingMetaIndex> {
         self.meta
     }
 

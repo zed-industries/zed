@@ -20,7 +20,7 @@ pub struct ModelContextProtocol {
 }
 
 impl ModelContextProtocol {
-    pub(crate) fn new(inner: Client) -> Self {
+    pub(crate) const fn new(inner: Client) -> Self {
         Self { inner }
     }
 
@@ -86,7 +86,7 @@ pub enum ServerCapability {
 
 impl InitializedContextServerProtocol {
     /// Check if the server supports a specific capability
-    pub fn capable(&self, capability: ServerCapability) -> bool {
+    pub const fn capable(&self, capability: ServerCapability) -> bool {
         match capability {
             ServerCapability::Experimental => self.initialize.capabilities.experimental.is_some(),
             ServerCapability::Logging => self.initialize.capabilities.logging.is_some(),

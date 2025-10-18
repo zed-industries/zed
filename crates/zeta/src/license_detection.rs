@@ -59,7 +59,7 @@ impl Display for OpenSourceLicense {
 impl OpenSourceLicense {
     /// These are SPDX identifiers for the licenses, except for BSD, where the variants are not
     /// distinguished.
-    pub fn spdx_identifier(&self) -> &'static str {
+    pub const fn spdx_identifier(&self) -> &'static str {
         match self {
             OpenSourceLicense::Apache2_0 => "apache-2.0",
             OpenSourceLicense::BSDZero => "0bsd",
@@ -71,7 +71,7 @@ impl OpenSourceLicense {
         }
     }
 
-    pub fn patterns(&self) -> &'static [&'static str] {
+    pub const fn patterns(&self) -> &'static [&'static str] {
         match self {
             OpenSourceLicense::Apache2_0 => &[
                 include_str!("../license_patterns/apache-2.0-pattern"),

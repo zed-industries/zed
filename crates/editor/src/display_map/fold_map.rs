@@ -76,19 +76,19 @@ impl PartialEq for FoldPlaceholder {
 pub struct FoldPoint(pub Point);
 
 impl FoldPoint {
-    pub fn new(row: u32, column: u32) -> Self {
+    pub const fn new(row: u32, column: u32) -> Self {
         Self(Point::new(row, column))
     }
 
-    pub fn row(self) -> u32 {
+    pub const fn row(self) -> u32 {
         self.0.row
     }
 
-    pub fn column(self) -> u32 {
+    pub const fn column(self) -> u32 {
         self.0.column
     }
 
-    pub fn row_mut(&mut self) -> &mut u32 {
+    pub const fn row_mut(&mut self) -> &mut u32 {
         &mut self.0.row
     }
 
@@ -632,7 +632,7 @@ pub struct FoldSnapshot {
 }
 
 impl FoldSnapshot {
-    pub fn buffer(&self) -> &MultiBufferSnapshot {
+    pub const fn buffer(&self) -> &MultiBufferSnapshot {
         &self.inlay_snapshot.buffer
     }
 
@@ -1048,7 +1048,7 @@ struct TransformPlaceholder {
 }
 
 impl Transform {
-    fn is_fold(&self) -> bool {
+    const fn is_fold(&self) -> bool {
         self.placeholder.is_some()
     }
 }

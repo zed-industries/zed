@@ -59,7 +59,7 @@ pub struct FetchContextPickerDelegate {
 }
 
 impl FetchContextPickerDelegate {
-    pub fn new(
+    pub const fn new(
         context_picker: WeakEntity<ContextPicker>,
         workspace: WeakEntity<Workspace>,
         context_store: WeakEntity<ContextStore>,

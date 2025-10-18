@@ -964,7 +964,7 @@ impl AttachMode {
             attach_picker,
         })
     }
-    pub(super) fn debug_request(&self) -> task::AttachRequest {
+    pub(super) const fn debug_request(&self) -> task::AttachRequest {
         task::AttachRequest { process_id: None }
     }
 }

@@ -326,7 +326,7 @@ impl GitBlame {
         max_author_length
     }
 
-    pub fn blur(&mut self, _: &mut Context<Self>) {
+    pub const fn blur(&mut self, _: &mut Context<Self>) {
         self.focused = false;
     }
 

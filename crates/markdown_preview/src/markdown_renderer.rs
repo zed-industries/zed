@@ -36,7 +36,7 @@ impl CheckboxClickedEvent {
         self.source_range.clone()
     }
 
-    pub fn checked(&self) -> bool {
+    pub const fn checked(&self) -> bool {
         self.checked
     }
 }

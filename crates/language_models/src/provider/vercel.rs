@@ -44,7 +44,7 @@ pub struct State {
 }
 
 impl State {
-    fn is_authenticated(&self) -> bool {
+    const fn is_authenticated(&self) -> bool {
         self.api_key_state.has_key()
     }
 

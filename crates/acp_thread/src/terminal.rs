@@ -82,7 +82,7 @@ impl Terminal {
         }
     }
 
-    pub fn id(&self) -> &acp::TerminalId {
+    pub const fn id(&self) -> &acp::TerminalId {
         &self.id
     }
 
@@ -143,23 +143,23 @@ impl Terminal {
         (content, original_content_len)
     }
 
-    pub fn command(&self) -> &Entity<Markdown> {
+    pub const fn command(&self) -> &Entity<Markdown> {
         &self.command
     }
 
-    pub fn working_dir(&self) -> &Option<PathBuf> {
+    pub const fn working_dir(&self) -> &Option<PathBuf> {
         &self.working_dir
     }
 
-    pub fn started_at(&self) -> Instant {
+    pub const fn started_at(&self) -> Instant {
         self.started_at
     }
 
-    pub fn output(&self) -> Option<&TerminalOutput> {
+    pub const fn output(&self) -> Option<&TerminalOutput> {
         self.output.as_ref()
     }
 
-    pub fn inner(&self) -> &Entity<terminal::Terminal> {
+    pub const fn inner(&self) -> &Entity<terminal::Terminal> {
         &self.terminal
     }
 

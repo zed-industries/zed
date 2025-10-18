@@ -26,7 +26,7 @@ pub enum Direction {
 }
 
 impl Direction {
-    pub fn opposite(&self) -> Self {
+    pub const fn opposite(&self) -> Self {
         match self {
             Direction::Prev => Direction::Next,
             Direction::Next => Direction::Prev,

@@ -515,7 +515,7 @@ impl HitboxId {
         window.mouse_hit_test.ids.contains(&self)
     }
 
-    fn next(mut self) -> HitboxId {
+    const fn next(mut self) -> HitboxId {
         HitboxId(self.0.wrapping_add(1))
     }
 }
@@ -1359,7 +1359,7 @@ impl Window {
     }
 
     /// Obtain a handle to the window that belongs to this context.
-    pub fn window_handle(&self) -> AnyWindowHandle {
+    pub const fn window_handle(&self) -> AnyWindowHandle {
         self.handle
     }
 
@@ -1372,7 +1372,7 @@ impl Window {
     }
 
     /// Close this window.
-    pub fn remove_window(&mut self) {
+    pub const fn remove_window(&mut self) {
         self.removed = true;
     }
 
@@ -1432,7 +1432,7 @@ impl Window {
     }
 
     /// Accessor for the text system.
-    pub fn text_system(&self) -> &Arc<WindowTextSystem> {
+    pub const fn text_system(&self) -> &Arc<WindowTextSystem> {
         &self.text_system
     }
 
@@ -1708,12 +1708,12 @@ impl Window {
     }
 
     /// Returns the appearance of the current window.
-    pub fn appearance(&self) -> WindowAppearance {
+    pub const fn appearance(&self) -> WindowAppearance {
         self.appearance
     }
 
     /// Returns the size of the drawable area within the window.
-    pub fn viewport_size(&self) -> Size<Pixels> {
+    pub const fn viewport_size(&self) -> Size<Pixels> {
         self.viewport_size
     }
 
@@ -1761,7 +1761,7 @@ impl Window {
     }
 
     /// Returns the client_inset value by [`Self::set_client_inset`].
-    pub fn client_inset(&self) -> Option<Pixels> {
+    pub const fn client_inset(&self) -> Option<Pixels> {
         self.client_inset
     }
 
@@ -1812,7 +1812,7 @@ impl Window {
     /// The scale factor of the display associated with the window. For example, it could
     /// return 2.0 for a "retina" display, indicating that each logical pixel should actually
     /// be rendered as two pixels on screen.
-    pub fn scale_factor(&self) -> f32 {
+    pub const fn scale_factor(&self) -> f32 {
         self.scale_factor
     }
 
@@ -1871,12 +1871,12 @@ impl Window {
 
     /// Call to prevent the default action of an event. Currently only used to prevent
     /// parent elements from becoming focused on mouse down.
-    pub fn prevent_default(&mut self) {
+    pub const fn prevent_default(&mut self) {
         self.default_prevented = true;
     }
 
     /// Obtain whether default has been prevented for the event currently being dispatched.
-    pub fn default_prevented(&self) -> bool {
+    pub const fn default_prevented(&self) -> bool {
         self.default_prevented
     }
 
@@ -1890,17 +1890,17 @@ impl Window {
     }
 
     /// The position of the mouse relative to the window.
-    pub fn mouse_position(&self) -> Point<Pixels> {
+    pub const fn mouse_position(&self) -> Point<Pixels> {
         self.mouse_position
     }
 
     /// The current state of the keyboard's modifiers
-    pub fn modifiers(&self) -> Modifiers {
+    pub const fn modifiers(&self) -> Modifiers {
         self.modifiers
     }
 
     /// The current state of the keyboard's capslock
-    pub fn capslock(&self) -> Capslock {
+    pub const fn capslock(&self) -> Capslock {
         self.capslock
     }
 
@@ -3927,7 +3927,7 @@ impl Window {
     }
 
     /// Determine whether a potential multi-stroke key binding is in progress on this window.
-    pub fn has_pending_keystrokes(&self) -> bool {
+    pub const fn has_pending_keystrokes(&self) -> bool {
         self.pending_input.is_some()
     }
 
@@ -4795,7 +4795,7 @@ pub struct AnyWindowHandle {
 
 impl AnyWindowHandle {
     /// Get the ID of this window.
-    pub fn window_id(&self) -> WindowId {
+    pub const fn window_id(&self) -> WindowId {
         self.id
     }
 

@@ -195,7 +195,7 @@ pub enum ContextServerSettingsContent {
     },
 }
 impl ContextServerSettingsContent {
-    pub fn set_enabled(&mut self, enabled: bool) {
+    pub const fn set_enabled(&mut self, enabled: bool) {
         match self {
             ContextServerSettingsContent::Custom {
                 enabled: custom_enabled,

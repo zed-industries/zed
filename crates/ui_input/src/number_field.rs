@@ -297,27 +297,27 @@ impl<T: NumberFieldType> NumberField<T> {
         self
     }
 
-    pub fn small_step(mut self, step: T) -> Self {
+    pub const fn small_step(mut self, step: T) -> Self {
         self.small_step = step;
         self
     }
 
-    pub fn normal_step(mut self, step: T) -> Self {
+    pub const fn normal_step(mut self, step: T) -> Self {
         self.step = step;
         self
     }
 
-    pub fn large_step(mut self, step: T) -> Self {
+    pub const fn large_step(mut self, step: T) -> Self {
         self.large_step = step;
         self
     }
 
-    pub fn min(mut self, min: T) -> Self {
+    pub const fn min(mut self, min: T) -> Self {
         self.min_value = min;
         self
     }
 
-    pub fn max(mut self, max: T) -> Self {
+    pub const fn max(mut self, max: T) -> Self {
         self.max_value = max;
         self
     }
@@ -330,7 +330,7 @@ impl<T: NumberFieldType> NumberField<T> {
         self
     }
 
-    pub fn tab_index(mut self, tab_index: isize) -> Self {
+    pub const fn tab_index(mut self, tab_index: isize) -> Self {
         self.tab_index = Some(tab_index);
         self
     }

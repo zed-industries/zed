@@ -38,7 +38,7 @@ macro_rules! id_type {
 
             #[allow(unused)]
             #[allow(missing_docs)]
-            pub fn to_proto(self) -> u64 {
+            pub const fn to_proto(self) -> u64 {
                 self.0 as u64
             }
         }
@@ -120,7 +120,7 @@ pub enum ChannelRole {
 
 impl ChannelRole {
     /// Returns true if this role is more powerful than the other role.
-    pub fn should_override(&self, other: Self) -> bool {
+    pub const fn should_override(&self, other: Self) -> bool {
         use ChannelRole::*;
         match self {
             Admin => matches!(other, Member | Banned | Talker | Guest),
@@ -132,7 +132,7 @@ impl ChannelRole {
     }
 
     /// Returns the maximal role between the two
-    pub fn max(&self, other: Self) -> Self {
+    pub const fn max(&self, other: Self) -> Self {
         if self.should_override(other) {
             *self
         } else {
@@ -150,7 +150,7 @@ impl ChannelRole {
     }
 
     /// True if the role allows access to all descendant channels
-    pub fn can_see_all_descendants(&self) -> bool {
+    pub const fn can_see_all_descendants(&self) -> bool {
         use ChannelRole::*;
         match self {
             Admin | Member => true,
@@ -159,7 +159,7 @@ impl ChannelRole {
     }
 
     /// True if the role only allows access to public descendant channels
-    pub fn can_only_see_public_descendants(&self) -> bool {
+    pub const fn can_only_see_public_descendants(&self) -> bool {
         use ChannelRole::*;
         match self {
             Guest | Talker => true,
@@ -168,7 +168,7 @@ impl ChannelRole {
     }
 
     /// True if the role can share screen/microphone/projects into rooms.
-    pub fn can_use_microphone(&self) -> bool {
+    pub const fn can_use_microphone(&self) -> bool {
         use ChannelRole::*;
         match self {
             Admin | Member | Talker => true,
@@ -177,7 +177,7 @@ impl ChannelRole {
     }
 
     /// True if the role can edit shared projects.
-    pub fn can_edit_projects(&self) -> bool {
+    pub const fn can_edit_projects(&self) -> bool {
         use ChannelRole::*;
         match self {
             Admin | Member => true,
@@ -186,7 +186,7 @@ impl ChannelRole {
     }
 
     /// True if the role can read shared projects.
-    pub fn can_read_projects(&self) -> bool {
+    pub const fn can_read_projects(&self) -> bool {
         use ChannelRole::*;
         match self {
             Admin | Member | Guest | Talker => true,
@@ -194,7 +194,7 @@ impl ChannelRole {
         }
     }
 
-    pub fn requires_cla(&self) -> bool {
+    pub const fn requires_cla(&self) -> bool {
         use ChannelRole::*;
         match self {
             Admin | Member => true,

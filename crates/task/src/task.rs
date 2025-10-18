@@ -130,17 +130,17 @@ pub struct ResolvedTask {
 
 impl ResolvedTask {
     /// A task template before the resolution.
-    pub fn original_task(&self) -> &TaskTemplate {
+    pub const fn original_task(&self) -> &TaskTemplate {
         &self.original_task
     }
 
     /// Variables that were substituted during the task template resolution.
-    pub fn substituted_variables(&self) -> &HashSet<VariableName> {
+    pub const fn substituted_variables(&self) -> &HashSet<VariableName> {
         &self.substituted_variables
     }
 
     /// A human-readable label to display in the UI.
-    pub fn display_label(&self) -> &str {
+    pub const fn display_label(&self) -> &str {
         self.resolved.label.as_str()
     }
 }
@@ -404,7 +404,7 @@ struct EnvVariableReplacer {
 }
 
 impl EnvVariableReplacer {
-    fn new(variables: HashMap<VsCodeEnvVariable, ZedEnvVariable>) -> Self {
+    const fn new(variables: HashMap<VsCodeEnvVariable, ZedEnvVariable>) -> Self {
         Self { variables }
     }
 

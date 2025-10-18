@@ -164,7 +164,7 @@ impl Icon {
         }
     }
 
-    pub fn color(mut self, color: Color) -> Self {
+    pub const fn color(mut self, color: Color) -> Self {
         self.color = color;
         self
     }
@@ -177,7 +177,7 @@ impl Icon {
     /// Sets a custom size for the icon, in [`Rems`].
     ///
     /// Not to be exposed outside of the `ui` crate.
-    pub(crate) fn custom_size(mut self, size: Rems) -> Self {
+    pub(crate) const fn custom_size(mut self, size: Rems) -> Self {
         self.size = size;
         self
     }
@@ -217,7 +217,7 @@ pub struct IconWithIndicator {
 }
 
 impl IconWithIndicator {
-    pub fn new(icon: Icon, indicator: Option<Indicator>) -> Self {
+    pub const fn new(icon: Icon, indicator: Option<Indicator>) -> Self {
         Self {
             icon,
             indicator,
@@ -230,14 +230,14 @@ impl IconWithIndicator {
         self
     }
 
-    pub fn indicator_color(mut self, color: Color) -> Self {
+    pub const fn indicator_color(mut self, color: Color) -> Self {
         if let Some(indicator) = self.indicator.as_mut() {
             indicator.color = color;
         }
         self
     }
 
-    pub fn indicator_border_color(mut self, color: Option<Hsla>) -> Self {
+    pub const fn indicator_border_color(mut self, color: Option<Hsla>) -> Self {
         self.indicator_border_color = color;
         self
     }

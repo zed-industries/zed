@@ -116,7 +116,7 @@ impl DebugSession {
         })
     }
 
-    pub fn running_state(&self) -> &Entity<RunningState> {
+    pub const fn running_state(&self) -> &Entity<RunningState> {
         &self.running_state
     }
 }

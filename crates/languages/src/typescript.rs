@@ -890,7 +890,7 @@ impl EsLintLspAdapter {
         "eslint.config.mts",
     ];
 
-    pub fn new(node: NodeRuntime) -> Self {
+    pub const fn new(node: NodeRuntime) -> Self {
         EsLintLspAdapter { node }
     }
 

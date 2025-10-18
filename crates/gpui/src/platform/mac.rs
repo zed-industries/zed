@@ -93,18 +93,18 @@ struct NSRange {
 }
 
 impl NSRange {
-    fn invalid() -> Self {
+    const fn invalid() -> Self {
         Self {
             location: NSNotFound as NSUInteger,
             length: 0,
         }
     }
 
-    fn is_valid(&self) -> bool {
+    const fn is_valid(&self) -> bool {
         self.location != NSNotFound as NSUInteger
     }
 
-    fn to_range(self) -> Option<Range<usize>> {
+    const fn to_range(self) -> Option<Range<usize>> {
         if self.is_valid() {
             let start = self.location as usize;
             let end = start + self.length as usize;

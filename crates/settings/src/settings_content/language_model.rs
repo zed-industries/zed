@@ -123,7 +123,7 @@ pub enum KeepAlive {
 
 impl KeepAlive {
     /// Keep model alive until a new model is loaded or until Ollama shuts down
-    pub fn indefinite() -> Self {
+    pub const fn indefinite() -> Self {
         Self::Seconds(-1)
     }
 }
@@ -398,7 +398,7 @@ impl Default for DataCollection {
     }
 }
 
-fn default_true() -> bool {
+const fn default_true() -> bool {
     true
 }
 

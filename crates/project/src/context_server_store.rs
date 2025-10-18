@@ -102,7 +102,7 @@ pub enum ContextServerConfiguration {
 }
 
 impl ContextServerConfiguration {
-    pub fn command(&self) -> &ContextServerCommand {
+    pub const fn command(&self) -> &ContextServerCommand {
         match self {
             ContextServerConfiguration::Custom { command } => command,
             ContextServerConfiguration::Extension { command, .. } => command,

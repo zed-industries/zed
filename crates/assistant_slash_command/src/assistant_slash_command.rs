@@ -47,7 +47,7 @@ impl From<bool> for AfterCompletion {
 }
 
 impl AfterCompletion {
-    pub fn run(&self) -> bool {
+    pub const fn run(&self) -> bool {
         match self {
             AfterCompletion::Run => true,
             AfterCompletion::Compose | AfterCompletion::Continue => false,

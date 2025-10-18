@@ -16,7 +16,7 @@ impl ExtensionCard {
         }
     }
 
-    pub fn overridden_by_dev_extension(mut self, overridden: bool) -> Self {
+    pub const fn overridden_by_dev_extension(mut self, overridden: bool) -> Self {
         self.overridden_by_dev_extension = overridden;
         self
     }

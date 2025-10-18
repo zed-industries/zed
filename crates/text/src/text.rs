@@ -84,7 +84,7 @@ impl BufferId {
 
     /// Increments this buffer id, returning the old value.
     /// So that's a post-increment operator in disguise.
-    pub fn next(&mut self) -> Self {
+    pub const fn next(&mut self) -> Self {
         let old = *self;
         self.0 = self.0.saturating_add(1);
         old
@@ -137,7 +137,7 @@ impl Transaction {
 }
 
 impl HistoryEntry {
-    pub fn transaction_id(&self) -> TransactionId {
+    pub const fn transaction_id(&self) -> TransactionId {
         self.transaction.id
     }
 }
@@ -175,7 +175,7 @@ impl PartialOrd for InsertionSlice {
 }
 
 impl InsertionSlice {
-    fn from_fragment(edit_id: clock::Lamport, fragment: &Fragment) -> Self {
+    const fn from_fragment(edit_id: clock::Lamport, fragment: &Fragment) -> Self {
         Self {
             edit_id,
             insertion_id: fragment.timestamp,
@@ -639,7 +639,7 @@ impl LineIndent {
     }
 
     /// Constructs a new `LineIndent` which only contains spaces.
-    pub fn spaces(spaces: u32) -> Self {
+    pub const fn spaces(spaces: u32) -> Self {
         Self {
             tabs: 0,
             spaces,
@@ -648,7 +648,7 @@ impl LineIndent {
     }
 
     /// Constructs a new `LineIndent` which only contains tabs.
-    pub fn tabs(tabs: u32) -> Self {
+    pub const fn tabs(tabs: u32) -> Self {
         Self {
             tabs,
             spaces: 0,
@@ -657,22 +657,22 @@ impl LineIndent {
     }
 
     /// Indicates whether the line is empty.
-    pub fn is_line_empty(&self) -> bool {
+    pub const fn is_line_empty(&self) -> bool {
         self.tabs == 0 && self.spaces == 0 && self.line_blank
     }
 
     /// Indicates whether the line is blank (contains only whitespace).
-    pub fn is_line_blank(&self) -> bool {
+    pub const fn is_line_blank(&self) -> bool {
         self.line_blank
     }
 
     /// Returns the number of indentation characters (tabs or spaces).
-    pub fn raw_len(&self) -> u32 {
+    pub const fn raw_len(&self) -> u32 {
         self.tabs + self.spaces
     }
 
     /// Returns the number of indentation characters (tabs or spaces), taking tab size into account.
-    pub fn len(&self, tab_size: u32) -> u32 {
+    pub const fn len(&self, tab_size: u32) -> u32 {
         self.tabs * tab_size + self.spaces
     }
 }
@@ -795,7 +795,7 @@ impl Buffer {
         }
     }
 
-    pub fn replica_id(&self) -> ReplicaId {
+    pub const fn replica_id(&self) -> ReplicaId {
         self.lamport_clock.replica_id
     }
 
@@ -807,7 +807,7 @@ impl Buffer {
         self.deferred_ops.len()
     }
 
-    pub fn transaction_group_interval(&self) -> Duration {
+    pub const fn transaction_group_interval(&self) -> Duration {
         self.history.group_interval
     }
 
@@ -1000,7 +1000,7 @@ impl Buffer {
         edit_op
     }
 
-    pub fn set_line_ending(&mut self, line_ending: LineEnding) {
+    pub const fn set_line_ending(&mut self, line_ending: LineEnding) {
         self.snapshot.line_ending = line_ending;
     }
 
@@ -1419,11 +1419,11 @@ impl Buffer {
         self.history.group_until(transaction_id);
     }
 
-    pub fn base_text(&self) -> &Rope {
+    pub const fn base_text(&self) -> &Rope {
         &self.history.base_text
     }
 
-    pub fn operations(&self) -> &TreeMap<clock::Lamport, Operation> {
+    pub const fn operations(&self) -> &TreeMap<clock::Lamport, Operation> {
         &self.history.operations
     }
 
@@ -1901,7 +1901,7 @@ impl Deref for Buffer {
 }
 
 impl BufferSnapshot {
-    pub fn as_rope(&self) -> &Rope {
+    pub const fn as_rope(&self) -> &Rope {
         &self.visible_text
     }
 
@@ -1948,11 +1948,11 @@ impl BufferSnapshot {
         rope
     }
 
-    pub fn remote_id(&self) -> BufferId {
+    pub const fn remote_id(&self) -> BufferId {
         self.remote_id
     }
 
-    pub fn replica_id(&self) -> ReplicaId {
+    pub const fn replica_id(&self) -> ReplicaId {
         self.replica_id
     }
 
@@ -2026,7 +2026,7 @@ impl BufferSnapshot {
         self.visible_text.to_string()
     }
 
-    pub fn line_ending(&self) -> LineEnding {
+    pub const fn line_ending(&self) -> LineEnding {
         self.line_ending
     }
 
@@ -2086,7 +2086,7 @@ impl BufferSnapshot {
         self.visible_text.point_to_point_utf16(point)
     }
 
-    pub fn version(&self) -> &clock::Global {
+    pub const fn version(&self) -> &clock::Global {
         &self.version
     }
 
@@ -3046,21 +3046,21 @@ impl Operation {
         operation_queue::Operation::lamport_timestamp(self).replica_id
     }
 
-    pub fn timestamp(&self) -> clock::Lamport {
+    pub const fn timestamp(&self) -> clock::Lamport {
         match self {
             Operation::Edit(edit) => edit.timestamp,
             Operation::Undo(undo) => undo.timestamp,
         }
     }
 
-    pub fn as_edit(&self) -> Option<&EditOperation> {
+    pub const fn as_edit(&self) -> Option<&EditOperation> {
         match self {
             Operation::Edit(edit) => Some(edit),
             _ => None,
         }
     }
 
-    pub fn is_edit(&self) -> bool {
+    pub const fn is_edit(&self) -> bool {
         matches!(self, Operation::Edit { .. })
     }
 }
@@ -3256,7 +3256,7 @@ impl Default for LineEnding {
 }
 
 impl LineEnding {
-    pub fn as_str(&self) -> &'static str {
+    pub const fn as_str(&self) -> &'static str {
         match self {
             LineEnding::Unix => "\n",
             LineEnding::Windows => "\r\n",

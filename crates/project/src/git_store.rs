@@ -438,7 +438,7 @@ impl GitStore {
         client.add_entity_request_handler(Self::handle_git_clone);
     }
 
-    pub fn is_local(&self) -> bool {
+    pub const fn is_local(&self) -> bool {
         matches!(self.state, GitStoreState::Local { .. })
     }
     pub fn set_active_repo_for_path(&mut self, project_path: &ProjectPath, cx: &mut Context<Self>) {
@@ -1364,7 +1364,7 @@ impl GitStore {
         }
     }
 
-    pub fn repositories(&self) -> &HashMap<RepositoryId, Entity<Repository>> {
+    pub const fn repositories(&self) -> &HashMap<RepositoryId, Entity<Repository>> {
         &self.repositories
     }
 
@@ -2765,11 +2765,11 @@ fn make_remote_delegate(
 }
 
 impl RepositoryId {
-    pub fn to_proto(self) -> u64 {
+    pub const fn to_proto(self) -> u64 {
         self.0
     }
 
-    pub fn from_proto(id: u64) -> Self {
+    pub const fn from_proto(id: u64) -> Self {
         RepositoryId(id)
     }
 }
@@ -5272,7 +5272,7 @@ fn status_to_proto(status: FileStatus) -> proto::GitFileStatus {
     }
 }
 
-fn unmerged_status_to_proto(code: UnmergedStatusCode) -> i32 {
+const fn unmerged_status_to_proto(code: UnmergedStatusCode) -> i32 {
     match code {
         UnmergedStatusCode::Added => proto::GitStatus::Added as _,
         UnmergedStatusCode::Deleted => proto::GitStatus::Deleted as _,
@@ -5280,7 +5280,7 @@ fn unmerged_status_to_proto(code: UnmergedStatusCode) -> i32 {
     }
 }
 
-fn tracked_status_to_proto(code: StatusCode) -> i32 {
+const fn tracked_status_to_proto(code: StatusCode) -> i32 {
     match code {
         StatusCode::Added => proto::GitStatus::Added as _,
         StatusCode::Deleted => proto::GitStatus::Deleted as _,

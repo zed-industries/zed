@@ -85,7 +85,7 @@ impl Channel {
                 .unwrap_or_default()
     }
 
-    pub fn is_root_channel(&self) -> bool {
+    pub const fn is_root_channel(&self) -> bool {
         self.parent_path.is_empty()
     }
 
@@ -797,7 +797,7 @@ impl ChannelStore {
         }
     }
 
-    pub fn has_pending_channel_invite_response(&self, _: &Arc<Channel>) -> bool {
+    pub const fn has_pending_channel_invite_response(&self, _: &Arc<Channel>) -> bool {
         false
     }
 
@@ -1114,7 +1114,7 @@ impl ChannelStore {
 }
 
 impl ChannelState {
-    fn set_role(&mut self, role: ChannelRole) {
+    const fn set_role(&mut self, role: ChannelRole) {
         self.role = Some(role);
     }
 

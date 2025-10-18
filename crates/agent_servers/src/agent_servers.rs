@@ -34,7 +34,7 @@ pub struct AgentServerDelegate {
 }
 
 impl AgentServerDelegate {
-    pub fn new(
+    pub const fn new(
         store: Entity<AgentServerStore>,
         project: Entity<Project>,
         status_tx: Option<watch::Sender<SharedString>>,
@@ -48,7 +48,7 @@ impl AgentServerDelegate {
         }
     }
 
-    pub fn project(&self) -> &Entity<Project> {
+    pub const fn project(&self) -> &Entity<Project> {
         &self.project
     }
 }

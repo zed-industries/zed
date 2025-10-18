@@ -206,7 +206,7 @@ pub fn img(source: impl Into<ImageSource>) -> Img {
 
 impl Img {
     /// A list of all format extensions currently supported by this img element
-    pub fn extensions() -> &'static [&'static str] {
+    pub const fn extensions() -> &'static [&'static str] {
         // This is the list in [image::ImageFormat::from_extension] + `svg`
         &[
             "avif", "jpg", "jpeg", "png", "gif", "webp", "tif", "tiff", "tga", "dds", "bmp", "ico",

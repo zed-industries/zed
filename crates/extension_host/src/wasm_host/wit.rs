@@ -49,7 +49,7 @@ pub fn new_linker(
     linker
 }
 
-fn wasi_view(state: &mut WasmState) -> &mut WasmState {
+const fn wasi_view(state: &mut WasmState) -> &mut WasmState {
     state
 }
 
@@ -63,7 +63,7 @@ pub fn is_supported_wasm_api_version(
 
 /// Returns the Wasm API version range that is supported by the Wasm host.
 #[inline(always)]
-pub fn wasm_api_version_range(release_channel: ReleaseChannel) -> RangeInclusive<SemanticVersion> {
+pub const fn wasm_api_version_range(release_channel: ReleaseChannel) -> RangeInclusive<SemanticVersion> {
     // Note: The release channel can be used to stage a new version of the extension API.
     let _ = release_channel;
 

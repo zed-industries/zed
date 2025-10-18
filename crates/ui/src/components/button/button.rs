@@ -195,13 +195,13 @@ impl Button {
     ///
     /// This method allows you to specify where the keybinding should be displayed
     /// in relation to the button's label.
-    pub fn key_binding_position(mut self, position: KeybindingPosition) -> Self {
+    pub const fn key_binding_position(mut self, position: KeybindingPosition) -> Self {
         self.key_binding_position = position;
         self
     }
 
     /// Sets the alpha property of the color of label.
-    pub fn alpha(mut self, alpha: f32) -> Self {
+    pub const fn alpha(mut self, alpha: f32) -> Self {
         self.alpha = Some(alpha);
         self
     }
@@ -210,7 +210,7 @@ impl Button {
     ///
     /// Buttons with static labels should _never_ be truncated, ensure
     /// this is only used when the label is dynamic and may overflow.
-    pub fn truncate(mut self, truncate: bool) -> Self {
+    pub const fn truncate(mut self, truncate: bool) -> Self {
         self.truncate = truncate;
         self
     }

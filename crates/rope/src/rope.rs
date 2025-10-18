@@ -648,7 +648,7 @@ impl<'a> Cursor<'a> {
         self.slice(self.rope.chunks.extent(()))
     }
 
-    pub fn offset(&self) -> usize {
+    pub const fn offset(&self) -> usize {
         self.offset
     }
 }
@@ -694,7 +694,7 @@ impl<'a> Chunks<'a> {
         }
     }
 
-    fn offset_is_valid(&self) -> bool {
+    const fn offset_is_valid(&self) -> bool {
         if self.reversed {
             if self.offset <= self.range.start || self.offset > self.range.end {
                 return false;
@@ -706,7 +706,7 @@ impl<'a> Chunks<'a> {
         true
     }
 
-    pub fn offset(&self) -> usize {
+    pub const fn offset(&self) -> usize {
         self.offset
     }
 
@@ -914,7 +914,7 @@ impl<'a> Chunks<'a> {
         })
     }
 
-    pub fn lines(self) -> Lines<'a> {
+    pub const fn lines(self) -> Lines<'a> {
         let reversed = self.reversed;
         Lines {
             chunks: self,
@@ -1147,7 +1147,7 @@ impl<'a> Lines<'a> {
         self.done = false;
     }
 
-    pub fn offset(&self) -> usize {
+    pub const fn offset(&self) -> usize {
         self.chunks.offset()
     }
 }
@@ -1204,14 +1204,14 @@ pub struct TextSummary {
 }
 
 impl TextSummary {
-    pub fn lines_utf16(&self) -> PointUtf16 {
+    pub const fn lines_utf16(&self) -> PointUtf16 {
         PointUtf16 {
             row: self.lines.row,
             column: self.last_line_len_utf16,
         }
     }
 
-    pub fn newline() -> Self {
+    pub const fn newline() -> Self {
         Self {
             len: 1,
             chars: 1,

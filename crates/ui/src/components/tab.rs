@@ -56,12 +56,12 @@ impl Tab {
         }
     }
 
-    pub fn position(mut self, position: TabPosition) -> Self {
+    pub const fn position(mut self, position: TabPosition) -> Self {
         self.position = position;
         self
     }
 
-    pub fn close_side(mut self, close_side: TabCloseSide) -> Self {
+    pub const fn close_side(mut self, close_side: TabCloseSide) -> Self {
         self.close_side = close_side;
         self
     }

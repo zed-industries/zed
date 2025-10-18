@@ -44,13 +44,13 @@ impl SearchInputs {
     pub fn as_str(&self) -> &str {
         self.query.as_ref()
     }
-    pub fn files_to_include(&self) -> &PathMatcher {
+    pub const fn files_to_include(&self) -> &PathMatcher {
         &self.files_to_include
     }
-    pub fn files_to_exclude(&self) -> &PathMatcher {
+    pub const fn files_to_exclude(&self) -> &PathMatcher {
         &self.files_to_exclude
     }
-    pub fn buffers(&self) -> &Option<Vec<Entity<Buffer>>> {
+    pub const fn buffers(&self) -> &Option<Vec<Entity<Buffer>>> {
         &self.buffers
     }
 }
@@ -505,21 +505,21 @@ impl SearchQuery {
         self.as_inner().as_str()
     }
 
-    pub fn whole_word(&self) -> bool {
+    pub const fn whole_word(&self) -> bool {
         match self {
             Self::Text { whole_word, .. } => *whole_word,
             Self::Regex { whole_word, .. } => *whole_word,
         }
     }
 
-    pub fn case_sensitive(&self) -> bool {
+    pub const fn case_sensitive(&self) -> bool {
         match self {
             Self::Text { case_sensitive, .. } => *case_sensitive,
             Self::Regex { case_sensitive, .. } => *case_sensitive,
         }
     }
 
-    pub fn include_ignored(&self) -> bool {
+    pub const fn include_ignored(&self) -> bool {
         match self {
             Self::Text {
                 include_ignored, ..
@@ -530,23 +530,23 @@ impl SearchQuery {
         }
     }
 
-    pub fn is_regex(&self) -> bool {
+    pub const fn is_regex(&self) -> bool {
         matches!(self, Self::Regex { .. })
     }
 
-    pub fn files_to_include(&self) -> &PathMatcher {
+    pub const fn files_to_include(&self) -> &PathMatcher {
         self.as_inner().files_to_include()
     }
 
-    pub fn files_to_exclude(&self) -> &PathMatcher {
+    pub const fn files_to_exclude(&self) -> &PathMatcher {
         self.as_inner().files_to_exclude()
     }
 
-    pub fn buffers(&self) -> Option<&Vec<Entity<Buffer>>> {
+    pub const fn buffers(&self) -> Option<&Vec<Entity<Buffer>>> {
         self.as_inner().buffers.as_ref()
     }
 
-    pub fn is_opened_only(&self) -> bool {
+    pub const fn is_opened_only(&self) -> bool {
         self.as_inner().buffers.is_some()
     }
 
@@ -555,7 +555,7 @@ impl SearchQuery {
             && self.files_to_include().sources().is_empty())
     }
 
-    pub fn match_full_paths(&self) -> bool {
+    pub const fn match_full_paths(&self) -> bool {
         self.as_inner().match_full_paths
     }
 
@@ -575,7 +575,7 @@ impl SearchQuery {
             }
         }
     }
-    pub fn as_inner(&self) -> &SearchInputs {
+    pub const fn as_inner(&self) -> &SearchInputs {
         match self {
             Self::Regex { inner, .. } | Self::Text { inner, .. } => inner,
         }
@@ -585,7 +585,7 @@ impl SearchQuery {
     /// all matches.
     /// Returns `None` for text searches, as only regex searches support this
     /// option.
-    pub fn one_match_per_line(&self) -> Option<bool> {
+    pub const fn one_match_per_line(&self) -> Option<bool> {
         match self {
             Self::Regex {
                 one_match_per_line, ..

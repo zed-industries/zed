@@ -33,7 +33,7 @@ impl ToggleButtonPosition {
         ..Self::HORIZONTAL_MIDDLE
     };
 
-    pub(crate) fn to_rounding(self) -> ButtonLikeRounding {
+    pub(crate) const fn to_rounding(self) -> ButtonLikeRounding {
         ButtonLikeRounding {
             top_left: self.topmost && self.leftmost,
             top_right: self.topmost && self.rightmost,
@@ -66,20 +66,20 @@ impl ToggleButton {
         self
     }
 
-    pub fn position_in_group(mut self, position: ToggleButtonPosition) -> Self {
+    pub const fn position_in_group(mut self, position: ToggleButtonPosition) -> Self {
         self.position_in_group = Some(position);
         self
     }
 
-    pub fn first(self) -> Self {
+    pub const fn first(self) -> Self {
         self.position_in_group(ToggleButtonPosition::HORIZONTAL_FIRST)
     }
 
-    pub fn middle(self) -> Self {
+    pub const fn middle(self) -> Self {
         self.position_in_group(ToggleButtonPosition::HORIZONTAL_MIDDLE)
     }
 
-    pub fn last(self) -> Self {
+    pub const fn last(self) -> Self {
         self.position_in_group(ToggleButtonPosition::HORIZONTAL_LAST)
     }
 }
@@ -363,7 +363,7 @@ impl ToggleButtonSimple {
         }
     }
 
-    pub fn selected(mut self, selected: bool) -> Self {
+    pub const fn selected(mut self, selected: bool) -> Self {
         self.selected = selected;
         self
     }
@@ -411,7 +411,7 @@ impl ToggleButtonWithIcon {
         }
     }
 
-    pub fn selected(mut self, selected: bool) -> Self {
+    pub const fn selected(mut self, selected: bool) -> Self {
         self.selected = selected;
         self
     }
@@ -496,17 +496,17 @@ impl<T: ButtonBuilder, const COLS: usize> ToggleButtonGroup<T, COLS, 2> {
 }
 
 impl<T: ButtonBuilder, const COLS: usize, const ROWS: usize> ToggleButtonGroup<T, COLS, ROWS> {
-    pub fn style(mut self, style: ToggleButtonGroupStyle) -> Self {
+    pub const fn style(mut self, style: ToggleButtonGroupStyle) -> Self {
         self.style = style;
         self
     }
 
-    pub fn size(mut self, size: ToggleButtonGroupSize) -> Self {
+    pub const fn size(mut self, size: ToggleButtonGroupSize) -> Self {
         self.size = size;
         self
     }
 
-    pub fn selected_index(mut self, index: usize) -> Self {
+    pub const fn selected_index(mut self, index: usize) -> Self {
         self.selected_index = index;
         self
     }
@@ -514,7 +514,7 @@ impl<T: ButtonBuilder, const COLS: usize, const ROWS: usize> ToggleButtonGroup<T
     /// Sets the tab index for the toggle button group.
     /// The tab index is set to the initial value provided, then the
     /// value is incremented by the number of buttons in the group.
-    pub fn tab_index(mut self, tab_index: &mut isize) -> Self {
+    pub const fn tab_index(mut self, tab_index: &mut isize) -> Self {
         self.tab_index = Some(*tab_index);
         *tab_index += (COLS * ROWS) as isize;
         self

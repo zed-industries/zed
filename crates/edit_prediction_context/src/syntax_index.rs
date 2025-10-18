@@ -324,7 +324,7 @@ impl SyntaxIndex {
         }
     }
 
-    pub fn state(&self) -> &Arc<Mutex<SyntaxIndexState>> {
+    pub const fn state(&self) -> &Arc<Mutex<SyntaxIndexState>> {
         &self.state
     }
 

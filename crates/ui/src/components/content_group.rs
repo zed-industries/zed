@@ -43,13 +43,13 @@ impl ContentGroup {
     }
 
     /// Removes the border from the [`ContentGroup`].
-    pub fn borderless(mut self) -> Self {
+    pub const fn borderless(mut self) -> Self {
         self.border = false;
         self
     }
 
     /// Removes the background fill from the [`ContentGroup`].
-    pub fn unfilled(mut self) -> Self {
+    pub const fn unfilled(mut self) -> Self {
         self.fill = false;
         self
     }

@@ -197,7 +197,7 @@ impl AcpConnection {
         })
     }
 
-    pub fn prompt_capabilities(&self) -> &acp::PromptCapabilities {
+    pub const fn prompt_capabilities(&self) -> &acp::PromptCapabilities {
         &self.agent_capabilities.prompt_capabilities
     }
 
@@ -548,7 +548,7 @@ struct AcpModelSelector {
 }
 
 impl AcpModelSelector {
-    fn new(
+    const fn new(
         session_id: acp::SessionId,
         connection: Rc<acp::ClientSideConnection>,
         state: Rc<RefCell<acp::SessionModelState>>,

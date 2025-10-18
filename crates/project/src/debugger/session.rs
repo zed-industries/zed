@@ -107,7 +107,7 @@ pub enum ThreadStatus {
 }
 
 impl ThreadStatus {
-    pub fn label(&self) -> &'static str {
+    pub const fn label(&self) -> &'static str {
         match self {
             ThreadStatus::Running => "Running",
             ThreadStatus::Stopped => "Stopped",
@@ -232,7 +232,7 @@ impl RunningMode {
         })
     }
 
-    pub(crate) fn worktree(&self) -> &WeakEntity<Worktree> {
+    pub(crate) const fn worktree(&self) -> &WeakEntity<Worktree> {
         &self.worktree
     }
 
@@ -595,14 +595,14 @@ impl SessionState {
     }
 
     /// Did this debug session stop at least once?
-    pub(crate) fn has_ever_stopped(&self) -> bool {
+    pub(crate) const fn has_ever_stopped(&self) -> bool {
         match self {
             SessionState::Booting(_) => false,
             SessionState::Running(running_mode) => running_mode.has_ever_stopped,
         }
     }
 
-    fn stopped(&mut self) {
+    const fn stopped(&mut self) {
         if let SessionState::Running(running) = self {
             running.has_ever_stopped = true;
         }
@@ -894,7 +894,7 @@ impl Session {
         })
     }
 
-    pub fn task_context(&self) -> &TaskContext {
+    pub const fn task_context(&self) -> &TaskContext {
         &self.task_context
     }
 
@@ -999,7 +999,7 @@ impl Session {
         })
     }
 
-    pub fn session_id(&self) -> SessionId {
+    pub const fn session_id(&self) -> SessionId {
         self.id
     }
 
@@ -1021,7 +1021,7 @@ impl Session {
             .map(|session| session.read(cx).id)
     }
 
-    pub fn parent_session(&self) -> Option<&Entity<Self>> {
+    pub const fn parent_session(&self) -> Option<&Entity<Self>> {
         self.parent_session.as_ref()
     }
 
@@ -1056,11 +1056,11 @@ impl Session {
         })
     }
 
-    pub fn capabilities(&self) -> &Capabilities {
+    pub const fn capabilities(&self) -> &Capabilities {
         &self.capabilities
     }
 
-    pub fn binary(&self) -> Option<&DebugAdapterBinary> {
+    pub const fn binary(&self) -> Option<&DebugAdapterBinary> {
         match &self.mode {
             SessionState::Booting(_) => None,
             SessionState::Running(running_mode) => Some(&running_mode.binary),
@@ -1075,7 +1075,7 @@ impl Session {
         self.label.clone()
     }
 
-    pub fn is_terminated(&self) -> bool {
+    pub const fn is_terminated(&self) -> bool {
         self.is_session_terminated
     }
 
@@ -1106,25 +1106,25 @@ impl Session {
         tx
     }
 
-    pub fn is_started(&self) -> bool {
+    pub const fn is_started(&self) -> bool {
         match &self.mode {
             SessionState::Booting(_) => false,
             SessionState::Running(running) => running.is_started,
         }
     }
 
-    pub fn is_building(&self) -> bool {
+    pub const fn is_building(&self) -> bool {
         matches!(self.mode, SessionState::Booting(_))
     }
 
-    pub fn as_running_mut(&mut self) -> Option<&mut RunningMode> {
+    pub const fn as_running_mut(&mut self) -> Option<&mut RunningMode> {
         match &mut self.mode {
             SessionState::Running(local_mode) => Some(local_mode),
             SessionState::Booting(_) => None,
         }
     }
 
-    pub fn as_running(&self) -> Option<&RunningMode> {
+    pub const fn as_running(&self) -> Option<&RunningMode> {
         match &self.mode {
             SessionState::Running(local_mode) => Some(local_mode),
             SessionState::Booting(_) => None,
@@ -1917,7 +1917,7 @@ impl Session {
         );
     }
 
-    pub fn ignore_breakpoints(&self) -> bool {
+    pub const fn ignore_breakpoints(&self) -> bool {
         self.ignore_breakpoints
     }
 
@@ -2023,7 +2023,7 @@ impl Session {
         self.send_data_breakpoints(cx);
     }
 
-    pub fn breakpoints_enabled(&self) -> bool {
+    pub const fn breakpoints_enabled(&self) -> bool {
         self.ignore_breakpoints
     }
 
@@ -2236,7 +2236,7 @@ impl Session {
         }
     }
 
-    pub fn has_ever_stopped(&self) -> bool {
+    pub const fn has_ever_stopped(&self) -> bool {
         self.mode.has_ever_stopped()
     }
     pub fn step_over(
@@ -2503,7 +2503,7 @@ impl Session {
             .collect()
     }
 
-    pub fn watchers(&self) -> &HashMap<SharedString, Watcher> {
+    pub const fn watchers(&self) -> &HashMap<SharedString, Watcher> {
         &self.watchers
     }
 
@@ -2750,7 +2750,7 @@ impl Session {
         self.thread_states.thread_state(thread_id)
     }
 
-    pub fn quirks(&self) -> SessionQuirks {
+    pub const fn quirks(&self) -> SessionQuirks {
         self.quirks
     }
 

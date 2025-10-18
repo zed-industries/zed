@@ -96,7 +96,7 @@ impl AgentSettings {
         });
     }
 
-    pub fn set_message_editor_max_lines(&self) -> usize {
+    pub const fn set_message_editor_max_lines(&self) -> usize {
         self.message_editor_min_lines * 2
     }
 }

@@ -39,7 +39,7 @@ pub fn surface(source: impl Into<SurfaceSource>) -> Surface {
 
 impl Surface {
     /// Set the object fit for the image.
-    pub fn object_fit(mut self, object_fit: ObjectFit) -> Self {
+    pub const fn object_fit(mut self, object_fit: ObjectFit) -> Self {
         self.object_fit = object_fit;
         self
     }

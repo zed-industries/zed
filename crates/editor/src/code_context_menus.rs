@@ -141,7 +141,7 @@ impl CodeContextMenu {
         }
     }
 
-    pub fn origin(&self) -> ContextMenuOrigin {
+    pub const fn origin(&self) -> ContextMenuOrigin {
         match self {
             CodeContextMenu::Completions(menu) => menu.origin(),
             CodeContextMenu::CodeActions(menu) => menu.origin(),
@@ -725,7 +725,7 @@ impl CompletionsMenu {
         !self.entries.borrow().is_empty()
     }
 
-    fn origin(&self) -> ContextMenuOrigin {
+    const fn origin(&self) -> ContextMenuOrigin {
         ContextMenuOrigin::Cursor
     }
 
@@ -1356,20 +1356,20 @@ pub enum CodeActionsItem {
 }
 
 impl CodeActionsItem {
-    fn as_task(&self) -> Option<&ResolvedTask> {
+    const fn as_task(&self) -> Option<&ResolvedTask> {
         let Self::Task(_, task) = self else {
             return None;
         };
         Some(task)
     }
 
-    fn as_code_action(&self) -> Option<&CodeAction> {
+    const fn as_code_action(&self) -> Option<&CodeAction> {
         let Self::CodeAction { action, .. } = self else {
             return None;
         };
         Some(action)
     }
-    fn as_debug_scenario(&self) -> Option<&DebugScenario> {
+    const fn as_debug_scenario(&self) -> Option<&DebugScenario> {
         let Self::DebugScenario(scenario) = self else {
             return None;
         };
@@ -1458,7 +1458,7 @@ impl CodeActionsMenu {
         !self.actions.is_empty()
     }
 
-    fn origin(&self) -> ContextMenuOrigin {
+    const fn origin(&self) -> ContextMenuOrigin {
         match &self.deployed_from {
             Some(CodeActionSource::Indicator(row)) | Some(CodeActionSource::RunMenu(row)) => {
                 ContextMenuOrigin::GutterIndicator(*row)

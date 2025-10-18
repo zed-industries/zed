@@ -46,7 +46,7 @@ pub struct GrepToolInput {
 
 impl GrepToolInput {
     /// Which page of search results this is.
-    pub fn page(&self) -> u32 {
+    pub const fn page(&self) -> u32 {
         1 + (self.offset / RESULTS_PER_PAGE)
     }
 }
@@ -58,7 +58,7 @@ pub struct GrepTool {
 }
 
 impl GrepTool {
-    pub fn new(project: Entity<Project>) -> Self {
+    pub const fn new(project: Entity<Project>) -> Self {
         Self { project }
     }
 }

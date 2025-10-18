@@ -687,7 +687,7 @@ pub struct GitStatusIcon {
 }
 
 impl GitStatusIcon {
-    pub fn new(status: FileStatus) -> Self {
+    pub const fn new(status: FileStatus) -> Self {
         Self { status }
     }
 }
@@ -729,7 +729,7 @@ impl Component for GitStatusIcon {
     }
 
     fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
-        fn tracked_file_status(code: StatusCode) -> FileStatus {
+        const fn tracked_file_status(code: StatusCode) -> FileStatus {
             FileStatus::Tracked(git::status::TrackedStatus {
                 index_status: code,
                 worktree_status: code,

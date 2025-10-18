@@ -35,7 +35,7 @@ impl TailwindLspAdapter {
         LanguageServerName::new_static("tailwindcss-language-server");
     const PACKAGE_NAME: &str = "@tailwindcss/language-server";
 
-    pub fn new(node: NodeRuntime) -> Self {
+    pub const fn new(node: NodeRuntime) -> Self {
         TailwindLspAdapter { node }
     }
 }

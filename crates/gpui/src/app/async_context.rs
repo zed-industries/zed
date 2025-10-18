@@ -129,12 +129,12 @@ impl AsyncApp {
     }
 
     /// Get an executor which can be used to spawn futures in the background.
-    pub fn background_executor(&self) -> &BackgroundExecutor {
+    pub const fn background_executor(&self) -> &BackgroundExecutor {
         &self.background_executor
     }
 
     /// Get an executor which can be used to spawn futures in the foreground.
-    pub fn foreground_executor(&self) -> &ForegroundExecutor {
+    pub const fn foreground_executor(&self) -> &ForegroundExecutor {
         &self.foreground_executor
     }
 
@@ -271,12 +271,12 @@ pub struct AsyncWindowContext {
 }
 
 impl AsyncWindowContext {
-    pub(crate) fn new_context(app: AsyncApp, window: AnyWindowHandle) -> Self {
+    pub(crate) const fn new_context(app: AsyncApp, window: AnyWindowHandle) -> Self {
         Self { app, window }
     }
 
     /// Get the handle of the window this context is associated with.
-    pub fn window_handle(&self) -> AnyWindowHandle {
+    pub const fn window_handle(&self) -> AnyWindowHandle {
         self.window
     }
 

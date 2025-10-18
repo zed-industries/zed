@@ -177,11 +177,11 @@ impl AvailableLanguage {
         self.name.clone()
     }
 
-    pub fn matcher(&self) -> &LanguageMatcher {
+    pub const fn matcher(&self) -> &LanguageMatcher {
         &self.matcher
     }
 
-    pub fn hidden(&self) -> bool {
+    pub const fn hidden(&self) -> bool {
         self.hidden
     }
 }

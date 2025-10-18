@@ -46,12 +46,12 @@ impl Modal {
         self
     }
 
-    pub fn show_dismiss(mut self, show: bool) -> Self {
+    pub const fn show_dismiss(mut self, show: bool) -> Self {
         self.header.show_dismiss_button = show;
         self
     }
 
-    pub fn show_back(mut self, show: bool) -> Self {
+    pub const fn show_back(mut self, show: bool) -> Self {
         self.header.show_back_button = show;
         self
     }
@@ -137,12 +137,12 @@ impl ModalHeader {
         self
     }
 
-    pub fn show_dismiss_button(mut self, show: bool) -> Self {
+    pub const fn show_dismiss_button(mut self, show: bool) -> Self {
         self.show_dismiss_button = show;
         self
     }
 
-    pub fn show_back_button(mut self, show: bool) -> Self {
+    pub const fn show_back_button(mut self, show: bool) -> Self {
         self.show_back_button = show;
         self
     }
@@ -254,7 +254,7 @@ impl Default for ModalFooter {
 }
 
 impl ModalFooter {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             start_slot: None,
             end_slot: None,
@@ -324,7 +324,7 @@ impl Section {
         }
     }
 
-    pub fn contained(mut self, contained: bool) -> Self {
+    pub const fn contained(mut self, contained: bool) -> Self {
         self.contained = contained;
         self
     }
@@ -338,7 +338,7 @@ impl Section {
         self.meta = Some(meta.into());
         self
     }
-    pub fn padded(mut self, padded: bool) -> Self {
+    pub const fn padded(mut self, padded: bool) -> Self {
         self.padded = padded;
         self
     }

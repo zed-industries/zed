@@ -327,7 +327,7 @@ impl WrapSnapshot {
         }
     }
 
-    pub fn buffer_snapshot(&self) -> &MultiBufferSnapshot {
+    pub const fn buffer_snapshot(&self) -> &MultiBufferSnapshot {
         self.tab_snapshot.buffer_snapshot()
     }
 
@@ -1067,7 +1067,7 @@ impl Transform {
         }
     }
 
-    fn is_isomorphic(&self) -> bool {
+    const fn is_isomorphic(&self) -> bool {
         self.display_text.is_none()
     }
 }
@@ -1116,23 +1116,23 @@ impl SumTreeExt for SumTree<Transform> {
 }
 
 impl WrapPoint {
-    pub fn new(row: u32, column: u32) -> Self {
+    pub const fn new(row: u32, column: u32) -> Self {
         Self(Point::new(row, column))
     }
 
-    pub fn row(self) -> u32 {
+    pub const fn row(self) -> u32 {
         self.0.row
     }
 
-    pub fn row_mut(&mut self) -> &mut u32 {
+    pub const fn row_mut(&mut self) -> &mut u32 {
         &mut self.0.row
     }
 
-    pub fn column(self) -> u32 {
+    pub const fn column(self) -> u32 {
         self.0.column
     }
 
-    pub fn column_mut(&mut self) -> &mut u32 {
+    pub const fn column_mut(&mut self) -> &mut u32 {
         &mut self.0.column
     }
 }

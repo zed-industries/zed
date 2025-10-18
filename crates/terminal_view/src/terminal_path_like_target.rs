@@ -37,21 +37,21 @@ enum OpenTarget {
 }
 
 impl OpenTarget {
-    fn is_file(&self) -> bool {
+    const fn is_file(&self) -> bool {
         match self {
             OpenTarget::Worktree(_, entry, ..) => entry.is_file(),
             OpenTarget::File(_, metadata) => !metadata.is_dir,
         }
     }
 
-    fn is_dir(&self) -> bool {
+    const fn is_dir(&self) -> bool {
         match self {
             OpenTarget::Worktree(_, entry, ..) => entry.is_dir(),
             OpenTarget::File(_, metadata) => metadata.is_dir,
         }
     }
 
-    fn path(&self) -> &PathWithPosition {
+    const fn path(&self) -> &PathWithPosition {
         match self {
             OpenTarget::Worktree(path, ..) => path,
             OpenTarget::File(path, _) => path,

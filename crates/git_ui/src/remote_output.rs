@@ -12,7 +12,7 @@ pub enum RemoteAction {
 }
 
 impl RemoteAction {
-    pub fn name(&self) -> &'static str {
+    pub const fn name(&self) -> &'static str {
         match self {
             RemoteAction::Fetch(_) => "fetch",
             RemoteAction::Pull(_) => "pull",

@@ -789,7 +789,7 @@ impl HeadlessProject {
     }
 }
 
-fn prompt_to_proto(
+const fn prompt_to_proto(
     prompt: &project::LanguageServerPromptRequest,
 ) -> proto::language_server_prompt_request::Level {
     match prompt.level {

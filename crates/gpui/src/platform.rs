@@ -432,7 +432,7 @@ pub struct Tiling {
 
 impl Tiling {
     /// Initializes a [`Tiling`] type with all sides tiled
-    pub fn tiled() -> Self {
+    pub const fn tiled() -> Self {
         Self {
             top: true,
             left: true,
@@ -442,7 +442,7 @@ impl Tiling {
     }
 
     /// Whether any edge is tiled
-    pub fn is_tiled(&self) -> bool {
+    pub const fn is_tiled(&self) -> bool {
         self.top || self.left || self.right || self.bottom
     }
 }
@@ -592,7 +592,7 @@ pub(crate) struct NoopTextSystem;
 
 impl NoopTextSystem {
     #[allow(dead_code)]
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self
     }
 }
@@ -723,7 +723,7 @@ impl AtlasKey {
         ),
         allow(dead_code)
     )]
-    pub(crate) fn texture_kind(&self) -> AtlasTextureKind {
+    pub(crate) const fn texture_kind(&self) -> AtlasTextureKind {
         match self {
             AtlasKey::Glyph(params) => {
                 if params.is_emoji {
@@ -1201,7 +1201,7 @@ impl Default for WindowBounds {
 
 impl WindowBounds {
     /// Retrieve the inner bounds
-    pub fn get_bounds(&self) -> Bounds<Pixels> {
+    pub const fn get_bounds(&self) -> Bounds<Pixels> {
         match self {
             WindowBounds::Windowed(bounds) => *bounds,
             WindowBounds::Maximized(bounds) => *bounds,
@@ -1376,12 +1376,12 @@ impl PromptButton {
     }
 
     #[allow(dead_code)]
-    pub(crate) fn is_cancel(&self) -> bool {
+    pub(crate) const fn is_cancel(&self) -> bool {
         matches!(self, PromptButton::Cancel(_))
     }
 
     /// Returns the label of the button
-    pub fn label(&self) -> &SharedString {
+    pub const fn label(&self) -> &SharedString {
         match self {
             PromptButton::Ok(label) => label,
             PromptButton::Cancel(label) => label,
@@ -1705,7 +1705,7 @@ impl Image {
     }
 
     /// Get this image's ID
-    pub fn id(&self) -> u64 {
+    pub const fn id(&self) -> u64 {
         self.id
     }
 
@@ -1788,12 +1788,12 @@ impl Image {
     }
 
     /// Get the format of the clipboard image
-    pub fn format(&self) -> ImageFormat {
+    pub const fn format(&self) -> ImageFormat {
         self.format
     }
 
     /// Get the raw bytes of the clipboard image
-    pub fn bytes(&self) -> &[u8] {
+    pub const fn bytes(&self) -> &[u8] {
         self.bytes.as_slice()
     }
 }
@@ -1807,7 +1807,7 @@ pub struct ClipboardString {
 
 impl ClipboardString {
     /// Create a new clipboard string with the given text
-    pub fn new(text: String) -> Self {
+    pub const fn new(text: String) -> Self {
         Self {
             text,
             metadata: None,
@@ -1822,7 +1822,7 @@ impl ClipboardString {
     }
 
     /// Get the text of the clipboard string
-    pub fn text(&self) -> &String {
+    pub const fn text(&self) -> &String {
         &self.text
     }
 

@@ -77,7 +77,7 @@ impl SingleLineInput {
         }
     }
 
-    pub fn start_icon(mut self, icon: IconName) -> Self {
+    pub const fn start_icon(mut self, icon: IconName) -> Self {
         self.start_icon = Some(icon);
         self
     }
@@ -87,7 +87,7 @@ impl SingleLineInput {
         self
     }
 
-    pub fn label_size(mut self, size: LabelSize) -> Self {
+    pub const fn label_size(mut self, size: LabelSize) -> Self {
         self.label_size = size;
         self
     }
@@ -107,7 +107,7 @@ impl SingleLineInput {
         self.editor().read(cx).text(cx).trim().is_empty()
     }
 
-    pub fn editor(&self) -> &Entity<Editor> {
+    pub const fn editor(&self) -> &Entity<Editor> {
         &self.editor
     }
 

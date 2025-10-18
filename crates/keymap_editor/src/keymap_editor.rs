@@ -115,7 +115,7 @@ pub struct KeymapEventChannel {}
 impl Global for KeymapEventChannel {}
 
 impl KeymapEventChannel {
-    fn new() -> Self {
+    const fn new() -> Self {
         Self {}
     }
 
@@ -140,14 +140,14 @@ enum SearchMode {
 }
 
 impl SearchMode {
-    fn invert(&self) -> Self {
+    const fn invert(&self) -> Self {
         match self {
             SearchMode::Normal => SearchMode::KeyStroke { exact_match: false },
             SearchMode::KeyStroke { .. } => SearchMode::Normal,
         }
     }
 
-    fn exact_match(&self) -> bool {
+    const fn exact_match(&self) -> bool {
         match self {
             SearchMode::Normal => false,
             SearchMode::KeyStroke { exact_match } => *exact_match,
@@ -163,7 +163,7 @@ enum FilterState {
 }
 
 impl FilterState {
-    fn invert(&self) -> Self {
+    const fn invert(&self) -> Self {
         match self {
             FilterState::All => FilterState::Conflicts,
             FilterState::Conflicts => FilterState::All,
@@ -191,7 +191,7 @@ struct ConflictOrigin {
 }
 
 impl ConflictOrigin {
-    fn new(source: KeybindSource, index: usize) -> Self {
+    const fn new(source: KeybindSource, index: usize) -> Self {
         Self {
             override_source: source,
             index,
@@ -199,7 +199,7 @@ impl ConflictOrigin {
         }
     }
 
-    fn with_overridden_source(self, source: KeybindSource) -> Self {
+    const fn with_overridden_source(self, source: KeybindSource) -> Self {
         Self {
             overridden_source: Some(source),
             ..self
@@ -347,7 +347,7 @@ impl ConflictState {
             .is_some_and(|conflict| conflict.is_user_keybind_conflict())
     }
 
-    fn any_user_binding_conflicts(&self) -> bool {
+    const fn any_user_binding_conflicts(&self) -> bool {
         self.has_user_conflicts
     }
 }
@@ -959,7 +959,7 @@ impl KeymapEditor {
         cx.notify();
     }
 
-    fn context_menu_deployed(&self) -> bool {
+    const fn context_menu_deployed(&self) -> bool {
         self.context_menu.is_some()
     }
 
@@ -1417,7 +1417,7 @@ impl ProcessedBinding {
         )
     }
 
-    fn is_unbound(&self) -> bool {
+    const fn is_unbound(&self) -> bool {
         matches!(self, Self::Unmapped(_))
     }
 
@@ -1431,7 +1431,7 @@ impl ProcessedBinding {
             .map(|binding| binding.keystrokes.as_slice())
     }
 
-    fn keybind_information(&self) -> Option<&KeybindInformation> {
+    const fn keybind_information(&self) -> Option<&KeybindInformation> {
         match self {
             Self::Mapped(keybind_information, _) => Some(keybind_information),
             Self::Unmapped(_) => None,
@@ -1456,7 +1456,7 @@ impl ProcessedBinding {
             .map(|binding| &binding.keystroke_text)
     }
 
-    fn action(&self) -> &ActionInformation {
+    const fn action(&self) -> &ActionInformation {
         match self {
             Self::Mapped(_, action) | Self::Unmapped(action) => action,
         }
@@ -1488,7 +1488,7 @@ enum KeybindContextString {
 impl KeybindContextString {
     const GLOBAL: SharedString = SharedString::new_static("<global>");
 
-    pub fn local(&self) -> Option<&SharedString> {
+    pub const fn local(&self) -> Option<&SharedString> {
         match self {
             KeybindContextString::Global => None,
             KeybindContextString::Local(name, _) => Some(name),

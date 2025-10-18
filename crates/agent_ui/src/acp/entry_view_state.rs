@@ -32,7 +32,7 @@ pub struct EntryViewState {
 }
 
 impl EntryViewState {
-    pub fn new(
+    pub const fn new(
         workspace: WeakEntity<Workspace>,
         project: Entity<Project>,
         history_store: Entity<HistoryStore>,
@@ -272,7 +272,7 @@ impl Entry {
         }
     }
 
-    pub fn message_editor(&self) -> Option<&Entity<MessageEditor>> {
+    pub const fn message_editor(&self) -> Option<&Entity<MessageEditor>> {
         match self {
             Self::UserMessage(editor) => Some(editor),
             Self::AssistantMessage(_) | Self::Content(_) => None,
@@ -306,7 +306,7 @@ impl Entry {
         }
     }
 
-    fn content_map(&self) -> Option<&HashMap<EntityId, AnyEntity>> {
+    const fn content_map(&self) -> Option<&HashMap<EntityId, AnyEntity>> {
         match self {
             Self::Content(map) => Some(map),
             _ => None,

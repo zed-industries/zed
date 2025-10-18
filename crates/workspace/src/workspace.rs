@@ -285,7 +285,7 @@ pub struct MoveItemToPane {
     pub clone: bool,
 }
 
-fn default_1() -> usize {
+const fn default_1() -> usize {
     1
 }
 
@@ -302,7 +302,7 @@ pub struct MoveItemToPaneInDirection {
     pub clone: bool,
 }
 
-fn default_right() -> SplitDirection {
+const fn default_right() -> SplitDirection {
     SplitDirection::Right
 }
 
@@ -472,7 +472,7 @@ impl Toast {
         self
     }
 
-    pub fn autohide(mut self) -> Self {
+    pub const fn autohide(mut self) -> Self {
         self.autohide = true;
         self
     }
@@ -997,7 +997,7 @@ struct DelayedDebouncedEditAction {
 }
 
 impl DelayedDebouncedEditAction {
-    fn new() -> DelayedDebouncedEditAction {
+    const fn new() -> DelayedDebouncedEditAction {
         DelayedDebouncedEditAction {
             task: None,
             cancel_channel: None,
@@ -1698,11 +1698,11 @@ impl Workspace {
         self.weak_self.clone()
     }
 
-    pub fn left_dock(&self) -> &Entity<Dock> {
+    pub const fn left_dock(&self) -> &Entity<Dock> {
         &self.left_dock
     }
 
-    pub fn bottom_dock(&self) -> &Entity<Dock> {
+    pub const fn bottom_dock(&self) -> &Entity<Dock> {
         &self.bottom_dock
     }
 
@@ -1721,15 +1721,15 @@ impl Workspace {
         self.serialize_workspace(window, cx);
     }
 
-    pub fn right_dock(&self) -> &Entity<Dock> {
+    pub const fn right_dock(&self) -> &Entity<Dock> {
         &self.right_dock
     }
 
-    pub fn all_docks(&self) -> [&Entity<Dock>; 3] {
+    pub const fn all_docks(&self) -> [&Entity<Dock>; 3] {
         [&self.left_dock, &self.bottom_dock, &self.right_dock]
     }
 
-    pub fn dock_at_position(&self, position: DockPosition) -> &Entity<Dock> {
+    pub const fn dock_at_position(&self, position: DockPosition) -> &Entity<Dock> {
         match position {
             DockPosition::Left => &self.left_dock,
             DockPosition::Bottom => &self.bottom_dock,
@@ -1737,7 +1737,7 @@ impl Workspace {
         }
     }
 
-    pub fn is_edited(&self) -> bool {
+    pub const fn is_edited(&self) -> bool {
         self.window_edited
     }
 
@@ -1772,7 +1772,7 @@ impl Workspace {
         }
     }
 
-    pub fn status_bar(&self) -> &Entity<StatusBar> {
+    pub const fn status_bar(&self) -> &Entity<StatusBar> {
         &self.status_bar
     }
 
@@ -1780,7 +1780,7 @@ impl Workspace {
         StatusBarSettings::get_global(cx).show
     }
 
-    pub fn app_state(&self) -> &Arc<AppState> {
+    pub const fn app_state(&self) -> &Arc<AppState> {
         &self.app_state
     }
 
@@ -1788,7 +1788,7 @@ impl Workspace {
         &self.app_state.user_store
     }
 
-    pub fn project(&self) -> &Entity<Project> {
+    pub const fn project(&self) -> &Entity<Project> {
         &self.project
     }
 
@@ -4199,7 +4199,7 @@ impl Workspace {
         &self.panes
     }
 
-    pub fn active_pane(&self) -> &Entity<Pane> {
+    pub const fn active_pane(&self) -> &Entity<Pane> {
         &self.active_pane
     }
 
@@ -5164,7 +5164,7 @@ impl Workspace {
         }
     }
 
-    pub fn database_id(&self) -> Option<WorkspaceId> {
+    pub const fn database_id(&self) -> Option<WorkspaceId> {
         self.database_id
     }
 
@@ -5954,7 +5954,7 @@ impl Workspace {
         window.root().flatten()
     }
 
-    pub fn zoomed_item(&self) -> Option<&AnyWeakView> {
+    pub const fn zoomed_item(&self) -> Option<&AnyWeakView> {
         self.zoomed.as_ref()
     }
 
@@ -6884,7 +6884,7 @@ impl WorkspaceStore {
         })?
     }
 
-    pub fn workspaces(&self) -> &HashSet<WindowHandle<Workspace>> {
+    pub const fn workspaces(&self) -> &HashSet<WindowHandle<Workspace>> {
         &self.workspaces
     }
 }
@@ -6900,7 +6900,7 @@ impl ViewId {
         })
     }
 
-    pub(crate) fn to_proto(self) -> Option<proto::ViewId> {
+    pub(crate) const fn to_proto(self) -> Option<proto::ViewId> {
         if let CollaboratorId::PeerId(peer_id) = self.creator {
             Some(proto::ViewId {
                 creator: Some(peer_id),

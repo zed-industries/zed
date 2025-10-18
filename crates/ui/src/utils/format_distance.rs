@@ -30,7 +30,7 @@ pub struct FormatDistance {
 }
 
 impl FormatDistance {
-    pub fn new(date: DateTimeType, base_date: DateTimeType) -> Self {
+    pub const fn new(date: DateTimeType, base_date: DateTimeType) -> Self {
         Self {
             date,
             base_date,
@@ -44,17 +44,17 @@ impl FormatDistance {
         Self::new(date, DateTimeType::Local(Local::now()))
     }
 
-    pub fn include_seconds(mut self, include_seconds: bool) -> Self {
+    pub const fn include_seconds(mut self, include_seconds: bool) -> Self {
         self.include_seconds = include_seconds;
         self
     }
 
-    pub fn add_suffix(mut self, add_suffix: bool) -> Self {
+    pub const fn add_suffix(mut self, add_suffix: bool) -> Self {
         self.add_suffix = add_suffix;
         self
     }
 
-    pub fn hide_prefix(mut self, hide_prefix: bool) -> Self {
+    pub const fn hide_prefix(mut self, hide_prefix: bool) -> Self {
         self.hide_prefix = hide_prefix;
         self
     }
@@ -82,7 +82,7 @@ impl std::fmt::Display for FormatDistance {
 ///
 /// * `date` - A [NaiveDateTime`] object representing the date of interest
 /// * `base_date` - A [NaiveDateTime`] object representing the base date against which the comparison is made
-fn distance_in_seconds(date: NaiveDateTime, base_date: NaiveDateTime) -> i64 {
+const fn distance_in_seconds(date: NaiveDateTime, base_date: NaiveDateTime) -> i64 {
     let duration = date.signed_duration_since(base_date);
     -duration.num_seconds()
 }

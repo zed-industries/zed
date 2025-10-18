@@ -30,19 +30,19 @@ impl SemanticVersion {
 
     /// Returns the major version number.
     #[inline(always)]
-    pub fn major(&self) -> usize {
+    pub const fn major(&self) -> usize {
         self.major
     }
 
     /// Returns the minor version number.
     #[inline(always)]
-    pub fn minor(&self) -> usize {
+    pub const fn minor(&self) -> usize {
         self.minor
     }
 
     /// Returns the patch version number.
     #[inline(always)]
-    pub fn patch(&self) -> usize {
+    pub const fn patch(&self) -> usize {
         self.patch
     }
 }

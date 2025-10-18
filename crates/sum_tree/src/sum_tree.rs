@@ -176,7 +176,7 @@ pub enum Bias {
 }
 
 impl Bias {
-    pub fn invert(self) -> Self {
+    pub const fn invert(self) -> Self {
         match self {
             Self::Left => Self::Right,
             Self::Right => Self::Left,
@@ -855,18 +855,18 @@ where
 }
 
 impl<T: Item> Node<T> {
-    fn is_leaf(&self) -> bool {
+    const fn is_leaf(&self) -> bool {
         matches!(self, Node::Leaf { .. })
     }
 
-    fn height(&self) -> u8 {
+    const fn height(&self) -> u8 {
         match self {
             Node::Internal { height, .. } => *height,
             Node::Leaf { .. } => 0,
         }
     }
 
-    fn summary(&self) -> &T::Summary {
+    const fn summary(&self) -> &T::Summary {
         match self {
             Node::Internal { summary, .. } => summary,
             Node::Leaf { summary, .. } => summary,
@@ -896,7 +896,7 @@ impl<T: Item> Node<T> {
         }
     }
 
-    fn is_underflowing(&self) -> bool {
+    const fn is_underflowing(&self) -> bool {
         match self {
             Node::Internal { child_trees, .. } => child_trees.len() < TREE_BASE,
             Node::Leaf { items, .. } => items.len() < TREE_BASE,

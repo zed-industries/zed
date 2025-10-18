@@ -276,7 +276,7 @@ impl SignatureHelpState {
         self.popover.as_ref()
     }
 
-    pub fn popover_mut(&mut self) -> Option<&mut SignatureHelpPopover> {
+    pub const fn popover_mut(&mut self) -> Option<&mut SignatureHelpPopover> {
         self.popover.as_mut()
     }
 
@@ -296,7 +296,7 @@ impl SignatureHelpState {
         self.hidden_by == Some(SignatureHelpHiddenBy::Selection)
     }
 
-    pub fn is_shown(&self) -> bool {
+    pub const fn is_shown(&self) -> bool {
         self.popover.is_some()
     }
 

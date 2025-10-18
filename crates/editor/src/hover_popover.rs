@@ -756,7 +756,7 @@ pub struct HoverState {
 }
 
 impl HoverState {
-    pub fn visible(&self) -> bool {
+    pub const fn visible(&self) -> bool {
         !self.info_popovers.is_empty() || self.diagnostic_popover.is_some()
     }
 

@@ -111,7 +111,7 @@ impl SyntaxLayerContent {
         }
     }
 
-    fn tree(&self) -> Option<&Tree> {
+    const fn tree(&self) -> Option<&Tree> {
         match self {
             SyntaxLayerContent::Parsed { tree, .. } => Some(tree),
             SyntaxLayerContent::Pending { .. } => None,
@@ -279,7 +279,7 @@ impl SyntaxSnapshot {
         self.layers.is_empty()
     }
 
-    pub fn update_count(&self) -> usize {
+    pub const fn update_count(&self) -> usize {
         self.update_count
     }
 
@@ -953,7 +953,7 @@ impl SyntaxSnapshot {
         self.layers.summary().contains_unknown_injections
     }
 
-    pub fn language_registry_version(&self) -> usize {
+    pub const fn language_registry_version(&self) -> usize {
         self.language_registry_version
     }
 }
@@ -1086,7 +1086,7 @@ pub struct TreeSitterOptions {
     max_start_depth: Option<u32>,
 }
 impl TreeSitterOptions {
-    pub fn max_start_depth(max_start_depth: u32) -> Self {
+    pub const fn max_start_depth(max_start_depth: u32) -> Self {
         Self {
             max_start_depth: Some(max_start_depth),
         }

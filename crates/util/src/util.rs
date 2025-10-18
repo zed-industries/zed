@@ -749,7 +749,7 @@ impl<F: FnOnce()> Drop for Deferred<F> {
 
 /// Run the given function when the returned value is dropped (unless it's cancelled).
 #[must_use]
-pub fn defer<F: FnOnce()>(f: F) -> Deferred<F> {
+pub const fn defer<F: FnOnce()>(f: F) -> Deferred<F> {
     Deferred(Some(f))
 }
 

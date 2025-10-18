@@ -105,12 +105,12 @@ impl Divider {
         }
     }
 
-    pub fn inset(mut self) -> Self {
+    pub const fn inset(mut self) -> Self {
         self.inset = true;
         self
     }
 
-    pub fn color(mut self, color: DividerColor) -> Self {
+    pub const fn color(mut self, color: DividerColor) -> Self {
         self.color = color;
         self
     }

@@ -47,7 +47,7 @@ mod breakpoints_in_file {
                 session_state: Default::default(),
             }
         }
-        pub(super) fn position(&self) -> &text::Anchor {
+        pub(super) const fn position(&self) -> &text::Anchor {
             &self.bp.position
         }
     }
@@ -638,7 +638,7 @@ impl BreakpointStore {
             })
     }
 
-    pub fn active_position(&self) -> Option<&ActiveStackFrame> {
+    pub const fn active_position(&self) -> Option<&ActiveStackFrame> {
         self.active_stack_frame.as_ref()
     }
 
@@ -894,17 +894,17 @@ pub enum BreakpointState {
 
 impl BreakpointState {
     #[inline]
-    pub fn is_enabled(&self) -> bool {
+    pub const fn is_enabled(&self) -> bool {
         matches!(self, BreakpointState::Enabled)
     }
 
     #[inline]
-    pub fn is_disabled(&self) -> bool {
+    pub const fn is_disabled(&self) -> bool {
         matches!(self, BreakpointState::Disabled)
     }
 
     #[inline]
-    pub fn to_int(self) -> i32 {
+    pub const fn to_int(self) -> i32 {
         match self {
             BreakpointState::Enabled => 0,
             BreakpointState::Disabled => 1,
@@ -922,7 +922,7 @@ pub struct Breakpoint {
 }
 
 impl Breakpoint {
-    pub fn new_standard() -> Self {
+    pub const fn new_standard() -> Self {
         Self {
             state: BreakpointState::Enabled,
             hit_condition: None,
@@ -995,12 +995,12 @@ impl Breakpoint {
     }
 
     #[inline]
-    pub fn is_enabled(&self) -> bool {
+    pub const fn is_enabled(&self) -> bool {
         self.state.is_enabled()
     }
 
     #[inline]
-    pub fn is_disabled(&self) -> bool {
+    pub const fn is_disabled(&self) -> bool {
         self.state.is_disabled()
     }
 }

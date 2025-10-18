@@ -32,7 +32,7 @@ pub struct RelPathBuf(String);
 
 impl RelPath {
     /// Creates an empty [`RelPath`].
-    pub fn empty() -> &'static Self {
+    pub const fn empty() -> &'static Self {
         Self::new_unchecked("")
     }
 
@@ -111,20 +111,20 @@ impl RelPath {
         }
     }
 
-    fn new_unchecked(s: &str) -> &Self {
+    const fn new_unchecked(s: &str) -> &Self {
         // Safety: `RelPath` is a transparent wrapper around `str`.
         unsafe { &*(s as *const str as *const Self) }
     }
 
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
 
-    pub fn components(&self) -> RelPathComponents<'_> {
+    pub const fn components(&self) -> RelPathComponents<'_> {
         RelPathComponents(&self.0)
     }
 
-    pub fn ancestors(&self) -> RelPathAncestors<'_> {
+    pub const fn ancestors(&self) -> RelPathAncestors<'_> {
         RelPathAncestors(Some(&self.0))
     }
 
@@ -235,7 +235,7 @@ impl RelPath {
     /// Get the internal unix-style representation of the path.
     ///
     /// This should not be shown to the user.
-    pub fn as_unix_str(&self) -> &str {
+    pub const fn as_unix_str(&self) -> &str {
         &self.0
     }
 
@@ -289,7 +289,7 @@ impl fmt::Debug for RelPathBuf {
 }
 
 impl RelPathBuf {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self(String::new())
     }
 
@@ -312,7 +312,7 @@ impl RelPathBuf {
         self.0.push_str(&path.0);
     }
 
-    pub fn as_rel_path(&self) -> &RelPath {
+    pub const fn as_rel_path(&self) -> &RelPath {
         RelPath::new_unchecked(self.0.as_str())
     }
 
@@ -381,7 +381,7 @@ pub struct RelPathAncestors<'a>(Option<&'a str>);
 const SEPARATOR: char = '/';
 
 impl<'a> RelPathComponents<'a> {
-    pub fn rest(&self) -> &'a RelPath {
+    pub const fn rest(&self) -> &'a RelPath {
         RelPath::new_unchecked(self.0)
     }
 }

@@ -404,7 +404,7 @@ pub enum ThemeColorField {
 }
 
 impl ThemeColors {
-    pub fn color(&self, field: ThemeColorField) -> Hsla {
+    pub const fn color(&self, field: ThemeColorField) -> Hsla {
         match field {
             ThemeColorField::Border => self.border,
             ThemeColorField::BorderVariant => self.border_variant,

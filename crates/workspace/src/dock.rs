@@ -236,7 +236,7 @@ impl Into<settings::DockPosition> for DockPosition {
 }
 
 impl DockPosition {
-    fn label(&self) -> &'static str {
+    const fn label(&self) -> &'static str {
         match self {
             Self::Left => "Left",
             Self::Bottom => "Bottom",
@@ -244,7 +244,7 @@ impl DockPosition {
         }
     }
 
-    pub fn axis(&self) -> Axis {
+    pub const fn axis(&self) -> Axis {
         match self {
             Self::Left | Self::Right => Axis::Horizontal,
             Self::Bottom => Axis::Vertical,
@@ -342,11 +342,11 @@ impl Dock {
         dock
     }
 
-    pub fn position(&self) -> DockPosition {
+    pub const fn position(&self) -> DockPosition {
         self.position
     }
 
-    pub fn is_open(&self) -> bool {
+    pub const fn is_open(&self) -> bool {
         self.is_open
     }
 
@@ -395,7 +395,7 @@ impl Dock {
             .and_then(|index| self.panel_entries.get(index))
     }
 
-    pub fn active_panel_index(&self) -> Option<usize> {
+    pub const fn active_panel_index(&self) -> Option<usize> {
         self.active_panel_index
     }
 
@@ -627,7 +627,7 @@ impl Dock {
         }
     }
 
-    pub fn panels_len(&self) -> usize {
+    pub const fn panels_len(&self) -> usize {
         self.panel_entries.len()
     }
 

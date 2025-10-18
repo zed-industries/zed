@@ -33,7 +33,7 @@ pub struct VsCodeThemeConverter {
 }
 
 impl VsCodeThemeConverter {
-    pub fn new(
+    pub const fn new(
         theme: VsCodeTheme,
         theme_metadata: ThemeMetadata,
         syntax_overrides: IndexMap<String, Vec<String>>,

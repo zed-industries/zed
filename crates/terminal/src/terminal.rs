@@ -194,7 +194,7 @@ pub struct TerminalBounds {
 }
 
 impl TerminalBounds {
-    pub fn new(line_height: Pixels, cell_width: Pixels, bounds: Bounds<Pixels>) -> Self {
+    pub const fn new(line_height: Pixels, cell_width: Pixels, bounds: Bounds<Pixels>) -> Self {
         TerminalBounds {
             cell_width,
             line_height,
@@ -210,19 +210,19 @@ impl TerminalBounds {
         (self.bounds.size.width / self.cell_width).floor() as usize
     }
 
-    pub fn height(&self) -> Pixels {
+    pub const fn height(&self) -> Pixels {
         self.bounds.size.height
     }
 
-    pub fn width(&self) -> Pixels {
+    pub const fn width(&self) -> Pixels {
         self.bounds.size.width
     }
 
-    pub fn cell_width(&self) -> Pixels {
+    pub const fn cell_width(&self) -> Pixels {
         self.cell_width
     }
 
-    pub fn line_height(&self) -> Pixels {
+    pub const fn line_height(&self) -> Pixels {
         self.line_height
     }
 }
@@ -875,7 +875,7 @@ impl TaskStatus {
         }
     }
 
-    fn register_task_exit(&mut self, error_code: i32) {
+    const fn register_task_exit(&mut self, error_code: i32) {
         *self = TaskStatus::Completed {
             success: error_code == 0,
         };
@@ -1221,13 +1221,13 @@ impl Terminal {
         cx.notify()
     }
 
-    fn next_link_id(&mut self) -> usize {
+    const fn next_link_id(&mut self) -> usize {
         let res = self.next_link_id;
         self.next_link_id = self.next_link_id.wrapping_add(1);
         res
     }
 
-    pub fn last_content(&self) -> &TerminalContent {
+    pub const fn last_content(&self) -> &TerminalContent {
         &self.last_content
     }
 
@@ -1372,11 +1372,11 @@ impl Terminal {
             .push_back(InternalEvent::Scroll(AlacScroll::Bottom));
     }
 
-    pub fn scrolled_to_top(&self) -> bool {
+    pub const fn scrolled_to_top(&self) -> bool {
         self.last_content.scrolled_to_top
     }
 
-    pub fn scrolled_to_bottom(&self) -> bool {
+    pub const fn scrolled_to_bottom(&self) -> bool {
         self.last_content.scrolled_to_bottom
     }
 
@@ -1679,7 +1679,7 @@ impl Terminal {
         }
     }
 
-    pub fn mouse_mode(&self, shift: bool) -> bool {
+    pub const fn mouse_mode(&self, shift: bool) -> bool {
         self.last_content.mode.intersects(TermMode::MOUSE_MODE) && !shift
     }
 
@@ -2057,14 +2057,14 @@ impl Terminal {
         }
     }
 
-    pub fn pid_getter(&self) -> Option<&ProcessIdGetter> {
+    pub const fn pid_getter(&self) -> Option<&ProcessIdGetter> {
         match &self.terminal_type {
             TerminalType::Pty { info, .. } => Some(info.pid_getter()),
             TerminalType::DisplayOnly => None,
         }
     }
 
-    pub fn task(&self) -> Option<&TaskState> {
+    pub const fn task(&self) -> Option<&TaskState> {
         self.task.as_ref()
     }
 
@@ -2149,7 +2149,7 @@ impl Terminal {
         }
     }
 
-    pub fn vi_mode_enabled(&self) -> bool {
+    pub const fn vi_mode_enabled(&self) -> bool {
         self.vi_mode_enabled
     }
 

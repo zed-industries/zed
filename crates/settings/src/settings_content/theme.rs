@@ -238,7 +238,7 @@ pub enum UiDensity {
 impl UiDensity {
     /// The spacing ratio of a given density.
     /// TODO: Standardize usage throughout the app or remove
-    pub fn spacing_ratio(self) -> f32 {
+    pub const fn spacing_ratio(self) -> f32 {
         match self {
             UiDensity::Compact => 0.75,
             UiDensity::Default => 1.0,
@@ -879,7 +879,7 @@ pub struct HighlightStyleContent {
 }
 
 impl HighlightStyleContent {
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.color.is_none()
             && self.background_color.is_none()
             && self.font_style.is_none()

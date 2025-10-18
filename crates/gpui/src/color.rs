@@ -333,7 +333,7 @@ impl Display for Hsla {
 }
 
 /// Construct an [`Hsla`] object from plain values
-pub fn hsla(h: f32, s: f32, l: f32, a: f32) -> Hsla {
+pub const fn hsla(h: f32, s: f32, l: f32, a: f32) -> Hsla {
     Hsla {
         h: h.clamp(0., 1.),
         s: s.clamp(0., 1.),
@@ -373,7 +373,7 @@ pub const fn transparent_white() -> Hsla {
 }
 
 /// Opaque grey in [`Hsla`], values will be clamped to the range [0, 1]
-pub fn opaque_grey(lightness: f32, opacity: f32) -> Hsla {
+pub const fn opaque_grey(lightness: f32, opacity: f32) -> Hsla {
     Hsla {
         h: 0.,
         s: 0.,
@@ -505,7 +505,7 @@ impl Hsla {
     }
 
     /// Returns a new HSLA color with the same hue, and lightness, but with no saturation.
-    pub fn grayscale(&self) -> Self {
+    pub const fn grayscale(&self) -> Self {
         Hsla {
             h: self.h,
             s: 0.,
@@ -576,7 +576,7 @@ impl Hsla {
     /// ```
     ///
     /// This will return a blue color with 25% opacity.
-    pub fn alpha(&self, a: f32) -> Self {
+    pub const fn alpha(&self, a: f32) -> Self {
         Hsla {
             h: self.h,
             s: self.s,
@@ -811,7 +811,7 @@ impl Background {
     /// Use specified color space for color interpolation.
     ///
     /// <https://developer.mozilla.org/en-US/docs/Web/CSS/color-interpolation-method>
-    pub fn color_space(mut self, color_space: ColorSpace) -> Self {
+    pub const fn color_space(mut self, color_space: ColorSpace) -> Self {
         self.color_space = color_space;
         self
     }

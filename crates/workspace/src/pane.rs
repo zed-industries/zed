@@ -251,7 +251,7 @@ actions!(
 );
 
 impl DeploySearch {
-    pub fn find() -> Self {
+    pub const fn find() -> Self {
         Self {
             replace_enabled: false,
             included_files: None,
@@ -715,7 +715,7 @@ impl Pane {
         cx.notify();
     }
 
-    pub fn active_item_index(&self) -> usize {
+    pub const fn active_item_index(&self) -> usize {
         self.active_item_index
     }
 
@@ -794,11 +794,11 @@ impl Pane {
         }
     }
 
-    pub fn nav_history(&self) -> &NavHistory {
+    pub const fn nav_history(&self) -> &NavHistory {
         &self.nav_history
     }
 
-    pub fn nav_history_mut(&mut self) -> &mut NavHistory {
+    pub const fn nav_history_mut(&mut self) -> &mut NavHistory {
         &mut self.nav_history
     }
 
@@ -846,7 +846,7 @@ impl Pane {
         self.toolbar.update(cx, |_, cx| cx.notify());
     }
 
-    pub fn preview_item_id(&self) -> Option<EntityId> {
+    pub const fn preview_item_id(&self) -> Option<EntityId> {
         self.preview_item_id
     }
 
@@ -879,11 +879,11 @@ impl Pane {
     }
 
     /// Should only be used when deserializing a pane.
-    pub fn set_pinned_count(&mut self, count: usize) {
+    pub const fn set_pinned_count(&mut self, count: usize) {
         self.pinned_tab_count = count;
     }
 
-    pub fn pinned_count(&self) -> usize {
+    pub const fn pinned_count(&self) -> usize {
         self.pinned_tab_count
     }
 
@@ -2319,7 +2319,7 @@ impl Pane {
         }
     }
 
-    pub fn toolbar(&self) -> &Entity<Toolbar> {
+    pub const fn toolbar(&self) -> &Entity<Toolbar> {
         &self.toolbar
     }
 
@@ -2388,7 +2388,7 @@ impl Pane {
         })
     }
 
-    pub fn icon_color(selected: bool) -> Color {
+    pub const fn icon_color(selected: bool) -> Color {
         if selected {
             Color::Default
         } else {
@@ -2488,7 +2488,7 @@ impl Pane {
         });
     }
 
-    fn is_tab_pinned(&self, ix: usize) -> bool {
+    const fn is_tab_pinned(&self, ix: usize) -> bool {
         self.pinned_tab_count > ix
     }
 
@@ -3180,7 +3180,7 @@ impl Pane {
         cx.notify();
     }
 
-    pub fn is_zoomed(&self) -> bool {
+    pub const fn is_zoomed(&self) -> bool {
         self.zoomed
     }
 
@@ -3515,7 +3515,7 @@ impl Pane {
             .log_err();
     }
 
-    pub fn display_nav_history_buttons(&mut self, display: Option<bool>) {
+    pub const fn display_nav_history_buttons(&mut self, display: Option<bool>) {
         self.display_nav_history_buttons = display;
     }
 
@@ -3568,11 +3568,11 @@ impl Pane {
             .collect()
     }
 
-    pub fn drag_split_direction(&self) -> Option<SplitDirection> {
+    pub const fn drag_split_direction(&self) -> Option<SplitDirection> {
         self.drag_split_direction
     }
 
-    pub fn set_zoom_out_on_close(&mut self, zoom_out_on_close: bool) {
+    pub const fn set_zoom_out_on_close(&mut self, zoom_out_on_close: bool) {
         self.zoom_out_on_close = zoom_out_on_close;
     }
 }

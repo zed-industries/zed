@@ -15,7 +15,7 @@ impl<E: 'static> Default for DebouncedDelay<E> {
 }
 
 impl<E: 'static> DebouncedDelay<E> {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             task: None,
             cancel_channel: None,

@@ -43,7 +43,7 @@ pub struct List {
 
 impl List {
     /// Set the sizing behavior for the list.
-    pub fn with_sizing_behavior(mut self, behavior: ListSizingBehavior) -> Self {
+    pub const fn with_sizing_behavior(mut self, behavior: ListSizingBehavior) -> Self {
         self.sizing_behavior = behavior;
         self
     }
@@ -116,7 +116,7 @@ pub enum ListMeasuringBehavior {
 }
 
 impl ListMeasuringBehavior {
-    fn reset(&mut self) {
+    const fn reset(&mut self) {
         match self {
             ListMeasuringBehavior::Measure(has_measured) => *has_measured = false,
             ListMeasuringBehavior::Visible => {}
@@ -164,7 +164,7 @@ enum ListItem {
 }
 
 impl ListItem {
-    fn size(&self) -> Option<Size<Pixels>> {
+    const fn size(&self) -> Option<Size<Pixels>> {
         if let ListItem::Measured { size, .. } = self {
             Some(*size)
         } else {

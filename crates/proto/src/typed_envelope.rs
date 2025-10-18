@@ -127,13 +127,13 @@ impl<T: EnvelopedMessage> AnyTypedEnvelope for TypedEnvelope<T> {
 }
 
 impl PeerId {
-    pub fn from_u64(peer_id: u64) -> Self {
+    pub const fn from_u64(peer_id: u64) -> Self {
         let owner_id = (peer_id >> 32) as u32;
         let id = peer_id as u32;
         Self { owner_id, id }
     }
 
-    pub fn as_u64(self) -> u64 {
+    pub const fn as_u64(self) -> u64 {
         ((self.owner_id as u64) << 32) | (self.id as u64)
     }
 }
@@ -200,7 +200,7 @@ impl<T> TypedEnvelope<T> {
 }
 
 impl<T: RequestMessage> TypedEnvelope<T> {
-    pub fn receipt(&self) -> Receipt<T> {
+    pub const fn receipt(&self) -> Receipt<T> {
         Receipt {
             sender_id: self.sender_id,
             message_id: self.message_id,

@@ -880,7 +880,7 @@ pub struct ComponentPreviewPage {
 }
 
 impl ComponentPreviewPage {
-    pub fn new(
+    pub const fn new(
         component: ComponentMetadata,
         reset_key: usize,
         // languages: Arc<LanguageRegistry>

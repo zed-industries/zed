@@ -59,7 +59,7 @@ pub struct State {
 }
 
 impl State {
-    fn is_authenticated(&self) -> bool {
+    const fn is_authenticated(&self) -> bool {
         !self.fetched_models.is_empty()
     }
 

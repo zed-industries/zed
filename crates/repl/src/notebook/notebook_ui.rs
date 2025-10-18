@@ -189,7 +189,7 @@ impl NotebookEditor {
         self.cell_map.len()
     }
 
-    fn selected_index(&self) -> usize {
+    const fn selected_index(&self) -> usize {
         self.selected_cell_index
     }
 

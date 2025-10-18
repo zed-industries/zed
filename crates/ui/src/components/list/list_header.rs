@@ -65,7 +65,7 @@ impl ListHeader {
         self
     }
 
-    pub fn inset(mut self, inset: bool) -> Self {
+    pub const fn inset(mut self, inset: bool) -> Self {
         self.inset = inset;
         self
     }

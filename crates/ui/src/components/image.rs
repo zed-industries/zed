@@ -64,7 +64,7 @@ impl Vector {
     }
 
     /// Sets the vector color.
-    pub fn color(mut self, color: Color) -> Self {
+    pub const fn color(mut self, color: Color) -> Self {
         self.color = color;
         self
     }

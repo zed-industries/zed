@@ -28,7 +28,7 @@ impl AsyncBody {
     ///
     /// An empty body represents the *absence* of a body, which is semantically
     /// different than the presence of a body of zero length.
-    pub fn empty() -> Self {
+    pub const fn empty() -> Self {
         Self(Inner::Empty)
     }
     /// Create a streaming body that reads from the given reader.
@@ -39,7 +39,7 @@ impl AsyncBody {
         Self(Inner::AsyncReader(Box::pin(read)))
     }
 
-    pub fn from_bytes(bytes: Bytes) -> Self {
+    pub const fn from_bytes(bytes: Bytes) -> Self {
         Self(Inner::Bytes(Cursor::new(bytes)))
     }
 }

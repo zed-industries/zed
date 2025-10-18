@@ -143,7 +143,7 @@ impl Display for SystemSpecs {
     }
 }
 
-fn try_determine_available_gpus() -> Option<String> {
+const fn try_determine_available_gpus() -> Option<String> {
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     {
         #[allow(

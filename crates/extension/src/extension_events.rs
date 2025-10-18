@@ -23,7 +23,7 @@ impl ExtensionEvents {
             .map(|g| g.0.clone())
     }
 
-    fn new(_cx: &mut Context<Self>) -> Self {
+    const fn new(_cx: &mut Context<Self>) -> Self {
         Self
     }
 

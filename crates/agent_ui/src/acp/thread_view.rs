@@ -820,11 +820,11 @@ impl AcpThreadView {
         }
     }
 
-    pub fn workspace(&self) -> &WeakEntity<Workspace> {
+    pub const fn workspace(&self) -> &WeakEntity<Workspace> {
         &self.workspace
     }
 
-    pub fn thread(&self) -> Option<&Entity<AcpThread>> {
+    pub const fn thread(&self) -> Option<&Entity<AcpThread>> {
         match &self.thread_state {
             ThreadState::Ready { thread, .. } => Some(thread),
             ThreadState::Unauthenticated { .. }
@@ -833,7 +833,7 @@ impl AcpThreadView {
         }
     }
 
-    pub fn mode_selector(&self) -> Option<&Entity<ModeSelector>> {
+    pub const fn mode_selector(&self) -> Option<&Entity<ModeSelector>> {
         match &self.thread_state {
             ThreadState::Ready { mode_selector, .. } => mode_selector.as_ref(),
             ThreadState::Unauthenticated { .. }

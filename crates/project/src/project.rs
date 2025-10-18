@@ -490,7 +490,7 @@ pub enum CompletionSource {
 }
 
 impl CompletionSource {
-    pub fn server_id(&self) -> Option<LanguageServerId> {
+    pub const fn server_id(&self) -> Option<LanguageServerId> {
         if let CompletionSource::Lsp { server_id, .. } = self {
             Some(*server_id)
         } else {
@@ -597,7 +597,7 @@ pub struct CompletionDisplayOptions {
 }
 
 impl CompletionDisplayOptions {
-    pub fn merge(&mut self, other: &CompletionDisplayOptions) {
+    pub const fn merge(&mut self, other: &CompletionDisplayOptions) {
         self.dynamic_width = self.dynamic_width && other.dynamic_width;
     }
 }
@@ -1704,7 +1704,7 @@ impl Project {
         Ok(project)
     }
 
-    fn new_search_history() -> SearchHistory {
+    const fn new_search_history() -> SearchHistory {
         SearchHistory::new(
             Some(MAX_PROJECT_SEARCH_HISTORY_SIZE),
             search_history::QueryInsertionBehavior::AlwaysInsert,
@@ -1856,7 +1856,7 @@ impl Project {
         self.buffer_store.read(cx).get(remote_id)
     }
 
-    pub fn languages(&self) -> &Arc<LanguageRegistry> {
+    pub const fn languages(&self) -> &Arc<LanguageRegistry> {
         &self.languages
     }
 
@@ -1872,7 +1872,7 @@ impl Project {
         self.user_store.clone()
     }
 
-    pub fn node_runtime(&self) -> Option<&NodeRuntime> {
+    pub const fn node_runtime(&self) -> Option<&NodeRuntime> {
         self.node.as_ref()
     }
 
@@ -1880,7 +1880,7 @@ impl Project {
         self.buffer_store.read(cx).buffers().collect()
     }
 
-    pub fn environment(&self) -> &Entity<ProjectEnvironment> {
+    pub const fn environment(&self) -> &Entity<ProjectEnvironment> {
         &self.environment
     }
 
@@ -1939,7 +1939,7 @@ impl Project {
         &self.fs
     }
 
-    pub fn remote_id(&self) -> Option<u64> {
+    pub const fn remote_id(&self) -> Option<u64> {
         match self.client_state {
             ProjectClientState::Local => None,
             ProjectClientState::Shared { remote_id, .. }
@@ -1947,7 +1947,7 @@ impl Project {
         }
     }
 
-    pub fn supports_terminal(&self, _cx: &App) -> bool {
+    pub const fn supports_terminal(&self, _cx: &App) -> bool {
         if self.is_local() {
             return true;
         }
@@ -1970,7 +1970,7 @@ impl Project {
             .map(|remote| remote.read(cx).connection_options())
     }
 
-    pub fn replica_id(&self) -> ReplicaId {
+    pub const fn replica_id(&self) -> ReplicaId {
         match self.client_state {
             ProjectClientState::Remote { replica_id, .. } => replica_id,
             _ => {
@@ -1983,15 +1983,15 @@ impl Project {
         }
     }
 
-    pub fn task_store(&self) -> &Entity<TaskStore> {
+    pub const fn task_store(&self) -> &Entity<TaskStore> {
         &self.task_store
     }
 
-    pub fn snippets(&self) -> &Entity<SnippetProvider> {
+    pub const fn snippets(&self) -> &Entity<SnippetProvider> {
         &self.snippets
     }
 
-    pub fn search_history(&self, kind: SearchInputKind) -> &SearchHistory {
+    pub const fn search_history(&self, kind: SearchInputKind) -> &SearchHistory {
         match kind {
             SearchInputKind::Query => &self.search_history,
             SearchInputKind::Include => &self.search_included_history,
@@ -1999,7 +1999,7 @@ impl Project {
         }
     }
 
-    pub fn search_history_mut(&mut self, kind: SearchInputKind) -> &mut SearchHistory {
+    pub const fn search_history_mut(&mut self, kind: SearchInputKind) -> &mut SearchHistory {
         match kind {
             SearchInputKind::Query => &mut self.search_history,
             SearchInputKind::Include => &mut self.search_included_history,
@@ -2007,7 +2007,7 @@ impl Project {
         }
     }
 
-    pub fn collaborators(&self) -> &HashMap<proto::PeerId, Collaborator> {
+    pub const fn collaborators(&self) -> &HashMap<proto::PeerId, Collaborator> {
         &self.collaborators
     }
 
@@ -2511,7 +2511,7 @@ impl Project {
             .unwrap_or(false)
     }
 
-    pub fn capability(&self) -> Capability {
+    pub const fn capability(&self) -> Capability {
         match &self.client_state {
             ProjectClientState::Remote { capability, .. } => *capability,
             ProjectClientState::Shared { .. } | ProjectClientState::Local => Capability::ReadWrite,
@@ -2522,7 +2522,7 @@ impl Project {
         self.is_disconnected(cx) || self.capability() == Capability::ReadOnly
     }
 
-    pub fn is_local(&self) -> bool {
+    pub const fn is_local(&self) -> bool {
         match &self.client_state {
             ProjectClientState::Local | ProjectClientState::Shared { .. } => {
                 self.remote_client.is_none()
@@ -2531,7 +2531,7 @@ impl Project {
         }
     }
 
-    pub fn is_via_remote_server(&self) -> bool {
+    pub const fn is_via_remote_server(&self) -> bool {
         match &self.client_state {
             ProjectClientState::Local | ProjectClientState::Shared { .. } => {
                 self.remote_client.is_some()
@@ -2540,7 +2540,7 @@ impl Project {
         }
     }
 
-    pub fn is_via_collab(&self) -> bool {
+    pub const fn is_via_collab(&self) -> bool {
         match &self.client_state {
             ProjectClientState::Local | ProjectClientState::Shared { .. } => false,
             ProjectClientState::Remote { .. } => true,
@@ -4177,7 +4177,7 @@ impl Project {
         self.worktree_store.read(cx).find_worktree(abs_path, cx)
     }
 
-    pub fn is_shared(&self) -> bool {
+    pub const fn is_shared(&self) -> bool {
         match &self.client_state {
             ProjectClientState::Shared { .. } => true,
             ProjectClientState::Local => false,
@@ -4429,7 +4429,7 @@ impl Project {
             .diagnostic_summaries(include_ignored, cx)
     }
 
-    pub fn active_entry(&self) -> Option<ProjectEntryId> {
+    pub const fn active_entry(&self) -> Option<ProjectEntryId> {
         self.active_entry
     }
 
@@ -5213,15 +5213,15 @@ impl Project {
             .git_init(path, fallback_branch_name, cx)
     }
 
-    pub fn buffer_store(&self) -> &Entity<BufferStore> {
+    pub const fn buffer_store(&self) -> &Entity<BufferStore> {
         &self.buffer_store
     }
 
-    pub fn git_store(&self) -> &Entity<GitStore> {
+    pub const fn git_store(&self) -> &Entity<GitStore> {
         &self.git_store
     }
 
-    pub fn agent_server_store(&self) -> &Entity<AgentServerStore> {
+    pub const fn agent_server_store(&self) -> &Entity<AgentServerStore> {
         &self.agent_server_store
     }
 
@@ -5496,18 +5496,18 @@ impl ResolvedPath {
         }
     }
 
-    pub fn project_path(&self) -> Option<&ProjectPath> {
+    pub const fn project_path(&self) -> Option<&ProjectPath> {
         match self {
             Self::ProjectPath { project_path, .. } => Some(project_path),
             _ => None,
         }
     }
 
-    pub fn is_file(&self) -> bool {
+    pub const fn is_file(&self) -> bool {
         !self.is_dir()
     }
 
-    pub fn is_dir(&self) -> bool {
+    pub const fn is_dir(&self) -> bool {
         match self {
             Self::ProjectPath { is_dir, .. } => *is_dir,
             Self::AbsPath { is_dir, .. } => *is_dir,
@@ -5594,7 +5594,7 @@ impl Completion {
     }
 }
 
-fn proto_to_prompt(level: proto::language_server_prompt_request::Level) -> gpui::PromptLevel {
+const fn proto_to_prompt(level: proto::language_server_prompt_request::Level) -> gpui::PromptLevel {
     match level {
         proto::language_server_prompt_request::Level::Info(_) => gpui::PromptLevel::Info,
         proto::language_server_prompt_request::Level::Warning(_) => gpui::PromptLevel::Warning,

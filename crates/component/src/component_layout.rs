@@ -83,7 +83,7 @@ impl ComponentExample {
         self
     }
 
-    pub fn width(mut self, width: Pixels) -> Self {
+    pub const fn width(mut self, width: Pixels) -> Self {
         self.width = Some(width);
         self
     }
@@ -150,7 +150,7 @@ impl RenderOnce for ComponentExampleGroup {
 }
 
 impl ComponentExampleGroup {
-    pub fn new(examples: Vec<ComponentExample>) -> Self {
+    pub const fn new(examples: Vec<ComponentExample>) -> Self {
         Self {
             title: None,
             examples,
@@ -168,15 +168,15 @@ impl ComponentExampleGroup {
             vertical: false,
         }
     }
-    pub fn width(mut self, width: Pixels) -> Self {
+    pub const fn width(mut self, width: Pixels) -> Self {
         self.width = Some(width);
         self
     }
-    pub fn grow(mut self) -> Self {
+    pub const fn grow(mut self) -> Self {
         self.grow = true;
         self
     }
-    pub fn vertical(mut self) -> Self {
+    pub const fn vertical(mut self) -> Self {
         self.vertical = true;
         self
     }
@@ -193,7 +193,7 @@ pub fn empty_example(variant_name: impl Into<SharedString>) -> ComponentExample 
     ComponentExample::new(variant_name, div().w_full().text_center().items_center().text_xs().opacity(0.4).child("This space is intentionally left blank. It indicates a case that should render nothing.").into_any_element())
 }
 
-pub fn example_group(examples: Vec<ComponentExample>) -> ComponentExampleGroup {
+pub const fn example_group(examples: Vec<ComponentExample>) -> ComponentExampleGroup {
     ComponentExampleGroup::new(examples)
 }
 

@@ -225,11 +225,11 @@ pub enum ServiceMode {
 }
 
 impl ServiceMode {
-    pub fn is_collab(&self) -> bool {
+    pub const fn is_collab(&self) -> bool {
         matches!(self, Self::Collab | Self::All)
     }
 
-    pub fn is_api(&self) -> bool {
+    pub const fn is_api(&self) -> bool {
         matches!(self, Self::Api | Self::All)
     }
 }

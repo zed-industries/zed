@@ -66,7 +66,7 @@ impl Display for Mode {
 }
 
 impl Mode {
-    pub fn is_visual(&self) -> bool {
+    pub const fn is_visual(&self) -> bool {
         match self {
             Self::Visual | Self::VisualLine | Self::VisualBlock | Self::HelixSelect => true,
             Self::Normal | Self::Insert | Self::Replace | Self::HelixNormal => false,
@@ -994,7 +994,7 @@ pub struct SearchState {
 }
 
 impl Operator {
-    pub fn id(&self) -> &'static str {
+    pub const fn id(&self) -> &'static str {
         match self {
             Operator::Object { around: false } => "i",
             Operator::Object { around: true } => "a",
@@ -1063,7 +1063,7 @@ impl Operator {
         }
     }
 
-    pub fn is_waiting(&self, mode: Mode) -> bool {
+    pub const fn is_waiting(&self, mode: Mode) -> bool {
         match self {
             Operator::AddSurrounds { target } => target.is_some() || mode.is_visual(),
             Operator::FindForward { .. }
@@ -1106,7 +1106,7 @@ impl Operator {
         }
     }
 
-    pub fn starts_dot_recording(&self) -> bool {
+    pub const fn starts_dot_recording(&self) -> bool {
         match self {
             Operator::Change
             | Operator::Delete

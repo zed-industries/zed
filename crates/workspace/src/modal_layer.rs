@@ -67,7 +67,7 @@ impl Default for ModalLayer {
 }
 
 impl ModalLayer {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             active_modal: None,
             dismiss_on_focus_lost: false,
@@ -159,7 +159,7 @@ impl ModalLayer {
         active_modal.modal.view().downcast::<V>().ok()
     }
 
-    pub fn has_active_modal(&self) -> bool {
+    pub const fn has_active_modal(&self) -> bool {
         self.active_modal.is_some()
     }
 }

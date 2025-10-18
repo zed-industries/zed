@@ -332,22 +332,22 @@ impl<D: PickerDelegate> Picker<D> {
         self
     }
 
-    pub fn widest_item(mut self, ix: Option<usize>) -> Self {
+    pub const fn widest_item(mut self, ix: Option<usize>) -> Self {
         self.widest_item = ix;
         self
     }
 
-    pub fn max_height(mut self, max_height: Option<gpui::Length>) -> Self {
+    pub const fn max_height(mut self, max_height: Option<gpui::Length>) -> Self {
         self.max_height = max_height;
         self
     }
 
-    pub fn show_scrollbar(mut self, show_scrollbar: bool) -> Self {
+    pub const fn show_scrollbar(mut self, show_scrollbar: bool) -> Self {
         self.show_scrollbar = show_scrollbar;
         self
     }
 
-    pub fn modal(mut self, modal: bool) -> Self {
+    pub const fn modal(mut self, modal: bool) -> Self {
         self.is_modal = modal;
         self
     }

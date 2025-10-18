@@ -506,7 +506,7 @@ impl Prettier {
         }
     }
 
-    pub fn server(&self) -> Option<&Arc<LanguageServer>> {
+    pub const fn server(&self) -> Option<&Arc<LanguageServer>> {
         match self {
             Self::Real(local) => Some(&local.server),
             #[cfg(any(test, feature = "test-support"))]
@@ -514,7 +514,7 @@ impl Prettier {
         }
     }
 
-    pub fn is_default(&self) -> bool {
+    pub const fn is_default(&self) -> bool {
         match self {
             Self::Real(local) => local.default,
             #[cfg(any(test, feature = "test-support"))]

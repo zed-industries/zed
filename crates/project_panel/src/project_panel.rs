@@ -180,7 +180,7 @@ struct EditState {
 }
 
 impl EditState {
-    fn is_new_entry(&self) -> bool {
+    const fn is_new_entry(&self) -> bool {
         self.leaf_entry_id.is_none()
     }
 }
@@ -332,7 +332,7 @@ struct FoldedAncestors {
 }
 
 impl FoldedAncestors {
-    fn max_ancestor_depth(&self) -> usize {
+    const fn max_ancestor_depth(&self) -> usize {
         self.ancestors.len()
     }
 
@@ -344,7 +344,7 @@ impl FoldedAncestors {
         self.ancestors.get(self.current_ancestor_depth).copied()
     }
 
-    fn active_index(&self) -> usize {
+    const fn active_index(&self) -> usize {
         self.max_ancestor_depth()
             .saturating_sub(1)
             .saturating_sub(self.current_ancestor_depth)
@@ -3612,7 +3612,7 @@ impl ProjectPanel {
         }
     }
 
-    fn is_copy_modifier_set(modifiers: &Modifiers) -> bool {
+    const fn is_copy_modifier_set(modifiers: &Modifiers) -> bool {
         cfg!(target_os = "macos") && modifiers.alt
             || cfg!(not(target_os = "macos")) && modifiers.control
     }
@@ -5303,7 +5303,7 @@ impl StickyCandidate for StickyProjectPanelCandidate {
     }
 }
 
-fn item_width_estimate(depth: usize, item_text_chars: usize, is_symlink: bool) -> usize {
+const fn item_width_estimate(depth: usize, item_text_chars: usize, is_symlink: bool) -> usize {
     const ICON_SIZE_FACTOR: usize = 2;
     let mut item_width = depth * ICON_SIZE_FACTOR + item_text_chars;
     if is_symlink {
@@ -6036,11 +6036,11 @@ impl Focusable for ProjectPanel {
 }
 
 impl ClipboardEntry {
-    fn is_cut(&self) -> bool {
+    const fn is_cut(&self) -> bool {
         matches!(self, Self::Cut { .. })
     }
 
-    fn items(&self) -> &BTreeSet<SelectedEntry> {
+    const fn items(&self) -> &BTreeSet<SelectedEntry> {
         match self {
             ClipboardEntry::Copied(entries) | ClipboardEntry::Cut(entries) => entries,
         }

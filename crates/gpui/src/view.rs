@@ -127,12 +127,12 @@ impl AnyView {
     }
 
     /// Gets the [TypeId] of the underlying view.
-    pub fn entity_type(&self) -> TypeId {
+    pub const fn entity_type(&self) -> TypeId {
         self.entity.entity_type
     }
 
     /// Gets the entity id of this handle.
-    pub fn entity_id(&self) -> EntityId {
+    pub const fn entity_id(&self) -> EntityId {
         self.entity.entity_id()
     }
 }

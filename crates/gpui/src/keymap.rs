@@ -36,7 +36,7 @@ impl Keymap {
     }
 
     /// Get the current version of the keymap.
-    pub fn version(&self) -> KeymapVersion {
+    pub const fn version(&self) -> KeymapVersion {
         self.version
     }
 

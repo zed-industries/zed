@@ -258,7 +258,7 @@ impl SanitizedPath {
         self.0.starts_with(&prefix.0)
     }
 
-    pub fn as_path(&self) -> &Path {
+    pub const fn as_path(&self) -> &Path {
         &self.0
     }
 
@@ -341,7 +341,7 @@ impl PathStyle {
     }
 
     #[inline]
-    pub fn separator(&self) -> &'static str {
+    pub const fn separator(&self) -> &'static str {
         match self {
             PathStyle::Posix => "/",
             PathStyle::Windows => "\\",
@@ -391,7 +391,7 @@ pub struct RemotePathBuf {
 }
 
 impl RemotePathBuf {
-    pub fn new(string: String, style: PathStyle) -> Self {
+    pub const fn new(string: String, style: PathStyle) -> Self {
         Self { style, string }
     }
 
@@ -399,7 +399,7 @@ impl RemotePathBuf {
         Self::new(path.to_string(), style)
     }
 
-    pub fn path_style(&self) -> PathStyle {
+    pub const fn path_style(&self) -> PathStyle {
         self.style
     }
 
@@ -539,7 +539,7 @@ pub struct PathWithPosition {
 
 impl PathWithPosition {
     /// Returns a PathWithPosition from a path.
-    pub fn from_path(path: PathBuf) -> Self {
+    pub const fn from_path(path: PathBuf) -> Self {
         Self {
             path,
             row: None,

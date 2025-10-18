@@ -290,7 +290,7 @@ impl SelectedEntry {
         }
     }
 
-    fn is_invalidated(&self) -> bool {
+    const fn is_invalidated(&self) -> bool {
         matches!(self, Self::Invalidated(_))
     }
 }
@@ -302,7 +302,7 @@ struct FsChildren {
 }
 
 impl FsChildren {
-    fn may_be_fold_part(&self) -> bool {
+    const fn may_be_fold_part(&self) -> bool {
         self.dirs == 0 || (self.dirs == 1 && self.files == 0)
     }
 }
@@ -344,7 +344,7 @@ impl Excerpt {
         }
     }
 
-    fn should_fetch_outlines(&self) -> bool {
+    const fn should_fetch_outlines(&self) -> bool {
         match &self.outlines {
             ExcerptOutlines::Outlines(_) => false,
             ExcerptOutlines::Invalidated(_) => true,
@@ -577,7 +577,7 @@ enum OutlineEntry {
 }
 
 impl OutlineEntry {
-    fn ids(&self) -> (BufferId, ExcerptId) {
+    const fn ids(&self) -> (BufferId, ExcerptId) {
         match self {
             OutlineEntry::Excerpt(excerpt) => (excerpt.buffer_id, excerpt.id),
             OutlineEntry::Outline(outline) => (outline.buffer_id, outline.excerpt_id),
@@ -1416,7 +1416,7 @@ impl OutlinePanel {
         cx.notify();
     }
 
-    fn is_unfoldable(&self, entry: &PanelEntry) -> bool {
+    const fn is_unfoldable(&self, entry: &PanelEntry) -> bool {
         matches!(entry, PanelEntry::FoldedDirs(..))
     }
 
@@ -4444,7 +4444,7 @@ impl OutlinePanel {
         cx.notify();
     }
 
-    fn selected_entry(&self) -> Option<&PanelEntry> {
+    const fn selected_entry(&self) -> Option<&PanelEntry> {
         match &self.selected_entry {
             SelectedEntry::Invalidated(entry) => entry.as_ref(),
             SelectedEntry::Valid(entry, _) => Some(entry),

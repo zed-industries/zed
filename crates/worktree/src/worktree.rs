@@ -570,7 +570,7 @@ impl Worktree {
         })
     }
 
-    pub fn as_local(&self) -> Option<&LocalWorktree> {
+    pub const fn as_local(&self) -> Option<&LocalWorktree> {
         if let Worktree::Local(worktree) = self {
             Some(worktree)
         } else {
@@ -578,7 +578,7 @@ impl Worktree {
         }
     }
 
-    pub fn as_remote(&self) -> Option<&RemoteWorktree> {
+    pub const fn as_remote(&self) -> Option<&RemoteWorktree> {
         if let Worktree::Remote(worktree) = self {
             Some(worktree)
         } else {
@@ -586,7 +586,7 @@ impl Worktree {
         }
     }
 
-    pub fn as_local_mut(&mut self) -> Option<&mut LocalWorktree> {
+    pub const fn as_local_mut(&mut self) -> Option<&mut LocalWorktree> {
         if let Worktree::Local(worktree) = self {
             Some(worktree)
         } else {
@@ -594,7 +594,7 @@ impl Worktree {
         }
     }
 
-    pub fn as_remote_mut(&mut self) -> Option<&mut RemoteWorktree> {
+    pub const fn as_remote_mut(&mut self) -> Option<&mut RemoteWorktree> {
         if let Worktree::Remote(worktree) = self {
             Some(worktree)
         } else {
@@ -602,11 +602,11 @@ impl Worktree {
         }
     }
 
-    pub fn is_local(&self) -> bool {
+    pub const fn is_local(&self) -> bool {
         matches!(self, Worktree::Local(_))
     }
 
-    pub fn is_remote(&self) -> bool {
+    pub const fn is_remote(&self) -> bool {
         !self.is_local()
     }
 
@@ -647,14 +647,14 @@ impl Worktree {
         }
     }
 
-    pub fn is_visible(&self) -> bool {
+    pub const fn is_visible(&self) -> bool {
         match self {
             Worktree::Local(worktree) => worktree.visible,
             Worktree::Remote(worktree) => worktree.visible,
         }
     }
 
-    pub fn replica_id(&self) -> ReplicaId {
+    pub const fn replica_id(&self) -> ReplicaId {
         match self {
             Worktree::Local(_) => 0,
             Worktree::Remote(worktree) => worktree.replica_id,
@@ -1018,7 +1018,7 @@ impl LocalWorktree {
         !self.share_private_files && self.settings.is_path_private(path)
     }
 
-    pub fn fs_is_case_sensitive(&self) -> bool {
+    pub const fn fs_is_case_sensitive(&self) -> bool {
         self.fs_case_sensitive
     }
 
@@ -1792,7 +1792,7 @@ impl LocalWorktree {
 }
 
 impl RemoteWorktree {
-    pub fn project_id(&self) -> u64 {
+    pub const fn project_id(&self) -> u64 {
         self.project_id
     }
 
@@ -2053,7 +2053,7 @@ impl Snapshot {
         }
     }
 
-    pub fn id(&self) -> WorktreeId {
+    pub const fn id(&self) -> WorktreeId {
         self.id
     }
 
@@ -2367,7 +2367,7 @@ impl Snapshot {
         self.root_name.as_unix_str()
     }
 
-    pub fn scan_id(&self) -> usize {
+    pub const fn scan_id(&self) -> usize {
         self.scan_id
     }
 
@@ -2388,7 +2388,7 @@ impl Snapshot {
         self.entry_for_path(&entry.path)
     }
 
-    pub fn path_style(&self) -> PathStyle {
+    pub const fn path_style(&self) -> PathStyle {
         self.path_style
     }
 }
@@ -3175,7 +3175,7 @@ impl File {
         self.worktree.read(cx).id()
     }
 
-    pub fn project_entry_id(&self) -> Option<ProjectEntryId> {
+    pub const fn project_entry_id(&self) -> Option<ProjectEntryId> {
         match self.disk_state {
             DiskState::Deleted => None,
             _ => self.entry_id,
@@ -3386,32 +3386,32 @@ impl Entry {
         }
     }
 
-    pub fn is_created(&self) -> bool {
+    pub const fn is_created(&self) -> bool {
         self.mtime.is_some()
     }
 
-    pub fn is_dir(&self) -> bool {
+    pub const fn is_dir(&self) -> bool {
         self.kind.is_dir()
     }
 
-    pub fn is_file(&self) -> bool {
+    pub const fn is_file(&self) -> bool {
         self.kind.is_file()
     }
 }
 
 impl EntryKind {
-    pub fn is_dir(&self) -> bool {
+    pub const fn is_dir(&self) -> bool {
         matches!(
             self,
             EntryKind::Dir | EntryKind::PendingDir | EntryKind::UnloadedDir
         )
     }
 
-    pub fn is_unloaded(&self) -> bool {
+    pub const fn is_unloaded(&self) -> bool {
         matches!(self, EntryKind::UnloadedDir)
     }
 
-    pub fn is_file(&self) -> bool {
+    pub const fn is_file(&self) -> bool {
         matches!(self, EntryKind::File)
     }
 }
@@ -5201,7 +5201,7 @@ struct TraversalProgress<'a> {
 }
 
 impl TraversalProgress<'_> {
-    fn count(&self, include_files: bool, include_dirs: bool, include_ignored: bool) -> usize {
+    const fn count(&self, include_files: bool, include_dirs: bool, include_ignored: bool) -> usize {
         match (include_files, include_dirs, include_ignored) {
             (true, true, true) => self.count,
             (true, true, false) => self.non_ignored_count,
@@ -5315,11 +5315,11 @@ impl<'a> Traversal<'a> {
         self.cursor.item()
     }
 
-    pub fn snapshot(&self) -> &'a Snapshot {
+    pub const fn snapshot(&self) -> &'a Snapshot {
         self.snapshot
     }
 
-    pub fn start_offset(&self) -> usize {
+    pub const fn start_offset(&self) -> usize {
         self.cursor
             .start()
             .count(self.include_files, self.include_dirs, self.include_ignored)
@@ -5390,11 +5390,11 @@ enum TraversalTarget<'a> {
 }
 
 impl<'a> TraversalTarget<'a> {
-    fn path(path: &'a RelPath) -> Self {
+    const fn path(path: &'a RelPath) -> Self {
         Self::Path(PathTarget::Path(path))
     }
 
-    fn successor(path: &'a RelPath) -> Self {
+    const fn successor(path: &'a RelPath) -> Self {
         Self::Path(PathTarget::Successor(path))
     }
 
@@ -5522,19 +5522,19 @@ impl ProjectEntryId {
         Self(counter.fetch_add(1, SeqCst))
     }
 
-    pub fn from_proto(id: u64) -> Self {
+    pub const fn from_proto(id: u64) -> Self {
         Self(id as usize)
     }
 
-    pub fn to_proto(self) -> u64 {
+    pub const fn to_proto(self) -> u64 {
         self.0 as u64
     }
 
-    pub fn from_usize(id: usize) -> Self {
+    pub const fn from_usize(id: usize) -> Self {
         ProjectEntryId(id)
     }
 
-    pub fn to_usize(self) -> usize {
+    pub const fn to_usize(self) -> usize {
         self.0
     }
 }

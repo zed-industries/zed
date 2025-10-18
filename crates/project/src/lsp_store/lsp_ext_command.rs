@@ -49,7 +49,7 @@ pub struct ExpandedMacro {
 }
 
 impl ExpandedMacro {
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.name.is_empty() && self.expansion.is_empty()
     }
 }
@@ -180,7 +180,7 @@ pub struct DocsUrls {
 }
 
 impl DocsUrls {
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.web.is_none() && self.local.is_none()
     }
 }

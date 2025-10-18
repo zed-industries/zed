@@ -183,7 +183,7 @@ impl WorktreeStore {
         Some(worktree.read(cx).absolutize(&project_path.path))
     }
 
-    pub fn path_style(&self) -> PathStyle {
+    pub const fn path_style(&self) -> PathStyle {
         match &self.state {
             WorktreeStoreState::Local { .. } => PathStyle::local(),
             WorktreeStoreState::Remote { path_style, .. } => *path_style,
@@ -686,7 +686,7 @@ impl WorktreeStore {
         self.send_project_updates(cx);
     }
 
-    pub fn set_worktrees_reordered(&mut self, worktrees_reordered: bool) {
+    pub const fn set_worktrees_reordered(&mut self, worktrees_reordered: bool) {
         self.worktrees_reordered = worktrees_reordered;
     }
 

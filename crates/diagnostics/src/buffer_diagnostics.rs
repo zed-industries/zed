@@ -621,7 +621,7 @@ impl BufferDiagnosticsEditor {
         self.update_all_diagnostics(window, cx);
     }
 
-    fn max_diagnostics_severity(include_warnings: bool) -> DiagnosticSeverity {
+    const fn max_diagnostics_severity(include_warnings: bool) -> DiagnosticSeverity {
         match include_warnings {
             true => DiagnosticSeverity::Warning,
             false => DiagnosticSeverity::Error,

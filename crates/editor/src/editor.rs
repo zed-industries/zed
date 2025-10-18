@@ -252,7 +252,7 @@ enum ReportEditorEvent {
 }
 
 impl ReportEditorEvent {
-    pub fn event_type(&self) -> &'static str {
+    pub const fn event_type(&self) -> &'static str {
         match self {
             Self::Saved { .. } => "Editor Saved",
             Self::EditorOpened => "Editor Opened",
@@ -268,7 +268,7 @@ struct InlineValueCache {
 }
 
 impl InlineValueCache {
-    fn new(enabled: bool) -> Self {
+    const fn new(enabled: bool) -> Self {
         Self {
             enabled,
             inlays: Vec::new(),
@@ -287,7 +287,7 @@ pub enum InlayId {
 }
 
 impl InlayId {
-    fn id(&self) -> u32 {
+    const fn id(&self) -> u32 {
         match self {
             Self::EditPrediction(id) => *id,
             Self::DebuggerValue(id) => *id,
@@ -318,7 +318,7 @@ pub enum Navigated {
 }
 
 impl Navigated {
-    pub fn from_bool(yes: bool) -> Navigated {
+    pub const fn from_bool(yes: bool) -> Navigated {
         if yes { Navigated::Yes } else { Navigated::No }
     }
 }
@@ -507,7 +507,7 @@ pub enum EditorMode {
 }
 
 impl EditorMode {
-    pub fn full() -> Self {
+    pub const fn full() -> Self {
         Self::Full {
             scale_ui_elements_with_buffer_font_size: true,
             show_active_line_background: true,
@@ -516,17 +516,17 @@ impl EditorMode {
     }
 
     #[inline]
-    pub fn is_full(&self) -> bool {
+    pub const fn is_full(&self) -> bool {
         matches!(self, Self::Full { .. })
     }
 
     #[inline]
-    pub fn is_single_line(&self) -> bool {
+    pub const fn is_single_line(&self) -> bool {
         matches!(self, Self::SingleLine { .. })
     }
 
     #[inline]
-    fn is_minimap(&self) -> bool {
+    const fn is_minimap(&self) -> bool {
         matches!(self, Self::Minimap { .. })
     }
 }
@@ -692,14 +692,14 @@ pub enum EditPredictionPreview {
 }
 
 impl EditPredictionPreview {
-    pub fn released_too_fast(&self) -> bool {
+    pub const fn released_too_fast(&self) -> bool {
         match self {
             EditPredictionPreview::Inactive { released_too_fast } => *released_too_fast,
             EditPredictionPreview::Active { .. } => false,
         }
     }
 
-    pub fn set_previous_scroll_position(&mut self, scroll_position: Option<ScrollAnchor>) {
+    pub const fn set_previous_scroll_position(&mut self, scroll_position: Option<ScrollAnchor>) {
         if let EditPredictionPreview::Active {
             previous_scroll_position,
             ..
@@ -726,7 +726,7 @@ pub enum ContextMenuPlacement {
 struct EditorActionId(usize);
 
 impl EditorActionId {
-    pub fn post_inc(&mut self) -> Self {
+    pub const fn post_inc(&mut self) -> Self {
         let answer = self.0;
 
         *self = Self(answer + 1);
@@ -778,7 +778,7 @@ impl MinimapVisibility {
         }
     }
 
-    fn hidden(&self) -> Self {
+    const fn hidden(&self) -> Self {
         match *self {
             Self::Enabled {
                 setting_configuration,
@@ -791,11 +791,11 @@ impl MinimapVisibility {
         }
     }
 
-    fn disabled(&self) -> bool {
+    const fn disabled(&self) -> bool {
         matches!(*self, Self::Disabled)
     }
 
-    fn settings_visibility(&self) -> bool {
+    const fn settings_visibility(&self) -> bool {
         match *self {
             Self::Enabled {
                 setting_configuration,
@@ -805,7 +805,7 @@ impl MinimapVisibility {
         }
     }
 
-    fn visible(&self) -> bool {
+    const fn visible(&self) -> bool {
         match *self {
             Self::Enabled {
                 setting_configuration,
@@ -815,7 +815,7 @@ impl MinimapVisibility {
         }
     }
 
-    fn toggle_visibility(&self) -> Self {
+    const fn toggle_visibility(&self) -> Self {
         match *self {
             Self::Enabled {
                 toggle_override,
@@ -901,7 +901,7 @@ pub struct ChangeList {
 }
 
 impl ChangeList {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             changes: Vec::new(),
             position: None,
@@ -1205,7 +1205,7 @@ enum NextScrollCursorCenterTopBottom {
 }
 
 impl NextScrollCursorCenterTopBottom {
-    fn next(&self) -> Self {
+    const fn next(&self) -> Self {
         match self {
             Self::Center => Self::Top,
             Self::Top => Self::Bottom,
@@ -1356,14 +1356,14 @@ impl SelectionEffects {
         }
     }
 
-    pub fn completions(self, completions: bool) -> Self {
+    pub const fn completions(self, completions: bool) -> Self {
         Self {
             completions,
             ..self
         }
     }
 
-    pub fn nav_history(self, nav_history: bool) -> Self {
+    pub const fn nav_history(self, nav_history: bool) -> Self {
         Self {
             nav_history: Some(nav_history),
             ..self
@@ -1632,7 +1632,7 @@ enum InlayHintRefreshReason {
 }
 
 impl InlayHintRefreshReason {
-    fn description(&self) -> &'static str {
+    const fn description(&self) -> &'static str {
         match self {
             Self::ModifiersChanged(_) => "modifiers changed",
             Self::Toggle(_) => "toggle",
@@ -2550,7 +2550,7 @@ impl Editor {
         key_context
     }
 
-    pub fn last_bounds(&self) -> Option<&Bounds<Pixels>> {
+    pub const fn last_bounds(&self) -> Option<&Bounds<Pixels>> {
         self.last_bounds.as_ref()
     }
 
@@ -2714,15 +2714,15 @@ impl Editor {
         });
     }
 
-    pub fn leader_id(&self) -> Option<CollaboratorId> {
+    pub const fn leader_id(&self) -> Option<CollaboratorId> {
         self.leader_id
     }
 
-    pub fn buffer(&self) -> &Entity<MultiBuffer> {
+    pub const fn buffer(&self) -> &Entity<MultiBuffer> {
         &self.buffer
     }
 
-    pub fn project(&self) -> Option<&Entity<Project>> {
+    pub const fn project(&self) -> Option<&Entity<Project>> {
         self.project.as_ref()
     }
 
@@ -2789,7 +2789,7 @@ impl Editor {
             .excerpt_containing(self.selections.newest_anchor().head(), cx)
     }
 
-    pub fn mode(&self) -> &EditorMode {
+    pub const fn mode(&self) -> &EditorMode {
         &self.mode
     }
 
@@ -2805,7 +2805,7 @@ impl Editor {
         self.collaboration_hub = Some(hub);
     }
 
-    pub fn set_in_project_search(&mut self, in_project_search: bool) {
+    pub const fn set_in_project_search(&mut self, in_project_search: bool) {
         self.in_project_search = in_project_search;
     }
 
@@ -2901,14 +2901,14 @@ impl Editor {
         cx.notify();
     }
 
-    pub fn set_current_line_highlight(
+    pub const fn set_current_line_highlight(
         &mut self,
         current_line_highlight: Option<CurrentLineHighlight>,
     ) {
         self.current_line_highlight = current_line_highlight;
     }
 
-    pub fn set_collapse_matches(&mut self, collapse_matches: bool) {
+    pub const fn set_collapse_matches(&mut self, collapse_matches: bool) {
         self.collapse_matches = collapse_matches;
     }
 
@@ -2926,7 +2926,7 @@ impl Editor {
         }
     }
 
-    pub fn set_input_enabled(&mut self, input_enabled: bool) {
+    pub const fn set_input_enabled(&mut self, input_enabled: bool) {
         self.input_enabled = input_enabled;
     }
 
@@ -2946,7 +2946,7 @@ impl Editor {
         }
     }
 
-    pub fn set_menu_edit_predictions_policy(&mut self, value: MenuEditPredictionsPolicy) {
+    pub const fn set_menu_edit_predictions_policy(&mut self, value: MenuEditPredictionsPolicy) {
         self.menu_edit_predictions_policy = value;
     }
 
@@ -2962,19 +2962,19 @@ impl Editor {
         self.read_only || self.buffer.read(cx).read_only()
     }
 
-    pub fn set_read_only(&mut self, read_only: bool) {
+    pub const fn set_read_only(&mut self, read_only: bool) {
         self.read_only = read_only;
     }
 
-    pub fn set_use_autoclose(&mut self, autoclose: bool) {
+    pub const fn set_use_autoclose(&mut self, autoclose: bool) {
         self.use_autoclose = autoclose;
     }
 
-    pub fn set_use_auto_surround(&mut self, auto_surround: bool) {
+    pub const fn set_use_auto_surround(&mut self, auto_surround: bool) {
         self.use_auto_surround = auto_surround;
     }
 
-    pub fn set_auto_replace_emoji_shortcode(&mut self, auto_replace: bool) {
+    pub const fn set_auto_replace_emoji_shortcode(&mut self, auto_replace: bool) {
         self.auto_replace_emoji_shortcode = auto_replace;
     }
 
@@ -3029,11 +3029,11 @@ impl Editor {
         })
     }
 
-    pub fn set_use_modal_editing(&mut self, to: bool) {
+    pub const fn set_use_modal_editing(&mut self, to: bool) {
         self.use_modal_editing = to;
     }
 
-    pub fn use_modal_editing(&self) -> bool {
+    pub const fn use_modal_editing(&self) -> bool {
         self.use_modal_editing
     }
 
@@ -5193,11 +5193,11 @@ impl Editor {
         );
     }
 
-    pub fn inlay_hints_enabled(&self) -> bool {
+    pub const fn inlay_hints_enabled(&self) -> bool {
         self.inlay_hint_cache.enabled
     }
 
-    pub fn inline_values_enabled(&self) -> bool {
+    pub const fn inline_values_enabled(&self) -> bool {
         self.inline_value_cache.enabled
     }
 
@@ -6627,7 +6627,7 @@ impl Editor {
             .into_any_element()
     }
 
-    pub fn context_menu(&self) -> &RefCell<Option<CodeContextMenu>> {
+    pub const fn context_menu(&self) -> &RefCell<Option<CodeContextMenu>> {
         &self.context_menu
     }
 
@@ -7222,21 +7222,21 @@ impl Editor {
         Some(())
     }
 
-    fn show_edit_predictions_in_menu(&self) -> bool {
+    const fn show_edit_predictions_in_menu(&self) -> bool {
         match self.edit_prediction_settings {
             EditPredictionSettings::Disabled => false,
             EditPredictionSettings::Enabled { show_in_menu, .. } => show_in_menu,
         }
     }
 
-    pub fn edit_predictions_enabled(&self) -> bool {
+    pub const fn edit_predictions_enabled(&self) -> bool {
         match self.edit_prediction_settings {
             EditPredictionSettings::Disabled => false,
             EditPredictionSettings::Enabled { .. } => true,
         }
     }
 
-    fn edit_prediction_requires_modifier(&self) -> bool {
+    const fn edit_prediction_requires_modifier(&self) -> bool {
         match self.edit_prediction_settings {
             EditPredictionSettings::Disabled => false,
             EditPredictionSettings::Enabled {
@@ -7308,7 +7308,7 @@ impl Editor {
         self.snippet_stack.is_empty() && self.edit_predictions_enabled()
     }
 
-    pub fn edit_prediction_preview_is_active(&self) -> bool {
+    pub const fn edit_prediction_preview_is_active(&self) -> bool {
         matches!(
             self.edit_prediction_preview,
             EditPredictionPreview::Active { .. }
@@ -7721,7 +7721,7 @@ impl Editor {
         })
     }
 
-    pub fn has_active_edit_prediction(&self) -> bool {
+    pub const fn has_active_edit_prediction(&self) -> bool {
         self.active_edit_prediction.is_some()
     }
 
@@ -8670,7 +8670,7 @@ impl Editor {
             .map(|menu| menu.origin())
     }
 
-    pub fn set_context_menu_options(&mut self, options: ContextMenuOptions) {
+    pub const fn set_context_menu_options(&mut self, options: ContextMenuOptions) {
         self.context_menu_options = Some(options);
     }
 
@@ -9257,7 +9257,7 @@ impl Editor {
         None
     }
 
-    fn edit_prediction_cursor_popover_height(&self) -> Pixels {
+    const fn edit_prediction_cursor_popover_height(&self) -> Pixels {
         px(30.)
     }
 
@@ -11707,7 +11707,7 @@ impl Editor {
         });
     }
 
-    pub fn clear_selection_drag_state(&mut self) {
+    pub const fn clear_selection_drag_state(&mut self) {
         self.selection_drag_state = SelectionDragState::None;
     }
 
@@ -14111,7 +14111,7 @@ impl Editor {
         self.nav_history = nav_history;
     }
 
-    pub fn nav_history(&self) -> Option<&ItemNavHistory> {
+    pub const fn nav_history(&self) -> Option<&ItemNavHistory> {
         self.nav_history.as_ref()
     }
 
@@ -17352,7 +17352,7 @@ impl Editor {
         Some(rename)
     }
 
-    pub fn pending_rename(&self) -> Option<&RenameState> {
+    pub const fn pending_rename(&self) -> Option<&RenameState> {
         self.pending_rename.as_ref()
     }
 
@@ -17642,7 +17642,7 @@ impl Editor {
         }
     }
 
-    pub fn active_diagnostic_group(&self) -> Option<&ActiveDiagnosticGroup> {
+    pub const fn active_diagnostic_group(&self) -> Option<&ActiveDiagnosticGroup> {
         match &self.active_diagnostics {
             ActiveDiagnostic::Group(group) => Some(group),
             _ => None,
@@ -17722,19 +17722,19 @@ impl Editor {
         self.inline_diagnostics.clear();
     }
 
-    pub fn disable_word_completions(&mut self) {
+    pub const fn disable_word_completions(&mut self) {
         self.word_completions_enabled = false;
     }
 
-    pub fn diagnostics_enabled(&self) -> bool {
+    pub const fn diagnostics_enabled(&self) -> bool {
         self.diagnostics_enabled && self.mode.is_full()
     }
 
-    pub fn inline_diagnostics_enabled(&self) -> bool {
+    pub const fn inline_diagnostics_enabled(&self) -> bool {
         self.inline_diagnostics_enabled && self.diagnostics_enabled()
     }
 
-    pub fn show_inline_diagnostics(&self) -> bool {
+    pub const fn show_inline_diagnostics(&self) -> bool {
         self.show_inline_diagnostics
     }
 
@@ -19199,7 +19199,7 @@ impl Editor {
         self.focused_block = Some(focused_block);
     }
 
-    pub(crate) fn take_focused_block(&mut self) -> Option<FocusedBlock> {
+    pub(crate) const fn take_focused_block(&mut self) -> Option<FocusedBlock> {
         self.focused_block.take()
     }
 
@@ -19403,7 +19403,7 @@ impl Editor {
         self.style = Some(style);
     }
 
-    pub fn style(&self) -> Option<&EditorStyle> {
+    pub const fn style(&self) -> Option<&EditorStyle> {
         self.style.as_ref()
     }
 
@@ -19422,7 +19422,7 @@ impl Editor {
         }
     }
 
-    pub fn set_soft_wrap(&mut self) {
+    pub const fn set_soft_wrap(&mut self) {
         self.soft_wrap_mode_override = Some(language_settings::SoftWrap::EditorWidth)
     }
 
@@ -19470,7 +19470,7 @@ impl Editor {
         cx.notify();
     }
 
-    fn should_show_indent_guides(&self) -> Option<bool> {
+    const fn should_show_indent_guides(&self) -> Option<bool> {
         self.show_indent_guides
     }
 
@@ -19846,7 +19846,7 @@ impl Editor {
         None
     }
 
-    pub fn git_blame_inline_enabled(&self) -> bool {
+    pub const fn git_blame_inline_enabled(&self) -> bool {
         self.git_blame_inline_enabled
     }
 
@@ -19930,11 +19930,11 @@ impl Editor {
         }
     }
 
-    pub fn blame(&self) -> Option<&Entity<GitBlame>> {
+    pub const fn blame(&self) -> Option<&Entity<GitBlame>> {
         self.blame.as_ref()
     }
 
-    pub fn show_git_blame_gutter(&self) -> bool {
+    pub const fn show_git_blame_gutter(&self) -> bool {
         self.show_git_blame_gutter
     }
 
@@ -21186,11 +21186,11 @@ impl Editor {
         cx.notify();
     }
 
-    pub fn set_searchable(&mut self, searchable: bool) {
+    pub const fn set_searchable(&mut self, searchable: bool) {
         self.searchable = searchable;
     }
 
-    pub fn searchable(&self) -> bool {
+    pub const fn searchable(&self) -> bool {
         self.searchable
     }
 
@@ -21639,7 +21639,7 @@ impl Editor {
         mouse_context_menu::deploy_context_menu(self, None, position, window, cx);
     }
 
-    pub fn inlay_hint_cache(&self) -> &InlayHintCache {
+    pub const fn inlay_hint_cache(&self) -> &InlayHintCache {
         &self.inlay_hint_cache
     }
 
@@ -21895,7 +21895,7 @@ impl Editor {
         })
     }
 
-    pub fn file_header_size(&self) -> u32 {
+    pub const fn file_header_size(&self) -> u32 {
         FILE_HEADER_HEIGHT
     }
 
@@ -22456,7 +22456,7 @@ struct WordBreakingTokenizer<'a> {
 }
 
 impl<'a> WordBreakingTokenizer<'a> {
-    fn new(input: &'a str) -> Self {
+    const fn new(input: &'a str) -> Self {
         Self { input }
     }
 }
@@ -23600,7 +23600,7 @@ impl EditorSnapshot {
             .language_at(position)
     }
 
-    pub fn is_focused(&self) -> bool {
+    pub const fn is_focused(&self) -> bool {
         self.is_focused
     }
 
@@ -24358,7 +24358,7 @@ fn edit_prediction_fallback_text(edits: &[(Range<Anchor>, String)], cx: &App) ->
     }
 }
 
-pub fn diagnostic_style(severity: lsp::DiagnosticSeverity, colors: &StatusColors) -> Hsla {
+pub const fn diagnostic_style(severity: lsp::DiagnosticSeverity, colors: &StatusColors) -> Hsla {
     match severity {
         lsp::DiagnosticSeverity::ERROR => colors.error,
         lsp::DiagnosticSeverity::WARNING => colors.warning,
@@ -24533,7 +24533,7 @@ impl RowRangeExt for Range<DisplayRow> {
 
 /// If select range has more than one line, we
 /// just point the cursor to range.start.
-fn collapse_multiline_range(range: Range<Point>) -> Range<Point> {
+const fn collapse_multiline_range(range: Range<Point>) -> Range<Point> {
     if range.start.row == range.end.row {
         range
     } else {

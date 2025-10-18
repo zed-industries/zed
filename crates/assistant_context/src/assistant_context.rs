@@ -62,7 +62,7 @@ impl ContextId {
         Self(Uuid::new_v4().to_string())
     }
 
-    pub fn from_proto(id: String) -> Self {
+    pub const fn from_proto(id: String) -> Self {
         Self(id)
     }
 
@@ -75,7 +75,7 @@ impl ContextId {
 pub struct MessageId(pub clock::Lamport);
 
 impl MessageId {
-    pub fn as_u64(self) -> u64 {
+    pub const fn as_u64(self) -> u64 {
         self.0.as_u64()
     }
 }
@@ -505,14 +505,14 @@ impl ContextSummary {
             .map_or_else(|| message.into(), |content| content.text.clone().into())
     }
 
-    pub fn content(&self) -> Option<&ContextSummaryContent> {
+    pub const fn content(&self) -> Option<&ContextSummaryContent> {
         match self {
             ContextSummary::Content(content) => Some(content),
             ContextSummary::Pending | ContextSummary::Error => None,
         }
     }
 
-    fn content_as_mut(&mut self) -> Option<&mut ContextSummaryContent> {
+    const fn content_as_mut(&mut self) -> Option<&mut ContextSummaryContent> {
         match self {
             ContextSummary::Content(content) => Some(content),
             ContextSummary::Pending | ContextSummary::Error => None,
@@ -530,11 +530,11 @@ impl ContextSummary {
         }
     }
 
-    pub fn is_pending(&self) -> bool {
+    pub const fn is_pending(&self) -> bool {
         matches!(self, ContextSummary::Pending)
     }
 
-    fn timestamp(&self) -> Option<clock::Lamport> {
+    const fn timestamp(&self) -> Option<clock::Lamport> {
         match self {
             ContextSummary::Content(content) => Some(content.timestamp),
             ContextSummary::Pending | ContextSummary::Error => None,
@@ -636,7 +636,7 @@ pub enum Content {
 }
 
 impl Content {
-    fn range(&self) -> Range<language::Anchor> {
+    const fn range(&self) -> Range<language::Anchor> {
         match self {
             Self::Image { anchor, .. } => *anchor..*anchor,
         }
@@ -731,11 +731,11 @@ impl AssistantContext {
         )
     }
 
-    pub fn completion_mode(&self) -> agent_settings::CompletionMode {
+    pub const fn completion_mode(&self) -> agent_settings::CompletionMode {
         self.completion_mode
     }
 
-    pub fn set_completion_mode(&mut self, completion_mode: agent_settings::CompletionMode) {
+    pub const fn set_completion_mode(&mut self, completion_mode: agent_settings::CompletionMode) {
         self.completion_mode = completion_mode;
     }
 
@@ -902,11 +902,11 @@ impl AssistantContext {
         this
     }
 
-    pub fn id(&self) -> &ContextId {
+    pub const fn id(&self) -> &ContextId {
         &self.id
     }
 
-    pub fn replica_id(&self) -> ReplicaId {
+    pub const fn replica_id(&self) -> ReplicaId {
         self.timestamp.replica_id
     }
 
@@ -917,7 +917,7 @@ impl AssistantContext {
         }
     }
 
-    pub fn slash_commands(&self) -> &Arc<SlashCommandWorkingSet> {
+    pub const fn slash_commands(&self) -> &Arc<SlashCommandWorkingSet> {
         &self.slash_commands
     }
 
@@ -1165,7 +1165,7 @@ impl AssistantContext {
         cx.emit(ContextEvent::Operation(op));
     }
 
-    pub fn buffer(&self) -> &Entity<Buffer> {
+    pub const fn buffer(&self) -> &Entity<Buffer> {
         &self.buffer
     }
 
@@ -1181,11 +1181,11 @@ impl AssistantContext {
         self.prompt_builder.clone()
     }
 
-    pub fn path(&self) -> Option<&Arc<Path>> {
+    pub const fn path(&self) -> Option<&Arc<Path>> {
         self.path.as_ref()
     }
 
-    pub fn summary(&self) -> &ContextSummary {
+    pub const fn summary(&self) -> &ContextSummary {
         &self.summary
     }
 
@@ -1258,7 +1258,7 @@ impl AssistantContext {
         }
     }
 
-    pub fn token_count(&self) -> Option<u64> {
+    pub const fn token_count(&self) -> Option<u64> {
         self.token_count
     }
 
@@ -3046,7 +3046,7 @@ pub enum PendingToolUseStatus {
 }
 
 impl PendingToolUseStatus {
-    pub fn is_idle(&self) -> bool {
+    pub const fn is_idle(&self) -> bool {
         matches!(self, PendingToolUseStatus::Idle)
     }
 }

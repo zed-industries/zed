@@ -54,7 +54,7 @@ pub enum HistoryEntry {
 }
 
 impl HistoryEntry {
-    pub fn updated_at(&self) -> DateTime<Utc> {
+    pub const fn updated_at(&self) -> DateTime<Utc> {
         match self {
             HistoryEntry::AcpThread(thread) => thread.updated_at,
             HistoryEntry::TextThread(context) => context.mtime.to_utc(),
@@ -253,7 +253,7 @@ impl HistoryStore {
         cx.notify()
     }
 
-    pub fn is_empty(&self, _cx: &App) -> bool {
+    pub const fn is_empty(&self, _cx: &App) -> bool {
         self.entries.is_empty()
     }
 

@@ -26,7 +26,7 @@ pub struct PromptHandle {
 }
 
 impl PromptHandle {
-    pub(crate) fn new(sender: oneshot::Sender<usize>) -> Self {
+    pub(crate) const fn new(sender: oneshot::Sender<usize>) -> Self {
         Self { sender }
     }
 

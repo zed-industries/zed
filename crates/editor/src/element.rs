@@ -9678,7 +9678,7 @@ impl Element for EditorElement {
     }
 }
 
-pub(super) fn gutter_bounds(
+pub(super) const fn gutter_bounds(
     editor_bounds: Bounds<Pixels>,
     gutter_dimensions: GutterDimensions,
 ) -> Bounds<Pixels> {
@@ -10047,7 +10047,7 @@ impl ScrollbarLayout {
         }
     }
 
-    fn with_thumb_state(self, thumb_state: Option<ScrollbarThumbState>) -> Self {
+    const fn with_thumb_state(self, thumb_state: Option<ScrollbarThumbState>) -> Self {
         if let Some(thumb_state) = thumb_state {
             Self {
                 thumb_state,
@@ -10367,7 +10367,7 @@ pub struct CursorName {
 }
 
 impl CursorLayout {
-    pub fn new(
+    pub const fn new(
         origin: gpui::Point<Pixels>,
         block_width: Pixels,
         line_height: Pixels,
@@ -10475,7 +10475,7 @@ impl CursorLayout {
         }
     }
 
-    pub fn shape(&self) -> CursorShape {
+    pub const fn shape(&self) -> CursorShape {
         self.shape
     }
 }

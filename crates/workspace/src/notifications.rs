@@ -52,7 +52,7 @@ impl NotificationId {
     }
 
     /// Builds a `NotificationId` out of the given string.
-    pub fn named(id: SharedString) -> Self {
+    pub const fn named(id: SharedString) -> Self {
         Self::Named(id)
     }
 }
@@ -500,12 +500,12 @@ impl NotificationFrame {
 
     /// Determines whether the given notification ID should be suppressible
     /// Suppressed motifications will not be shown anymore
-    pub fn show_suppress_button(mut self, show: bool) -> Self {
+    pub const fn show_suppress_button(mut self, show: bool) -> Self {
         self.show_suppress_button = show;
         self
     }
 
-    pub fn show_close_button(mut self, show: bool) -> Self {
+    pub const fn show_close_button(mut self, show: bool) -> Self {
         self.show_close_button = show;
         self
     }
@@ -676,12 +676,12 @@ pub mod simple_message_notification {
             self
         }
 
-        pub fn primary_icon(mut self, icon: IconName) -> Self {
+        pub const fn primary_icon(mut self, icon: IconName) -> Self {
             self.primary_icon = Some(icon);
             self
         }
 
-        pub fn primary_icon_color(mut self, color: Color) -> Self {
+        pub const fn primary_icon_color(mut self, color: Color) -> Self {
             self.primary_icon_color = Some(color);
             self
         }
@@ -710,12 +710,12 @@ pub mod simple_message_notification {
             self
         }
 
-        pub fn secondary_icon(mut self, icon: IconName) -> Self {
+        pub const fn secondary_icon(mut self, icon: IconName) -> Self {
             self.secondary_icon = Some(icon);
             self
         }
 
-        pub fn secondary_icon_color(mut self, color: Color) -> Self {
+        pub const fn secondary_icon_color(mut self, color: Color) -> Self {
             self.secondary_icon_color = Some(color);
             self
         }
@@ -756,14 +756,14 @@ pub mod simple_message_notification {
             cx.emit(DismissEvent);
         }
 
-        pub fn show_close_button(mut self, show: bool) -> Self {
+        pub const fn show_close_button(mut self, show: bool) -> Self {
             self.show_close_button = show;
             self
         }
 
         /// Determines whether the given notification ID should be supressable
         /// Suppressed motifications will not be shown anymor
-        pub fn show_suppress_button(mut self, show: bool) -> Self {
+        pub const fn show_suppress_button(mut self, show: bool) -> Self {
             self.show_suppress_button = show;
             self
         }

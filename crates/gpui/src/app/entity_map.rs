@@ -244,12 +244,12 @@ impl AnyEntity {
     }
 
     /// Returns the id associated with this entity.
-    pub fn entity_id(&self) -> EntityId {
+    pub const fn entity_id(&self) -> EntityId {
         self.entity_id
     }
 
     /// Returns the [TypeId] associated with this entity.
-    pub fn entity_type(&self) -> TypeId {
+    pub const fn entity_type(&self) -> TypeId {
         self.entity_type
     }
 
@@ -395,7 +395,7 @@ impl<T: 'static> Entity<T> {
     }
 
     /// Get the entity ID associated with this entity
-    pub fn entity_id(&self) -> EntityId {
+    pub const fn entity_id(&self) -> EntityId {
         self.any_entity.entity_id
     }
 
@@ -520,7 +520,7 @@ pub struct AnyWeakEntity {
 
 impl AnyWeakEntity {
     /// Get the entity ID associated with this weak reference.
-    pub fn entity_id(&self) -> EntityId {
+    pub const fn entity_id(&self) -> EntityId {
         self.entity_id
     }
 

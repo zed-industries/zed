@@ -1871,7 +1871,7 @@ impl CollabPanel {
             });
     }
 
-    fn start_move_channel(
+    const fn start_move_channel(
         &mut self,
         channel_id: ChannelId,
         _window: &mut Window,

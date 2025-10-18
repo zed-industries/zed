@@ -30,19 +30,19 @@ impl Chip {
     }
 
     /// Sets the color of the label.
-    pub fn label_color(mut self, color: Color) -> Self {
+    pub const fn label_color(mut self, color: Color) -> Self {
         self.label_color = color;
         self
     }
 
     /// Sets the size of the label.
-    pub fn label_size(mut self, size: LabelSize) -> Self {
+    pub const fn label_size(mut self, size: LabelSize) -> Self {
         self.label_size = size;
         self
     }
 
     /// Sets a custom background color for the callout content.
-    pub fn bg_color(mut self, color: Hsla) -> Self {
+    pub const fn bg_color(mut self, color: Hsla) -> Self {
         self.bg_color = Some(color);
         self
     }

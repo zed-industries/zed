@@ -65,7 +65,7 @@ impl Notification {
         serde_json::from_value(value).ok()
     }
 
-    pub fn all_variant_names() -> &'static [&'static str] {
+    pub const fn all_variant_names() -> &'static [&'static str] {
         Self::VARIANTS
     }
 }

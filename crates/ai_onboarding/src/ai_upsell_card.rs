@@ -41,7 +41,7 @@ impl AiUpsellCard {
         }
     }
 
-    pub fn tab_index(mut self, tab_index: Option<isize>) -> Self {
+    pub const fn tab_index(mut self, tab_index: Option<isize>) -> Self {
         self.tab_index = tab_index;
         self
     }

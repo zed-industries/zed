@@ -627,7 +627,7 @@ impl UniformList {
     }
 
     /// Sets the sizing behavior, similar to the `List` element.
-    pub fn with_sizing_behavior(mut self, behavior: ListSizingBehavior) -> Self {
+    pub const fn with_sizing_behavior(mut self, behavior: ListSizingBehavior) -> Self {
         self.sizing_behavior = behavior;
         self
     }

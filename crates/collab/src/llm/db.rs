@@ -32,7 +32,7 @@ impl LlmDatabase {
         })
     }
 
-    pub fn options(&self) -> &ConnectOptions {
+    pub const fn options(&self) -> &ConnectOptions {
         &self.options
     }
 

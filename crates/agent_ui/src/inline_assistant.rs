@@ -1618,7 +1618,7 @@ struct InlineAssistGroup {
 }
 
 impl InlineAssistGroup {
-    fn new() -> Self {
+    const fn new() -> Self {
         Self {
             assist_ids: Vec::new(),
             linked: true,
@@ -1642,7 +1642,7 @@ fn build_assist_editor_renderer(editor: &Entity<PromptEditor<BufferCodegen>>) ->
 struct InlineAssistGroupId(usize);
 
 impl InlineAssistGroupId {
-    fn post_inc(&mut self) -> InlineAssistGroupId {
+    const fn post_inc(&mut self) -> InlineAssistGroupId {
         let id = *self;
         self.0 += 1;
         id

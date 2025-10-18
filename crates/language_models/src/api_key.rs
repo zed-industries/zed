@@ -35,7 +35,7 @@ pub struct ApiKey {
 }
 
 impl ApiKeyState {
-    pub fn new(url: SharedString) -> Self {
+    pub const fn new(url: SharedString) -> Self {
         Self {
             url,
             load_status: LoadStatus::NotPresent,
@@ -43,11 +43,11 @@ impl ApiKeyState {
         }
     }
 
-    pub fn has_key(&self) -> bool {
+    pub const fn has_key(&self) -> bool {
         matches!(self.load_status, LoadStatus::Loaded { .. })
     }
 
-    pub fn is_from_env_var(&self) -> bool {
+    pub const fn is_from_env_var(&self) -> bool {
         match &self.load_status {
             LoadStatus::Loaded(ApiKey {
                 source: ApiKeySource::EnvVar { .. },

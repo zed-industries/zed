@@ -47,19 +47,19 @@ impl From<WorktreeId> for usize {
 }
 
 impl WorktreeId {
-    pub fn from_usize(handle_id: usize) -> Self {
+    pub const fn from_usize(handle_id: usize) -> Self {
         Self(handle_id)
     }
 
-    pub fn from_proto(id: u64) -> Self {
+    pub const fn from_proto(id: u64) -> Self {
         Self(id as usize)
     }
 
-    pub fn to_proto(self) -> u64 {
+    pub const fn to_proto(self) -> u64 {
         self.0 as u64
     }
 
-    pub fn to_usize(self) -> usize {
+    pub const fn to_usize(self) -> usize {
         self.0
     }
 }

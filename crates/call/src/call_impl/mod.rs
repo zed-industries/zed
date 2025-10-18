@@ -404,7 +404,7 @@ impl ActiveCall {
         room.update(cx, |room, cx| room.unshare_project(project, cx))
     }
 
-    pub fn location(&self) -> Option<&WeakEntity<Project>> {
+    pub const fn location(&self) -> Option<&WeakEntity<Project>> {
         self.location.as_ref()
     }
 
@@ -466,7 +466,7 @@ impl ActiveCall {
         self.client.clone()
     }
 
-    pub fn pending_invites(&self) -> &HashSet<u64> {
+    pub const fn pending_invites(&self) -> &HashSet<u64> {
         &self.pending_invites
     }
 

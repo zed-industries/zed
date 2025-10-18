@@ -19,7 +19,7 @@ impl Role {
         }
     }
 
-    pub fn to_proto(self) -> proto::LanguageModelRole {
+    pub const fn to_proto(self) -> proto::LanguageModelRole {
         match self {
             Role::User => proto::LanguageModelRole::LanguageModelUser,
             Role::Assistant => proto::LanguageModelRole::LanguageModelAssistant,
@@ -27,7 +27,7 @@ impl Role {
         }
     }
 
-    pub fn cycle(self) -> Role {
+    pub const fn cycle(self) -> Role {
         match self {
             Role::User => Role::Assistant,
             Role::Assistant => Role::System,

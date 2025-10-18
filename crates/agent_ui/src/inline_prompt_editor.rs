@@ -759,7 +759,7 @@ pub enum PromptEditorEvent {
 pub struct InlineAssistId(pub usize);
 
 impl InlineAssistId {
-    pub fn post_inc(&mut self) -> InlineAssistId {
+    pub const fn post_inc(&mut self) -> InlineAssistId {
         let id = *self;
         self.0 += 1;
         id
@@ -932,7 +932,7 @@ impl PromptEditor<BufferCodegen> {
 pub struct TerminalInlineAssistId(pub usize);
 
 impl TerminalInlineAssistId {
-    pub fn post_inc(&mut self) -> TerminalInlineAssistId {
+    pub const fn post_inc(&mut self) -> TerminalInlineAssistId {
         let id = *self;
         self.0 += 1;
         id
@@ -1135,27 +1135,27 @@ pub enum GenerationMode {
 }
 
 impl GenerationMode {
-    fn start_label(self) -> &'static str {
+    const fn start_label(self) -> &'static str {
         match self {
             GenerationMode::Generate => "Generate",
             GenerationMode::Transform => "Transform",
         }
     }
-    fn tooltip_interrupt(self) -> &'static str {
+    const fn tooltip_interrupt(self) -> &'static str {
         match self {
             GenerationMode::Generate => "Interrupt Generation",
             GenerationMode::Transform => "Interrupt Transform",
         }
     }
 
-    fn tooltip_restart(self) -> &'static str {
+    const fn tooltip_restart(self) -> &'static str {
         match self {
             GenerationMode::Generate => "Restart Generation",
             GenerationMode::Transform => "Restart Transform",
         }
     }
 
-    fn tooltip_accept(self) -> &'static str {
+    const fn tooltip_accept(self) -> &'static str {
         match self {
             GenerationMode::Generate => "Accept Generation",
             GenerationMode::Transform => "Accept Transform",

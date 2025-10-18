@@ -36,7 +36,7 @@ impl ParsedMarkdownElement {
         })
     }
 
-    pub fn is_list_item(&self) -> bool {
+    pub const fn is_list_item(&self) -> bool {
         matches!(self, Self::ListItem(_))
     }
 }
@@ -132,13 +132,13 @@ impl Default for ParsedMarkdownTableRow {
 }
 
 impl ParsedMarkdownTableRow {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             children: Vec::new(),
         }
     }
 
-    pub fn with_children(children: Vec<MarkdownParagraph>) -> Self {
+    pub const fn with_children(children: Vec<MarkdownParagraph>) -> Self {
         Self { children }
     }
 }
@@ -326,11 +326,11 @@ impl Image {
         self.alt_text = Some(alt_text);
     }
 
-    pub fn set_width(&mut self, width: DefiniteLength) {
+    pub const fn set_width(&mut self, width: DefiniteLength) {
         self.width = Some(width);
     }
 
-    pub fn set_height(&mut self, height: DefiniteLength) {
+    pub const fn set_height(&mut self, height: DefiniteLength) {
         self.height = Some(height);
     }
 }

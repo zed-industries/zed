@@ -8,12 +8,12 @@ pub struct WindowsWindowControls {
 }
 
 impl WindowsWindowControls {
-    pub fn new(button_height: Pixels) -> Self {
+    pub const fn new(button_height: Pixels) -> Self {
         Self { button_height }
     }
 
     #[cfg(not(target_os = "windows"))]
-    fn get_font() -> &'static str {
+    const fn get_font() -> &'static str {
         "Segoe Fluent Icons"
     }
 

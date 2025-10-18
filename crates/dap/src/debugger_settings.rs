@@ -49,7 +49,7 @@ impl Settings for DebuggerSettings {
     }
 }
 
-fn dap_granularity_from_settings(
+const fn dap_granularity_from_settings(
     granularity: settings::SteppingGranularity,
 ) -> dap_types::SteppingGranularity {
     match granularity {

@@ -1809,7 +1809,7 @@ pub fn active_match_index(
     }
 }
 
-pub fn entry_label_color(selected: bool) -> Color {
+pub const fn entry_label_color(selected: bool) -> Color {
     if selected {
         Color::Default
     } else {
@@ -1817,7 +1817,7 @@ pub fn entry_label_color(selected: bool) -> Color {
     }
 }
 
-pub fn entry_diagnostic_aware_icon_name_and_color(
+pub const fn entry_diagnostic_aware_icon_name_and_color(
     diagnostic_severity: Option<DiagnosticSeverity>,
 ) -> Option<(IconName, Color)> {
     match diagnostic_severity {
@@ -1827,7 +1827,7 @@ pub fn entry_diagnostic_aware_icon_name_and_color(
     }
 }
 
-pub fn entry_diagnostic_aware_icon_decoration_and_color(
+pub const fn entry_diagnostic_aware_icon_decoration_and_color(
     diagnostic_severity: Option<DiagnosticSeverity>,
 ) -> Option<(IconDecorationKind, Color)> {
     match diagnostic_severity {

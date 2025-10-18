@@ -164,7 +164,7 @@ impl StyledText {
     }
 
     /// Get the layout for this element. This can be used to map indices to pixels and vice versa.
-    pub fn layout(&self) -> &TextLayout {
+    pub const fn layout(&self) -> &TextLayout {
         &self.layout
     }
 

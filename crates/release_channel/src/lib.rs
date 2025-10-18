@@ -44,7 +44,7 @@ impl Global for GlobalAppCommitSha {}
 
 impl AppCommitSha {
     /// Creates a new [`AppCommitSha`].
-    pub fn new(sha: String) -> Self {
+    pub const fn new(sha: String) -> Self {
         AppCommitSha(sha)
     }
 
@@ -139,12 +139,12 @@ impl ReleaseChannel {
     }
 
     /// Returns whether we want to poll for updates for this [`ReleaseChannel`]
-    pub fn poll_for_updates(&self) -> bool {
+    pub const fn poll_for_updates(&self) -> bool {
         !matches!(self, ReleaseChannel::Dev)
     }
 
     /// Returns the display name for this [`ReleaseChannel`].
-    pub fn display_name(&self) -> &'static str {
+    pub const fn display_name(&self) -> &'static str {
         match self {
             ReleaseChannel::Dev => "Zed Dev",
             ReleaseChannel::Nightly => "Zed Nightly",
@@ -154,7 +154,7 @@ impl ReleaseChannel {
     }
 
     /// Returns the programmatic name for this [`ReleaseChannel`].
-    pub fn dev_name(&self) -> &'static str {
+    pub const fn dev_name(&self) -> &'static str {
         match self {
             ReleaseChannel::Dev => "dev",
             ReleaseChannel::Nightly => "nightly",
@@ -166,7 +166,7 @@ impl ReleaseChannel {
     /// Returns the application ID that's used by Wayland as application ID
     /// and WM_CLASS on X11.
     /// This also has to match the bundle identifier for Zed on macOS.
-    pub fn app_id(&self) -> &'static str {
+    pub const fn app_id(&self) -> &'static str {
         match self {
             ReleaseChannel::Dev => "dev.zed.Zed-Dev",
             ReleaseChannel::Nightly => "dev.zed.Zed-Nightly",
@@ -176,7 +176,7 @@ impl ReleaseChannel {
     }
 
     /// Returns the query parameter for this [`ReleaseChannel`].
-    pub fn release_query_param(&self) -> Option<&'static str> {
+    pub const fn release_query_param(&self) -> Option<&'static str> {
         match self {
             Self::Dev => None,
             Self::Nightly => Some("nightly=1"),

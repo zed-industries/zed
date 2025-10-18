@@ -40,17 +40,17 @@ impl Disclosure {
         self
     }
 
-    pub fn opened_icon(mut self, icon: IconName) -> Self {
+    pub const fn opened_icon(mut self, icon: IconName) -> Self {
         self.opened_icon = icon;
         self
     }
 
-    pub fn closed_icon(mut self, icon: IconName) -> Self {
+    pub const fn closed_icon(mut self, icon: IconName) -> Self {
         self.closed_icon = icon;
         self
     }
 
-    pub fn disabled(mut self, disabled: bool) -> Self {
+    pub const fn disabled(mut self, disabled: bool) -> Self {
         self.disabled = disabled;
         self
     }
