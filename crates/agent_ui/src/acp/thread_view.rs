@@ -2224,6 +2224,8 @@ impl AcpThreadView {
                             .gap_0p5()
                             .text_ui_sm(cx)
                             .bg(self.tool_card_header_bg(cx))
+                            .max_h(rems(20.))
+                            .overflow_y_scroll()
                             .child(
                                 Label::new("Run Command")
                                     .buffer_font(cx)
