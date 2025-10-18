@@ -11,8 +11,7 @@ use language::{
     LanguageServerStatusUpdate, ServerHealth,
 };
 use project::{
-    EnvironmentErrorMessage, LanguageServerProgress, LspStoreEvent, Project,
-    ProjectEnvironmentEvent,
+    LanguageServerProgress, LspStoreEvent, Project, ProjectEnvironmentEvent,
     git_store::{GitStoreEvent, Repository},
 };
 use smallvec::SmallVec;
@@ -327,20 +326,20 @@ impl ActivityIndicator {
             .flatten()
     }
 
-    fn pending_environment_error<'a>(&'a self, cx: &'a App) -> Option<&'a EnvironmentErrorMessage> {
+    fn pending_environment_error<'a>(&'a self, cx: &'a App) -> Option<&'a String> {
         self.project.read(cx).peek_environment_error(cx)
     }
 
     fn content_to_render(&mut self, cx: &mut Context<Self>) -> Option<Content> {
         // Show if any direnv calls failed
-        if let Some(error) = self.pending_environment_error(cx) {
+        if let Some(message) = self.pending_environment_error(cx) {
             return Some(Content {
                 icon: Some(
                     Icon::new(IconName::Warning)
                         .size(IconSize::Small)
                         .into_any_element(),
                 ),
-                message: error.0.clone(),
+                message: message.clone(),
                 on_click: Some(Arc::new(move |this, window, cx| {
                     this.project.update(cx, |project, cx| {
                         project.pop_environment_error(cx);
