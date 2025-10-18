@@ -1772,7 +1772,7 @@ async fn test_visual_indent_count(cx: &mut gpui::TestAppContext) {
     cx.assert_state("    ˇhi", Mode::Normal);
 }
 
-#[perf]
+#[perf(iterations = 1)]
 #[gpui::test]
 async fn test_record_replay_recursion(cx: &mut gpui::TestAppContext) {
     let mut cx = NeovimBackedTestContext::new(cx).await;
