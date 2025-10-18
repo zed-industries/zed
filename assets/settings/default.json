@@ -175,6 +175,16 @@
   //
   // Default: true
   "zoomed_padding": true,
+  // What draws Zed's window decorations (titlebar):
+  // 1. Client application (Zed) draws its own window decorations
+  //    "client"
+  // 2. Display server draws the window decorations. Not supported by GNOME Wayland.
+  //    "server"
+  //
+  // This requires restarting Zed for changes to take effect.
+  //
+  // Default: "client"
+  "window_decorations": "client",
   // Whether to use the system provided dialogs for Open and Save As.
   // When set to false, Zed will use the built-in keyboard-first pickers.
   "use_system_path_prompts": true,
