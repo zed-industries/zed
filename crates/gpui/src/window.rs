@@ -2411,7 +2411,7 @@ impl Window {
             return f(self);
         };
 
-        let abs_offset = self.element_offset() + offset;
+        let abs_offset = self.element_offset() + point(offset.x.round(), offset.y.round());
         self.with_absolute_element_offset(abs_offset, f)
     }
 
