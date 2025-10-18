@@ -95,7 +95,7 @@ impl Render for ModeIndicator {
         let vim_readable = vim.read(cx);
         let status_label = vim_readable.status_label.clone();
         let temp_mode = vim_readable.temp_mode;
-        let mode = vim_readable.mode.clone();
+        let mode = vim_readable.mode;
 
         let theme = cx.theme();
         let colors = theme.colors();
