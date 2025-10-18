@@ -87,6 +87,8 @@ struct InProgressConfigure {
 pub struct WaylandWindowState {
     surface_state: WaylandSurfaceState,
     acknowledged_first_configure: bool,
+    parent: Option<WaylandWindowStatePtr>,
+    children: Vec<XdgToplevel>,
     pub surface: wl_surface::WlSurface,
     app_id: Option<String>,
     appearance: WindowAppearance,
@@ -126,7 +128,7 @@ impl WaylandSurfaceState {
         surface: &wl_surface::WlSurface,
         globals: &Globals,
         params: &WindowParams,
-        parent: Option<XdgToplevel>,
+        parent: Option<WaylandWindowStatePtr>,
     ) -> anyhow::Result<Self> {
         // For layer_shell windows, create a layer surface instead of an xdg surface
         if let WindowKind::LayerShell(options) = &params.kind {
@@ -178,8 +180,10 @@ impl WaylandSurfaceState {
             .get_xdg_surface(&surface, &globals.qh, surface.id());
 
         let toplevel = xdg_surface.get_toplevel(&globals.qh, surface.id());
+        let xdg_parent = parent.as_ref().and_then(|w| w.toplevel());
+
         if params.kind == WindowKind::Floating || params.kind == WindowKind::Dialog {
-            toplevel.set_parent(parent.as_ref());
+            toplevel.set_parent(xdg_parent.as_ref());
         }
 
         if params.kind == WindowKind::Dialog
@@ -188,6 +192,10 @@ impl WaylandSurfaceState {
             let xdg_dialog = dialog.get_xdg_dialog(&toplevel, &globals.qh, ());
 
             xdg_dialog.set_modal();
+
+            if let Some(parent) = parent.as_ref() {
+                parent.add_children(toplevel.clone());
+            }
         }
 
         if let Some(size) = params.window_min_size {
@@ -296,6 +304,7 @@ impl WaylandWindowState {
         globals: Globals,
         gpu_context: &BladeContext,
         options: WindowParams,
+        parent: Option<WaylandWindowStatePtr>,
     ) -> anyhow::Result<Self> {
         let renderer = {
             let raw_window = RawWindow {
@@ -327,6 +336,8 @@ impl WaylandWindowState {
         Ok(Self {
             surface_state,
             acknowledged_first_configure: false,
+            parent,
+            children: Vec::new(),
             surface,
             app_id: None,
             blur: None,
@@ -398,6 +409,15 @@ pub enum ImeInput {
 impl Drop for WaylandWindow {
     fn drop(&mut self) {
         let mut state = self.0.state.borrow_mut();
+        if let Some(xdg_toplevel) = state.surface_state.toplevel()
+            && let Some(parent) = state.parent.as_ref()
+        {
+            parent
+                .state
+                .borrow_mut()
+                .children
+                .retain(|child| !(child.id() == xdg_toplevel.id()));
+        }
         let surface_id = state.surface.id();
         let client = state.client.clone();
 
@@ -456,10 +476,10 @@ impl WaylandWindow {
         client: WaylandClientStatePtr,
         params: WindowParams,
         appearance: WindowAppearance,
-        parent: Option<XdgToplevel>,
+        parent: Option<WaylandWindowStatePtr>,
     ) -> anyhow::Result<(Self, ObjectId)> {
         let surface = globals.compositor.create_surface(&globals.qh, ());
-        let surface_state = WaylandSurfaceState::new(&surface, &globals, &params, parent)?;
+        let surface_state = WaylandSurfaceState::new(&surface, &globals, &params, parent.clone())?;
 
         if let Some(fractional_scale_manager) = globals.fractional_scale_manager.as_ref() {
             fractional_scale_manager.get_fractional_scale(&surface, &globals.qh, surface.id());
@@ -481,6 +501,7 @@ impl WaylandWindow {
                 globals,
                 gpu_context,
                 params,
+                parent,
             )?)),
             callbacks: Rc::new(RefCell::new(Callbacks::default())),
         });
@@ -507,6 +528,16 @@ impl WaylandWindowStatePtr {
 
     pub fn ptr_eq(&self, other: &Self) -> bool {
         Rc::ptr_eq(&self.state, &other.state)
+    }
+
+    pub fn add_children(&self, child: XdgToplevel) {
+        let mut state = self.state.borrow_mut();
+        state.children.push(child);
+    }
+
+    pub fn has_children(&self) -> bool {
+        let state = self.state.borrow();
+        !state.children.is_empty()
     }
 
     pub fn frame(&self) {

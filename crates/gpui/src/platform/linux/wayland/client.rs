@@ -734,10 +734,7 @@ impl LinuxClient for WaylandClient {
     ) -> anyhow::Result<Box<dyn PlatformWindow>> {
         let mut state = self.0.borrow_mut();
 
-        let parent = state
-            .keyboard_focused_window
-            .as_ref()
-            .and_then(|w| w.toplevel());
+        let parent = state.keyboard_focused_window.clone();
 
         let (window, surface_id) = WaylandWindow::new(
             handle,
@@ -1298,12 +1295,18 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                 this.handle_keyboard_layout_change();
             }
             wl_keyboard::Event::Enter { surface, .. } => {
-                state.keyboard_focused_window = get_window(&mut state, &surface.id());
-                state.enter_token = Some(());
+                let window = get_window(&mut state, &surface.id());
+                if (window.is_some() && !window.as_ref().unwrap().has_children())
+                    || window.is_none()
+                {
+                    state.keyboard_focused_window = window;
 
-                if let Some(window) = state.keyboard_focused_window.clone() {
-                    drop(state);
-                    window.set_focused(true);
+                    state.enter_token = Some(());
+
+                    if let Some(window) = state.keyboard_focused_window.clone() {
+                        drop(state);
+                        window.set_focused(true);
+                    }
                 }
             }
             wl_keyboard::Event::Leave { surface, .. } => {
@@ -1607,6 +1610,9 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                 state.button_pressed = None;
 
                 if let Some(window) = get_window(&mut state, &surface.id()) {
+                    if window.has_children() {
+                        return;
+                    }
                     state.mouse_focused_window = Some(window.clone());
 
                     if state.enter_token.is_some() {
