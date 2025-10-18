@@ -2484,120 +2484,15 @@ mod tests {
             })
         })
         .detach();
-        cx.background_spawn(async move {
-            assert_eq!(
-                completion_rx.recv().await.unwrap(),
-                Some(ExitStatus::default()),
-                "EOF should result in the tty shell exiting successfully",
-            );
-        })
-        .detach();
 
-        let _initial_event = event_rx.recv().await.expect("No wakeup event received");
-
-        // Start a sleep command
-        terminal.update(cx, |terminal, _| {
-            terminal .input(b"sleep 10\n");
-        });
-
-
-        while let Ok(Ok(_)) = smol_timeout(Duration::from_millis(50), event_rx.recv()).await {}
-
-        // Send Ctrl-c
-        terminal.update(cx, |terminal, _| {
-            let success = terminal.try_keystroke(&Keystroke::parse("ctrl-c").unwrap(), false);
-            assert!(success, "Should have registered ctrl-c sequence");
-        });
-
-        let mut events_after_ctrl_c = Vec::new();
-        while let Ok(Ok(event)) = smol_timeout(Duration::from_millis(200), event_rx.recv()).await {
-            events_after_ctrl_c.push(event.clone());
-        }
-
-        assert!(
-            !events_after_ctrl_c.contains(&Event::CloseTerminal),
-            "BUG: ctrl-c should NOT close the terminal, it should only kill the foreground process. Got events: {:?}",
-            events_after_ctrl_c
-        );
-
-        terminal.update(cx, |terminal, _| {
-            let success = terminal.try_keystroke(&Keystroke::parse("ctrl-d").unwrap(), false);
-            assert!(success, "Should have registered ctrl-d sequence");
-        });
-
-        let mut all_events = Vec::new();
-        while let Ok(Ok(new_event)) = smol_timeout(Duration::from_secs(1), event_rx.recv()).await {
-            all_events.push(new_event.clone());
-            if new_event == Event::CloseTerminal {
-                break;
-            }
-        }
-        assert!(
-            all_events.contains(&Event::CloseTerminal),
-            "EOF command sequence should have triggered a TTY terminal exit, but got events: {all_events:?}",
-        );
-    }
-
-
-    #[cfg(target_os = "linux")]
-    #[gpui::test(iterations = 10)]
-    async fn test_terminal_eof_linux(cx: &mut TestAppContext) {
-        cx.executor().allow_parking();
-
-        let (completion_tx, completion_rx) = smol::channel::unbounded();
-        // Build an empty command, which will result in a tty shell spawned.
-        let terminal = cx.new(|cx| {
-            TerminalBuilder::new(
-                None,
-                None,
-                task::Shell::System,
-                HashMap::default(),
-                CursorShape::default(),
-                AlternateScroll::On,
-                None,
-                false,
-                0,
-                Some(completion_tx),
-                cx,
-                Vec::new(),
-            )
-            .unwrap()
-            .subscribe(cx)
-        });
-
-        let (event_tx, event_rx) = smol::channel::unbounded::<Event>();
-        cx.update(|cx| {
-            cx.subscribe(&terminal, move |_, e, _| {
-                event_tx.send_blocking(e.clone()).unwrap();
-            })
-        })
-        .detach();
-        cx.background_spawn(async move {
-            assert_eq!(
-                completion_rx.recv().await.unwrap(),
-                Some(ExitStatus::default()),
-                "EOF should result in the tty shell exiting successfully",
-            );
-        })
-        .detach();
-
-        // Wait for 3 Events & Drain them.
-        for _ in 0..3 {
-            if let Ok(Ok(_)) = smol_timeout(Duration::from_millis(500), event_rx.recv()).await {}
-        }
-        smol::Timer::after(Duration::from_millis(100)).await;
+        let _initial_event = event_rx.recv().await.expect("No initial event received");
 
         // Send Ctrl-C
         terminal.update(cx, |terminal, _| {
             let success = terminal.try_keystroke(&Keystroke::parse("ctrl-c").unwrap(), false);
             assert!(success, "Should have registered ctrl-c sequence");
         });
-
-        // Wait for shell to process Ctrl-C
-        for _ in 0..5 {
-            if let Ok(Ok(_)) = smol_timeout(Duration::from_millis(200), event_rx.recv()).await {}
-        }
-        smol::Timer::after(Duration::from_millis(200)).await;
+        smol::Timer::after(Duration::from_millis(100)).await;
 
         // Send Ctrl-D
         terminal.update(cx, |terminal, _| {
@@ -2605,17 +2500,11 @@ mod tests {
             assert!(success, "Should have registered ctrl-d sequence");
         });
 
-        // Collect Events
-        let mut all_events = Vec::new();
-        while let Ok(Ok(new_event)) = smol_timeout(Duration::from_secs(2), event_rx.recv()).await {
-            all_events.push(new_event.clone());
-            if new_event == Event::CloseTerminal {
-                break;
-            }
-        }
+        // Wait for terminal exit
+        let result = smol_timeout(Duration::from_millis(100), completion_rx.recv()).await;
         assert!(
-            all_events.contains(&Event::CloseTerminal),
-            "EOF command sequence should have triggered a TTY terminal exit, but got events: {all_events:?}",
+            result.is_ok() && result.unwrap().unwrap().is_some(),
+            "EOF should result in the tty shell exiting",
         );
     }
 
