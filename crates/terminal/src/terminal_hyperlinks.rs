@@ -7,12 +7,16 @@ use alacritty_terminal::{
 };
 use regex::Regex;
 use std::{ops::Index, sync::LazyLock};
+use util::paths::PathWithPosition;
 
 const URL_REGEX: &str = r#"(ipfs:|ipns:|magnet:|mailto:|gemini://|gopher://|https://|http://|news:|file://|git://|ssh:|ftp://)[^\u{0000}-\u{001F}\u{007F}-\u{009F}<>"\s{-}\^⟨⟩`']+"#;
-// Optional suffix matches MSBuild diagnostic suffixes for path parsing in PathLikeWithPosition
-// https://learn.microsoft.com/en-us/visualstudio/msbuild/msbuild-diagnostic-format-for-tasks
-const WORD_REGEX: &str =
-    r#"[\$\+\w.\[\]:/\\@\-~()]+(?:\((?:\d+|\d+,\d+)\))|[\$\+\w.\[\]:/\\@\-~()]+"#;
+// Words are separated by only ascii space or tab characters. We technically could use
+// "\P{Zs}+" or, when supported, the shorter equivalent "\H+" instead, but it seems like we should
+// treat, for example, non-breaking space (&nbsp; 0xA0u32) as part of a word (see test_word_regex
+// below). It is not important for words to match the specification for valid file names on various
+// operating systems or line and column suffixes for various tools. It is used to identify something
+// that might be a path--invalid paths and suffixes will be filtered out later.
+const WORD_REGEX: &str = r#"[^ \t]+"#;
 
 const PYTHON_FILE_LINE_REGEX: &str = r#"File "(?P<file>[^"]+)", line (?P<line>\d+)"#;
 
@@ -90,61 +94,7 @@ pub(super) fn find_from_grid_point<T: EventListener>(
         })
     } else if let Some(word_match) = regex_match_at(term, point, &mut regex_searches.word_regex) {
         let file_path = term.bounds_to_string(*word_match.start(), *word_match.end());
-
-        let (sanitized_match, sanitized_word) = 'sanitize: {
-            let mut word_match = word_match;
-            let mut file_path = file_path;
-
-            if is_path_surrounded_by_common_symbols(&file_path) {
-                word_match = Match::new(
-                    word_match.start().add(term, Boundary::Grid, 1),
-                    word_match.end().sub(term, Boundary::Grid, 1),
-                );
-                file_path = file_path[1..file_path.len() - 1].to_owned();
-            }
-
-            while file_path.ends_with(':') {
-                file_path.pop();
-                word_match = Match::new(
-                    *word_match.start(),
-                    word_match.end().sub(term, Boundary::Grid, 1),
-                );
-            }
-            let mut colon_count = 0;
-            for c in file_path.chars() {
-                if c == ':' {
-                    colon_count += 1;
-                }
-            }
-            // strip trailing comment after colon in case of
-            // file/at/path.rs:row:column:description or error message
-            // so that the file path is `file/at/path.rs:row:column`
-            if colon_count > 2 {
-                let last_index = file_path.rfind(':').unwrap();
-                let prev_is_digit = last_index > 0
-                    && file_path
-                        .chars()
-                        .nth(last_index - 1)
-                        .is_some_and(|c| c.is_ascii_digit());
-                let next_is_digit = last_index < file_path.len() - 1
-                    && file_path
-                        .chars()
-                        .nth(last_index + 1)
-                        .is_none_or(|c| c.is_ascii_digit());
-                if prev_is_digit && !next_is_digit {
-                    let stripped_len = file_path.len() - last_index;
-                    word_match = Match::new(
-                        *word_match.start(),
-                        word_match.end().sub(term, Boundary::Grid, stripped_len),
-                    );
-                    file_path = file_path[0..last_index].to_owned();
-                }
-            }
-
-            break 'sanitize (word_match, file_path);
-        };
-
-        Some((sanitized_word, false, sanitized_match))
+        sanitize_file_path(file_path, word_match, term, point)
     } else {
         None
     };
@@ -222,12 +172,150 @@ fn sanitize_url_punctuation<T: EventListener>(
     }
 }
 
-fn is_path_surrounded_by_common_symbols(path: &str) -> bool {
-    // Avoid detecting `[]` or `()` strings as paths, surrounded by common symbols
-    path.len() > 2
-        // The rest of the brackets and various quotes cannot be matched by the [`WORD_REGEX`] hence not checked for.
-        && (path.starts_with('[') && path.ends_with(']')
-            || path.starts_with('(') && path.ends_with(')'))
+fn sanitize_file_path<T: EventListener>(
+    file_path: String,
+    mut word_match: Match,
+    term: &Term<T>,
+    point: AlacPoint,
+) -> Option<(String, bool, Match)> {
+    let shrink_by = |left_byte_count: usize,
+                     right_byte_count: usize,
+                     match_: &mut Match,
+                     file_path: &mut &str| {
+        let go = |dir: AlacDirection, mut point: AlacPoint, char_count: usize| -> AlacPoint {
+            for _ in 0..char_count {
+                point = term.expand_wide(point, dir);
+                point = match dir {
+                    AlacDirection::Right => point.add(term, Boundary::Grid, 1),
+                    AlacDirection::Left => point.sub(term, Boundary::Grid, 1),
+                };
+            }
+            point
+        };
+
+        let left_chars = file_path[..left_byte_count].chars();
+        let right_chars = file_path[file_path.len() - right_byte_count..].chars();
+
+        *match_ = Match::new(
+            go(AlacDirection::Right, *match_.start(), left_chars.count()),
+            go(AlacDirection::Left, *match_.end(), right_chars.count()),
+        );
+        *file_path = &file_path[left_byte_count..file_path.len() - right_byte_count];
+    };
+
+    let mut file_path = file_path.as_str();
+    let mut end_trimmed = false;
+
+    while file_path.ends_with([':', '.', ',']) {
+        shrink_by(0, 1, &mut word_match, &mut file_path);
+        end_trimmed = true;
+    }
+
+    if let Some((left_byte_count, right_byte_count)) = path_surrounded_by_common_symbols(file_path)
+    {
+        shrink_by(
+            left_byte_count,
+            right_byte_count,
+            &mut word_match,
+            &mut file_path,
+        );
+        end_trimmed = right_byte_count > 0;
+    }
+
+    if is_path_surrounded_by_quotes(file_path) {
+        shrink_by(1, 1, &mut word_match, &mut file_path);
+        end_trimmed = true;
+    }
+
+    // strip trailing comment after colon in case of
+    //   file/at/path.rs:row:column:description or error message
+    //   so that the file path is `file/at/path.rs:row:column`
+    // or
+    //   file/at/path.rs(row,column):description or error message
+    //   so that the file path is `file/at/path.rs(row,column)`
+    if !end_trimmed
+        && let Some(last_colon_index) = file_path.rfind(':')
+        && let PathWithPosition {
+            row: Some(_),
+            column: Some(_),
+            ..
+        } = PathWithPosition::parse_str(&file_path[..last_colon_index])
+    {
+        let desc_byte_count = file_path.len() - last_colon_index;
+        shrink_by(0, desc_byte_count, &mut word_match, &mut file_path);
+    }
+
+    word_match
+        .contains(&point)
+        .then_some((file_path.to_owned(), false, word_match))
+}
+
+/// Check if path is surrounded by quotes: `""` or `''` or ````
+fn is_path_surrounded_by_quotes(path: &str) -> bool {
+    let mut chars = path.chars();
+    if let Some(first_char) = chars.next()
+        && let Some(last_char) = chars.next_back()
+        && chars.next().is_some()
+    {
+        match (first_char, last_char) {
+            ('"', '"') | ('\'', '\'') | ('`', '`') => true,
+            _ => false,
+        }
+    } else {
+        false
+    }
+}
+
+/// Check if path is surrounded by brackets: `[]` or `()` or `{}` or `<>`.
+/// Supports one level of imbalance, e.g., `([]` or `<>]` or `(""` or `[:`
+fn path_surrounded_by_common_symbols(path: &str) -> Option<(usize, usize)> {
+    enum Surrounded {
+        Matched,
+        Left,
+        Right,
+        Mismatched,
+    }
+
+    fn surrounded_by(path: &str) -> Option<Surrounded> {
+        let mut chars = path.chars();
+        if let Some(first_char) = chars.next()
+            && let Some(last_char) = chars.next_back()
+            && chars.next().is_some()
+        {
+            match (first_char, last_char) {
+                ('[', ']') | ('(', ')') | ('{', '}') | ('<', '>') => Some(Surrounded::Matched),
+                ('[', _) | ('(', _) | ('{', _) | ('<', _) => match last_char {
+                    ']' | ')' | '}' | '>' => Some(Surrounded::Mismatched),
+                    _ => Some(Surrounded::Left),
+                },
+                (_, ']') | (_, ')') | (_, '}') | (_, '>') => match first_char {
+                    '[' | '(' | '{' | '<' => Some(Surrounded::Mismatched),
+                    '\'' | '"' | '`' => Some(Surrounded::Right),
+                    _ => None,
+                },
+                _ => None,
+            }
+        } else {
+            None
+        }
+    }
+
+    surrounded_by(path).and_then(|surrounded| match surrounded {
+        Surrounded::Matched => Some((1, 1)),
+        Surrounded::Left => Some((1, 0)),
+        Surrounded::Right => Some((0, 1)),
+        Surrounded::Mismatched => {
+            let start_trimmed = &path[1..];
+            let end_trimmed = &path[..path.len() - 1];
+            if let Some(Surrounded::Matched) = surrounded_by(start_trimmed) {
+                Some((2, 1))
+            } else if let Some(Surrounded::Matched) = surrounded_by(end_trimmed) {
+                Some((1, 2))
+            } else {
+                None
+            }
+        }
+    })
 }
 
 /// Based on alacritty/src/display/hint.rs > regex_match_at
@@ -378,10 +466,17 @@ mod tests {
 
     #[test]
     fn test_word_regex() {
+        const NBSP: char = char::from_u32(0xA0u32).unwrap();
         re_test(
             WORD_REGEX,
-            "hello, world! \"What\" is this?",
-            vec!["hello", "world", "What", "is", "this"],
+            &format!("hello, wor{NBSP}ld! \"Wh\r\nat\" is\tthis?"),
+            vec![
+                "hello,",
+                &format!("wor{NBSP}ld!"),
+                "\"Wh\r\nat\"",
+                "is",
+                "this?",
+            ],
         );
     }
 
@@ -440,14 +535,6 @@ mod tests {
         assert_eq!(actual, expected);
     }
 
-    // We use custom columns in many tests to workaround this issue by ensuring a wrapped
-    // line never ends on a wide char:
-    //
-    // <https://github.com/alacritty/alacritty/issues/8586>
-    //
-    // This issue was recently fixed, as soon as we update to a version containing the fix we
-    // can remove all the custom columns from these tests.
-    //
     macro_rules! test_hyperlink {
         ($($lines:expr),+; $hyperlink_kind:ident) => { {
             use crate::terminal_hyperlinks::tests::line_cells_count;
@@ -522,16 +609,18 @@ mod tests {
             test_path!("‹«/test/cool.rs»:«4»:«👉2»›:");
             test_path!("‹«/👉test/cool.rs»(«4»,«2»)›:");
             test_path!("‹«/test/cool.rs»(«4»,«2»👉)›:");
+            test_path!("/test/cool.rs:4:2👉:", "What is this?");
+            test_path!("/test/cool.rs(4,2)👉:", "What is this?");
 
             // path, line, column, and description
-            test_path!("‹«/test/cool.rs»:«4»:«2»›👉:Error!");
-            test_path!("‹«/test/cool.rs»:«4»:«2»›:👉Error!");
+            test_path!("/test/cool.rs:4:2👉:Error!");
+            test_path!("/test/cool.rs:4:2:👉Error!");
             test_path!("‹«/test/co👉ol.rs»(«4»,«2»)›:Error!");
 
             // Cargo output
-            test_path!("    Compiling Cool 👉(‹«/test/Cool»›)");
+            test_path!("    Compiling Cool 👉(/test/Cool)");
             test_path!("    Compiling Cool (‹«/👉test/Cool»›)");
-            test_path!("    Compiling Cool (‹«/test/Cool»›👉)");
+            test_path!("    Compiling Cool (/test/Cool👉)");
 
             // Python
             test_path!("‹«awe👉some.py»›");
@@ -540,6 +629,25 @@ mod tests {
             test_path!("    ‹File \"«/awe👉some.py»\", line «42»›: Wat?");
             test_path!("    ‹File \"«/awesome.py»👉\", line «42»›: Wat?");
             test_path!("    ‹File \"«/awesome.py»\", line «4👉2»›: Wat?");
+        }
+
+        #[test]
+        fn simple_with_descriptions() {
+            // path, line, column and description
+            test_path!("‹«/👉test/cool.rs»:«4»:«2»›:例Desc例例例");
+            test_path!("‹«/test/cool.rs»:«4»:«👉2»›:例Desc例例例");
+            test_path!("/test/cool.rs:4:2:例Desc例👉例例");
+            test_path!("‹«/👉test/cool.rs»(«4»,«2»)›:例Desc例例例");
+            test_path!("‹«/test/cool.rs»(«4»👉,«2»)›:例Desc例例例");
+            test_path!("/test/cool.rs(4,2):例Desc例👉例例");
+
+            // path, line, column and description w/extra colons
+            test_path!("‹«/👉test/cool.rs»:«4»:«2»:›:例Desc例例例");
+            test_path!("‹«/test/cool.rs»:«4»:«👉2»:›:例Desc例例例");
+            test_path!("/test/cool.rs:4:2::例Desc例👉例例");
+            test_path!("‹«/👉test/cool.rs»(«4»,«2»):›:例Desc例例例");
+            test_path!("‹«/test/cool.rs»(«4»,«2»👉):›:例Desc例例例");
+            test_path!("/test/cool.rs(4,2)::例Desc例👉例例");
         }
 
         #[test]
@@ -570,7 +678,23 @@ mod tests {
             test_path!("<‹«/test/co👉ol.rs»:«4»›>");
 
             test_path!("[\"‹«/test/co👉ol.rs»:«4»›\"]");
-            test_path!("'(‹«/test/co👉ol.rs»:«4»›)'");
+            test_path!("'‹«(/test/co👉ol.rs:4)»›'");
+
+            // Imbalanced
+            test_path!("([‹«/test/co👉ol.rs»:«4»›] was here...)");
+            test_path!("[Here's <‹«/test/co👉ol.rs»:«4»›>]");
+            test_path!("('‹«/test/co👉ol.rs»:«4»›' was here...)");
+            test_path!("[Here's `‹«/test/co👉ol.rs»:«4»›`]");
+        }
+
+        #[test]
+        fn trailing_punctuation() {
+            test_path!("‹«/test/co👉ol.rs»:«4»›:,");
+            test_path!("/test/cool.rs:4:👉,");
+            test_path!("[\"‹«/test/co👉ol.rs»:«4»›\"]:,");
+            test_path!("'‹«(/test/co👉ol.rs:4),,»›'..");
+            test_path!("('‹«/test/co👉ol.rs»:«4»›'::: was here...)");
+            test_path!("[Here's <‹«/test/co👉ol.rs»:«4»›>]::: ");
         }
 
         #[test]
@@ -624,7 +748,6 @@ mod tests {
             }
 
             #[test]
-            #[should_panic(expected = "No hyperlink found")]
             // <https://github.com/zed-industries/zed/issues/12338>
             fn issue_12338() {
                 // Issue #12338
@@ -659,6 +782,14 @@ mod tests {
             }
 
             #[test]
+            // <https://github.com/zed-industries/zed/issues/40202>
+            fn issue_40202() {
+                // Elixir
+                test_path!("[‹«lib/blitz_apex_👉server/stats/aggregate_rank_stats.ex»:«35»›: BlitzApexServer.Stats.AggregateRankStats.update/2]
+                1 #=> 1");
+            }
+
+            #[test]
             #[cfg_attr(
                 not(target_os = "windows"),
                 should_panic(
@@ -682,6 +813,27 @@ mod tests {
                 test_path!(
                     "‹«test/controllers/template_items_controller_test.rb»:«19»›:i👉n 'block in <class:TemplateItemsControllerTest>'"
                 );
+            }
+
+            #[test]
+            #[cfg_attr(
+                not(target_os = "windows"),
+                should_panic(
+                    expected = "Path = «/test/cool.rs:4:NotDesc», at grid cells (0, 1)..=(7, 2)"
+                )
+            )]
+            #[cfg_attr(
+                target_os = "windows",
+                should_panic(
+                    expected = r#"Path = «C:\\test\\cool.rs:4:NotDesc», at grid cells (0, 1)..=(8, 1)"#
+                )
+            )]
+            // PathWithPosition::parse_str considers "/test/co👉ol.rs:4:NotDesc" invalid input, but
+            // still succeeds and truncates the part after the position. Ideally this would be
+            // parsed as the path "/test/co👉ol.rs:4:NotDesc" with no position.
+            fn path_with_position_parse_str() {
+                test_path!("`‹«/test/co👉ol.rs:4:NotDesc»›`");
+                test_path!("<‹«/test/co👉ol.rs:4:NotDesc»›>");
             }
         }
 
@@ -716,24 +868,17 @@ mod tests {
             }
 
             #[test]
-            #[should_panic(expected = "Path = «»")]
-            fn colon_suffix_succeeds_in_finding_an_empty_maybe_path() {
-                test_path!("‹«/test/cool.rs»:«4»:«2»›👉:", "What is this?");
-                test_path!("‹«/test/cool.rs»(«4»,«2»)›👉:", "What is this?");
-            }
-
-            #[test]
             #[cfg_attr(
                 not(target_os = "windows"),
-                should_panic(expected = "Path = «/test/cool.rs»")
+                should_panic(expected = "Path = «/te:st/co:ol.r:s:4:2::::::»")
             )]
             #[cfg_attr(
                 target_os = "windows",
-                should_panic(expected = r#"Path = «C:\\test\\cool.rs»"#)
+                should_panic(expected = r#"Path = «C:\\te:st\\co:ol.r:s:4:2::::::»"#)
             )]
             fn many_trailing_colons_should_be_parsed_as_part_of_the_path() {
-                test_path!("‹«/test/cool.rs:::👉:»›");
                 test_path!("‹«/te:st/👉co:ol.r:s:4:2::::::»›");
+                test_path!("/test/cool.rs:::👉:");
             }
         }
 
@@ -1357,12 +1502,16 @@ mod tests {
             Some((hyperlink_word, true, hyperlink_match)) => {
                 check_hyperlink_match.check_iri_and_match(hyperlink_word, &hyperlink_match);
             }
-            _ => {
-                assert!(
-                    false,
-                    "No hyperlink found\n     at {source_location}:\n{}",
-                    check_hyperlink_match.format_renderable_content()
-                )
+            None => {
+                if expected_hyperlink.hyperlink_match.start()
+                    != expected_hyperlink.hyperlink_match.end()
+                {
+                    assert!(
+                        false,
+                        "No hyperlink found\n     at {source_location}:\n{}",
+                        check_hyperlink_match.format_renderable_content()
+                    )
+                }
             }
         }
     }
