@@ -3203,7 +3203,7 @@ fn test_random_collaboration(cx: &mut App, mut rng: StdRng) {
                 });
                 mutation_count -= 1;
             }
-            40..=49 if mutation_count != 0 && replica_id == ReplicaId::REMOTE => {
+            40..=49 if mutation_count != 0 && replica_id == ReplicaId::REMOTE_SERVER => {
                 let entry_count = rng.random_range(1..=5);
                 buffer.update(cx, |buffer, cx| {
                     let diagnostics = DiagnosticSet::new(

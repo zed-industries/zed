@@ -919,7 +919,7 @@ impl BufferStore {
             path: file.path.clone(),
             worktree_id: file.worktree_id(cx),
         });
-        let is_remote = buffer.replica_id() != ReplicaId::LOCAL;
+        let is_remote = buffer.replica_id().is_remote();
         let open_buffer = OpenBuffer::Complete {
             buffer: buffer_entity.downgrade(),
         };
