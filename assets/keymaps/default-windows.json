@@ -1106,7 +1106,8 @@
     "context": "StashList || (StashList > Picker > Editor)",
     "use_key_equivalents": true,
     "bindings": {
-      "ctrl-shift-backspace": "stash_picker::DropStashItem"
+      "ctrl-shift-backspace": "stash_picker::DropStashItem",
+      "ctrl-shift-v": "stash_picker::ShowStashItem"
     }
   },
   {
@@ -1292,6 +1293,15 @@
       "ctrl-0": ["settings_editor::FocusFile", 9],
       "ctrl-pageup": "settings_editor::FocusPreviousFile",
       "ctrl-pagedown": "settings_editor::FocusNextFile"
+    }
+  },
+  {
+    "context": "StashDiff > Editor",
+    "use_key_equivalents": true,
+    "bindings": {
+      "ctrl-space": "git::ApplyCurrentStash",
+      "ctrl-shift-space": "git::PopCurrentStash",
+      "ctrl-shift-backspace": "git::DropCurrentStash"
     }
   },
   {
