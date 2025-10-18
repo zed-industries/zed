@@ -7,21 +7,18 @@ use std::{
 };
 
 use blade_graphics as gpu;
-use collections::HashMap;
+use collections::{FxHashSet, HashMap};
 use futures::channel::oneshot::Receiver;
 
 use raw_window_handle as rwh;
 use wayland_backend::client::ObjectId;
 use wayland_client::WEnum;
 use wayland_client::{Proxy, protocol::wl_surface};
+use wayland_protocols::wp::fractional_scale::v1::client::wp_fractional_scale_v1;
 use wayland_protocols::wp::viewporter::client::wp_viewport;
 use wayland_protocols::xdg::decoration::zv1::client::zxdg_toplevel_decoration_v1;
 use wayland_protocols::xdg::shell::client::xdg_surface;
 use wayland_protocols::xdg::shell::client::xdg_toplevel::{self};
-use wayland_protocols::{
-    wp::fractional_scale::v1::client::wp_fractional_scale_v1,
-    xdg::shell::client::xdg_toplevel::XdgToplevel,
-};
 use wayland_protocols_plasma::blur::client::org_kde_kwin_blur;
 use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1;
 
@@ -88,7 +85,7 @@ pub struct WaylandWindowState {
     surface_state: WaylandSurfaceState,
     acknowledged_first_configure: bool,
     parent: Option<WaylandWindowStatePtr>,
-    children: Vec<XdgToplevel>,
+    children: FxHashSet<ObjectId>,
     pub surface: wl_surface::WlSurface,
     app_id: Option<String>,
     appearance: WindowAppearance,
@@ -194,7 +191,7 @@ impl WaylandSurfaceState {
             xdg_dialog.set_modal();
 
             if let Some(parent) = parent.as_ref() {
-                parent.add_children(toplevel.clone());
+                parent.add_children(surface.id());
             }
         }
 
@@ -337,7 +334,7 @@ impl WaylandWindowState {
             surface_state,
             acknowledged_first_configure: false,
             parent,
-            children: Vec::new(),
+            children: FxHashSet::default(),
             surface,
             app_id: None,
             blur: None,
@@ -409,17 +406,16 @@ pub enum ImeInput {
 impl Drop for WaylandWindow {
     fn drop(&mut self) {
         let mut state = self.0.state.borrow_mut();
-        if let Some(xdg_toplevel) = state.surface_state.toplevel()
-            && let Some(parent) = state.parent.as_ref()
-        {
-            parent
-                .state
-                .borrow_mut()
-                .children
-                .retain(|child| !(child.id() == xdg_toplevel.id()));
+        let surface_id = state.surface.id();
+        if let Some(parent) = state.parent.as_ref() {
+            parent.state.borrow_mut().children.remove(&surface_id);
         }
+
         let surface_id = state.surface.id();
         let client = state.client.clone();
+
+        #[allow(clippy::mutable_key_type)]
+        let childrens = state.children.clone();
 
         state.renderer.destroy();
 
@@ -453,6 +449,9 @@ impl Drop for WaylandWindow {
             .executor
             .spawn(async move {
                 state_ptr.close();
+                for children in childrens {
+                    client.drop_window(&children);
+                }
                 client.drop_window(&surface_id)
             })
             .detach();
@@ -530,9 +529,9 @@ impl WaylandWindowStatePtr {
         Rc::ptr_eq(&self.state, &other.state)
     }
 
-    pub fn add_children(&self, child: XdgToplevel) {
+    pub fn add_children(&self, child: ObjectId) {
         let mut state = self.state.borrow_mut();
-        state.children.push(child);
+        state.children.insert(child);
     }
 
     pub fn has_children(&self) -> bool {
