@@ -91,14 +91,18 @@ impl Database {
                 .await?;
             }
 
-            let replica_id = if is_ssh_project { 1 } else { 0 };
+            let replica_id = if is_ssh_project {
+                clock::ReplicaId::REMOTE_SERVER
+            } else {
+                clock::ReplicaId::LOCAL
+            };
 
             project_collaborator::ActiveModel {
                 project_id: ActiveValue::set(project.id),
                 connection_id: ActiveValue::set(connection.id as i32),
                 connection_server_id: ActiveValue::set(ServerId(connection.owner_id as i32)),
                 user_id: ActiveValue::set(participant.user_id),
-                replica_id: ActiveValue::set(ReplicaId(replica_id)),
+                replica_id: ActiveValue::set(ReplicaId(replica_id.as_u16() as i32)),
                 is_host: ActiveValue::set(true),
                 id: ActiveValue::NotSet,
                 committer_name: ActiveValue::Set(None),

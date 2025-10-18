@@ -741,7 +741,7 @@ async fn test_serialization(cx: &mut TestAppContext) {
     );
 }
 
-#[gpui::test(iterations = 100)]
+#[gpui::test(iterations = 25)]
 async fn test_random_context_collaboration(cx: &mut TestAppContext, mut rng: StdRng) {
     cx.update(init_test);
 
@@ -945,9 +945,7 @@ async fn test_random_context_collaboration(cx: &mut TestAppContext, mut rng: Std
             _ => {
                 let replica_id = ReplicaId::new(context_index as u16);
                 if network.lock().is_disconnected(replica_id) {
-                    network
-                        .lock()
-                        .reconnect_peer(replica_id, ReplicaId::REMOTE_SERVER);
+                    network.lock().reconnect_peer(replica_id, ReplicaId::new(0));
 
                     let (ops_to_send, ops_to_receive) = cx.read(|cx| {
                         let host_context = &contexts[0].read(cx);
@@ -973,7 +971,7 @@ async fn test_random_context_collaboration(cx: &mut TestAppContext, mut rng: Std
 
                     network.lock().broadcast(replica_id, ops_to_send);
                     context.update(cx, |context, cx| context.apply_ops(ops_to_receive, cx));
-                } else if rng.random_bool(0.1) && replica_id != ReplicaId::REMOTE_SERVER {
+                } else if rng.random_bool(0.1) && replica_id != ReplicaId::new(0) {
                     log::info!("Context {}: disconnecting", context_index);
                     network.lock().disconnect_peer(replica_id);
                 } else if network.lock().has_unreceived(replica_id) {

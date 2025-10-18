@@ -65,7 +65,7 @@ pub struct Lamport {
     pub value: Seq,
 }
 
-/// A [vector clock](https://en.wikipedia.org/wiki/Vector_clock).
+/// A [version vector](https://en.wikipedia.org/wiki/Version_vector).
 #[derive(Clone, Default, Hash, Eq, PartialEq)]
 pub struct Global {
     // 4 is chosen as it is the biggest count that does not increase the size of the field itself.
@@ -85,7 +85,7 @@ impl Global {
 
     /// Observe the lamport timestampe.
     ///
-    /// This sets the current sequence number of the observed replica ID to the maximum of this clock's observed sequence and the observed timestamp.
+    /// This sets the current sequence number of the observed replica ID to the maximum of this global's observed sequence and the observed timestamp.
     pub fn observe(&mut self, timestamp: Lamport) {
         debug_assert_ne!(timestamp.replica_id, Lamport::MAX.replica_id);
         if timestamp.value > 0 {
@@ -99,9 +99,10 @@ impl Global {
         }
     }
 
-    /// Join another clock.
+    /// Join another global.
     ///
-    /// This observes all timestamps from the other clock.
+    /// This observes all timestamps from the other global.
+    #[doc(alias = "synchronize")]
     pub fn join(&mut self, other: &Self) {
         if other.values.len() > self.values.len() {
             self.values.resize(other.values.len(), 0);
@@ -112,9 +113,9 @@ impl Global {
         }
     }
 
-    /// Meet another clock.
+    /// Meet another global.
     ///
-    /// Sets all unobserved timestamps of this clock to the sequences of other and sets all observed timestamps of this clock to the minimum observed of both clocks.
+    /// Sets all unobserved timestamps of this global to the sequences of other and sets all observed timestamps of this global to the minimum observed of both globals.
     pub fn meet(&mut self, other: &Self) {
         if other.values.len() > self.values.len() {
             self.values.resize(other.values.len(), 0);
@@ -133,7 +134,13 @@ impl Global {
                 new_len = ix + 1;
             }
         }
-        self.values.truncate(new_len);
+        if other.values.len() == self.values.len() {
+            // only truncate if other was equal or shorter (which at this point
+            // cant be due to the resize above) to `self` as otherwise we would
+            // truncate the unprocessed tail that is guaranteed to contain
+            // non-null timestamps
+            self.values.truncate(new_len);
+        }
     }
 
     pub fn observed(&self, timestamp: Lamport) -> bool {
@@ -150,11 +157,9 @@ impl Global {
         if self.values.len() < other.values.len() {
             return false;
         }
-        let mut rhs = other.iter();
-        self.iter().all(|left| match rhs.next() {
-            Some(right) => left.value >= right.value,
-            None => true,
-        })
+        self.iter()
+            .zip(other.iter())
+            .all(|(left, right)| left.value >= right.value)
     }
 
     pub fn changed_since(&self, other: &Self) -> bool {
@@ -170,7 +175,7 @@ impl Global {
         self.iter().max_by_key(|timestamp| timestamp.value)
     }
 
-    /// Iterates all replicas observed by this clock as well as any unobserved replicas whose ID is lower than the highest observed replica.
+    /// Iterates all replicas observed by this global as well as any unobserved replicas whose ID is lower than the highest observed replica.
     pub fn iter(&self) -> impl Iterator<Item = Lamport> + '_ {
         self.values
             .iter()

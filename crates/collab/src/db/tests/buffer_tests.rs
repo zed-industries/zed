@@ -128,7 +128,7 @@ async fn test_channel_buffers(db: &Arc<Database>) {
             rpc::proto::Collaborator {
                 user_id: a_id.to_proto(),
                 peer_id: Some(rpc::proto::PeerId { id: 1, owner_id }),
-                replica_id: 0,
+                replica_id: ReplicaId::FIRST_COLLAB_ID.as_u16() as u32,
                 is_host: false,
                 committer_name: None,
                 committer_email: None,
@@ -136,7 +136,7 @@ async fn test_channel_buffers(db: &Arc<Database>) {
             rpc::proto::Collaborator {
                 user_id: b_id.to_proto(),
                 peer_id: Some(rpc::proto::PeerId { id: 2, owner_id }),
-                replica_id: 1,
+                replica_id: ReplicaId::FIRST_COLLAB_ID.as_u16() as u32 + 1,
                 is_host: false,
                 committer_name: None,
                 committer_email: None,
@@ -232,7 +232,8 @@ async fn test_channel_buffers_last_operations(db: &Database) {
             .await
             .unwrap();
 
-        db.join_channel_buffer(channel, user_id, connection_id)
+        let res = db
+            .join_channel_buffer(channel, user_id, connection_id)
             .await
             .unwrap();
 
@@ -243,7 +244,7 @@ async fn test_channel_buffers_last_operations(db: &Database) {
         );
 
         text_buffers.push(Buffer::new(
-            ReplicaId::REMOTE_SERVER,
+            ReplicaId::new(res.replica_id as u16),
             text::BufferId::new(1).unwrap(),
             "".to_string(),
         ));
@@ -280,8 +281,9 @@ async fn test_channel_buffers_last_operations(db: &Database) {
     db.join_channel_buffer(buffers[1].channel_id, user_id, connection_id)
         .await
         .unwrap();
+    let replica_id = text_buffers[1].replica_id();
     text_buffers[1] = Buffer::new(
-        ReplicaId::new(1),
+        replica_id,
         text::BufferId::new(1).unwrap(),
         "def".to_string(),
     );
@@ -312,7 +314,12 @@ async fn test_channel_buffers_last_operations(db: &Database) {
             rpc::proto::ChannelBufferVersion {
                 channel_id: buffers[0].channel_id.to_proto(),
                 epoch: 0,
-                version: serialize_version(&text_buffers[0].version()),
+                version: serialize_version(&text_buffers[0].version())
+                    .into_iter()
+                    .filter(
+                        |vector| vector.replica_id == text_buffers[0].replica_id().as_u16() as u32
+                    )
+                    .collect::<Vec<_>>(),
             },
             rpc::proto::ChannelBufferVersion {
                 channel_id: buffers[1].channel_id.to_proto(),
@@ -327,7 +334,12 @@ async fn test_channel_buffers_last_operations(db: &Database) {
             rpc::proto::ChannelBufferVersion {
                 channel_id: buffers[2].channel_id.to_proto(),
                 epoch: 0,
-                version: serialize_version(&text_buffers[2].version()),
+                version: serialize_version(&text_buffers[2].version())
+                    .into_iter()
+                    .filter(
+                        |vector| vector.replica_id == text_buffers[2].replica_id().as_u16() as u32
+                    )
+                    .collect::<Vec<_>>(),
             },
         ]
     );

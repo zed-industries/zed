@@ -731,7 +731,7 @@ impl Buffer {
 
         let visible_text = history.base_text.clone();
         if !visible_text.is_empty() {
-            let insertion_timestamp = clock::Lamport::new(replica_id);
+            let insertion_timestamp = clock::Lamport::new(ReplicaId::LOCAL);
             lamport_clock.observe(insertion_timestamp);
             version.observe(insertion_timestamp);
             let fragment_id = Locator::between(&Locator::min(), &Locator::max());
