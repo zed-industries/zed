@@ -31,6 +31,7 @@ use language::{
     tree_sitter_python,
 };
 use language_settings::Formatter;
+use languages::rust_lang;
 use lsp::CompletionParams;
 use multi_buffer::{IndentGuide, PathKey};
 use parking_lot::Mutex;
@@ -50,7 +51,7 @@ use std::{
     iter,
     sync::atomic::{self, AtomicUsize},
 };
-use test::{build_editor_with_project, editor_lsp_test_context::rust_lang};
+use test::build_editor_with_project;
 use text::ToPoint as _;
 use unindent::Unindent;
 use util::{

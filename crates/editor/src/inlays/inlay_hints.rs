@@ -825,7 +825,7 @@ pub mod tests {
     use crate::inlays::inlay_hints::InlayHintRefreshReason;
     use crate::scroll::ScrollAmount;
     use crate::{Editor, SelectionEffects};
-    use crate::{ExcerptRange, scroll::Autoscroll, test::editor_lsp_test_context::rust_lang};
+    use crate::{ExcerptRange, scroll::Autoscroll};
     use collections::HashSet;
     use futures::{StreamExt, future};
     use gpui::{AppContext as _, Context, SemanticVersion, TestAppContext, WindowHandle};
@@ -833,6 +833,7 @@ pub mod tests {
     use language::language_settings::InlayHintKind;
     use language::{Capability, FakeLspAdapter};
     use language::{Language, LanguageConfig, LanguageMatcher};
+    use languages::rust_lang;
     use lsp::FakeLanguageServer;
     use multi_buffer::MultiBuffer;
     use parking_lot::Mutex;
