@@ -1776,7 +1776,7 @@
           "name": "ruff"
         }
       },
-      "language_servers": ["basedpyright", "ruff", "!ty", "!pyright", "!pyrefly", "!python-lsp-server ", "..."],
+      "language_servers": ["basedpyright", "ruff", "!ty", "!pyrefly", "!pyright", "!python-lsp-server ", "..."],
       "debuggers": ["Debugpy"]
     },
     "Ruby": {
