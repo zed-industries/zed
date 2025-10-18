@@ -13,6 +13,7 @@
   = @SomeoneToIgnore
   = @probably-neb
   = @danilo-leal
+  = @Veykril
 
 vim
   = @ConradIrwin
@@ -41,6 +42,7 @@ helix
 
 terminal
   = @kubkon
+  = @Veykril
 
 dap
   = @kubkon
@@ -54,9 +56,13 @@ settings_ui
 
 crashes
   = @p1n3appl3
+  = @Veykril
 
 ai
   = @danilo-leal
 
 design
   = @danilo-leal
+
+multi_buffer
+  = @Veykril
