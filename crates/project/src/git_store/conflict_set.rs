@@ -299,7 +299,7 @@ mod tests {
         .unindent();
 
         let buffer_id = BufferId::new(1).unwrap();
-        let buffer = Buffer::new(ReplicaId::new(0), buffer_id, test_content);
+        let buffer = Buffer::new(ReplicaId::LOCAL, buffer_id, test_content);
         let snapshot = buffer.snapshot();
 
         let conflict_snapshot = ConflictSet::parse(&snapshot);
@@ -374,7 +374,7 @@ mod tests {
         .unindent();
 
         let buffer_id = BufferId::new(1).unwrap();
-        let buffer = Buffer::new(ReplicaId::new(0), buffer_id, test_content);
+        let buffer = Buffer::new(ReplicaId::LOCAL, buffer_id, test_content);
         let snapshot = buffer.snapshot();
 
         let conflict_snapshot = ConflictSet::parse(&snapshot);
@@ -405,7 +405,7 @@ mod tests {
             >>>>>>> "#
             .unindent();
         let buffer_id = BufferId::new(1).unwrap();
-        let buffer = Buffer::new(ReplicaId::new(0), buffer_id, test_content);
+        let buffer = Buffer::new(ReplicaId::LOCAL, buffer_id, test_content);
         let snapshot = buffer.snapshot();
 
         let conflict_snapshot = ConflictSet::parse(&snapshot);
@@ -447,7 +447,7 @@ mod tests {
         .unindent();
 
         let buffer_id = BufferId::new(1).unwrap();
-        let buffer = Buffer::new(ReplicaId::new(0), buffer_id, test_content.clone());
+        let buffer = Buffer::new(ReplicaId::LOCAL, buffer_id, test_content.clone());
         let snapshot = buffer.snapshot();
 
         let conflict_snapshot = ConflictSet::parse(&snapshot);

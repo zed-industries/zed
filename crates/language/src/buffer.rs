@@ -829,7 +829,7 @@ impl Buffer {
     pub fn local<T: Into<String>>(base_text: T, cx: &Context<Self>) -> Self {
         Self::build(
             TextBuffer::new(
-                ReplicaId::new(0),
+                ReplicaId::LOCAL,
                 cx.entity_id().as_non_zero_u64().into(),
                 base_text.into(),
             ),
@@ -846,7 +846,7 @@ impl Buffer {
     ) -> Self {
         Self::build(
             TextBuffer::new_normalized(
-                ReplicaId::new(0),
+                ReplicaId::LOCAL,
                 cx.entity_id().as_non_zero_u64().into(),
                 line_ending,
                 base_text_normalized,
@@ -1016,7 +1016,7 @@ impl Buffer {
         let buffer_id = entity_id.as_non_zero_u64().into();
         async move {
             let text =
-                TextBuffer::new_normalized(ReplicaId::new(0), buffer_id, Default::default(), text)
+                TextBuffer::new_normalized(ReplicaId::LOCAL, buffer_id, Default::default(), text)
                     .snapshot();
             let mut syntax = SyntaxMap::new(&text).snapshot();
             if let Some(language) = language.clone() {
@@ -1039,7 +1039,7 @@ impl Buffer {
         let entity_id = cx.reserve_entity::<Self>().entity_id();
         let buffer_id = entity_id.as_non_zero_u64().into();
         let text = TextBuffer::new_normalized(
-            ReplicaId::new(0),
+            ReplicaId::LOCAL,
             buffer_id,
             Default::default(),
             Rope::new(),
@@ -1067,7 +1067,7 @@ impl Buffer {
         let entity_id = cx.reserve_entity::<Self>().entity_id();
         let buffer_id = entity_id.as_non_zero_u64().into();
         let text =
-            TextBuffer::new_normalized(ReplicaId::new(0), buffer_id, Default::default(), text)
+            TextBuffer::new_normalized(ReplicaId::LOCAL, buffer_id, Default::default(), text)
                 .snapshot();
         let mut syntax = SyntaxMap::new(&text).snapshot();
         if let Some(language) = language.clone() {

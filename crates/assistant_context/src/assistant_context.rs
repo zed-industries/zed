@@ -800,7 +800,7 @@ impl AssistantContext {
         };
 
         let first_message_id = MessageId(clock::Lamport {
-            replica_id: ReplicaId::new(0),
+            replica_id,
             value: 0,
         });
         let message = MessageAnchor {

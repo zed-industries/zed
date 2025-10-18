@@ -1975,9 +1975,9 @@ impl Project {
             ProjectClientState::Remote { replica_id, .. } => replica_id,
             _ => {
                 if self.remote_client.is_some() {
-                    ReplicaId::new(1)
+                    ReplicaId::REMOTE
                 } else {
-                    ReplicaId::new(0)
+                    ReplicaId::LOCAL
                 }
             }
         }

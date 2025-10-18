@@ -14,9 +14,11 @@ pub use system_clock::*;
 pub struct ReplicaId(u16);
 
 impl ReplicaId {
+    /// The local replica
+    pub const LOCAL: ReplicaId = ReplicaId(0);
+    /// The remote replica of the connected remote server.
+    pub const REMOTE: ReplicaId = ReplicaId(1);
     /// A local branch.
-    ///
-    /// This is mainly used to branch buffers.
     pub const LOCAL_BRANCH: ReplicaId = ReplicaId(u16::MAX);
     /// The agent's unique identifier.
     pub const AGENT: ReplicaId = ReplicaId(u16::MAX - 1);

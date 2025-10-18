@@ -4,8 +4,7 @@ use editor::{MultiBuffer, PathKey, multibuffer_context_lines};
 use gpui::{App, AppContext, AsyncApp, Context, Entity, Subscription, Task};
 use itertools::Itertools;
 use language::{
-    Anchor, Buffer, Capability, LanguageRegistry, OffsetRangeExt as _, Point, ReplicaId, Rope,
-    TextBuffer,
+    Anchor, Buffer, Capability, LanguageRegistry, OffsetRangeExt as _, Point, Rope, TextBuffer,
 };
 use std::{cmp::Reverse, ops::Range, path::Path, sync::Arc};
 use util::ResultExt;
@@ -237,21 +236,21 @@ impl PendingDiff {
     fn finalize(&self, cx: &mut Context<Diff>) -> FinalizedDiff {
         let ranges = self.excerpt_ranges(cx);
         let base_text = self.base_text.clone();
-        let language_registry = self.new_buffer.read(cx).language_registry();
+        let new_buffer = self.new_buffer.read(cx);
+        let language_registry = new_buffer.language_registry();
 
-        let path = self
-            .new_buffer
-            .read(cx)
+        let path = new_buffer
             .file()
             .map(|file| file.path().display(file.path_style(cx)))
             .unwrap_or("untitled".into())
             .into();
+        let replica_id = new_buffer.replica_id();
 
         // Replace the buffer in the multibuffer with the snapshot
         let buffer = cx.new(|cx| {
             let language = self.new_buffer.read(cx).language().cloned();
             let buffer = TextBuffer::new_normalized(
-                ReplicaId::new(0),
+                replica_id,
                 cx.entity_id().as_non_zero_u64().into(),
                 self.new_buffer.read(cx).line_ending(),
                 self.new_buffer.read(cx).as_rope().clone(),

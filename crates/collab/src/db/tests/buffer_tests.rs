@@ -243,7 +243,7 @@ async fn test_channel_buffers_last_operations(db: &Database) {
         );
 
         text_buffers.push(Buffer::new(
-            ReplicaId::new(0),
+            ReplicaId::REMOTE,
             text::BufferId::new(1).unwrap(),
             "".to_string(),
         ));

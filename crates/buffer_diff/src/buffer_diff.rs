@@ -1397,7 +1397,7 @@ mod tests {
         "
         .unindent();
 
-        let mut buffer = Buffer::new(ReplicaId::new(0), BufferId::new(1).unwrap(), buffer_text);
+        let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), buffer_text);
         let mut diff = BufferDiffSnapshot::new_sync(buffer.clone(), diff_base.clone(), cx);
         assert_hunks(
             diff.hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &buffer),
@@ -1471,7 +1471,7 @@ mod tests {
         "
         .unindent();
 
-        let buffer = Buffer::new(ReplicaId::new(0), BufferId::new(1).unwrap(), buffer_text);
+        let buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), buffer_text);
         let unstaged_diff = BufferDiffSnapshot::new_sync(buffer.clone(), index_text, cx);
         let mut uncommitted_diff =
             BufferDiffSnapshot::new_sync(buffer.clone(), head_text.clone(), cx);
@@ -1540,7 +1540,7 @@ mod tests {
         "
         .unindent();
 
-        let buffer = Buffer::new(ReplicaId::new(0), BufferId::new(1).unwrap(), buffer_text);
+        let buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), buffer_text);
         let diff = cx
             .update(|cx| {
                 BufferDiffSnapshot::new_with_base_text(
@@ -1803,7 +1803,7 @@ mod tests {
 
         for example in table {
             let (buffer_text, ranges) = marked_text_ranges(&example.buffer_marked_text, false);
-            let buffer = Buffer::new(ReplicaId::new(0), BufferId::new(1).unwrap(), buffer_text);
+            let buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), buffer_text);
             let hunk_range =
                 buffer.anchor_before(ranges[0].start)..buffer.anchor_before(ranges[0].end);
 
@@ -1877,7 +1877,7 @@ mod tests {
         .unindent();
 
         let buffer = Buffer::new(
-            ReplicaId::new(0),
+            ReplicaId::LOCAL,
             BufferId::new(1).unwrap(),
             buffer_text.clone(),
         );
@@ -1953,7 +1953,7 @@ mod tests {
         "
         .unindent();
 
-        let mut buffer = Buffer::new(ReplicaId::new(0), BufferId::new(1).unwrap(), buffer_text_1);
+        let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), buffer_text_1);
 
         let empty_diff = cx.update(|cx| BufferDiffSnapshot::empty(&buffer, cx));
         let diff_1 = BufferDiffSnapshot::new_sync(buffer.clone(), base_text.clone(), cx);

@@ -841,7 +841,7 @@ impl Database {
             .iter()
             .map(|c| c.replica_id)
             .collect::<HashSet<_>>();
-        let mut replica_id = ReplicaId(1);
+        let mut replica_id = ReplicaId(clock::ReplicaId::REMOTE.as_u16() as i32 + 1);
         while replica_ids.contains(&replica_id) {
             replica_id.0 += 1;
         }

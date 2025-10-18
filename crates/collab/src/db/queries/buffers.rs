@@ -702,7 +702,7 @@ impl Database {
         }
 
         let mut text_buffer = text::Buffer::new(
-            clock::ReplicaId::new(0),
+            clock::ReplicaId::LOCAL,
             text::BufferId::new(1).unwrap(),
             base_text,
         );

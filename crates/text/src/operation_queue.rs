@@ -133,7 +133,7 @@ mod tests {
 
     #[test]
     fn test_len() {
-        let mut clock = clock::Lamport::new(ReplicaId::new(0));
+        let mut clock = clock::Lamport::new(ReplicaId::LOCAL);
 
         let mut queue = OperationQueue::new();
         assert_eq!(queue.len(), 0);
