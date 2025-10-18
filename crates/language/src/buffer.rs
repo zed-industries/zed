@@ -2078,12 +2078,15 @@ impl Buffer {
         }
     }
 
+    /// Set the change bit for all "listeners".
     fn was_changed(&mut self) {
         self.change_bits.retain(|change_bit| {
-            change_bit.upgrade().is_some_and(|bit| {
-                bit.replace(true);
-                true
-            })
+            change_bit
+                .upgrade()
+                .inspect(|bit| {
+                    _ = bit.replace(true);
+                })
+                .is_some()
         });
     }
 
