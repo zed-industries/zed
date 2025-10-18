@@ -32,7 +32,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{Arc, atomic::AtomicUsize},
 };
-use sysinfo::System;
+use sysinfo::{ProcessRefreshKind, RefreshKind, System, UpdateKind};
 use util::{ResultExt, paths::PathStyle, rel_path::RelPath};
 use worktree::Worktree;
 
@@ -746,9 +746,14 @@ impl HeadlessProject {
         _cx: AsyncApp,
     ) -> Result<proto::GetProcessesResponse> {
         let mut processes = Vec::new();
-        let system = System::new_all();
+        let refresh_kind = RefreshKind::nothing()
+            .with_processes(ProcessRefreshKind::nothing().with_cmd(UpdateKind::Always));
 
-        for (_pid, process) in system.processes() {
+        for process in System::new_with_specifics(refresh_kind)
+            .processes()
+            .values()
+            .filter(|p| p.thread_kind().is_none())
+        {
             let name = process.name().to_string_lossy().into_owned();
             let command = process
                 .cmd()
