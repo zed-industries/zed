@@ -1,4 +1,4 @@
-use crate::{InlayId, display_map::inlay_map::InlayChunk};
+use crate::display_map::inlay_map::InlayChunk;
 
 use super::{
     Highlights,
@@ -9,6 +9,7 @@ use language::{Edit, HighlightId, Point, TextSummary};
 use multi_buffer::{
     Anchor, AnchorRangeExt, MultiBufferRow, MultiBufferSnapshot, RowInfo, ToOffset,
 };
+use project::InlayId;
 use std::{
     any::TypeId,
     cmp::{self, Ordering},

@@ -1,11 +1,11 @@
 use crate::{ApplyAllDiffHunks, Editor, EditorEvent, SelectionEffects, SemanticsProvider};
 use buffer_diff::BufferDiff;
-use collections::HashSet;
+use collections::{HashMap, HashSet};
 use futures::{channel::mpsc, future::join_all};
 use gpui::{App, Entity, EventEmitter, Focusable, Render, Subscription, Task};
-use language::{Buffer, BufferEvent, Capability};
+use language::{Buffer, BufferEvent, BufferRow, Capability};
 use multi_buffer::{ExcerptRange, MultiBuffer};
-use project::Project;
+use project::{InvalidationStrategy, Project, lsp_store::CacheInlayHints};
 use smol::stream::StreamExt;
 use std::{any::TypeId, ops::Range, rc::Rc, time::Duration};
 use text::ToOffset;
@@ -438,12 +438,19 @@ impl SemanticsProvider for BranchBufferSemanticsProvider {
 
     fn inlay_hints(
         &self,
+        invalidate: InvalidationStrategy,
         buffer: Entity<Buffer>,
-        range: Range<text::Anchor>,
+        ranges: Vec<Range<text::Anchor>>,
+        known_chunks: Option<(clock::Global, HashSet<Range<BufferRow>>)>,
         cx: &mut App,
-    ) -> Option<Task<anyhow::Result<Vec<project::InlayHint>>>> {
-        let buffer = self.to_base(&buffer, &[range.start, range.end], cx)?;
-        self.0.inlay_hints(buffer, range, cx)
+    ) -> Option<HashMap<Range<BufferRow>, Task<anyhow::Result<CacheInlayHints>>>> {
+        let positions = ranges
+            .iter()
+            .flat_map(|range| [range.start, range.end])
+            .collect::<Vec<_>>();
+        let buffer = self.to_base(&buffer, &positions, cx)?;
+        self.0
+            .inlay_hints(invalidate, buffer, ranges, known_chunks, cx)
     }
 
     fn inline_values(
@@ -453,17 +460,6 @@ impl SemanticsProvider for BranchBufferSemanticsProvider {
         _: &mut App,
     ) -> Option<Task<anyhow::Result<Vec<project::InlayHint>>>> {
         None
-    }
-
-    fn resolve_inlay_hint(
-        &self,
-        hint: project::InlayHint,
-        buffer: Entity<Buffer>,
-        server_id: lsp::LanguageServerId,
-        cx: &mut App,
-    ) -> Option<Task<anyhow::Result<project::InlayHint>>> {
-        let buffer = self.to_base(&buffer, &[], cx)?;
-        self.0.resolve_inlay_hint(hint, buffer, server_id, cx)
     }
 
     fn supports_inlay_hints(&self, buffer: &Entity<Buffer>, cx: &mut App) -> bool {

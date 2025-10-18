@@ -1,9 +1,9 @@
 use super::*;
 use collections::{HashMap, HashSet};
 use editor::{
-    DisplayPoint, EditorSettings,
+    DisplayPoint, EditorSettings, Inlay,
     actions::{GoToDiagnostic, GoToPreviousDiagnostic, Hover, MoveToBeginning},
-    display_map::{DisplayRow, Inlay},
+    display_map::DisplayRow,
     test::{
         editor_content_with_blocks, editor_lsp_test_context::EditorLspTestContext,
         editor_test_context::EditorTestContext,
