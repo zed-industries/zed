@@ -598,7 +598,8 @@
       "shift-i": ["vim::IndentObj", { "include_below": true }],
       "f": "vim::Method",
       "c": "vim::Class",
-      "e": "vim::EntireFile"
+      "e": "vim::EntireFile",
+      "d": "vim::Digit"
     }
   },
   {
