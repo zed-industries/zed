@@ -21,7 +21,6 @@ picker.workspace = true
 settings.workspace = true
 theme.workspace = true
 ui.workspace = true
-workspace-hack.workspace = true
 
 [features]
 default = []

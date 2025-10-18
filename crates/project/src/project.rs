@@ -985,12 +985,6 @@ impl settings::Settings for DisableAiSettings {
             disable_ai: content.disable_ai.unwrap().0,
         }
     }
-
-    fn import_from_vscode(
-        _vscode: &settings::VsCodeSettings,
-        _current: &mut settings::SettingsContent,
-    ) {
-    }
 }
 
 impl Project {
@@ -1084,6 +1078,7 @@ impl Project {
                     toolchain_store.read(cx).as_language_toolchain_store(),
                     worktree_store.clone(),
                     breakpoint_store.clone(),
+                    false,
                     cx,
                 )
             });
@@ -1154,7 +1149,13 @@ impl Project {
             });
 
             let agent_server_store = cx.new(|cx| {
-                AgentServerStore::local(node.clone(), fs.clone(), environment.clone(), cx)
+                AgentServerStore::local(
+                    node.clone(),
+                    fs.clone(),
+                    environment.clone(),
+                    client.http_client(),
+                    cx,
+                )
             });
 
             cx.subscribe(&lsp_store, Self::on_lsp_store_event).detach();
@@ -1306,6 +1307,9 @@ impl Project {
                     remote.clone(),
                     breakpoint_store.clone(),
                     worktree_store.clone(),
+                    node.clone(),
+                    client.http_client(),
+                    fs.clone(),
                     cx,
                 )
             });
@@ -1321,7 +1325,7 @@ impl Project {
             });
 
             let agent_server_store =
-                cx.new(|cx| AgentServerStore::remote(REMOTE_SERVER_PROJECT_ID, remote.clone(), cx));
+                cx.new(|_| AgentServerStore::remote(REMOTE_SERVER_PROJECT_ID, remote.clone()));
 
             cx.subscribe(&remote, Self::on_remote_client_event).detach();
 
@@ -1503,6 +1507,7 @@ impl Project {
                 client.clone().into(),
                 breakpoint_store.clone(),
                 worktree_store.clone(),
+                fs.clone(),
                 cx,
             )
         })?;
@@ -1901,20 +1906,24 @@ impl Project {
         cx: &mut App,
     ) -> Shared<Task<Option<HashMap<String, String>>>> {
         self.environment.update(cx, |environment, cx| {
-            environment.get_directory_environment_for_shell(shell, abs_path, cx)
+            if let Some(remote_client) = self.remote_client.clone() {
+                environment.get_remote_directory_environment(shell, abs_path, remote_client, cx)
+            } else {
+                environment.get_local_directory_environment(shell, abs_path, cx)
+            }
         })
     }
 
-    pub fn shell_environment_errors<'a>(
+    pub fn peek_environment_error<'a>(
         &'a self,
         cx: &'a App,
-    ) -> impl Iterator<Item = (&'a Arc<Path>, &'a EnvironmentErrorMessage)> {
-        self.environment.read(cx).environment_errors()
+    ) -> Option<&'a EnvironmentErrorMessage> {
+        self.environment.read(cx).peek_environment_error()
     }
 
-    pub fn remove_environment_error(&mut self, abs_path: &Path, cx: &mut Context<Self>) {
-        self.environment.update(cx, |environment, cx| {
-            environment.remove_environment_error(abs_path, cx);
+    pub fn pop_environment_error(&mut self, cx: &mut Context<Self>) {
+        self.environment.update(cx, |environment, _| {
+            environment.pop_environment_error();
         });
     }
 
@@ -2571,8 +2580,8 @@ impl Project {
         let task = self.open_buffer(path, cx);
         cx.spawn(async move |_project, cx| {
             let buffer = task.await?;
-            let project_entry_id = buffer.read_with(cx, |buffer, cx| {
-                File::from_dyn(buffer.file()).and_then(|file| file.project_entry_id(cx))
+            let project_entry_id = buffer.read_with(cx, |buffer, _cx| {
+                File::from_dyn(buffer.file()).and_then(|file| file.project_entry_id())
             })?;
 
             Ok((project_entry_id, buffer))
@@ -3252,9 +3261,9 @@ impl Project {
         self.buffers_needing_diff.insert(buffer.downgrade());
         let first_insertion = self.buffers_needing_diff.len() == 1;
         let settings = ProjectSettings::get_global(cx);
-        let delay = if let Some(delay) = settings.git.gutter_debounce {
-            delay
-        } else {
+        let delay = settings.git.gutter_debounce;
+
+        if delay == 0 {
             if first_insertion {
                 let this = cx.weak_entity();
                 cx.defer(move |cx| {
@@ -3266,7 +3275,7 @@ impl Project {
                 });
             }
             return;
-        };
+        }
 
         const MIN_DELAY: u64 = 50;
         let delay = delay.max(MIN_DELAY);
@@ -5515,8 +5524,8 @@ impl ProjectItem for Buffer {
         Some(project.update(cx, |project, cx| project.open_buffer(path.clone(), cx)))
     }
 
-    fn entry_id(&self, cx: &App) -> Option<ProjectEntryId> {
-        File::from_dyn(self.file()).and_then(|file| file.project_entry_id(cx))
+    fn entry_id(&self, _cx: &App) -> Option<ProjectEntryId> {
+        File::from_dyn(self.file()).and_then(|file| file.project_entry_id())
     }
 
     fn project_path(&self, cx: &App) -> Option<ProjectPath> {

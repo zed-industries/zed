@@ -29,6 +29,7 @@ use tempfile::TempDir;
 use util::{
     paths::{PathStyle, RemotePathBuf},
     rel_path::RelPath,
+    shell::ShellKind,
 };
 
 pub(crate) struct SshRemoteConnection {
@@ -145,6 +146,24 @@ impl RemoteConnection for SshRemoteConnection {
         )
     }
 
+    fn build_forward_ports_command(
+        &self,
+        forwards: Vec<(u16, String, u16)>,
+    ) -> Result<CommandTemplate> {
+        let Self { socket, .. } = self;
+        let mut args = socket.ssh_args();
+        args.push("-N".into());
+        for (local_port, host, remote_port) in forwards {
+            args.push("-L".into());
+            args.push(format!("{local_port}:{host}:{remote_port}"));
+        }
+        Ok(CommandTemplate {
+            program: "ssh".into(),
+            args,
+            env: Default::default(),
+        })
+    }
+
     fn upload_directory(
         &self,
         src_path: PathBuf,
@@ -154,7 +173,7 @@ impl RemoteConnection for SshRemoteConnection {
         let mut command = util::command::new_smol_command("scp");
         let output = self
             .socket
-            .ssh_options(&mut command)
+            .ssh_options(&mut command, false)
             .args(
                 self.socket
                     .connection_options
@@ -179,7 +198,7 @@ impl RemoteConnection for SshRemoteConnection {
                 output.status.success(),
                 "failed to upload directory {} -> {}: {}",
                 src_path.display(),
-                dest_path.to_string(),
+                dest_path,
                 String::from_utf8_lossy(&output.stderr)
             );
 
@@ -253,8 +272,6 @@ impl SshRemoteConnection {
     ) -> Result<Self> {
         use askpass::AskPassResult;
 
-        delegate.set_status(Some("Connecting"), cx);
-
         let url = connection_options.ssh_url();
 
         let temp_dir = tempfile::Builder::new()
@@ -267,6 +284,8 @@ impl SshRemoteConnection {
 
         let mut askpass =
             askpass::AskPassSession::new(cx.background_executor(), askpass_delegate).await?;
+
+        delegate.set_status(Some("Connecting"), cx);
 
         // Start the master SSH process, which does not do anything except for establish
         // the connection and keep it open, allowing other ssh commands to reuse it
@@ -355,12 +374,12 @@ impl SshRemoteConnection {
         .await?;
         drop(askpass);
 
-        let ssh_platform = socket.platform().await?;
+        let ssh_shell = socket.shell().await;
+        let ssh_platform = socket.platform(ShellKind::new(&ssh_shell, false)).await?;
         let ssh_path_style = match ssh_platform.os {
             "windows" => PathStyle::Windows,
             _ => PathStyle::Posix,
         };
-        let ssh_shell = socket.shell().await;
         let ssh_default_system_shell = String::from("/bin/sh");
 
         let mut this = Self {
@@ -629,7 +648,7 @@ impl SshRemoteConnection {
         let mut command = util::command::new_smol_command("scp");
         let output = self
             .socket
-            .ssh_options(&mut command)
+            .ssh_options(&mut command, false)
             .args(
                 self.socket
                     .connection_options
@@ -710,7 +729,7 @@ impl SshSocket {
             to_run.push_str(&shlex::try_quote(arg.as_ref()).unwrap());
         }
         let to_run = format!("cd; {to_run}");
-        self.ssh_options(&mut command)
+        self.ssh_options(&mut command, true)
             .arg(self.connection_options.ssh_url())
             .arg("-T")
             .arg(to_run);
@@ -729,23 +748,43 @@ impl SshSocket {
     }
 
     #[cfg(not(target_os = "windows"))]
-    fn ssh_options<'a>(&self, command: &'a mut process::Command) -> &'a mut process::Command {
+    fn ssh_options<'a>(
+        &self,
+        command: &'a mut process::Command,
+        include_port_forwards: bool,
+    ) -> &'a mut process::Command {
+        let args = if include_port_forwards {
+            self.connection_options.additional_args()
+        } else {
+            self.connection_options.additional_args_for_scp()
+        };
+
         command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .args(self.connection_options.additional_args())
+            .args(args)
             .args(["-o", "ControlMaster=no", "-o"])
             .arg(format!("ControlPath={}", self.socket_path.display()))
     }
 
     #[cfg(target_os = "windows")]
-    fn ssh_options<'a>(&self, command: &'a mut process::Command) -> &'a mut process::Command {
+    fn ssh_options<'a>(
+        &self,
+        command: &'a mut process::Command,
+        include_port_forwards: bool,
+    ) -> &'a mut process::Command {
+        let args = if include_port_forwards {
+            self.connection_options.additional_args()
+        } else {
+            self.connection_options.additional_args_for_scp()
+        };
+
         command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .args(self.connection_options.additional_args())
+            .args(args)
             .envs(self.envs.clone())
     }
 
@@ -771,8 +810,13 @@ impl SshSocket {
         arguments
     }
 
-    async fn platform(&self) -> Result<RemotePlatform> {
-        let uname = self.run_command("uname", &["-sm"]).await?;
+    async fn platform(&self, shell: ShellKind) -> Result<RemotePlatform> {
+        let program = if shell == ShellKind::Nushell {
+            "^uname"
+        } else {
+            "uname"
+        };
+        let uname = self.run_command(program, &["-sm"]).await?;
         let Some((os, arch)) = uname.split_once(" ") else {
             anyhow::bail!("unknown uname: {uname:?}")
         };
@@ -967,8 +1011,12 @@ impl SshConnectionOptions {
         result
     }
 
+    pub fn additional_args_for_scp(&self) -> Vec<String> {
+        self.args.iter().flatten().cloned().collect::<Vec<String>>()
+    }
+
     pub fn additional_args(&self) -> Vec<String> {
-        let mut args = self.args.iter().flatten().cloned().collect::<Vec<String>>();
+        let mut args = self.additional_args_for_scp();
 
         if let Some(forwards) = &self.port_forwards {
             args.extend(forwards.iter().map(|pf| {
@@ -1026,7 +1074,7 @@ fn build_command(
 ) -> Result<CommandTemplate> {
     use std::fmt::Write as _;
 
-    let mut exec = String::from("exec env -C ");
+    let mut exec = String::new();
     if let Some(working_dir) = working_dir {
         let working_dir = RemotePathBuf::new(working_dir, ssh_path_style).to_string();
 
@@ -1035,13 +1083,14 @@ fn build_command(
         const TILDE_PREFIX: &'static str = "~/";
         if working_dir.starts_with(TILDE_PREFIX) {
             let working_dir = working_dir.trim_start_matches("~").trim_start_matches("/");
-            write!(exec, "\"$HOME/{working_dir}\" ",).unwrap();
+            write!(exec, "cd \"$HOME/{working_dir}\" && ",).unwrap();
         } else {
-            write!(exec, "\"{working_dir}\" ",).unwrap();
+            write!(exec, "cd \"{working_dir}\" && ",).unwrap();
         }
     } else {
-        write!(exec, "\"$HOME\" ").unwrap();
+        write!(exec, "cd && ").unwrap();
     };
+    write!(exec, "exec env ").unwrap();
 
     for (k, v) in input_env.iter() {
         if let Some((k, v)) = shlex::try_quote(k).ok().zip(shlex::try_quote(v).ok()) {
@@ -1106,7 +1155,7 @@ mod tests {
                 "-p",
                 "2222",
                 "-t",
-                "exec env -C \"$HOME/work\" INPUT_VA=val remote_program arg1 arg2"
+                "cd \"$HOME/work\" && exec env INPUT_VA=val remote_program arg1 arg2"
             ]
         );
         assert_eq!(command.env, env);
@@ -1137,11 +1186,52 @@ mod tests {
                 "-L",
                 "1:foo:2",
                 "-t",
-                "exec env -C \"$HOME\" INPUT_VA=val /bin/fish -l"
+                "cd && exec env INPUT_VA=val /bin/fish -l"
             ]
         );
         assert_eq!(command.env, env);
 
         Ok(())
+    }
+
+    #[test]
+    fn scp_args_exclude_port_forward_flags() {
+        let options = SshConnectionOptions {
+            host: "example.com".into(),
+            args: Some(vec![
+                "-p".to_string(),
+                "2222".to_string(),
+                "-o".to_string(),
+                "StrictHostKeyChecking=no".to_string(),
+            ]),
+            port_forwards: Some(vec![SshPortForwardOption {
+                local_host: Some("127.0.0.1".to_string()),
+                local_port: 8080,
+                remote_host: Some("127.0.0.1".to_string()),
+                remote_port: 80,
+            }]),
+            ..Default::default()
+        };
+
+        let ssh_args = options.additional_args();
+        assert!(
+            ssh_args.iter().any(|arg| arg.starts_with("-L")),
+            "expected ssh args to include port-forward: {ssh_args:?}"
+        );
+
+        let scp_args = options.additional_args_for_scp();
+        assert_eq!(
+            scp_args,
+            vec![
+                "-p".to_string(),
+                "2222".to_string(),
+                "-o".to_string(),
+                "StrictHostKeyChecking=no".to_string()
+            ]
+        );
+        assert!(
+            scp_args.iter().all(|arg| !arg.starts_with("-L")),
+            "scp args should not contain port forward flags: {scp_args:?}"
+        );
     }
 }

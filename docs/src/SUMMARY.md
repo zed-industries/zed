@@ -160,4 +160,5 @@
   - [Using Debuggers](./development/debuggers.md)
   - [Glossary](./development/glossary.md)
 - [Release Process](./development/releases.md)
+- [Release Notes](./development/release-notes.md)
 - [Debugging Crashes](./development/debugging-crashes.md)

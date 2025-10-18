@@ -215,6 +215,7 @@ impl From<settings::DiagnosticSeverityContent> for DiagnosticSeverity {
             settings::DiagnosticSeverityContent::Warning => DiagnosticSeverity::Warning,
             settings::DiagnosticSeverityContent::Info => DiagnosticSeverity::Info,
             settings::DiagnosticSeverityContent::Hint => DiagnosticSeverity::Hint,
+            settings::DiagnosticSeverityContent::All => DiagnosticSeverity::Hint,
         }
     }
 }
@@ -300,8 +301,8 @@ pub struct GitSettings {
     pub git_gutter: settings::GitGutterSetting,
     /// Sets the debounce threshold (in milliseconds) after which changes are reflected in the git gutter.
     ///
-    /// Default: null
-    pub gutter_debounce: Option<u64>,
+    /// Default: 0
+    pub gutter_debounce: u64,
     /// Whether or not to show git blame data inline in
     /// the currently focused line.
     ///
@@ -446,7 +447,7 @@ impl Settings for ProjectSettings {
         let git = content.git.as_ref().unwrap();
         let git_settings = GitSettings {
             git_gutter: git.git_gutter.unwrap(),
-            gutter_debounce: git.gutter_debounce,
+            gutter_debounce: git.gutter_debounce.unwrap_or_default(),
             inline_blame: {
                 let inline = git.inline_blame.unwrap();
                 InlineBlameSettings {
@@ -520,65 +521,6 @@ impl Settings for ProjectSettings {
                 restore_unsaved_buffers: content.session.unwrap().restore_unsaved_buffers.unwrap(),
             },
         }
-    }
-
-    fn import_from_vscode(
-        vscode: &settings::VsCodeSettings,
-        current: &mut settings::SettingsContent,
-    ) {
-        // this just sets the binary name instead of a full path so it relies on path lookup
-        // resolving to the one you want
-        let npm_path = vscode.read_enum("npm.packageManager", |s| match s {
-            v @ ("npm" | "yarn" | "bun" | "pnpm") => Some(v.to_owned()),
-            _ => None,
-        });
-        if npm_path.is_some() {
-            current.node.get_or_insert_default().npm_path = npm_path;
-        }
-
-        if let Some(b) = vscode.read_bool("git.blame.editorDecoration.enabled") {
-            current
-                .git
-                .get_or_insert_default()
-                .inline_blame
-                .get_or_insert_default()
-                .enabled = Some(b);
-        }
-
-        #[derive(Deserialize)]
-        struct VsCodeContextServerCommand {
-            command: PathBuf,
-            args: Option<Vec<String>>,
-            env: Option<HashMap<String, String>>,
-            // note: we don't support envFile and type
-        }
-        if let Some(mcp) = vscode.read_value("mcp").and_then(|v| v.as_object()) {
-            current
-                .project
-                .context_servers
-                .extend(mcp.iter().filter_map(|(k, v)| {
-                    Some((
-                        k.clone().into(),
-                        settings::ContextServerSettingsContent::Custom {
-                            enabled: true,
-                            command: serde_json::from_value::<VsCodeContextServerCommand>(
-                                v.clone(),
-                            )
-                            .ok()
-                            .map(|cmd| {
-                                settings::ContextServerCommand {
-                                    path: cmd.command,
-                                    args: cmd.args.unwrap_or_default(),
-                                    env: cmd.env,
-                                    timeout: None,
-                                }
-                            })?,
-                        },
-                    ))
-                }));
-        }
-
-        // TODO: translate lsp settings for rust-analyzer and other popular ones to old.lsp
     }
 }
 
@@ -1214,6 +1156,7 @@ pub fn local_settings_kind_to_proto(kind: LocalSettingsKind) -> proto::LocalSett
 pub struct DapSettings {
     pub binary: DapBinary,
     pub args: Vec<String>,
+    pub env: HashMap<String, String>,
 }
 
 impl From<DapSettingsContent> for DapSettings {
@@ -1223,6 +1166,7 @@ impl From<DapSettingsContent> for DapSettings {
                 .binary
                 .map_or_else(|| DapBinary::Default, |binary| DapBinary::Custom(binary)),
             args: content.args.unwrap_or_default(),
+            env: content.env.unwrap_or_default(),
         }
     }
 }

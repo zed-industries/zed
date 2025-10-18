@@ -234,9 +234,7 @@ impl TerminalView {
                 terminal_view.focus_out(window, cx);
             },
         );
-        let cursor_shape = TerminalSettings::get_global(cx)
-            .cursor_shape
-            .unwrap_or_default();
+        let cursor_shape = TerminalSettings::get_global(cx).cursor_shape;
 
         let scroll_handle = TerminalScrollHandle::new(terminal.read(cx));
 
@@ -427,7 +425,7 @@ impl TerminalView {
         let breadcrumb_visibility_changed = self.show_breadcrumbs != settings.toolbar.breadcrumbs;
         self.show_breadcrumbs = settings.toolbar.breadcrumbs;
 
-        let new_cursor_shape = settings.cursor_shape.unwrap_or_default();
+        let new_cursor_shape = settings.cursor_shape;
         let old_cursor_shape = self.cursor_shape;
         if old_cursor_shape != new_cursor_shape {
             self.cursor_shape = new_cursor_shape;
@@ -1211,6 +1209,10 @@ impl Item for TerminalView {
 
     fn telemetry_event_text(&self) -> Option<&'static str> {
         None
+    }
+
+    fn buffer_kind(&self, _: &App) -> workspace::item::ItemBufferKind {
+        workspace::item::ItemBufferKind::Singleton
     }
 
     fn clone_on_split(

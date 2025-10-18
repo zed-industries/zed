@@ -62,6 +62,7 @@ use std::{
     time::Instant,
 };
 use sum_tree::{Edit, SumTree, TreeSet};
+use task::Shell;
 use text::{Bias, BufferId};
 use util::{
     ResultExt, debug_panic,
@@ -969,8 +970,6 @@ impl GitStore {
                 get_permalink_in_rust_registry_src(provider_registry, file_path, selection)
                     .context("no permalink available")
             });
-
-            // TODO remote case
         };
 
         let buffer_id = buffer.read(cx).remote_id();
@@ -999,15 +998,9 @@ impl GitStore {
                             parse_git_remote_url(provider_registry, &origin_url)
                                 .context("parsing Git remote URL")?;
 
-                        let path = repo_path.as_unix_str();
-
                         Ok(provider.build_permalink(
                             remote,
-                            BuildPermalinkParams {
-                                sha: &sha,
-                                path,
-                                selection: Some(selection),
-                            },
+                            BuildPermalinkParams::new(&sha, &repo_path, Some(selection)),
                         ))
                     }
                     RepositoryState::Remote { project_id, client } => {
@@ -2917,6 +2910,13 @@ impl RepositorySnapshot {
         Self::abs_path_to_repo_path_inner(&self.work_directory_abs_path, abs_path, self.path_style)
     }
 
+    fn repo_path_to_abs_path(&self, repo_path: &RepoPath) -> PathBuf {
+        self.path_style
+            .join(&self.work_directory_abs_path, repo_path.as_std_path())
+            .unwrap()
+            .into()
+    }
+
     #[inline]
     fn abs_path_to_repo_path_inner(
         work_directory_abs_path: &Path,
@@ -3356,10 +3356,7 @@ impl Repository {
     pub fn repo_path_to_project_path(&self, path: &RepoPath, cx: &App) -> Option<ProjectPath> {
         let git_store = self.git_store.upgrade()?;
         let worktree_store = git_store.read(cx).worktree_store.read(cx);
-        let abs_path = self
-            .snapshot
-            .work_directory_abs_path
-            .join(path.as_std_path());
+        let abs_path = self.snapshot.repo_path_to_abs_path(path);
         let abs_path = SanitizedPath::new(&abs_path);
         let (worktree, relative_path) = worktree_store.find_worktree(abs_path, cx)?;
         Some(ProjectPath {
@@ -4607,7 +4604,7 @@ impl Repository {
                 .upgrade()
                 .context("missing project environment")?
                 .update(cx, |project_environment, cx| {
-                    project_environment.get_directory_environment(work_directory_abs_path.clone(), cx)
+                    project_environment.get_local_directory_environment(&Shell::System, work_directory_abs_path.clone(), cx)
                 })?
                 .await
                 .unwrap_or_else(|| {
@@ -4913,11 +4910,15 @@ fn get_permalink_in_rust_registry_src(
     let path = PathBuf::from(cargo_vcs_info.path_in_vcs).join(path.strip_prefix(dir).unwrap());
     let permalink = provider.build_permalink(
         remote,
-        BuildPermalinkParams {
-            sha: &cargo_vcs_info.git.sha1,
-            path: &path.to_string_lossy(),
-            selection: Some(selection),
-        },
+        BuildPermalinkParams::new(
+            &cargo_vcs_info.git.sha1,
+            &RepoPath(
+                RelPath::new(&path, PathStyle::local())
+                    .context("invalid path")?
+                    .into_arc(),
+            ),
+            Some(selection),
+        ),
     );
     Ok(permalink)
 }

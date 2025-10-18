@@ -60,16 +60,4 @@ impl Settings for GitPanelSettings {
             panel_mode: git_panel.panel_mode.unwrap(),
         }
     }
-
-    fn import_from_vscode(vscode: &settings::VsCodeSettings, current: &mut SettingsContent) {
-        if let Some(git_enabled) = vscode.read_bool("git.enabled") {
-            current.git_panel.get_or_insert_default().button = Some(git_enabled);
-        }
-        if let Some(default_branch) = vscode.read_string("git.defaultBranchName") {
-            current
-                .git_panel
-                .get_or_insert_default()
-                .fallback_branch_name = Some(default_branch.to_string());
-        }
-    }
 }

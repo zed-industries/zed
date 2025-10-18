@@ -7,7 +7,9 @@ use serde_with::skip_serializing_none;
 use settings_macros::MergeFrom;
 use util::serde::default_true;
 
-use crate::{AllLanguageSettingsContent, ExtendingVec, SlashCommandSettings};
+use crate::{
+    AllLanguageSettingsContent, ExtendingVec, ProjectTerminalSettingsContent, SlashCommandSettings,
+};
 
 #[skip_serializing_none]
 #[derive(Debug, PartialEq, Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
@@ -28,6 +30,9 @@ pub struct ProjectSettingsContent {
     /// Default: null
     #[serde(default)]
     pub lsp: HashMap<Arc<str>, LspSettings>,
+
+    #[serde(default)]
+    pub terminal: Option<ProjectTerminalSettingsContent>,
 
     /// Configuration for Debugger-related features
     #[serde(default)]
@@ -149,6 +154,8 @@ pub struct DapSettingsContent {
     pub binary: Option<String>,
     #[serde(default)]
     pub args: Option<Vec<String>>,
+    #[serde(default)]
+    pub env: Option<HashMap<String, String>>,
 }
 
 #[skip_serializing_none]
@@ -249,7 +256,7 @@ pub struct GitSettings {
     pub git_gutter: Option<GitGutterSetting>,
     /// Sets the debounce threshold (in milliseconds) after which changes are reflected in the git gutter.
     ///
-    /// Default: null
+    /// Default: 0
     pub gutter_debounce: Option<u64>,
     /// Whether or not to show git blame data inline in
     /// the currently focused line.
@@ -465,8 +472,8 @@ pub enum DiagnosticSeverityContent {
     Error,
     Warning,
     Info,
-    #[serde(alias = "all")]
     Hint,
+    All,
 }
 
 /// A custom Git hosting provider.
