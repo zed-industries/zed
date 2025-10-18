@@ -164,7 +164,7 @@ impl VimOption {
         }
     }
 
-    fn to_string(&self) -> &'static str {
+    const fn to_string(&self) -> &'static str {
         match self {
             VimOption::Wrap(true) => "wrap",
             VimOption::Wrap(false) => "nowrap",
@@ -792,7 +792,7 @@ impl VimCommand {
         self
     }
 
-    fn count(mut self) -> Self {
+    const fn count(mut self) -> Self {
         self.has_count = true;
         self
     }
@@ -1140,7 +1140,7 @@ impl CommandRange {
         }
     }
 
-    pub fn as_count(&self) -> Option<u32> {
+    pub const fn as_count(&self) -> Option<u32> {
         if let CommandRange {
             start: Position::Line { row, offset: 0 },
             end: None,

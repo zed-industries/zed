@@ -63,7 +63,7 @@ pub struct IncomingCallNotification {
     state: Arc<IncomingCallNotificationState>,
 }
 impl IncomingCallNotificationState {
-    pub fn new(call: IncomingCall, app_state: Weak<AppState>) -> Self {
+    pub const fn new(call: IncomingCall, app_state: Weak<AppState>) -> Self {
         Self { call, app_state }
     }
 

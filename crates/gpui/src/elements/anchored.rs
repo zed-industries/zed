@@ -37,21 +37,21 @@ pub fn anchored() -> Anchored {
 
 impl Anchored {
     /// Sets which corner of the anchored element should be anchored to the current position.
-    pub fn anchor(mut self, anchor: Corner) -> Self {
+    pub const fn anchor(mut self, anchor: Corner) -> Self {
         self.anchor_corner = anchor;
         self
     }
 
     /// Sets the position in window coordinates
     /// (otherwise the location the anchored element is rendered is used)
-    pub fn position(mut self, anchor: Point<Pixels>) -> Self {
+    pub const fn position(mut self, anchor: Point<Pixels>) -> Self {
         self.anchor_position = Some(anchor);
         self
     }
 
     /// Offset the final position by this amount.
     /// Useful when you want to anchor to an element but offset from it, such as in PopoverMenu.
-    pub fn offset(mut self, offset: Point<Pixels>) -> Self {
+    pub const fn offset(mut self, offset: Point<Pixels>) -> Self {
         self.offset = Some(offset);
         self
     }
@@ -59,13 +59,13 @@ impl Anchored {
     /// Sets the position mode for this anchored element. Local will have this
     /// interpret its [`Anchored::position`] as relative to the parent element.
     /// While Window will have it interpret the position as relative to the window.
-    pub fn position_mode(mut self, mode: AnchoredPositionMode) -> Self {
+    pub const fn position_mode(mut self, mode: AnchoredPositionMode) -> Self {
         self.position_mode = mode;
         self
     }
 
     /// Snap to window edge instead of switching anchor corner when an overflow would occur.
-    pub fn snap_to_window(mut self) -> Self {
+    pub const fn snap_to_window(mut self) -> Self {
         self.fit_mode = AnchoredFitMode::SnapToWindow;
         self
     }

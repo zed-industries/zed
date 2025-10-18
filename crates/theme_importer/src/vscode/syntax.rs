@@ -173,7 +173,7 @@ impl ZedSyntaxToken {
         Some(matches)
     }
 
-    pub fn fallbacks(&self) -> &[Self] {
+    pub const fn fallbacks(&self) -> &[Self] {
         match self {
             ZedSyntaxToken::CommentDoc => &[ZedSyntaxToken::Comment],
             ZedSyntaxToken::Number => &[ZedSyntaxToken::Constant],

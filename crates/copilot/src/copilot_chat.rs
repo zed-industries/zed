@@ -189,35 +189,35 @@ pub struct ImageUrl {
 }
 
 impl Model {
-    pub fn uses_streaming(&self) -> bool {
+    pub const fn uses_streaming(&self) -> bool {
         self.capabilities.supports.streaming
     }
 
-    pub fn id(&self) -> &str {
+    pub const fn id(&self) -> &str {
         self.id.as_str()
     }
 
-    pub fn display_name(&self) -> &str {
+    pub const fn display_name(&self) -> &str {
         self.name.as_str()
     }
 
-    pub fn max_token_count(&self) -> u64 {
+    pub const fn max_token_count(&self) -> u64 {
         self.capabilities.limits.max_prompt_tokens
     }
 
-    pub fn supports_tools(&self) -> bool {
+    pub const fn supports_tools(&self) -> bool {
         self.capabilities.supports.tool_calls
     }
 
-    pub fn vendor(&self) -> ModelVendor {
+    pub const fn vendor(&self) -> ModelVendor {
         self.vendor
     }
 
-    pub fn supports_vision(&self) -> bool {
+    pub const fn supports_vision(&self) -> bool {
         self.capabilities.supports.vision
     }
 
-    pub fn supports_parallel_tool_calls(&self) -> bool {
+    pub const fn supports_parallel_tool_calls(&self) -> bool {
         self.capabilities.supports.parallel_tool_calls
     }
 
@@ -289,7 +289,7 @@ pub enum ChatMessageContent {
 }
 
 impl ChatMessageContent {
-    pub fn empty() -> Self {
+    pub const fn empty() -> Self {
         ChatMessageContent::Multipart(vec![])
     }
 }
@@ -541,7 +541,7 @@ impl CopilotChat {
         anyhow::Ok(())
     }
 
-    pub fn is_authenticated(&self) -> bool {
+    pub const fn is_authenticated(&self) -> bool {
         self.oauth_token.is_some()
     }
 

@@ -206,7 +206,7 @@ impl MentionUri {
         }
     }
 
-    pub fn as_link<'a>(&'a self) -> MentionLink<'a> {
+    pub const fn as_link<'a>(&'a self) -> MentionLink<'a> {
         MentionLink(self)
     }
 

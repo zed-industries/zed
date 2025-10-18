@@ -59,7 +59,7 @@ pub struct ThreadContextPickerDelegate {
 }
 
 impl ThreadContextPickerDelegate {
-    pub fn new(
+    pub const fn new(
         thread_store: WeakEntity<HistoryStore>,
         context_picker: WeakEntity<ContextPicker>,
         context_store: WeakEntity<context_store::ContextStore>,

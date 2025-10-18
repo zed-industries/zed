@@ -284,7 +284,7 @@ impl BufferDiffSnapshot {
         self.inner.hunks_intersecting_range_rev(range, buffer)
     }
 
-    pub fn base_text(&self) -> &language::BufferSnapshot {
+    pub const fn base_text(&self) -> &language::BufferSnapshot {
         &self.inner.base_text
     }
 
@@ -1098,11 +1098,11 @@ impl BufferDiff {
         changed_range
     }
 
-    pub fn base_text(&self) -> &language::BufferSnapshot {
+    pub const fn base_text(&self) -> &language::BufferSnapshot {
         &self.inner.base_text
     }
 
-    pub fn base_text_exists(&self) -> bool {
+    pub const fn base_text_exists(&self) -> bool {
         self.inner.base_text_exists
     }
 
@@ -1248,7 +1248,7 @@ impl DiffHunk {
 }
 
 impl DiffHunkStatus {
-    pub fn has_secondary_hunk(&self) -> bool {
+    pub const fn has_secondary_hunk(&self) -> bool {
         matches!(
             self.secondary,
             DiffHunkSecondaryStatus::HasSecondaryHunk
@@ -1257,7 +1257,7 @@ impl DiffHunkStatus {
         )
     }
 
-    pub fn is_pending(&self) -> bool {
+    pub const fn is_pending(&self) -> bool {
         matches!(
             self.secondary,
             DiffHunkSecondaryStatus::SecondaryHunkAdditionPending
@@ -1277,42 +1277,42 @@ impl DiffHunkStatus {
         self.kind == DiffHunkStatusKind::Modified
     }
 
-    pub fn added(secondary: DiffHunkSecondaryStatus) -> Self {
+    pub const fn added(secondary: DiffHunkSecondaryStatus) -> Self {
         Self {
             kind: DiffHunkStatusKind::Added,
             secondary,
         }
     }
 
-    pub fn modified(secondary: DiffHunkSecondaryStatus) -> Self {
+    pub const fn modified(secondary: DiffHunkSecondaryStatus) -> Self {
         Self {
             kind: DiffHunkStatusKind::Modified,
             secondary,
         }
     }
 
-    pub fn deleted(secondary: DiffHunkSecondaryStatus) -> Self {
+    pub const fn deleted(secondary: DiffHunkSecondaryStatus) -> Self {
         Self {
             kind: DiffHunkStatusKind::Deleted,
             secondary,
         }
     }
 
-    pub fn deleted_none() -> Self {
+    pub const fn deleted_none() -> Self {
         Self {
             kind: DiffHunkStatusKind::Deleted,
             secondary: DiffHunkSecondaryStatus::NoSecondaryHunk,
         }
     }
 
-    pub fn added_none() -> Self {
+    pub const fn added_none() -> Self {
         Self {
             kind: DiffHunkStatusKind::Added,
             secondary: DiffHunkSecondaryStatus::NoSecondaryHunk,
         }
     }
 
-    pub fn modified_none() -> Self {
+    pub const fn modified_none() -> Self {
         Self {
             kind: DiffHunkStatusKind::Modified,
             secondary: DiffHunkSecondaryStatus::NoSecondaryHunk,

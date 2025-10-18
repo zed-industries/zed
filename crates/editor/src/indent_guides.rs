@@ -23,7 +23,7 @@ pub struct ActiveIndentGuidesState {
 }
 
 impl ActiveIndentGuidesState {
-    pub fn should_refresh(&self) -> bool {
+    pub const fn should_refresh(&self) -> bool {
         self.pending_refresh.is_none() && self.dirty
     }
 }

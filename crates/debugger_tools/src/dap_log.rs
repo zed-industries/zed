@@ -120,7 +120,7 @@ enum MessageKind {
 }
 
 impl MessageKind {
-    fn label(&self) -> &'static str {
+    const fn label(&self) -> &'static str {
         match self {
             Self::Send => SEND,
             Self::Receive => RECEIVE,
@@ -495,7 +495,7 @@ pub struct DapLogToolbarItemView {
 }
 
 impl DapLogToolbarItemView {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self { log_view: None }
     }
 }

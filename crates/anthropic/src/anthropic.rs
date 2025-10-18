@@ -126,7 +126,7 @@ pub enum Model {
 }
 
 impl Model {
-    pub fn default_fast() -> Self {
+    pub const fn default_fast() -> Self {
         Self::Claude3_5Haiku
     }
 
@@ -297,7 +297,7 @@ impl Model {
         }
     }
 
-    pub fn max_token_count(&self) -> u64 {
+    pub const fn max_token_count(&self) -> u64 {
         match self {
             Self::ClaudeOpus4
             | Self::ClaudeOpus4_1

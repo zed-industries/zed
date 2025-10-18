@@ -64,7 +64,7 @@ impl Chunk {
         }
     }
 
-    fn reset(&mut self) {
+    const fn reset(&mut self) {
         self.offset = self.start;
     }
 }
@@ -95,7 +95,7 @@ impl Arena {
         }
     }
 
-    pub fn capacity(&self) -> usize {
+    pub const fn capacity(&self) -> usize {
         self.chunks.len() * self.chunk_size.get()
     }
 

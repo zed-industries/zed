@@ -499,6 +499,7 @@ fn main() {
         if !QUIET.load(Ordering::Relaxed) {
             eprint!("\rProfiling test {}/{}", idx + 1, len);
         }
+
         // Pretty-printable stripped name for the test.
         let t_name_pretty = t_name.replace(consts::SUF_NORMAL, "");
 

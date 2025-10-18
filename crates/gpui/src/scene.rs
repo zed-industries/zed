@@ -48,7 +48,7 @@ impl Scene {
         self.surfaces.clear();
     }
 
-    pub fn len(&self) -> usize {
+    pub const fn len(&self) -> usize {
         self.paint_operations.len()
     }
 
@@ -207,7 +207,7 @@ pub(crate) enum Primitive {
 }
 
 impl Primitive {
-    pub fn bounds(&self) -> &Bounds<ScaledPixels> {
+    pub const fn bounds(&self) -> &Bounds<ScaledPixels> {
         match self {
             Primitive::Shadow(shadow) => &shadow.bounds,
             Primitive::Quad(quad) => &quad.bounds,
@@ -219,7 +219,7 @@ impl Primitive {
         }
     }
 
-    pub fn content_mask(&self) -> &ContentMask<ScaledPixels> {
+    pub const fn content_mask(&self) -> &ContentMask<ScaledPixels> {
         match self {
             Primitive::Shadow(shadow) => &shadow.content_mask,
             Primitive::Quad(quad) => &quad.content_mask,
@@ -528,7 +528,7 @@ impl Eq for TransformationMatrix {}
 
 impl TransformationMatrix {
     /// The unit matrix, has no effect.
-    pub fn unit() -> Self {
+    pub const fn unit() -> Self {
         Self {
             rotation_scale: [[1.0, 0.0], [0.0, 1.0]],
             translation: [0.0, 0.0],
@@ -724,7 +724,7 @@ impl Path<Pixels> {
     }
 
     /// Move the start, current point to the given point.
-    pub fn move_to(&mut self, to: Point<Pixels>) {
+    pub const fn move_to(&mut self, to: Point<Pixels>) {
         self.contour_count += 1;
         self.start = to;
         self.current = to;

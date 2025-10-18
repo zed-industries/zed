@@ -95,7 +95,7 @@ pub enum Model {
 }
 
 impl Model {
-    pub fn default_fast() -> Self {
+    pub const fn default_fast() -> Self {
         // TODO: Replace with FiveMini since all other models are deprecated
         Self::FourPointOneMini
     }
@@ -165,7 +165,7 @@ impl Model {
         }
     }
 
-    pub fn max_token_count(&self) -> u64 {
+    pub const fn max_token_count(&self) -> u64 {
         match self {
             Self::ThreePointFiveTurbo => 16_385,
             Self::Four => 8_192,
@@ -186,7 +186,7 @@ impl Model {
         }
     }
 
-    pub fn max_output_tokens(&self) -> Option<u64> {
+    pub const fn max_output_tokens(&self) -> Option<u64> {
         match self {
             Self::Custom {
                 max_output_tokens, ..
@@ -221,7 +221,7 @@ impl Model {
     /// Returns whether the given model supports the `parallel_tool_calls` parameter.
     ///
     /// If the model does not support the parameter, do not pass it up, or the API will return an error.
-    pub fn supports_parallel_tool_calls(&self) -> bool {
+    pub const fn supports_parallel_tool_calls(&self) -> bool {
         match self {
             Self::ThreePointFiveTurbo
             | Self::Four
@@ -241,7 +241,7 @@ impl Model {
     /// Returns whether the given model supports the `prompt_cache_key` parameter.
     ///
     /// If the model does not support the parameter, do not pass it up.
-    pub fn supports_prompt_cache_key(&self) -> bool {
+    pub const fn supports_prompt_cache_key(&self) -> bool {
         true
     }
 }
@@ -321,7 +321,7 @@ pub enum MessageContent {
 }
 
 impl MessageContent {
-    pub fn empty() -> Self {
+    pub const fn empty() -> Self {
         MessageContent::Multipart(vec![])
     }
 

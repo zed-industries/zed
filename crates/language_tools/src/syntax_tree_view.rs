@@ -594,7 +594,7 @@ impl Default for SyntaxTreeToolbarItemView {
 }
 
 impl SyntaxTreeToolbarItemView {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             tree_view: None,
             subscription: None,

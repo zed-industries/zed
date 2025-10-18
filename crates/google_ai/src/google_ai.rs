@@ -442,7 +442,7 @@ pub struct ModelName {
 }
 
 impl ModelName {
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.model_id.is_empty()
     }
 }
@@ -529,7 +529,7 @@ pub enum Model {
 }
 
 impl Model {
-    pub fn default_fast() -> Self {
+    pub const fn default_fast() -> Self {
         Self::Gemini20FlashLite
     }
 
@@ -576,7 +576,7 @@ impl Model {
         }
     }
 
-    pub fn max_token_count(&self) -> u64 {
+    pub const fn max_token_count(&self) -> u64 {
         match self {
             Self::Gemini15Pro => 2_097_152,
             Self::Gemini15Flash8b => 1_048_576,
@@ -590,7 +590,7 @@ impl Model {
         }
     }
 
-    pub fn max_output_tokens(&self) -> Option<u64> {
+    pub const fn max_output_tokens(&self) -> Option<u64> {
         match self {
             Model::Gemini15Pro => Some(8_192),
             Model::Gemini15Flash8b => Some(8_192),
@@ -604,15 +604,15 @@ impl Model {
         }
     }
 
-    pub fn supports_tools(&self) -> bool {
+    pub const fn supports_tools(&self) -> bool {
         true
     }
 
-    pub fn supports_images(&self) -> bool {
+    pub const fn supports_images(&self) -> bool {
         true
     }
 
-    pub fn mode(&self) -> GoogleModelMode {
+    pub const fn mode(&self) -> GoogleModelMode {
         match self {
             Self::Gemini15Pro
             | Self::Gemini15Flash8b

@@ -512,7 +512,7 @@ impl ButtonLike {
         self
     }
 
-    pub fn height(mut self, height: DefiniteLength) -> Self {
+    pub const fn height(mut self, height: DefiniteLength) -> Self {
         self.height = Some(height);
         self
     }

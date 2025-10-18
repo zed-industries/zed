@@ -133,7 +133,7 @@ pub struct AuthRequired {
 }
 
 impl AuthRequired {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             description: None,
             provider_id: None,

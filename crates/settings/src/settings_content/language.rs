@@ -82,7 +82,7 @@ pub enum EditPredictionProvider {
 }
 
 impl EditPredictionProvider {
-    pub fn is_zed(&self) -> bool {
+    pub const fn is_zed(&self) -> bool {
         match self {
             EditPredictionProvider::Zed => true,
             EditPredictionProvider::None
@@ -504,7 +504,7 @@ impl InlayHintKind {
     }
 
     /// Returns the name of this [`InlayHintKind`].
-    pub fn name(&self) -> &'static str {
+    pub const fn name(&self) -> &'static str {
         match self {
             InlayHintKind::Type => "type",
             InlayHintKind::Parameter => "parameter",

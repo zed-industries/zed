@@ -284,7 +284,7 @@ impl InlayChunks<'_> {
         self.max_output_offset = new_range.end;
     }
 
-    pub fn offset(&self) -> InlayOffset {
+    pub const fn offset(&self) -> InlayOffset {
         self.output_offset
     }
 }
@@ -543,11 +543,11 @@ impl Iterator for InlayBufferRows<'_> {
 }
 
 impl InlayPoint {
-    pub fn new(row: u32, column: u32) -> Self {
+    pub const fn new(row: u32, column: u32) -> Self {
         Self(Point::new(row, column))
     }
 
-    pub fn row(self) -> u32 {
+    pub const fn row(self) -> u32 {
         self.0.row
     }
 }

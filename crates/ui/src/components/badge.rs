@@ -24,7 +24,7 @@ impl Badge {
         }
     }
 
-    pub fn icon(mut self, icon: IconName) -> Self {
+    pub const fn icon(mut self, icon: IconName) -> Self {
         self.icon = icon;
         self
     }

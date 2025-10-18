@@ -31,7 +31,7 @@ pub fn channel<T>(value: T) -> (Sender<T>, Receiver<T>) {
 struct WakerId(usize);
 
 impl WakerId {
-    fn post_inc(&mut self) -> Self {
+    const fn post_inc(&mut self) -> Self {
         let id = *self;
         self.0 = id.0.wrapping_add(1);
         *self

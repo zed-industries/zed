@@ -55,7 +55,7 @@ impl DebuggerPaneItem {
         }
     }
 
-    pub(crate) fn to_shared_string(self) -> SharedString {
+    pub(crate) const fn to_shared_string(self) -> SharedString {
         match self {
             DebuggerPaneItem::Console => SharedString::new_static("Console"),
             DebuggerPaneItem::Variables => SharedString::new_static("Variables"),
@@ -67,7 +67,7 @@ impl DebuggerPaneItem {
             DebuggerPaneItem::MemoryView => SharedString::new_static("Memory View"),
         }
     }
-    pub(crate) fn tab_tooltip(self) -> SharedString {
+    pub(crate) const fn tab_tooltip(self) -> SharedString {
         let tooltip = match self {
             DebuggerPaneItem::Console => {
                 "Displays program output and allows manual input of debugger commands."

@@ -1015,7 +1015,7 @@ impl TerminalPanel {
         self.active_pane.read(cx).items_len() == 0 && self.pending_terminals_to_add == 0
     }
 
-    pub fn assistant_enabled(&self) -> bool {
+    pub const fn assistant_enabled(&self) -> bool {
         self.assistant_enabled
     }
 

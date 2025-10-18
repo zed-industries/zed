@@ -218,7 +218,7 @@ pub struct ManageProfiles {
 }
 
 impl ManageProfiles {
-    pub fn customize_tools(profile_id: AgentProfileId) -> Self {
+    pub const fn customize_tools(profile_id: AgentProfileId) -> Self {
         Self {
             customize_tools: Some(profile_id),
         }

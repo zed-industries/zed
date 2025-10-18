@@ -119,7 +119,7 @@ impl ChannelBuffer {
         self.buffer.read(cx).remote_id()
     }
 
-    pub fn user_store(&self) -> &Entity<UserStore> {
+    pub const fn user_store(&self) -> &Entity<UserStore> {
         &self.user_store
     }
 
@@ -234,7 +234,7 @@ impl ChannelBuffer {
         }));
     }
 
-    pub fn epoch(&self) -> u64 {
+    pub const fn epoch(&self) -> u64 {
         self.buffer_epoch
     }
 
@@ -242,7 +242,7 @@ impl ChannelBuffer {
         self.buffer.clone()
     }
 
-    pub fn collaborators(&self) -> &HashMap<PeerId, Collaborator> {
+    pub const fn collaborators(&self) -> &HashMap<PeerId, Collaborator> {
         &self.collaborators
     }
 
@@ -268,7 +268,7 @@ impl ChannelBuffer {
         cx.notify()
     }
 
-    pub fn is_connected(&self) -> bool {
+    pub const fn is_connected(&self) -> bool {
         self.connected
     }
 

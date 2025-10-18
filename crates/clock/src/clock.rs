@@ -182,18 +182,18 @@ impl Lamport {
         value: Seq::MAX,
     };
 
-    pub fn new(replica_id: ReplicaId) -> Self {
+    pub const fn new(replica_id: ReplicaId) -> Self {
         Self {
             value: 1,
             replica_id,
         }
     }
 
-    pub fn as_u64(self) -> u64 {
+    pub const fn as_u64(self) -> u64 {
         ((self.value as u64) << 32) | (self.replica_id as u64)
     }
 
-    pub fn tick(&mut self) -> Self {
+    pub const fn tick(&mut self) -> Self {
         let timestamp = *self;
         self.value += 1;
         timestamp

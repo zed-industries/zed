@@ -21,7 +21,7 @@ pub struct TerminalCodegen {
 impl EventEmitter<CodegenEvent> for TerminalCodegen {}
 
 impl TerminalCodegen {
-    pub fn new(terminal: Entity<Terminal>, telemetry: Option<Arc<Telemetry>>) -> Self {
+    pub const fn new(terminal: Entity<Terminal>, telemetry: Option<Arc<Telemetry>>) -> Self {
         Self {
             terminal,
             telemetry,
@@ -171,7 +171,7 @@ struct TerminalTransaction {
 }
 
 impl TerminalTransaction {
-    pub fn start(terminal: Entity<Terminal>) -> Self {
+    pub const fn start(terminal: Entity<Terminal>) -> Self {
         Self { terminal }
     }
 

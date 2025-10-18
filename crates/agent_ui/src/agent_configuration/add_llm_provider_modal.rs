@@ -19,13 +19,13 @@ pub enum LlmCompatibleProvider {
 }
 
 impl LlmCompatibleProvider {
-    fn name(&self) -> &'static str {
+    const fn name(&self) -> &'static str {
         match self {
             LlmCompatibleProvider::OpenAi => "OpenAI",
         }
     }
 
-    fn api_url(&self) -> &'static str {
+    const fn api_url(&self) -> &'static str {
         match self {
             LlmCompatibleProvider::OpenAi => "https://api.openai.com/v1",
         }

@@ -156,7 +156,7 @@ impl MultiBufferDiffHunk {
             && self.buffer_range == (text::Anchor::MIN..text::Anchor::MAX)
     }
 
-    pub fn multi_buffer_range(&self) -> Range<Anchor> {
+    pub const fn multi_buffer_range(&self) -> Range<Anchor> {
         let start = Anchor::in_buffer(self.excerpt_id, self.buffer_id, self.buffer_range.start);
         let end = Anchor::in_buffer(self.excerpt_id, self.buffer_id, self.buffer_range.end);
         start..end
@@ -171,7 +171,7 @@ pub struct PathKey {
 }
 
 impl PathKey {
-    pub fn with_sort_prefix(sort_prefix: u64, path: Arc<RelPath>) -> Self {
+    pub const fn with_sort_prefix(sort_prefix: u64, path: Arc<RelPath>) -> Self {
         Self {
             sort_prefix: Some(sort_prefix),
             path,
@@ -587,7 +587,7 @@ pub enum ExpandExcerptDirection {
 }
 
 impl ExpandExcerptDirection {
-    pub fn should_expand_up(&self) -> bool {
+    pub const fn should_expand_up(&self) -> bool {
         match self {
             ExpandExcerptDirection::Up => true,
             ExpandExcerptDirection::Down => false,
@@ -595,7 +595,7 @@ impl ExpandExcerptDirection {
         }
     }
 
-    pub fn should_expand_down(&self) -> bool {
+    pub const fn should_expand_down(&self) -> bool {
         match self {
             ExpandExcerptDirection::Up => false,
             ExpandExcerptDirection::Down => true,
@@ -615,7 +615,7 @@ pub struct IndentGuide {
 }
 
 impl IndentGuide {
-    pub fn indent_level(&self) -> u32 {
+    pub const fn indent_level(&self) -> u32 {
         self.depth * self.tab_size
     }
 }
@@ -745,7 +745,7 @@ impl MultiBuffer {
         }
     }
 
-    pub fn is_singleton(&self) -> bool {
+    pub const fn is_singleton(&self) -> bool {
         self.singleton
     }
 
@@ -4224,7 +4224,7 @@ impl MultiBufferSnapshot {
             .map(|ch| classifier.kind(ch))
     }
 
-    pub fn is_singleton(&self) -> bool {
+    pub const fn is_singleton(&self) -> bool {
         self.singleton
     }
 
@@ -5408,11 +5408,11 @@ impl MultiBufferSnapshot {
         })
     }
 
-    pub fn edit_count(&self) -> usize {
+    pub const fn edit_count(&self) -> usize {
         self.edit_count
     }
 
-    pub fn non_text_state_update_count(&self) -> usize {
+    pub const fn non_text_state_update_count(&self) -> usize {
         self.non_text_state_update_count
     }
 
@@ -5891,7 +5891,7 @@ impl MultiBufferSnapshot {
         result.into_iter()
     }
 
-    pub fn trailing_excerpt_update_count(&self) -> usize {
+    pub const fn trailing_excerpt_update_count(&self) -> usize {
         self.trailing_excerpt_update_count
     }
 
@@ -5953,15 +5953,15 @@ impl MultiBufferSnapshot {
         Some(buffer_snapshot.language_indent_size_at(offset, cx))
     }
 
-    pub fn is_dirty(&self) -> bool {
+    pub const fn is_dirty(&self) -> bool {
         self.is_dirty
     }
 
-    pub fn has_deleted_file(&self) -> bool {
+    pub const fn has_deleted_file(&self) -> bool {
         self.has_deleted_file
     }
 
-    pub fn has_conflict(&self) -> bool {
+    pub const fn has_conflict(&self) -> bool {
         self.has_conflict
     }
 
@@ -6333,7 +6333,7 @@ impl MultiBufferSnapshot {
             })
     }
 
-    pub fn show_headers(&self) -> bool {
+    pub const fn show_headers(&self) -> bool {
         self.show_headers
     }
 
@@ -7027,15 +7027,15 @@ impl Excerpt {
 }
 
 impl<'a> MultiBufferExcerpt<'a> {
-    pub fn id(&self) -> ExcerptId {
+    pub const fn id(&self) -> ExcerptId {
         self.excerpt.id
     }
 
-    pub fn buffer_id(&self) -> BufferId {
+    pub const fn buffer_id(&self) -> BufferId {
         self.excerpt.buffer_id
     }
 
-    pub fn start_anchor(&self) -> Anchor {
+    pub const fn start_anchor(&self) -> Anchor {
         Anchor::in_buffer(
             self.excerpt.id,
             self.excerpt.buffer_id,
@@ -7043,7 +7043,7 @@ impl<'a> MultiBufferExcerpt<'a> {
         )
     }
 
-    pub fn end_anchor(&self) -> Anchor {
+    pub const fn end_anchor(&self) -> Anchor {
         Anchor::in_buffer(
             self.excerpt.id,
             self.excerpt.buffer_id,
@@ -7051,7 +7051,7 @@ impl<'a> MultiBufferExcerpt<'a> {
         )
     }
 
-    pub fn buffer(&self) -> &'a BufferSnapshot {
+    pub const fn buffer(&self) -> &'a BufferSnapshot {
         &self.excerpt.buffer
     }
 
@@ -7065,7 +7065,7 @@ impl<'a> MultiBufferExcerpt<'a> {
                 .to_offset(&self.excerpt.buffer.text)
     }
 
-    pub fn start_offset(&self) -> usize {
+    pub const fn start_offset(&self) -> usize {
         self.offset
     }
 
@@ -7144,25 +7144,25 @@ impl<'a> MultiBufferExcerpt<'a> {
             && range.end <= self.excerpt.buffer_end_offset()
     }
 
-    pub fn max_buffer_row(&self) -> u32 {
+    pub const fn max_buffer_row(&self) -> u32 {
         self.excerpt.max_buffer_row
     }
 }
 
 impl ExcerptId {
-    pub fn min() -> Self {
+    pub const fn min() -> Self {
         Self(0)
     }
 
-    pub fn max() -> Self {
+    pub const fn max() -> Self {
         Self(u32::MAX)
     }
 
-    pub fn to_proto(self) -> u64 {
+    pub const fn to_proto(self) -> u64 {
         self.0 as _
     }
 
-    pub fn from_proto(proto: u64) -> Self {
+    pub const fn from_proto(proto: u64) -> Self {
         Self(proto as _)
     }
 
@@ -7226,7 +7226,7 @@ impl sum_tree::KeyedItem for ExcerptIdMapping {
 }
 
 impl DiffTransform {
-    fn hunk_info(&self) -> Option<DiffTransformHunkInfo> {
+    const fn hunk_info(&self) -> Option<DiffTransformHunkInfo> {
         match self {
             DiffTransform::DeletedHunk { hunk_info, .. } => Some(*hunk_info),
             DiffTransform::BufferContent {
@@ -7254,7 +7254,7 @@ impl sum_tree::Item for DiffTransform {
 }
 
 impl DiffTransformSummary {
-    fn excerpt_len(&self) -> ExcerptOffset {
+    const fn excerpt_len(&self) -> ExcerptOffset {
         ExcerptOffset::new(self.input.len)
     }
 }
@@ -7593,7 +7593,7 @@ impl Iterator for MultiBufferRows<'_> {
 }
 
 impl<'a> MultiBufferChunks<'a> {
-    pub fn offset(&self) -> usize {
+    pub const fn offset(&self) -> usize {
         self.range.start
     }
 

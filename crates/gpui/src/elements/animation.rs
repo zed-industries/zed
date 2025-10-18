@@ -34,7 +34,7 @@ impl Animation {
     }
 
     /// Set the animation to loop when it finishes.
-    pub fn repeat(mut self) -> Self {
+    pub const fn repeat(mut self) -> Self {
         self.oneshot = false;
         self
     }
@@ -210,7 +210,7 @@ mod easing {
     use std::f32::consts::PI;
 
     /// The linear easing function, or delta itself
-    pub fn linear(delta: f32) -> f32 {
+    pub const fn linear(delta: f32) -> f32 {
         delta
     }
 

@@ -127,7 +127,7 @@ impl AgentThreadEntry {
         }
     }
 
-    pub fn user_message(&self) -> Option<&UserMessage> {
+    pub const fn user_message(&self) -> Option<&UserMessage> {
         if let AgentThreadEntry::UserMessage(message) = self {
             Some(message)
         } else {
@@ -536,7 +536,7 @@ impl ContentBlock {
         }
     }
 
-    pub fn markdown(&self) -> Option<&Entity<Markdown>> {
+    pub const fn markdown(&self) -> Option<&Entity<Markdown>> {
         match self {
             ContentBlock::Empty => None,
             ContentBlock::Markdown { markdown } => Some(markdown),
@@ -544,7 +544,7 @@ impl ContentBlock {
         }
     }
 
-    pub fn resource_link(&self) -> Option<&acp::ResourceLink> {
+    pub const fn resource_link(&self) -> Option<&acp::ResourceLink> {
         match self {
             ContentBlock::ResourceLink { resource_link } => Some(resource_link),
             _ => None,
@@ -630,7 +630,7 @@ pub enum ToolCallUpdate {
 }
 
 impl ToolCallUpdate {
-    fn id(&self) -> &acp::ToolCallId {
+    const fn id(&self) -> &acp::ToolCallId {
         match self {
             Self::UpdateFields(update) => &update.id,
             Self::UpdateDiff(diff) => &diff.id,
@@ -682,7 +682,7 @@ pub struct PlanStats<'a> {
 }
 
 impl Plan {
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
 
@@ -1022,11 +1022,11 @@ impl AcpThread {
         &self.connection
     }
 
-    pub fn action_log(&self) -> &Entity<ActionLog> {
+    pub const fn action_log(&self) -> &Entity<ActionLog> {
         &self.action_log
     }
 
-    pub fn project(&self) -> &Entity<Project> {
+    pub const fn project(&self) -> &Entity<Project> {
         &self.project
     }
 
@@ -1038,11 +1038,11 @@ impl AcpThread {
         &self.entries
     }
 
-    pub fn session_id(&self) -> &acp::SessionId {
+    pub const fn session_id(&self) -> &acp::SessionId {
         &self.session_id
     }
 
-    pub fn status(&self) -> ThreadStatus {
+    pub const fn status(&self) -> ThreadStatus {
         if self.send_task.is_some() {
             ThreadStatus::Generating
         } else {
@@ -1050,7 +1050,7 @@ impl AcpThread {
         }
     }
 
-    pub fn token_usage(&self) -> Option<&TokenUsage> {
+    pub const fn token_usage(&self) -> Option<&TokenUsage> {
         self.token_usage.as_ref()
     }
 
@@ -1533,7 +1533,7 @@ impl AcpThread {
         first_tool_call
     }
 
-    pub fn plan(&self) -> &Plan {
+    pub const fn plan(&self) -> &Plan {
         &self.plan
     }
 

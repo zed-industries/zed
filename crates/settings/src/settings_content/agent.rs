@@ -112,7 +112,7 @@ pub struct AgentSettingsContent {
 }
 
 impl AgentSettingsContent {
-    pub fn set_dock(&mut self, dock: DockPosition) {
+    pub const fn set_dock(&mut self, dock: DockPosition) {
         self.dock = Some(dock);
     }
 
@@ -147,19 +147,19 @@ impl AgentSettingsContent {
         });
     }
 
-    pub fn set_always_allow_tool_actions(&mut self, allow: bool) {
+    pub const fn set_always_allow_tool_actions(&mut self, allow: bool) {
         self.always_allow_tool_actions = Some(allow);
     }
 
-    pub fn set_play_sound_when_agent_done(&mut self, allow: bool) {
+    pub const fn set_play_sound_when_agent_done(&mut self, allow: bool) {
         self.play_sound_when_agent_done = Some(allow);
     }
 
-    pub fn set_single_file_review(&mut self, allow: bool) {
+    pub const fn set_single_file_review(&mut self, allow: bool) {
         self.single_file_review = Some(allow);
     }
 
-    pub fn set_use_modifier_to_send(&mut self, always_use: bool) {
+    pub const fn set_use_modifier_to_send(&mut self, always_use: bool) {
         self.use_modifier_to_send = Some(always_use);
     }
 

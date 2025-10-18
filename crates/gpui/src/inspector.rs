@@ -77,7 +77,7 @@ mod conditional {
     }
 
     impl Inspector {
-        pub(crate) fn new() -> Self {
+        pub(crate) const fn new() -> Self {
             Self {
                 active_element: None,
                 pick_depth: Some(0.0),
@@ -143,12 +143,12 @@ mod conditional {
         }
 
         /// Starts element picking mode, allowing the user to select elements by clicking.
-        pub fn start_picking(&mut self) {
+        pub const fn start_picking(&mut self) {
             self.pick_depth = Some(0.0);
         }
 
         /// Returns whether the inspector is currently in picking mode.
-        pub fn is_picking(&self) -> bool {
+        pub const fn is_picking(&self) -> bool {
             self.pick_depth.is_some()
         }
 

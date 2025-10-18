@@ -92,7 +92,7 @@ pub enum Model {
 }
 
 impl Model {
-    pub fn default_fast() -> Self {
+    pub const fn default_fast() -> Self {
         Model::MistralSmallLatest
     }
 
@@ -152,7 +152,7 @@ impl Model {
         }
     }
 
-    pub fn max_token_count(&self) -> u64 {
+    pub const fn max_token_count(&self) -> u64 {
         match self {
             Self::CodestralLatest => 256000,
             Self::MistralLargeLatest => 131000,
@@ -170,7 +170,7 @@ impl Model {
         }
     }
 
-    pub fn max_output_tokens(&self) -> Option<u64> {
+    pub const fn max_output_tokens(&self) -> Option<u64> {
         match self {
             Self::Custom {
                 max_output_tokens, ..
@@ -313,7 +313,7 @@ pub enum MessageContent {
 }
 
 impl MessageContent {
-    pub fn empty() -> Self {
+    pub const fn empty() -> Self {
         Self::Plain {
             content: String::new(),
         }

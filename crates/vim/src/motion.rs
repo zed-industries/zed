@@ -28,14 +28,14 @@ pub(crate) enum MotionKind {
 }
 
 impl MotionKind {
-    pub(crate) fn for_mode(mode: Mode) -> Self {
+    pub(crate) const fn for_mode(mode: Mode) -> Self {
         match mode {
             Mode::VisualLine => MotionKind::Linewise,
             _ => MotionKind::Exclusive,
         }
     }
 
-    pub(crate) fn linewise(&self) -> bool {
+    pub(crate) const fn linewise(&self) -> bool {
         matches!(self, MotionKind::Linewise)
     }
 }
@@ -809,11 +809,11 @@ impl Motion {
         }
     }
 
-    fn skip_exclusive_special_case(&self) -> bool {
+    const fn skip_exclusive_special_case(&self) -> bool {
         matches!(self, Motion::WrappingLeft | Motion::WrappingRight)
     }
 
-    pub(crate) fn push_to_jump_list(&self) -> bool {
+    pub(crate) const fn push_to_jump_list(&self) -> bool {
         use Motion::*;
         match self {
             CurrentLine
@@ -880,7 +880,7 @@ impl Motion {
         }
     }
 
-    pub fn infallible(&self) -> bool {
+    pub const fn infallible(&self) -> bool {
         use Motion::*;
         match self {
             StartOfDocument | EndOfDocument | CurrentLine => true,
@@ -2628,7 +2628,7 @@ fn find_backward(
 }
 
 /// Returns true if one char is equal to the other or its uppercase variant (if smartcase is true).
-pub fn is_character_match(target: char, other: char, smartcase: bool) -> bool {
+pub const fn is_character_match(target: char, other: char, smartcase: bool) -> bool {
     if smartcase {
         if target.is_uppercase() {
             target == other
@@ -3015,7 +3015,7 @@ fn section_motion(
     display_point
 }
 
-fn matches_indent_type(
+const fn matches_indent_type(
     target_indent: &text::LineIndent,
     current_indent: &text::LineIndent,
     indent_type: IndentType,

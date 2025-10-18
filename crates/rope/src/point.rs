@@ -16,11 +16,11 @@ impl Point {
         column: u32::MAX,
     };
 
-    pub fn new(row: u32, column: u32) -> Self {
+    pub const fn new(row: u32, column: u32) -> Self {
         Point { row, column }
     }
 
-    pub fn row_range(range: Range<u32>) -> Range<Self> {
+    pub const fn row_range(range: Range<u32>) -> Range<Self> {
         Point {
             row: range.start,
             column: 0,
@@ -30,7 +30,7 @@ impl Point {
         }
     }
 
-    pub fn zero() -> Self {
+    pub const fn zero() -> Self {
         Point::new(0, 0)
     }
 
@@ -43,7 +43,7 @@ impl Point {
         point
     }
 
-    pub fn is_zero(&self) -> bool {
+    pub const fn is_zero(&self) -> bool {
         self.row == 0 && self.column == 0
     }
 

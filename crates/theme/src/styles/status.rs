@@ -181,7 +181,7 @@ impl StatusColors {
         }
     }
 
-    pub fn diagnostic(&self) -> DiagnosticColors {
+    pub const fn diagnostic(&self) -> DiagnosticColors {
         DiagnosticColors {
             error: self.error,
             warning: self.warning,

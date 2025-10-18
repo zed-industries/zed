@@ -440,7 +440,7 @@ pub struct TokenUsage {
 }
 
 impl TokenUsage {
-    pub fn total_tokens(&self) -> u64 {
+    pub const fn total_tokens(&self) -> u64 {
         self.input_tokens
             + self.output_tokens
             + self.cache_read_input_tokens

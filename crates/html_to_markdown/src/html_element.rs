@@ -28,7 +28,7 @@ pub struct HtmlElement {
 }
 
 impl HtmlElement {
-    pub fn new(tag: String, attrs: RefCell<Vec<Attribute>>) -> Self {
+    pub const fn new(tag: String, attrs: RefCell<Vec<Attribute>>) -> Self {
         Self { tag, attrs }
     }
 

@@ -56,7 +56,7 @@ impl Drag {
         range.contains(&address)
     }
 
-    fn memory_range(&self) -> RangeInclusive<u64> {
+    const fn memory_range(&self) -> RangeInclusive<u64> {
         if self.start_address < self.end_address {
             self.start_address..=self.end_address
         } else {
@@ -77,10 +77,10 @@ impl SelectedMemoryRange {
             SelectedMemoryRange::DragComplete(drag) => drag.contains(address),
         }
     }
-    fn is_dragging(&self) -> bool {
+    const fn is_dragging(&self) -> bool {
         matches!(self, SelectedMemoryRange::DragUnderway(_))
     }
-    fn drag(&self) -> &Drag {
+    const fn drag(&self) -> &Drag {
         match self {
             SelectedMemoryRange::DragUnderway(drag) => drag,
             SelectedMemoryRange::DragComplete(drag) => drag,
@@ -116,16 +116,16 @@ impl ViewState {
             selection: None,
         }
     }
-    fn row_count(&self) -> u64 {
+    const fn row_count(&self) -> u64 {
         // This was picked fully arbitrarily. There's no incentive for us to care about page sizes other than the fact that it seems to be a good
         // middle ground for data size.
         const PAGE_SIZE: u64 = 4096;
         PAGE_SIZE / self.line_width.width as u64
     }
-    fn schedule_scroll_down(&mut self) {
+    const fn schedule_scroll_down(&mut self) {
         self.base_row = self.base_row.saturating_add(1)
     }
-    fn schedule_scroll_up(&mut self) {
+    const fn schedule_scroll_up(&mut self) {
         self.base_row = self.base_row.saturating_sub(1);
     }
 

@@ -32,7 +32,7 @@ struct GlobalHistoryManager(Entity<HistoryManager>);
 impl Global for GlobalHistoryManager {}
 
 impl HistoryManager {
-    fn new() -> Self {
+    const fn new() -> Self {
         Self {
             history: Vec::new(),
         }

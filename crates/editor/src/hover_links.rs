@@ -85,7 +85,7 @@ pub enum TriggerPoint {
 }
 
 impl TriggerPoint {
-    fn anchor(&self) -> &Anchor {
+    const fn anchor(&self) -> &Anchor {
         match self {
             TriggerPoint::Text(anchor) => anchor,
             TriggerPoint::InlayHint(inlay_range, _, _) => &inlay_range.inlay_position,

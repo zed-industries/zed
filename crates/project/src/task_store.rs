@@ -230,7 +230,7 @@ impl TaskStore {
         }
     }
 
-    pub fn task_inventory(&self) -> Option<&Entity<Inventory>> {
+    pub const fn task_inventory(&self) -> Option<&Entity<Inventory>> {
         match self {
             TaskStore::Functional(state) => Some(&state.task_inventory),
             TaskStore::Noop => None,

@@ -105,7 +105,7 @@ impl Minimap {
         self.display_in == DisplayIn::ActiveEditor
     }
 
-    pub fn with_show_override(self) -> Self {
+    pub const fn with_show_override(self) -> Self {
         Self {
             show: ShowMinimap::Always,
             ..self

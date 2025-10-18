@@ -174,7 +174,7 @@ impl ContentMode {
         }
     }
 
-    pub fn is_scrollable(&self) -> bool {
+    pub const fn is_scrollable(&self) -> bool {
         matches!(self, ContentMode::Scrollable)
     }
 }
@@ -356,11 +356,11 @@ impl TerminalView {
         self.terminal.read(cx).last_content().terminal_bounds
     }
 
-    pub fn entity(&self) -> &Entity<Terminal> {
+    pub const fn entity(&self) -> &Entity<Terminal> {
         &self.terminal
     }
 
-    pub fn has_bell(&self) -> bool {
+    pub const fn has_bell(&self) -> bool {
         self.has_bell
     }
 
@@ -660,7 +660,7 @@ impl TerminalView {
         .detach();
     }
 
-    pub fn terminal(&self) -> &Entity<Terminal> {
+    pub const fn terminal(&self) -> &Entity<Terminal> {
         &self.terminal
     }
 
@@ -681,7 +681,7 @@ impl TerminalView {
         cx.notify();
     }
 
-    fn next_blink_epoch(&mut self) -> usize {
+    const fn next_blink_epoch(&mut self) -> usize {
         self.blink_epoch += 1;
         self.blink_epoch
     }

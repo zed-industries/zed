@@ -59,7 +59,7 @@ pub struct RulesContextPickerDelegate {
 }
 
 impl RulesContextPickerDelegate {
-    pub fn new(
+    pub const fn new(
         prompt_store: WeakEntity<PromptStore>,
         context_picker: WeakEntity<ContextPicker>,
         context_store: WeakEntity<context_store::ContextStore>,

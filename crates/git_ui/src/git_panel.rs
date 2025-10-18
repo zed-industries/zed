@@ -225,7 +225,7 @@ impl GitHeaderEntry {
             Section::New => status.is_created(),
         }
     }
-    pub fn title(&self) -> &'static str {
+    pub const fn title(&self) -> &'static str {
         match self.header {
             Section::Conflict => "Conflicts",
             Section::Tracked => "Tracked",
@@ -241,7 +241,7 @@ enum GitListEntry {
 }
 
 impl GitListEntry {
-    fn status_entry(&self) -> Option<&GitStatusEntry> {
+    const fn status_entry(&self) -> Option<&GitStatusEntry> {
         match self {
             GitListEntry::Status(entry) => Some(entry),
             _ => None,
@@ -1333,7 +1333,7 @@ impl GitPanel {
         .detach();
     }
 
-    pub fn total_staged_count(&self) -> usize {
+    pub const fn total_staged_count(&self) -> usize {
         self.tracked_staged_count + self.new_staged_count + self.conflicted_staged_count
     }
 
@@ -2807,7 +2807,7 @@ impl GitPanel {
         cx.notify();
     }
 
-    fn header_state(&self, header_type: Section) -> ToggleState {
+    const fn header_state(&self, header_type: Section) -> ToggleState {
         let (staged_count, count) = match header_type {
             Section::New => (self.new_staged_count, self.new_count),
             Section::Tracked => (self.tracked_staged_count, self.tracked_count),
@@ -2873,23 +2873,23 @@ impl GitPanel {
         entry.staging
     }
 
-    pub(crate) fn has_staged_changes(&self) -> bool {
+    pub(crate) const fn has_staged_changes(&self) -> bool {
         self.tracked_staged_count > 0
             || self.new_staged_count > 0
             || self.conflicted_staged_count > 0
     }
 
-    pub(crate) fn has_unstaged_changes(&self) -> bool {
+    pub(crate) const fn has_unstaged_changes(&self) -> bool {
         self.tracked_count > self.tracked_staged_count
             || self.new_count > self.new_staged_count
             || self.conflicted_count > self.conflicted_staged_count
     }
 
-    fn has_tracked_changes(&self) -> bool {
+    const fn has_tracked_changes(&self) -> bool {
         self.tracked_count > 0
     }
 
-    pub fn has_unstaged_conflicts(&self) -> bool {
+    pub const fn has_unstaged_conflicts(&self) -> bool {
         self.conflicted_count > 0 && self.conflicted_count != self.conflicted_staged_count
     }
 
@@ -3004,21 +3004,21 @@ impl GitPanel {
         workspace.add_item_to_center(Box::new(editor), window, cx);
     }
 
-    pub fn can_commit(&self) -> bool {
+    pub const fn can_commit(&self) -> bool {
         (self.has_staged_changes() || self.has_tracked_changes()) && !self.has_unstaged_conflicts()
     }
 
-    pub fn can_stage_all(&self) -> bool {
+    pub const fn can_stage_all(&self) -> bool {
         self.has_unstaged_changes()
     }
 
-    pub fn can_unstage_all(&self) -> bool {
+    pub const fn can_unstage_all(&self) -> bool {
         self.has_staged_changes()
     }
 
     // eventually we'll need to take depth into account here
     // if we add a tree view
-    fn item_width_estimate(path: usize, file_name: usize) -> usize {
+    const fn item_width_estimate(path: usize, file_name: usize) -> usize {
         path + file_name
     }
 
@@ -3235,7 +3235,7 @@ impl GitPanel {
         }
     }
 
-    pub fn commit_button_title(&self) -> &'static str {
+    pub const fn commit_button_title(&self) -> &'static str {
         if self.amend_pending {
             if self.has_staged_changes() {
                 "Amend"
@@ -3822,7 +3822,7 @@ impl GitPanel {
         Label::new(label.into()).color(color).single_line()
     }
 
-    fn list_item_height(&self) -> Rems {
+    const fn list_item_height(&self) -> Rems {
         rems(1.75)
     }
 
@@ -4160,7 +4160,7 @@ impl GitPanel {
         !self.project.read(cx).is_read_only(cx)
     }
 
-    pub fn amend_pending(&self) -> bool {
+    pub const fn amend_pending(&self) -> bool {
         self.amend_pending
     }
 
@@ -4186,7 +4186,7 @@ impl GitPanel {
         cx.notify();
     }
 
-    pub fn signoff_enabled(&self) -> bool {
+    pub const fn signoff_enabled(&self) -> bool {
         self.signoff_enabled
     }
 
@@ -4535,7 +4535,7 @@ pub struct PanelRepoFooter {
 }
 
 impl PanelRepoFooter {
-    pub fn new(
+    pub const fn new(
         active_repository: SharedString,
         branch: Option<Branch>,
         head_commit: Option<CommitDetails>,
@@ -4549,7 +4549,7 @@ impl PanelRepoFooter {
         }
     }
 
-    pub fn new_preview(active_repository: SharedString, branch: Option<Branch>) -> Self {
+    pub const fn new_preview(active_repository: SharedString, branch: Option<Branch>) -> Self {
         Self {
             active_repository,
             branch,

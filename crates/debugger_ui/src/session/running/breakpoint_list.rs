@@ -1214,7 +1214,7 @@ impl BreakpointEntry {
         }
     }
 
-    fn has_log(&self) -> bool {
+    const fn has_log(&self) -> bool {
         match &self.kind {
             BreakpointEntryKind::LineBreakpoint(line_breakpoint) => {
                 line_breakpoint.breakpoint.message.is_some()
@@ -1223,7 +1223,7 @@ impl BreakpointEntry {
         }
     }
 
-    fn has_condition(&self) -> bool {
+    const fn has_condition(&self) -> bool {
         match &self.kind {
             BreakpointEntryKind::LineBreakpoint(line_breakpoint) => {
                 line_breakpoint.breakpoint.condition.is_some()
@@ -1233,7 +1233,7 @@ impl BreakpointEntry {
         }
     }
 
-    fn has_hit_condition(&self) -> bool {
+    const fn has_hit_condition(&self) -> bool {
         match &self.kind {
             BreakpointEntryKind::LineBreakpoint(line_breakpoint) => {
                 line_breakpoint.breakpoint.hit_condition.is_some()
@@ -1278,11 +1278,11 @@ impl From<&Capabilities> for SupportedBreakpointProperties {
 }
 
 impl SupportedBreakpointProperties {
-    fn for_exception_breakpoints(self) -> Self {
+    const fn for_exception_breakpoints(self) -> Self {
         // TODO: we don't yet support conditions for exception breakpoints at the data layer, hence all props are disabled here.
         Self::empty()
     }
-    fn for_data_breakpoints(self) -> Self {
+    const fn for_data_breakpoints(self) -> Self {
         // TODO: we don't yet support conditions for data breakpoints at the data layer, hence all props are disabled here.
         Self::empty()
     }

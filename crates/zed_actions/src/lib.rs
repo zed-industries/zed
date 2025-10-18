@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 // These may provide relevant context:
 // https://github.com/rust-lang/rust/issues/47384
 // https://github.com/mmastrac/rust-ctor/issues/280
-pub fn init() {}
+pub const fn init() {}
 
 /// Opens a URL in the system's default web browser.
 #[derive(Clone, PartialEq, Deserialize, JsonSchema, Action)]
@@ -412,7 +412,7 @@ pub enum Spawn {
 }
 
 impl Spawn {
-    pub fn modal() -> Self {
+    pub const fn modal() -> Self {
         Self::ViaModal {
             reveal_target: None,
         }

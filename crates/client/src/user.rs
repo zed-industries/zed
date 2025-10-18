@@ -42,7 +42,7 @@ impl std::fmt::Display for ChannelId {
 pub struct ProjectId(pub u64);
 
 impl ProjectId {
-    pub fn to_proto(self) -> u64 {
+    pub const fn to_proto(self) -> u64 {
         self.0
     }
 }
@@ -320,7 +320,7 @@ impl UserStore {
         Ok(())
     }
 
-    pub fn invite_info(&self) -> Option<&InviteInfo> {
+    pub const fn invite_info(&self) -> Option<&InviteInfo> {
         self.invite_info.as_ref()
     }
 
@@ -766,7 +766,7 @@ impl UserStore {
         cx.notify();
     }
 
-    pub fn edit_prediction_usage(&self) -> Option<EditPredictionUsage> {
+    pub const fn edit_prediction_usage(&self) -> Option<EditPredictionUsage> {
         self.edit_prediction_usage
     }
 
@@ -879,7 +879,7 @@ impl UserStore {
         }
     }
 
-    pub fn participant_indices(&self) -> &HashMap<u64, ParticipantIndex> {
+    pub const fn participant_indices(&self) -> &HashMap<u64, ParticipantIndex> {
         &self.participant_indices
     }
 
@@ -953,7 +953,7 @@ impl Collaborator {
 }
 
 impl RequestUsage {
-    pub fn over_limit(&self) -> bool {
+    pub const fn over_limit(&self) -> bool {
         match self.limit {
             UsageLimit::Limited(limit) => self.amount >= limit,
             UsageLimit::Unlimited => false,

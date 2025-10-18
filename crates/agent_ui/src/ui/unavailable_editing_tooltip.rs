@@ -6,7 +6,7 @@ pub struct UnavailableEditingTooltip {
 }
 
 impl UnavailableEditingTooltip {
-    pub fn new(agent_name: SharedString) -> Self {
+    pub const fn new(agent_name: SharedString) -> Self {
         Self { agent_name }
     }
 }

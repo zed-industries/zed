@@ -95,7 +95,7 @@ impl KeyContext {
     }
 
     /// Check if this context is empty.
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
 
@@ -448,7 +448,7 @@ fn is_identifier_char(c: char) -> bool {
     c.is_alphanumeric() || c == '_' || c == '-'
 }
 
-fn is_vim_operator_char(c: char) -> bool {
+const fn is_vim_operator_char(c: char) -> bool {
     c == '>' || c == '<' || c == '~' || c == '"' || c == '?'
 }
 

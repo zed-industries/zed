@@ -87,7 +87,7 @@ pub struct ProjectSharedNotification {
 }
 
 impl ProjectSharedNotification {
-    fn new(
+    const fn new(
         owner: Arc<User>,
         project_id: u64,
         worktree_root_names: Vec<String>,

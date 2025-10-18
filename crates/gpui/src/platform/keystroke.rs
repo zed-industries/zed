@@ -283,7 +283,7 @@ impl KeybindingKeystroke {
     }
 
     /// Create a new keybinding keystroke from the given keystroke, without any platform-specific mapping.
-    pub fn from_keystroke(keystroke: Keystroke) -> Self {
+    pub const fn from_keystroke(keystroke: Keystroke) -> Self {
         #[cfg(target_os = "windows")]
         {
             let key = keystroke.key.clone();
@@ -301,7 +301,7 @@ impl KeybindingKeystroke {
     }
 
     /// Returns the GPUI representation of the keystroke.
-    pub fn inner(&self) -> &Keystroke {
+    pub const fn inner(&self) -> &Keystroke {
         &self.inner
     }
 
@@ -311,7 +311,7 @@ impl KeybindingKeystroke {
     /// - On macOS and Linux, this modifiers is the same as `inner.modifiers`, which is the GPUI representation of the keystroke.
     /// - On Windows, this modifiers is the display modifiers, for example, a `ctrl-@` keystroke will have `inner.modifiers` as
     /// `Modifiers::control()` and `display_modifiers` as `Modifiers::control_shift()`.
-    pub fn modifiers(&self) -> &Modifiers {
+    pub const fn modifiers(&self) -> &Modifiers {
         #[cfg(target_os = "windows")]
         {
             &self.display_modifiers
@@ -339,7 +339,7 @@ impl KeybindingKeystroke {
     }
 
     /// Sets the modifiers. On Windows this modifies both `inner.modifiers` and `display_modifiers`.
-    pub fn set_modifiers(&mut self, modifiers: Modifiers) {
+    pub const fn set_modifiers(&mut self, modifiers: Modifiers) {
         self.inner.modifiers = modifiers;
         #[cfg(target_os = "windows")]
         {
@@ -471,7 +471,7 @@ pub struct Modifiers {
 
 impl Modifiers {
     /// Returns whether any modifier key is pressed.
-    pub fn modified(&self) -> bool {
+    pub const fn modified(&self) -> bool {
         self.control || self.alt || self.shift || self.platform || self.function
     }
 
@@ -479,7 +479,7 @@ impl Modifiers {
     ///
     /// On macOS, this is the command key.
     /// On Linux and Windows, this is the control key.
-    pub fn secondary(&self) -> bool {
+    pub const fn secondary(&self) -> bool {
         #[cfg(target_os = "macos")]
         {
             self.platform
@@ -492,7 +492,7 @@ impl Modifiers {
     }
 
     /// Returns how many modifier keys are pressed.
-    pub fn number_of_modifiers(&self) -> u8 {
+    pub const fn number_of_modifiers(&self) -> u8 {
         self.control as u8
             + self.alt as u8
             + self.shift as u8

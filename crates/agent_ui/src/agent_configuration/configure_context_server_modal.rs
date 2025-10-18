@@ -60,11 +60,11 @@ enum ConfigurationSource {
 }
 
 impl ConfigurationSource {
-    fn has_configuration_options(&self) -> bool {
+    const fn has_configuration_options(&self) -> bool {
         !matches!(self, ConfigurationSource::Extension { editor: None, .. })
     }
 
-    fn is_new(&self) -> bool {
+    const fn is_new(&self) -> bool {
         matches!(self, ConfigurationSource::New { .. })
     }
 

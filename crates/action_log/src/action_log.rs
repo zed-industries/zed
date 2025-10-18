@@ -27,7 +27,7 @@ impl ActionLog {
         }
     }
 
-    pub fn project(&self) -> &Entity<Project> {
+    pub const fn project(&self) -> &Entity<Project> {
         &self.project
     }
 

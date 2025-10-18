@@ -170,14 +170,14 @@ impl ContextServerSettings {
         }
     }
 
-    pub fn enabled(&self) -> bool {
+    pub const fn enabled(&self) -> bool {
         match self {
             ContextServerSettings::Custom { enabled, .. } => *enabled,
             ContextServerSettings::Extension { enabled, .. } => *enabled,
         }
     }
 
-    pub fn set_enabled(&mut self, enabled: bool) {
+    pub const fn set_enabled(&mut self, enabled: bool) {
         match self {
             ContextServerSettings::Custom { enabled: e, .. } => *e = enabled,
             ContextServerSettings::Extension { enabled: e, .. } => *e = enabled,
@@ -196,7 +196,7 @@ pub enum DiagnosticSeverity {
 }
 
 impl DiagnosticSeverity {
-    pub fn into_lsp(self) -> Option<lsp::DiagnosticSeverity> {
+    pub const fn into_lsp(self) -> Option<lsp::DiagnosticSeverity> {
         match self {
             DiagnosticSeverity::Off => None,
             DiagnosticSeverity::Error => Some(lsp::DiagnosticSeverity::ERROR),
@@ -247,11 +247,11 @@ impl From<lsp::DiagnosticSeverity> for GoToDiagnosticSeverity {
 }
 
 impl GoToDiagnosticSeverity {
-    pub fn min() -> Self {
+    pub const fn min() -> Self {
         Self::Hint
     }
 
-    pub fn max() -> Self {
+    pub const fn max() -> Self {
         Self::Error
     }
 }
@@ -356,7 +356,7 @@ pub struct BlameSettings {
 }
 
 impl GitSettings {
-    pub fn inline_blame_delay(&self) -> Option<Duration> {
+    pub const fn inline_blame_delay(&self) -> Option<Duration> {
         if self.inline_blame.delay_ms.as_millis() > 0 {
             Some(self.inline_blame.delay_ms)
         } else {
@@ -1134,7 +1134,7 @@ impl SettingsObserver {
     }
 }
 
-pub fn local_settings_kind_from_proto(kind: proto::LocalSettingsKind) -> LocalSettingsKind {
+pub const fn local_settings_kind_from_proto(kind: proto::LocalSettingsKind) -> LocalSettingsKind {
     match kind {
         proto::LocalSettingsKind::Settings => LocalSettingsKind::Settings,
         proto::LocalSettingsKind::Tasks => LocalSettingsKind::Tasks,
@@ -1143,7 +1143,7 @@ pub fn local_settings_kind_from_proto(kind: proto::LocalSettingsKind) -> LocalSe
     }
 }
 
-pub fn local_settings_kind_to_proto(kind: LocalSettingsKind) -> proto::LocalSettingsKind {
+pub const fn local_settings_kind_to_proto(kind: LocalSettingsKind) -> proto::LocalSettingsKind {
     match kind {
         LocalSettingsKind::Settings => proto::LocalSettingsKind::Settings,
         LocalSettingsKind::Tasks => proto::LocalSettingsKind::Tasks,

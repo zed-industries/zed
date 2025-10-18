@@ -130,7 +130,7 @@ struct ContextServerTool {
 }
 
 impl ContextServerTool {
-    fn new(
+    const fn new(
         store: Entity<ContextServerStore>,
         server_id: ContextServerId,
         tool: context_server::types::Tool,

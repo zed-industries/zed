@@ -235,14 +235,14 @@ impl<T> Crease<T> {
         }
     }
 
-    pub fn range(&self) -> &Range<T> {
+    pub const fn range(&self) -> &Range<T> {
         match self {
             Crease::Inline { range, .. } => range,
             Crease::Block { range, .. } => range,
         }
     }
 
-    pub fn metadata(&self) -> Option<&CreaseMetadata> {
+    pub const fn metadata(&self) -> Option<&CreaseMetadata> {
         match self {
             Self::Inline { metadata, .. } => metadata.as_ref(),
             Self::Block { .. } => None,

@@ -283,7 +283,7 @@ impl SystemWindowTabController {
     }
 
     /// Get all tab groups.
-    pub fn tab_groups(&self) -> &FxHashMap<usize, Vec<SystemWindowTab>> {
+    pub const fn tab_groups(&self) -> &FxHashMap<usize, Vec<SystemWindowTab>> {
         &self.tab_groups
     }
 
@@ -762,7 +762,7 @@ impl App {
         result
     }
 
-    pub(crate) fn start_update(&mut self) {
+    pub(crate) const fn start_update(&mut self) {
         self.pending_updates += 1;
     }
 
@@ -1398,7 +1398,7 @@ impl App {
     }
 
     /// Obtains a reference to the executor, which can be used to spawn futures.
-    pub fn background_executor(&self) -> &BackgroundExecutor {
+    pub const fn background_executor(&self) -> &BackgroundExecutor {
         &self.background_executor
     }
 
@@ -1442,7 +1442,7 @@ impl App {
     }
 
     /// Accessor for the text system.
-    pub fn text_system(&self) -> &Arc<TextSystem> {
+    pub const fn text_system(&self) -> &Arc<TextSystem> {
         &self.text_system
     }
 
@@ -1708,7 +1708,7 @@ impl App {
     /// event handlers with a lower z-index (mouse) or higher in the tree (keyboard). This is
     /// the opposite of [`Self::propagate`]. It's also possible to cancel a call to [`Self::propagate`] by
     /// calling this method before effects are flushed.
-    pub fn stop_propagation(&mut self) {
+    pub const fn stop_propagation(&mut self) {
         self.propagate_event = false;
     }
 
@@ -1716,7 +1716,7 @@ impl App {
     /// dispatching to action handlers higher in the element tree. This is the opposite of
     /// [`Self::stop_propagation`]. It's also possible to cancel a call to [`Self::stop_propagation`] by calling
     /// this method before effects are flushed.
-    pub fn propagate(&mut self) {
+    pub const fn propagate(&mut self) {
         self.propagate_event = true;
     }
 
@@ -1935,7 +1935,7 @@ impl App {
     }
 
     /// Is there currently something being dragged?
-    pub fn has_active_drag(&self) -> bool {
+    pub const fn has_active_drag(&self) -> bool {
         self.active_drag.is_some()
     }
 
@@ -2054,7 +2054,7 @@ impl App {
 
     /// Returns the name for this [`App`].
     #[cfg(any(test, feature = "test-support", debug_assertions))]
-    pub fn get_name(&self) -> Option<&'static str> {
+    pub const fn get_name(&self) -> Option<&'static str> {
         self.name
     }
 

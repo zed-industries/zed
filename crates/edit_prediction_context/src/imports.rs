@@ -493,7 +493,7 @@ enum ContentKind {
 }
 
 impl ContentKind {
-    fn capture_name(&self) -> &'static str {
+    const fn capture_name(&self) -> &'static str {
         match self {
             ContentKind::Name => "name",
             ContentKind::Wildcard => "wildcard",
@@ -521,7 +521,7 @@ impl ImportTree {
     }
 
     #[allow(dead_code)]
-    fn debug<'a>(&'a self, snapshot: &'a BufferSnapshot) -> ImportTreeDebug<'a> {
+    const fn debug<'a>(&'a self, snapshot: &'a BufferSnapshot) -> ImportTreeDebug<'a> {
         ImportTreeDebug {
             tree: self,
             snapshot,

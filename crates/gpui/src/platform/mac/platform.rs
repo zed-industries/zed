@@ -1650,11 +1650,11 @@ impl UTType {
         Self(unsafe { NSPasteboardTypeTIFF }) // This is a rare case where there's a built-in NSPasteboardType
     }
 
-    fn inner(&self) -> *const Object {
+    const fn inner(&self) -> *const Object {
         self.0
     }
 
-    fn inner_mut(&self) -> *mut Object {
+    const fn inner_mut(&self) -> *mut Object {
         self.0 as *mut _
     }
 }

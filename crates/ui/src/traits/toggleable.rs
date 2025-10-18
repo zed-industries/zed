@@ -23,7 +23,7 @@ impl ToggleState {
     /// Returns the inverse of the current selection status.
     ///
     /// Indeterminate states become selected if inverted.
-    pub fn inverse(&self) -> Self {
+    pub const fn inverse(&self) -> Self {
         match self {
             Self::Unselected | Self::Indeterminate => Self::Selected,
             Self::Selected => Self::Unselected,
@@ -31,7 +31,7 @@ impl ToggleState {
     }
 
     /// Creates a `ToggleState` from the given `any_checked` and `all_checked` flags.
-    pub fn from_any_and_all(any_checked: bool, all_checked: bool) -> Self {
+    pub const fn from_any_and_all(any_checked: bool, all_checked: bool) -> Self {
         match (any_checked, all_checked) {
             (true, true) => Self::Selected,
             (false, false) => Self::Unselected,
@@ -40,7 +40,7 @@ impl ToggleState {
     }
 
     /// Returns whether this toggle state is selected
-    pub fn selected(&self) -> bool {
+    pub const fn selected(&self) -> bool {
         match self {
             ToggleState::Indeterminate | ToggleState::Unselected => false,
             ToggleState::Selected => true,

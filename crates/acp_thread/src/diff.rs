@@ -129,7 +129,7 @@ impl Diff {
         }
     }
 
-    pub fn multibuffer(&self) -> &Entity<MultiBuffer> {
+    pub const fn multibuffer(&self) -> &Entity<MultiBuffer> {
         match self {
             Self::Pending(PendingDiff { multibuffer, .. }) => multibuffer,
             Self::Finalized(FinalizedDiff { multibuffer, .. }) => multibuffer,

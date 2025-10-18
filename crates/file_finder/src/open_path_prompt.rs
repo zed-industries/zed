@@ -77,7 +77,7 @@ impl OpenPathDelegate {
         self
     }
 
-    pub fn show_hidden(mut self) -> Self {
+    pub const fn show_hidden(mut self) -> Self {
         self.hidden_entries = true;
         self
     }
@@ -144,7 +144,7 @@ impl OpenPathDelegate {
         }
     }
 
-    fn current_dir(&self) -> &'static str {
+    const fn current_dir(&self) -> &'static str {
         match self.path_style {
             PathStyle::Posix => "./",
             PathStyle::Windows => ".\\",

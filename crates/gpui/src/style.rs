@@ -819,7 +819,7 @@ impl Fill {
     /// Unwrap this fill into a solid color, if it is one.
     ///
     /// If the fill is not a solid color, this method returns `None`.
-    pub fn color(&self) -> Option<Background> {
+    pub const fn color(&self) -> Option<Background> {
         match self {
             Fill::Color(color) => Some(*color),
         }

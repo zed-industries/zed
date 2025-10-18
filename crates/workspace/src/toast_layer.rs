@@ -101,7 +101,7 @@ impl Default for ToastLayer {
 }
 
 impl ToastLayer {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             active_toast: None,
             duration_remaining: None,
@@ -158,7 +158,7 @@ impl ToastLayer {
         active_toast.toast.view().downcast::<V>().ok()
     }
 
-    pub fn has_active_toast(&self) -> bool {
+    pub const fn has_active_toast(&self) -> bool {
         self.active_toast.is_some()
     }
 

@@ -941,7 +941,7 @@ impl<T> StripInvalidSpans<T>
 where
     T: Stream<Item = Result<String>>,
 {
-    fn new(stream: T) -> Self {
+    const fn new(stream: T) -> Self {
         Self {
             stream,
             stream_done: false,
@@ -1067,7 +1067,7 @@ pub struct Diff {
 }
 
 impl Diff {
-    fn is_empty(&self) -> bool {
+    const fn is_empty(&self) -> bool {
         self.deleted_row_ranges.is_empty() && self.inserted_row_ranges.is_empty()
     }
 }

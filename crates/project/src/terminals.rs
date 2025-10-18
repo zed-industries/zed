@@ -518,7 +518,7 @@ impl Project {
         })
     }
 
-    pub fn local_terminal_handles(&self) -> &Vec<WeakEntity<terminal::Terminal>> {
+    pub const fn local_terminal_handles(&self) -> &Vec<WeakEntity<terminal::Terminal>> {
         &self.terminals.local_handles
     }
 }

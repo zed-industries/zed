@@ -81,17 +81,17 @@ impl ListItem {
         self
     }
 
-    pub fn spacing(mut self, spacing: ListItemSpacing) -> Self {
+    pub const fn spacing(mut self, spacing: ListItemSpacing) -> Self {
         self.spacing = spacing;
         self
     }
 
-    pub fn selectable(mut self, has_hover: bool) -> Self {
+    pub const fn selectable(mut self, has_hover: bool) -> Self {
         self.selectable = has_hover;
         self
     }
 
-    pub fn always_show_disclosure_icon(mut self, show: bool) -> Self {
+    pub const fn always_show_disclosure_icon(mut self, show: bool) -> Self {
         self.always_show_disclosure_icon = show;
         self
     }
@@ -122,17 +122,17 @@ impl ListItem {
         self
     }
 
-    pub fn inset(mut self, inset: bool) -> Self {
+    pub const fn inset(mut self, inset: bool) -> Self {
         self.inset = inset;
         self
     }
 
-    pub fn indent_level(mut self, indent_level: usize) -> Self {
+    pub const fn indent_level(mut self, indent_level: usize) -> Self {
         self.indent_level = indent_level;
         self
     }
 
-    pub fn indent_step_size(mut self, indent_step_size: Pixels) -> Self {
+    pub const fn indent_step_size(mut self, indent_step_size: Pixels) -> Self {
         self.indent_step_size = indent_step_size;
         self
     }
@@ -165,22 +165,22 @@ impl ListItem {
         self
     }
 
-    pub fn outlined(mut self) -> Self {
+    pub const fn outlined(mut self) -> Self {
         self.outlined = true;
         self
     }
 
-    pub fn rounded(mut self) -> Self {
+    pub const fn rounded(mut self) -> Self {
         self.rounded = true;
         self
     }
 
-    pub fn overflow_x(mut self) -> Self {
+    pub const fn overflow_x(mut self) -> Self {
         self.overflow_x = true;
         self
     }
 
-    pub fn focused(mut self, focused: bool) -> Self {
+    pub const fn focused(mut self, focused: bool) -> Self {
         self.focused = Some(focused);
         self
     }

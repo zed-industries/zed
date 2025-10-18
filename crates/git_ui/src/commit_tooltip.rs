@@ -33,7 +33,7 @@ pub struct CommitAvatar<'a> {
 }
 
 impl<'a> CommitAvatar<'a> {
-    pub fn new(sha: &'a SharedString, remote: Option<&'a GitRemote>) -> Self {
+    pub const fn new(sha: &'a SharedString, remote: Option<&'a GitRemote>) -> Self {
         Self { sha, remote }
     }
 
@@ -83,7 +83,7 @@ impl Hash for CommitAvatarAsset {
 }
 
 impl CommitAvatarAsset {
-    fn new(remote: GitRemote, sha: SharedString) -> Self {
+    const fn new(remote: GitRemote, sha: SharedString) -> Self {
         Self { remote, sha }
     }
 }

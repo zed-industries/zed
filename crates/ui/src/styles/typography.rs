@@ -166,7 +166,7 @@ pub enum HeadlineSize {
 
 impl HeadlineSize {
     /// Returns the headline size in rems.
-    pub fn rems(self) -> Rems {
+    pub const fn rems(self) -> Rems {
         match self {
             Self::XSmall => rems(0.88),
             Self::Small => rems(1.0),
@@ -177,7 +177,7 @@ impl HeadlineSize {
     }
 
     /// Returns the line height for the headline size.
-    pub fn line_height(self) -> Rems {
+    pub const fn line_height(self) -> Rems {
         match self {
             Self::XSmall => rems(1.6),
             Self::Small => rems(1.6),
@@ -221,13 +221,13 @@ impl Headline {
     }
 
     /// Set the size of the headline.
-    pub fn size(mut self, size: HeadlineSize) -> Self {
+    pub const fn size(mut self, size: HeadlineSize) -> Self {
         self.size = size;
         self
     }
 
     /// Set the color of the headline.
-    pub fn color(mut self, color: Color) -> Self {
+    pub const fn color(mut self, color: Color) -> Self {
         self.color = color;
         self
     }

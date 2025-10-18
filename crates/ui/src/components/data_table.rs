@@ -33,21 +33,21 @@ enum TableContents<const COLS: usize> {
 }
 
 impl<const COLS: usize> TableContents<COLS> {
-    fn rows_mut(&mut self) -> Option<&mut Vec<[AnyElement; COLS]>> {
+    const fn rows_mut(&mut self) -> Option<&mut Vec<[AnyElement; COLS]>> {
         match self {
             TableContents::Vec(rows) => Some(rows),
             TableContents::UniformList(_) => None,
         }
     }
 
-    fn len(&self) -> usize {
+    const fn len(&self) -> usize {
         match self {
             TableContents::Vec(rows) => rows.len(),
             TableContents::UniformList(data) => data.row_count,
         }
     }
 
-    fn is_empty(&self) -> bool {
+    const fn is_empty(&self) -> bool {
         self.len() == 0
     }
 }
@@ -186,7 +186,7 @@ impl TableResizeBehavior {
         *self != TableResizeBehavior::None
     }
 
-    pub fn min_size(&self) -> Option<f32> {
+    pub const fn min_size(&self) -> Option<f32> {
         match self {
             TableResizeBehavior::None => None,
             TableResizeBehavior::Resizable => Some(0.05),
@@ -523,7 +523,7 @@ impl<const COLS: usize> Table<COLS> {
     }
 
     /// Enables row striping.
-    pub fn striped(mut self) -> Self {
+    pub const fn striped(mut self) -> Self {
         self.striped = true;
         self
     }

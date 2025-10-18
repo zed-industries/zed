@@ -19,11 +19,11 @@ use std::{
 pub struct SessionId(pub u32);
 
 impl SessionId {
-    pub fn from_proto(client_id: u64) -> Self {
+    pub const fn from_proto(client_id: u64) -> Self {
         Self(client_id as u32)
     }
 
-    pub fn to_proto(self) -> u64 {
+    pub const fn to_proto(self) -> u64 {
         self.0 as u64
     }
 }
@@ -155,11 +155,11 @@ impl DebugAdapterClient {
         self.transport_delegate.send_message(message).await
     }
 
-    pub fn id(&self) -> SessionId {
+    pub const fn id(&self) -> SessionId {
         self.id
     }
 
-    pub fn binary(&self) -> &DebugAdapterBinary {
+    pub const fn binary(&self) -> &DebugAdapterBinary {
         &self.binary
     }
 

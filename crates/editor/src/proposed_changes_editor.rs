@@ -354,13 +354,13 @@ impl Item for ProposedChangesEditor {
 }
 
 impl ProposedChangesEditorToolbar {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             current_editor: None,
         }
     }
 
-    fn get_toolbar_item_location(&self) -> ToolbarItemLocation {
+    const fn get_toolbar_item_location(&self) -> ToolbarItemLocation {
         if self.current_editor.is_some() {
             ToolbarItemLocation::PrimaryRight
         } else {

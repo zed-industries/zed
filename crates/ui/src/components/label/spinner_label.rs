@@ -44,14 +44,14 @@ impl SpinnerVariant {
         }
     }
 
-    fn duration(&self) -> Duration {
+    const fn duration(&self) -> Duration {
         match self {
             SpinnerVariant::Dots => Duration::from_millis(1000),
             SpinnerVariant::DotsVariant => Duration::from_millis(1000),
         }
     }
 
-    fn animation_id(&self) -> &'static str {
+    const fn animation_id(&self) -> &'static str {
         match self {
             SpinnerVariant::Dots => "spinner_label_dots",
             SpinnerVariant::DotsVariant => "spinner_label_dots_variant",

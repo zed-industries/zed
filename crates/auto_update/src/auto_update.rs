@@ -67,7 +67,7 @@ pub enum AutoUpdateStatus {
 }
 
 impl AutoUpdateStatus {
-    pub fn is_updated(&self) -> bool {
+    pub const fn is_updated(&self) -> bool {
         matches!(self, Self::Updated { .. })
     }
 }
@@ -371,7 +371,7 @@ impl AutoUpdater {
         }));
     }
 
-    pub fn current_version(&self) -> SemanticVersion {
+    pub const fn current_version(&self) -> SemanticVersion {
         self.current_version
     }
 

@@ -1561,7 +1561,7 @@ impl MentionSet {
 pub struct MessageEditorAddon {}
 
 impl MessageEditorAddon {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {}
     }
 }

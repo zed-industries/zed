@@ -37,7 +37,7 @@ impl<'a> LogRecord<'a> {
     }
 }
 
-fn serialize_level(level: Level) -> usize {
+const fn serialize_level(level: Level) -> usize {
     match level {
         Level::Error => 1,
         Level::Warn => 2,
@@ -47,7 +47,7 @@ fn serialize_level(level: Level) -> usize {
     }
 }
 
-fn deserialize_level(level: usize) -> Option<Level> {
+const fn deserialize_level(level: usize) -> Option<Level> {
     match level {
         1 => Some(Level::Error),
         2 => Some(Level::Warn),

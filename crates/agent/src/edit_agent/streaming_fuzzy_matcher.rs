@@ -262,7 +262,7 @@ struct SearchState {
 }
 
 impl SearchState {
-    fn new(cost: u32, direction: SearchDirection) -> Self {
+    const fn new(cost: u32, direction: SearchDirection) -> Self {
         Self { cost, direction }
     }
 }
@@ -274,7 +274,7 @@ struct SearchMatrix {
 }
 
 impl SearchMatrix {
-    fn new(cols: usize) -> Self {
+    const fn new(cols: usize) -> Self {
         SearchMatrix {
             cols,
             rows: 0,

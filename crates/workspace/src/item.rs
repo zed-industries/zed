@@ -117,7 +117,7 @@ pub struct TabContentParams {
 
 impl TabContentParams {
     /// Returns the text color to be used for the tab content.
-    pub fn text_color(&self) -> Color {
+    pub const fn text_color(&self) -> Color {
         if self.deemphasized {
             if self.selected {
                 Color::Muted

@@ -117,7 +117,7 @@ impl<T: Copy + Ord> Selection<T> {
         self.goal = new_goal;
     }
 
-    pub fn swap_head_tail(&mut self) {
+    pub const fn swap_head_tail(&mut self) {
         if self.reversed {
             self.reversed = false;
         } else {
@@ -127,7 +127,7 @@ impl<T: Copy + Ord> Selection<T> {
 }
 
 impl<T: Copy> Selection<T> {
-    pub fn range(&self) -> Range<T> {
+    pub const fn range(&self) -> Range<T> {
         self.start..self.end
     }
 }
@@ -144,7 +144,7 @@ impl Selection<usize> {
         }
     }
 
-    pub fn equals(&self, offset_range: &Range<usize>) -> bool {
+    pub const fn equals(&self, offset_range: &Range<usize>) -> bool {
         self.start == offset_range.start && self.end == offset_range.end
     }
 }
