@@ -526,6 +526,7 @@ impl LocalBufferStore {
                     path: entry.path.clone(),
                     worktree: worktree.clone(),
                     is_private: entry.is_private,
+                    encoding: None,
                 }
             } else {
                 File {
@@ -535,6 +536,7 @@ impl LocalBufferStore {
                     path: old_file.path.clone(),
                     worktree: worktree.clone(),
                     is_private: old_file.is_private,
+                    encoding: None,
                 }
             };
 
@@ -663,6 +665,8 @@ impl LocalBufferStore {
                     buffer
                         .replace_text_buffer(text::Buffer::new(0, buffer_id, loaded_file.text), cx);
 
+                    buffer.update_encoding();
+
                     reload_task = Some(buffer.reload(cx));
                 })?;
 
@@ -685,6 +689,13 @@ impl LocalBufferStore {
                             entry_id: None,
                             is_local: true,
                             is_private: false,
+                            encoding: Some(Arc::new(std::sync::Mutex::new(
+                                if let Some(encoding) = encoding {
+                                    encoding.0
+                                } else {
+                                    encoding_rs::UTF_8
+                                },
+                            ))),
                         })),
                         Capability::ReadWrite,
                     )

@@ -607,6 +607,7 @@ impl LocalImageStore {
                     path: entry.path.clone(),
                     worktree: worktree.clone(),
                     is_private: entry.is_private,
+                    encoding: None,
                 }
             } else {
                 worktree::File {
@@ -616,6 +617,7 @@ impl LocalImageStore {
                     path: old_file.path.clone(),
                     worktree: worktree.clone(),
                     is_private: old_file.is_private,
+                    encoding: None,
                 }
             };
 
