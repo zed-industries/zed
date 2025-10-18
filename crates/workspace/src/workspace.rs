@@ -200,6 +200,8 @@ actions!(
         CloseActiveDock,
         /// Closes all docks.
         CloseAllDocks,
+        /// Toggles all docks.
+        ToggleAllDocks,
         /// Closes the current window.
         CloseWindow,
         /// Opens the feedback dialog.
@@ -1167,6 +1169,7 @@ pub struct Workspace {
     _items_serializer: Task<Result<()>>,
     session_id: Option<String>,
     scheduled_tasks: Vec<Task<()>>,
+    last_open_dock_positions: Vec<DockPosition>,
 }
 
 impl EventEmitter<Event> for Workspace {}
@@ -1511,6 +1514,7 @@ impl Workspace {
             session_id: Some(session_id),
 
             scheduled_tasks: Vec::new(),
+            last_open_dock_positions: Vec::new(),
         }
     }
 
@@ -2980,12 +2984,17 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let dock = self.dock_at_position(dock_side);
         let mut focus_center = false;
         let mut reveal_dock = false;
+
+        let other_is_zoomed = self.zoomed.is_some() && self.zoomed_position != Some(dock_side);
+        let was_visible = self.is_dock_at_position_open(dock_side, cx) && !other_is_zoomed;
+        if was_visible {
+            self.save_open_dock_positions(cx);
+        }
+
+        let dock = self.dock_at_position(dock_side);
         dock.update(cx, |dock, cx| {
-            let other_is_zoomed = self.zoomed.is_some() && self.zoomed_position != Some(dock_side);
-            let was_visible = dock.is_open() && !other_is_zoomed;
             dock.set_open(!was_visible, window, cx);
 
             if dock.active_panel().is_none() {
@@ -3034,7 +3043,8 @@ impl Workspace {
     }
 
     fn close_active_dock(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
-        if let Some(dock) = self.active_dock(window, cx) {
+        if let Some(dock) = self.active_dock(window, cx).cloned() {
+            self.save_open_dock_positions(cx);
             dock.update(cx, |dock, cx| {
                 dock.set_open(false, window, cx);
             });
@@ -3044,10 +3054,72 @@ impl Workspace {
     }
 
     pub fn close_all_docks(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.save_open_dock_positions(cx);
         for dock in self.all_docks() {
             dock.update(cx, |dock, cx| {
                 dock.set_open(false, window, cx);
             });
+        }
+
+        cx.focus_self(window);
+        cx.notify();
+        self.serialize_workspace(window, cx);
+    }
+
+    fn get_open_dock_positions(&self, cx: &Context<Self>) -> Vec<DockPosition> {
+        self.all_docks()
+            .into_iter()
+            .filter_map(|dock| {
+                let dock_ref = dock.read(cx);
+                if dock_ref.is_open() {
+                    Some(dock_ref.position())
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    /// Saves the positions of currently open docks.
+    ///
+    /// Updates `last_open_dock_positions` with positions of all currently open
+    /// docks, to later be restored by the 'Toggle All Docks' action.
+    fn save_open_dock_positions(&mut self, cx: &mut Context<Self>) {
+        let open_dock_positions = self.get_open_dock_positions(cx);
+        if !open_dock_positions.is_empty() {
+            self.last_open_dock_positions = open_dock_positions;
+        }
+    }
+
+    /// Toggles all docks between open and closed states.
+    ///
+    /// If any docks are open, closes all and remembers their positions. If all
+    /// docks are closed, restores the last remembered dock configuration.
+    fn toggle_all_docks(
+        &mut self,
+        _: &ToggleAllDocks,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let open_dock_positions = self.get_open_dock_positions(cx);
+
+        if !open_dock_positions.is_empty() {
+            self.close_all_docks(window, cx);
+        } else if !self.last_open_dock_positions.is_empty() {
+            self.restore_last_open_docks(window, cx);
+        }
+    }
+
+    /// Reopens docks from the most recently remembered configuration.
+    ///
+    /// Opens all docks whose positions are stored in `last_open_dock_positions`
+    /// and clears the stored positions.
+    fn restore_last_open_docks(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let positions_to_open = std::mem::take(&mut self.last_open_dock_positions);
+
+        for position in positions_to_open {
+            let dock = self.dock_at_position(position);
+            dock.update(cx, |dock, cx| dock.set_open(true, window, cx));
         }
 
         cx.focus_self(window);
@@ -5728,6 +5800,7 @@ impl Workspace {
                     workspace.close_all_docks(window, cx);
                 }),
             )
+            .on_action(cx.listener(Self::toggle_all_docks))
             .on_action(cx.listener(
                 |workspace: &mut Workspace, _: &ClearAllNotifications, _, cx| {
                     workspace.clear_all_notifications(cx);
@@ -9093,6 +9166,89 @@ mod tests {
             assert!(!pane.focus_handle(cx).is_focused(window));
             assert!(workspace.right_dock().read(cx).is_open());
             assert!(workspace.zoomed.is_none());
+        });
+    }
+
+    #[gpui::test]
+    async fn test_toggle_all_docks(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+        workspace.update_in(cx, |workspace, window, cx| {
+            // Open two docks
+            let left_dock = workspace.dock_at_position(DockPosition::Left);
+            let right_dock = workspace.dock_at_position(DockPosition::Right);
+
+            left_dock.update(cx, |dock, cx| dock.set_open(true, window, cx));
+            right_dock.update(cx, |dock, cx| dock.set_open(true, window, cx));
+
+            assert!(left_dock.read(cx).is_open());
+            assert!(right_dock.read(cx).is_open());
+        });
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            // Toggle all docks - should close both
+            workspace.toggle_all_docks(&ToggleAllDocks, window, cx);
+
+            let left_dock = workspace.dock_at_position(DockPosition::Left);
+            let right_dock = workspace.dock_at_position(DockPosition::Right);
+            assert!(!left_dock.read(cx).is_open());
+            assert!(!right_dock.read(cx).is_open());
+        });
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            // Toggle again - should reopen both
+            workspace.toggle_all_docks(&ToggleAllDocks, window, cx);
+
+            let left_dock = workspace.dock_at_position(DockPosition::Left);
+            let right_dock = workspace.dock_at_position(DockPosition::Right);
+            assert!(left_dock.read(cx).is_open());
+            assert!(right_dock.read(cx).is_open());
+        });
+    }
+
+    #[gpui::test]
+    async fn test_toggle_all_with_manual_close(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+        workspace.update_in(cx, |workspace, window, cx| {
+            // Open two docks
+            let left_dock = workspace.dock_at_position(DockPosition::Left);
+            let right_dock = workspace.dock_at_position(DockPosition::Right);
+
+            left_dock.update(cx, |dock, cx| dock.set_open(true, window, cx));
+            right_dock.update(cx, |dock, cx| dock.set_open(true, window, cx));
+
+            assert!(left_dock.read(cx).is_open());
+            assert!(right_dock.read(cx).is_open());
+        });
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            // Close them manually
+            workspace.toggle_dock(DockPosition::Left, window, cx);
+            workspace.toggle_dock(DockPosition::Right, window, cx);
+
+            let left_dock = workspace.dock_at_position(DockPosition::Left);
+            let right_dock = workspace.dock_at_position(DockPosition::Right);
+            assert!(!left_dock.read(cx).is_open());
+            assert!(!right_dock.read(cx).is_open());
+        });
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            // Toggle all docks - only last closed (right dock) should reopen
+            workspace.toggle_all_docks(&ToggleAllDocks, window, cx);
+
+            let left_dock = workspace.dock_at_position(DockPosition::Left);
+            let right_dock = workspace.dock_at_position(DockPosition::Right);
+            assert!(!left_dock.read(cx).is_open());
+            assert!(right_dock.read(cx).is_open());
         });
     }
 
