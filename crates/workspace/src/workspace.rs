@@ -15,6 +15,7 @@ pub mod tasks;
 mod theme_preview;
 mod toast_layer;
 mod toolbar;
+mod workspace_profile_resolution;
 mod workspace_settings;
 
 pub use crate::notifications::NotificationFrame;
@@ -435,6 +436,16 @@ actions!(
     ]
 );
 
+#[derive(PartialEq, Eq, Debug, Clone, Copy)]
+pub enum PathMatch {
+    /// Exact path match
+    Exact,
+    /// Glob pattern match
+    Glob,
+    /// No match
+    None,
+}
+
 #[derive(PartialEq, Eq, Debug)]
 pub enum CloseIntent {
     /// Quit the program entirely.
@@ -560,6 +571,7 @@ pub fn init(app_state: Arc<AppState>, cx: &mut App) {
     init_settings(cx);
     component::init();
     theme_preview::init(cx);
+    workspace_profile_resolution::init(cx);
     toast_layer::init(cx);
     history_manager::init(cx);
 
@@ -1148,6 +1160,7 @@ pub struct Workspace {
     active_call: Option<(Entity<ActiveCall>, Vec<Subscription>)>,
     leader_updates_tx: mpsc::UnboundedSender<(PeerId, proto::UpdateFollowers)>,
     database_id: Option<WorkspaceId>,
+    active_workspace_profile_name: Option<String>,
     app_state: Arc<AppState>,
     dispatching_keystrokes: Rc<RefCell<DispatchingKeystrokes>>,
     _subscriptions: Vec<Subscription>,
@@ -1457,6 +1470,7 @@ impl Workspace {
         ];
 
         cx.defer_in(window, |this, window, cx| {
+            this.resolve_active_workspace_profile(cx);
             this.update_window_title(window, cx);
             this.show_initial_notifications(cx);
         });
@@ -1489,6 +1503,7 @@ impl Workspace {
             dirty_items: Default::default(),
             active_call,
             database_id: workspace_id,
+            active_workspace_profile_name: None,
             app_state,
             _observe_current_user,
             _apply_leader_updates,
@@ -5180,6 +5195,73 @@ impl Workspace {
             .collect::<Vec<_>>()
     }
 
+    pub fn match_path(&self, pattern: &str, cx: &App) -> PathMatch {
+        let root_paths = self.root_paths(cx);
+
+        if root_paths.is_empty() {
+            return PathMatch::None;
+        }
+
+        // Expand tilde in pattern
+        let expanded_pattern = shellexpand::tilde(pattern);
+        let pattern_path = Path::new(expanded_pattern.as_ref());
+
+        // Try exact match first
+        for root_path in &root_paths {
+            if root_path.as_ref() == pattern_path {
+                return PathMatch::Exact;
+            }
+        }
+
+        // Try glob pattern matching
+        if let Ok(glob_pattern) = globset::Glob::new(&expanded_pattern) {
+            let matcher = glob_pattern.compile_matcher();
+            for root_path in &root_paths {
+                if matcher.is_match(root_path.as_ref()) {
+                    return PathMatch::Glob;
+                }
+            }
+        }
+
+        PathMatch::None
+    }
+
+    pub fn winning_workspace_profile<'a>(
+        &self,
+        profiles: &'a collections::IndexMap<String, settings::WorkspaceProfileSettingsContent>,
+        cx: &App,
+    ) -> Option<(&'a str, PathMatch)> {
+        let first_exact_match = profiles
+            .iter()
+            .find(|(_, profile)| self.match_path(&profile.path, cx) == PathMatch::Exact)
+            .map(|(name, _)| (name.as_str(), PathMatch::Exact));
+
+        if let Some(exact_match) = first_exact_match {
+            return Some(exact_match);
+        }
+
+        let first_glob_match = profiles
+            .iter()
+            .find(|(_, profile)| self.match_path(&profile.path, cx) == PathMatch::Glob)
+            .map(|(name, _)| (name.as_str(), PathMatch::Glob));
+
+        if let Some(glob_match) = first_glob_match {
+            return Some(glob_match);
+        }
+
+        None
+    }
+
+    fn resolve_active_workspace_profile(&mut self, cx: &mut Context<Self>) {
+        self.active_workspace_profile_name = self.database_id.and_then(|_| {
+            let store = cx.global::<settings::SettingsStore>();
+            let user_settings = store.raw_user_settings()?;
+
+            self.winning_workspace_profile(&user_settings.workspace_profiles, cx)
+                .map(|(name, _)| name.to_string())
+        });
+    }
+
     fn remove_panes(&mut self, member: Member, window: &mut Window, cx: &mut Context<Workspace>) {
         match member {
             Member::Axis(PaneAxis { members, .. }) => {
@@ -6350,6 +6432,15 @@ impl Render for DraggedDock {
 
 impl Render for Workspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Register this window's active workspace profile for settings resolution
+        let window_id = window.window_handle().window_id();
+        if let Some(ref profile_name) = self.active_workspace_profile_name {
+            cx.update_global::<theme::WorkspaceProfileMap, _>(|map, _| {
+                map.profile_by_window
+                    .insert(window_id, profile_name.clone());
+            });
+        }
+
         let mut context = KeyContext::new_with_defaults();
         context.add("Workspace");
         context.set("keyboard_layout", cx.keyboard_layout().name().to_string());

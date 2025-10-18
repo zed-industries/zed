@@ -170,6 +170,15 @@ impl SettingsContent {
 }
 
 #[skip_serializing_none]
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct WorkspaceProfileSettingsContent {
+    pub path: String,
+
+    #[serde(flatten)]
+    pub settings: SettingsContent,
+}
+
+#[skip_serializing_none]
 #[derive(Debug, Default, PartialEq, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct UserSettingsContent {
     #[serde(flatten)]
@@ -186,6 +195,9 @@ pub struct UserSettingsContent {
 
     #[serde(default)]
     pub profiles: IndexMap<String, SettingsContent>,
+
+    #[serde(default)]
+    pub workspace_profiles: IndexMap<String, WorkspaceProfileSettingsContent>,
 }
 
 pub struct ExtensionsSettingsContent {

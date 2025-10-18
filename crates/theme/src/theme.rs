@@ -19,11 +19,11 @@ mod schema;
 mod settings;
 mod styles;
 
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
-use ::settings::Settings;
-use ::settings::SettingsStore;
+use ::settings::{Settings, SettingsStore};
 use anyhow::Result;
 use fallback_themes::apply_status_color_defaults;
 use fs::Fs;
@@ -31,7 +31,7 @@ use gpui::BorrowAppContext;
 use gpui::Global;
 use gpui::{
     App, AssetSource, HighlightStyle, Hsla, Pixels, Refineable, SharedString, WindowAppearance,
-    WindowBackgroundAppearance, px,
+    WindowBackgroundAppearance, WindowId, px,
 };
 use serde::Deserialize;
 use uuid::Uuid;
@@ -113,7 +113,13 @@ pub fn init(themes_to_load: LoadThemes, cx: &mut App) {
 
     let theme = GlobalTheme::configured_theme(cx);
     let icon_theme = GlobalTheme::configured_icon_theme(cx);
-    cx.set_global(GlobalTheme { theme, icon_theme });
+    cx.set_global(GlobalTheme {
+        theme,
+        workspace_themes: HashMap::default(),
+        icon_theme,
+        workspace_icon_themes: HashMap::default(),
+    });
+    cx.set_global(WorkspaceProfileMap::default());
 
     let settings = ThemeSettings::get_global(cx);
 
@@ -162,13 +168,22 @@ pub fn init(themes_to_load: LoadThemes, cx: &mut App) {
             reset_agent_buffer_font_size(cx);
         }
 
-        if theme_name != prev_theme_name || theme_overrides != prev_theme_overrides {
+        // Check if workspace profiles exist - if so, always reload themes to catch profile changes
+        let has_workspace_profiles = !cx
+            .global::<SettingsStore>()
+            .workspace_profile_settings()
+            .is_empty();
+
+        if theme_name != prev_theme_name
+            || theme_overrides != prev_theme_overrides
+            || has_workspace_profiles
+        {
             prev_theme_name = theme_name;
             prev_theme_overrides = theme_overrides;
             GlobalTheme::reload_theme(cx);
         }
 
-        if icon_theme_name != prev_icon_theme_name {
+        if icon_theme_name != prev_icon_theme_name || has_workspace_profiles {
             prev_icon_theme_name = icon_theme_name;
             GlobalTheme::reload_icon_theme(cx);
         }
@@ -439,10 +454,21 @@ pub async fn read_icon_theme(
     Ok(icon_theme_family)
 }
 
+/// Maps WindowId to active workspace profile name for workspace-aware settings resolution
+#[derive(Clone, Default)]
+pub struct WorkspaceProfileMap {
+    /// Maps window IDs to their active workspace profile names
+    pub profile_by_window: HashMap<WindowId, String>,
+}
+
+impl Global for WorkspaceProfileMap {}
+
 /// The active theme
 pub struct GlobalTheme {
     theme: Arc<Theme>,
+    workspace_themes: HashMap<String, Arc<Theme>>,
     icon_theme: Arc<IconTheme>,
+    workspace_icon_themes: HashMap<String, Arc<IconTheme>>,
 }
 impl Global for GlobalTheme {}
 
@@ -475,7 +501,16 @@ impl GlobalTheme {
     /// taking into account the current [`SystemAppearance`].
     pub fn reload_theme(cx: &mut App) {
         let theme = Self::configured_theme(cx);
-        cx.update_global::<Self, _>(|this, _| this.theme = theme);
+
+        // Recompute workspace themes from cached settings
+        let workspace_themes = Self::recompute_workspace_themes(cx);
+        let workspace_icon_themes = Self::recompute_workspace_icon_themes(cx);
+
+        cx.update_global::<Self, _>(|this, _| {
+            this.theme = theme;
+            this.workspace_themes = workspace_themes;
+            this.workspace_icon_themes = workspace_icon_themes;
+        });
         cx.refresh_windows();
     }
 
@@ -497,23 +532,99 @@ impl GlobalTheme {
         }
     }
 
+    fn recompute_workspace_themes(cx: &App) -> HashMap<String, Arc<Theme>> {
+        let store = cx.global::<SettingsStore>();
+        let mut workspace_themes = HashMap::default();
+
+        for (profile_name, settings_content) in store.workspace_profile_settings() {
+            let theme_settings = ThemeSettings::from_settings(settings_content.as_ref());
+            let themes = ThemeRegistry::global(cx);
+            let system_appearance = SystemAppearance::global(cx);
+            let theme_name = theme_settings.theme.name(*system_appearance);
+
+            if let Ok(theme) = themes.get(&theme_name.0) {
+                let theme = theme_settings.apply_theme_overrides(theme);
+                workspace_themes.insert(profile_name.clone(), theme);
+            }
+        }
+
+        workspace_themes
+    }
+
+    fn recompute_workspace_icon_themes(cx: &App) -> HashMap<String, Arc<IconTheme>> {
+        let store = cx.global::<SettingsStore>();
+        let mut workspace_icon_themes = HashMap::default();
+
+        for (profile_name, settings_content) in store.workspace_profile_settings() {
+            let theme_settings = ThemeSettings::from_settings(settings_content.as_ref());
+            let themes = ThemeRegistry::global(cx);
+            let system_appearance = SystemAppearance::global(cx);
+            let icon_theme_name = theme_settings.icon_theme.name(*system_appearance);
+
+            if let Ok(icon_theme) = themes.get_icon_theme(&icon_theme_name.0) {
+                workspace_icon_themes.insert(profile_name.clone(), icon_theme);
+            }
+        }
+
+        workspace_icon_themes
+    }
+
     /// Reloads the current icon theme.
     ///
     /// Reads the [`ThemeSettings`] to know which icon theme should be loaded,
     /// taking into account the current [`SystemAppearance`].
     pub fn reload_icon_theme(cx: &mut App) {
         let icon_theme = Self::configured_icon_theme(cx);
-        cx.update_global::<Self, _>(|this, _| this.icon_theme = icon_theme);
+
+        // Recompute workspace icon themes from cached settings
+        let workspace_icon_themes = Self::recompute_workspace_icon_themes(cx);
+
+        cx.update_global::<Self, _>(|this, _| {
+            this.icon_theme = icon_theme;
+            this.workspace_icon_themes = workspace_icon_themes;
+        });
         cx.refresh_windows();
     }
 
-    /// the active theme
+    /// the active theme (workspace-aware)
     pub fn theme(cx: &App) -> &Arc<Theme> {
+        // Get current window from context
+        let window_id = gpui::Window::current_window_id();
+
+        // Try to resolve workspace profile for this window
+        if let Some(wid) = window_id {
+            if let Some(profile_map) = cx.try_global::<WorkspaceProfileMap>() {
+                if let Some(profile_name) = profile_map.profile_by_window.get(&wid) {
+                    if let Some(theme) = cx.global::<Self>().workspace_themes.get(profile_name) {
+                        return theme;
+                    }
+                }
+            }
+        }
+
+        // Fallback to global theme
         &cx.global::<Self>().theme
     }
 
-    /// the active icon theme
+    /// the active icon theme (workspace-aware)
     pub fn icon_theme(cx: &App) -> &Arc<IconTheme> {
+        // Get current window from context
+        let window_id = gpui::Window::current_window_id();
+
+        // Try to resolve workspace profile for this window
+        if let Some(wid) = window_id {
+            if let Some(profile_map) = cx.try_global::<WorkspaceProfileMap>() {
+                if let Some(profile_name) = profile_map.profile_by_window.get(&wid) {
+                    if let Some(icon_theme) =
+                        cx.global::<Self>().workspace_icon_themes.get(profile_name)
+                    {
+                        return icon_theme;
+                    }
+                }
+            }
+        }
+
+        // Fallback to global icon theme
         &cx.global::<Self>().icon_theme
     }
 }
