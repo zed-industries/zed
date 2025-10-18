@@ -5463,28 +5463,6 @@ impl Render for ProjectPanel {
                         .on_action(cx.listener(Self::copy))
                         .on_action(cx.listener(Self::paste))
                         .on_action(cx.listener(Self::duplicate))
-                        .on_click(cx.listener(|this, event: &gpui::ClickEvent, window, cx| {
-                            if event.click_count() > 1
-                                && let Some(entry_id) = this.state.last_worktree_root_id
-                            {
-                                let project = this.project.read(cx);
-
-                                let worktree_id = if let Some(worktree) =
-                                    project.worktree_for_entry(entry_id, cx)
-                                {
-                                    worktree.read(cx).id()
-                                } else {
-                                    return;
-                                };
-
-                                this.state.selection = Some(SelectedEntry {
-                                    worktree_id,
-                                    entry_id,
-                                });
-
-                                this.new_file(&NewFile, window, cx);
-                            }
-                        }))
                 })
                 .when(project.is_local(), |el| {
                     el.on_action(cx.listener(Self::reveal_in_finder))
@@ -5819,7 +5797,34 @@ impl Render for ProjectPanel {
                                             );
                                         }
                                     }),
-                                ),
+                                )
+                                .when(!project.is_read_only(cx), |el| {
+                                    el.on_click(cx.listener(
+                                        |this, event: &gpui::ClickEvent, window, cx| {
+                                            if event.click_count() > 1
+                                                && let Some(entry_id) =
+                                                    this.state.last_worktree_root_id
+                                            {
+                                                let project = this.project.read(cx);
+
+                                                let worktree_id = if let Some(worktree) =
+                                                    project.worktree_for_entry(entry_id, cx)
+                                                {
+                                                    worktree.read(cx).id()
+                                                } else {
+                                                    return;
+                                                };
+
+                                                this.state.selection = Some(SelectedEntry {
+                                                    worktree_id,
+                                                    entry_id,
+                                                });
+
+                                                this.new_file(&NewFile, window, cx);
+                                            }
+                                        },
+                                    ))
+                                }),
                         )
                         .size_full(),
                 )
