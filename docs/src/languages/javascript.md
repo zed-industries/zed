@@ -49,8 +49,8 @@ You can configure Zed to format code using `eslint --fix` by running the ESLint 
 {
   "languages": {
     "JavaScript": {
-      "formatter": {
-        "code_action": "source.fixAll.eslint"
+      "code_actions_on_format": {
+        "source.fixAll.eslint": true
       }
     }
   }
@@ -63,8 +63,8 @@ You can also only execute a single ESLint rule when using `fixAll`:
 {
   "languages": {
     "JavaScript": {
-      "formatter": {
-        "code_action": "source.fixAll.eslint"
+      "code_actions_on_format": {
+        "source.fixAll.eslint": true
       }
     }
   },
@@ -92,8 +92,8 @@ the formatter:
 {
   "languages": {
     "JavaScript": {
-      "formatter": {
-        "code_action": "source.fixAll.eslint"
+      "code_actions_on_format": {
+        "source.fixAll.eslint": true
       }
     }
   }
@@ -175,19 +175,29 @@ You can configure ESLint's `workingDirectory` setting:
 
 ## Debugging
 
-Zed supports debugging JavaScript code out of the box.
+Zed supports debugging JavaScript code out of the box with `vscode-js-debug`.
 The following can be debugged without writing additional configuration:
 
 - Tasks from `package.json`
-- Tests written using several popular frameworks (Jest, Mocha, Vitest, Jasmine)
+- Tests written using several popular frameworks (Jest, Mocha, Vitest, Jasmine, Bun, Node)
 
 Run {#action debugger::Start} ({#kb debugger::Start}) to see a contextual list of these predefined debug tasks.
+
+> **Note:** Bun test is automatically detected when `@types/bun` is present in `package.json`.
+>
+> **Note:** Node test is automatically detected when `@types/node` is present in `package.json` (requires Node.js 20+).
 
 As for all languages, configurations from `.vscode/launch.json` are also available for debugging in Zed.
 
 If your use-case isn't covered by any of these, you can take full control by adding debug configurations to `.zed/debug.json`. See below for example configurations.
 
-### Debug the current file
+### Configuring JavaScript debug tasks
+
+JavaScript debugging is more complicated than other languages because there are two different environments: Node.js and the browser. `vscode-js-debug` exposes a `type` field, that you can use to specify the environment, either `node` or `chrome`.
+
+- [vscode-js-debug configuration documentation](https://github.com/microsoft/vscode-js-debug/blob/main/OPTIONS.md)
+
+### Debug the current file with Node
 
 ```json [debug]
 [
@@ -201,8 +211,6 @@ If your use-case isn't covered by any of these, you can take full control by add
   }
 ]
 ```
-
-This implicitly runs the current file using `node`.
 
 ### Launch a web app in Chrome
 

@@ -63,7 +63,7 @@ For more information, see the [Gemini CLI docs](https://github.com/google-gemini
 Similar to Zed's first-party agent, you can use Gemini CLI to do anything that you need.
 And to give it context, you can @-mention files, recent threads, symbols, or fetch the web.
 
-> Note that some first-party agent features don't yet work with Gemini CLI: editing past messages, resuming threads from history, checkpointing, and using the agent in SSH projects.
+> Note that some first-party agent features don't yet work with Gemini CLI: editing past messages, resuming threads from history, and checkpointing.
 > We hope to add these features in the near future.
 
 ## Claude Code
@@ -97,7 +97,21 @@ To ensure you're using your billing method of choice, [open a new Claude Code th
 
 The first time you create a Claude Code thread, Zed will install [@zed-industries/claude-code-acp](https://github.com/zed-industries/claude-code-acp). This installation is only available to Zed and is kept up to date as you use the agent.
 
-Zed will always use this managed version of Claude Code even if you have it installed globally.
+Zed will always use this managed version of the Claude Code adapter, which includes a vendored version of the Claude Code CLI, even if you have it installed globally.
+
+If you want to override the executable used by the adapter, you can set the `CLAUDE_CODE_EXECUTABLE` environment variable in your settings to the path of your preferred executable.
+
+```json
+{
+  "agent_servers": {
+    "claude": {
+      "env": {
+        "CLAUDE_CODE_EXECUTABLE": "/path/to/alternate-claude-code-executable"
+      }
+    }
+  }
+}
+```
 
 ### Usage
 
@@ -111,7 +125,7 @@ However, the SDK doesn't yet expose everything needed to fully support all of th
 - [Subagents](https://docs.anthropic.com/en/docs/claude-code/sub-agents) are supported.
 - [Hooks](https://docs.anthropic.com/en/docs/claude-code/hooks-guide) are currently _not_ supported.
 
-> Also note that some [first-party agent](./agent-panel.md) features don't yet work with Claude Code: editing past messages, resuming threads from history, checkpointing, and using the agent in SSH projects.
+> Also note that some [first-party agent](./agent-panel.md) features don't yet work with Claude Code: editing past messages, resuming threads from history, and checkpointing.
 > We hope to add these features in the near future.
 
 #### CLAUDE.md
@@ -119,6 +133,53 @@ However, the SDK doesn't yet expose everything needed to fully support all of th
 Claude Code in Zed will automatically use any `CLAUDE.md` file found in your project root, project subdirectories, or root `.claude` directory.
 
 If you don't have a `CLAUDE.md` file, you can ask Claude Code to create one for you through the `init` slash command.
+
+## Codex CLI
+
+You can also run [Codex CLI](https://github.com/openai/codex) directly via Zed's [agent panel](./agent-panel.md).
+Under the hood, Zed runs Codex CLI and communicates to it over ACP, through [a dedicated adapter](https://github.com/zed-industries/codex-acp).
+
+### Getting Started
+
+As of Zed Stable v0.208 you should be able to use Codex directly from Zed. Open the agent panel with {#kb agent::ToggleFocus}, and then use the `+` button in the top right to start a new Codex thread.
+
+If you'd like to bind this to a keyboard shortcut, you can do so by editing your `keymap.json` file via the `zed: open keymap` command to include:
+
+```json
+[
+  {
+    "bindings": {
+      "cmd-alt-c": ["agent::NewExternalAgentThread", { "agent": "codex" }]
+    }
+  }
+]
+```
+
+### Authentication
+
+Authentication to Zed's Codex installation is decoupled entirely from Zed's agent. That is to say, an OpenAI API key added via the [Zed Agent's settings](./llm-providers.md#openai) will _not_ be utilized by Codex for authentication and billing.
+
+To ensure you're using your billing method of choice, [open a new Codex thread](./agent-panel.md#new-thread). The first time you will be prompted to authenticate with one of three methods:
+
+1. Login with ChatGPT - allows you to use your existing, paid ChatGPT subscription. _Note: This method isn't currently supported in remote projects_
+2. `CODEX_API_KEY` - uses an API key you have set in your environment under the variable `CODEX_API_KEY`.
+3. `OPENAI_API_KEY` - uses an API key you have set in your environment under the variable `OPENAI_API_KEY`.
+
+If you are already logged in and want to change your authentication method, type `/logout` in the thread and authenticate again.
+
+#### Installation
+
+The first time you create a Codex thread, Zed will install [codex-acp](https://github.com/zed-industries/codex-acp). This installation is only available to Zed and is kept up to date as you use the agent.
+
+Zed will always use this managed version of Codex even if you have it installed globally.
+
+### Usage
+
+Similar to Zed's first-party agent, you can use Codex to do anything that you need.
+And to give it context, you can @-mention files, symbols, or fetch the web.
+
+> Note that some first-party agent features don't yet work with Codex: editing past messages, resuming threads from history, and checkpointing.
+> We hope to add these features in the near future.
 
 ## Add Custom Agents {#add-custom-agents}
 

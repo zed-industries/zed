@@ -93,7 +93,7 @@ const MAX_RECONNECT_ATTEMPTS: usize = 3;
 enum State {
     Connecting,
     Connected {
-        ssh_connection: Arc<dyn RemoteConnection>,
+        remote_connection: Arc<dyn RemoteConnection>,
         delegate: Arc<dyn RemoteClientDelegate>,
 
         multiplex_task: Task<Result<()>>,
@@ -137,7 +137,10 @@ impl fmt::Display for State {
 impl State {
     fn remote_connection(&self) -> Option<Arc<dyn RemoteConnection>> {
         match self {
-            Self::Connected { ssh_connection, .. } => Some(ssh_connection.clone()),
+            Self::Connected {
+                remote_connection: ssh_connection,
+                ..
+            } => Some(ssh_connection.clone()),
             Self::HeartbeatMissed { ssh_connection, .. } => Some(ssh_connection.clone()),
             Self::ReconnectFailed { ssh_connection, .. } => Some(ssh_connection.clone()),
             _ => None,
@@ -181,7 +184,7 @@ impl State {
                 heartbeat_task,
                 ..
             } => Self::Connected {
-                ssh_connection,
+                remote_connection: ssh_connection,
                 delegate,
                 multiplex_task,
                 heartbeat_task,
@@ -193,7 +196,7 @@ impl State {
     fn heartbeat_missed(self) -> Self {
         match self {
             Self::Connected {
-                ssh_connection,
+                remote_connection: ssh_connection,
                 delegate,
                 multiplex_task,
                 heartbeat_task,
@@ -260,8 +263,8 @@ pub enum RemoteClientEvent {
 
 impl EventEmitter<RemoteClientEvent> for RemoteClient {}
 
-// Identifies the socket on the remote server so that reconnects
-// can re-join the same project.
+/// Identifies the socket on the remote server so that reconnects
+/// can re-join the same project.
 pub enum ConnectionIdentifier {
     Setup(u64),
     Workspace(i64),
@@ -294,26 +297,24 @@ impl ConnectionIdentifier {
     }
 }
 
-impl RemoteClient {
-    pub fn ssh(
-        unique_identifier: ConnectionIdentifier,
-        connection_options: SshConnectionOptions,
-        cancellation: oneshot::Receiver<()>,
-        delegate: Arc<dyn RemoteClientDelegate>,
-        cx: &mut App,
-    ) -> Task<Result<Option<Entity<Self>>>> {
-        Self::new(
-            unique_identifier,
-            RemoteConnectionOptions::Ssh(connection_options),
-            cancellation,
-            delegate,
-            cx,
-        )
-    }
+pub async fn connect(
+    connection_options: RemoteConnectionOptions,
+    delegate: Arc<dyn RemoteClientDelegate>,
+    cx: &mut AsyncApp,
+) -> Result<Arc<dyn RemoteConnection>> {
+    cx.update(|cx| {
+        cx.update_default_global(|pool: &mut ConnectionPool, cx| {
+            pool.connect(connection_options.clone(), delegate.clone(), cx)
+        })
+    })?
+    .await
+    .map_err(|e| e.cloned())
+}
 
+impl RemoteClient {
     pub fn new(
         unique_identifier: ConnectionIdentifier,
-        connection_options: RemoteConnectionOptions,
+        remote_connection: Arc<dyn RemoteConnection>,
         cancellation: oneshot::Receiver<()>,
         delegate: Arc<dyn RemoteClientDelegate>,
         cx: &mut App,
@@ -328,25 +329,16 @@ impl RemoteClient {
                 let client =
                     cx.update(|cx| ChannelClient::new(incoming_rx, outgoing_tx, cx, "client"))?;
 
-                let ssh_connection = cx
-                    .update(|cx| {
-                        cx.update_default_global(|pool: &mut ConnectionPool, cx| {
-                            pool.connect(connection_options.clone(), &delegate, cx)
-                        })
-                    })?
-                    .await
-                    .map_err(|e| e.cloned())?;
-
-                let path_style = ssh_connection.path_style();
+                let path_style = remote_connection.path_style();
                 let this = cx.new(|_| Self {
                     client: client.clone(),
                     unique_identifier: unique_identifier.clone(),
-                    connection_options,
+                    connection_options: remote_connection.connection_options(),
                     path_style,
                     state: Some(State::Connecting),
                 })?;
 
-                let io_task = ssh_connection.start_proxy(
+                let io_task = remote_connection.start_proxy(
                     unique_identifier,
                     false,
                     incoming_tx,
@@ -402,7 +394,7 @@ impl RemoteClient {
 
                 this.update(cx, |this, _| {
                     this.state = Some(State::Connected {
-                        ssh_connection,
+                        remote_connection,
                         delegate,
                         multiplex_task,
                         heartbeat_task,
@@ -441,7 +433,7 @@ impl RemoteClient {
         let State::Connected {
             multiplex_task,
             heartbeat_task,
-            ssh_connection,
+            remote_connection: ssh_connection,
             delegate,
         } = state
         else {
@@ -488,7 +480,7 @@ impl RemoteClient {
         let state = self.state.take().unwrap();
         let (attempts, remote_connection, delegate) = match state {
             State::Connected {
-                ssh_connection,
+                remote_connection: ssh_connection,
                 delegate,
                 multiplex_task,
                 heartbeat_task,
@@ -561,7 +553,7 @@ impl RemoteClient {
             let (ssh_connection, io_task) = match async {
                 let ssh_connection = cx
                     .update_global(|pool: &mut ConnectionPool, cx| {
-                        pool.connect(connection_options, &delegate, cx)
+                        pool.connect(connection_options, delegate.clone(), cx)
                     })?
                     .await
                     .map_err(|error| error.cloned())?;
@@ -593,7 +585,7 @@ impl RemoteClient {
             };
 
             State::Connected {
-                ssh_connection,
+                remote_connection: ssh_connection,
                 delegate,
                 multiplex_task,
                 heartbeat_task: Self::heartbeat(this.clone(), connection_activity_rx, cx),
@@ -836,16 +828,14 @@ impl RemoteClient {
         connection.build_command(program, args, env, working_dir, port_forward)
     }
 
-    pub fn build_forward_port_command(
+    pub fn build_forward_ports_command(
         &self,
-        local_port: u16,
-        host: String,
-        remote_port: u16,
+        forwards: Vec<(u16, String, u16)>,
     ) -> Result<CommandTemplate> {
         let Some(connection) = self.remote_connection() else {
             return Err(anyhow!("no ssh connection"));
         };
-        connection.build_forward_port_command(local_port, host, remote_port)
+        connection.build_forward_ports_command(forwards)
     }
 
     pub fn upload_directory(
@@ -866,6 +856,17 @@ impl RemoteClient {
 
     pub fn connection_options(&self) -> RemoteConnectionOptions {
         self.connection_options.clone()
+    }
+
+    pub fn connection(&self) -> Option<Arc<dyn RemoteConnection>> {
+        if let State::Connected {
+            remote_connection, ..
+        } = self.state.as_ref()?
+        {
+            Some(remote_connection.clone())
+        } else {
+            None
+        }
     }
 
     pub fn connection_state(&self) -> ConnectionState {
@@ -949,11 +950,15 @@ impl RemoteClient {
         client_cx: &mut gpui::TestAppContext,
     ) -> Entity<Self> {
         let (_tx, rx) = oneshot::channel();
+        let mut cx = client_cx.to_async();
+        let connection = connect(opts, Arc::new(fake::Delegate), &mut cx)
+            .await
+            .unwrap();
         client_cx
             .update(|cx| {
                 Self::new(
                     ConnectionIdentifier::setup(),
-                    opts,
+                    connection,
                     rx,
                     Arc::new(fake::Delegate),
                     cx,
@@ -987,7 +992,7 @@ impl ConnectionPool {
     pub fn connect(
         &mut self,
         opts: RemoteConnectionOptions,
-        delegate: &Arc<dyn RemoteClientDelegate>,
+        delegate: Arc<dyn RemoteClientDelegate>,
         cx: &mut App,
     ) -> Shared<Task<Result<Arc<dyn RemoteConnection>, Arc<anyhow::Error>>>> {
         let connection = self.connections.get(&opts);
@@ -1086,7 +1091,7 @@ impl From<WslConnectionOptions> for RemoteConnectionOptions {
 }
 
 #[async_trait(?Send)]
-pub(crate) trait RemoteConnection: Send + Sync {
+pub trait RemoteConnection: Send + Sync {
     fn start_proxy(
         &self,
         unique_identifier: String,
@@ -1116,11 +1121,9 @@ pub(crate) trait RemoteConnection: Send + Sync {
         working_dir: Option<String>,
         port_forward: Option<(u16, String, u16)>,
     ) -> Result<CommandTemplate>;
-    fn build_forward_port_command(
+    fn build_forward_ports_command(
         &self,
-        local_port: u16,
-        remote: String,
-        remote_port: u16,
+        forwards: Vec<(u16, String, u16)>,
     ) -> Result<CommandTemplate>;
     fn connection_options(&self) -> RemoteConnectionOptions;
     fn path_style(&self) -> PathStyle;
@@ -1551,19 +1554,17 @@ mod fake {
             })
         }
 
-        fn build_forward_port_command(
+        fn build_forward_ports_command(
             &self,
-            local_port: u16,
-            host: String,
-            remote_port: u16,
+            forwards: Vec<(u16, String, u16)>,
         ) -> anyhow::Result<CommandTemplate> {
             Ok(CommandTemplate {
                 program: "ssh".into(),
-                args: vec![
-                    "-N".into(),
-                    "-L".into(),
-                    format!("{local_port}:{host}:{remote_port}"),
-                ],
+                args: std::iter::once("-N".to_owned())
+                    .chain(forwards.into_iter().map(|(local_port, host, remote_port)| {
+                        format!("{local_port}:{host}:{remote_port}")
+                    }))
+                    .collect(),
                 env: Default::default(),
             })
         }

@@ -189,10 +189,18 @@ impl Render for TitleBar {
         let status = &*status.borrow();
         let user = self.user_store.read(cx).current_user();
 
+        let signed_in = user.is_some();
+
         children.push(
             h_flex()
+                .map(|this| {
+                    if signed_in {
+                        this.pr_1p5()
+                    } else {
+                        this.pr_1()
+                    }
+                })
                 .gap_1()
-                .pr_1()
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .children(self.render_call_controls(window, cx))
                 .children(self.render_connection_status(status, cx))
@@ -753,26 +761,10 @@ impl TitleBar {
                 .into()
             })
             .map(|this| {
-                if is_signed_in {
+                if is_signed_in && TitleBarSettings::get_global(cx).show_user_picture {
                     this.trigger_with_tooltip(
                         ButtonLike::new("user-menu")
-                            .child(
-                                h_flex()
-                                    .gap_0p5()
-                                    .children(
-                                        TitleBarSettings::get_global(cx)
-                                            .show_user_picture
-                                            .then(|| user_avatar.clone())
-                                            .flatten()
-                                            .map(|avatar| Avatar::new(avatar)),
-                                    )
-                                    .child(
-                                        Icon::new(IconName::ChevronDown)
-                                            .size(IconSize::Small)
-                                            .color(Color::Muted),
-                                    ),
-                            )
-                            .style(ButtonStyle::Subtle),
+                            .children(user_avatar.clone().map(|avatar| Avatar::new(avatar))),
                         Tooltip::text("Toggle User Menu"),
                     )
                 } else {

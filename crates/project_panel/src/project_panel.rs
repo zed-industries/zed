@@ -64,7 +64,7 @@ use workspace::{
     DraggedSelection, OpenInTerminal, OpenOptions, OpenVisible, PreviewTabsSettings, SelectedEntry,
     SplitDirection, Workspace,
     dock::{DockPosition, Panel, PanelEvent},
-    notifications::{DetachAndPromptErr, NotifyTaskExt},
+    notifications::{DetachAndPromptErr, NotifyResultExt, NotifyTaskExt},
 };
 use worktree::CreatedEntry;
 use zed_actions::workspace::OpenWithSystem;
@@ -2677,12 +2677,14 @@ impl ProjectPanel {
                 for task in paste_tasks {
                     match task {
                         PasteTask::Rename(task) => {
-                            if let Some(CreatedEntry::Included(entry)) = task.await.log_err() {
+                            if let Some(CreatedEntry::Included(entry)) =
+                                task.await.notify_async_err(cx)
+                            {
                                 last_succeed = Some(entry);
                             }
                         }
                         PasteTask::Copy(task) => {
-                            if let Some(Some(entry)) = task.await.log_err() {
+                            if let Some(Some(entry)) = task.await.notify_async_err(cx) {
                                 last_succeed = Some(entry);
                             }
                         }
@@ -2698,8 +2700,10 @@ impl ProjectPanel {
                             });
 
                             if item_count == 1 {
-                                // open entry if not dir, and only focus if rename is not pending
-                                if !entry.is_dir() {
+                                // open entry if not dir, setting is enabled, and only focus if rename is not pending
+                                if !entry.is_dir()
+                                    && ProjectPanelSettings::get_global(cx).open_file_on_paste
+                                {
                                     project_panel.open_entry(
                                         entry.id,
                                         disambiguation_range.is_none(),

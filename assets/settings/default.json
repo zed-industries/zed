@@ -311,11 +311,11 @@
   "use_on_type_format": true,
   // Whether to automatically add matching closing characters when typing
   // opening parenthesis, bracket, brace, single or double quote characters.
-  // For example, when you type (, Zed will add a closing ) at the correct position.
+  // For example, when you type '(', Zed will add a closing ) at the correct position.
   "use_autoclose": true,
   // Whether to automatically surround selected text when typing opening parenthesis,
   // bracket, brace, single or double quote characters.
-  // For example, when you select text and type (, Zed will surround the text with ().
+  // For example, when you select text and type '(', Zed will surround the text with ().
   "use_auto_surround": true,
   // Whether indentation should be adjusted based on the context whilst typing.
   "auto_indent": true,
@@ -724,7 +724,9 @@
     // Whether to hide the root entry when only one folder is open in the window.
     "hide_root": false,
     // Whether to hide the hidden entries in the project panel.
-    "hide_hidden": false
+    "hide_hidden": false,
+    // Whether to automatically open files when pasting them in the project panel.
+    "open_file_on_paste": true
   },
   "outline_panel": {
     // Whether to show the outline panel button in the status bar
@@ -906,6 +908,7 @@
           "now": true,
           "find_path": true,
           "read_file": true,
+          "open": true,
           "grep": true,
           "terminal": true,
           "thinking": true,
@@ -917,7 +920,6 @@
         // We don't know which of the context server tools are safe for the "Ask" profile, so we don't enable them by default.
         // "enable_all_context_servers": true,
         "tools": {
-          "contents": true,
           "diagnostics": true,
           "fetch": true,
           "list_directory": true,
@@ -1107,22 +1109,28 @@
   // Whether or not to perform a buffer format before saving: [on, off]
   // Keep in mind, if the autosave with delay is enabled, format_on_save will be ignored
   "format_on_save": "on",
-  // How to perform a buffer format. This setting can take 4 values:
+  // How to perform a buffer format. This setting can take multiple values:
   //
-  // 1. Format code using the current language server:
+  // 1. Default. Format files using Zed's Prettier integration (if applicable),
+  //    or falling back to formatting via language server:
+  //     "formatter": "auto"
+  // 2. Format code using the current language server:
   //     "formatter": "language_server"
-  // 2. Format code using an external command:
+  // 3. Format code using a specific language server:
+  //     "formatter": {"language_server": {"name": "ruff"}}
+  // 4. Format code using an external command:
   //     "formatter": {
   //       "external": {
   //         "command": "prettier",
   //         "arguments": ["--stdin-filepath", "{buffer_path}"]
   //       }
   //     }
-  // 3. Format code using Zed's Prettier integration:
+  // 5. Format code using Zed's Prettier integration:
   //     "formatter": "prettier"
-  // 4. Default. Format files using Zed's Prettier integration (if applicable),
-  //    or falling back to formatting via language server:
-  //     "formatter": "auto"
+  // 6. Format code using a code action
+  //     "formatter": {"code_action": "source.fixAll.eslint"}
+  // 7. An array of any format step specified above to apply in order
+  //     "formatter": [{"code_action": "source.fixAll.eslint"}, "prettier"]
   "formatter": "auto",
   // How to soft-wrap long lines of text.
   // Possible values:
@@ -1521,6 +1529,7 @@
     // A value of 45 preserves colorful themes while ensuring legibility.
     "minimum_contrast": 45
   },
+  "code_actions_on_format": {},
   // Settings related to running tasks.
   "tasks": {
     "variables": {},
@@ -1690,7 +1699,9 @@
       "preferred_line_length": 72
     },
     "Go": {
-      "formatter": [{ "code_action": "source.organizeImports" }, { "language_server": {} }],
+      "code_actions_on_format": {
+        "source.organizeImports": true
+      },
       "debuggers": ["Delve"]
     },
     "GraphQL": {
@@ -1914,6 +1925,11 @@
   // DAP Specific settings.
   "dap": {
     // Specify the DAP name as a key here.
+    "CodeLLDB": {
+      "env": {
+        "RUST_LOG": "info"
+      }
+    }
   },
   // Common language server settings.
   "global_lsp_settings": {

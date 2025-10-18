@@ -15,10 +15,7 @@ use workspace::searchable::Direction;
 
 use crate::{
     Vim,
-    motion::{
-        Motion, MotionKind, first_non_whitespace, next_line_end, start_of_line,
-        start_of_relative_buffer_row,
-    },
+    motion::{Motion, MotionKind, first_non_whitespace, next_line_end, start_of_line},
     object::Object,
     state::{Mark, Mode, Operator},
 };
@@ -406,7 +403,9 @@ impl Vim {
                 // Move to the next or previous buffer row, ensuring that
                 // wrapped lines are handled correctly.
                 let direction = if tail.row() > head.row() { -1 } else { 1 };
-                row = start_of_relative_buffer_row(map, DisplayPoint::new(row, 0), direction).row();
+                row = map
+                    .start_of_relative_buffer_row(DisplayPoint::new(row, 0), direction)
+                    .row();
             }
 
             s.select(selections);
@@ -748,7 +747,8 @@ impl Vim {
         self.stop_recording(cx);
         self.update_editor(cx, |_, editor, cx| {
             editor.transact(window, cx, |editor, window, cx| {
-                let (display_map, selections) = editor.selections.all_adjusted_display(cx);
+                let display_map = editor.display_snapshot(cx);
+                let selections = editor.selections.all_adjusted_display(&display_map);
 
                 // Selections are biased right at the start. So we need to store
                 // anchors that are biased left so that we can restore the selections
@@ -859,7 +859,9 @@ impl Vim {
             });
         }
         self.update_editor(cx, |_, editor, cx| {
-            let latest = editor.selections.newest::<usize>(cx);
+            let latest = editor
+                .selections
+                .newest::<usize>(&editor.display_snapshot(cx));
             start_selection = latest.start;
             end_selection = latest.end;
         });
@@ -880,7 +882,9 @@ impl Vim {
             return;
         }
         self.update_editor(cx, |_, editor, cx| {
-            let latest = editor.selections.newest::<usize>(cx);
+            let latest = editor
+                .selections
+                .newest::<usize>(&editor.display_snapshot(cx));
             if vim_is_normal {
                 start_selection = latest.start;
                 end_selection = latest.end;

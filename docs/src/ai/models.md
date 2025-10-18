@@ -40,9 +40,6 @@ We’re working hard to expand the models supported by Zed’s subscription offe
 | Grok 4 Fast            | X.ai      | Input               | $0.20                        | $0.22                   |
 |                        | X.ai      | Output              | $0.50                        | $0.55                   |
 |                        | X.ai      | Cached Input        | $0.05                        | $0.055                  |
-| Grok 4 Fast            | X.ai      | Input               | $0.20                        | $0.22                   |
-|                        | X.ai      | Output              | $0.50                        | $0.55                   |
-|                        | X.ai      | Cached Input        | $0.05                        | $0.055                  |
 | Grok 4 (Non-Reasoning) | X.ai      | Input               | $0.20                        | $0.22                   |
 |                        | X.ai      | Output              | $0.50                        | $0.55                   |
 |                        | X.ai      | Cached Input        | $0.05                        | $0.055                  |

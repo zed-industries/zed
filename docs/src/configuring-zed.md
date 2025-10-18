@@ -3326,7 +3326,7 @@ Positive integer values
 
 ## Use Auto Surround
 
-- Description: Whether to automatically surround selected text when typing opening parenthesis, bracket, brace, single or double quote characters. For example, when you select text and type (, Zed will surround the text with ().
+- Description: Whether to automatically surround selected text when typing opening parenthesis, bracket, brace, single or double quote characters. For example, when you select text and type '(', Zed will surround the text with ().
 - Setting: `use_auto_surround`
 - Default: `true`
 
@@ -4155,7 +4155,8 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
     },
     "hide_root": false,
     "hide_hidden": false,
-    "starts_open": true
+    "starts_open": true,
+    "open_file_on_paste": true
   }
 }
 ```

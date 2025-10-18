@@ -877,7 +877,7 @@ async fn test_collaborating_with_renames(cx_a: &mut TestAppContext, cx_b: &mut T
             6..9
         );
         rename.editor.update(cx, |rename_editor, cx| {
-            let rename_selection = rename_editor.selections.newest::<usize>(cx);
+            let rename_selection = rename_editor.selections.newest::<usize>(&rename_editor.display_snapshot(cx));
             assert_eq!(
                 rename_selection.range(),
                 0..3,
@@ -924,7 +924,7 @@ async fn test_collaborating_with_renames(cx_a: &mut TestAppContext, cx_b: &mut T
         let lsp_rename_end = rename.range.end.to_offset(&buffer);
         assert_eq!(lsp_rename_start..lsp_rename_end, 6..9);
         rename.editor.update(cx, |rename_editor, cx| {
-            let rename_selection = rename_editor.selections.newest::<usize>(cx);
+            let rename_selection = rename_editor.selections.newest::<usize>(&rename_editor.display_snapshot(cx));
             assert_eq!(
                 rename_selection.range(),
                 1..2,
@@ -2553,6 +2553,27 @@ async fn test_lsp_pull_diagnostics(
     cx_a.update(editor::init);
     cx_b.update(editor::init);
 
+    let expected_push_diagnostic_main_message = "pushed main diagnostic";
+    let expected_push_diagnostic_lib_message = "pushed lib diagnostic";
+    let expected_pull_diagnostic_main_message = "pulled main diagnostic";
+    let expected_pull_diagnostic_lib_message = "pulled lib diagnostic";
+    let expected_workspace_pull_diagnostics_main_message = "pulled workspace main diagnostic";
+    let expected_workspace_pull_diagnostics_lib_message = "pulled workspace lib diagnostic";
+
+    let diagnostics_pulls_result_ids = Arc::new(Mutex::new(BTreeSet::<Option<String>>::new()));
+    let workspace_diagnostics_pulls_result_ids = Arc::new(Mutex::new(BTreeSet::<String>::new()));
+    let diagnostics_pulls_made = Arc::new(AtomicUsize::new(0));
+    let closure_diagnostics_pulls_made = diagnostics_pulls_made.clone();
+    let closure_diagnostics_pulls_result_ids = diagnostics_pulls_result_ids.clone();
+    let workspace_diagnostics_pulls_made = Arc::new(AtomicUsize::new(0));
+    let closure_workspace_diagnostics_pulls_made = workspace_diagnostics_pulls_made.clone();
+    let closure_workspace_diagnostics_pulls_result_ids =
+        workspace_diagnostics_pulls_result_ids.clone();
+    let (workspace_diagnostic_cancel_tx, closure_workspace_diagnostic_cancel_rx) =
+        smol::channel::bounded::<()>(1);
+    let (closure_workspace_diagnostic_received_tx, workspace_diagnostic_received_rx) =
+        smol::channel::bounded::<()>(1);
+
     let capabilities = lsp::ServerCapabilities {
         diagnostic_provider: Some(lsp::DiagnosticServerCapabilities::Options(
             lsp::DiagnosticOptions {
@@ -2567,13 +2588,195 @@ async fn test_lsp_pull_diagnostics(
         ..lsp::ServerCapabilities::default()
     };
     client_a.language_registry().add(rust_lang());
+
+    let pull_diagnostics_handle = Arc::new(parking_lot::Mutex::new(None));
+    let workspace_diagnostics_pulls_handle = Arc::new(parking_lot::Mutex::new(None));
+
+    let closure_pull_diagnostics_handle = pull_diagnostics_handle.clone();
+    let closure_workspace_diagnostics_pulls_handle = workspace_diagnostics_pulls_handle.clone();
     let mut fake_language_servers = client_a.language_registry().register_fake_lsp(
         "Rust",
         FakeLspAdapter {
             capabilities: capabilities.clone(),
+            initializer: Some(Box::new(move |fake_language_server| {
+                let expected_workspace_diagnostic_token = lsp::ProgressToken::String(format!(
+                    "workspace/diagnostic-{}-1",
+                    fake_language_server.server.server_id()
+                ));
+                let closure_workspace_diagnostics_pulls_result_ids = closure_workspace_diagnostics_pulls_result_ids.clone();
+                let diagnostics_pulls_made = closure_diagnostics_pulls_made.clone();
+                let diagnostics_pulls_result_ids = closure_diagnostics_pulls_result_ids.clone();
+                let closure_pull_diagnostics_handle = closure_pull_diagnostics_handle.clone();
+                let closure_workspace_diagnostics_pulls_handle = closure_workspace_diagnostics_pulls_handle.clone();
+                let closure_workspace_diagnostic_cancel_rx = closure_workspace_diagnostic_cancel_rx.clone();
+                let closure_workspace_diagnostic_received_tx = closure_workspace_diagnostic_received_tx.clone();
+                let pull_diagnostics_handle = fake_language_server
+                    .set_request_handler::<lsp::request::DocumentDiagnosticRequest, _, _>(
+                        move |params, _| {
+                            let requests_made = diagnostics_pulls_made.clone();
+                            let diagnostics_pulls_result_ids =
+                                diagnostics_pulls_result_ids.clone();
+                            async move {
+                                let message = if lsp::Uri::from_file_path(path!("/a/main.rs"))
+                                    .unwrap()
+                                    == params.text_document.uri
+                                {
+                                    expected_pull_diagnostic_main_message.to_string()
+                                } else if lsp::Uri::from_file_path(path!("/a/lib.rs")).unwrap()
+                                    == params.text_document.uri
+                                {
+                                    expected_pull_diagnostic_lib_message.to_string()
+                                } else {
+                                    panic!("Unexpected document: {}", params.text_document.uri)
+                                };
+                                {
+                                    diagnostics_pulls_result_ids
+                                        .lock()
+                                        .await
+                                        .insert(params.previous_result_id);
+                                }
+                                let new_requests_count =
+                                    requests_made.fetch_add(1, atomic::Ordering::Release) + 1;
+                                Ok(lsp::DocumentDiagnosticReportResult::Report(
+                                    lsp::DocumentDiagnosticReport::Full(
+                                        lsp::RelatedFullDocumentDiagnosticReport {
+                                            related_documents: None,
+                                            full_document_diagnostic_report:
+                                                lsp::FullDocumentDiagnosticReport {
+                                                    result_id: Some(format!(
+                                                        "pull-{new_requests_count}"
+                                                    )),
+                                                    items: vec![lsp::Diagnostic {
+                                                        range: lsp::Range {
+                                                            start: lsp::Position {
+                                                                line: 0,
+                                                                character: 0,
+                                                            },
+                                                            end: lsp::Position {
+                                                                line: 0,
+                                                                character: 2,
+                                                            },
+                                                        },
+                                                        severity: Some(
+                                                            lsp::DiagnosticSeverity::ERROR,
+                                                        ),
+                                                        message,
+                                                        ..lsp::Diagnostic::default()
+                                                    }],
+                                                },
+                                        },
+                                    ),
+                                ))
+                            }
+                        },
+                    );
+                let _ = closure_pull_diagnostics_handle.lock().insert(pull_diagnostics_handle);
+
+                let closure_workspace_diagnostics_pulls_made = closure_workspace_diagnostics_pulls_made.clone();
+                let workspace_diagnostics_pulls_handle = fake_language_server.set_request_handler::<lsp::request::WorkspaceDiagnosticRequest, _, _>(
+                    move |params, _| {
+                        let workspace_requests_made = closure_workspace_diagnostics_pulls_made.clone();
+                        let workspace_diagnostics_pulls_result_ids =
+                            closure_workspace_diagnostics_pulls_result_ids.clone();
+                        let workspace_diagnostic_cancel_rx = closure_workspace_diagnostic_cancel_rx.clone();
+                        let workspace_diagnostic_received_tx = closure_workspace_diagnostic_received_tx.clone();
+                        let expected_workspace_diagnostic_token = expected_workspace_diagnostic_token.clone();
+                        async move {
+                            let workspace_request_count =
+                                workspace_requests_made.fetch_add(1, atomic::Ordering::Release) + 1;
+                            {
+                                workspace_diagnostics_pulls_result_ids
+                                    .lock()
+                                    .await
+                                    .extend(params.previous_result_ids.into_iter().map(|id| id.value));
+                            }
+                            if should_stream_workspace_diagnostic && !workspace_diagnostic_cancel_rx.is_closed()
+                            {
+                                assert_eq!(
+                                    params.partial_result_params.partial_result_token,
+                                    Some(expected_workspace_diagnostic_token)
+                                );
+                                workspace_diagnostic_received_tx.send(()).await.unwrap();
+                                workspace_diagnostic_cancel_rx.recv().await.unwrap();
+                                workspace_diagnostic_cancel_rx.close();
+                                // https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#partialResults
+                                // > The final response has to be empty in terms of result values.
+                                return Ok(lsp::WorkspaceDiagnosticReportResult::Report(
+                                    lsp::WorkspaceDiagnosticReport { items: Vec::new() },
+                                ));
+                            }
+                            Ok(lsp::WorkspaceDiagnosticReportResult::Report(
+                                lsp::WorkspaceDiagnosticReport {
+                                    items: vec![
+                                        lsp::WorkspaceDocumentDiagnosticReport::Full(
+                                            lsp::WorkspaceFullDocumentDiagnosticReport {
+                                                uri: lsp::Uri::from_file_path(path!("/a/main.rs")).unwrap(),
+                                                version: None,
+                                                full_document_diagnostic_report:
+                                                    lsp::FullDocumentDiagnosticReport {
+                                                        result_id: Some(format!(
+                                                            "workspace_{workspace_request_count}"
+                                                        )),
+                                                        items: vec![lsp::Diagnostic {
+                                                            range: lsp::Range {
+                                                                start: lsp::Position {
+                                                                    line: 0,
+                                                                    character: 1,
+                                                                },
+                                                                end: lsp::Position {
+                                                                    line: 0,
+                                                                    character: 3,
+                                                                },
+                                                            },
+                                                            severity: Some(lsp::DiagnosticSeverity::WARNING),
+                                                            message:
+                                                                expected_workspace_pull_diagnostics_main_message
+                                                                    .to_string(),
+                                                            ..lsp::Diagnostic::default()
+                                                        }],
+                                                    },
+                                            },
+                                        ),
+                                        lsp::WorkspaceDocumentDiagnosticReport::Full(
+                                            lsp::WorkspaceFullDocumentDiagnosticReport {
+                                                uri: lsp::Uri::from_file_path(path!("/a/lib.rs")).unwrap(),
+                                                version: None,
+                                                full_document_diagnostic_report:
+                                                    lsp::FullDocumentDiagnosticReport {
+                                                        result_id: Some(format!(
+                                                            "workspace_{workspace_request_count}"
+                                                        )),
+                                                        items: vec![lsp::Diagnostic {
+                                                            range: lsp::Range {
+                                                                start: lsp::Position {
+                                                                    line: 0,
+                                                                    character: 1,
+                                                                },
+                                                                end: lsp::Position {
+                                                                    line: 0,
+                                                                    character: 3,
+                                                                },
+                                                            },
+                                                            severity: Some(lsp::DiagnosticSeverity::WARNING),
+                                                            message:
+                                                                expected_workspace_pull_diagnostics_lib_message
+                                                                    .to_string(),
+                                                            ..lsp::Diagnostic::default()
+                                                        }],
+                                                    },
+                                            },
+                                        ),
+                                    ],
+                                },
+                            ))
+                        }
+                    });
+                let _ = closure_workspace_diagnostics_pulls_handle.lock().insert(workspace_diagnostics_pulls_handle);
+            })),
             ..FakeLspAdapter::default()
         },
     );
+
     client_b.language_registry().add(rust_lang());
     client_b.language_registry().register_fake_lsp_adapter(
         "Rust",
@@ -2631,183 +2834,15 @@ async fn test_lsp_pull_diagnostics(
         .unwrap();
 
     let fake_language_server = fake_language_servers.next().await.unwrap();
-    cx_a.run_until_parked();
-    cx_b.run_until_parked();
-    let expected_push_diagnostic_main_message = "pushed main diagnostic";
-    let expected_push_diagnostic_lib_message = "pushed lib diagnostic";
-    let expected_pull_diagnostic_main_message = "pulled main diagnostic";
-    let expected_pull_diagnostic_lib_message = "pulled lib diagnostic";
-    let expected_workspace_pull_diagnostics_main_message = "pulled workspace main diagnostic";
-    let expected_workspace_pull_diagnostics_lib_message = "pulled workspace lib diagnostic";
-
-    let diagnostics_pulls_result_ids = Arc::new(Mutex::new(BTreeSet::<Option<String>>::new()));
-    let workspace_diagnostics_pulls_result_ids = Arc::new(Mutex::new(BTreeSet::<String>::new()));
-    let diagnostics_pulls_made = Arc::new(AtomicUsize::new(0));
-    let closure_diagnostics_pulls_made = diagnostics_pulls_made.clone();
-    let closure_diagnostics_pulls_result_ids = diagnostics_pulls_result_ids.clone();
-    let mut pull_diagnostics_handle = fake_language_server
-        .set_request_handler::<lsp::request::DocumentDiagnosticRequest, _, _>(move |params, _| {
-            let requests_made = closure_diagnostics_pulls_made.clone();
-            let diagnostics_pulls_result_ids = closure_diagnostics_pulls_result_ids.clone();
-            async move {
-                let message = if lsp::Uri::from_file_path(path!("/a/main.rs")).unwrap()
-                    == params.text_document.uri
-                {
-                    expected_pull_diagnostic_main_message.to_string()
-                } else if lsp::Uri::from_file_path(path!("/a/lib.rs")).unwrap()
-                    == params.text_document.uri
-                {
-                    expected_pull_diagnostic_lib_message.to_string()
-                } else {
-                    panic!("Unexpected document: {}", params.text_document.uri)
-                };
-                {
-                    diagnostics_pulls_result_ids
-                        .lock()
-                        .await
-                        .insert(params.previous_result_id);
-                }
-                let new_requests_count = requests_made.fetch_add(1, atomic::Ordering::Release) + 1;
-                Ok(lsp::DocumentDiagnosticReportResult::Report(
-                    lsp::DocumentDiagnosticReport::Full(lsp::RelatedFullDocumentDiagnosticReport {
-                        related_documents: None,
-                        full_document_diagnostic_report: lsp::FullDocumentDiagnosticReport {
-                            result_id: Some(format!("pull-{new_requests_count}")),
-                            items: vec![lsp::Diagnostic {
-                                range: lsp::Range {
-                                    start: lsp::Position {
-                                        line: 0,
-                                        character: 0,
-                                    },
-                                    end: lsp::Position {
-                                        line: 0,
-                                        character: 2,
-                                    },
-                                },
-                                severity: Some(lsp::DiagnosticSeverity::ERROR),
-                                message,
-                                ..lsp::Diagnostic::default()
-                            }],
-                        },
-                    }),
-                ))
-            }
-        });
-
-    let workspace_diagnostics_pulls_made = Arc::new(AtomicUsize::new(0));
-    let closure_workspace_diagnostics_pulls_made = workspace_diagnostics_pulls_made.clone();
-    let closure_workspace_diagnostics_pulls_result_ids =
-        workspace_diagnostics_pulls_result_ids.clone();
-    let (workspace_diagnostic_cancel_tx, closure_workspace_diagnostic_cancel_rx) =
-        smol::channel::bounded::<()>(1);
-    let (closure_workspace_diagnostic_received_tx, workspace_diagnostic_received_rx) =
-        smol::channel::bounded::<()>(1);
     let expected_workspace_diagnostic_token = lsp::ProgressToken::String(format!(
         "workspace/diagnostic-{}-1",
         fake_language_server.server.server_id()
     ));
-    let closure_expected_workspace_diagnostic_token = expected_workspace_diagnostic_token.clone();
-    let mut workspace_diagnostics_pulls_handle = fake_language_server
-        .set_request_handler::<lsp::request::WorkspaceDiagnosticRequest, _, _>(
-        move |params, _| {
-            let workspace_requests_made = closure_workspace_diagnostics_pulls_made.clone();
-            let workspace_diagnostics_pulls_result_ids =
-                closure_workspace_diagnostics_pulls_result_ids.clone();
-            let workspace_diagnostic_cancel_rx = closure_workspace_diagnostic_cancel_rx.clone();
-            let workspace_diagnostic_received_tx = closure_workspace_diagnostic_received_tx.clone();
-            let expected_workspace_diagnostic_token =
-                closure_expected_workspace_diagnostic_token.clone();
-            async move {
-                let workspace_request_count =
-                    workspace_requests_made.fetch_add(1, atomic::Ordering::Release) + 1;
-                {
-                    workspace_diagnostics_pulls_result_ids
-                        .lock()
-                        .await
-                        .extend(params.previous_result_ids.into_iter().map(|id| id.value));
-                }
-                if should_stream_workspace_diagnostic && !workspace_diagnostic_cancel_rx.is_closed()
-                {
-                    assert_eq!(
-                        params.partial_result_params.partial_result_token,
-                        Some(expected_workspace_diagnostic_token)
-                    );
-                    workspace_diagnostic_received_tx.send(()).await.unwrap();
-                    workspace_diagnostic_cancel_rx.recv().await.unwrap();
-                    workspace_diagnostic_cancel_rx.close();
-                    // https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#partialResults
-                    // > The final response has to be empty in terms of result values.
-                    return Ok(lsp::WorkspaceDiagnosticReportResult::Report(
-                        lsp::WorkspaceDiagnosticReport { items: Vec::new() },
-                    ));
-                }
-                Ok(lsp::WorkspaceDiagnosticReportResult::Report(
-                    lsp::WorkspaceDiagnosticReport {
-                        items: vec![
-                            lsp::WorkspaceDocumentDiagnosticReport::Full(
-                                lsp::WorkspaceFullDocumentDiagnosticReport {
-                                    uri: lsp::Uri::from_file_path(path!("/a/main.rs")).unwrap(),
-                                    version: None,
-                                    full_document_diagnostic_report:
-                                        lsp::FullDocumentDiagnosticReport {
-                                            result_id: Some(format!(
-                                                "workspace_{workspace_request_count}"
-                                            )),
-                                            items: vec![lsp::Diagnostic {
-                                                range: lsp::Range {
-                                                    start: lsp::Position {
-                                                        line: 0,
-                                                        character: 1,
-                                                    },
-                                                    end: lsp::Position {
-                                                        line: 0,
-                                                        character: 3,
-                                                    },
-                                                },
-                                                severity: Some(lsp::DiagnosticSeverity::WARNING),
-                                                message:
-                                                    expected_workspace_pull_diagnostics_main_message
-                                                        .to_string(),
-                                                ..lsp::Diagnostic::default()
-                                            }],
-                                        },
-                                },
-                            ),
-                            lsp::WorkspaceDocumentDiagnosticReport::Full(
-                                lsp::WorkspaceFullDocumentDiagnosticReport {
-                                    uri: lsp::Uri::from_file_path(path!("/a/lib.rs")).unwrap(),
-                                    version: None,
-                                    full_document_diagnostic_report:
-                                        lsp::FullDocumentDiagnosticReport {
-                                            result_id: Some(format!(
-                                                "workspace_{workspace_request_count}"
-                                            )),
-                                            items: vec![lsp::Diagnostic {
-                                                range: lsp::Range {
-                                                    start: lsp::Position {
-                                                        line: 0,
-                                                        character: 1,
-                                                    },
-                                                    end: lsp::Position {
-                                                        line: 0,
-                                                        character: 3,
-                                                    },
-                                                },
-                                                severity: Some(lsp::DiagnosticSeverity::WARNING),
-                                                message:
-                                                    expected_workspace_pull_diagnostics_lib_message
-                                                        .to_string(),
-                                                ..lsp::Diagnostic::default()
-                                            }],
-                                        },
-                                },
-                            ),
-                        ],
-                    },
-                ))
-            }
-        },
-    );
+    cx_a.run_until_parked();
+    cx_b.run_until_parked();
+    let mut pull_diagnostics_handle = pull_diagnostics_handle.lock().take().unwrap();
+    let mut workspace_diagnostics_pulls_handle =
+        workspace_diagnostics_pulls_handle.lock().take().unwrap();
 
     if should_stream_workspace_diagnostic {
         workspace_diagnostic_received_rx.recv().await.unwrap();
