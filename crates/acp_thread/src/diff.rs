@@ -4,7 +4,8 @@ use editor::{MultiBuffer, PathKey, multibuffer_context_lines};
 use gpui::{App, AppContext, AsyncApp, Context, Entity, Subscription, Task};
 use itertools::Itertools;
 use language::{
-    Anchor, Buffer, Capability, LanguageRegistry, OffsetRangeExt as _, Point, Rope, TextBuffer,
+    Anchor, Buffer, Capability, LanguageRegistry, OffsetRangeExt as _, Point, ReplicaId, Rope,
+    TextBuffer,
 };
 use std::{cmp::Reverse, ops::Range, path::Path, sync::Arc};
 use util::ResultExt;
@@ -250,7 +251,7 @@ impl PendingDiff {
         let buffer = cx.new(|cx| {
             let language = self.new_buffer.read(cx).language().cloned();
             let buffer = TextBuffer::new_normalized(
-                0,
+                ReplicaId::new(0),
                 cx.entity_id().as_non_zero_u64().into(),
                 self.new_buffer.read(cx).line_ending(),
                 self.new_buffer.read(cx).as_rope().clone(),

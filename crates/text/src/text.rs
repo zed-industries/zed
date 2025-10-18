@@ -12,7 +12,6 @@ mod undo_map;
 
 pub use anchor::*;
 use anyhow::{Context as _, Result};
-use clock::LOCAL_BRANCH_REPLICA_ID;
 pub use clock::ReplicaId;
 use collections::{HashMap, HashSet};
 use locator::Locator;
@@ -709,7 +708,7 @@ impl FromIterator<char> for LineIndent {
 }
 
 impl Buffer {
-    pub fn new(replica_id: u16, remote_id: BufferId, base_text: impl Into<String>) -> Buffer {
+    pub fn new(replica_id: ReplicaId, remote_id: BufferId, base_text: impl Into<String>) -> Buffer {
         let mut base_text = base_text.into();
         let line_ending = LineEnding::detect(&base_text);
         LineEnding::normalize(&mut base_text);
@@ -717,7 +716,7 @@ impl Buffer {
     }
 
     pub fn new_normalized(
-        replica_id: u16,
+        replica_id: ReplicaId,
         remote_id: BufferId,
         line_ending: LineEnding,
         normalized: Rope,
@@ -732,7 +731,7 @@ impl Buffer {
         let visible_text = history.base_text.clone();
         if !visible_text.is_empty() {
             let insertion_timestamp = clock::Lamport {
-                replica_id: 0,
+                replica_id: ReplicaId::new(0),
                 value: 1,
             };
             lamport_clock.observe(insertion_timestamp);
@@ -788,7 +787,7 @@ impl Buffer {
             history: History::new(self.base_text().clone()),
             deferred_ops: OperationQueue::new(),
             deferred_replicas: HashSet::default(),
-            lamport_clock: clock::Lamport::new(LOCAL_BRANCH_REPLICA_ID),
+            lamport_clock: clock::Lamport::new(ReplicaId::LOCAL_BRANCH),
             subscriptions: Default::default(),
             edit_id_resolvers: Default::default(),
             wait_for_version_txs: Default::default(),
@@ -1858,7 +1857,7 @@ impl Buffer {
         T: rand::Rng,
     {
         let mut edits = self.get_random_edits(rng, edit_count);
-        log::info!("mutating buffer {} with {:?}", self.replica_id, edits);
+        log::info!("mutating buffer {:?} with {:?}", self.replica_id, edits);
 
         let op = self.edit(edits.iter().cloned());
         if let Operation::Edit(edit) = &op {
@@ -1881,7 +1880,7 @@ impl Buffer {
             if let Some(entry) = self.history.undo_stack.choose(rng) {
                 let transaction = entry.transaction.clone();
                 log::info!(
-                    "undoing buffer {} transaction {:?}",
+                    "undoing buffer {:?} transaction {:?}",
                     self.replica_id,
                     transaction
                 );

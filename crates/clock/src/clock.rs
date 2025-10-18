@@ -9,11 +9,34 @@ use std::{
 
 pub use system_clock::*;
 
-pub const LOCAL_BRANCH_REPLICA_ID: u16 = u16::MAX;
-pub const AGENT_REPLICA_ID: u16 = u16::MAX - 1;
-
 /// A unique identifier for each distributed node.
-pub type ReplicaId = u16;
+#[derive(Clone, Copy, Default, Eq, Hash, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
+pub struct ReplicaId(u16);
+
+impl ReplicaId {
+    pub const LOCAL_BRANCH: ReplicaId = ReplicaId(u16::MAX);
+    pub const AGENT: ReplicaId = ReplicaId(u16::MAX - 1);
+
+    pub fn new(id: u16) -> Self {
+        ReplicaId(id)
+    }
+
+    pub fn as_u16(&self) -> u16 {
+        self.0
+    }
+}
+
+impl fmt::Debug for ReplicaId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if *self == ReplicaId::LOCAL_BRANCH {
+            write!(f, "<branch>")
+        } else if *self == ReplicaId::AGENT {
+            write!(f, "<agent>")
+        } else {
+            write!(f, "{}", self.0)
+        }
+    }
+}
 
 /// A [Lamport sequence number](https://en.wikipedia.org/wiki/Lamport_timestamp).
 pub type Seq = u32;
@@ -29,8 +52,9 @@ pub struct Lamport {
 /// A [vector clock](https://en.wikipedia.org/wiki/Vector_clock).
 #[derive(Clone, Default, Hash, Eq, PartialEq)]
 pub struct Global {
-    values: SmallVec<[u32; 8]>,
     local_branch_value: u32,
+    agent_value: u32,
+    values: SmallVec<[u32; 4]>,
 }
 
 impl Global {
@@ -39,24 +63,28 @@ impl Global {
     }
 
     pub fn get(&self, replica_id: ReplicaId) -> Seq {
-        if replica_id == LOCAL_BRANCH_REPLICA_ID {
+        if replica_id == ReplicaId::LOCAL_BRANCH {
             self.local_branch_value
+        } else if replica_id == ReplicaId::AGENT {
+            self.agent_value
         } else {
-            self.values.get(replica_id as usize).copied().unwrap_or(0) as Seq
+            self.values.get(replica_id.0 as usize).copied().unwrap_or(0) as Seq
         }
     }
 
     pub fn observe(&mut self, timestamp: Lamport) {
         if timestamp.value > 0 {
-            if timestamp.replica_id == LOCAL_BRANCH_REPLICA_ID {
+            if timestamp.replica_id == ReplicaId::LOCAL_BRANCH {
                 self.local_branch_value = cmp::max(self.local_branch_value, timestamp.value);
+            } else if timestamp.replica_id == ReplicaId::AGENT {
+                self.agent_value = cmp::max(self.agent_value, timestamp.value);
             } else {
-                let new_len = timestamp.replica_id as usize + 1;
+                let new_len = timestamp.replica_id.0 as usize + 1;
                 if new_len > self.values.len() {
                     self.values.resize(new_len, 0);
                 }
 
-                let entry = &mut self.values[timestamp.replica_id as usize];
+                let entry = &mut self.values[timestamp.replica_id.0 as usize];
                 *entry = cmp::max(*entry, timestamp.value);
             }
         }
@@ -110,6 +138,7 @@ impl Global {
             .zip(other.values.iter())
             .any(|(left, right)| *right > 0 && left >= right)
             || (other.local_branch_value > 0 && self.local_branch_value >= other.local_branch_value)
+            || (other.agent_value > 0 && self.agent_value >= other.agent_value)
     }
 
     pub fn observed_all(&self, other: &Self) -> bool {
@@ -119,6 +148,7 @@ impl Global {
             None => true,
         }) && rhs.next().is_none()
             && self.local_branch_value >= other.local_branch_value
+            && self.agent_value >= other.agent_value
     }
 
     pub fn changed_since(&self, other: &Self) -> bool {
@@ -129,6 +159,7 @@ impl Global {
                 .zip(other.values.iter())
                 .any(|(left, right)| left > right)
             || self.local_branch_value > other.local_branch_value
+            || self.agent_value > other.agent_value
     }
 
     pub fn iter(&self) -> impl Iterator<Item = Lamport> + '_ {
@@ -136,12 +167,16 @@ impl Global {
             .iter()
             .enumerate()
             .map(|(replica_id, seq)| Lamport {
-                replica_id: replica_id as ReplicaId,
+                replica_id: ReplicaId(replica_id as u16),
                 value: *seq,
             })
             .chain((self.local_branch_value > 0).then_some(Lamport {
-                replica_id: LOCAL_BRANCH_REPLICA_ID,
+                replica_id: ReplicaId::LOCAL_BRANCH,
                 value: self.local_branch_value,
+            }))
+            .chain((self.agent_value > 0).then_some(Lamport {
+                replica_id: ReplicaId::AGENT,
+                value: self.agent_value,
             }))
     }
 }
@@ -173,12 +208,12 @@ impl PartialOrd for Lamport {
 
 impl Lamport {
     pub const MIN: Self = Self {
-        replica_id: ReplicaId::MIN,
+        replica_id: ReplicaId(u16::MIN),
         value: Seq::MIN,
     };
 
     pub const MAX: Self = Self {
-        replica_id: ReplicaId::MAX,
+        replica_id: ReplicaId(u16::MAX),
         value: Seq::MAX,
     };
 
@@ -190,7 +225,7 @@ impl Lamport {
     }
 
     pub fn as_u64(self) -> u64 {
-        ((self.value as u64) << 32) | (self.replica_id as u64)
+        ((self.value as u64) << 32) | (self.replica_id.0 as u64)
     }
 
     pub fn tick(&mut self) -> Self {
@@ -211,7 +246,7 @@ impl fmt::Debug for Lamport {
         } else if *self == Self::MIN {
             write!(f, "Lamport {{MIN}}")
         } else {
-            write!(f, "Lamport {{{}: {}}}", self.replica_id, self.value)
+            write!(f, "Lamport {{{:?}: {}}}", self.replica_id, self.value)
         }
     }
 }
@@ -220,16 +255,10 @@ impl fmt::Debug for Global {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "Global {{")?;
         for timestamp in self.iter() {
-            if timestamp.replica_id > 0 {
+            if timestamp.replica_id.0 > 0 {
                 write!(f, ", ")?;
             }
-            if timestamp.replica_id == LOCAL_BRANCH_REPLICA_ID {
-                write!(f, "<branch>: {}", timestamp.value)?;
-            } else if timestamp.replica_id == AGENT_REPLICA_ID {
-                write!(f, "<agent>: {}", timestamp.value)?;
-            } else {
-                write!(f, "{}: {}", timestamp.replica_id, timestamp.value)?;
-            }
+            write!(f, "{:?}: {}", timestamp.replica_id, timestamp.value)?;
         }
         write!(f, "}}")
     }

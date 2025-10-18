@@ -123,11 +123,13 @@ impl<T: Operation> KeyedItem for OperationItem<T> {
 
 #[cfg(test)]
 mod tests {
+    use clock::ReplicaId;
+
     use super::*;
 
     #[test]
     fn test_len() {
-        let mut clock = clock::Lamport::new(0);
+        let mut clock = clock::Lamport::new(ReplicaId::new(0));
 
         let mut queue = OperationQueue::new();
         assert_eq!(queue.len(), 0);

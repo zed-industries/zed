@@ -551,7 +551,7 @@ impl WorktreeStore {
             let worktree = cx.update(|cx| {
                 Worktree::remote(
                     REMOTE_SERVER_PROJECT_ID,
-                    0,
+                    ReplicaId::new(0),
                     proto::WorktreeMetadata {
                         id: response.worktree_id,
                         root_name,
