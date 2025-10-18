@@ -1,4 +1,4 @@
-use gpui::{div, Context, Element, Entity, FontWeight, Render, Subscription, WeakEntity, Window};
+use gpui::{Context, Element, Entity, FontWeight, Render, Subscription, WeakEntity, Window, div};
 use ui::text_for_keystrokes;
 use workspace::{StatusItemView, item::ItemHandle, ui::prelude::*};
 
@@ -147,13 +147,11 @@ impl Render for ModeIndicator {
                     .size(LabelSize::Small)
                     .line_height_style(LineHeightStyle::UiLabel)
                     .weight(FontWeight::MEDIUM)
-                    .color(
-                        if bg_color == system_transparent {
-                            text_muted.into()
-                        } else {
-                            vim_mode_text.into()
-                        }
-                    )
+                    .color(if bg_color == system_transparent {
+                        text_muted.into()
+                    } else {
+                        vim_mode_text.into()
+                    }),
             )
             .into_any()
     }

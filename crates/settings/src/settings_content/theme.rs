@@ -867,7 +867,6 @@ pub struct ThemeColorsContent {
     /// Text color for Vim mode indicator label.
     #[serde(rename = "vim.mode.text")]
     pub vim_mode_text: Option<String>,
-
 }
 
 #[skip_serializing_none]
