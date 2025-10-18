@@ -73,6 +73,7 @@ pub fn init(languages: Arc<LanguageRegistry>, fs: Arc<dyn Fs>, node: NodeRuntime
         ("markdown", tree_sitter_md::LANGUAGE),
         ("markdown-inline", tree_sitter_md::INLINE_LANGUAGE),
         ("python", tree_sitter_python::LANGUAGE),
+        ("html", tree_sitter_html::LANGUAGE),
         ("regex", tree_sitter_regex::LANGUAGE),
         ("rust", tree_sitter_rust::LANGUAGE),
         ("tsx", tree_sitter_typescript::LANGUAGE_TSX),
@@ -126,6 +127,11 @@ pub fn init(languages: Arc<LanguageRegistry>, fs: Arc<dyn Fs>, node: NodeRuntime
         LanguageInfo {
             name: "css",
             adapters: vec![css_lsp_adapter],
+            ..Default::default()
+        },
+        LanguageInfo {
+            name: "html",
+            adapters: vec![],
             ..Default::default()
         },
         LanguageInfo {
