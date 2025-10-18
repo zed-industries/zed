@@ -7327,7 +7327,10 @@ pub fn open_paths(
     let mut best_match = None;
     let mut open_visible = OpenVisible::All;
     // #[cfg(target_os = "windows")]
-    let wsl_path = abs_paths.iter().find(|p| util::paths::get_wsl_distro(p).is_some()).cloned();
+    let wsl_path = abs_paths
+        .iter()
+        .find(|p| util::paths::get_wsl_distro(p).is_some())
+        .cloned();
 
     cx.spawn(async move |cx| {
         if open_options.open_new_workspace != Some(true) {
@@ -7433,18 +7436,19 @@ pub fn open_paths(
             && let Ok((workspace, _)) = &result
         {
             workspace
-                .update(cx, |workspace, window, cx| {
+                .update(cx, |workspace, _window, cx| {
                     struct OpenInWsl;
                     workspace.show_notification(NotificationId::unique::<OpenInWsl>(), cx, |cx| {
+                        let path = util::markdown::MarkdownInlineCode(&path.to_string_lossy());
+                        let msg = format!("{path} is inside a WSL filesystem, some features may not work unless you open it with WSL remote");
                         cx.new(|cx| {
-                            MessageNotification::new("opened wsl path", cx)
-                                .primary_message("{path:?} is inside a WSL filesystem. Some features such as git and language servers may not work on this file from windows")
-                                .primary_icon(IconName::Plus)
+                            MessageNotification::new(msg, cx)
+                                .primary_message("Open WSL Path")
+                                .primary_icon(IconName::FolderOpen)
                                 .primary_on_click(|window, cx| {
-                                    // window.dispatch_action(Box::new(zed_actions::wsl_actions::OpenFolderInWsl {
-                                    //         create_new_window: false,
-                                    //     }), cx)
-                                    window.dispatch_action(Box::new(zed_actions::OpenSettings), cx)
+                                    window.dispatch_action(Box::new(zed_actions::wsl_actions::OpenFolderInWsl {
+                                            create_new_window: false,
+                                        }), cx)
                                 })
                         })
                     });
