@@ -2450,7 +2450,6 @@ mod tests {
         );
     }
 
-    // TODO should be tested on Linux too, but does not work there well
     #[cfg(not(target_os = "windows"))]
     #[gpui::test(iterations = 10)]
     async fn test_terminal_eof(cx: &mut TestAppContext) {
