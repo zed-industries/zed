@@ -2101,25 +2101,7 @@ impl Terminal {
         let task = match &mut self.task {
             Some(task) => task,
             None => {
-                let should_close = self.child_exited.is_none_or(|e| {
-                    match e.code() {
-                        Some(0) => true,   // Normal exit (user invoked `exit` or pressed Ctrl+D)
-                        Some(130) => true, // SIGINT exit (user pressed Ctrl+C)
-
-                        #[cfg(unix)]
-                        None => {
-                            // Prossess was killed by a signal (not an exit code)
-                            // Checks if it was SIGINT
-                            use std::os::unix::process::ExitStatusExt;
-                            e.signal() == Some(2) // SIGINT signal number
-                        }
-                        #[cfg(not(unix))]
-                        None => false,
-                        _ => !self.events.is_empty(),
-                    }
-                });
-
-                if should_close {
+                if error_code.is_some() {
                     cx.emit(Event::CloseTerminal);
                 }
                 return;
