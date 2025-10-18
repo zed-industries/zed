@@ -85,7 +85,7 @@ struct PendingHunk {
     new_status: DiffHunkSecondaryStatus,
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Clone)]
 pub struct DiffHunkSummary {
     buffer_range: Range<Anchor>,
 }
@@ -114,7 +114,9 @@ impl sum_tree::Summary for DiffHunkSummary {
     type Context<'a> = &'a text::BufferSnapshot;
 
     fn zero(_cx: Self::Context<'_>) -> Self {
-        Default::default()
+        DiffHunkSummary {
+            buffer_range: Anchor::MIN..Anchor::MIN,
+        }
     }
 
     fn add_summary(&mut self, other: &Self, buffer: Self::Context<'_>) {
@@ -937,7 +939,9 @@ impl BufferDiff {
 
     pub fn clear_pending_hunks(&mut self, cx: &mut Context<Self>) {
         if self.secondary_diff.is_some() {
-            self.inner.pending_hunks = SumTree::from_summary(DiffHunkSummary::default());
+            self.inner.pending_hunks = SumTree::from_summary(DiffHunkSummary {
+                buffer_range: Anchor::MIN..Anchor::MIN,
+            });
             cx.emit(BufferDiffEvent::DiffChanged {
                 changed_range: Some(Anchor::MIN..Anchor::MAX),
             });

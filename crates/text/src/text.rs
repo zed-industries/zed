@@ -12,6 +12,7 @@ mod undo_map;
 
 pub use anchor::*;
 use anyhow::{Context as _, Result};
+use clock::Lamport;
 pub use clock::ReplicaId;
 use collections::{HashMap, HashSet};
 use locator::Locator;
@@ -572,7 +573,7 @@ struct InsertionFragment {
     fragment_id: Locator,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 struct InsertionFragmentKey {
     timestamp: clock::Lamport,
     split_offset: usize,
@@ -1253,7 +1254,7 @@ impl Buffer {
         for edit_id in edit_ids {
             let insertion_slice = InsertionSlice {
                 edit_id: *edit_id,
-                insertion_id: clock::Lamport::default(),
+                insertion_id: clock::Lamport::MIN,
                 range: 0..0,
             };
             let slices = self
@@ -2917,7 +2918,10 @@ impl InsertionFragment {
 
 impl sum_tree::ContextLessSummary for InsertionFragmentKey {
     fn zero() -> Self {
-        Default::default()
+        InsertionFragmentKey {
+            timestamp: Lamport::MIN,
+            split_offset: 0,
+        }
     }
 
     fn add_summary(&mut self, summary: &Self) {
