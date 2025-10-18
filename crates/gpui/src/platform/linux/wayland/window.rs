@@ -85,6 +85,8 @@ struct InProgressConfigure {
 pub struct WaylandWindowState {
     xdg_surface: xdg_surface::XdgSurface,
     acknowledged_first_configure: bool,
+    parent: Option<WaylandWindowStatePtr>,
+    children: Vec<XdgToplevel>,
     pub surface: wl_surface::WlSurface,
     decoration: Option<zxdg_toplevel_decoration_v1::ZxdgToplevelDecorationV1>,
     app_id: Option<String>,
@@ -135,6 +137,7 @@ impl WaylandWindowState {
         globals: Globals,
         gpu_context: &BladeContext,
         options: WindowParams,
+        parent: Option<WaylandWindowStatePtr>,
     ) -> anyhow::Result<Self> {
         let renderer = {
             let raw_window = RawWindow {
@@ -160,6 +163,8 @@ impl WaylandWindowState {
         Ok(Self {
             xdg_surface,
             acknowledged_first_configure: false,
+            parent,
+            children: Vec::new(),
             surface,
             decoration,
             app_id: None,
@@ -233,6 +238,14 @@ pub enum ImeInput {
 impl Drop for WaylandWindow {
     fn drop(&mut self) {
         let mut state = self.0.state.borrow_mut();
+        let xdg_toplevel = state.toplevel.clone();
+        if let Some(parent) = state.parent.as_ref() {
+            parent
+                .state
+                .borrow_mut()
+                .children
+                .retain(|child| !(child.id() == xdg_toplevel.id()));
+        }
         let surface_id = state.surface.id();
         let client = state.client.clone();
 
@@ -279,7 +292,7 @@ impl WaylandWindow {
         client: WaylandClientStatePtr,
         params: WindowParams,
         appearance: WindowAppearance,
-        parent: Option<XdgToplevel>,
+        parent: Option<WaylandWindowStatePtr>,
     ) -> anyhow::Result<(Self, ObjectId)> {
         let surface = globals.compositor.create_surface(&globals.qh, ());
         let xdg_surface = globals
@@ -287,8 +300,21 @@ impl WaylandWindow {
             .get_xdg_surface(&surface, &globals.qh, surface.id());
         let toplevel = xdg_surface.get_toplevel(&globals.qh, surface.id());
 
-        if params.kind == WindowKind::Floating {
-            toplevel.set_parent(parent.as_ref());
+        let xdg_parent = parent.as_ref().map(|w| w.toplevel());
+        if params.kind == WindowKind::Floating || params.kind == WindowKind::Dialog {
+            toplevel.set_parent(xdg_parent.as_ref());
+        }
+
+        if params.kind == WindowKind::Dialog
+            && let Some(dialog) = &globals.dialog
+        {
+            let xdg_dialog = dialog.get_xdg_dialog(&toplevel, &globals.qh, ());
+
+            xdg_dialog.set_modal();
+
+            if let Some(parent) = parent.as_ref() {
+                parent.add_children(toplevel.clone());
+            }
         }
 
         if let Some(size) = params.window_min_size {
@@ -325,6 +351,7 @@ impl WaylandWindow {
                 globals,
                 gpu_context,
                 params,
+                parent,
             )?)),
             callbacks: Rc::new(RefCell::new(Callbacks::default())),
         });
@@ -351,6 +378,16 @@ impl WaylandWindowStatePtr {
 
     pub fn ptr_eq(&self, other: &Self) -> bool {
         Rc::ptr_eq(&self.state, &other.state)
+    }
+
+    pub fn add_children(&self, child: XdgToplevel) {
+        let mut state = self.state.borrow_mut();
+        state.children.push(child);
+    }
+
+    pub fn has_children(&self) -> bool {
+        let state = self.state.borrow();
+        !state.children.is_empty()
     }
 
     pub fn frame(&self) {

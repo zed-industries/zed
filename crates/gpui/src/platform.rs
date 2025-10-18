@@ -1266,6 +1266,10 @@ pub enum WindowKind {
 
     /// A floating window that appears on top of its parent window
     Floating,
+
+    /// A window that appears on top of its parent window and blocks interaction with it
+    /// until the modal window is closed
+    Dialog,
 }
 
 /// The appearance of the window, as defined by the operating system.

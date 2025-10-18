@@ -36,12 +36,6 @@ use wayland_client::{
         wl_shm_pool, wl_surface,
     },
 };
-use wayland_protocols::wp::cursor_shape::v1::client::{
-    wp_cursor_shape_device_v1, wp_cursor_shape_manager_v1,
-};
-use wayland_protocols::wp::fractional_scale::v1::client::{
-    wp_fractional_scale_manager_v1, wp_fractional_scale_v1,
-};
 use wayland_protocols::wp::primary_selection::zv1::client::zwp_primary_selection_offer_v1::{
     self, ZwpPrimarySelectionOfferV1,
 };
@@ -61,6 +55,14 @@ use wayland_protocols::xdg::decoration::zv1::client::{
     zxdg_decoration_manager_v1, zxdg_toplevel_decoration_v1,
 };
 use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_base};
+use wayland_protocols::{
+    wp::cursor_shape::v1::client::{wp_cursor_shape_device_v1, wp_cursor_shape_manager_v1},
+    xdg::dialog::v1::client::xdg_wm_dialog_v1::{self, XdgWmDialogV1},
+};
+use wayland_protocols::{
+    wp::fractional_scale::v1::client::{wp_fractional_scale_manager_v1, wp_fractional_scale_v1},
+    xdg::dialog::v1::client::xdg_dialog_v1::XdgDialogV1,
+};
 use wayland_protocols_plasma::blur::client::{org_kde_kwin_blur, org_kde_kwin_blur_manager};
 use xkbcommon::xkb::ffi::XKB_KEYMAP_FORMAT_TEXT_V1;
 use xkbcommon::xkb::{self, KEYMAP_COMPILE_NO_FLAGS, Keycode};
@@ -117,6 +119,7 @@ pub struct Globals {
     pub decoration_manager: Option<zxdg_decoration_manager_v1::ZxdgDecorationManagerV1>,
     pub blur_manager: Option<org_kde_kwin_blur_manager::OrgKdeKwinBlurManager>,
     pub text_input_manager: Option<zwp_text_input_manager_v3::ZwpTextInputManagerV3>,
+    pub dialog: Option<xdg_wm_dialog_v1::XdgWmDialogV1>,
     pub executor: ForegroundExecutor,
 }
 
@@ -127,6 +130,7 @@ impl Globals {
         qh: QueueHandle<WaylandClientStatePtr>,
         seat: wl_seat::WlSeat,
     ) -> Self {
+        let dialog_v = XdgWmDialogV1::interface().version;
         Globals {
             activation: globals.bind(&qh, 1..=1, ()).ok(),
             compositor: globals
@@ -154,6 +158,7 @@ impl Globals {
             decoration_manager: globals.bind(&qh, 1..=1, ()).ok(),
             blur_manager: globals.bind(&qh, 1..=1, ()).ok(),
             text_input_manager: globals.bind(&qh, 1..=1, ()).ok(),
+            dialog: globals.bind(&qh, dialog_v..=dialog_v, ()).ok(),
             executor,
             qh,
         }
@@ -695,7 +700,7 @@ impl LinuxClient for WaylandClient {
     ) -> anyhow::Result<Box<dyn PlatformWindow>> {
         let mut state = self.0.borrow_mut();
 
-        let parent = state.keyboard_focused_window.as_ref().map(|w| w.toplevel());
+        let parent = state.keyboard_focused_window.clone();
 
         let (window, surface_id) = WaylandWindow::new(
             handle,
@@ -1230,12 +1235,18 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                 this.handle_keyboard_layout_change();
             }
             wl_keyboard::Event::Enter { surface, .. } => {
-                state.keyboard_focused_window = get_window(&mut state, &surface.id());
-                state.enter_token = Some(());
+                let window = get_window(&mut state, &surface.id());
+                if (window.is_some() && !window.as_ref().unwrap().has_children())
+                    || window.is_none()
+                {
+                    state.keyboard_focused_window = window;
 
-                if let Some(window) = state.keyboard_focused_window.clone() {
-                    drop(state);
-                    window.set_focused(true);
+                    state.enter_token = Some(());
+
+                    if let Some(window) = state.keyboard_focused_window.clone() {
+                        drop(state);
+                        window.set_focused(true);
+                    }
                 }
             }
             wl_keyboard::Event::Leave { surface, .. } => {
@@ -1534,6 +1545,9 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                 state.button_pressed = None;
 
                 if let Some(window) = get_window(&mut state, &surface.id()) {
+                    if window.has_children() {
+                        return;
+                    }
                     state.mouse_focused_window = Some(window.clone());
 
                     if state.enter_token.is_some() {
@@ -2155,5 +2169,29 @@ impl Dispatch<zwp_primary_selection_source_v1::ZwpPrimarySelectionSourceV1, ()>
             }
             _ => {}
         }
+    }
+}
+
+impl Dispatch<XdgWmDialogV1, ()> for WaylandClientStatePtr {
+    fn event(
+        _: &mut Self,
+        _: &XdgWmDialogV1,
+        _: <XdgWmDialogV1 as Proxy>::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
+}
+
+impl Dispatch<XdgDialogV1, ()> for WaylandClientStatePtr {
+    fn event(
+        _state: &mut Self,
+        _proxy: &XdgDialogV1,
+        _event: <XdgDialogV1 as Proxy>::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qhandle: &QueueHandle<Self>,
+    ) {
     }
 }
