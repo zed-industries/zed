@@ -2567,6 +2567,10 @@ async fn test_history_items_uniqueness_for_multiple_worktree_open_all_files(
             let panel_match = panel_match.as_ref().unwrap();
             assert_eq!(panel_match.0.path_prefix, rel_path("repo2").into());
             assert_eq!(panel_match.0.path, rel_path("package.json").into());
+            assert_eq!(
+                panel_match.0.positions,
+                vec![6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]
+            );
         }
 
         if let Match::History { path, panel_match } = &matches[1] {
@@ -2575,6 +2579,10 @@ async fn test_history_items_uniqueness_for_multiple_worktree_open_all_files(
             let panel_match = panel_match.as_ref().unwrap();
             assert_eq!(panel_match.0.path_prefix, rel_path("repo1").into());
             assert_eq!(panel_match.0.path, rel_path("package.json").into());
+            assert_eq!(
+                panel_match.0.positions,
+                vec![6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]
+            );
         }
     });
 }

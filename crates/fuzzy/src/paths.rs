@@ -92,6 +92,7 @@ pub fn match_fixed_path_set(
     query: &str,
     smart_case: bool,
     max_results: usize,
+    path_style: PathStyle,
 ) -> Vec<PathMatch> {
     let lowercase_query = query.to_lowercase().chars().collect::<Vec<_>>();
     let query = query.chars().collect::<Vec<_>>();
@@ -99,10 +100,21 @@ pub fn match_fixed_path_set(
 
     let mut matcher = Matcher::new(&query, &lowercase_query, query_char_bag, smart_case, true);
 
-    let mut results = Vec::new();
+    let mut results = Vec::with_capacity(candidates.len());
+    let path_prefix = match worktree_root_name {
+        Some(worktree_root_name) => worktree_root_name,
+        None => RelPath::empty().into(),
+    };
+
+    let mut path_prefix_chars = path_prefix.display(path_style).chars().collect::<Vec<_>>();
+    path_prefix_chars.extend(path_style.separator().chars());
+    let lowercase_prefix = path_prefix_chars
+        .iter()
+        .map(|c| c.to_ascii_lowercase())
+        .collect::<Vec<_>>();
     matcher.match_candidates(
-        &[],
-        &[],
+        &path_prefix_chars,
+        &lowercase_prefix,
         candidates.into_iter(),
         &mut results,
         &AtomicBool::new(false),
@@ -112,10 +124,7 @@ pub fn match_fixed_path_set(
             positions: positions.clone(),
             is_dir: candidate.is_dir,
             path: candidate.path.into(),
-            path_prefix: match worktree_root_name.clone() {
-                Some(worktree_root_name) => worktree_root_name,
-                None => RelPath::empty().into(),
-            },
+            path_prefix: path_prefix.clone(),
             distance_to_relative_ancestor: usize::MAX,
         },
     );
@@ -190,7 +199,7 @@ pub async fn match_path_sets<'a, Set: PathMatchCandidateSet<'a>>(
                             let worktree_id = candidate_set.id();
                             let mut prefix = candidate_set
                                 .prefix()
-                                .as_unix_str()
+                                .as_unix_str() // Would it be an issue here for windows ?
                                 .chars()
                                 .collect::<Vec<_>>();
                             if !candidate_set.root_is_file() && !prefix.is_empty() {
