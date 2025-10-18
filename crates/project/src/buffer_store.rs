@@ -970,6 +970,10 @@ impl BufferStore {
             .filter_map(|buffer| buffer.upgrade())
     }
 
+    pub(crate) fn is_searchable(&self, id: &BufferId) -> bool {
+        !self.non_searchable_buffers.contains(&id)
+    }
+
     pub fn loading_buffers(
         &self,
     ) -> impl Iterator<Item = (&ProjectPath, impl Future<Output = Result<Entity<Buffer>>>)> {

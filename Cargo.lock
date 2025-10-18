@@ -12848,6 +12848,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "project_benchmarks"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "client",
+ "futures 0.3.31",
+ "gpui",
+ "http_client",
+ "language",
+ "node_runtime",
+ "project",
+ "settings",
+ "watch",
+ "workspace-hack",
+]
+
+[[package]]
 name = "project_panel"
 version = "0.1.0"
 dependencies = [
