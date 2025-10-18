@@ -35,6 +35,7 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 use std::{fmt::Display, mem, path::PathBuf, sync::Arc};
 use ui::App;
+use util::markdown::MarkdownCodeBlock;
 use util::{ResultExt, get_default_system_shell_preferring_bash};
 use uuid::Uuid;
 
@@ -313,10 +314,20 @@ impl ToolCall {
 
     fn to_markdown(&self, cx: &App) -> String {
         let mut markdown = format!(
-            "**Tool Call: {}**\nStatus: {}\n\n",
+            "**Tool Call: {}**\nStatus: {}\n",
             self.label.read(cx).source(),
             self.status
         );
+        if let Some(raw_input) = self.raw_input.as_ref() {
+            markdown.push_str(&format!(
+                "\n### Input: \n{}\n### Output:",
+                MarkdownCodeBlock {
+                    tag: "json",
+                    text: &raw_input.to_string()
+                }
+            ));
+        }
+        markdown.push('\n');
         for content in &self.content {
             markdown.push_str(content.to_markdown(cx).as_str());
             markdown.push_str("\n\n");
