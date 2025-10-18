@@ -10,13 +10,12 @@ Release Notes:
 - N/A _or_ Added/Fixed/Improved ...
 ```
 
-On Wednesdays, we run a [`get-preview-channel-changes`](https://github.com/zed-industries/zed/blob/main/script/get-preview-channel-changes) script that scrapes these `Release Notes` lines from pull requests landing in preview, as documented in our [Release](https://zed.dev/docs/development/releases) docs.
-The script outputs all the `Release Notes` lines, as well as some extra data, such as the pull request author (if not done by a Zed team member) and a link to the pull request, so this data can be aggregated.
+On Wednesdays, we run a [`get-preview-channel-changes`](https://github.com/zed-industries/zed/blob/main/script/get-preview-channel-changes) script that scrapes `Release Notes` lines from pull requests landing in preview, as documented in our [Release](https://zed.dev/docs/development/releases) docs.
 
-Anything included below `Release Notes` is printed out by the script.
-If you use `N/A`, the script skips your pull request entirely, and the compiler of the release notes never sees it.
+The script outputs everything below the `Release Notes` line, including additional data such as the pull request author (if not a Zed team member) and a link to the pull request.
+If you use `N/A`, the script skips your pull request entirely.
 
-Here are some useful guidelines for crafting your `Release Notes` line(s):
+## Guidelines for crafting your `Release Notes` line(s)
 
 - A `Release Notes` line should only be written if the user can see or feel the difference in Zed.
 - A `Release Notes` line should be written such that a Zed user can understand what the change is.
