@@ -33,6 +33,21 @@ if ($Architecture -eq $OSArchitecture) {
     $CargoOutDir = "./target/$Architecture-pc-windows-msvc/release"
 }
 
+function Get-VSArch {
+    param(
+        [string]$Arch
+    )
+
+    switch ($Arch) {
+        "x86_64" { "amd64" }
+        "aarch64" { "arm64" }
+    }
+}
+
+Push-Location
+& "C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\Tools\Launch-VsDevShell.ps1" -Arch (Get-VSArch -Arch $Architecture) -HostArch (Get-VSArch -Arch $OSArchitecture)
+Pop-Location
+
 $target = "$Architecture-pc-windows-msvc"
 
 if ($Help) {
