@@ -367,6 +367,7 @@ fn get_processes_for_project(project: &Entity<Project>, cx: &mut App) -> Task<Ar
         let mut processes: Box<[_]> = System::new_with_specifics(refresh_kind)
             .processes()
             .values()
+            .filter(|p| p.thread_kind().is_none())
             .map(|process| {
                 let name = process.name().to_string_lossy().into_owned();
                 Candidate {
