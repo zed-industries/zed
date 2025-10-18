@@ -131,6 +131,14 @@ pub struct TerminalSettingsContent {
     ///
     /// Default: 45
     pub minimum_contrast: Option<f32>,
+    /// Regexes used to identify paths for hyperlink navigation.
+    ///
+    /// Default: ["File \"(?<path>[^\"]+)\", line (?<line>\\d+)"],
+    pub path_hyperlink_regexes: Option<Vec<String>>,
+    /// Timeout for hover and Cmd-click path hyperlink discovery in milliseconds.
+    ///
+    /// Default: 10
+    pub path_hyperlink_timeout_ms: Option<u64>,
 }
 
 /// Shell configuration to open the terminal with.

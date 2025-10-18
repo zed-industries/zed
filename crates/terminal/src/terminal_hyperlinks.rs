@@ -5,8 +5,12 @@ use alacritty_terminal::{
     index::{Boundary, Column, Direction as AlacDirection, Line, Point as AlacPoint},
     term::search::{Match, RegexIter, RegexSearch},
 };
+use log::{info, warn};
 use regex::Regex;
-use std::{ops::Index, sync::LazyLock};
+use std::{
+    ops::{Index, Range},
+    time::{Duration, Instant},
+};
 
 const URL_REGEX: &str = r#"(ipfs:|ipns:|magnet:|mailto:|gemini://|gopher://|https://|http://|news:|file://|git://|ssh:|ftp://)[^\u{0000}-\u{001F}\u{007F}-\u{009F}<>"\s{-}\^⟨⟩`']+"#;
 // Optional suffix matches MSBuild diagnostic suffixes for path parsing in PathLikeWithPosition
@@ -14,34 +18,134 @@ const URL_REGEX: &str = r#"(ipfs:|ipns:|magnet:|mailto:|gemini://|gopher://|http
 const WORD_REGEX: &str =
     r#"[\$\+\w.\[\]:/\\@\-~()]+(?:\((?:\d+|\d+,\d+)\))|[\$\+\w.\[\]:/\\@\-~()]+"#;
 
-const PYTHON_FILE_LINE_REGEX: &str = r#"File "(?P<file>[^"]+)", line (?P<line>\d+)"#;
-
-static PYTHON_FILE_LINE_MATCHER: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(PYTHON_FILE_LINE_REGEX).unwrap());
-
-fn python_extract_path_and_line(input: &str) -> Option<(&str, u32)> {
-    if let Some(captures) = PYTHON_FILE_LINE_MATCHER.captures(input) {
-        let path_part = captures.name("file")?.as_str();
-
-        let line_number: u32 = captures.name("line")?.as_str().parse().ok()?;
-        return Some((path_part, line_number));
-    }
-    None
-}
-
 pub(super) struct RegexSearches {
     url_regex: RegexSearch,
     word_regex: RegexSearch,
-    python_file_line_regex: RegexSearch,
+    path_hyperlink_regexes: Vec<Regex>,
+    path_hyperlink_timeout: Duration,
 }
 
-impl RegexSearches {
-    pub(super) fn new() -> Self {
+impl Default for RegexSearches {
+    fn default() -> Self {
         Self {
             url_regex: RegexSearch::new(URL_REGEX).unwrap(),
             word_regex: RegexSearch::new(WORD_REGEX).unwrap(),
-            python_file_line_regex: RegexSearch::new(PYTHON_FILE_LINE_REGEX).unwrap(),
+            path_hyperlink_regexes: Vec::default(),
+            path_hyperlink_timeout: Duration::default(),
         }
+    }
+}
+impl RegexSearches {
+    pub(super) fn new<'a>(
+        path_hyperlink_regexes: impl IntoIterator<Item = &'a String>,
+        path_hyperlink_timeout_ms: u64,
+    ) -> Self {
+        Self {
+            url_regex: RegexSearch::new(URL_REGEX).unwrap(),
+            word_regex: RegexSearch::new(WORD_REGEX).unwrap(),
+            path_hyperlink_regexes: path_hyperlink_regexes
+                .into_iter()
+                .filter_map(|regex| {
+                    Regex::new(&regex)
+                        .inspect_err(|error| {
+                            warn!(
+                                concat!(
+                                    "Ignoring path hyperlink regex specified in ",
+                                    "`terminal.path_hyperlink_regexes` due to:\n{}"
+                                ),
+                                error
+                            )
+                        })
+                        .ok()
+                })
+                .collect(),
+            path_hyperlink_timeout: Duration::from_millis(path_hyperlink_timeout_ms),
+        }
+    }
+
+    fn regex_path_match<T>(&self, term: &Term<T>, point: AlacPoint) -> Option<(String, Match)> {
+        if self.path_hyperlink_regexes.is_empty() {
+            return None;
+        }
+
+        let advance_point_by_str = |mut point: AlacPoint, s: &str| -> AlacPoint {
+            for _ in 0..s.chars().count() {
+                point = term
+                    .expand_wide(point, AlacDirection::Right)
+                    .add(term, Boundary::Grid, 1);
+            }
+            point
+        };
+
+        let (start, end) = (term.line_search_left(point), term.line_search_right(point));
+        let input = term.bounds_to_string(start, end);
+
+        let found_from_range = |path: Range<usize>,
+                                line: Option<u32>,
+                                column: Option<u32>|
+         -> Option<(String, Match)> {
+            let path_start = advance_point_by_str(start, &input[..path.start]);
+            let path_end = advance_point_by_str(path_start, &input[path.clone()]);
+            let path_match = path_start..=path_end.sub(term, Boundary::Grid, 1);
+            if !path_match.contains(&point) {
+                return None;
+            }
+
+            Some((
+                {
+                    let mut path = input[path].to_string();
+                    if let Some(line) = line {
+                        path += &format!(":{line}")
+                    }
+                    if let Some(column) = column {
+                        path += &format!(":{column}")
+                    }
+                    path
+                },
+                path_match,
+            ))
+        };
+
+        let search_start_time = Instant::now();
+
+        let timed_out = || -> Option<(_, _)> {
+            let elapsed_time = Instant::now().saturating_duration_since(search_start_time);
+            (elapsed_time > self.path_hyperlink_timeout).then_some((
+                elapsed_time.as_millis(),
+                self.path_hyperlink_timeout.as_millis(),
+            ))
+        };
+
+        for regex in &self.path_hyperlink_regexes {
+            if let Some(captures) = regex.captures(&input) {
+                let Some(path_capture) = captures.name("path") else {
+                    return found_from_range(captures.get(0).unwrap().range(), None, None);
+                };
+
+                let Some(line) = captures
+                    .name("line")
+                    .and_then(|line_capture| line_capture.as_str().parse().ok())
+                else {
+                    return found_from_range(path_capture.range(), None, None);
+                };
+
+                let Some(column) = captures
+                    .name("column")
+                    .and_then(|column_capture| column_capture.as_str().parse().ok())
+                else {
+                    return found_from_range(path_capture.range(), Some(line), None);
+                };
+
+                return found_from_range(path_capture.range(), Some(line), Some(column));
+            }
+
+            if let Some((timed_out_ms, timeout_ms)) = timed_out() {
+                warn!("Timed out processing path hyperlink regexes after {timed_out_ms}ms");
+                info!("{timeout_ms}ms time out specified in `terminal.path_hyperlink_timeout_ms`");
+                break;
+            }
+        }
+        None
     }
 }
 
@@ -81,13 +185,8 @@ pub(super) fn find_from_grid_point<T: EventListener>(
         let url = term.bounds_to_string(*url_match.start(), *url_match.end());
         let (sanitized_url, sanitized_match) = sanitize_url_punctuation(url, url_match, term);
         Some((sanitized_url, true, sanitized_match))
-    } else if let Some(python_match) =
-        regex_match_at(term, point, &mut regex_searches.python_file_line_regex)
-    {
-        let matching_line = term.bounds_to_string(*python_match.start(), *python_match.end());
-        python_extract_path_and_line(&matching_line).map(|(file_path, line_number)| {
-            (format!("{file_path}:{line_number}"), false, python_match)
-        })
+    } else if let Some((path, path_match)) = regex_searches.regex_path_match(&term, point) {
+        Some((path, false, path_match))
     } else if let Some(word_match) = regex_match_at(term, point, &mut regex_searches.word_regex) {
         let file_path = term.bounds_to_string(*word_match.start(), *word_match.end());
 
@@ -411,35 +510,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_python_file_line_regex() {
-        re_test(
-            PYTHON_FILE_LINE_REGEX,
-            "hay File \"/zed/bad_py.py\", line 8 stack",
-            vec!["File \"/zed/bad_py.py\", line 8"],
-        );
-        re_test(PYTHON_FILE_LINE_REGEX, "unrelated", vec![]);
-    }
-
-    #[test]
-    fn test_python_file_line() {
-        let inputs: Vec<(&str, Option<(&str, u32)>)> = vec![
-            (
-                "File \"/zed/bad_py.py\", line 8",
-                Some(("/zed/bad_py.py", 8u32)),
-            ),
-            ("File \"path/to/zed/bad_py.py\"", None),
-            ("unrelated", None),
-            ("", None),
-        ];
-        let actual = inputs
-            .iter()
-            .map(|input| python_extract_path_and_line(input.0))
-            .collect::<Vec<_>>();
-        let expected = inputs.iter().map(|(_, output)| *output).collect::<Vec<_>>();
-        assert_eq!(actual, expected);
-    }
-
     // We use custom columns in many tests to workaround this issue by ensuring a wrapped
     // line never ends on a wide char:
     //
@@ -536,10 +606,10 @@ mod tests {
             // Python
             test_path!("‹«awe👉some.py»›");
 
-            test_path!("    ‹F👉ile \"«/awesome.py»\", line «42»›: Wat?");
-            test_path!("    ‹File \"«/awe👉some.py»\", line «42»›: Wat?");
-            test_path!("    ‹File \"«/awesome.py»👉\", line «42»›: Wat?");
-            test_path!("    ‹File \"«/awesome.py»\", line «4👉2»›: Wat?");
+            test_path!("    ‹«F👉ile»› \"/awesome.py\", line 42: Wat?");
+            test_path!("    File \"‹«/awe👉some.py»›\", line «42»");
+            test_path!("    File \"/awesome.py👉\", line 42: Wat?");
+            test_path!("    File \"/awesome.py\", line ‹«4👉2»›");
         }
 
         #[test]
@@ -585,20 +655,30 @@ mod tests {
             test_path!("    Compiling Cool (‹«/👉例/Cool»›)");
             test_path!("    Compiling Cool (‹«/例👈/Cool»›)");
 
+            test_path!("    Compiling Cool (‹«/👉例/Cool Spaces»›)");
+            test_path!("    Compiling Cool (‹«/例👈/Cool Spaces»›)");
+            test_path!("    Compiling Cool (‹«/👉例/Cool Spaces»:«4»:«2»›)");
+            test_path!("    Compiling Cool (‹«/例👈/Cool Spaces»(«4»,«2»)›)");
+
+            test_path!("    --> ‹«/👉例/Cool Spaces»›");
+            test_path!("    ::: ‹«/例👈/Cool Spaces»›");
+            test_path!("    --> ‹«/👉例/Cool Spaces»:«4»:«2»›");
+            test_path!("    ::: ‹«/例👈/Cool Spaces»(«4»,«2»)›");
+
             // Python
             test_path!("‹«👉例wesome.py»›");
             test_path!("‹«例👈wesome.py»›");
-            test_path!("    ‹File \"«/👉例wesome.py»\", line «42»›: Wat?");
-            test_path!("    ‹File \"«/例👈wesome.py»\", line «42»›: Wat?");
+            test_path!("    File \"‹«/👉例wesome.py»›\", line «42»: Wat?");
+            test_path!("    File \"‹«/例👈wesome.py»›\", line «42»: Wat?");
         }
 
         #[test]
         fn non_word_wide_chars() {
             // Mojo diagnostic message
-            test_path!("    ‹File \"«/awe👉some.🔥»\", line «42»›: Wat?");
-            test_path!("    ‹File \"«/awesome👉.🔥»\", line «42»›: Wat?");
-            test_path!("    ‹File \"«/awesome.👉🔥»\", line «42»›: Wat?");
-            test_path!("    ‹File \"«/awesome.🔥👈»\", line «42»›: Wat?");
+            test_path!("    File \"‹«/awe👉some.🔥»›\", line «42»: Wat?");
+            test_path!("    File \"‹«/awesome👉.🔥»›\", line «42»: Wat?");
+            test_path!("    File \"‹«/awesome.👉🔥»›\", line «42»: Wat?");
+            test_path!("    File \"‹«/awesome.🔥👈»›\", line «42»: Wat?");
         }
 
         /// These likely rise to the level of being worth fixing.
@@ -619,8 +699,16 @@ mod tests {
                 // Python
                 test_path!("‹«👉例wesome.py»›");
                 test_path!("‹«例👈wesome.py»›");
-                test_path!("    ‹File \"«/👉例wesome.py»\", line «42»›: Wat?");
-                test_path!("    ‹File \"«/例👈wesome.py»\", line «42»›: Wat?");
+                test_path!("    File \"‹«/👉例wesome.py»›\", line «42»: Wat?");
+                test_path!("    File \"‹«/例👈wesome.py»›\", line «42»: Wat?");
+            }
+
+            #[test]
+            // <https://github.com/zed-industries/zed/issues/12338>
+            fn issue_12338_regex() {
+                // Issue #12338
+                test_path!(".rw-r--r--     0     staff 05-27 14:03 ‹«'test file 👉1.txt'»›");
+                test_path!(".rw-r--r--     0     staff 05-27 14:03 ‹«👉'test file 1.txt'»›");
             }
 
             #[test]
@@ -646,16 +734,16 @@ mod tests {
                 // Python
                 test_path!("‹«👉🏃wesome.py»›");
                 test_path!("‹«🏃👈wesome.py»›");
-                test_path!("    ‹File \"«/👉🏃wesome.py»\", line «42»›: Wat?");
-                test_path!("    ‹File \"«/🏃👈wesome.py»\", line «42»›: Wat?");
+                test_path!("    File \"‹«/👉🏃wesome.py»›\", line «42»: Wat?");
+                test_path!("    File \"‹«/🏃👈wesome.py»›\", line «42»: Wat?");
 
                 // Mojo
                 test_path!("‹«/awe👉some.🔥»› is some good Mojo!");
                 test_path!("‹«/awesome👉.🔥»› is some good Mojo!");
                 test_path!("‹«/awesome.👉🔥»› is some good Mojo!");
                 test_path!("‹«/awesome.🔥👈»› is some good Mojo!");
-                test_path!("    ‹File \"«/👉🏃wesome.🔥»\", line «42»›: Wat?");
-                test_path!("    ‹File \"«/🏃👈wesome.🔥»\", line «42»›: Wat?");
+                test_path!("    File \"‹«/👉🏃wesome.🔥»›\", line «42»: Wat?");
+                test_path!("    File \"‹«/🏃👈wesome.🔥»›\", line «42»: Wat?");
             }
 
             #[test]
@@ -1331,8 +1419,21 @@ mod tests {
         hyperlink_kind: HyperlinkKind,
         source_location: &str,
     ) {
+        const PYTHON_FILE_LINE_REGEX: &str = r#"File "(?<path>[^"]+)", line (?P<line>\d+)"#;
+        const CARGO_DIR_REGEX: &str =
+            r#"\s+(Compiling|Checking|Documenting) [^(]+\((?<path>.+)\)$"#;
+        const RUSTC_DIAGNOSTIC_REGEX: &str = r#"\s+(-->|:::) (?<path>.+)$"#;
+        const ISSUE_12338_REGEX: &str = r#"[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2} (?<path>.+)$"#;
+        const PATH_HYPERLINK_TIMEOUT_MS: u64 = 1000;
+
         thread_local! {
-            static TEST_REGEX_SEARCHES: RefCell<RegexSearches> = RefCell::new(RegexSearches::new());
+            static TEST_REGEX_SEARCHES: RefCell<RegexSearches> =
+                RefCell::new(RegexSearches::new(&vec![
+                    PYTHON_FILE_LINE_REGEX.to_string(),
+                    CARGO_DIR_REGEX.to_string(),
+                    RUSTC_DIAGNOSTIC_REGEX.to_string(),
+                    ISSUE_12338_REGEX.to_string(),
+                ], PATH_HYPERLINK_TIMEOUT_MS));
         }
 
         let term_size = TermSize::new(columns, total_cells / columns + 2);
@@ -1357,12 +1458,16 @@ mod tests {
             Some((hyperlink_word, true, hyperlink_match)) => {
                 check_hyperlink_match.check_iri_and_match(hyperlink_word, &hyperlink_match);
             }
-            _ => {
-                assert!(
-                    false,
-                    "No hyperlink found\n     at {source_location}:\n{}",
-                    check_hyperlink_match.format_renderable_content()
-                )
+            None => {
+                if expected_hyperlink.hyperlink_match.start()
+                    != expected_hyperlink.hyperlink_match.end()
+                {
+                    assert!(
+                        false,
+                        "No hyperlink found\n     at {source_location}:\n{}",
+                        check_hyperlink_match.format_renderable_content()
+                    )
+                }
             }
         }
     }
