@@ -1191,10 +1191,10 @@ impl EditorElement {
             if mouse_over_inline_blame || mouse_over_popover {
                 editor.show_blame_popover(*buffer_id, blame_entry, event.position, false, cx);
             } else if !keyboard_grace {
-                editor.hide_blame_popover(cx);
+                editor.hide_blame_popover(false, cx);
             }
         } else {
-            editor.hide_blame_popover(cx);
+            editor.hide_blame_popover(false, cx);
         }
 
         let breakpoint_indicator = if gutter_hovered {
