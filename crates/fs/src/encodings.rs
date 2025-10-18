@@ -11,6 +11,7 @@ use encoding_rs::Encoding;
 
 /// A wrapper around `encoding_rs::Encoding` to implement `Send` and `Sync`.
 /// Since the reference is static, it is safe to send it across threads.
+#[derive(Copy)]
 pub struct EncodingWrapper(pub &'static Encoding);
 
 impl Debug for EncodingWrapper {
@@ -59,8 +60,6 @@ impl EncodingWrapper {
         buffer_encoding: Option<Arc<Mutex<&'static Encoding>>>,
     ) -> Result<String> {
         // Check if the input starts with a BOM for UTF-16 encodings only if detect_utf16 is true.
-        println!("{}", force);
-        println!("{}", detect_utf16);
         if detect_utf16 {
             if let Some(encoding) = match input.get(..2) {
                 Some([0xFF, 0xFE]) => Some(encoding_rs::UTF_16LE),

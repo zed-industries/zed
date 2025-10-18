@@ -128,6 +128,7 @@ pub struct Buffer {
     change_bits: Vec<rc::Weak<Cell<bool>>>,
     _subscriptions: Vec<gpui::Subscription>,
     pub encoding: Arc<std::sync::Mutex<&'static Encoding>>,
+    pub observe_file_encoding: Option<gpui::Subscription>,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -373,6 +374,10 @@ pub trait File: Send + Sync + Any {
 
     /// Return whether Zed considers this to be a private file.
     fn is_private(&self) -> bool;
+
+    fn encoding(&self) -> Option<Arc<std::sync::Mutex<&'static Encoding>>> {
+        unimplemented!()
+    }
 }
 
 /// The file's storage status - whether it's stored (`Present`), and if so when it was last
@@ -1028,6 +1033,7 @@ impl Buffer {
             change_bits: Default::default(),
             _subscriptions: Vec::new(),
             encoding: Arc::new(std::sync::Mutex::new(encoding_rs::UTF_8)),
+            observe_file_encoding: None,
         }
     }
 
@@ -2927,6 +2933,17 @@ impl Buffer {
     /// Whether we should preserve the preview status of a tab containing this buffer.
     pub fn preserve_preview(&self) -> bool {
         !self.has_edits_since(&self.preview_version)
+    }
+
+    /// Update the `encoding` field, whenever the `encoding` field of the file changes
+    pub fn update_encoding(&mut self) {
+        if let Some(file) = self.file() {
+            if let Some(encoding) = file.encoding() {
+                *self.encoding.lock().unwrap() = *encoding.lock().unwrap();
+            } else {
+                *self.encoding.lock().unwrap() = encoding_rs::UTF_8;
+            };
+        }
     }
 }
 

@@ -1318,6 +1318,7 @@ impl LocalWorktree {
                         },
                         is_local: true,
                         is_private,
+                        encoding: None,
                     })
                 }
             };
@@ -1393,6 +1394,11 @@ impl LocalWorktree {
                         },
                         is_local: true,
                         is_private,
+                        encoding: if let Some(encoding) = encoding {
+                            Some(Arc::new(std::sync::Mutex::new(encoding.0)))
+                        } else {
+                            None
+                        },
                     })
                 }
             };
@@ -1529,6 +1535,7 @@ impl LocalWorktree {
                     entry_id: None,
                     is_local: true,
                     is_private,
+                    encoding: Some(Arc::new(std::sync::Mutex::new(encoding))),
                 }))
             }
         })
@@ -3082,7 +3089,7 @@ impl fmt::Debug for Snapshot {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct File {
     pub worktree: Entity<Worktree>,
     pub path: Arc<RelPath>,
@@ -3090,8 +3097,35 @@ pub struct File {
     pub entry_id: Option<ProjectEntryId>,
     pub is_local: bool,
     pub is_private: bool,
+    pub encoding: Option<Arc<std::sync::Mutex<&'static Encoding>>>,
 }
 
+impl PartialEq for File {
+    fn eq(&self, other: &Self) -> bool {
+        if self.worktree == other.worktree
+            && self.path == other.path
+            && self.disk_state == other.disk_state
+            && self.entry_id == other.entry_id
+            && self.is_local == other.is_local
+            && self.is_private == other.is_private
+            && if let Some(encoding) = &self.encoding
+                && let Some(other_encoding) = &other.encoding
+            {
+                if *encoding.lock().unwrap() != *other_encoding.lock().unwrap() {
+                    false
+                } else {
+                    true
+                }
+            } else {
+                true
+            }
+        {
+            true
+        } else {
+            false
+        }
+    }
+}
 impl language::File for File {
     fn as_local(&self) -> Option<&dyn language::LocalFile> {
         if self.is_local { Some(self) } else { None }
@@ -3137,6 +3171,12 @@ impl language::File for File {
 
     fn path_style(&self, cx: &App) -> PathStyle {
         self.worktree.read(cx).path_style()
+    fn encoding(&self) -> Option<Arc<std::sync::Mutex<&'static Encoding>>> {
+        if let Some(encoding) = &self.encoding {
+            Some(encoding.clone())
+        } else {
+            None
+        }
     }
 }
 
@@ -3183,6 +3223,7 @@ impl File {
             entry_id: Some(entry.id),
             is_local: true,
             is_private: entry.is_private,
+            encoding: None,
         })
     }
 
@@ -3213,6 +3254,7 @@ impl File {
             entry_id: proto.entry_id.map(ProjectEntryId::from_proto),
             is_local: false,
             is_private: false,
+            encoding: None,
         })
     }
 

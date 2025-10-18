@@ -1945,6 +1945,10 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> Task<Result<()>> {
+        *self.encoding_options.force.get_mut() = false;
+        *self.encoding_options.detect_utf16.get_mut() = true;
+        *self.encoding_options.encoding.lock().unwrap() = EncodingWrapper::new(encoding_rs::UTF_8);
+
         let to_load = if let Some(pane) = pane.upgrade() {
             pane.update(cx, |pane, cx| {
                 window.focus(&pane.focus_handle(cx));
