@@ -1097,6 +1097,31 @@ pub fn compare_paths(
     }
 }
 
+pub fn get_wsl_distro<P: AsRef<Path>>(path: &P) -> Option<String> {
+    if cfg!(not(target_os = "windows")) {
+        return None;
+    }
+    use std::path::{Component, Prefix};
+
+    path.as_ref()
+        .components()
+        .next()
+        .and_then(|component| match component {
+            Component::Prefix(prefix) => Some(prefix),
+            _ => None,
+        })
+        .and_then(|prefix| match prefix.kind() {
+            Prefix::UNC(server, distro) => Some((server, distro)),
+            Prefix::VerbatimUNC(server, distro) => Some((server, distro)),
+            _ => None,
+        })
+        .and_then(|(server, distro)| {
+            let server_str = server.to_string_lossy();
+            (server_str == "wsl.localhost" || server_str == "wsl$")
+                .then(|| distro.to_string_lossy().to_string())
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1930,5 +1955,27 @@ mod tests {
         let base = Path::new("/a/b/c/long.app.tar.gz");
         let suffix = Path::new("app.tar.gz");
         assert_eq!(strip_path_suffix(base, suffix), None);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn test_wsl_path() {
+        let path = "/a/b/c";
+        assert_eq!(get_wsl_distro(&path), None);
+
+        let path = r"\\wsl.localhost";
+        assert_eq!(get_wsl_distro(&path), None);
+
+        let path = r"\\wsl.localhost\Distro";
+        assert_eq!(get_wsl_distro(&path), Some("Distro".to_owned()));
+
+        let path = r"\\wsl.localhost\Distro\foo";
+        assert_eq!(get_wsl_distro(&path), Some("Distro".to_owned()));
+
+        let path = r"\\wsl$\archlinux\foo";
+        assert_eq!(get_wsl_distro(&path), Some("archlinux".to_owned()));
+
+        let path = r"\\windows.localhost\Distro\foo";
+        assert_eq!(get_wsl_distro(&path), None);
     }
 }
