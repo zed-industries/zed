@@ -362,12 +362,14 @@ fn get_processes_for_project(project: &Entity<Project>, cx: &mut App) -> Task<Ar
             Arc::from(processes.into_boxed_slice())
         })
     } else {
-        let refresh_kind = RefreshKind::nothing()
-            .with_processes(ProcessRefreshKind::nothing().with_cmd(UpdateKind::Always));
+        let refresh_kind = RefreshKind::nothing().with_processes(
+            ProcessRefreshKind::nothing()
+                .without_tasks()
+                .with_cmd(UpdateKind::Always),
+        );
         let mut processes: Box<[_]> = System::new_with_specifics(refresh_kind)
             .processes()
             .values()
-            .filter(|p| p.thread_kind().is_none())
             .map(|process| {
                 let name = process.name().to_string_lossy().into_owned();
                 Candidate {

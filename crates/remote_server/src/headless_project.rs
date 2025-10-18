@@ -746,13 +746,15 @@ impl HeadlessProject {
         _cx: AsyncApp,
     ) -> Result<proto::GetProcessesResponse> {
         let mut processes = Vec::new();
-        let refresh_kind = RefreshKind::nothing()
-            .with_processes(ProcessRefreshKind::nothing().with_cmd(UpdateKind::Always));
+        let refresh_kind = RefreshKind::nothing().with_processes(
+            ProcessRefreshKind::nothing()
+                .without_tasks()
+                .with_cmd(UpdateKind::Always),
+        );
 
         for process in System::new_with_specifics(refresh_kind)
             .processes()
             .values()
-            .filter(|p| p.thread_kind().is_none())
         {
             let name = process.name().to_string_lossy().into_owned();
             let command = process
