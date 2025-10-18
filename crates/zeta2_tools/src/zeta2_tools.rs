@@ -68,6 +68,7 @@ pub struct Zeta2Inspector {
     min_excerpt_bytes_input: Entity<SingleLineInput>,
     cursor_context_ratio_input: Entity<SingleLineInput>,
     max_prompt_bytes_input: Entity<SingleLineInput>,
+    max_retrieved_declarations: Entity<SingleLineInput>,
     active_view: ActiveView,
     zeta: Entity<Zeta>,
     _active_editor_subscription: Option<Subscription>,
@@ -133,6 +134,7 @@ impl Zeta2Inspector {
             min_excerpt_bytes_input: Self::number_input("Min Excerpt Bytes", window, cx),
             cursor_context_ratio_input: Self::number_input("Cursor Context Ratio", window, cx),
             max_prompt_bytes_input: Self::number_input("Max Prompt Bytes", window, cx),
+            max_retrieved_declarations: Self::number_input("Max Retrieved Definitions", window, cx),
             zeta: zeta.clone(),
             _active_editor_subscription: None,
             _update_state_task: Task::ready(()),
@@ -169,6 +171,13 @@ impl Zeta2Inspector {
         });
         self.max_prompt_bytes_input.update(cx, |input, cx| {
             input.set_text(options.max_prompt_bytes.to_string(), window, cx);
+        });
+        self.max_retrieved_declarations.update(cx, |input, cx| {
+            input.set_text(
+                options.context.max_retrieved_declarations.to_string(),
+                window,
+                cx,
+            );
         });
         cx.notify();
     }
@@ -246,6 +255,10 @@ impl Zeta2Inspector {
                             cx,
                         ),
                     },
+                    max_retrieved_declarations: number_input_value(
+                        &this.max_retrieved_declarations,
+                        cx,
+                    ),
                     ..zeta_options.context
                 };
 
@@ -536,6 +549,7 @@ impl Zeta2Inspector {
                         h_flex()
                             .gap_2()
                             .items_end()
+                            .child(self.max_retrieved_declarations.clone())
                             .child(self.max_prompt_bytes_input.clone())
                             .child(self.render_prompt_format_dropdown(window, cx)),
                     ),
