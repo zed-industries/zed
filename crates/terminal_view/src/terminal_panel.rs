@@ -22,8 +22,8 @@ use settings::{Settings, TerminalDockPosition};
 use task::{RevealStrategy, RevealTarget, Shell, ShellBuilder, SpawnInTerminal, TaskId};
 use terminal::{Terminal, terminal_settings::TerminalSettings};
 use ui::{
-    ButtonCommon, Clickable, ContextMenu, FluentBuilder, PopoverMenu, Toggleable, Tooltip,
-    prelude::*,
+    ButtonLike, Clickable, ContextMenu, FluentBuilder, PopoverMenu, SplitButton, Toggleable,
+    Tooltip, prelude::*,
 };
 use util::{ResultExt, TryFutureExt};
 use workspace::{
@@ -35,7 +35,6 @@ use workspace::{
     dock::{DockPosition, Panel, PanelEvent, PanelHandle},
     item::SerializableItem,
     move_active_item, move_item, pane,
-    ui::IconName,
 };
 
 use anyhow::{Result, anyhow};
@@ -813,6 +812,7 @@ impl TerminalPanel {
         cx: &mut Context<Self>,
     ) -> Task<Result<WeakEntity<Terminal>>> {
         let workspace = self.workspace.clone();
+
         cx.spawn_in(window, async move |terminal_panel, cx| {
             if workspace.update(cx, |workspace, cx| !is_enabled_in_workspace(workspace, cx))? {
                 anyhow::bail!("terminal not yet supported for collaborative projects");
@@ -824,43 +824,59 @@ impl TerminalPanel {
             let project = workspace.read_with(cx, |workspace, _| workspace.project().clone())?;
             let terminal = project
                 .update(cx, |project, cx| project.create_terminal_shell(cwd, cx))?
-                .await?;
-            let result = workspace.update_in(cx, |workspace, window, cx| {
-                let terminal_view = Box::new(cx.new(|cx| {
-                    TerminalView::new(
-                        terminal.clone(),
-                        workspace.weak_handle(),
-                        workspace.database_id(),
-                        workspace.project().downgrade(),
-                        window,
-                        cx,
-                    )
-                }));
+                .await;
 
-                match reveal_strategy {
-                    RevealStrategy::Always => {
-                        workspace.focus_panel::<Self>(window, cx);
-                    }
-                    RevealStrategy::NoFocus => {
-                        workspace.open_panel::<Self>(window, cx);
-                    }
-                    RevealStrategy::Never => {}
+            match terminal {
+                Ok(terminal) => {
+                    let result = workspace.update_in(cx, |workspace, window, cx| {
+                        let terminal_view = Box::new(cx.new(|cx| {
+                            TerminalView::new(
+                                terminal.clone(),
+                                workspace.weak_handle(),
+                                workspace.database_id(),
+                                workspace.project().downgrade(),
+                                window,
+                                cx,
+                            )
+                        }));
+
+                        match reveal_strategy {
+                            RevealStrategy::Always => {
+                                workspace.focus_panel::<Self>(window, cx);
+                            }
+                            RevealStrategy::NoFocus => {
+                                workspace.open_panel::<Self>(window, cx);
+                            }
+                            RevealStrategy::Never => {}
+                        }
+
+                        pane.update(cx, |pane, cx| {
+                            let focus = pane.has_focus(window, cx)
+                                || matches!(reveal_strategy, RevealStrategy::Always);
+                            pane.add_item(terminal_view, true, focus, None, window, cx);
+                        });
+
+                        Ok(terminal.downgrade())
+                    })?;
+                    terminal_panel.update(cx, |terminal_panel, cx| {
+                        terminal_panel.pending_terminals_to_add =
+                            terminal_panel.pending_terminals_to_add.saturating_sub(1);
+                        terminal_panel.serialize(cx)
+                    })?;
+                    result
                 }
-
-                pane.update(cx, |pane, cx| {
-                    let focus = pane.has_focus(window, cx)
-                        || matches!(reveal_strategy, RevealStrategy::Always);
-                    pane.add_item(terminal_view, true, focus, None, window, cx);
-                });
-
-                Ok(terminal.downgrade())
-            })?;
-            terminal_panel.update(cx, |terminal_panel, cx| {
-                terminal_panel.pending_terminals_to_add =
-                    terminal_panel.pending_terminals_to_add.saturating_sub(1);
-                terminal_panel.serialize(cx)
-            })?;
-            result
+                Err(error) => {
+                    pane.update_in(cx, |pane, window, cx| {
+                        let focus = pane.has_focus(window, cx);
+                        let failed_to_spawn = cx.new(|cx| FailedToSpawnTerminal {
+                            error: error.to_string(),
+                            focus_handle: cx.focus_handle(),
+                        });
+                        pane.add_item(Box::new(failed_to_spawn), true, focus, None, window, cx);
+                    })?;
+                    Err(error)
+                }
+            }
         })
     }
 
@@ -1288,6 +1304,82 @@ fn add_paths_to_terminal(
     }
 }
 
+struct FailedToSpawnTerminal {
+    error: String,
+    focus_handle: FocusHandle,
+}
+
+impl Focusable for FailedToSpawnTerminal {
+    fn focus_handle(&self, _: &App) -> FocusHandle {
+        self.focus_handle.clone()
+    }
+}
+
+impl Render for FailedToSpawnTerminal {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let popover_menu = PopoverMenu::new("settings-popover")
+            .trigger(
+                IconButton::new("icon-button-popover", IconName::ChevronDown)
+                    .icon_size(IconSize::XSmall),
+            )
+            .menu(move |window, cx| {
+                Some(ContextMenu::build(window, cx, |context_menu, _, _| {
+                    context_menu
+                        .action("Open Settings", zed_actions::OpenSettings.boxed_clone())
+                        .action(
+                            "Edit settings.json",
+                            zed_actions::OpenSettingsFile.boxed_clone(),
+                        )
+                }))
+            })
+            .anchor(Corner::TopRight)
+            .offset(gpui::Point {
+                x: px(0.0),
+                y: px(2.0),
+            });
+
+        v_flex()
+            .track_focus(&self.focus_handle)
+            .size_full()
+            .p_4()
+            .items_center()
+            .justify_center()
+            .bg(cx.theme().colors().editor_background)
+            .child(
+                v_flex()
+                    .max_w_112()
+                    .items_center()
+                    .justify_center()
+                    .text_center()
+                    .child(Label::new("Failed to spawn terminal"))
+                    .child(
+                        Label::new(self.error.to_string())
+                            .size(LabelSize::Small)
+                            .color(Color::Muted)
+                            .mb_4(),
+                    )
+                    .child(SplitButton::new(
+                        ButtonLike::new("open-settings-ui")
+                            .child(Label::new("Edit Settings").size(LabelSize::Small))
+                            .on_click(|_, window, cx| {
+                                window.dispatch_action(zed_actions::OpenSettings.boxed_clone(), cx);
+                            }),
+                        popover_menu.into_any_element(),
+                    )),
+            )
+    }
+}
+
+impl EventEmitter<()> for FailedToSpawnTerminal {}
+
+impl workspace::Item for FailedToSpawnTerminal {
+    type Event = ();
+
+    fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
+        SharedString::new_static("Failed to spawn terminal")
+    }
+}
+
 impl EventEmitter<PanelEvent> for TerminalPanel {}
 
 impl Render for TerminalPanel {
@@ -1657,7 +1749,7 @@ impl Render for InlineAssistTabBarButton {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::TestAppContext;
+    use gpui::{TestAppContext, UpdateGlobal as _};
     use pretty_assertions::assert_eq;
     use project::FakeFs;
     use settings::SettingsStore;
@@ -1771,6 +1863,57 @@ mod tests {
                     task_metadata.command_label,
                     format!("{shell} {interactive}-c '{user_command}'", interactive = if cfg!(windows) {""} else {"-i "}),
                     "We want to show to the user the entire command spawned");
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    async fn renders_error_if_default_shell_fails(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.terminal.get_or_insert_default().project.shell =
+                        Some(settings::Shell::Program("asdf".to_owned()));
+                });
+            });
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let workspace = cx.add_window(|window, cx| Workspace::test_new(project, window, cx));
+
+        let (window_handle, terminal_panel) = workspace
+            .update(cx, |workspace, window, cx| {
+                let window_handle = window.window_handle();
+                let terminal_panel = cx.new(|cx| TerminalPanel::new(workspace, window, cx));
+                (window_handle, terminal_panel)
+            })
+            .unwrap();
+
+        window_handle
+            .update(cx, |_, window, cx| {
+                terminal_panel.update(cx, |terminal_panel, cx| {
+                    terminal_panel.add_terminal_shell(None, RevealStrategy::Always, window, cx)
+                })
+            })
+            .unwrap()
+            .await
+            .unwrap_err();
+
+        window_handle
+            .update(cx, |_, _, cx| {
+                terminal_panel.update(cx, |terminal_panel, cx| {
+                    assert!(
+                        terminal_panel
+                            .active_pane
+                            .read(cx)
+                            .items()
+                            .any(|item| item.downcast::<FailedToSpawnTerminal>().is_some()),
+                        "should spawn `FailedToSpawnTerminal` pane"
+                    );
+                })
             })
             .unwrap();
     }
