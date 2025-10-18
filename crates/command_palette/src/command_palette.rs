@@ -15,10 +15,11 @@ use command_palette_hooks::{
 
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    Action, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
-    ParentElement, Render, Styled, Task, WeakEntity, Window,
+    Action, App, Context, DismissEvent, DragMoveEvent, Entity, EventEmitter, FocusHandle,
+    Focusable, MouseButton, ParentElement, Pixels, Render, Styled, Task, WeakEntity, Window,
+    deferred, div, px,
 };
-use persistence::COMMAND_PALETTE_HISTORY;
+use persistence::COMMAND_PALETTE;
 use picker::{Picker, PickerDelegate};
 use postage::{sink::Sink, stream::Stream};
 use settings::Settings;
@@ -26,6 +27,10 @@ use ui::{HighlightedLabel, KeyBinding, ListItem, ListItemSpacing, h_flex, prelud
 use util::ResultExt;
 use workspace::{ModalView, Workspace, WorkspaceSettings};
 use zed_actions::{OpenZedUrl, command_palette::Toggle};
+
+const MIN_COMMAND_PALETTE_WIDTH: Pixels = px(500.);
+const MAX_COMMAND_PALETTE_WIDTH: Pixels = px(800.);
+const RESIZE_HANDLE_SIZE: Pixels = px(6.);
 
 pub fn init(cx: &mut App) {
     client::init_settings(cx);
@@ -37,6 +42,8 @@ impl ModalView for CommandPalette {}
 
 pub struct CommandPalette {
     picker: Entity<Picker<CommandPaletteDelegate>>,
+    width: Pixels,
+    drag_start_position: Option<(Pixels, Pixels)>,
 }
 
 /// Removes subsequent whitespace characters and double colons from the query.
@@ -125,7 +132,19 @@ impl CommandPalette {
             picker.set_query(query, window, cx);
             picker
         });
-        Self { picker }
+
+        let width = COMMAND_PALETTE
+            .get_command_palette_width()
+            .ok()
+            .flatten()
+            .map(px)
+            .unwrap_or(MIN_COMMAND_PALETTE_WIDTH);
+
+        Self {
+            picker,
+            width,
+            drag_start_position: None,
+        }
     }
 
     pub fn set_query(&mut self, query: &str, window: &mut Window, cx: &mut Context<Self>) {
@@ -143,11 +162,100 @@ impl Focusable for CommandPalette {
 }
 
 impl Render for CommandPalette {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let width = self.width;
+
+        let create_resize_handle = |side: ResizeSide| {
+            let handle = div()
+                .id(match side {
+                    ResizeSide::Left => "resize-handle-left",
+                    ResizeSide::Right => "resize-handle-right",
+                })
+                .on_drag(CommandPaletteResizeHandle(side), move |this, _, _, cx| {
+                    cx.stop_propagation();
+                    cx.new(|_| this.clone())
+                })
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |_, _, _, cx| {
+                        cx.stop_propagation();
+                    }),
+                )
+                .on_mouse_up_out(
+                    MouseButton::Left,
+                    cx.listener(move |this, _, _, cx| {
+                        this.drag_start_position = None;
+
+                        let width_value: f32 = this.width.into();
+                        cx.background_spawn(async move {
+                            COMMAND_PALETTE.set_command_palette_width(width_value).await
+                        })
+                        .detach_and_log_err(cx);
+                    }),
+                )
+                .occlude();
+
+            deferred(
+                handle
+                    .absolute()
+                    .top(px(0.))
+                    .h_full()
+                    .w(RESIZE_HANDLE_SIZE)
+                    .cursor_col_resize()
+                    .when(side == ResizeSide::Left, |this| {
+                        this.left(-RESIZE_HANDLE_SIZE / 2.)
+                    })
+                    .when(side == ResizeSide::Right, |this| {
+                        this.right(-RESIZE_HANDLE_SIZE / 2.)
+                    }),
+            )
+        };
+
         v_flex()
             .key_context("CommandPalette")
-            .w(rems(34.))
+            .w(width)
+            .min_w(MIN_COMMAND_PALETTE_WIDTH)
+            .max_w(MAX_COMMAND_PALETTE_WIDTH)
+            .relative()
+            .on_drag_move(cx.listener(
+                move |this, e: &DragMoveEvent<CommandPaletteResizeHandle>, _, cx| {
+                    if this.drag_start_position.is_none() {
+                        this.drag_start_position = Some((e.event.position.x, this.width));
+                    }
+
+                    if let Some((start_x, start_width)) = this.drag_start_position {
+                        let delta = e.event.position.x - start_x;
+                        let new_width = match e.drag(cx).0 {
+                            ResizeSide::Left => start_width - delta * 2.,
+                            ResizeSide::Right => start_width + delta * 2.,
+                        };
+
+                        this.width = new_width
+                            .max(MIN_COMMAND_PALETTE_WIDTH)
+                            .min(MAX_COMMAND_PALETTE_WIDTH);
+
+                        cx.notify();
+                    }
+                },
+            ))
+            .child(create_resize_handle(ResizeSide::Left))
+            .child(create_resize_handle(ResizeSide::Right))
             .child(self.picker.clone())
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ResizeSide {
+    Left,
+    Right,
+}
+
+#[derive(Clone)]
+struct CommandPaletteResizeHandle(ResizeSide);
+
+impl Render for CommandPaletteResizeHandle {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        gpui::Empty
     }
 }
 
@@ -252,7 +360,7 @@ impl CommandPaletteDelegate {
     /// We only account for commands triggered directly via command palette and not by e.g. keystrokes because
     /// if a user already knows a keystroke for a command, they are unlikely to use a command palette to look for it.
     fn hit_counts(&self) -> HashMap<String, u16> {
-        if let Ok(commands) = COMMAND_PALETTE_HISTORY.list_commands_used() {
+        if let Ok(commands) = COMMAND_PALETTE.list_commands_used() {
             commands
                 .into_iter()
                 .map(|command| (command.command_name, command.invocations))
@@ -428,7 +536,7 @@ impl PickerDelegate for CommandPaletteDelegate {
         let command_name = command.name.clone();
         let latest_query = self.latest_query.clone();
         cx.background_spawn(async move {
-            COMMAND_PALETTE_HISTORY
+            COMMAND_PALETTE
                 .write_command_invocation(command_name, latest_query)
                 .await
         })
