@@ -893,10 +893,26 @@ impl ToolchainLister for PythonToolchainProvider {
 
         match toolchain.kind {
             Some(PythonEnvironmentKind::Conda) => {
+                // Honor conda manager preference via env var ZED_CONDA_MANAGER if set:
+                // accepts "conda", "mamba", or "micromamba". Otherwise, use the detected
+                // manager executable if available, falling back to "conda".
+                let manager_cmd = std::env::var("ZED_CONDA_MANAGER")
+                    .ok()
+                    .and_then(|s| match s.as_str() {
+                        "conda" | "mamba" | "micromamba" => Some(s),
+                        _ => None,
+                    })
+                    .or_else(|| {
+                        toolchain
+                            .manager
+                            .as_ref()
+                            .map(|m| m.executable.to_string_lossy().into_owned())
+                    })
+                    .unwrap_or_else(|| "conda".to_string());
                 if let Some(name) = &toolchain.name {
-                    activation_script.push(format!("conda activate {name}"));
+                    activation_script.push(format!("\"{manager_cmd}\" activate {name}"));
                 } else {
-                    activation_script.push("conda activate".to_string());
+                    activation_script.push(format!("\"{manager_cmd}\" activate"));
                 }
             }
             Some(PythonEnvironmentKind::Venv | PythonEnvironmentKind::VirtualEnv) => {

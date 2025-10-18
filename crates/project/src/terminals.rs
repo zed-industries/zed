@@ -303,6 +303,17 @@ impl Project {
         // Then extend it with the explicit env variables from the settings, so they take
         // precedence.
         env.extend(settings.env);
+        if let Some(venv) = settings.detect_venv.as_option() {
+            let manager = match venv.conda_manager {
+                terminal::terminal_settings::CondaManager::Conda => Some("conda"),
+                terminal::terminal_settings::CondaManager::Mamba => Some("mamba"),
+                terminal::terminal_settings::CondaManager::Micromamba => Some("micromamba"),
+                terminal::terminal_settings::CondaManager::Auto => None,
+            };
+            if let Some(mgr) = manager {
+                env.insert("ZED_CONDA_MANAGER".to_string(), mgr.to_string());
+            }
+        }
 
         let local_path = if is_via_remote { None } else { path.clone() };
 

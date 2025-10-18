@@ -91,6 +91,10 @@ pub enum VenvSettings {
     #[default]
     Off,
     On {
+        /// Preferred Conda manager to use when activating Conda environments.
+        /// Values: "auto", "conda", "mamba", "micromamba".
+        /// Default: "auto"
+        conda_manager: Option<CondaManager>,
         /// Default directories to search for virtual environments, relative
         /// to the current working directory. We recommend overriding this
         /// in your project's settings, rather than globally.
@@ -101,6 +105,7 @@ pub enum VenvSettings {
 }
 
 pub struct VenvSettingsContent<'a> {
+    pub conda_manager: CondaManager,
     pub activate_script: ActivateScript,
     pub venv_name: &'a str,
     pub directories: &'a [PathBuf],
@@ -115,6 +120,7 @@ impl VenvSettings {
                 venv_name,
                 directories,
             } => Some(VenvSettingsContent {
+                conda_manager: conda_manager.unwrap_or(CondaManager::Auto),
                 activate_script: activate_script.unwrap_or(ActivateScript::Default),
                 venv_name: venv_name.as_deref().unwrap_or(""),
                 directories: directories.as_deref().unwrap_or(&[]),
@@ -133,6 +139,16 @@ pub enum ActivateScript {
     Nushell,
     PowerShell,
     Pyenv,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum CondaManager {
+    #[default]
+    Auto,
+    Conda,
+    Mamba,
+    Micromamba,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, SettingsUi, SettingsKey)]
