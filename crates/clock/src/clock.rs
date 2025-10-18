@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use std::{
     cmp::{self, Ordering},
-    fmt, iter,
+    fmt,
 };
 
 pub use system_clock::*;
@@ -14,7 +14,11 @@ pub use system_clock::*;
 pub struct ReplicaId(u16);
 
 impl ReplicaId {
+    /// A local branch.
+    ///
+    /// This is mainly used to branch buffers.
     pub const LOCAL_BRANCH: ReplicaId = ReplicaId(u16::MAX);
+    /// The agent's unique identifier.
     pub const AGENT: ReplicaId = ReplicaId(u16::MAX - 1);
 
     pub fn new(id: u16) -> Self {
@@ -62,6 +66,7 @@ impl Global {
         Self::default()
     }
 
+    /// Fetches the sequence number for the given replica ID.
     pub fn get(&self, replica_id: ReplicaId) -> Seq {
         if replica_id == ReplicaId::LOCAL_BRANCH {
             self.local_branch_value
@@ -72,6 +77,9 @@ impl Global {
         }
     }
 
+    /// Observe the lamport timestampe.
+    ///
+    /// This sets the current sequence number of the observed replica ID to the maximum of this clock's observed sequence and the observed timestamp.
     pub fn observe(&mut self, timestamp: Lamport) {
         if timestamp.value > 0 {
             if timestamp.replica_id == ReplicaId::LOCAL_BRANCH {
@@ -90,7 +98,13 @@ impl Global {
         }
     }
 
+    /// Join another clock.
+    ///
+    /// This observes all timestamps from the other clock.
     pub fn join(&mut self, other: &Self) {
+        self.local_branch_value = cmp::max(self.local_branch_value, other.local_branch_value);
+        self.agent_value = cmp::max(self.agent_value, other.agent_value);
+
         if other.values.len() > self.values.len() {
             self.values.resize(other.values.len(), 0);
         }
@@ -98,34 +112,33 @@ impl Global {
         for (left, right) in self.values.iter_mut().zip(&other.values) {
             *left = cmp::max(*left, *right);
         }
-
-        self.local_branch_value = cmp::max(self.local_branch_value, other.local_branch_value);
     }
 
+    /// Meet another clock.
+    ///
+    /// Sets all unobserved timestamps of this clock to the sequences of other and sets all observed timestamps of this clock to the minimum observed of both clocks.
     pub fn meet(&mut self, other: &Self) {
+        self.local_branch_value = cmp::min(self.local_branch_value, other.local_branch_value);
+        self.agent_value = cmp::min(self.agent_value, other.agent_value);
+
         if other.values.len() > self.values.len() {
             self.values.resize(other.values.len(), 0);
         }
 
         let mut new_len = 0;
-        for (ix, (left, right)) in self
-            .values
-            .iter_mut()
-            .zip(other.values.iter().chain(iter::repeat(&0)))
-            .enumerate()
-        {
-            if *left == 0 {
-                *left = *right;
-            } else if *right > 0 {
-                *left = cmp::min(*left, *right);
+        for (ix, (left, &right)) in self.values.iter_mut().zip(&other.values).enumerate() {
+            match (*left, right) {
+                // left has not observed the replica
+                (0, _) => *left = right,
+                // right has not observed the replica
+                (_, 0) => (),
+                (_, _) => *left = cmp::min(*left, right),
             }
-
             if *left != 0 {
                 new_len = ix + 1;
             }
         }
-        self.values.resize(new_len, 0);
-        self.local_branch_value = cmp::min(self.local_branch_value, other.local_branch_value);
+        self.values.truncate(new_len);
     }
 
     pub fn observed(&self, timestamp: Lamport) -> bool {
@@ -133,51 +146,60 @@ impl Global {
     }
 
     pub fn observed_any(&self, other: &Self) -> bool {
-        self.values
-            .iter()
-            .zip(other.values.iter())
-            .any(|(left, right)| *right > 0 && left >= right)
-            || (other.local_branch_value > 0 && self.local_branch_value >= other.local_branch_value)
-            || (other.agent_value > 0 && self.agent_value >= other.agent_value)
+        self.iter()
+            .zip(other.iter())
+            .any(|(left, right)| right.value > 0 && left.value >= right.value)
     }
 
     pub fn observed_all(&self, other: &Self) -> bool {
-        let mut rhs = other.values.iter();
-        self.values.iter().all(|left| match rhs.next() {
-            Some(right) => left >= right,
+        if self.values.len() < other.values.len() {
+            return false;
+        }
+        let mut rhs = other.iter();
+        self.iter().all(|left| match rhs.next() {
+            Some(right) => left.value >= right.value,
             None => true,
-        }) && rhs.next().is_none()
-            && self.local_branch_value >= other.local_branch_value
-            && self.agent_value >= other.agent_value
+        })
     }
 
     pub fn changed_since(&self, other: &Self) -> bool {
         self.values.len() > other.values.len()
+            || self.local_branch_value > other.local_branch_value
+            || self.agent_value > other.agent_value
             || self
                 .values
                 .iter()
                 .zip(other.values.iter())
                 .any(|(left, right)| left > right)
-            || self.local_branch_value > other.local_branch_value
-            || self.agent_value > other.agent_value
     }
 
+    pub fn most_recent(&self) -> Option<Lamport> {
+        self.iter().max_by_key(|timestamp| timestamp.value)
+    }
+
+    /// Iterates all replicas observed by this clock as well as any unobserved replicas whose ID is lower than the highest observed replica.
     pub fn iter(&self) -> impl Iterator<Item = Lamport> + '_ {
-        self.values
-            .iter()
-            .enumerate()
-            .map(|(replica_id, seq)| Lamport {
-                replica_id: ReplicaId(replica_id as u16),
-                value: *seq,
-            })
-            .chain((self.local_branch_value > 0).then_some(Lamport {
-                replica_id: ReplicaId::LOCAL_BRANCH,
-                value: self.local_branch_value,
-            }))
-            .chain((self.agent_value > 0).then_some(Lamport {
-                replica_id: ReplicaId::AGENT,
-                value: self.agent_value,
-            }))
+        let observed_others = !self.values.is_empty() || self.agent_value > 0;
+        let local_branch = (self.local_branch_value > 0 || observed_others).then_some(Lamport {
+            replica_id: ReplicaId::LOCAL_BRANCH,
+            value: self.local_branch_value,
+        });
+        let agent = (self.agent_value > 0).then_some(Lamport {
+            replica_id: ReplicaId::AGENT,
+            value: self.agent_value,
+        });
+        local_branch
+            .into_iter()
+            .chain(agent)
+            .chain(
+                self.values
+                    .iter()
+                    .enumerate()
+                    .map(|(replica_id, seq)| Lamport {
+                        replica_id: ReplicaId(replica_id as u16),
+                        value: *seq,
+                    }),
+            )
     }
 }
 
