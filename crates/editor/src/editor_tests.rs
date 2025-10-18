@@ -22268,7 +22268,7 @@ async fn test_folding_buffers(cx: &mut TestAppContext) {
 
     assert_eq!(
         multi_buffer_editor.update(cx, |editor, cx| editor.display_text(cx)),
-        "\n\nB\n\n\n\n\n\n\nllll\nmmmm\nnnnn\n\n\nqqqq\nrrrr\n\n\nuuuu\n\n",
+        "\n\naaaa\nBbbbb\ncccc\n\n\nffff\ngggg\n\n\njjjj\n\n\nllll\nmmmm\nnnnn\n\n\nqqqq\nrrrr\n\n\nuuuu\n\n",
         "After unfolding the first buffer, its and 2nd buffer's text should be displayed"
     );
 
@@ -22277,7 +22277,7 @@ async fn test_folding_buffers(cx: &mut TestAppContext) {
     });
     assert_eq!(
         multi_buffer_editor.update(cx, |editor, cx| editor.display_text(cx)),
-        "\n\nB\n\n\n\n\n\n\nllll\nmmmm\nnnnn\n\n\nqqqq\nrrrr\n\n\nuuuu\n\n\nvvvv\nwwww\nxxxx\n\n\n1111\n2222\n\n\n5555",
+        "\n\naaaa\nBbbbb\ncccc\n\n\nffff\ngggg\n\n\njjjj\n\n\nllll\nmmmm\nnnnn\n\n\nqqqq\nrrrr\n\n\nuuuu\n\n\nvvvv\nwwww\nxxxx\n\n\n1111\n2222\n\n\n5555",
         "After unfolding the all buffers, all original text should be displayed"
     );
 }
@@ -27331,4 +27331,213 @@ async fn test_next_prev_reference(cx: &mut TestAppContext) {
 
     _move(Direction::Prev, 2, &mut cx).await;
     cx.assert_editor_state(CYCLE_POSITIONS[1]);
+}
+
+async fn test_multibuffer_selections_with_folding(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        let multi_buffer = MultiBuffer::build_multi(
+            [
+                ("1\n2\n3\n", vec![Point::row_range(0..3)]),
+                ("1\n2\n3\n", vec![Point::row_range(0..3)]),
+            ],
+            cx,
+        );
+        Editor::new(EditorMode::full(), multi_buffer, None, window, cx)
+    });
+
+    let mut cx = EditorTestContext::for_editor_in(editor.clone(), cx).await;
+    let buffer_ids = cx.multibuffer(|mb, _| mb.excerpt_buffer_ids());
+
+    cx.assert_excerpts_with_selections(indoc! {"
+        [EXCERPT]
+        ˇ1
+        2
+        3
+        [EXCERPT]
+        1
+        2
+        3
+        "});
+
+    // Scenario 1: Unfolded buffers, position cursor on "2", select all matches, then insert
+    cx.update_editor(|editor, window, cx| {
+        editor.change_selections(None.into(), window, cx, |s| {
+            s.select_ranges([2..3]);
+        });
+    });
+    cx.assert_excerpts_with_selections(indoc! {"
+        [EXCERPT]
+        1
+        2ˇ
+        3
+        [EXCERPT]
+        1
+        2
+        3
+        "});
+
+    cx.update_editor(|editor, window, cx| {
+        editor
+            .select_all_matches(&SelectAllMatches, window, cx)
+            .unwrap();
+    });
+    cx.assert_excerpts_with_selections(indoc! {"
+        [EXCERPT]
+        1
+        2ˇ
+        3
+        [EXCERPT]
+        1
+        2ˇ
+        3
+        "});
+
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input("X", window, cx);
+    });
+    cx.assert_excerpts_with_selections(indoc! {"
+        [EXCERPT]
+        1
+        Xˇ
+        3
+        [EXCERPT]
+        1
+        Xˇ
+        3
+        "});
+
+    // Scenario 2: Select "2", then fold second buffer before insertion
+    cx.update_multibuffer(|mb, cx| {
+        for buffer_id in buffer_ids.iter() {
+            let buffer = mb.buffer(*buffer_id).unwrap();
+            buffer.update(cx, |buffer, cx| {
+                buffer.edit([(0..buffer.len(), "1\n2\n3\n")], None, cx);
+            });
+        }
+    });
+
+    // Select "2" and select all matches
+    cx.update_editor(|editor, window, cx| {
+        editor.change_selections(None.into(), window, cx, |s| {
+            s.select_ranges([2..3]);
+        });
+        editor
+            .select_all_matches(&SelectAllMatches, window, cx)
+            .unwrap();
+    });
+
+    // Fold second buffer - should remove selections from folded buffer
+    cx.update_editor(|editor, _, cx| {
+        editor.fold_buffer(buffer_ids[1], cx);
+    });
+    cx.assert_excerpts_with_selections(indoc! {"
+        [EXCERPT]
+        1
+        2ˇ
+        3
+        [EXCERPT]
+        [FOLDED]
+        "});
+
+    // Insert text - should only affect first buffer
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input("Y", window, cx);
+    });
+    cx.update_editor(|editor, _, cx| {
+        editor.unfold_buffer(buffer_ids[1], cx);
+    });
+    cx.assert_excerpts_with_selections(indoc! {"
+        [EXCERPT]
+        1
+        Yˇ
+        3
+        [EXCERPT]
+        1
+        2
+        3
+        "});
+
+    // Scenario 3: Select "2", then fold first buffer before insertion
+    cx.update_multibuffer(|mb, cx| {
+        for buffer_id in buffer_ids.iter() {
+            let buffer = mb.buffer(*buffer_id).unwrap();
+            buffer.update(cx, |buffer, cx| {
+                buffer.edit([(0..buffer.len(), "1\n2\n3\n")], None, cx);
+            });
+        }
+    });
+
+    // Select "2" and select all matches
+    cx.update_editor(|editor, window, cx| {
+        editor.change_selections(None.into(), window, cx, |s| {
+            s.select_ranges([2..3]);
+        });
+        editor
+            .select_all_matches(&SelectAllMatches, window, cx)
+            .unwrap();
+    });
+
+    // Fold first buffer - should remove selections from folded buffer
+    cx.update_editor(|editor, _, cx| {
+        editor.fold_buffer(buffer_ids[0], cx);
+    });
+    cx.assert_excerpts_with_selections(indoc! {"
+        [EXCERPT]
+        [FOLDED]
+        [EXCERPT]
+        1
+        2ˇ
+        3
+        "});
+
+    // Insert text - should only affect second buffer
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input("Z", window, cx);
+    });
+    cx.update_editor(|editor, _, cx| {
+        editor.unfold_buffer(buffer_ids[0], cx);
+    });
+    cx.assert_excerpts_with_selections(indoc! {"
+        [EXCERPT]
+        1
+        2
+        3
+        [EXCERPT]
+        1
+        Zˇ
+        3
+        "});
+
+    // Edge case scenario: fold all buffers, then try to insert
+    cx.update_editor(|editor, _, cx| {
+        editor.fold_buffer(buffer_ids[0], cx);
+        editor.fold_buffer(buffer_ids[1], cx);
+    });
+    cx.assert_excerpts_with_selections(indoc! {"
+        [EXCERPT]
+        ˇ[FOLDED]
+        [EXCERPT]
+        [FOLDED]
+        "});
+
+    // Insert should work via default selection
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input("W", window, cx);
+    });
+    cx.update_editor(|editor, _, cx| {
+        editor.unfold_buffer(buffer_ids[0], cx);
+        editor.unfold_buffer(buffer_ids[1], cx);
+    });
+    cx.assert_excerpts_with_selections(indoc! {"
+        [EXCERPT]
+        Wˇ1
+        2
+        3
+        [EXCERPT]
+        1
+        Z
+        3
+        "});
 }

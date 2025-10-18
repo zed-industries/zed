@@ -487,6 +487,44 @@ impl<'snap, 'a> MutableSelectionsCollection<'snap, 'a> {
         self.selections_changed |= changed;
     }
 
+    pub fn remove_selections_from_buffer(&mut self, buffer_id: language::BufferId) {
+        let mut changed = false;
+        let buffer_snapshot = self.buffer.read(self.cx).snapshot(self.cx);
+
+        let filtered_selections: Arc<[Selection<Anchor>]> = {
+            self.disjoint
+                .iter()
+                .filter(|selection| {
+                    if let Some(selection_buffer_id) =
+                        buffer_snapshot.buffer_id_for_anchor(selection.start)
+                    {
+                        let should_remove = selection_buffer_id == buffer_id;
+                        changed |= should_remove;
+                        !should_remove
+                    } else {
+                        true
+                    }
+                })
+                .cloned()
+                .collect()
+        };
+
+        if filtered_selections.is_empty() {
+            let default_anchor = buffer_snapshot.anchor_before(0);
+            self.collection.disjoint = Arc::from([Selection {
+                id: post_inc(&mut self.collection.next_selection_id),
+                start: default_anchor,
+                end: default_anchor,
+                reversed: false,
+                goal: SelectionGoal::None,
+            }]);
+        } else {
+            self.collection.disjoint = filtered_selections;
+        }
+
+        self.selections_changed |= changed;
+    }
+
     pub fn clear_pending(&mut self) {
         if self.collection.pending.is_some() {
             self.collection.pending = None;
