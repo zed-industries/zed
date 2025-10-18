@@ -7,7 +7,7 @@ Whenever you open a pull request, the body is automatically populated based on t
 
 Release Notes:
 
-- N/A *or* Added/Fixed/Improved ...
+- N/A _or_ Added/Fixed/Improved ...
 ```
 
 On Wednesdays, we run a [`get-preview-channel-changes`](https://github.com/zed-industries/zed/blob/main/script/get-preview-channel-changes) script that scrapes these `Release Notes` lines from pull requests landing in preview, as documented in our [Release](https://zed.dev/docs/development/releases) docs.
@@ -26,5 +26,5 @@ Here are some useful guidelines for crafting your `Release Notes` line(s):
 - If your pull request adds/changes a setting or a keybinding, always mention that setting or keybinding.
   Don't make the user dig into docs or the pull request to find this information (although it should be included in docs as well).
 - For pull requests that are reverts:
-    - If the item being reverted **has already been shipped**, include a `Release Notes` line explaining why we reverted, as this is a breaking change.
-    - If the item being reverted **hasn't been shipped**, edit the original PR's `Release Notes` line to be `N/A`; otherwise, it will be included and the compiler of the release notes may not know to skip it, leading to a potentially awkward situation where we are stating we shipped something we actually didn't.
+  - If the item being reverted **has already been shipped**, include a `Release Notes` line explaining why we reverted, as this is a breaking change.
+  - If the item being reverted **hasn't been shipped**, edit the original PR's `Release Notes` line to be `N/A`; otherwise, it will be included and the compiler of the release notes may not know to skip it, leading to a potentially-awkward situation where we are stating we shipped something we actually didn't.
