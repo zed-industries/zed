@@ -319,6 +319,10 @@ TBD: Centered layout related settings
     // Clicking the button brings up an input for jumping to a line and column.
     // Defaults to true.
     "cursor_position_button": true,
+    // Show/hide a button that displays the buffer's line-ending mode.
+    // Clicking the button brings up the line-ending selector.
+    // Defaults to false.
+    "line_endings_button": false
   },
   "global_lsp_settings": {
     // Show/hide the LSP button in the status bar.
