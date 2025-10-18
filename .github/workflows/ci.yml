@@ -824,7 +824,7 @@ jobs:
 
   bundle-windows-x64:
     timeout-minutes: 120
-    name: Create a Windows installer
+    name: Create a Windows installer for x86_64
     runs-on: [self-32vcpu-windows-2022]
     if: |
       ( startsWith(github.ref, 'refs/tags/v')
@@ -881,7 +881,7 @@ jobs:
 
   bundle-windows-aarch64:
     timeout-minutes: 120
-    name: Create a Windows installer
+    name: Create a Windows installer for aarch64
     runs-on: [self-32vcpu-windows-2022]
     if: |
       ( startsWith(github.ref, 'refs/tags/v')

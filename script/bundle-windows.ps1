@@ -81,6 +81,8 @@ function PrepareForBundle {
     New-Item -Path "$innoDir\appx" -ItemType Directory -Force
     New-Item -Path "$innoDir\bin" -ItemType Directory -Force
     New-Item -Path "$innoDir\tools" -ItemType Directory -Force
+
+    rustup target add $target
 }
 
 function GenerateLicenses {

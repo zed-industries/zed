@@ -246,7 +246,7 @@ jobs:
 
   bundle-windows-x64:
     timeout-minutes: 60
-    name: Create a Windows installer
+    name: Create a Windows installer for x86_64
     if: github.repository_owner == 'zed-industries'
     runs-on: [self-32vcpu-windows-2022]
     needs: windows-tests
@@ -289,7 +289,7 @@ jobs:
 
   bundle-windows-arm64:
     timeout-minutes: 60
-    name: Create a Windows installer
+    name: Create a Windows installer for aarch64
     if: github.repository_owner == 'zed-industries'
     runs-on: [self-32vcpu-windows-2022]
     needs: windows-tests
