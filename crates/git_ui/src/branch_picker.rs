@@ -538,7 +538,7 @@ impl PickerDelegate for BranchListDelegate {
                                 .gap_6()
                                 .justify_between()
                                 .overflow_x_hidden()
-                                .child(branch_name)
+                                .child(div().flex_shrink().min_w_0().child(branch_name))
                                 .when_some(commit_time, |label, commit_time| {
                                     label.child(
                                         Label::new(commit_time)
