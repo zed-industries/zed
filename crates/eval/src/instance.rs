@@ -322,7 +322,8 @@ impl ExampleInstance {
                     cx.new(|cx| agent::Thread::new(project.clone(), project_context, context_server_registry, agent::Templates::new(), None, cx))
                 };
 
-                thread.update(cx, |thread, _cx| {
+                thread.update(cx, |thread, cx| {
+                    thread.add_default_tools(Rc::new(FakeThreadEnvironment), cx);
                     thread.set_profile(meta.profile_id.clone());
                 });
 
@@ -638,6 +639,22 @@ impl ExampleInstance {
         }
 
         (responses, report)
+    }
+}
+
+struct FakeThreadEnvironment;
+
+impl agent::ThreadEnvironment for FakeThreadEnvironment {
+    fn create_terminal(
+        &self,
+        command: String,
+        cwd: Option<PathBuf>,
+        output_byte_limit: Option<u64>,
+        cx: &mut AsyncApp,
+    ) -> Task<Result<Rc<dyn agent::TerminalHandle>>> {
+        Task::ready(Err(anyhow!(
+            "Creating a terminal is not implemented in the eval"
+        )))
     }
 }
 
