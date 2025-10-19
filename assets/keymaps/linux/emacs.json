@@ -42,8 +42,8 @@
       "alt-m": ["editor::MoveToBeginningOfLine", { "stop_at_soft_wraps": false, "stop_at_indent": true }], // back-to-indentation
       "alt-left": "editor::MoveToPreviousWordStart", // left-word
       "alt-right": "editor::MoveToNextWordEnd", // right-word
-      "alt-f": "editor::MoveToNextSubwordEnd", // forward-word
-      "alt-b": "editor::MoveToPreviousSubwordStart", // backward-word
+      "alt-f": "editor::MoveToNextWordEnd", // forward-word
+      "alt-b": "editor::MoveToPreviousWordStart", // backward-word
       "alt-u": "editor::ConvertToUpperCase", // upcase-word
       "alt-l": "editor::ConvertToLowerCase", // downcase-word
       "alt-c": "editor::ConvertToUpperCamelCase", // capitalize-word
@@ -107,7 +107,7 @@
       "ctrl-e": ["editor::SelectToEndOfLine", { "stop_at_soft_wraps": false }],
       "alt-m": ["editor::SelectToBeginningOfLine", { "stop_at_soft_wraps": false, "stop_at_indent": true }],
       "alt-f": "editor::SelectToNextWordEnd",
-      "alt-b": "editor::SelectToPreviousSubwordStart",
+      "alt-b": "editor::SelectToPreviousWordStart",
       "alt-{": "editor::SelectToStartOfParagraph",
       "alt-}": "editor::SelectToEndOfParagraph",
       "ctrl-up": "editor::SelectToStartOfParagraph",
