@@ -302,8 +302,8 @@ pub enum RepositoryState {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RepositoryEvent {
     StatusesChanged {
-        updated: Vec<RepoPath>,
-        removed: Vec<RepoPath>,
+        // TODO could report which statuses changed here
+        full_scan: bool,
     },
     MergeHeadsChanged,
     BranchChanged,
@@ -4054,12 +4054,8 @@ impl Repository {
                             log::info!("head branch after scan is {branch:?}");
                             let snapshot = this.update(&mut cx, |this, cx| {
                                 this.snapshot.branch = branch;
-                                let snapshot = this.snapshot.clone();
-                                cx.emit(RepositoryEvent::Updated {
-                                    full_scan: false,
-                                    new_instance: false,
-                                });
-                                snapshot
+                                cx.emit(RepositoryEvent::BranchChanged);
+                                this.snapshot.clone()
                             })?;
                             if let Some(updates_tx) = updates_tx {
                                 updates_tx
@@ -4472,6 +4468,7 @@ impl Repository {
             .head_commit_details
             .as_ref()
             .map(proto_to_commit_details);
+        // FIXME branch changed
 
         self.snapshot.merge.conflicted_paths = conflicted_paths;
         self.snapshot.merge.message = update.merge_message.map(SharedString::from);
@@ -4482,6 +4479,7 @@ impl Repository {
                 .filter_map(|entry| proto_to_stash(entry).ok())
                 .collect(),
         };
+        // FIXME stash changed
 
         let edits = update
             .removed_statuses
@@ -4501,14 +4499,11 @@ impl Repository {
             )
             .collect::<Vec<_>>();
         self.snapshot.statuses_by_path.edit(edits, ());
+        // FIXME statuses changed
         if update.is_last_update {
             self.snapshot.scan_id = update.scan_id;
         }
-        // FIXME stuff
-        cx.emit(RepositoryEvent::Updated {
-            full_scan: true,
-            // new_instance: is_new,
-        });
+        // FIXME did git scan
         Ok(())
     }
 
@@ -4831,21 +4826,17 @@ impl Repository {
                     .await;
 
                 this.update(&mut cx, |this, cx| {
-                    let needs_update = !changed_path_statuses.is_empty()
-                        || this.snapshot.stash_entries != stash_entries;
-                    this.snapshot.stash_entries = stash_entries;
+                    if this.snapshot.stash_entries != stash_entries {
+                        cx.emit(RepositoryEvent::StashEntriesChanged);
+                        this.snapshot.stash_entries = stash_entries;
+                    }
+
                     if !changed_path_statuses.is_empty() {
+                        cx.emit(RepositoryEvent::StatusesChanged { full_scan: false });
                         this.snapshot
                             .statuses_by_path
                             .edit(changed_path_statuses, ());
                         this.snapshot.scan_id += 1;
-                    }
-
-                    if needs_update {
-                        cx.emit(RepositoryEvent::Updated {
-                            full_scan: false,
-                            new_instance: false,
-                        });
                     }
 
                     if let Some(updates_tx) = updates_tx {
@@ -4855,7 +4846,6 @@ impl Repository {
                             ))
                             .ok();
                     }
-                    cx.emit(RepositoryEvent::PathsChanged);
                 })
             },
         );
@@ -5118,21 +5108,16 @@ async fn compute_snapshot(
         MergeDetails::load(&backend, &statuses_by_path, &prev_snapshot).await?;
     log::debug!("new merge details (changed={merge_heads_changed:?}): {merge_details:?}");
 
-    if merge_heads_changed
-        || branch != prev_snapshot.branch
-        || dbg!(&statuses_by_path) != dbg!(&prev_snapshot.statuses_by_path)
-    {
-        dbg!();
-        events.push(RepositoryEvent::Updated {
-            full_scan: true,
-            new_instance: false,
-        });
-    }
-
-    // Cache merge conflict paths so they don't change from staging/unstaging,
-    // until the merge heads change (at commit time, etc.).
     if merge_heads_changed {
         events.push(RepositoryEvent::MergeHeadsChanged);
+    }
+
+    if branch != prev_snapshot.branch {
+        events.push(RepositoryEvent::BranchChanged);
+    }
+
+    if statuses_by_path != prev_snapshot.statuses_by_path {
+        events.push(RepositoryEvent::StatusesChanged { full_scan: true })
     }
 
     // Useful when branch is None in detached head state
