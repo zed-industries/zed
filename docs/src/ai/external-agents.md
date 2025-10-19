@@ -206,3 +206,15 @@ You can also specify a custom path, arguments, or environment for the builtin in
 When using external agents in Zed, you can access the debug view via with `dev: open acp logs` from the Command Palette. This lets you see the messages being sent and received between Zed and the agent.
 
 ![The debug view for ACP logs.](https://zed.dev/img/acp/acp-logs.webp)
+
+## MCP Servers
+
+Note that, currently, MCP servers installed _from_ Zed won't be picked up by external agents connected through ACP.
+This is valid for Claude Code, Codex, Gemini CLI, and any other one you may come to add.
+
+You need to configure MCP servers for each external agent directly through their own CLI.
+Learn how to do that for each built-in one through the documentation below:
+
+- [Anthropic's Claude Code](https://docs.claude.com/en/docs/claude-code/mcp#installing-mcp-servers)
+- [OpenAI's Codex](https://developers.openai.com/codex/mcp/#connect-codex-to-a-mcp-server)
+- [Google's Gemini CLI](https://github.com/google-gemini/gemini-cli?tab=readme-ov-file#using-mcp-servers)
