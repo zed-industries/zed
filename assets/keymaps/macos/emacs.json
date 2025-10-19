@@ -10,6 +10,15 @@
     }
   },
   {
+    // Workaround to avoid falling back to default bindings.
+    // Unbind so Zed ignores these keys and lets emacs handle them.
+    // NOTE: must be declared before the `Editor` override.
+    "context": "Editor",
+    "bindings": {
+      "ctrl-g": null // currently activates `go_to_line::Toggle` when there is nothing to cancel
+    }
+  },
+  {
     "context": "Editor",
     "bindings": {
       "alt-x": "command_palette::Toggle",
