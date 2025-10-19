@@ -61,9 +61,22 @@ struct Args {
     /// Maximum number of examples to run concurrently.
     #[arg(long, default_value = "4")]
     concurrency: usize,
+    /// Output current environment variables as JSON to stdout
+    #[arg(long, hide = true)]
+    printenv: bool,
 }
 
 fn main() {
+    let args = Args::parse();
+
+    // This prevents errors showing up in the logs, because
+    // project::environment::load_shell_environment() calls
+    // std::env::current_exe().unwrap() --printenv
+    if args.printenv {
+        util::shell_env::print_env();
+        return;
+    }
+
     dotenvy::from_filename(CARGO_MANIFEST_DIR.join(".env")).ok();
 
     env_logger::init();
@@ -99,7 +112,6 @@ fn main() {
 
     let zed_commit_sha = commit_sha_for_path(&root_dir);
     let zed_branch_name = git_branch_for_path(&root_dir);
-    let args = Args::parse();
     let languages: HashSet<String> = args.languages.into_iter().collect();
 
     let http_client = Arc::new(ReqwestClient::new());
