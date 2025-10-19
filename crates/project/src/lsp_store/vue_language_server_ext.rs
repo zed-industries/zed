@@ -30,17 +30,16 @@ pub fn register_requests(lsp_store: WeakEntity<LspStore>, language_server: &Lang
         let vue_server_id = language_server.server_id();
         language_server
             .on_notification::<VueServerRequest, _>({
-                let this = lsp_store.clone();
                 move |params, cx| {
-                    let this = this.clone();
-                    let Ok(Some(vue_server)) = this.read_with(cx, |this, _| {
+                    let lsp_store = lsp_store.clone();
+                    let Ok(Some(vue_server)) = lsp_store.read_with(cx, |this, _| {
                         this.language_server_for_id(vue_server_id)
                     }) else {
                         return;
                     };
 
                     let requests = params;
-                    let target_server = match this.read_with(cx, |this, _| {
+                    let target_server = match lsp_store.read_with(cx, |this, _| {
                         let language_server_id = this
                             .as_local()
                             .and_then(|local| {
