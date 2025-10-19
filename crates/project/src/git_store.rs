@@ -301,9 +301,13 @@ pub enum RepositoryState {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RepositoryEvent {
-    Updated { full_scan: bool, new_instance: bool },
+    StatusesChanged {
+        updated: Vec<RepoPath>,
+        removed: Vec<RepoPath>,
+    },
     MergeHeadsChanged,
-    PathsChanged,
+    BranchChanged,
+    StashEntriesChanged,
 }
 
 #[derive(Clone, Debug)]
@@ -313,7 +317,7 @@ pub struct JobsUpdated;
 pub enum GitStoreEvent {
     ActiveRepositoryChanged(Option<RepositoryId>),
     RepositoryUpdated(RepositoryId, RepositoryEvent, bool),
-    RepositoryAdded(RepositoryId),
+    RepositoryAdded,
     RepositoryRemoved(RepositoryId),
     IndexWriteError(anyhow::Error),
     JobsUpdated,
@@ -1218,7 +1222,7 @@ impl GitStore {
                 self._subscriptions
                     .push(cx.subscribe(&repo, Self::on_jobs_updated));
                 self.repositories.insert(id, repo);
-                cx.emit(GitStoreEvent::RepositoryAdded(id));
+                cx.emit(GitStoreEvent::RepositoryAdded);
                 self.active_repo_id.get_or_insert_with(|| {
                     cx.emit(GitStoreEvent::ActiveRepositoryChanged(Some(id)));
                     id
@@ -1485,11 +1489,10 @@ impl GitStore {
             let id = RepositoryId::from_proto(update.id);
             let client = this.upstream_client().context("no upstream client")?;
 
-            let mut is_new = false;
+            let mut repo_subscription = None;
             let repo = this.repositories.entry(id).or_insert_with(|| {
-                is_new = true;
                 let git_store = cx.weak_entity();
-                cx.new(|cx| {
+                let repo = cx.new(|cx| {
                     Repository::remote(
                         id,
                         Path::new(&update.abs_path).into(),
@@ -1499,16 +1502,16 @@ impl GitStore {
                         git_store,
                         cx,
                     )
-                })
+                });
+                repo_subscription = Some(cx.subscribe(&repo, Self::on_repository_event));
+                cx.emit(GitStoreEvent::RepositoryAdded);
+                repo
             });
-            if is_new {
-                this._subscriptions
-                    .push(cx.subscribe(repo, Self::on_repository_event))
-            }
+            this._subscriptions.extend(repo_subscription);
 
             repo.update(cx, {
                 let update = update.clone();
-                |repo, cx| repo.apply_remote_update(update, is_new, cx)
+                |repo, cx| repo.apply_remote_update(update, cx)
             })?;
 
             this.active_repo_id.get_or_insert_with(|| {
@@ -3883,12 +3886,8 @@ impl Repository {
                     {
                         let snapshot = this.update(&mut cx, |this, cx| {
                             this.snapshot.stash_entries = stash_entries;
-                            let snapshot = this.snapshot.clone();
-                            cx.emit(RepositoryEvent::Updated {
-                                full_scan: false,
-                                new_instance: false,
-                            });
-                            snapshot
+                            cx.emit(RepositoryEvent::StashEntriesChanged);
+                            this.snapshot.clone()
                         })?;
                         if let Some(updates_tx) = updates_tx {
                             updates_tx
@@ -4048,6 +4047,7 @@ impl Repository {
                                 cx.clone(),
                             )
                             .await;
+                        // FIXME force a reload in some other way
                         if result.is_ok() {
                             let branches = backend.branches().await?;
                             let branch = branches.into_iter().find(|branch| branch.is_head);
@@ -4458,7 +4458,7 @@ impl Repository {
     pub(crate) fn apply_remote_update(
         &mut self,
         update: proto::UpdateRepository,
-        is_new: bool,
+        // is_new: bool,
         cx: &mut Context<Self>,
     ) -> Result<()> {
         let conflicted_paths = TreeSet::from_ordered_entries(
@@ -4504,9 +4504,10 @@ impl Repository {
         if update.is_last_update {
             self.snapshot.scan_id = update.scan_id;
         }
+        // FIXME stuff
         cx.emit(RepositoryEvent::Updated {
             full_scan: true,
-            new_instance: is_new,
+            // new_instance: is_new,
         });
         Ok(())
     }
@@ -4575,7 +4576,7 @@ impl Repository {
                 this.update(&mut cx, |this, cx| {
                     this.snapshot = snapshot.clone();
                     for event in events {
-                        cx.emit(event);
+                        cx.emit(dbg!(event));
                     }
                 })?;
                 if let Some(updates_tx) = updates_tx {
@@ -5119,8 +5120,9 @@ async fn compute_snapshot(
 
     if merge_heads_changed
         || branch != prev_snapshot.branch
-        || statuses_by_path != prev_snapshot.statuses_by_path
+        || dbg!(&statuses_by_path) != dbg!(&prev_snapshot.statuses_by_path)
     {
+        dbg!();
         events.push(RepositoryEvent::Updated {
             full_scan: true,
             new_instance: false,

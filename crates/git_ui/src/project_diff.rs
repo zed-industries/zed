@@ -57,12 +57,13 @@ pub struct ProjectDiff {
     multibuffer: Entity<MultiBuffer>,
     editor: Entity<Editor>,
     git_store: Entity<GitStore>,
+    buffers: Vec<DiffBuffer>,
     workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
     update_needed: postage::watch::Sender<()>,
     pending_scroll: Option<PathKey>,
     _task: Task<Result<()>>,
-    _subscription: Subscription,
+    _git_store_subscription: Subscription,
 }
 
 #[derive(Debug)]
@@ -71,6 +72,7 @@ struct DiffBuffer {
     buffer: Entity<Buffer>,
     diff: Entity<BufferDiff>,
     file_status: FileStatus,
+    _subscription: Subscription,
 }
 
 const CONFLICT_SORT_PREFIX: u64 = 1;
@@ -179,6 +181,7 @@ impl ProjectDiff {
                 GitStoreEvent::ActiveRepositoryChanged(_)
                 | GitStoreEvent::RepositoryUpdated(_, _, true)
                 | GitStoreEvent::ConflictsUpdated => {
+                    dbg!();
                     *this.update_needed.borrow_mut() = ();
                 }
                 _ => {}
@@ -217,10 +220,11 @@ impl ProjectDiff {
             focus_handle,
             editor,
             multibuffer,
+            buffers: Default::default(),
             pending_scroll: None,
             update_needed: send,
             _task: worker,
-            _subscription: git_store_subscription,
+            _git_store_subscription: git_store_subscription,
         }
     }
 
@@ -370,6 +374,7 @@ impl ProjectDiff {
 
         let mut previous_paths = self.multibuffer.read(cx).paths().collect::<HashSet<_>>();
 
+        let this = cx.weak_entity();
         let mut result = vec![];
         repo.update(cx, |repo, cx| {
             for entry in repo.cached_status() {
@@ -396,11 +401,19 @@ impl ProjectDiff {
                             project.open_uncommitted_diff(buffer.clone(), cx)
                         })?
                         .await?;
+                    let subscription = cx.subscribe_in(&changes, |_, _, window, cx| {
+                        this.update(cx, |this, cx| {
+                            // FIXME can we do this more fine-grained?
+                            *this.update_needed.borrow_mut() = true;
+                        })
+                        .ok();
+                    });
                     Ok(DiffBuffer {
                         path_key,
                         buffer,
                         diff: changes,
                         file_status: entry.status,
+                        _subscription: subscription,
                     })
                 }));
             }
@@ -419,6 +432,7 @@ impl ProjectDiff {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        dbg!();
         let path_key = diff_buffer.path_key;
         let buffer = diff_buffer.buffer;
         let diff = diff_buffer.diff;
@@ -431,25 +445,30 @@ impl ProjectDiff {
 
         let snapshot = buffer.read(cx).snapshot();
         let diff = diff.read(cx);
+        dbg!("HERE");
         let diff_hunk_ranges = diff
             .hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot, cx)
-            .map(|diff_hunk| diff_hunk.buffer_range);
+            // FIXME collect
+            .map(|diff_hunk| diff_hunk.buffer_range)
+            .collect::<Vec<_>>();
         let conflicts = conflict_addon
             .conflict_set(snapshot.remote_id())
             .map(|conflict_set| conflict_set.read(cx).snapshot().conflicts)
             .unwrap_or_default();
         let conflicts = conflicts.iter().map(|conflict| conflict.range.clone());
 
-        let excerpt_ranges = merge_anchor_ranges(diff_hunk_ranges, conflicts, &snapshot)
-            .map(|range| range.to_point(&snapshot))
-            .collect::<Vec<_>>();
+        let excerpt_ranges =
+            merge_anchor_ranges(dbg!(diff_hunk_ranges).into_iter(), conflicts, &snapshot)
+                .map(|range| range.to_point(&snapshot))
+                .collect::<Vec<_>>();
 
         let (was_empty, is_excerpt_newly_added) = self.multibuffer.update(cx, |multibuffer, cx| {
             let was_empty = multibuffer.is_empty();
+            dbg!();
             let (_, is_newly_added) = multibuffer.set_excerpts_for_path(
                 path_key.clone(),
                 buffer,
-                excerpt_ranges,
+                dbg!(excerpt_ranges),
                 multibuffer_context_lines(cx),
                 cx,
             );
@@ -488,6 +507,7 @@ impl ProjectDiff {
         if self.pending_scroll.as_ref() == Some(&path_key) {
             self.move_to_path(path_key, window, cx);
         }
+        self.buffers.push(diff_buffer);
     }
 
     pub async fn handle_status_updates(
@@ -496,7 +516,9 @@ impl ProjectDiff {
         cx: &mut AsyncWindowContext,
     ) -> Result<()> {
         while (recv.next().await).is_some() {
+            dbg!();
             let buffers_to_load = this.update(cx, |this, cx| this.load_buffers(cx))?;
+            dbg!(buffers_to_load.len());
             for buffer_to_load in buffers_to_load {
                 if let Some(buffer) = buffer_to_load.await.log_err() {
                     cx.update(|window, cx| {

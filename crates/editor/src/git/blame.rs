@@ -236,7 +236,7 @@ impl GitBlame {
         let git_store_subscription =
             cx.subscribe(&git_store, move |this, _, event, cx| match event {
                 GitStoreEvent::RepositoryUpdated(_, RepositoryEvent::Updated { .. }, _)
-                | GitStoreEvent::RepositoryAdded(_)
+                | GitStoreEvent::RepositoryAdded
                 | GitStoreEvent::RepositoryRemoved(_) => {
                     log::debug!("Status of git repositories updated. Regenerating blame data...",);
                     this.generate(cx);

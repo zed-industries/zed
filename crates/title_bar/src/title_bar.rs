@@ -288,7 +288,7 @@ impl TitleBar {
             cx.subscribe(&git_store, move |_, _, event, cx| match event {
                 GitStoreEvent::ActiveRepositoryChanged(_)
                 | GitStoreEvent::RepositoryUpdated(_, RepositoryEvent::Updated { .. }, _)
-                | GitStoreEvent::RepositoryAdded(_)
+                | GitStoreEvent::RepositoryAdded
                 | GitStoreEvent::RepositoryRemoved(_) => {
                     cx.notify();
                 }

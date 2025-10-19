@@ -431,7 +431,7 @@ impl GitPanel {
                         this.schedule_update(*full_scan, window, cx);
                     }
 
-                    GitStoreEvent::RepositoryAdded(_) | GitStoreEvent::RepositoryRemoved(_) => {
+                    GitStoreEvent::RepositoryAdded | GitStoreEvent::RepositoryRemoved(_) => {
                         this.schedule_update(false, window, cx);
                     }
                     GitStoreEvent::IndexWriteError(error) => {

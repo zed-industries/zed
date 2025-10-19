@@ -1582,7 +1582,9 @@ impl MultiBuffer {
         let buffer_snapshot = buffer.read(cx).snapshot();
         let excerpt_ranges = build_excerpt_ranges(ranges, context_line_count, &buffer_snapshot);
 
+        dbg!(&excerpt_ranges);
         let (new, counts) = Self::merge_excerpt_ranges(&excerpt_ranges);
+        dbg!(&new, &counts);
         self.set_merged_excerpt_ranges_for_path(
             path,
             buffer,
@@ -1680,7 +1682,7 @@ impl MultiBuffer {
                 result.push(range)
             }
         }
-        (result, added_a_new_excerpt)
+        (dbg!(result), dbg!(added_a_new_excerpt))
     }
 
     fn merge_excerpt_ranges<'a>(
@@ -1699,6 +1701,7 @@ impl MultiBuffer {
                 {
                     last_range.context.end = range.context.end.max(last_range.context.end);
                     *counts.last_mut().unwrap() += 1;
+                    dbg!();
                     continue;
                 }
             }
@@ -3497,6 +3500,7 @@ fn build_excerpt_ranges(
     ranges
         .into_iter()
         .map(|range| {
+            dbg!(&range);
             let start_row = range.start.row.saturating_sub(context_line_count);
             let start = Point::new(start_row, 0);
             let end_row = (range.end.row + context_line_count).min(buffer_snapshot.max_point().row);
