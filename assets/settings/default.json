@@ -1559,6 +1559,7 @@
   //
   "file_types": {
     "JSONC": ["**/.zed/**/*.json", "**/zed/**/*.json", "**/Zed/**/*.json", "**/.vscode/**/*.json", "tsconfig*.json"],
+    "Markdown": [".rules", ".cursorrules", ".windsurfrules", ".clinerules"],
     "Shell Script": [".env.*"]
   },
   // Settings for which version of Node.js and NPM to use when installing
