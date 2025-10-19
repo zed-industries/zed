@@ -643,38 +643,18 @@ impl LocalBufferStore {
             let reservation = cx.reserve_entity();
             let buffer_id = BufferId::from(reservation.entity_id().as_non_zero_u64());
 
-            // Create the buffer first
-            let buffer = cx.insert_entity(reservation, |_| {
-                Buffer::build(
-                    text::Buffer::new(0, buffer_id, ""),
-                    None,
-                    Capability::ReadWrite,
-                )
-            });
+            let load_file_task =
+                worktree.load_file(path.as_ref(), encoding, force, detect_utf16, None, cx);
 
-            let buffer_encoding = buffer.read(cx).encoding.clone();
-
-            let load_file_task = worktree.load_file(
-                path.as_ref(),
-                encoding,
-                force,
-                detect_utf16,
-                Some(buffer_encoding),
-                cx,
-            );
-
-            cx.spawn(async move |_, async_cx| {
+            cx.spawn(async move |_, cx| {
                 let loaded_file = load_file_task.await?;
-                let mut reload_task = None;
 
-                buffer.update(async_cx, |buffer, cx| {
-                    buffer.replace_file(loaded_file.file);
-                    buffer
-                        .replace_text_buffer(text::Buffer::new(0, buffer_id, loaded_file.text), cx);
-
-                    buffer.update_encoding();
-
-                    reload_task = Some(buffer.reload(cx));
+                let buffer = cx.insert_entity(reservation, |_| {
+                    Buffer::build(
+                        text::Buffer::new(0, buffer_id, loaded_file.text),
+                        Some(loaded_file.file),
+                        Capability::ReadWrite,
+                    )
                 })?;
 
                 Ok(buffer)
