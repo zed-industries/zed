@@ -12,9 +12,11 @@
     // Workaround to avoid falling back to default bindings.
     // Unbind so Zed ignores these keys and lets emacs handle them.
     // NOTE: must be declared before the `Editor` override.
+    // NOTE: in macos the 'ctrl-x' rebind is not needed, since it defaults to 'cmd-x'.
     "context": "Editor",
     "bindings": {
-      "ctrl-g": null // currently activates `go_to_line::Toggle` when there is nothing to cancel
+      "ctrl-g": null, // currently activates `go_to_line::Toggle` when there is nothing to cancel
+      "ctrl-x": null // currently activates `editor::Cut` if no following key is pressed for 1 second
     }
   },
   {
