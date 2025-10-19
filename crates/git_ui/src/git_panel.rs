@@ -12,7 +12,7 @@ use agent_settings::AgentSettings;
 use anyhow::Context as _;
 use askpass::AskPassDelegate;
 use db::kvp::KEY_VALUE_STORE;
-use editor::{Editor, EditorElement, EditorMode, MultiBuffer};
+use editor::{Editor, EditorElement, EditorMode, MultiBuffer, actions::ExpandAllDiffHunks};
 use futures::StreamExt as _;
 use git::blame::ParsedCommitMessage;
 use git::repository::{
@@ -69,7 +69,7 @@ use cloud_llm_client::CompletionIntent;
 use workspace::{
     Workspace,
     dock::{DockPosition, Panel, PanelEvent},
-    notifications::{DetachAndPromptErr, ErrorMessagePrompt, NotificationId},
+    notifications::{DetachAndPromptErr, ErrorMessagePrompt, NotificationId, NotifyResultExt},
 };
 
 actions!(
@@ -809,15 +809,28 @@ impl GitPanel {
                 return None;
             }
 
-            self.workspace
+            let open_task = self.workspace
                 .update(cx, |workspace, cx| {
-                    workspace
-                        .open_path_preview(path, None, false, false, true, window, cx)
-                        .detach_and_prompt_err("Failed to open file", window, cx, |e, _, _| {
-                            Some(format!("{e}"))
-                        });
+                    workspace.open_path_preview(path, None, false, false, true, window, cx)
                 })
-                .ok()
+                .ok()?;
+        
+            cx.spawn_in(window, async move |_, cx| {
+                let item = open_task.await.notify_async_err(cx)?;
+                if let Some(active_editor) = item.downcast::<Editor>() {
+                    active_editor
+                        .downgrade()
+                        .update_in(cx, |editor, window, cx| {
+                            editor.expand_all_diff_hunks(&ExpandAllDiffHunks, window, cx);
+                        })
+                        .log_err();
+                }
+                
+                Some(())
+            })
+            .detach();
+            
+            Some(())
         });
     }
 
