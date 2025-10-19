@@ -444,7 +444,7 @@ pub fn initialize_workspace(
         });
 
         let encoding_indicator = cx.new(|_cx| {
-            encodings::EncodingIndicator::new(None, workspace.weak_handle(), None, None)
+            encodings_ui::EncodingIndicator::new(None, workspace.weak_handle(), None, None)
         });
 
         let cursor_position =

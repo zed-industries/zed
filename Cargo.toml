@@ -60,6 +60,7 @@ members = [
     "crates/editor",
     "crates/eval",
     "crates/encodings",
+    "crates/encodings_ui",
     "crates/explorer_command_injector",
     "crates/extension",
     "crates/extension_api",
@@ -223,6 +224,7 @@ members = [
     "tooling/perf",
     "tooling/xtask",
     "crates/encodings",
+    "crates/encodings_ui",
 ]
 default-members = ["crates/zed"]
 
@@ -316,6 +318,7 @@ edit_prediction_button = { path = "crates/edit_prediction_button" }
 edit_prediction_context = { path = "crates/edit_prediction_context" }
 zeta2_tools = { path = "crates/zeta2_tools" }
 encodings = {path = "crates/encodings"}
+encodings_ui = {path = "crates/encodings_ui"}
 inspector_ui = { path = "crates/inspector_ui" }
 install_cli = { path = "crates/install_cli" }
 journal = { path = "crates/journal" }

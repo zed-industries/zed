@@ -299,7 +299,7 @@ pub mod settings_profile_selector {
     pub struct Toggle;
 }
 
-pub mod encodings {
+pub mod encodings_ui {
     use std::sync::Arc;
 
     use gpui::Action;
