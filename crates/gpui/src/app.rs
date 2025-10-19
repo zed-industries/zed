@@ -415,7 +415,7 @@ impl SystemWindowTabController {
         for windows in controller.tab_groups.values_mut() {
             for tab in windows.iter_mut() {
                 if tab.id == id {
-                    tab.title = title.clone();
+                    tab.title = title;
                     return;
                 }
             }
