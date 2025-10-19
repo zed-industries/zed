@@ -6224,13 +6224,25 @@ impl LspStore {
             };
 
             cx.spawn(async move |this, cx| {
-                Self::resolve_completion_local(
-                    server.clone(),
-                    completions.clone(),
-                    completion_index,
-                )
-                .await
-                .context("resolving completion")?;
+                // First check if the completion already has additionalTextEdits in the initial response
+                let completion_before_resolve = completions.borrow()[completion_index].clone();
+                let has_additional_edits = completion_before_resolve
+                    .source
+                    .lsp_completion(true)
+                    .as_ref()
+                    .and_then(|lsp_completion| lsp_completion.additional_text_edits.as_ref())
+                    .is_some();
+
+                // Only attempt resolution if additionalTextEdits are not already present
+                if !has_additional_edits {
+                    Self::resolve_completion_local(
+                        server.clone(),
+                        completions.clone(),
+                        completion_index,
+                    )
+                    .await
+                    .context("resolving completion")?;
+                }
                 let completion = completions.borrow()[completion_index].clone();
                 let additional_text_edits = completion
                     .source
