@@ -38,8 +38,8 @@ use std::{
     fmt::Write,
     path::{Path, PathBuf},
     sync::Arc,
+    ffi::OsString, // <-- needed for Pyrefly adapter
 };
-use std::ffi::OsString; // <-- needed for Pyrefly adapter
 use task::{ShellKind, TaskTemplate, TaskTemplates, VariableName};
 use util::{ResultExt, maybe};
 
