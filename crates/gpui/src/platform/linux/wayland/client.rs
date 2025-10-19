@@ -1296,9 +1296,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
             }
             wl_keyboard::Event::Enter { surface, .. } => {
                 let window = get_window(&mut state, &surface.id());
-                if (window.is_some() && !window.as_ref().unwrap().has_children())
-                    || window.is_none()
-                {
+                if !window.as_ref().is_some_and(|w| w.has_children()) {
                     state.keyboard_focused_window = window;
 
                     state.enter_token = Some(());
