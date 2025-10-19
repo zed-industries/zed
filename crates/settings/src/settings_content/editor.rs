@@ -334,7 +334,18 @@ pub struct GutterContent {
 
 /// How to render LSP `textDocument/documentColor` colors in the editor.
 #[derive(
-    Copy, Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom,
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum DocumentColorsRenderMode {
@@ -788,6 +799,31 @@ pub enum DisplayIn {
 pub struct MinimumContrast(pub f32);
 
 impl Display for MinimumContrast {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:.1}", self.0)
+    }
+}
+
+/// Opacity of the inactive panes. 0 means transparent, 1 means opaque.
+///
+/// Valid range: 0.0 to 1.0
+/// Default: 1.0
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    PartialOrd,
+    derive_more::FromStr,
+)]
+#[serde(transparent)]
+pub struct InactiveOpacity(pub f32);
+
+impl Display for InactiveOpacity {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{:.1}", self.0)
     }

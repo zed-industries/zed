@@ -10,15 +10,14 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{
     DefaultAgentView, DockPosition, LanguageModelParameters, LanguageModelSelection,
-    NotifyWhenAgentWaiting, Settings, SettingsContent,
+    NotifyWhenAgentWaiting, Settings,
 };
 
 pub use crate::agent_profile::*;
 
-pub const SUMMARIZE_THREAD_PROMPT: &str =
-    include_str!("../../agent/src/prompts/summarize_thread_prompt.txt");
+pub const SUMMARIZE_THREAD_PROMPT: &str = include_str!("prompts/summarize_thread_prompt.txt");
 pub const SUMMARIZE_THREAD_DETAILED_PROMPT: &str =
-    include_str!("../../agent/src/prompts/summarize_thread_detailed_prompt.txt");
+    include_str!("prompts/summarize_thread_detailed_prompt.txt");
 
 pub fn init(cx: &mut App) {
     AgentSettings::register(cx);
@@ -184,16 +183,6 @@ impl Settings for AgentSettings {
             expand_terminal_card: agent.expand_terminal_card.unwrap(),
             use_modifier_to_send: agent.use_modifier_to_send.unwrap(),
             message_editor_min_lines: agent.message_editor_min_lines.unwrap(),
-        }
-    }
-
-    fn import_from_vscode(vscode: &settings::VsCodeSettings, current: &mut SettingsContent) {
-        if let Some(b) = vscode
-            .read_value("chat.agent.enabled")
-            .and_then(|b| b.as_bool())
-        {
-            current.agent.get_or_insert_default().enabled = Some(b);
-            current.agent.get_or_insert_default().button = Some(b);
         }
     }
 }

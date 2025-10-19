@@ -9,7 +9,9 @@ use html5ever::{ParseOpts, local_name, parse_document, tendril::TendrilSink};
 use language::LanguageRegistry;
 use markup5ever_rcdom::RcDom;
 use pulldown_cmark::{Alignment, Event, Options, Parser, Tag, TagEnd};
-use std::{cell::RefCell, collections::HashMap, ops::Range, path::PathBuf, rc::Rc, sync::Arc, vec};
+use std::{
+    cell::RefCell, collections::HashMap, mem, ops::Range, path::PathBuf, rc::Rc, sync::Arc, vec,
+};
 
 pub async fn parse_markdown(
     markdown_input: &str,
@@ -290,18 +292,16 @@ impl<'a> MarkdownParser<'a> {
                         finder.kinds(&[linkify::LinkKind::Url]);
                         let mut last_link_len = prev_len;
                         for link in finder.links(t) {
-                            let start = link.start();
-                            let end = link.end();
-                            let range = (prev_len + start)..(prev_len + end);
+                            let start = prev_len + link.start();
+                            let end = prev_len + link.end();
+                            let range = start..end;
                             link_ranges.push(range.clone());
                             link_urls.push(link.as_str().to_string());
 
                             // If there is a style before we match a link, we have to add this to the highlighted ranges
-                            if style != MarkdownHighlightStyle::default()
-                                && last_link_len < link.start()
-                            {
+                            if style != MarkdownHighlightStyle::default() && last_link_len < start {
                                 highlights.push((
-                                    last_link_len..link.start(),
+                                    last_link_len..start,
                                     MarkdownHighlight::Style(style.clone()),
                                 ));
                             }
@@ -374,15 +374,11 @@ impl<'a> MarkdownParser<'a> {
                         if !text.is_empty() {
                             let parsed_regions = MarkdownParagraphChunk::Text(ParsedMarkdownText {
                                 source_range: source_range.clone(),
-                                contents: text.into(),
-                                highlights: highlights.clone(),
-                                region_ranges: region_ranges.clone(),
-                                regions: regions.clone(),
+                                contents: mem::take(&mut text).into(),
+                                highlights: mem::take(&mut highlights),
+                                region_ranges: mem::take(&mut region_ranges),
+                                regions: mem::take(&mut regions),
                             });
-                            text = String::new();
-                            highlights = vec![];
-                            region_ranges = vec![];
-                            regions = vec![];
                             markdown_text_like.push(parsed_regions);
                         }
                         image = Image::identify(
@@ -407,6 +403,9 @@ impl<'a> MarkdownParser<'a> {
                         if let Some(mut image) = image.take() {
                             if !text.is_empty() {
                                 image.set_alt_text(std::mem::take(&mut text).into());
+                                mem::take(&mut highlights);
+                                mem::take(&mut region_ranges);
+                                mem::take(&mut regions);
                             }
                             markdown_text_like.push(MarkdownParagraphChunk::Image(image));
                         }
@@ -1338,17 +1337,40 @@ mod tests {
             panic!("Expected a paragraph");
         };
         assert_eq!(
-            paragraph[0],
-            MarkdownParagraphChunk::Image(Image {
-                source_range: 0..111,
-                link: Link::Web {
-                    url: "https://blog.logrocket.com/wp-content/uploads/2024/04/exploring-zed-open-source-code-editor-rust-2.png".to_string(),
-                },
-                alt_text: Some("test".into()),
-                height: None,
-                width: None,
-            },)
-        );
+                paragraph[0],
+                MarkdownParagraphChunk::Image(Image {
+                    source_range: 0..111,
+                    link: Link::Web {
+                        url: "https://blog.logrocket.com/wp-content/uploads/2024/04/exploring-zed-open-source-code-editor-rust-2.png".to_string(),
+                    },
+                    alt_text: Some("test".into()),
+                    height: None,
+                    width: None,
+                },)
+            );
+    }
+
+    #[gpui::test]
+    async fn test_image_alt_text() {
+        let parsed = parse("[![Zed](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/zed-industries/zed/main/assets/badge/v0.json)](https://zed.dev)\n ").await;
+
+        let paragraph = if let ParsedMarkdownElement::Paragraph(text) = &parsed.children[0] {
+            text
+        } else {
+            panic!("Expected a paragraph");
+        };
+        assert_eq!(
+                    paragraph[0],
+                    MarkdownParagraphChunk::Image(Image {
+                        source_range: 0..142,
+                        link: Link::Web {
+                            url: "https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/zed-industries/zed/main/assets/badge/v0.json".to_string(),
+                        },
+                        alt_text: Some("Zed".into()),
+                        height: None,
+                        width: None,
+                    },)
+                );
     }
 
     #[gpui::test]

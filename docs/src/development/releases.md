@@ -40,7 +40,7 @@ This is mostly a formality on Wednesday's minor update releases, but can be bene
 1. Check the release assets.
 
    - Ensure the stable and preview release jobs have finished without error.
-   - Ensure each draft has the proper number of assets—releases currently have 10 assets each.
+   - Ensure each draft has the proper number of assets—releases currently have 11 assets each.
    - Download the artifacts for each release draft and test that you can run them locally.
 
 1. Publish the drafts.

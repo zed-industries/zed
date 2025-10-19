@@ -37,7 +37,7 @@ In any case, here are some of the ones available:
 Creating an extension is not the only way to use MCP servers in Zed.
 You can connect them by adding their commands directly to your `settings.json`, like so:
 
-```json
+```json [settings]
 {
   "context_servers": {
     "your-mcp-server": {
@@ -79,7 +79,7 @@ However, if you want to ensure a given MCP server will be used, you can create [
 
 As an example, [the Dagger team suggests](https://container-use.com/agent-integrations#zed) doing that with their [Container Use MCP server](https://zed.dev/extensions/mcp-server-container-use):
 
-```json
+```json [settings]
 "agent": {
   "profiles": {
     "container-use": {

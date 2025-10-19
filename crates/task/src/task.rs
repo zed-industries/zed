@@ -9,6 +9,7 @@ mod task_template;
 mod vscode_debug_format;
 mod vscode_format;
 
+use anyhow::Context as _;
 use collections::{HashMap, HashSet, hash_map};
 use gpui::SharedString;
 use schemars::JsonSchema;
@@ -354,11 +355,43 @@ impl Shell {
         }
     }
 
-    pub fn shell_kind(&self) -> ShellKind {
+    pub fn shell_kind(&self, is_windows: bool) -> ShellKind {
         match self {
-            Shell::Program(program) => ShellKind::new(program),
-            Shell::WithArguments { program, .. } => ShellKind::new(program),
+            Shell::Program(program) => ShellKind::new(program, is_windows),
+            Shell::WithArguments { program, .. } => ShellKind::new(program, is_windows),
             Shell::System => ShellKind::system(),
+        }
+    }
+
+    pub fn from_proto(proto: proto::Shell) -> anyhow::Result<Self> {
+        let shell_type = proto.shell_type.context("invalid shell type")?;
+        let shell = match shell_type {
+            proto::shell::ShellType::System(_) => Self::System,
+            proto::shell::ShellType::Program(program) => Self::Program(program),
+            proto::shell::ShellType::WithArguments(program) => Self::WithArguments {
+                program: program.program,
+                args: program.args,
+                title_override: None,
+            },
+        };
+        Ok(shell)
+    }
+
+    pub fn to_proto(self) -> proto::Shell {
+        let shell_type = match self {
+            Shell::System => proto::shell::ShellType::System(proto::System {}),
+            Shell::Program(program) => proto::shell::ShellType::Program(program),
+            Shell::WithArguments {
+                program,
+                args,
+                title_override: _,
+            } => proto::shell::ShellType::WithArguments(proto::shell::WithArguments {
+                program,
+                args,
+            }),
+        };
+        proto::Shell {
+            shell_type: Some(shell_type),
         }
     }
 }

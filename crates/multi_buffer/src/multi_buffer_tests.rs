@@ -157,15 +157,12 @@ fn test_excerpt_boundaries_and_clipping(cx: &mut App) {
         events.read().as_slice(),
         &[
             Event::Edited {
-                singleton_buffer_edited: false,
                 edited_buffer: None,
             },
             Event::Edited {
-                singleton_buffer_edited: false,
                 edited_buffer: None,
             },
             Event::Edited {
-                singleton_buffer_edited: false,
                 edited_buffer: None,
             }
         ]
@@ -800,7 +797,13 @@ async fn test_set_anchored_excerpts_for_path(cx: &mut TestAppContext) {
     let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
     let anchor_ranges_1 = multibuffer
         .update(cx, |multibuffer, cx| {
-            multibuffer.set_anchored_excerpts_for_path(buffer_1.clone(), ranges_1, 2, cx)
+            multibuffer.set_anchored_excerpts_for_path(
+                PathKey::for_buffer(&buffer_1, cx),
+                buffer_1.clone(),
+                ranges_1,
+                2,
+                cx,
+            )
         })
         .await;
     let snapshot_1 = multibuffer.update(cx, |multibuffer, cx| multibuffer.snapshot(cx));
@@ -817,7 +820,13 @@ async fn test_set_anchored_excerpts_for_path(cx: &mut TestAppContext) {
     );
     let anchor_ranges_2 = multibuffer
         .update(cx, |multibuffer, cx| {
-            multibuffer.set_anchored_excerpts_for_path(buffer_2.clone(), ranges_2, 2, cx)
+            multibuffer.set_anchored_excerpts_for_path(
+                PathKey::for_buffer(&buffer_2, cx),
+                buffer_2.clone(),
+                ranges_2,
+                2,
+                cx,
+            )
         })
         .await;
     let snapshot_2 = multibuffer.update(cx, |multibuffer, cx| multibuffer.snapshot(cx));

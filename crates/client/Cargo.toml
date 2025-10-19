@@ -57,7 +57,6 @@ tokio-socks = { version = "0.5.2", default-features = false, features = ["future
 tokio.workspace = true
 url.workspace = true
 util.workspace = true
-workspace-hack.workspace = true
 worktree.workspace = true
 
 [dev-dependencies]

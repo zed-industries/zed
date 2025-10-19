@@ -9,6 +9,7 @@ pub mod text_similarity;
 
 use std::{path::Path, sync::Arc};
 
+use cloud_llm_client::predict_edits_v3;
 use collections::HashMap;
 use gpui::{App, AppContext as _, Entity, Task};
 use language::BufferSnapshot;
@@ -21,9 +22,12 @@ pub use imports::*;
 pub use reference::*;
 pub use syntax_index::*;
 
+pub use predict_edits_v3::Line;
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct EditPredictionContextOptions {
     pub use_imports: bool,
+    pub use_references: bool,
     pub excerpt: EditPredictionExcerptOptions,
     pub score: EditPredictionScoreOptions,
 }
@@ -32,7 +36,7 @@ pub struct EditPredictionContextOptions {
 pub struct EditPredictionContext {
     pub excerpt: EditPredictionExcerpt,
     pub excerpt_text: EditPredictionExcerptText,
-    pub cursor_offset_in_excerpt: usize,
+    pub cursor_point: Point,
     pub declarations: Vec<ScoredDeclaration>,
 }
 
@@ -113,21 +117,23 @@ impl EditPredictionContext {
             index_state,
         )?;
         let excerpt_text = excerpt.text(buffer);
-        let excerpt_occurrences = text_similarity::Occurrences::within_string(&excerpt_text.body);
 
-        let adjacent_start = Point::new(cursor_point.row.saturating_sub(2), 0);
-        let adjacent_end = Point::new(cursor_point.row + 1, 0);
-        let adjacent_occurrences = text_similarity::Occurrences::within_string(
-            &buffer
-                .text_for_range(adjacent_start..adjacent_end)
-                .collect::<String>(),
-        );
+        let declarations = if options.use_references
+            && let Some(index_state) = index_state
+        {
+            let excerpt_occurrences =
+                text_similarity::Occurrences::within_string(&excerpt_text.body);
 
-        let cursor_offset_in_file = cursor_point.to_offset(buffer);
-        // TODO fix this to not need saturating_sub
-        let cursor_offset_in_excerpt = cursor_offset_in_file.saturating_sub(excerpt.range.start);
+            let adjacent_start = Point::new(cursor_point.row.saturating_sub(2), 0);
+            let adjacent_end = Point::new(cursor_point.row + 1, 0);
+            let adjacent_occurrences = text_similarity::Occurrences::within_string(
+                &buffer
+                    .text_for_range(adjacent_start..adjacent_end)
+                    .collect::<String>(),
+            );
 
-        let declarations = if let Some(index_state) = index_state {
+            let cursor_offset_in_file = cursor_point.to_offset(buffer);
+
             let references = get_references(&excerpt, &excerpt_text, buffer);
 
             scored_declarations(
@@ -148,7 +154,7 @@ impl EditPredictionContext {
         Some(Self {
             excerpt,
             excerpt_text,
-            cursor_offset_in_excerpt,
+            cursor_point,
             declarations,
         })
     }
@@ -194,6 +200,7 @@ mod tests {
                     buffer_snapshot,
                     EditPredictionContextOptions {
                         use_imports: true,
+                        use_references: true,
                         excerpt: EditPredictionExcerptOptions {
                             max_bytes: 60,
                             min_bytes: 10,

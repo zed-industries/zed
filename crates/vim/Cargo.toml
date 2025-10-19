@@ -26,6 +26,7 @@ db.workspace = true
 editor.workspace = true
 env_logger.workspace = true
 futures.workspace = true
+fuzzy.workspace = true
 gpui.workspace = true
 itertools.workspace = true
 language.workspace = true
@@ -52,7 +53,6 @@ util_macros.workspace = true
 vim_mode_setting.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
-workspace-hack.workspace = true
 
 [dev-dependencies]
 assets.workspace = true
