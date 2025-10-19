@@ -275,12 +275,12 @@ pub fn init(languages: Arc<LanguageRegistry>, fs: Arc<dyn Fs>, node: NodeRuntime
     languages.register_available_lsp_adapter(py_lsp_adapter.name(), py_lsp_adapter);
     languages.register_available_lsp_adapter(ty_lsp_adapter.name(), ty_lsp_adapter);
     languages.register_available_lsp_adapter(
-        LanguageServerName("basedpyright".into()),
-        Arc::new(BasedPyrightLspAdapter::new(node.clone())),
+        basedpyright_lsp_adapter.name(),
+        basedpyright_lsp_adapter.clone(),
     );
     languages.register_available_lsp_adapter(
-        LanguageServerName("ruff".into()),
-        Arc::new(RuffLspAdapter::new(fs.clone())),
+        ruff_lsp_adapter.name(),
+        ruff_lsp_adapter.clone(),
     );
     // NEW: expose pyrefly so users can select it in settings
     languages.register_available_lsp_adapter(
