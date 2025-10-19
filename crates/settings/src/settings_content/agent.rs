@@ -68,10 +68,6 @@ pub struct AgentSettingsContent {
     ///
     /// Default: false
     pub play_sound_when_agent_done: Option<bool>,
-    /// Whether to stream edits from the agent as they are received.
-    ///
-    /// Default: false
-    pub stream_edits: Option<bool>,
     /// Whether to display agent edits in single-file editors in addition to the review multibuffer pane.
     ///
     /// Default: true
