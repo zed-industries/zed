@@ -27,7 +27,7 @@ use language::{Anchor, Buffer, Capability, OffsetRangeExt};
 use multi_buffer::{MultiBuffer, PathKey};
 use project::{
     Project, ProjectPath,
-    git_store::{GitStore, GitStoreEvent, Repository},
+    git_store::{GitStore, GitStoreEvent, Repository, RepositoryEvent},
 };
 use settings::{Settings, SettingsStore};
 use std::any::{Any, TypeId};
@@ -179,7 +179,11 @@ impl ProjectDiff {
             window,
             move |this, _git_store, event, _window, _cx| match event {
                 GitStoreEvent::ActiveRepositoryChanged(_)
-                | GitStoreEvent::RepositoryUpdated(_, _, true)
+                | GitStoreEvent::RepositoryUpdated(
+                    _,
+                    RepositoryEvent::StatusesChanged { full_scan: _ },
+                    true,
+                )
                 | GitStoreEvent::ConflictsUpdated => {
                     dbg!();
                     *this.update_needed.borrow_mut() = ();
@@ -394,6 +398,7 @@ impl ProjectDiff {
                     .update(cx, |project, cx| project.open_buffer(project_path, cx));
 
                 let project = self.project.clone();
+                let this = this.clone();
                 result.push(cx.spawn(async move |_, cx| {
                     let buffer = load_buffer.await?;
                     let changes = project
@@ -401,13 +406,13 @@ impl ProjectDiff {
                             project.open_uncommitted_diff(buffer.clone(), cx)
                         })?
                         .await?;
-                    let subscription = cx.subscribe_in(&changes, |_, _, window, cx| {
-                        this.update(cx, |this, cx| {
-                            // FIXME can we do this more fine-grained?
-                            *this.update_needed.borrow_mut() = true;
+                    let subscription = cx.subscribe(&changes, move |_, _, cx| {
+                        this.update(cx, |this, _| {
+                            // TODO may be able to do a more fine-grained update
+                            *this.update_needed.borrow_mut() = ();
                         })
                         .ok();
-                    });
+                    })?;
                     Ok(DiffBuffer {
                         path_key,
                         buffer,
@@ -432,10 +437,9 @@ impl ProjectDiff {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        dbg!();
-        let path_key = diff_buffer.path_key;
-        let buffer = diff_buffer.buffer;
-        let diff = diff_buffer.diff;
+        let path_key = diff_buffer.path_key.clone();
+        let buffer = diff_buffer.buffer.clone();
+        let diff = diff_buffer.diff.clone();
 
         let conflict_addon = self
             .editor
