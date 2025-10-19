@@ -1013,7 +1013,7 @@ impl Dispatch<WlCallback, ObjectId> for WaylandClientStatePtr {
     }
 }
 
-fn get_window(
+pub(crate) fn get_window(
     mut state: &mut RefMut<WaylandClientState>,
     surface_id: &ObjectId,
 ) -> Option<WaylandWindowStatePtr> {

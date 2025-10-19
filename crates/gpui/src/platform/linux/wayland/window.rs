@@ -26,7 +26,7 @@ use crate::{
     AnyWindowHandle, Bounds, Decorations, Globals, GpuSpecs, Modifiers, Output, Pixels,
     PlatformDisplay, PlatformInput, Point, PromptButton, PromptLevel, RequestFrameOptions,
     ResizeEdge, Size, Tiling, WaylandClientStatePtr, WindowAppearance, WindowBackgroundAppearance,
-    WindowBounds, WindowControlArea, WindowControls, WindowDecorations, WindowParams,
+    WindowBounds, WindowControlArea, WindowControls, WindowDecorations, WindowParams, get_window,
     layer_shell::LayerShellNotSupportedError, px, size,
 };
 use crate::{
@@ -414,9 +414,6 @@ impl Drop for WaylandWindow {
         let surface_id = state.surface.id();
         let client = state.client.clone();
 
-        #[allow(clippy::mutable_key_type)]
-        let childrens = state.children.clone();
-
         state.renderer.destroy();
 
         // Destroy blur first, this has no dependencies.
@@ -449,9 +446,6 @@ impl Drop for WaylandWindow {
             .executor
             .spawn(async move {
                 state_ptr.close();
-                for children in childrens {
-                    client.drop_window(&children);
-                }
                 client.drop_window(&surface_id)
             })
             .detach();
@@ -932,6 +926,21 @@ impl WaylandWindowStatePtr {
     }
 
     pub fn close(&self) {
+        let state = self.state.borrow();
+        let client = state.client.get_client();
+        #[allow(clippy::mutable_key_type)]
+        let childrens = state.children.clone();
+        drop(state);
+
+        for children in childrens {
+            let mut client_state = client.borrow_mut();
+            let window = get_window(&mut client_state, &children);
+            drop(client_state);
+
+            if let Some(children) = window {
+                children.close();
+            }
+        }
         let mut callbacks = self.callbacks.borrow_mut();
         if let Some(fun) = callbacks.close.take() {
             fun()
