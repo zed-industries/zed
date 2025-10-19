@@ -5,8 +5,8 @@ use async_trait::async_trait;
 use call::ActiveCall;
 use collections::{BTreeMap, HashMap};
 use editor::Bias;
-use encoding_rs::UTF_8;
-use fs::{FakeFs, Fs as _, encodings::EncodingWrapper};
+use encodings::Encoding;
+use fs::{FakeFs, Fs as _};
 use git::status::{FileStatus, StatusCode, TrackedStatus, UnmergedStatus, UnmergedStatusCode};
 use gpui::{BackgroundExecutor, Entity, TestAppContext};
 use language::{
@@ -944,7 +944,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                             &path,
                             &Rope::from_str_small(content.as_str()),
                             text::LineEnding::Unix,
-                            EncodingWrapper::new(UTF_8),
+                            Encoding::default(),
                         )
                         .await
                         .unwrap();

@@ -7,8 +7,8 @@ use std::{
 
 use anyhow::{Context as _, Result, anyhow};
 use collections::{HashMap, HashSet};
-use encoding_rs::UTF_8;
-use fs::{Fs, encodings::EncodingWrapper};
+use encodings::Encoding;
+use fs::Fs;
 use futures::{
     FutureExt,
     future::{self, Shared},
@@ -982,12 +982,12 @@ async fn save_prettier_server_file(
     executor: &BackgroundExecutor,
 ) -> anyhow::Result<()> {
     let prettier_wrapper_path = default_prettier_dir().join(prettier::PRETTIER_SERVER_FILE);
-    let encoding_wrapper = EncodingWrapper::new(UTF_8);
+    let encoding = Encoding::default();
     fs.save(
         &prettier_wrapper_path,
         &text::Rope::from_str(prettier::PRETTIER_SERVER_JS, executor),
         text::LineEnding::Unix,
-        encoding_wrapper,
+        encoding,
     )
     .await
     .with_context(|| {

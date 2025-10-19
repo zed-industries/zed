@@ -1,7 +1,6 @@
 #[cfg(target_os = "macos")]
 mod mac_watcher;
 
-pub mod encodings;
 #[cfg(not(target_os = "macos"))]
 pub mod fs_watcher;
 
@@ -9,7 +8,7 @@ use anyhow::{Context as _, Result, anyhow};
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use ashpd::desktop::trash;
 use futures::stream::iter;
-use encoding_rs::Encoding;
+use encodings::Encoding;
 use gpui::App;
 use gpui::BackgroundExecutor;
 use gpui::Global;
@@ -62,9 +61,9 @@ use std::ffi::OsStr;
 
 #[cfg(any(test, feature = "test-support"))]
 pub use fake_git_repo::{LOAD_HEAD_TEXT_TASK, LOAD_INDEX_TEXT_TASK};
-use crate::encodings::EncodingWrapper;
-use crate::encodings::from_utf8;
-use crate::encodings::to_utf8;
+use encodings::Encoding;
+use encodings::from_utf8;
+use encodings::to_utf8;
 
 pub trait Watcher: Send + Sync {
     fn add(&self, path: &Path) -> Result<()>;
@@ -124,10 +123,10 @@ pub trait Fs: Send + Sync {
     async fn load_with_encoding(
         &self,
         path: &Path,
-        encoding: EncodingWrapper,
+        encoding: Encoding,
         force: bool,
         detect_utf16: bool,
-        buffer_encoding: Option<Arc<std::sync::Mutex<&'static Encoding>>>,
+        buffer_encoding: Option<Arc<Encoding>>,
     ) -> Result<String> {
         Ok(to_utf8(
             self.load_bytes(path).await?,
@@ -146,7 +145,7 @@ pub trait Fs: Send + Sync {
         path: &Path,
         text: &Rope,
         line_ending: LineEnding,
-        encoding: EncodingWrapper,
+        encoding: Encoding,
     ) -> Result<()>;
     async fn write(&self, path: &Path, content: &[u8]) -> Result<()>;
     async fn canonicalize(&self, path: &Path) -> Result<PathBuf>;
@@ -693,7 +692,7 @@ impl Fs for RealFs {
         path: &Path,
         text: &Rope,
         line_ending: LineEnding,
-        encoding: EncodingWrapper,
+        encoding: Encoding,
     ) -> Result<()> {
         let buffer_size = text.summary().len.min(10 * 1024);
         if let Some(path) = path.parent() {
@@ -704,18 +703,18 @@ impl Fs for RealFs {
 
         // BOM for UTF-16 is written at the start of the file here because
         // if BOM is written in the `encode` function of `fs::encodings`, it would be written
-        // for every chunk, resulting in multiple BOMs in the file.
-        if encoding.get_encoding() == encoding_rs::UTF_16BE {
+        // twice. Hence, it is written only here.
+        if encoding.get() == encodings::UTF_16BE {
             // Write BOM for UTF-16BE
             writer.write_all(&[0xFE, 0xFF]).await?;
-        } else if encoding.get_encoding() == encoding_rs::UTF_16LE {
+        } else if encoding.get() == encodings::UTF_16LE {
             // Write BOM for UTF-16LE
             writer.write_all(&[0xFF, 0xFE]).await?;
         }
 
         for chunk in chunks(text, line_ending) {
             writer
-                .write_all(&from_utf8(chunk.to_string(), encoding.clone()).await?)
+                .write_all(&from_utf8(chunk.to_string(), Encoding::new(encoding.get())).await?)
                 .await?
         }
 
@@ -2435,9 +2434,9 @@ impl Fs for FakeFs {
         path: &Path,
         text: &Rope,
         line_ending: LineEnding,
-        encoding: EncodingWrapper,
+        encoding: Encoding,
     ) -> Result<()> {
-        use crate::encodings::from_utf8;
+        use encodings::from_utf8;
 
         self.simulate_random_delay().await;
         let path = normalize_path(path);

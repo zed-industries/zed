@@ -12,8 +12,8 @@ use buffer_diff::{
     BufferDiffEvent, CALCULATE_DIFF_TASK, DiffHunkSecondaryStatus, DiffHunkStatus,
     DiffHunkStatusKind, assert_hunks,
 };
-use encoding_rs::UTF_8;
-use fs::{FakeFs, encodings::EncodingWrapper};
+use encodings::{Encoding, UTF_8};
+use fs::FakeFs;
 use futures::{StreamExt, future};
 use git::{
     GitHostingProviderRegistry,
@@ -1461,13 +1461,13 @@ async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppCon
     .await
     .unwrap();
 
-    let encoding_wrapper = EncodingWrapper::new(UTF_8);
+    let encoding = Encoding::default();
 
     fs.save(
         path!("/the-root/Cargo.lock").as_ref(),
         &Rope::default(),
         Default::default(),
-        encoding_wrapper.clone(),
+        encoding.clone(),
     )
     .await
     .unwrap();
@@ -1475,7 +1475,7 @@ async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppCon
         path!("/the-stdlib/LICENSE").as_ref(),
         &Rope::default(),
         Default::default(),
-        encoding_wrapper.clone(),
+        encoding.clone(),
     )
     .await
     .unwrap();
@@ -1483,7 +1483,7 @@ async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppCon
         path!("/the/stdlib/src/string.rs").as_ref(),
         &Rope::default(),
         Default::default(),
-        encoding_wrapper,
+        encoding,
     )
     .await
     .unwrap();
@@ -4075,7 +4075,7 @@ async fn test_file_changes_multiple_times_on_disk(cx: &mut gpui::TestAppContext)
     // the next file change occurs.
     cx.executor().deprioritize(*language::BUFFER_DIFF_TASK);
 
-    let encoding_wrapper = EncodingWrapper::new(UTF_8);
+    let encoding = Encoding::default();
 
     // Change the buffer's file on disk, and then wait for the file change
     // to be detected by the worktree, so that the buffer starts reloading.
@@ -4083,7 +4083,7 @@ async fn test_file_changes_multiple_times_on_disk(cx: &mut gpui::TestAppContext)
         path!("/dir/file1").as_ref(),
         &Rope::from_str("the first contents", cx.background_executor()),
         Default::default(),
-        encoding_wrapper.clone(),
+        encoding.clone(),
     )
     .await
     .unwrap();
@@ -4095,7 +4095,7 @@ async fn test_file_changes_multiple_times_on_disk(cx: &mut gpui::TestAppContext)
         path!("/dir/file1").as_ref(),
         &Rope::from_str("the second contents", cx.background_executor()),
         Default::default(),
-        encoding_wrapper,
+        encoding,
     )
     .await
     .unwrap();
@@ -4134,7 +4134,7 @@ async fn test_edit_buffer_while_it_reloads(cx: &mut gpui::TestAppContext) {
     // the next file change occurs.
     cx.executor().deprioritize(*language::BUFFER_DIFF_TASK);
 
-    let encoding_wrapper = EncodingWrapper::new(UTF_8);
+    let encoding = Encoding::new(UTF_8);
 
     // Change the buffer's file on disk, and then wait for the file change
     // to be detected by the worktree, so that the buffer starts reloading.
@@ -4142,7 +4142,7 @@ async fn test_edit_buffer_while_it_reloads(cx: &mut gpui::TestAppContext) {
         path!("/dir/file1").as_ref(),
         &Rope::from_str("the first contents", cx.background_executor()),
         Default::default(),
-        encoding_wrapper,
+        encoding,
     )
     .await
     .unwrap();
@@ -4818,13 +4818,13 @@ async fn test_buffer_file_changes_on_disk(cx: &mut gpui::TestAppContext) {
     let (new_contents, new_offsets) =
         marked_text_offsets("oneˇ\nthree ˇFOURˇ five\nsixtyˇ seven\n");
 
-    let encoding_wrapper = EncodingWrapper::new(UTF_8);
+    let encoding = Encoding::new(UTF_8);
 
     fs.save(
         path!("/dir/the-file").as_ref(),
         &Rope::from_str(new_contents.as_str(), cx.background_executor()),
         LineEnding::Unix,
-        encoding_wrapper,
+        encoding,
     )
     .await
     .unwrap();
@@ -4852,14 +4852,14 @@ async fn test_buffer_file_changes_on_disk(cx: &mut gpui::TestAppContext) {
         assert!(!buffer.has_conflict());
     });
 
-    let encoding_wrapper = EncodingWrapper::new(UTF_8);
+    let encoding = Encoding::new(UTF_8);
 
     // Change the file on disk again, adding blank lines to the beginning.
     fs.save(
         path!("/dir/the-file").as_ref(),
         &Rope::from_str("\n\n\nAAAA\naaa\nBB\nbbbbb\n", cx.background_executor()),
         LineEnding::Unix,
-        encoding_wrapper,
+        encoding,
     )
     .await
     .unwrap();
@@ -4906,7 +4906,7 @@ async fn test_buffer_line_endings(cx: &mut gpui::TestAppContext) {
         assert_eq!(buffer.line_ending(), LineEnding::Windows);
     });
 
-    let encoding_wrapper = EncodingWrapper::new(UTF_8);
+    let encoding = Encoding::new(UTF_8);
 
     // Change a file's line endings on disk from unix to windows. The buffer's
     // state updates correctly.
@@ -4914,7 +4914,7 @@ async fn test_buffer_line_endings(cx: &mut gpui::TestAppContext) {
         path!("/dir/file1").as_ref(),
         &Rope::from_str("aaa\nb\nc\n", cx.background_executor()),
         LineEnding::Windows,
-        encoding_wrapper,
+        encoding,
     )
     .await
     .unwrap();

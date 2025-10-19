@@ -12,7 +12,7 @@ use async_tar::Archive;
 use client::ExtensionProvides;
 use client::{Client, ExtensionMetadata, GetExtensionsResponse, proto, telemetry::Telemetry};
 use collections::{BTreeMap, BTreeSet, HashMap, HashSet, btree_map};
-use encoding_rs::UTF_8;
+use encodings::Encoding;
 pub use extension::ExtensionManifest;
 use extension::extension_builder::{CompileExtensionOptions, ExtensionBuilder};
 use extension::{
@@ -21,7 +21,6 @@ use extension::{
     ExtensionLanguageServerProxy, ExtensionSlashCommandProxy, ExtensionSnippetProxy,
     ExtensionThemeProxy,
 };
-use fs::encodings::EncodingWrapper;
 use fs::{Fs, RemoveOptions};
 use futures::future::join_all;
 use futures::{
@@ -1508,7 +1507,7 @@ impl ExtensionStore {
                     &index_path,
                     &Rope::from_str(&index_json, &executor),
                     Default::default(),
-                    EncodingWrapper::new(UTF_8),
+                    Encoding::default(),
                 )
                 .await
                 .context("failed to save extension index")
@@ -1681,7 +1680,7 @@ impl ExtensionStore {
                     &tmp_dir.join(EXTENSION_TOML),
                     &Rope::from_str_small(&manifest_toml),
                     language::LineEnding::Unix,
-                    EncodingWrapper::new(UTF_8),
+                    Encoding::default(),
                 )
                 .await?;
             } else {

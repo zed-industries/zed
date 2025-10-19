@@ -358,7 +358,7 @@ impl Render for FileDiffView {
 mod tests {
     use super::*;
     use editor::test::editor_test_context::assert_state_with_diff;
-    use encoding_rs::UTF_8;
+    use encodings::Encoding;
     use gpui::TestAppContext;
     use language::Rope;
     use project::{FakeFs, Fs, Project};
@@ -442,7 +442,7 @@ mod tests {
                 ",
             )),
             Default::default(),
-            EncodingWrapper::new(UTF_8),
+            Encoding::default(),
         )
         .await
         .unwrap();
@@ -477,7 +477,7 @@ mod tests {
                 ",
             )),
             Default::default(),
-            EncodingWrapper::new(UTF_8),
+            Encoding::default(),
         )
         .await
         .unwrap();

@@ -7,9 +7,9 @@ use crate::{
 use anyhow::{Context as _, Result, anyhow};
 use client::Client;
 use collections::{HashMap, HashSet, hash_map};
+use encodings::Encoding;
 use fs::Fs;
 use futures::{Future, FutureExt as _, StreamExt, channel::oneshot, future::Shared};
-use fs::{Fs, encodings::EncodingWrapper};
 use gpui::{
     App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Subscription, Task, WeakEntity,
 };
@@ -398,13 +398,7 @@ impl LocalBufferStore {
         }
 
         let save = worktree.update(cx, |worktree, cx| {
-            worktree.write_file(
-                path.as_ref(),
-                text,
-                line_ending,
-                cx,
-                &encoding.lock().unwrap(),
-            )
+            worktree.write_file(path.as_ref(), text, line_ending, cx, (*encoding).clone())
         });
 
         cx.spawn(async move |this, cx| {
@@ -634,7 +628,7 @@ impl LocalBufferStore {
         &self,
         path: Arc<RelPath>,
         worktree: Entity<Worktree>,
-        encoding: Option<EncodingWrapper>,
+        encoding: Option<Encoding>,
         force: bool,
         detect_utf16: bool,
         cx: &mut Context<BufferStore>,
@@ -643,8 +637,14 @@ impl LocalBufferStore {
             let reservation = cx.reserve_entity();
             let buffer_id = BufferId::from(reservation.entity_id().as_non_zero_u64());
 
-            let load_file_task =
-                worktree.load_file(path.as_ref(), encoding, force, detect_utf16, None, cx);
+            let load_file_task = worktree.load_file(
+                path.as_ref(),
+                encoding.clone(),
+                force,
+                detect_utf16,
+                None,
+                cx,
+            );
 
             cx.spawn(async move |_, cx| {
                 let loaded_file = load_file_task.await?;
@@ -681,13 +681,11 @@ impl LocalBufferStore {
                             entry_id: None,
                             is_local: true,
                             is_private: false,
-                            encoding: Some(Arc::new(std::sync::Mutex::new(
-                                if let Some(encoding) = encoding {
-                                    encoding.0
-                                } else {
-                                    encoding_rs::UTF_8
-                                },
-                            ))),
+                            encoding: Some(Arc::new(if let Some(encoding) = encoding {
+                                encoding
+                            } else {
+                                Encoding::default()
+                            })),
                         })),
                         Capability::ReadWrite,
                     )
@@ -845,7 +843,7 @@ impl BufferStore {
     pub fn open_buffer(
         &mut self,
         project_path: ProjectPath,
-        encoding: Option<EncodingWrapper>,
+        encoding: Option<Encoding>,
         force: bool,
         detect_utf16: bool,
         cx: &mut Context<Self>,

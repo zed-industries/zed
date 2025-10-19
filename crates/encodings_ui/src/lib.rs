@@ -120,7 +120,7 @@ impl EncodingIndicator {
         let editor = editor.read(cx);
         if let Some((_, buffer, _)) = editor.active_excerpt(cx) {
             let encoding = buffer.read(cx).encoding.clone();
-            self.encoding = Some(&*encoding.lock().unwrap());
+            self.encoding = Some(encoding.get());
 
             if let Some(_) = buffer.read(cx).file() {
                 self.show_save_or_reopen_selector = true;
@@ -140,7 +140,7 @@ impl EncodingIndicator {
         cx: &mut Context<EncodingIndicator>,
     ) {
         let encoding = buffer.read(cx).encoding.clone();
-        self.encoding = Some(&*encoding.lock().unwrap());
+        self.encoding = Some(encoding.get());
         cx.notify();
     }
 }

@@ -19,8 +19,8 @@ mod workspace_settings;
 
 pub use crate::notifications::NotificationFrame;
 pub use dock::Panel;
-use encoding_rs::UTF_8;
-use fs::encodings::EncodingWrapper;
+use encodings::Encoding;
+
 pub use path_list::PathList;
 pub use toast_layer::{ToastAction, ToastLayer, ToastView};
 
@@ -32,7 +32,7 @@ use client::{
 };
 use collections::{HashMap, HashSet, hash_map};
 use dock::{Dock, DockPosition, PanelButtons, PanelHandle, RESIZE_HANDLE_SIZE};
-use fs::encodings::EncodingOptions;
+use encodings::EncodingOptions;
 
 use futures::{
     Future, FutureExt, StreamExt,
@@ -625,7 +625,7 @@ type BuildProjectItemForPathFn =
     fn(
         &Entity<Project>,
         &ProjectPath,
-        Option<EncodingWrapper>,
+        Option<Encoding>,
         &mut Window,
         &mut App,
     ) -> Option<Task<Result<(Option<ProjectEntryId>, WorkspaceItemBuilder)>>>;
@@ -649,9 +649,9 @@ impl ProjectItemRegistry {
         self.build_project_item_for_path_fns
             .push(|project, project_path, encoding, window, cx| {
                 let project_path = project_path.clone();
-                let EncodingWrapper(encoding) = encoding.unwrap_or_default();
+                let encoding = encoding.unwrap_or_default();
 
-                project.update(cx, |project, _| {*project.encoding_options.encoding.lock().unwrap() = EncodingWrapper::new(encoding)});
+                project.update(cx, |project, _| {project.encoding_options.encoding.lock().unwrap().set(encoding.get())});
 
                 let is_file = project
                     .read(cx)
@@ -721,7 +721,7 @@ impl ProjectItemRegistry {
         &self,
         project: &Entity<Project>,
         path: &ProjectPath,
-        encoding: Option<EncodingWrapper>,
+        encoding: Option<Encoding>,
         window: &mut Window,
         cx: &mut App,
     ) -> Task<Result<(Option<ProjectEntryId>, WorkspaceItemBuilder)>> {
@@ -1945,9 +1945,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> Task<Result<()>> {
-        *self.encoding_options.force.get_mut() = false;
-        *self.encoding_options.detect_utf16.get_mut() = true;
-        *self.encoding_options.encoding.lock().unwrap() = EncodingWrapper::new(encoding_rs::UTF_8);
+        self.encoding_options.reset();
 
         let to_load = if let Some(pane) = pane.upgrade() {
             pane.update(cx, |pane, cx| {
@@ -3593,9 +3591,7 @@ impl Workspace {
         registry.open_path(
             project,
             &path,
-            Some(EncodingWrapper::new(
-                (self.encoding_options.encoding.lock().unwrap()).0,
-            )),
+            Some(self.encoding_options.encoding.lock().unwrap().clone()),
             window,
             cx,
         )
@@ -7622,12 +7618,11 @@ pub fn create_and_open_local_file(
         let fs = workspace.read_with(cx, |workspace, _| workspace.app_state().fs.clone())?;
         if !fs.is_file(path).await {
             fs.create_file(path, Default::default()).await?;
-            let encoding_wrapper = EncodingWrapper::new(UTF_8);
             fs.save(
                 path,
                 &default_content(),
                 Default::default(),
-                encoding_wrapper,
+                Default::default(),
             )
             .await?;
         }
