@@ -54,6 +54,7 @@ pretty_assertions.workspace = true
 project.workspace = true
 prompt_store.workspace = true
 regex.workspace = true
+rand.workspace = true
 release_channel.workspace = true
 reqwest_client.workspace = true
 serde.workspace = true

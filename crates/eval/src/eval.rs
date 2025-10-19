@@ -126,19 +126,20 @@ fn main() {
 
         let mut cumulative_tool_metrics = ToolMetrics::default();
 
-        let agent_model = load_model(&args.model, cx).unwrap();
-        let judge_model = load_model(&args.judge_model, cx).unwrap();
-
-        LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
-            registry.set_default_model(Some(agent_model.clone()), cx);
+        let tasks = LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
+            registry.providers().iter().map(|p| p.authenticate(cx)).collect::<Vec<_>>()
         });
 
-        let auth1 = agent_model.provider.authenticate(cx);
-        let auth2 = judge_model.provider.authenticate(cx);
-
         cx.spawn(async move |cx| {
-            auth1.await?;
-            auth2.await?;
+            future::join_all(tasks).await;
+            let (agent_model, judge_model) = cx.update(|cx| {
+                let agent_model = load_model(&args.model, cx).unwrap();
+                let judge_model = load_model(&args.judge_model, cx).unwrap();
+                LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
+                    registry.set_default_model(Some(agent_model.clone()), cx);
+                });
+                (agent_model, judge_model)
+            })?;
 
             let mut examples = Vec::new();
 
@@ -524,7 +525,6 @@ async fn judge_example(
             diff_evaluation = judge_output.diff.clone(),
             thread_evaluation = judge_output.thread,
             tool_metrics = run_output.tool_metrics,
-            response_count = run_output.response_count,
             token_usage = run_output.token_usage,
             model = model.telemetry_id(),
             model_provider = model.provider_id().to_string(),

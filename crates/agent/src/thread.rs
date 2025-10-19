@@ -1133,14 +1133,18 @@ impl Thread {
         Ok(())
     }
 
-    pub fn latest_token_usage(&self) -> Option<acp_thread::TokenUsage> {
+    pub fn latest_request_token_usage(&self) -> Option<language_model::TokenUsage> {
         let last_user_message = self.last_user_message()?;
         let tokens = self.request_token_usage.get(&last_user_message.id)?;
-        let model = self.model.clone()?;
+        Some(tokens.clone())
+    }
 
+    pub fn latest_token_usage(&self) -> Option<acp_thread::TokenUsage> {
+        let usage = self.latest_request_token_usage()?;
+        let model = self.model.clone()?;
         Some(acp_thread::TokenUsage {
             max_tokens: model.max_token_count_for_mode(self.completion_mode.into()),
-            used_tokens: tokens.total_tokens(),
+            used_tokens: usage.total_tokens(),
         })
     }
 

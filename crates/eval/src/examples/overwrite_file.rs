@@ -1,3 +1,4 @@
+use agent::{EditFileMode, EditFileToolInput};
 use agent_settings::AgentProfileId;
 use anyhow::Result;
 use async_trait::async_trait;
@@ -35,7 +36,7 @@ impl Example for FileOverwriteExample {
     }
 
     async fn conversation(&self, cx: &mut ExampleContext) -> Result<()> {
-        let response = cx.run_turns(1).await?;
+        let response = cx.resume_with_max_turns(1).await?;
         let file_overwritten = if let Some(tool_use) = response.find_tool_call("edit_file") {
             let input = tool_use.parse_input::<EditFileToolInput>()?;
             match input.mode {
