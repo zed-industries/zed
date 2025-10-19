@@ -26,13 +26,11 @@ mod project_tests;
 mod environment;
 use buffer_diff::BufferDiff;
 use context_server_store::ContextServerStore;
-use encoding_rs::Encoding;
+
+use encodings::EncodingOptions;
 pub use environment::ProjectEnvironmentEvent;
-use fs::encodings::EncodingOptions;
-use fs::encodings::EncodingWrapper;
 use git::repository::get_git_committer;
 use git_store::{Repository, RepositoryId};
-use std::sync::atomic::AtomicBool;
 
 pub mod search_history;
 mod yarn;
@@ -1230,11 +1228,7 @@ impl Project {
                 toolchain_store: Some(toolchain_store),
 
                 agent_location: None,
-                encoding_options: EncodingOptions {
-                    encoding: Arc::new(std::sync::Mutex::new(EncodingWrapper::default())),
-                    force: AtomicBool::new(false),
-                    detect_utf16: AtomicBool::new(true),
-                },
+                encoding_options: EncodingOptions::default(),
             }
         })
     }
@@ -1420,11 +1414,7 @@ impl Project {
 
                 toolchain_store: Some(toolchain_store),
                 agent_location: None,
-                encoding_options: EncodingOptions {
-                    encoding: Arc::new(std::sync::Mutex::new(EncodingWrapper::default())),
-                    force: AtomicBool::new(false),
-                    detect_utf16: AtomicBool::new(false),
-                },
+                encoding_options: EncodingOptions::default(),
             };
 
             // remote server -> local machine handlers
@@ -1678,12 +1668,7 @@ impl Project {
                 remotely_created_models: Arc::new(Mutex::new(RemotelyCreatedModels::default())),
                 toolchain_store: None,
                 agent_location: None,
-                encoding_options: EncodingOptions {
-                    encoding: Arc::new(std::sync::Mutex::new(EncodingWrapper::default())),
-
-                    force: AtomicBool::new(false),
-                    detect_utf16: AtomicBool::new(false),
-                },
+                encoding_options: EncodingOptions::default(),
             };
 
             project.set_role(role, cx);

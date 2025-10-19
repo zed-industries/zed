@@ -278,7 +278,6 @@ pub mod save_or_reopen {
 /// This module contains the encoding selector for choosing an encoding to save or reopen a file with.
 pub mod encoding {
     use editor::Editor;
-    use fs::encodings::EncodingWrapper;
     use std::{path::PathBuf, sync::atomic::AtomicBool};
 
     use fuzzy::{StringMatch, StringMatchCandidate};
@@ -449,8 +448,9 @@ pub mod encoding {
                 // By limiting the scope, we ensure that it is released
                 {
                     let buffer_encoding = buffer.encoding.clone();
-                    *buffer_encoding.lock().unwrap() =
-                        encoding_from_name(self.matches[self.current_selection].string.as_str());
+                    buffer_encoding.set(encoding_from_name(
+                        self.matches[self.current_selection].string.as_str(),
+                    ));
                 }
 
                 self.dismissed(window, cx);
@@ -481,8 +481,12 @@ pub mod encoding {
                         encoding_from_name(self.matches[self.current_selection].string.as_str());
 
                     let open_task = workspace.update(cx, |workspace, cx| {
-                        *workspace.encoding_options.encoding.lock().unwrap() =
-                            EncodingWrapper::new(encoding);
+                        workspace
+                            .encoding_options
+                            .encoding
+                            .lock()
+                            .unwrap()
+                            .set(encoding);
 
                         workspace.open_abs_path(path, OpenOptions::default(), window, cx)
                     });
@@ -510,7 +514,7 @@ pub mod encoding {
                         {
                             buffer
                                 .read_with(cx, |buffer, _| {
-                                    *buffer.encoding.lock().unwrap() = encoding;
+                                    buffer.encoding.set(encoding);
                                 })
                                 .log_err();
                         }

@@ -22,6 +22,12 @@ impl Debug for Encoding {
     }
 }
 
+impl Clone for Encoding {
+    fn clone(&self) -> Self {
+        Encoding(Mutex::new(self.get()))
+    }
+}
+
 impl Default for Encoding {
     fn default() -> Self {
         Encoding(Mutex::new(UTF_8))

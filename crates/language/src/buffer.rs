@@ -21,8 +21,8 @@ use anyhow::{Context as _, Result};
 use clock::Lamport;
 pub use clock::ReplicaId;
 use collections::HashMap;
-use encoding_rs::Encoding;
-use fs::{MTime, encodings::EncodingWrapper};
+use encodings::Encoding;
+use fs::MTime;
 use futures::channel::oneshot;
 use gpui::{
     App, AppContext as _, Context, Entity, EventEmitter, HighlightStyle, SharedString, StyledText,
@@ -127,7 +127,7 @@ pub struct Buffer {
     has_unsaved_edits: Cell<(clock::Global, bool)>,
     change_bits: Vec<rc::Weak<Cell<bool>>>,
     _subscriptions: Vec<gpui::Subscription>,
-    pub encoding: Arc<std::sync::Mutex<&'static Encoding>>,
+    pub encoding: Arc<Encoding>,
     pub observe_file_encoding: Option<gpui::Subscription>,
 }
 
@@ -375,7 +375,7 @@ pub trait File: Send + Sync + Any {
     /// Return whether Zed considers this to be a private file.
     fn is_private(&self) -> bool;
 
-    fn encoding(&self) -> Option<Arc<std::sync::Mutex<&'static Encoding>>> {
+    fn encoding(&self) -> Option<Arc<Encoding>> {
         unimplemented!()
     }
 }
@@ -422,10 +422,10 @@ pub trait LocalFile: File {
     fn load(
         &self,
         cx: &App,
-        encoding: EncodingWrapper,
+        encoding: Encoding,
         force: bool,
         detect_utf16: bool,
-        buffer_encoding: Option<Arc<std::sync::Mutex<&'static Encoding>>>,
+        buffer_encoding: Option<Arc<Encoding>>,
     ) -> Task<Result<String>>;
 
     /// Loads the file's contents from disk.
@@ -1029,7 +1029,7 @@ impl Buffer {
             has_conflict: false,
             change_bits: Default::default(),
             _subscriptions: Vec::new(),
-            encoding: Arc::new(std::sync::Mutex::new(encoding_rs::UTF_8)),
+            encoding: Arc::new(Encoding::new(encodings::UTF_8)),
             observe_file_encoding: None,
         }
     }
@@ -1365,7 +1365,8 @@ impl Buffer {
     /// Reloads the contents of the buffer from disk.
     pub fn reload(&mut self, cx: &Context<Self>) -> oneshot::Receiver<Option<Transaction>> {
         let (tx, rx) = futures::channel::oneshot::channel();
-        let encoding = EncodingWrapper::new(*(self.encoding.lock().unwrap()));
+        let encoding = self.encoding.clone();
+
         let buffer_encoding = self.encoding.clone();
 
         let prev_version = self.text.version();
@@ -1373,7 +1374,7 @@ impl Buffer {
             let Some((new_mtime, new_text)) = this.update(cx, |this, cx| {
                 let file = this.file.as_ref()?.as_local()?;
                 Some((file.disk_state().mtime(), {
-                    file.load(cx, encoding, false, true, Some(buffer_encoding))
+                    file.load(cx, (*encoding).clone(), false, true, Some(buffer_encoding))
                 }))
             })?
             else {
@@ -2929,9 +2930,9 @@ impl Buffer {
     pub fn update_encoding(&mut self) {
         if let Some(file) = self.file() {
             if let Some(encoding) = file.encoding() {
-                *self.encoding.lock().unwrap() = *encoding.lock().unwrap();
+                self.encoding.set(encoding.get());
             } else {
-                *self.encoding.lock().unwrap() = encoding_rs::UTF_8;
+                self.encoding.set(encodings::UTF_8);
             };
         }
     }
@@ -5236,10 +5237,10 @@ impl LocalFile for TestFile {
     fn load(
         &self,
         _cx: &App,
-        _encoding: EncodingWrapper,
+        _encoding: Encoding,
         _force: bool,
         _detect_utf16: bool,
-        _buffer_encoding: Option<Arc<std::sync::Mutex<&'static Encoding>>>,
+        _buffer_encoding: Option<Arc<Encoding>>,
     ) -> Task<Result<String>> {
         unimplemented!()
     }

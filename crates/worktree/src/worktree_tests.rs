@@ -3,8 +3,7 @@ use crate::{
     worktree_settings::WorktreeSettings,
 };
 use anyhow::Result;
-use encoding_rs::UTF_8;
-use fs::{FakeFs, Fs, RealFs, RemoveOptions, encodings::EncodingWrapper};
+use fs::{FakeFs, Fs, RealFs, RemoveOptions};
 use git::GITIGNORE;
 use gpui::{AppContext as _, BackgroundExecutor, BorrowAppContext, Context, Task, TestAppContext};
 use parking_lot::Mutex;
@@ -661,12 +660,11 @@ async fn test_dirs_no_longer_ignored(cx: &mut TestAppContext) {
 
     // Update the gitignore so that node_modules is no longer ignored,
     // but a subdirectory is ignored
-    let encoding_wrapper = fs::encodings::EncodingWrapper::new(UTF_8);
     fs.save(
         "/root/.gitignore".as_ref(),
         &"e".into(),
         Default::default(),
-        encoding_wrapper,
+        Default::default(),
     )
     .await
     .unwrap();
@@ -740,7 +738,7 @@ async fn test_write_file(cx: &mut TestAppContext) {
                 "hello".into(),
                 Default::default(),
                 cx,
-                UTF_8,
+                Default::default(),
             )
         })
         .await
@@ -752,7 +750,7 @@ async fn test_write_file(cx: &mut TestAppContext) {
                 "world".into(),
                 Default::default(),
                 cx,
-                UTF_8,
+                Default::default(),
             )
         })
         .await
@@ -1787,7 +1785,7 @@ fn randomly_mutate_worktree(
                     "".into(),
                     Default::default(),
                     cx,
-                    UTF_8,
+                    Default::default(),
                 );
                 cx.background_spawn(async move {
                     task.await?;
@@ -1875,12 +1873,11 @@ async fn randomly_mutate_fs(
             ignore_path.strip_prefix(root_path).unwrap(),
             ignore_contents
         );
-        let encoding_wrapper = EncodingWrapper::new(UTF_8);
         fs.save(
             &ignore_path,
             &ignore_contents.as_str().into(),
             Default::default(),
-            encoding_wrapper,
+            Default::default(),
         )
         .await
         .unwrap();

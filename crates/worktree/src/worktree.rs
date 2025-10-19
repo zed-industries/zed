@@ -7,11 +7,8 @@ use ::ignore::gitignore::{Gitignore, GitignoreBuilder};
 use anyhow::{Context as _, Result, anyhow};
 use clock::ReplicaId;
 use collections::{HashMap, HashSet, VecDeque};
-use encoding_rs::Encoding;
-use fs::{
-    Fs, MTime, PathEvent, RemoveOptions, Watcher, copy_recursive, encodings::EncodingWrapper,
-    read_dir_items,
-};
+use encodings::Encoding;
+use fs::{Fs, MTime, PathEvent, RemoveOptions, Watcher, copy_recursive, read_dir_items};
 use futures::{
     FutureExt as _, Stream, StreamExt,
     channel::{
@@ -710,10 +707,10 @@ impl Worktree {
     pub fn load_file(
         &self,
         path: &Path,
-        encoding: Option<EncodingWrapper>,
+        encoding: Option<Encoding>,
         force: bool,
         detect_utf16: bool,
-        buffer_encoding: Option<Arc<std::sync::Mutex<&'static Encoding>>>,
+        buffer_encoding: Option<Arc<Encoding>>,
         cx: &Context<Worktree>,
     ) -> Task<Result<LoadedFile>> {
         match self {
@@ -745,7 +742,7 @@ impl Worktree {
         text: Rope,
         line_ending: LineEnding,
         cx: &Context<Worktree>,
-        encoding: &'static Encoding,
+        encoding: Encoding,
     ) -> Task<Result<Arc<File>>> {
         match self {
             Worktree::Local(this) => this.write_file(path, text, line_ending, cx, encoding),
@@ -1330,10 +1327,10 @@ impl LocalWorktree {
     fn load_file(
         &self,
         path: &Path,
-        encoding: Option<EncodingWrapper>,
+        encoding: Option<Encoding>,
         force: bool,
         detect_utf16: bool,
-        buffer_encoding: Option<Arc<std::sync::Mutex<&'static Encoding>>>,
+        buffer_encoding: Option<Arc<Encoding>>,
         cx: &Context<Worktree>,
     ) -> Task<Result<LoadedFile>> {
         let path = Arc::from(path);
@@ -1360,14 +1357,14 @@ impl LocalWorktree {
             let text = fs
                 .load_with_encoding(
                     &abs_path,
-                    if let Some(encoding) = encoding {
-                        encoding
+                    if let Some(ref encoding) = encoding {
+                        Encoding::new(encoding.get())
                     } else {
-                        EncodingWrapper::new(encoding_rs::UTF_8)
+                        Encoding::new(encodings::UTF_8)
                     },
                     force,
                     detect_utf16,
-                    buffer_encoding,
+                    buffer_encoding.clone(),
                 )
                 .await?;
 
@@ -1393,11 +1390,7 @@ impl LocalWorktree {
                         },
                         is_local: true,
                         is_private,
-                        encoding: if let Some(encoding) = encoding {
-                            Some(Arc::new(std::sync::Mutex::new(encoding.0)))
-                        } else {
-                            None
-                        },
+                        encoding: encoding.map(|e| Arc::new(Encoding::new(e.get()))),
                     })
                 }
             };
@@ -1486,20 +1479,18 @@ impl LocalWorktree {
         text: Rope,
         line_ending: LineEnding,
         cx: &Context<Worktree>,
-        encoding: &'static Encoding,
+        encoding: Encoding,
     ) -> Task<Result<Arc<File>>> {
         let fs = self.fs.clone();
         let is_private = self.is_path_private(&path);
         let abs_path = self.absolutize(&path);
 
-        let encoding_wrapper = EncodingWrapper::new(encoding);
-
         let write = cx.background_spawn({
             let fs = fs.clone();
             let abs_path = abs_path.clone();
-            async move {
-                fs.save(&abs_path, &text, line_ending, encoding_wrapper)
-                    .await
+            {
+                let encoding = encoding.clone();
+                async move { fs.save(&abs_path, &text, line_ending, encoding).await }
             }
         });
 
@@ -1534,7 +1525,7 @@ impl LocalWorktree {
                     entry_id: None,
                     is_local: true,
                     is_private,
-                    encoding: Some(Arc::new(std::sync::Mutex::new(encoding))),
+                    encoding: Some(Arc::new(encoding)),
                 }))
             }
         })
@@ -3095,7 +3086,7 @@ pub struct File {
     pub entry_id: Option<ProjectEntryId>,
     pub is_local: bool,
     pub is_private: bool,
-    pub encoding: Option<Arc<std::sync::Mutex<&'static Encoding>>>,
+    pub encoding: Option<Arc<Encoding>>,
 }
 
 impl PartialEq for File {
@@ -3109,7 +3100,7 @@ impl PartialEq for File {
             && if let Some(encoding) = &self.encoding
                 && let Some(other_encoding) = &other.encoding
             {
-                if *encoding.lock().unwrap() != *other_encoding.lock().unwrap() {
+                if encoding.get() != other_encoding.get() {
                     false
                 } else {
                     true
@@ -3169,7 +3160,8 @@ impl language::File for File {
 
     fn path_style(&self, cx: &App) -> PathStyle {
         self.worktree.read(cx).path_style()
-    fn encoding(&self) -> Option<Arc<std::sync::Mutex<&'static Encoding>>> {
+    }
+    fn encoding(&self) -> Option<Arc<Encoding>> {
         if let Some(encoding) = &self.encoding {
             Some(encoding.clone())
         } else {
@@ -3186,10 +3178,10 @@ impl language::LocalFile for File {
     fn load(
         &self,
         cx: &App,
-        encoding: EncodingWrapper,
+        encoding: Encoding,
         force: bool,
         detect_utf16: bool,
-        buffer_encoding: Option<Arc<std::sync::Mutex<&'static Encoding>>>,
+        buffer_encoding: Option<Arc<Encoding>>,
     ) -> Task<Result<String>> {
         let worktree = self.worktree.read(cx).as_local().unwrap();
         let abs_path = worktree.absolutize(&self.path);
