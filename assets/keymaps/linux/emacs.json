@@ -12,7 +12,7 @@
     // Workaround to avoid falling back to default bindings.
     // Unbind so Zed ignores these keys and lets emacs handle them.
     // NOTE: must be declared before the `Editor` override.
-    // NOTE: in macos the 'ctrl-x' rebind is not needed, since it defaults to 'cmd-x'.
+    // NOTE: in macos the 'ctrl-x' rebind is not needed, since it defaults to 'cmd'.
     "context": "Editor",
     "bindings": {
       "ctrl-g": null, // currently activates `go_to_line::Toggle` when there is nothing to cancel
@@ -167,7 +167,7 @@
   {
     // Workaround to avoid falling back to default bindings.
     // Unbind so Zed ignores these keys and lets emacs handle them.
-    // NOTE: in macos this is not needed, since the defaults are bound to 'cmd-', and not 'ctrl-'
+    // NOTE: in macos this is not needed, since the defaults are bound to 'cmd', not 'ctrl'
     "context": "Workspace",
     "bindings": {
       "ctrl-p": null, // currently activates `file_finder::Toggle` when the cursor is on the first character of the buffer
