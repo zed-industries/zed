@@ -285,7 +285,7 @@ pub fn init(languages: Arc<LanguageRegistry>, fs: Arc<dyn Fs>, node: NodeRuntime
     // NEW: expose pyrefly so users can select it in settings
     languages.register_available_lsp_adapter(
         LanguageServerName("pyrefly".into()),
-        Arc::new(PyreflyLspAdapter::new(fs.clone())),
+        Arc::new(PyreflyLspAdapter::new()),
     );
 
     // Register Tailwind for the existing languages that should have it by default.
