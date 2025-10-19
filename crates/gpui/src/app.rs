@@ -416,6 +416,7 @@ impl SystemWindowTabController {
             for tab in windows.iter_mut() {
                 if tab.id == id {
                     tab.title = title.clone();
+                    return;
                 }
             }
         }
