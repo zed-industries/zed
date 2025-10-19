@@ -16,6 +16,7 @@ pub struct WorktreeSettings {
     pub file_scan_inclusions: PathMatcher,
     // Mainly useful when a glob contains ** or * for directories
     pub parent_dir_scan_inclusions: PathMatcher,
+||||||| parent of c0a9841ba3 (file_finder: respect .gitignore and file_scan_inclusions with ** in glob)
     pub file_scan_exclusions: PathMatcher,
     pub private_files: PathMatcher,
 }
