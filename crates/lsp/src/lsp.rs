@@ -355,7 +355,6 @@ impl LanguageServer {
         let stdin = server.stdin.take().unwrap();
         let stdout = server.stdout.take().unwrap();
         let stderr = server.stderr.take().unwrap();
-        let name_for_logging = server_name.clone();
         let server = Self::new_internal(
             server_id,
             server_name,
@@ -371,8 +370,7 @@ impl LanguageServer {
             cx,
             move |notification| {
                 log::info!(
-                    "Language server `{}` with id {} sent unhandled notification {}:\n{}",
-                    name_for_logging.0,
+                    "Language server with id {} sent unhandled notification {}:\n{}",
                     server_id,
                     notification.method,
                     serde_json::to_string_pretty(&notification.params).unwrap(),
@@ -885,7 +883,7 @@ impl LanguageServer {
                     ..WindowClientCapabilities::default()
                 }),
             },
-            trace: Some(TraceValue::Verbose),
+            trace: None,
             workspace_folders: Some(workspace_folders),
             client_info: release_channel::ReleaseChannel::try_global(cx).map(|release_channel| {
                 ClientInfo {
