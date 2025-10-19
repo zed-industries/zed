@@ -209,7 +209,7 @@ pub async fn match_path_sets<'a, Set: PathMatchCandidateSet<'a>>(
                             let worktree_id = candidate_set.id();
                             let mut prefix = candidate_set
                                 .prefix()
-                                .as_unix_str() // Would it be an issue here for windows ?
+                                .as_unix_str()
                                 .chars()
                                 .collect::<Vec<_>>();
                             if !candidate_set.root_is_file() && !prefix.is_empty() {
