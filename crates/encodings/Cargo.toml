@@ -5,21 +5,8 @@ publish.workspace = true
 edition.workspace = true
 
 [dependencies]
-editor.workspace = true
 encoding_rs.workspace = true
-fs.workspace = true
-futures.workspace = true
-fuzzy.workspace = true
-gpui.workspace = true
-language.workspace = true
-picker.workspace = true
-settings.workspace = true
-ui.workspace = true
-util.workspace = true
-workspace.workspace = true
-workspace-hack.workspace = true
-zed_actions.workspace = true
-
+anyhow.workspace = true
 
 [lints]
 workspace = true

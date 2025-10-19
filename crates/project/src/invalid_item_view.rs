@@ -2,9 +2,9 @@ use std::{path::Path, sync::Arc};
 
 use gpui::{EventEmitter, FocusHandle, Focusable};
 use ui::{
-    App, Button, ButtonCommon, ButtonStyle, Clickable, Context, FluentBuilder, InteractiveElement,
-    KeyBinding, Label, LabelCommon, LabelSize, ParentElement, Render, SharedString, Styled as _,
-    TintColor, Window, h_flex, v_flex,
+    h_flex, v_flex, App, Button, ButtonCommon, ButtonStyle, Clickable, Context, FluentBuilder,
+    InteractiveElement, KeyBinding, Label, LabelCommon, LabelSize, ParentElement, Render,
+    SharedString, Styled as _, TintColor, Window,
 };
 use zed_actions::workspace::OpenWithSystem;
 
@@ -127,9 +127,11 @@ impl Render for InvalidItemView {
                                             .on_click(
                                                 move |_, window, cx| {
                                                     window.dispatch_action(
-                                                        Box::new(zed_actions::encodings::Toggle(
-                                                            path0.clone(),
-                                                        )),
+                                                        Box::new(
+                                                            zed_actions::encodings_ui::Toggle(
+                                                                path0.clone(),
+                                                            ),
+                                                        ),
                                                         cx,
                                                     )
                                                 },
@@ -145,7 +147,7 @@ impl Render for InvalidItemView {
                                                 move |_, window, cx| {
                                                     window.dispatch_action(
                                                         Box::new(
-                                                            zed_actions::encodings::ForceOpen(
+                                                            zed_actions::encodings_ui::ForceOpen(
                                                                 path1.clone(),
                                                             ),
                                                         ),
