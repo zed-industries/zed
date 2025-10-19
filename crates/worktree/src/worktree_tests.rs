@@ -765,6 +765,7 @@ async fn test_file_scan_inclusions(cx: &mut TestAppContext) {
             "prettier": {
                 "package.json": "{}",
             },
+            "package.json": "//package.json"
         },
         "src": {
             ".DS_Store": "",
