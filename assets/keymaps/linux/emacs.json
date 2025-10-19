@@ -124,6 +124,15 @@
     }
   },
   {
+    // Workaround to clear the selection after copy/paste commands.
+    // TODO: allow to do the same on minibuffers without closing them
+    "context": "Editor && mode == full",
+    "bindings": {
+      "ctrl-w": ["workspace::SendKeystrokes", "ctrl-w ctrl-g"],
+      "alt-w": ["workspace::SendKeystrokes", "alt-w ctrl-g"]
+    }
+  },
+  {
     "context": "Editor && (showing_code_actions || showing_completions)",
     "bindings": {
       "ctrl-p": "editor::ContextMenuPrevious",
