@@ -101,17 +101,27 @@ pub fn match_fixed_path_set(
     let mut matcher = Matcher::new(&query, &lowercase_query, query_char_bag, smart_case, true);
 
     let mut results = Vec::with_capacity(candidates.len());
-    let path_prefix = match worktree_root_name {
-        Some(worktree_root_name) => worktree_root_name,
-        None => RelPath::empty().into(),
+    let (path_prefix, path_prefix_chars, lowercase_prefix) = match worktree_root_name {
+        Some(worktree_root_name) => {
+            let mut path_prefix_chars = worktree_root_name
+                .display(path_style)
+                .chars()
+                .collect::<Vec<_>>();
+            path_prefix_chars.extend(path_style.separator().chars());
+            let lowercase_pfx = path_prefix_chars
+                .iter()
+                .map(|c| c.to_ascii_lowercase())
+                .collect::<Vec<_>>();
+
+            (worktree_root_name, path_prefix_chars, lowercase_pfx)
+        }
+        None => (
+            RelPath::empty().into(),
+            Default::default(),
+            Default::default(),
+        ),
     };
 
-    let mut path_prefix_chars = path_prefix.display(path_style).chars().collect::<Vec<_>>();
-    path_prefix_chars.extend(path_style.separator().chars());
-    let lowercase_prefix = path_prefix_chars
-        .iter()
-        .map(|c| c.to_ascii_lowercase())
-        .collect::<Vec<_>>();
     matcher.match_candidates(
         &path_prefix_chars,
         &lowercase_prefix,
