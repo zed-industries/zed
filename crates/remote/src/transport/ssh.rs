@@ -737,12 +737,7 @@ impl SshRemoteConnection {
     }
 
     async fn is_sftp_available() -> bool {
-        util::command::new_smol_command("which")
-            .arg("sftp")
-            .output()
-            .await
-            .map(|output| output.status.success())
-            .unwrap_or(false)
+        which::which("sftp").is_ok()
     }
 }
 
