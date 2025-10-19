@@ -5,7 +5,7 @@ use language::CursorShape;
 use project::project_settings::DiagnosticSeverity;
 use settings::Settings;
 pub use settings::{
-    CurrentLineHighlight, DisplayIn, DocumentColorsRenderMode, DoubleClickInMultibuffer,
+    CurrentLineHighlight, DelayMs, DisplayIn, DocumentColorsRenderMode, DoubleClickInMultibuffer,
     GoToDefinitionFallback, HideMouseMode, MinimapThumb, MinimapThumbBorder, MultiCursorModifier,
     ScrollBeyondLastLine, ScrollbarDiagnostics, SeedQuerySetting, ShowMinimap, SnippetSortOrder,
 };
@@ -20,9 +20,9 @@ pub struct EditorSettings {
     pub current_line_highlight: CurrentLineHighlight,
     pub selection_highlight: bool,
     pub rounded_selection: bool,
-    pub lsp_highlight_debounce: u64,
+    pub lsp_highlight_debounce: DelayMs,
     pub hover_popover_enabled: bool,
-    pub hover_popover_delay: u64,
+    pub hover_popover_delay: DelayMs,
     pub toolbar: Toolbar,
     pub scrollbar: Scrollbar,
     pub minimap: Minimap,
@@ -147,7 +147,7 @@ pub struct DragAndDropSelection {
     /// The delay in milliseconds that must elapse before drag and drop is allowed. Otherwise, a new text selection is created.
     ///
     /// Default: 300
-    pub delay: u64,
+    pub delay: DelayMs,
 }
 
 /// Default options for buffer and project search items.
@@ -189,9 +189,9 @@ impl Settings for EditorSettings {
             current_line_highlight: editor.current_line_highlight.unwrap(),
             selection_highlight: editor.selection_highlight.unwrap(),
             rounded_selection: editor.rounded_selection.unwrap(),
-            lsp_highlight_debounce: editor.lsp_highlight_debounce.unwrap(),
+            lsp_highlight_debounce: editor.lsp_highlight_debounce.unwrap().into(),
             hover_popover_enabled: editor.hover_popover_enabled.unwrap(),
-            hover_popover_delay: editor.hover_popover_delay.unwrap(),
+            hover_popover_delay: editor.hover_popover_delay.unwrap().into(),
             toolbar: Toolbar {
                 breadcrumbs: toolbar.breadcrumbs.unwrap(),
                 quick_actions: toolbar.quick_actions.unwrap(),
@@ -262,7 +262,7 @@ impl Settings for EditorSettings {
             inline_code_actions: editor.inline_code_actions.unwrap(),
             drag_and_drop_selection: DragAndDropSelection {
                 enabled: drag_and_drop_selection.enabled.unwrap(),
-                delay: drag_and_drop_selection.delay.unwrap(),
+                delay: drag_and_drop_selection.delay.unwrap().into(),
             },
             lsp_document_colors: editor.lsp_document_colors.unwrap(),
             minimum_contrast_for_highlights: editor.minimum_contrast_for_highlights.unwrap().0,

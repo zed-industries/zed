@@ -804,6 +804,12 @@ impl Display for MinimumContrast {
     }
 }
 
+impl From<f32> for MinimumContrast {
+    fn from(x: f32) -> Self {
+        Self(x)
+    }
+}
+
 /// Opacity of the inactive panes. 0 means transparent, 1 means opaque.
 ///
 /// Valid range: 0.0 to 1.0
@@ -826,5 +832,11 @@ pub struct InactiveOpacity(pub f32);
 impl Display for InactiveOpacity {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{:.1}", self.0)
+    }
+}
+
+impl From<f32> for InactiveOpacity {
+    fn from(x: f32) -> Self {
+        Self(x)
     }
 }

@@ -112,6 +112,12 @@ impl Display for CodeFade {
     }
 }
 
+impl From<f32> for CodeFade {
+    fn from(x: f32) -> Self {
+        Self(x)
+    }
+}
+
 fn default_font_features() -> Option<FontFeatures> {
     Some(FontFeatures::default())
 }

@@ -8,7 +8,8 @@ use settings_macros::MergeFrom;
 use util::serde::default_true;
 
 use crate::{
-    AllLanguageSettingsContent, ExtendingVec, ProjectTerminalSettingsContent, SlashCommandSettings,
+    AllLanguageSettingsContent, DelayMs, ExtendingVec, ProjectTerminalSettingsContent,
+    SlashCommandSettings,
 };
 
 #[skip_serializing_none]
@@ -397,7 +398,7 @@ pub struct LspPullDiagnosticsSettingsContent {
     /// 0 turns the debounce off.
     ///
     /// Default: 50
-    pub debounce_ms: Option<u64>,
+    pub debounce_ms: Option<DelayMs>,
 }
 
 #[skip_serializing_none]
@@ -413,7 +414,7 @@ pub struct InlineDiagnosticsSettingsContent {
     /// last editor event.
     ///
     /// Default: 150
-    pub update_debounce_ms: Option<u64>,
+    pub update_debounce_ms: Option<DelayMs>,
     /// The amount of padding between the end of the source line and the start
     /// of the inline diagnostic in units of columns.
     ///

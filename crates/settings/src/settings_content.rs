@@ -985,3 +985,33 @@ impl merge_from::MergeFrom for SaturatingBool {
         self.0 |= other.0
     }
 }
+
+#[derive(
+    Copy,
+    Clone,
+    Default,
+    Debug,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Serialize,
+    Deserialize,
+    MergeFrom,
+    JsonSchema,
+    derive_more::FromStr,
+)]
+#[serde(transparent)]
+pub struct DelayMs(pub u64);
+
+impl From<u64> for DelayMs {
+    fn from(n: u64) -> Self {
+        Self(n)
+    }
+}
+
+impl std::fmt::Display for DelayMs {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}ms", self.0)
+    }
+}

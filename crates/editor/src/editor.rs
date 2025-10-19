@@ -6772,7 +6772,7 @@ impl Editor {
         if let Some(state) = &mut self.inline_blame_popover {
             state.hide_task.take();
         } else {
-            let blame_popover_delay = EditorSettings::get_global(cx).hover_popover_delay;
+            let blame_popover_delay = EditorSettings::get_global(cx).hover_popover_delay.0;
             let blame_entry = blame_entry.clone();
             let show_task = cx.spawn(async move |editor, cx| {
                 if !ignore_timeout {
@@ -6863,7 +6863,7 @@ impl Editor {
             return None;
         }
 
-        let debounce = EditorSettings::get_global(cx).lsp_highlight_debounce;
+        let debounce = EditorSettings::get_global(cx).lsp_highlight_debounce.0;
         self.document_highlights_task = Some(cx.spawn(async move |this, cx| {
             cx.background_executor()
                 .timer(Duration::from_millis(debounce))
