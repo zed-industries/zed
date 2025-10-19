@@ -259,7 +259,7 @@ impl VsCodeSettings {
             gutter: self.gutter_content(),
             hide_mouse: None,
             horizontal_scroll_margin: None,
-            hover_popover_delay: self.read_u64("editor.hover.delay").map(Into::into),
+            hover_popover_delay: self.read_u64("editor.hover.delay"),
             hover_popover_enabled: self.read_bool("editor.hover.enabled"),
             inline_code_actions: None,
             jupyter: None,

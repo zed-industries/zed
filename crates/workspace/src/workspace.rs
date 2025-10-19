@@ -8800,7 +8800,7 @@ mod tests {
             SettingsStore::update_global(cx, |settings, cx| {
                 settings.update_user_settings(cx, |settings| {
                     settings.workspace.autosave =
-                        Some(AutosaveSetting::AfterDelay { milliseconds: 500 });
+                        Some(AutosaveSetting::AfterDelay { milliseconds: 500.into() });
                 })
             });
             item.is_dirty = true;
