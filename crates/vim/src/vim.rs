@@ -51,7 +51,10 @@ use vim_mode_setting::HelixModeSetting;
 use vim_mode_setting::VimModeSetting;
 use workspace::{self, Pane, Workspace};
 
-use crate::state::ReplayableAction;
+use crate::{
+    normal::{GoToPreviousTab, GoToTab},
+    state::ReplayableAction,
+};
 
 /// Number is used to manage vim's count. Pushing a digit
 /// multiplies the current value by 10 and adds the digit.
@@ -408,6 +411,46 @@ pub fn init(cx: &mut App) {
             vim.entity.update(cx, |_, cx| {
                 cx.defer_in(window, |vim, window, cx| vim.search_submit(window, cx))
             })
+        });
+        workspace.register_action(|_, _: &GoToTab, window, cx| {
+            let count = Vim::take_count(cx);
+            Vim::take_forced_motion(cx);
+
+            if let Some(tab_index) = count {
+                // <count>gt goes to tab <count> (1-based).
+                let zero_based_index = tab_index.saturating_sub(1);
+                window.dispatch_action(
+                    workspace::pane::ActivateItem(zero_based_index).boxed_clone(),
+                    cx,
+                );
+            } else {
+                // If no count is provided, go to the next tab.
+                window.dispatch_action(workspace::pane::ActivateNextItem.boxed_clone(), cx);
+            }
+        });
+
+        workspace.register_action(|workspace, _: &GoToPreviousTab, window, cx| {
+            let count = Vim::take_count(cx);
+            Vim::take_forced_motion(cx);
+
+            if let Some(count) = count {
+                // gT with count goes back that many tabs with wraparound (not the same as gt!).
+                let pane = workspace.active_pane().read(cx);
+                let item_count = pane.items().count();
+                if item_count > 0 {
+                    let current_index = pane.active_item_index();
+                    let target_index = (current_index as isize - count as isize)
+                        .rem_euclid(item_count as isize)
+                        as usize;
+                    window.dispatch_action(
+                        workspace::pane::ActivateItem(target_index).boxed_clone(),
+                        cx,
+                    );
+                }
+            } else {
+                // No count provided, go to the previous tab.
+                window.dispatch_action(workspace::pane::ActivatePreviousItem.boxed_clone(), cx);
+            }
         });
     })
     .detach();
@@ -1316,7 +1359,10 @@ impl Vim {
             return;
         };
         let newest_selection_empty = editor.update(cx, |editor, cx| {
-            editor.selections.newest::<usize>(cx).is_empty()
+            editor
+                .selections
+                .newest::<usize>(&editor.display_snapshot(cx))
+                .is_empty()
         });
         let editor = editor.read(cx);
         let editor_mode = editor.mode();
@@ -1412,9 +1458,11 @@ impl Vim {
         cx: &mut Context<Self>,
     ) -> Option<String> {
         self.update_editor(cx, |_, editor, cx| {
-            let selection = editor.selections.newest::<usize>(cx);
+            let snapshot = &editor.snapshot(window, cx);
+            let selection = editor
+                .selections
+                .newest::<usize>(&snapshot.display_snapshot);
 
-            let snapshot = editor.snapshot(window, cx);
             let snapshot = snapshot.buffer_snapshot();
             let (range, kind) =
                 snapshot.surrounding_word(selection.start, Some(CharScopeContext::Completion));
@@ -1441,9 +1489,11 @@ impl Vim {
 
                 let selections = self.editor().map(|editor| {
                     editor.update(cx, |editor, cx| {
+                        let snapshot = editor.display_snapshot(cx);
+
                         (
-                            editor.selections.oldest::<Point>(cx),
-                            editor.selections.newest::<Point>(cx),
+                            editor.selections.oldest::<Point>(&snapshot),
+                            editor.selections.newest::<Point>(&snapshot),
                         )
                     })
                 });

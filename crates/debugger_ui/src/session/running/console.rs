@@ -963,8 +963,12 @@ mod tests {
     ) {
         cx.set_state(input);
 
-        let buffer_position =
-            cx.editor(|editor, _, cx| editor.selections.newest::<Point>(cx).start);
+        let buffer_position = cx.editor(|editor, _, cx| {
+            editor
+                .selections
+                .newest::<Point>(&editor.display_snapshot(cx))
+                .start
+        });
 
         let snapshot = &cx.buffer_snapshot();
 

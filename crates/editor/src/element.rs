@@ -1070,7 +1070,10 @@ impl EditorElement {
                     ref mouse_down_time,
                 } => {
                     let drag_and_drop_delay = Duration::from_millis(
-                        EditorSettings::get_global(cx).drag_and_drop_selection.delay,
+                        EditorSettings::get_global(cx)
+                            .drag_and_drop_selection
+                            .delay
+                            .0,
                     );
                     if mouse_down_time.elapsed() >= drag_and_drop_delay {
                         let drop_cursor = Selection {
@@ -1377,7 +1380,7 @@ impl EditorElement {
         editor_with_selections.update(cx, |editor, cx| {
             if editor.show_local_selections {
                 let mut layouts = Vec::new();
-                let newest = editor.selections.newest(cx);
+                let newest = editor.selections.newest(&editor.display_snapshot(cx));
                 for selection in local_selections.iter().cloned() {
                     let is_empty = selection.start == selection.end;
                     let is_newest = selection == newest;
@@ -3195,7 +3198,9 @@ impl EditorElement {
 
         let (newest_selection_head, is_relative) = self.editor.update(cx, |editor, cx| {
             let newest_selection_head = newest_selection_head.unwrap_or_else(|| {
-                let newest = editor.selections.newest::<Point>(cx);
+                let newest = editor
+                    .selections
+                    .newest::<Point>(&editor.display_snapshot(cx));
                 SelectionLayout::new(
                     newest,
                     editor.selections.line_mode(),
@@ -6170,7 +6175,10 @@ impl EditorElement {
                 } = &editor.selection_drag_state
                 {
                     let drag_and_drop_delay = Duration::from_millis(
-                        EditorSettings::get_global(cx).drag_and_drop_selection.delay,
+                        EditorSettings::get_global(cx)
+                            .drag_and_drop_selection
+                            .delay
+                            .0,
                     );
                     if mouse_down_time.elapsed() >= drag_and_drop_delay {
                         window.set_cursor_style(
@@ -7212,9 +7220,16 @@ impl EditorElement {
                             * ScrollPixelOffset::from(max_glyph_advance)
                             - ScrollPixelOffset::from(delta.x * scroll_sensitivity))
                             / ScrollPixelOffset::from(max_glyph_advance);
-                        let y = (current_scroll_position.y * ScrollPixelOffset::from(line_height)
+
+                        let scale_factor = window.scale_factor();
+                        let y = (current_scroll_position.y
+                            * ScrollPixelOffset::from(line_height)
+                            * ScrollPixelOffset::from(scale_factor)
                             - ScrollPixelOffset::from(delta.y * scroll_sensitivity))
-                            / ScrollPixelOffset::from(line_height);
+                        .round()
+                            / ScrollPixelOffset::from(line_height)
+                            / ScrollPixelOffset::from(scale_factor);
+
                         let mut scroll_position =
                             point(x, y).clamp(&point(0., 0.), &position_map.scroll_max);
                         let forbid_vertical_scroll = editor.scroll_manager.forbid_vertical_scroll();
@@ -7457,8 +7472,8 @@ impl EditorElement {
                         }
                         let clipped_start = range.start.max(&buffer_range.start, buffer);
                         let clipped_end = range.end.min(&buffer_range.end, buffer);
-                        let range = buffer_snapshot.anchor_in_excerpt(excerpt_id, clipped_start)?
-                            ..buffer_snapshot.anchor_in_excerpt(excerpt_id, clipped_end)?;
+                        let range = buffer_snapshot
+                            .anchor_range_in_excerpt(excerpt_id, *clipped_start..*clipped_end)?;
                         let start = range.start.to_display_point(display_snapshot);
                         let end = range.end.to_display_point(display_snapshot);
                         let selection_layout = SelectionLayout {
@@ -8786,7 +8801,8 @@ impl Element for EditorElement {
                         .editor_with_selections(cx)
                         .map(|editor| {
                             editor.update(cx, |editor, cx| {
-                                let all_selections = editor.selections.all::<Point>(cx);
+                                let all_selections =
+                                    editor.selections.all::<Point>(&snapshot.display_snapshot);
                                 let selected_buffer_ids =
                                     if editor.buffer_kind(cx) == ItemBufferKind::Singleton {
                                         Vec::new()
@@ -8808,10 +8824,12 @@ impl Element for EditorElement {
                                         selected_buffer_ids
                                     };
 
-                                let mut selections = editor
-                                    .selections
-                                    .disjoint_in_range(start_anchor..end_anchor, cx);
-                                selections.extend(editor.selections.pending(cx));
+                                let mut selections = editor.selections.disjoint_in_range(
+                                    start_anchor..end_anchor,
+                                    &snapshot.display_snapshot,
+                                );
+                                selections
+                                    .extend(editor.selections.pending(&snapshot.display_snapshot));
 
                                 (selections, selected_buffer_ids)
                             })

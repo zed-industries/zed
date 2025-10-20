@@ -82,7 +82,7 @@ impl WslRemoteConnection {
         this.can_exec = this.detect_can_exec(shell).await?;
         this.platform = this.detect_platform(shell).await?;
         this.remote_binary_path = Some(
-            this.ensure_server_binary(&delegate, release_channel, version, commit, cx)
+            this.ensure_server_binary(&delegate, release_channel, version, commit, shell, cx)
                 .await?,
         );
         log::debug!("Detected WSL environment: {this:#?}");
@@ -163,6 +163,7 @@ impl WslRemoteConnection {
         release_channel: ReleaseChannel,
         version: SemanticVersion,
         commit: Option<AppCommitSha>,
+        shell: ShellKind,
         cx: &mut AsyncApp,
     ) -> Result<Arc<RelPath>> {
         let version_str = match release_channel {
@@ -184,9 +185,13 @@ impl WslRemoteConnection {
             paths::remote_wsl_server_dir_relative().join(RelPath::unix(&binary_name).unwrap());
 
         if let Some(parent) = dst_path.parent() {
-            self.run_wsl_command("mkdir", &["-p", &parent.display(PathStyle::Posix)])
-                .await
-                .map_err(|e| anyhow!("Failed to create directory: {}", e))?;
+            let parent = parent.display(PathStyle::Posix);
+            if shell == ShellKind::Nushell {
+                self.run_wsl_command("mkdir", &[&parent]).await
+            } else {
+                self.run_wsl_command("mkdir", &["-p", &parent]).await
+            }
+            .map_err(|e| anyhow!("Failed to create directory: {}", e))?;
         }
 
         #[cfg(debug_assertions)]
@@ -201,7 +206,7 @@ impl WslRemoteConnection {
                 ))
                 .unwrap(),
             );
-            self.upload_file(&remote_server_path, &tmp_path, delegate, cx)
+            self.upload_file(&remote_server_path, &tmp_path, delegate, &shell, cx)
                 .await?;
             self.extract_and_install(&tmp_path, &dst_path, delegate, cx)
                 .await?;
@@ -234,7 +239,8 @@ impl WslRemoteConnection {
         );
         let tmp_path = RelPath::unix(&tmp_path).unwrap();
 
-        self.upload_file(&src_path, &tmp_path, delegate, cx).await?;
+        self.upload_file(&src_path, &tmp_path, delegate, &shell, cx)
+            .await?;
         self.extract_and_install(&tmp_path, &dst_path, delegate, cx)
             .await?;
 
@@ -246,14 +252,19 @@ impl WslRemoteConnection {
         src_path: &Path,
         dst_path: &RelPath,
         delegate: &Arc<dyn RemoteClientDelegate>,
+        shell: &ShellKind,
         cx: &mut AsyncApp,
     ) -> Result<()> {
         delegate.set_status(Some("Uploading remote server to WSL"), cx);
 
         if let Some(parent) = dst_path.parent() {
-            self.run_wsl_command("mkdir", &["-p", &parent.display(PathStyle::Posix)])
-                .await
-                .map_err(|e| anyhow!("Failed to create directory when uploading file: {}", e))?;
+            let parent = parent.display(PathStyle::Posix);
+            if *shell == ShellKind::Nushell {
+                self.run_wsl_command("mkdir", &[&parent]).await
+            } else {
+                self.run_wsl_command("mkdir", &["-p", &parent]).await
+            }
+            .map_err(|e| anyhow!("Failed to create directory when uploading file: {}", e))?;
         }
 
         let t0 = Instant::now();
@@ -396,7 +407,7 @@ impl RemoteConnection for WslRemoteConnection {
                     anyhow!(
                         "failed to upload directory {} -> {}: {}",
                         src_path.display(),
-                        dest_path.to_string(),
+                        dest_path,
                         e
                     )
                 })?;

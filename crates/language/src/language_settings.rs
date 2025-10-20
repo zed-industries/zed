@@ -15,7 +15,7 @@ pub use settings::{
     Formatter, FormatterList, InlayHintKind, LanguageSettingsContent, LspInsertMode,
     RewrapBehavior, ShowWhitespaceSetting, SoftWrap, WordsCompletionMode,
 };
-use settings::{ExtendingVec, Settings, SettingsContent, SettingsLocation, SettingsStore};
+use settings::{Settings, SettingsLocation, SettingsStore};
 use shellexpand;
 use std::{borrow::Cow, num::NonZeroU32, path::Path, sync::Arc};
 
@@ -142,6 +142,8 @@ pub struct LanguageSettings {
     pub auto_indent_on_paste: bool,
     /// Controls how the editor handles the autoclosed characters.
     pub always_treat_brackets_as_autoclosed: bool,
+    /// Which code actions to run on save
+    pub code_actions_on_format: HashMap<String, bool>,
     /// Whether to perform linked edits
     pub linked_edits: bool,
     /// Task configuration for this language.
@@ -576,6 +578,7 @@ impl settings::Settings for AllLanguageSettings {
                 always_treat_brackets_as_autoclosed: settings
                     .always_treat_brackets_as_autoclosed
                     .unwrap(),
+                code_actions_on_format: settings.code_actions_on_format.unwrap(),
                 linked_edits: settings.linked_edits.unwrap(),
                 tasks: LanguageTaskSettings {
                     variables: tasks.variables.unwrap_or_default(),
@@ -674,131 +677,6 @@ impl settings::Settings for AllLanguageSettings {
             defaults: default_language_settings,
             languages,
             file_types,
-        }
-    }
-
-    fn import_from_vscode(vscode: &settings::VsCodeSettings, current: &mut SettingsContent) {
-        let d = &mut current.project.all_languages.defaults;
-        if let Some(size) = vscode
-            .read_value("editor.tabSize")
-            .and_then(|v| v.as_u64())
-            .and_then(|n| NonZeroU32::new(n as u32))
-        {
-            d.tab_size = Some(size);
-        }
-        if let Some(v) = vscode.read_bool("editor.insertSpaces") {
-            d.hard_tabs = Some(!v);
-        }
-
-        vscode.enum_setting("editor.wordWrap", &mut d.soft_wrap, |s| match s {
-            "on" => Some(SoftWrap::EditorWidth),
-            "wordWrapColumn" => Some(SoftWrap::PreferLine),
-            "bounded" => Some(SoftWrap::Bounded),
-            "off" => Some(SoftWrap::None),
-            _ => None,
-        });
-        vscode.u32_setting("editor.wordWrapColumn", &mut d.preferred_line_length);
-
-        if let Some(arr) = vscode
-            .read_value("editor.rulers")
-            .and_then(|v| v.as_array())
-            .map(|v| v.iter().map(|n| n.as_u64().map(|n| n as usize)).collect())
-        {
-            d.wrap_guides = arr;
-        }
-        if let Some(b) = vscode.read_bool("editor.guides.indentation") {
-            d.indent_guides.get_or_insert_default().enabled = Some(b);
-        }
-
-        if let Some(b) = vscode.read_bool("editor.guides.formatOnSave") {
-            d.format_on_save = Some(if b {
-                FormatOnSave::On
-            } else {
-                FormatOnSave::Off
-            });
-        }
-        vscode.bool_setting(
-            "editor.trimAutoWhitespace",
-            &mut d.remove_trailing_whitespace_on_save,
-        );
-        vscode.bool_setting(
-            "files.insertFinalNewline",
-            &mut d.ensure_final_newline_on_save,
-        );
-        vscode.bool_setting("editor.inlineSuggest.enabled", &mut d.show_edit_predictions);
-        vscode.enum_setting("editor.renderWhitespace", &mut d.show_whitespaces, |s| {
-            Some(match s {
-                "boundary" => ShowWhitespaceSetting::Boundary,
-                "trailing" => ShowWhitespaceSetting::Trailing,
-                "selection" => ShowWhitespaceSetting::Selection,
-                "all" => ShowWhitespaceSetting::All,
-                _ => ShowWhitespaceSetting::None,
-            })
-        });
-        vscode.enum_setting(
-            "editor.autoSurround",
-            &mut d.use_auto_surround,
-            |s| match s {
-                "languageDefined" | "quotes" | "brackets" => Some(true),
-                "never" => Some(false),
-                _ => None,
-            },
-        );
-        vscode.bool_setting("editor.formatOnType", &mut d.use_on_type_format);
-        vscode.bool_setting("editor.linkedEditing", &mut d.linked_edits);
-        vscode.bool_setting("editor.formatOnPaste", &mut d.auto_indent_on_paste);
-        vscode.bool_setting(
-            "editor.suggestOnTriggerCharacters",
-            &mut d.show_completions_on_input,
-        );
-        if let Some(b) = vscode.read_bool("editor.suggest.showWords") {
-            let mode = if b {
-                WordsCompletionMode::Enabled
-            } else {
-                WordsCompletionMode::Disabled
-            };
-            d.completions.get_or_insert_default().words = Some(mode);
-        }
-        // TODO: pull ^ out into helper and reuse for per-language settings
-
-        // vscodes file association map is inverted from ours, so we flip the mapping before merging
-        let mut associations: HashMap<Arc<str>, ExtendingVec<String>> = HashMap::default();
-        if let Some(map) = vscode
-            .read_value("files.associations")
-            .and_then(|v| v.as_object())
-        {
-            for (k, v) in map {
-                let Some(v) = v.as_str() else { continue };
-                associations.entry(v.into()).or_default().0.push(k.clone());
-            }
-        }
-
-        // TODO: do we want to merge imported globs per filetype? for now we'll just replace
-        current
-            .project
-            .all_languages
-            .file_types
-            .get_or_insert_default()
-            .extend(associations);
-
-        // cursor global ignore list applies to cursor-tab, so transfer it to edit_predictions.disabled_globs
-        if let Some(disabled_globs) = vscode
-            .read_value("cursor.general.globalCursorIgnoreList")
-            .and_then(|v| v.as_array())
-        {
-            current
-                .project
-                .all_languages
-                .edit_predictions
-                .get_or_insert_default()
-                .disabled_globs
-                .get_or_insert_default()
-                .extend(
-                    disabled_globs
-                        .iter()
-                        .filter_map(|glob| glob.as_str())
-                        .map(|s| s.to_string()),
-                );
         }
     }
 }

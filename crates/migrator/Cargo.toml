@@ -20,7 +20,6 @@ log.workspace = true
 streaming-iterator.workspace = true
 tree-sitter-json.workspace = true
 tree-sitter.workspace = true
-workspace-hack.workspace = true
 serde_json_lenient.workspace = true
 serde_json.workspace = true
 settings.workspace = true

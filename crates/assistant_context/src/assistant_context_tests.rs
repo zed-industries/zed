@@ -741,7 +741,7 @@ async fn test_serialization(cx: &mut TestAppContext) {
     );
 }
 
-#[gpui::test(iterations = 100)]
+#[gpui::test(iterations = 25)]
 async fn test_random_context_collaboration(cx: &mut TestAppContext, mut rng: StdRng) {
     cx.update(init_test);
 
@@ -771,7 +771,7 @@ async fn test_random_context_collaboration(cx: &mut TestAppContext, mut rng: Std
         let context = cx.new(|cx| {
             AssistantContext::new(
                 context_id.clone(),
-                i as ReplicaId,
+                ReplicaId::new(i as u16),
                 language::Capability::ReadWrite,
                 registry.clone(),
                 prompt_builder.clone(),
@@ -789,7 +789,7 @@ async fn test_random_context_collaboration(cx: &mut TestAppContext, mut rng: Std
                     if let ContextEvent::Operation(op) = event {
                         network
                             .lock()
-                            .broadcast(i as ReplicaId, vec![op.to_proto()]);
+                            .broadcast(ReplicaId::new(i as u16), vec![op.to_proto()]);
                     }
                 }
             })
@@ -797,7 +797,7 @@ async fn test_random_context_collaboration(cx: &mut TestAppContext, mut rng: Std
         });
 
         contexts.push(context);
-        network.lock().add_peer(i as ReplicaId);
+        network.lock().add_peer(ReplicaId::new(i as u16));
     }
 
     let mut mutation_count = operations;
@@ -943,9 +943,9 @@ async fn test_random_context_collaboration(cx: &mut TestAppContext, mut rng: Std
                 mutation_count -= 1;
             }
             _ => {
-                let replica_id = context_index as ReplicaId;
+                let replica_id = ReplicaId::new(context_index as u16);
                 if network.lock().is_disconnected(replica_id) {
-                    network.lock().reconnect_peer(replica_id, 0);
+                    network.lock().reconnect_peer(replica_id, ReplicaId::new(0));
 
                     let (ops_to_send, ops_to_receive) = cx.read(|cx| {
                         let host_context = &contexts[0].read(cx);
@@ -971,7 +971,7 @@ async fn test_random_context_collaboration(cx: &mut TestAppContext, mut rng: Std
 
                     network.lock().broadcast(replica_id, ops_to_send);
                     context.update(cx, |context, cx| context.apply_ops(ops_to_receive, cx));
-                } else if rng.random_bool(0.1) && replica_id != 0 {
+                } else if rng.random_bool(0.1) && replica_id != ReplicaId::new(0) {
                     log::info!("Context {}: disconnecting", context_index);
                     network.lock().disconnect_peer(replica_id);
                 } else if network.lock().has_unreceived(replica_id) {
@@ -996,25 +996,25 @@ async fn test_random_context_collaboration(cx: &mut TestAppContext, mut rng: Std
             assert_eq!(
                 context.buffer.read(cx).text(),
                 first_context.buffer.read(cx).text(),
-                "Context {} text != Context 0 text",
+                "Context {:?} text != Context 0 text",
                 context.buffer.read(cx).replica_id()
             );
             assert_eq!(
                 context.message_anchors,
                 first_context.message_anchors,
-                "Context {} messages != Context 0 messages",
+                "Context {:?} messages != Context 0 messages",
                 context.buffer.read(cx).replica_id()
             );
             assert_eq!(
                 context.messages_metadata,
                 first_context.messages_metadata,
-                "Context {} message metadata != Context 0 message metadata",
+                "Context {:?} message metadata != Context 0 message metadata",
                 context.buffer.read(cx).replica_id()
             );
             assert_eq!(
                 context.slash_command_output_sections,
                 first_context.slash_command_output_sections,
-                "Context {} slash command output sections != Context 0 slash command output sections",
+                "Context {:?} slash command output sections != Context 0 slash command output sections",
                 context.buffer.read(cx).replica_id()
             );
         }

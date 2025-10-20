@@ -2295,7 +2295,10 @@ async fn test_clipping_on_mode_change(cx: &mut gpui::TestAppContext) {
 
     let mut pixel_position = cx.update_editor(|editor, window, cx| {
         let snapshot = editor.snapshot(window, cx);
-        let current_head = editor.selections.newest_display(cx).end;
+        let current_head = editor
+            .selections
+            .newest_display(&snapshot.display_snapshot)
+            .end;
         editor.last_bounds().unwrap().origin
             + editor
                 .display_to_pixel_point(current_head, &snapshot, window)

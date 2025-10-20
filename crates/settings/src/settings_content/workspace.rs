@@ -6,7 +6,9 @@ use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 use settings_macros::MergeFrom;
 
-use crate::{DockPosition, DockSide, ScrollbarSettingsContent, ShowIndentGuides};
+use crate::{
+    DelayMs, DockPosition, DockSide, InactiveOpacity, ScrollbarSettingsContent, ShowIndentGuides,
+};
 
 #[skip_serializing_none]
 #[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
@@ -256,7 +258,8 @@ pub struct ActivePaneModifiers {
     /// Values are clamped to the [0.0, 1.0] range.
     ///
     /// Default: `1.0`
-    pub inactive_opacity: Option<f32>,
+    #[schemars(range(min = 0.0, max = 1.0))]
+    pub inactive_opacity: Option<InactiveOpacity>,
 }
 
 #[derive(
@@ -379,13 +382,25 @@ pub struct StatusBarSettingsContent {
     pub cursor_position_button: Option<bool>,
 }
 
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom)]
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    JsonSchema,
+    MergeFrom,
+    strum::EnumDiscriminants,
+)]
+#[strum_discriminants(derive(strum::VariantArray, strum::VariantNames, strum::FromRepr))]
 #[serde(rename_all = "snake_case")]
 pub enum AutosaveSetting {
     /// Disable autosave.
     Off,
     /// Save after inactivity period of `milliseconds`.
-    AfterDelay { milliseconds: u64 },
+    AfterDelay { milliseconds: DelayMs },
     /// Autosave when focus changes.
     OnFocusChange,
     /// Autosave when the active window changes.
@@ -566,6 +581,10 @@ pub struct ProjectPanelSettingsContent {
     ///
     /// Default: true
     pub drag_and_drop: Option<bool>,
+    /// Whether to automatically open files when pasting them in the project panel.
+    ///
+    /// Default: true
+    pub open_file_on_paste: Option<bool>,
 }
 
 #[derive(

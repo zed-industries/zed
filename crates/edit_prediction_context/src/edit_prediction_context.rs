@@ -29,6 +29,7 @@ pub struct EditPredictionContextOptions {
     pub use_imports: bool,
     pub excerpt: EditPredictionExcerptOptions,
     pub score: EditPredictionScoreOptions,
+    pub max_retrieved_declarations: u8,
 }
 
 #[derive(Clone, Debug)]
@@ -116,22 +117,26 @@ impl EditPredictionContext {
             index_state,
         )?;
         let excerpt_text = excerpt.text(buffer);
-        let excerpt_occurrences = text_similarity::Occurrences::within_string(&excerpt_text.body);
 
-        let adjacent_start = Point::new(cursor_point.row.saturating_sub(2), 0);
-        let adjacent_end = Point::new(cursor_point.row + 1, 0);
-        let adjacent_occurrences = text_similarity::Occurrences::within_string(
-            &buffer
-                .text_for_range(adjacent_start..adjacent_end)
-                .collect::<String>(),
-        );
+        let declarations = if options.max_retrieved_declarations > 0
+            && let Some(index_state) = index_state
+        {
+            let excerpt_occurrences =
+                text_similarity::Occurrences::within_string(&excerpt_text.body);
 
-        let cursor_offset_in_file = cursor_point.to_offset(buffer);
+            let adjacent_start = Point::new(cursor_point.row.saturating_sub(2), 0);
+            let adjacent_end = Point::new(cursor_point.row + 1, 0);
+            let adjacent_occurrences = text_similarity::Occurrences::within_string(
+                &buffer
+                    .text_for_range(adjacent_start..adjacent_end)
+                    .collect::<String>(),
+            );
 
-        let declarations = if let Some(index_state) = index_state {
+            let cursor_offset_in_file = cursor_point.to_offset(buffer);
+
             let references = get_references(&excerpt, &excerpt_text, buffer);
 
-            scored_declarations(
+            let mut declarations = scored_declarations(
                 &options.score,
                 &index_state,
                 &excerpt,
@@ -141,7 +146,10 @@ impl EditPredictionContext {
                 references,
                 cursor_offset_in_file,
                 buffer,
-            )
+            );
+            // TODO [zeta2] if we need this when we ship, we should probably do it in a smarter way
+            declarations.truncate(options.max_retrieved_declarations as usize);
+            declarations
         } else {
             vec![]
         };
@@ -203,6 +211,7 @@ mod tests {
                         score: EditPredictionScoreOptions {
                             omit_excerpt_overlaps: true,
                         },
+                        max_retrieved_declarations: u8::MAX,
                     },
                     Some(index.clone()),
                     cx,

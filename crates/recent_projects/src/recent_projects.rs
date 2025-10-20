@@ -471,7 +471,15 @@ impl PickerDelegate for RecentProjectsDelegate {
             })
             .unzip();
 
+        let prefix = match &location {
+            SerializedWorkspaceLocation::Remote(RemoteConnectionOptions::Wsl(wsl)) => {
+                Some(SharedString::from(&wsl.distro_name))
+            }
+            _ => None,
+        };
+
         let highlighted_match = HighlightedMatchWithPaths {
+            prefix,
             match_label: HighlightedMatch::join(match_labels.into_iter().flatten(), ", "),
             paths,
         };

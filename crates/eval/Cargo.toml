@@ -18,12 +18,12 @@ name = "explorer"
 path = "src/explorer.rs"
 
 [dependencies]
+acp_thread.workspace = true
 agent.workspace = true
+agent-client-protocol.workspace = true
 agent_settings.workspace = true
 agent_ui.workspace = true
 anyhow.workspace = true
-assistant_tool.workspace = true
-assistant_tools.workspace = true
 async-trait.workspace = true
 buffer_diff.workspace = true
 chrono.workspace = true
@@ -68,4 +68,3 @@ unindent.workspace = true
 util.workspace = true
 uuid.workspace = true
 watch.workspace = true
-workspace-hack.workspace = true

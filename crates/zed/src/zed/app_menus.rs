@@ -185,8 +185,18 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
                     editor::actions::SelectPreviousSyntaxNode,
                 ),
                 MenuItem::separator(),
-                MenuItem::action("Add Cursor Above", editor::actions::AddSelectionAbove),
-                MenuItem::action("Add Cursor Below", editor::actions::AddSelectionBelow),
+                MenuItem::action(
+                    "Add Cursor Above",
+                    editor::actions::AddSelectionAbove {
+                        skip_soft_wrap: true,
+                    },
+                ),
+                MenuItem::action(
+                    "Add Cursor Below",
+                    editor::actions::AddSelectionBelow {
+                        skip_soft_wrap: true,
+                    },
+                ),
                 MenuItem::action(
                     "Select Next Occurrence",
                     editor::actions::SelectNext {
