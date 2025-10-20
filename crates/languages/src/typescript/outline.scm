@@ -31,21 +31,8 @@
     "interface" @context
     name: (_) @name) @item
 
-(export_statement
-    (lexical_declaration
-        ["let" "const"] @context
-        ; Multiple names may be exported - @item is on the declarator to keep
-        ; ranges distinct.
-        (variable_declarator
-            name: (_) @name) @item))
-
-(program
-    (lexical_declaration
-        ["let" "const"] @context
-        ; Multiple names may be defined - @item is on the declarator to keep
-        ; ranges distinct.
-        (variable_declarator
-            name: (_) @name) @item))
+(property_signature
+    name: (_) @name) @item
 
 (class_declaration
     "class" @context
@@ -82,7 +69,81 @@
     ]* @context
     name: (_) @name) @item
 
-; Add support for (node:test, bun:test and Jest) runnable
+; All variable declarators with identifiers
+(lexical_declaration
+    ["let" "const"] @context
+    (variable_declarator
+        name: (identifier) @name) @item)
+
+; Object destructuring - shorthand
+(lexical_declaration
+    ["let" "const"] @context
+    (variable_declarator
+        name: (object_pattern
+            (shorthand_property_identifier_pattern) @name @item)))
+
+; Object destructuring - pair pattern
+(lexical_declaration
+    ["let" "const"] @context
+    (variable_declarator
+        name: (object_pattern
+            (pair_pattern
+                key: (_) @name) @item)))
+
+; Array destructuring
+(lexical_declaration
+    ["let" "const"] @context
+    (variable_declarator
+        name: (array_pattern
+            (identifier) @name @item)))
+
+; Object pairs with functions
+(pair
+    key: (_) @name
+    value: [(arrow_function) (function_expression)]) @item
+
+; Object pairs with non-function values
+(pair
+    key: (_) @name
+    value: [
+        (string)
+        (number)
+        (true)
+        (false)
+        (null)
+        (undefined)
+        (identifier)
+        (call_expression)
+        (new_expression)
+        (await_expression)
+        (binary_expression)
+        (unary_expression)
+        (template_string)
+        (array)
+        (object)
+        (member_expression)
+        (as_expression)
+        (satisfies_expression)
+        (type_assertion)
+    ]) @item
+
+(expression_statement
+    (assignment_expression
+        left: (member_expression
+            object: (member_expression
+                property: (property_identifier) @_prototype)
+            property: (property_identifier) @name)
+        (#eq? @_prototype "prototype")
+        right: [(function_expression) (arrow_function)]) @item)
+
+; Method calls in call chains - capture only the arguments part to avoid nesting
+(call_expression
+    function: (member_expression
+        property: (property_identifier) @context)
+    arguments: (arguments
+        . (string (string_fragment) @name)) @item)
+
+
 (
     (call_expression
         function: [
@@ -104,7 +165,6 @@
     )
 ) @item
 
-; Add support for parameterized tests
 (
     (call_expression
         function: (call_expression
@@ -123,5 +183,18 @@
         )
     )
 ) @item
+
+; Function calls inside arrow functions and function expressions
+(arrow_function
+    body: (statement_block
+        (expression_statement
+            (call_expression
+                function: (identifier) @name) @item)))
+
+(function_expression
+    body: (statement_block
+        (expression_statement
+            (call_expression
+                function: (identifier) @name) @item)))
 
 (comment) @annotation
