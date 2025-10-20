@@ -52,12 +52,6 @@ pub fn open(
 ) {
     let repository = workspace.project().read(cx).active_repository(cx);
 
-    if let Some(repo) = repository.as_ref() {
-        if repo.read(cx).current_job().is_some() {
-            return;
-        }
-    }
-
     let style = BranchListStyle::Modal;
     workspace.toggle_modal(window, cx, |window, cx| {
         BranchList::new(repository, style, rems(34.), window, cx)
@@ -144,13 +138,13 @@ impl BranchList {
                 })
                 .await;
 
-            this.update_in(cx, |this, window, cx| {
+            let _ = this.update_in(cx, |this, window, cx| {
                 this.picker.update(cx, |picker, cx| {
                     picker.delegate.default_branch = default_branch;
                     picker.delegate.all_branches = Some(all_branches);
                     picker.refresh(window, cx);
                 })
-            })?;
+            });
 
             anyhow::Ok(())
         })
