@@ -86,6 +86,26 @@ struct FocusFile(pub u32);
 struct SettingField<T: 'static> {
     pick: fn(&SettingsContent) -> Option<&T>,
     write: fn(&mut SettingsContent, Option<T>),
+    
+    /// A json-path-like string that gives a unique-ish string that identifies
+    /// where in the JSON the setting is defined.
+    /// 
+    /// The syntax is `jq`-like, but modified slightly to be URL-safe (and
+    /// without the leading dot), e.g. `foo.bar`.
+    /// 
+    /// They are URL-safe (this is important since links are the main use-case
+    /// for these paths). 
+    /// 
+    /// There are a couple of special cases:
+    /// - discrimminants are represented with a trailing `$`, for example
+    /// `terminal.working_directory$`. This is to distinguish the discrimminant
+    /// setting (i.e. the setting that changes whether the value is a string or
+    /// an object) from the setting in the case that it is a string.
+    /// - language-specific settings have a `$(language)` component in the
+    /// middle. While each setting item in `page_data.rs` is unique, both
+    /// `languages.Rust.tab_size` and `languages.C.tab_size` are mapped by
+    /// `languages.$(language).tab_size`. 
+    json_path: Option<&'static str>,
 }
 
 impl<T: 'static> Clone for SettingField<T> {
@@ -116,8 +136,17 @@ impl<T: 'static> SettingField<T> {
         SettingField {
             pick: |_| Some(&UnimplementedSettingField),
             write: |_, _| unreachable!(),
-            json_path: "<invalid path>",
+            json_path: None,
         }
+    }
+
+    fn unimplemented_boxed() -> Box<SettingField<UnimplementedSettingField>> {
+        SettingField {
+            pick: |_| Some(&UnimplementedSettingField),
+            write: |_, _| unreachable!(),
+            json_path: None,
+        }
+        .into()
     }
 }
 
@@ -133,8 +162,8 @@ trait AnySettingField {
         file_set_in: &settings::SettingsFile,
         cx: &App,
     ) -> Option<Box<dyn Fn(&mut App)>>;
-    
-    fn json_path(&self) -> &'static str;
+
+    fn json_path(&self) -> Option<&'static str>;
 }
 
 impl<T: PartialEq + Clone + Send + Sync + 'static> AnySettingField for SettingField<T> {
@@ -200,8 +229,8 @@ impl<T: PartialEq + Clone + Send + Sync + 'static> AnySettingField for SettingFi
             .log_err();
         }));
     }
-    
-    fn json_path(&self) -> &'static str {
+
+    fn json_path(&self) -> Option<&'static str> {
         self.json_path
     }
 }
@@ -482,15 +511,19 @@ pub fn open_settings_editor(
         settings_window: &mut SettingsWindow,
         cx: &mut App,
     ) {
-        let item = settings_window.pages.iter().flat_map(|page| &page.items).find_map(|item| match item{
-            SettingsPageItem::SettingItem(item) if item.field.json_path() == path => Some(item),
-            _ => None
-        });
-        
+        let item = settings_window
+            .pages
+            .iter()
+            .flat_map(|page| &page.items)
+            .find_map(|item| match item {
+                SettingsPageItem::SettingItem(item) if item.field.json_path() == Some(path) => Some(item),
+                _ => None,
+            });
+
         let Some(item) = item else {
-            todo!("cameron");  // show an error popup maybe
+            todo!("cameron"); // show an error popup maybe
         };
-        
+
         // settings_window.open_and_scroll_to_setting(item, window, cx, focus_content);
         todo!("cameron");
     }
@@ -551,13 +584,13 @@ pub fn open_settings_editor(
             |window, cx| {
                 let settings_window =
                     cx.new(|cx| SettingsWindow::new(Some(workspace_handle), window, cx));
-                
+
                 settings_window.update(cx, |settings_window, cx| {
                     if let Some(path) = path {
                         open_path(&path, window, settings_window, cx);
                     }
                 });
-                
+
                 settings_window
             },
         )
@@ -3062,7 +3095,7 @@ fn render_icon_theme_picker(
 }
 
 #[cfg(test)]
-mod test {
+pub mod test {
 
     use super::*;
 
@@ -3083,7 +3116,7 @@ mod test {
         }
     }
 
-    fn register_settings(cx: &mut App) {
+    pub fn register_settings(cx: &mut App) {
         settings::init(cx);
         theme::init(theme::LoadThemes::JustBase, cx);
         workspace::init_settings(cx);
