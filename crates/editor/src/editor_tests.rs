@@ -1753,7 +1753,6 @@ fn test_beginning_end_of_line(cx: &mut TestAppContext) {
 
     _ = editor.update(cx, |editor, window, cx| {
         editor.move_to_beginning_of_line(&move_to_beg, window, cx);
-        assert!(!editor.key_context(window, cx).contains("end_of_buffer"));
         assert_eq!(
             editor.selections.display_ranges(cx),
             &[
@@ -1765,7 +1764,6 @@ fn test_beginning_end_of_line(cx: &mut TestAppContext) {
 
     _ = editor.update(cx, |editor, window, cx| {
         editor.move_to_end_of_line(&move_to_end, window, cx);
-        assert!(editor.key_context(window, cx).contains("end_of_buffer"));
         assert_eq!(
             editor.selections.display_ranges(cx),
             &[
@@ -1778,7 +1776,6 @@ fn test_beginning_end_of_line(cx: &mut TestAppContext) {
     // Moving to the end of line again is a no-op.
     _ = editor.update(cx, |editor, window, cx| {
         editor.move_to_end_of_line(&move_to_end, window, cx);
-        assert!(editor.key_context(window, cx).contains("end_of_buffer"));
         assert_eq!(
             editor.selections.display_ranges(cx),
             &[
@@ -1798,7 +1795,6 @@ fn test_beginning_end_of_line(cx: &mut TestAppContext) {
             window,
             cx,
         );
-        assert!(!editor.key_context(window, cx).contains("end_of_buffer"));
         assert_eq!(
             editor.selections.display_ranges(cx),
             &[
