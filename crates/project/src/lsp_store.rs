@@ -14,6 +14,7 @@ pub mod json_language_server_ext;
 pub mod log_store;
 pub mod lsp_ext_command;
 pub mod rust_analyzer_ext;
+pub mod vue_language_server_ext;
 
 use crate::{
     CodeAction, ColorPresentation, Completion, CompletionDisplayOptions, CompletionResponse,
@@ -987,6 +988,7 @@ impl LocalLspStore {
             })
             .detach();
 
+        vue_language_server_ext::register_requests(this.clone(), language_server);
         json_language_server_ext::register_requests(this.clone(), language_server);
         rust_analyzer_ext::register_notifications(this.clone(), language_server);
         clangd_ext::register_notifications(this, language_server, adapter);
@@ -3023,9 +3025,8 @@ impl LocalLspStore {
                                     Some(buffer_to_edit.read(cx).saved_version().clone())
                                 };
 
-                                let most_recent_edit = version.and_then(|version| {
-                                    version.iter().max_by_key(|timestamp| timestamp.value)
-                                });
+                                let most_recent_edit =
+                                    version.and_then(|version| version.most_recent());
                                 // Check if the edit that triggered that edit has been made by this participant.
 
                                 if let Some(most_recent_edit) = most_recent_edit {

@@ -1,16 +1,14 @@
 use core::num;
-use std::num::NonZeroU32;
 
 use gpui::App;
 use language::CursorShape;
 use project::project_settings::DiagnosticSeverity;
+use settings::Settings;
 pub use settings::{
-    CurrentLineHighlight, DisplayIn, DocumentColorsRenderMode, DoubleClickInMultibuffer,
+    CurrentLineHighlight, DelayMs, DisplayIn, DocumentColorsRenderMode, DoubleClickInMultibuffer,
     GoToDefinitionFallback, HideMouseMode, MinimapThumb, MinimapThumbBorder, MultiCursorModifier,
     ScrollBeyondLastLine, ScrollbarDiagnostics, SeedQuerySetting, ShowMinimap, SnippetSortOrder,
-    VsCodeSettings,
 };
-use settings::{Settings, SettingsContent};
 use ui::scrollbars::{ScrollbarVisibility, ShowScrollbar};
 
 /// Imports from the VSCode settings at
@@ -22,9 +20,9 @@ pub struct EditorSettings {
     pub current_line_highlight: CurrentLineHighlight,
     pub selection_highlight: bool,
     pub rounded_selection: bool,
-    pub lsp_highlight_debounce: u64,
+    pub lsp_highlight_debounce: DelayMs,
     pub hover_popover_enabled: bool,
-    pub hover_popover_delay: u64,
+    pub hover_popover_delay: DelayMs,
     pub toolbar: Toolbar,
     pub scrollbar: Scrollbar,
     pub minimap: Minimap,
@@ -149,7 +147,7 @@ pub struct DragAndDropSelection {
     /// The delay in milliseconds that must elapse before drag and drop is allowed. Otherwise, a new text selection is created.
     ///
     /// Default: 300
-    pub delay: u64,
+    pub delay: DelayMs,
 }
 
 /// Default options for buffer and project search items.
@@ -268,210 +266,6 @@ impl Settings for EditorSettings {
             },
             lsp_document_colors: editor.lsp_document_colors.unwrap(),
             minimum_contrast_for_highlights: editor.minimum_contrast_for_highlights.unwrap().0,
-        }
-    }
-
-    fn import_from_vscode(vscode: &VsCodeSettings, current: &mut SettingsContent) {
-        vscode.enum_setting(
-            "editor.cursorBlinking",
-            &mut current.editor.cursor_blink,
-            |s| match s {
-                "blink" | "phase" | "expand" | "smooth" => Some(true),
-                "solid" => Some(false),
-                _ => None,
-            },
-        );
-        vscode.enum_setting(
-            "editor.cursorStyle",
-            &mut current.editor.cursor_shape,
-            |s| match s {
-                "block" => Some(settings::CursorShape::Block),
-                "block-outline" => Some(settings::CursorShape::Hollow),
-                "line" | "line-thin" => Some(settings::CursorShape::Bar),
-                "underline" | "underline-thin" => Some(settings::CursorShape::Underline),
-                _ => None,
-            },
-        );
-
-        vscode.enum_setting(
-            "editor.renderLineHighlight",
-            &mut current.editor.current_line_highlight,
-            |s| match s {
-                "gutter" => Some(CurrentLineHighlight::Gutter),
-                "line" => Some(CurrentLineHighlight::Line),
-                "all" => Some(CurrentLineHighlight::All),
-                _ => None,
-            },
-        );
-
-        vscode.bool_setting(
-            "editor.selectionHighlight",
-            &mut current.editor.selection_highlight,
-        );
-        vscode.bool_setting(
-            "editor.roundedSelection",
-            &mut current.editor.rounded_selection,
-        );
-        vscode.bool_setting(
-            "editor.hover.enabled",
-            &mut current.editor.hover_popover_enabled,
-        );
-        vscode.u64_setting(
-            "editor.hover.delay",
-            &mut current.editor.hover_popover_delay,
-        );
-
-        let mut gutter = settings::GutterContent::default();
-        vscode.enum_setting(
-            "editor.showFoldingControls",
-            &mut gutter.folds,
-            |s| match s {
-                "always" | "mouseover" => Some(true),
-                "never" => Some(false),
-                _ => None,
-            },
-        );
-        vscode.enum_setting(
-            "editor.lineNumbers",
-            &mut gutter.line_numbers,
-            |s| match s {
-                "on" | "relative" => Some(true),
-                "off" => Some(false),
-                _ => None,
-            },
-        );
-        if let Some(old_gutter) = current.editor.gutter.as_mut() {
-            if gutter.folds.is_some() {
-                old_gutter.folds = gutter.folds
-            }
-            if gutter.line_numbers.is_some() {
-                old_gutter.line_numbers = gutter.line_numbers
-            }
-        } else if gutter != settings::GutterContent::default() {
-            current.editor.gutter = Some(gutter)
-        }
-        if let Some(b) = vscode.read_bool("editor.scrollBeyondLastLine") {
-            current.editor.scroll_beyond_last_line = Some(if b {
-                ScrollBeyondLastLine::OnePage
-            } else {
-                ScrollBeyondLastLine::Off
-            })
-        }
-
-        let mut scrollbar_axes = settings::ScrollbarAxesContent::default();
-        vscode.enum_setting(
-            "editor.scrollbar.horizontal",
-            &mut scrollbar_axes.horizontal,
-            |s| match s {
-                "auto" | "visible" => Some(true),
-                "hidden" => Some(false),
-                _ => None,
-            },
-        );
-        vscode.enum_setting(
-            "editor.scrollbar.vertical",
-            &mut scrollbar_axes.horizontal,
-            |s| match s {
-                "auto" | "visible" => Some(true),
-                "hidden" => Some(false),
-                _ => None,
-            },
-        );
-
-        if scrollbar_axes != settings::ScrollbarAxesContent::default() {
-            let scrollbar_settings = current.editor.scrollbar.get_or_insert_default();
-            let axes_settings = scrollbar_settings.axes.get_or_insert_default();
-
-            if let Some(vertical) = scrollbar_axes.vertical {
-                axes_settings.vertical = Some(vertical);
-            }
-            if let Some(horizontal) = scrollbar_axes.horizontal {
-                axes_settings.horizontal = Some(horizontal);
-            }
-        }
-
-        // TODO: check if this does the int->float conversion?
-        vscode.f32_setting(
-            "editor.cursorSurroundingLines",
-            &mut current.editor.vertical_scroll_margin,
-        );
-        vscode.f32_setting(
-            "editor.mouseWheelScrollSensitivity",
-            &mut current.editor.scroll_sensitivity,
-        );
-        vscode.f32_setting(
-            "editor.fastScrollSensitivity",
-            &mut current.editor.fast_scroll_sensitivity,
-        );
-        if Some("relative") == vscode.read_string("editor.lineNumbers") {
-            current.editor.relative_line_numbers = Some(true);
-        }
-
-        vscode.enum_setting(
-            "editor.find.seedSearchStringFromSelection",
-            &mut current.editor.seed_search_query_from_cursor,
-            |s| match s {
-                "always" => Some(SeedQuerySetting::Always),
-                "selection" => Some(SeedQuerySetting::Selection),
-                "never" => Some(SeedQuerySetting::Never),
-                _ => None,
-            },
-        );
-        vscode.bool_setting("search.smartCase", &mut current.editor.use_smartcase_search);
-        vscode.enum_setting(
-            "editor.multiCursorModifier",
-            &mut current.editor.multi_cursor_modifier,
-            |s| match s {
-                "ctrlCmd" => Some(MultiCursorModifier::CmdOrCtrl),
-                "alt" => Some(MultiCursorModifier::Alt),
-                _ => None,
-            },
-        );
-
-        vscode.bool_setting(
-            "editor.parameterHints.enabled",
-            &mut current.editor.auto_signature_help,
-        );
-        vscode.bool_setting(
-            "editor.parameterHints.enabled",
-            &mut current.editor.show_signature_help_after_edits,
-        );
-
-        if let Some(use_ignored) = vscode.read_bool("search.useIgnoreFiles") {
-            let search = current.editor.search.get_or_insert_default();
-            search.include_ignored = Some(use_ignored);
-        }
-
-        let mut minimap = settings::MinimapContent::default();
-        let minimap_enabled = vscode.read_bool("editor.minimap.enabled").unwrap_or(true);
-        let autohide = vscode.read_bool("editor.minimap.autohide");
-        let mut max_width_columns: Option<u32> = None;
-        vscode.u32_setting("editor.minimap.maxColumn", &mut max_width_columns);
-        if minimap_enabled {
-            if let Some(false) = autohide {
-                minimap.show = Some(ShowMinimap::Always);
-            } else {
-                minimap.show = Some(ShowMinimap::Auto);
-            }
-        } else {
-            minimap.show = Some(ShowMinimap::Never);
-        }
-        if let Some(max_width_columns) = max_width_columns {
-            minimap.max_width_columns = NonZeroU32::new(max_width_columns);
-        }
-
-        vscode.enum_setting(
-            "editor.minimap.showSlider",
-            &mut minimap.thumb,
-            |s| match s {
-                "always" => Some(MinimapThumb::Always),
-                "mouseover" => Some(MinimapThumb::Hover),
-                _ => None,
-            },
-        );
-
-        if minimap != settings::MinimapContent::default() {
-            current.editor.minimap = Some(minimap)
         }
     }
 }

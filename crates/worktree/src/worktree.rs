@@ -236,7 +236,7 @@ pub struct LocalSnapshot {
     /// All of the git repositories in the worktree, indexed by the project entry
     /// id of their parent directory.
     git_repositories: TreeMap<ProjectEntryId, LocalRepositoryEntry>,
-    /// The file handle of the worktree root. `None` if the worktree is a directory.
+    /// The file handle of the worktree root
     /// (so we can find it after it's been moved)
     root_file_handle: Option<Arc<dyn fs::FileHandle>>,
     executor: BackgroundExecutor,
@@ -656,7 +656,7 @@ impl Worktree {
 
     pub fn replica_id(&self) -> ReplicaId {
         match self {
-            Worktree::Local(_) => 0,
+            Worktree::Local(_) => ReplicaId::LOCAL,
             Worktree::Remote(worktree) => worktree.replica_id,
         }
     }
@@ -3830,7 +3830,7 @@ impl BackgroundScanner {
                         .unbounded_send(ScanState::RootUpdated { new_path })
                         .ok();
                 } else {
-                    log::warn!("root path could not be canonicalized: {}", err);
+                    log::warn!("root path could not be canonicalized: {:#}", err);
                 }
                 return;
             }

@@ -3294,10 +3294,6 @@ impl Workspace {
         window: &mut Window,
         cx: &mut App,
     ) {
-        if let Some(text) = item.telemetry_event_text(cx) {
-            telemetry::event!(text);
-        }
-
         pane.update(cx, |pane, cx| {
             pane.add_item(
                 item,
@@ -8803,8 +8799,9 @@ mod tests {
         item.update(cx, |item, cx| {
             SettingsStore::update_global(cx, |settings, cx| {
                 settings.update_user_settings(cx, |settings| {
-                    settings.workspace.autosave =
-                        Some(AutosaveSetting::AfterDelay { milliseconds: 500 });
+                    settings.workspace.autosave = Some(AutosaveSetting::AfterDelay {
+                        milliseconds: 500.into(),
+                    });
                 })
             });
             item.is_dirty = true;

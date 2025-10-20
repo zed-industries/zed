@@ -70,6 +70,7 @@ members = [
     "crates/file_finder",
     "crates/file_icons",
     "crates/fs",
+    "crates/fs_benchmarks",
     "crates/fsevent",
     "crates/fuzzy",
     "crates/git",
@@ -125,6 +126,7 @@ members = [
     "crates/picker",
     "crates/prettier",
     "crates/project",
+    "crates/project_benchmarks",
     "crates/project_panel",
     "crates/project_symbols",
     "crates/prompt_store",
@@ -193,6 +195,7 @@ members = [
     "crates/web_search_providers",
     "crates/workspace",
     "crates/worktree",
+    "crates/worktree_benchmarks",
     "crates/x_ai",
     "crates/zed",
     "crates/zed_actions",
@@ -218,8 +221,7 @@ members = [
     #
 
     "tooling/perf",
-    "tooling/workspace-hack",
-    "tooling/xtask", "crates/fs_benchmarks", "crates/worktree_benchmarks",
+    "tooling/xtask",
 ]
 default-members = ["crates/zed"]
 
@@ -372,7 +374,7 @@ remote_server = { path = "crates/remote_server" }
 repl = { path = "crates/repl" }
 reqwest_client = { path = "crates/reqwest_client" }
 rich_text = { path = "crates/rich_text" }
-rodio = { git = "https://github.com/RustAudio/rodio" }
+rodio = { git = "https://github.com/RustAudio/rodio", rev ="e2074c6c2acf07b57cf717e076bdda7a9ac6e70b", features = ["wav", "playback", "wav_output", "recording"] }
 rope = { path = "crates/rope" }
 rpc = { path = "crates/rpc" }
 rules_library = { path = "crates/rules_library" }
@@ -438,7 +440,7 @@ zlog_settings = { path = "crates/zlog_settings" }
 # External crates
 #
 
-agent-client-protocol = { version = "0.4.3", features = ["unstable"] }
+agent-client-protocol = { version = "0.5.0", features = ["unstable"] }
 aho-corasick = "1.1"
 alacritty_terminal = "0.25.1-rc1"
 any_vec = "0.14"
@@ -455,7 +457,7 @@ async-recursion = "1.0.0"
 async-tar = "0.5.0"
 async-task = "4.7"
 async-trait = "0.1"
-async-tungstenite = "0.29.1"
+async-tungstenite = "0.31.0"
 async_zip = { version = "0.0.17", features = ["deflate", "deflate64"] }
 aws-config = { version = "1.6.1", features = ["behavior-version-latest"] }
 aws-credential-types = { version = "1.2.2", features = [
@@ -481,10 +483,10 @@ chrono = { version = "0.4", features = ["serde"] }
 ciborium = "0.2"
 circular-buffer = "1.0"
 clap = { version = "4.4", features = ["derive"] }
-cocoa = "0.26"
-cocoa-foundation = "0.2.0"
+cocoa = "=0.26.0"
+cocoa-foundation = "=0.2.0"
 convert_case = "0.8.0"
-core-foundation = "0.10.0"
+core-foundation = "=0.10.0"
 core-foundation-sys = "0.8.6"
 core-video = { version = "0.4.3", features = ["metal"] }
 cpal = "0.16"
@@ -547,7 +549,7 @@ nix = "0.29"
 num-format = "0.4.4"
 num-traits = "0.2"
 objc = "0.2"
-objc2-foundation = { version = "0.3", default-features = false, features = [
+objc2-foundation = { version = "=0.3.1", default-features = false, features = [
     "NSArray",
     "NSAttributedString",
     "NSBundle",
@@ -713,7 +715,6 @@ wasmtime-wasi = "29"
 which = "6.0.0"
 windows-core = "0.61"
 wit-component = "0.221"
-workspace-hack = "0.1.0"
 yawc = "0.2.5"
 zeroize = "1.8"
 zstd = "0.11"
@@ -773,9 +774,6 @@ features = [
 notify = { git = "https://github.com/zed-industries/notify.git", rev = "bbb9ea5ae52b253e095737847e367c30653a2e96" }
 notify-types = { git = "https://github.com/zed-industries/notify.git", rev = "bbb9ea5ae52b253e095737847e367c30653a2e96" }
 windows-capture = { git = "https://github.com/zed-industries/windows-capture.git", rev = "f0d6c1b6691db75461b732f6d5ff56eed002eeb9" }
-
-# Makes the workspace hack crate refer to the local one, but only when you're building locally
-workspace-hack = { path = "tooling/workspace-hack" }
 
 [profile.dev]
 split-debuginfo = "unpacked"
@@ -904,5 +902,4 @@ ignored = [
     "serde",
     "component",
     "documented",
-    "workspace-hack",
 ]
