@@ -12764,7 +12764,8 @@ impl LspAdapterDelegate for LocalLspAdapterDelegate {
         let env = self.shell_env().await;
 
         // On Windows, PATH might be "Path" instead of "PATH"
-        let shell_path = env.get("PATH")
+        let shell_path = env
+            .get("PATH")
             .or_else(|| env.get("Path"))
             .or_else(|| env.get("path"))
             .cloned();
