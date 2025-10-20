@@ -840,3 +840,34 @@ impl From<f32> for InactiveOpacity {
         Self(x)
     }
 }
+
+/// Centered layout related setting (left/right).
+///
+/// Valid range: 0.0 to 0.4
+/// Default: 2.0
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    PartialOrd,
+    derive_more::FromStr,
+)]
+#[serde(transparent)]
+pub struct CenteredPaddingSettings(pub f32);
+
+impl Display for CenteredPaddingSettings {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:.2}", self.0)
+    }
+}
+
+impl From<f32> for CenteredPaddingSettings {
+    fn from(x: f32) -> Self {
+        Self(x)
+    }
+}
