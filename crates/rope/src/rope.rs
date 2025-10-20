@@ -389,11 +389,12 @@ impl Rope {
         if offset >= self.summary().len_utf16 {
             return self.summary().len;
         }
-        let mut cursor = self.chunks.cursor::<Dimensions<OffsetUtf16, usize>>(());
-        cursor.seek(&offset, Bias::Left);
-        let overshoot = offset - cursor.start().0;
-        cursor.start().1
-            + cursor.item().map_or(Default::default(), |chunk| {
+        let (start, _, item) =
+            self.chunks
+                .find::<Dimensions<OffsetUtf16, usize>, _>((), &offset, Bias::Left);
+        let overshoot = offset - start.0;
+        start.1
+            + item.map_or(Default::default(), |chunk| {
                 chunk.as_slice().offset_utf16_to_offset(overshoot)
             })
     }
@@ -402,11 +403,12 @@ impl Rope {
         if offset >= self.summary().len {
             return self.summary().lines;
         }
-        let mut cursor = self.chunks.cursor::<Dimensions<usize, Point>>(());
-        cursor.seek(&offset, Bias::Left);
-        let overshoot = offset - cursor.start().0;
-        cursor.start().1
-            + cursor.item().map_or(Point::zero(), |chunk| {
+        let (start, _, item) =
+            self.chunks
+                .find::<Dimensions<usize, Point>, _>((), &offset, Bias::Left);
+        let overshoot = offset - start.0;
+        start.1
+            + item.map_or(Point::zero(), |chunk| {
                 chunk.as_slice().offset_to_point(overshoot)
             })
     }
@@ -415,11 +417,12 @@ impl Rope {
         if offset >= self.summary().len {
             return self.summary().lines_utf16();
         }
-        let mut cursor = self.chunks.cursor::<Dimensions<usize, PointUtf16>>(());
-        cursor.seek(&offset, Bias::Left);
-        let overshoot = offset - cursor.start().0;
-        cursor.start().1
-            + cursor.item().map_or(PointUtf16::zero(), |chunk| {
+        let (start, _, item) =
+            self.chunks
+                .find::<Dimensions<usize, PointUtf16>, _>((), &offset, Bias::Left);
+        let overshoot = offset - start.0;
+        start.1
+            + item.map_or(PointUtf16::zero(), |chunk| {
                 chunk.as_slice().offset_to_point_utf16(overshoot)
             })
     }
@@ -428,11 +431,12 @@ impl Rope {
         if point >= self.summary().lines {
             return self.summary().lines_utf16();
         }
-        let mut cursor = self.chunks.cursor::<Dimensions<Point, PointUtf16>>(());
-        cursor.seek(&point, Bias::Left);
-        let overshoot = point - cursor.start().0;
-        cursor.start().1
-            + cursor.item().map_or(PointUtf16::zero(), |chunk| {
+        let (start, _, item) =
+            self.chunks
+                .find::<Dimensions<Point, PointUtf16>, _>((), &point, Bias::Left);
+        let overshoot = point - start.0;
+        start.1
+            + item.map_or(PointUtf16::zero(), |chunk| {
                 chunk.as_slice().point_to_point_utf16(overshoot)
             })
     }
@@ -441,13 +445,11 @@ impl Rope {
         if point >= self.summary().lines {
             return self.summary().len;
         }
-        let mut cursor = self.chunks.cursor::<Dimensions<Point, usize>>(());
-        cursor.seek(&point, Bias::Left);
-        let overshoot = point - cursor.start().0;
-        cursor.start().1
-            + cursor
-                .item()
-                .map_or(0, |chunk| chunk.as_slice().point_to_offset(overshoot))
+        let (start, _, item) =
+            self.chunks
+                .find::<Dimensions<Point, usize>, _>((), &point, Bias::Left);
+        let overshoot = point - start.0;
+        start.1 + item.map_or(0, |chunk| chunk.as_slice().point_to_offset(overshoot))
     }
 
     pub fn point_utf16_to_offset(&self, point: PointUtf16) -> usize {
@@ -462,11 +464,12 @@ impl Rope {
         if point >= self.summary().lines_utf16() {
             return self.summary().len;
         }
-        let mut cursor = self.chunks.cursor::<Dimensions<PointUtf16, usize>>(());
-        cursor.seek(&point, Bias::Left);
-        let overshoot = point - cursor.start().0;
-        cursor.start().1
-            + cursor.item().map_or(0, |chunk| {
+        let (start, _, item) =
+            self.chunks
+                .find::<Dimensions<PointUtf16, usize>, _>((), &point, Bias::Left);
+        let overshoot = point - start.0;
+        start.1
+            + item.map_or(0, |chunk| {
                 chunk.as_slice().point_utf16_to_offset(overshoot, clip)
             })
     }
@@ -475,11 +478,12 @@ impl Rope {
         if point.0 >= self.summary().lines_utf16() {
             return self.summary().lines;
         }
-        let mut cursor = self.chunks.cursor::<Dimensions<PointUtf16, Point>>(());
-        cursor.seek(&point.0, Bias::Left);
-        let overshoot = Unclipped(point.0 - cursor.start().0);
-        cursor.start().1
-            + cursor.item().map_or(Point::zero(), |chunk| {
+        let (start, _, item) =
+            self.chunks
+                .find::<Dimensions<PointUtf16, Point>, _>((), &point.0, Bias::Left);
+        let overshoot = Unclipped(point.0 - start.0);
+        start.1
+            + item.map_or(Point::zero(), |chunk| {
                 chunk.as_slice().unclipped_point_utf16_to_point(overshoot)
             })
     }
@@ -492,33 +496,30 @@ impl Rope {
     }
 
     pub fn clip_offset_utf16(&self, offset: OffsetUtf16, bias: Bias) -> OffsetUtf16 {
-        let mut cursor = self.chunks.cursor::<OffsetUtf16>(());
-        cursor.seek(&offset, Bias::Right);
-        if let Some(chunk) = cursor.item() {
-            let overshoot = offset - cursor.start();
-            *cursor.start() + chunk.as_slice().clip_offset_utf16(overshoot, bias)
+        let (start, _, item) = self.chunks.find::<OffsetUtf16, _>((), &offset, Bias::Right);
+        if let Some(chunk) = item {
+            let overshoot = offset - start;
+            start + chunk.as_slice().clip_offset_utf16(overshoot, bias)
         } else {
             self.summary().len_utf16
         }
     }
 
     pub fn clip_point(&self, point: Point, bias: Bias) -> Point {
-        let mut cursor = self.chunks.cursor::<Point>(());
-        cursor.seek(&point, Bias::Right);
-        if let Some(chunk) = cursor.item() {
-            let overshoot = point - cursor.start();
-            *cursor.start() + chunk.as_slice().clip_point(overshoot, bias)
+        let (start, _, item) = self.chunks.find::<Point, _>((), &point, Bias::Right);
+        if let Some(chunk) = item {
+            let overshoot = point - start;
+            start + chunk.as_slice().clip_point(overshoot, bias)
         } else {
             self.summary().lines
         }
     }
 
     pub fn clip_point_utf16(&self, point: Unclipped<PointUtf16>, bias: Bias) -> PointUtf16 {
-        let mut cursor = self.chunks.cursor::<PointUtf16>(());
-        cursor.seek(&point.0, Bias::Right);
-        if let Some(chunk) = cursor.item() {
-            let overshoot = Unclipped(point.0 - cursor.start());
-            *cursor.start() + chunk.as_slice().clip_point_utf16(overshoot, bias)
+        let (start, _, item) = self.chunks.find::<PointUtf16, _>((), &point.0, Bias::Right);
+        if let Some(chunk) = item {
+            let overshoot = Unclipped(point.0 - start);
+            start + chunk.as_slice().clip_point_utf16(overshoot, bias)
         } else {
             self.summary().lines_utf16()
         }
