@@ -1749,6 +1749,8 @@ impl Render for InlineAssistTabBarButton {
 
 #[cfg(test)]
 mod tests {
+    use std::num::NonZero;
+
     use super::*;
     use gpui::{TestAppContext, UpdateGlobal as _};
     use pretty_assertions::assert_eq;
@@ -1803,6 +1805,46 @@ mod tests {
                 );
             })
             .unwrap();
+    }
+
+    #[gpui::test]
+    async fn test_bypass_max_tabs_limit(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let workspace = cx.add_window(|window, cx| Workspace::test_new(project, window, cx));
+
+        let (window_handle, terminal_panel) = workspace
+            .update(cx, |workspace, window, cx| {
+                let window_handle = window.window_handle();
+                let terminal_panel = cx.new(|cx| TerminalPanel::new(workspace, window, cx));
+                (window_handle, terminal_panel)
+            })
+            .unwrap();
+
+        set_max_tabs(cx, Some(3));
+
+        for _ in 0..5 {
+            let task = window_handle
+                .update(cx, |_, window, cx| {
+                    terminal_panel.update(cx, |panel, cx| {
+                        panel.add_terminal_shell(None, RevealStrategy::Always, window, cx)
+                    })
+                })
+                .unwrap();
+            task.await.unwrap();
+        }
+
+        cx.run_until_parked();
+
+        let item_count =
+            terminal_panel.read_with(cx, |panel, cx| panel.active_pane.read(cx).items_len());
+
+        assert_eq!(
+            item_count, 5,
+            "Terminal panel should bypass max_tabs limit and have all 5 terminals"
+        );
     }
 
     // A complex Unix command won't be properly parsed by the Windows terminal hence omit the test there.
@@ -1917,6 +1959,14 @@ mod tests {
                 })
             })
             .unwrap();
+    }
+
+    fn set_max_tabs(cx: &mut TestAppContext, value: Option<usize>) {
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.workspace.max_tabs = value.map(|v| NonZero::new(v).unwrap())
+            });
+        });
     }
 
     pub fn init_test(cx: &mut TestAppContext) {
