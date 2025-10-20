@@ -52,6 +52,7 @@ terminal
 
 dap
   = @kubkon
+  = @osiewicz
 
 extension
   = @kubkon
@@ -72,3 +73,9 @@ design
 
 multi_buffer
   = @Veykril
+
+lsp
+  = @osiewicz
+
+languages
+  = @osiewicz
