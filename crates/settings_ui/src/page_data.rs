@@ -4226,31 +4226,91 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     metadata: None,
                     files: USER | LOCAL,
                 }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Working Directory",
-                    description: "What working directory to use when launching the terminal",
-                    field: Box::new(
-                        SettingField {
+                SettingsPageItem::DynamicItem(DynamicItem {
+                    discriminant: SettingItem {
+                        files: USER | LOCAL,
+                        title: "Working Directory",
+                        description: "What working directory to use when launching the terminal",
+                        field: Box::new(SettingField {
                             pick: |settings_content| {
-                                settings_content
-                                    .terminal
-                                    .as_ref()?
-                                    .project
-                                    .working_directory
-                                    .as_ref()
+                                Some(&dynamic_variants::<settings::WorkingDirectory>()[
+                                    settings_content
+                                        .terminal
+                                        .as_ref()?
+                                        .project
+                                        .working_directory
+                                        .as_ref()?
+                                        .discriminant() as usize])
                             },
                             write: |settings_content, value| {
-                                settings_content
+                                let Some(value) = value else {
+                                    return;
+                                };
+                                let settings_value = settings_content
                                     .terminal
                                     .get_or_insert_default()
                                     .project
-                                    .working_directory = value;
+                                    .working_directory
+                                    .get_or_insert_with(|| settings::WorkingDirectory::CurrentProjectDirectory);
+                                *settings_value = match value {
+                                    settings::WorkingDirectoryDiscriminants::CurrentProjectDirectory => {
+                                        settings::WorkingDirectory::CurrentProjectDirectory
+                                    },
+                                    settings::WorkingDirectoryDiscriminants::FirstProjectDirectory => {
+                                        settings::WorkingDirectory::FirstProjectDirectory
+                                    },
+                                    settings::WorkingDirectoryDiscriminants::AlwaysHome => {
+                                        settings::WorkingDirectory::AlwaysHome
+                                    },
+                                    settings::WorkingDirectoryDiscriminants::Always => {
+                                        let directory = match settings_value {
+                                            settings::WorkingDirectory::Always { .. } => return,
+                                            _ => String::new(),
+                                        };
+                                        settings::WorkingDirectory::Always { directory }
+                                    },
+                                };
                             },
+                        }),
+                        metadata: None,
+                    },
+                    pick_discriminant: |settings_content| {
+                        Some(settings_content.terminal.as_ref()?.project.working_directory.as_ref()?.discriminant() as usize)
+                    },
+                    fields: dynamic_variants::<settings::WorkingDirectory>().into_iter().map(|variant| {
+                        match variant {
+                            settings::WorkingDirectoryDiscriminants::CurrentProjectDirectory => vec![],
+                            settings::WorkingDirectoryDiscriminants::FirstProjectDirectory => vec![],
+                            settings::WorkingDirectoryDiscriminants::AlwaysHome => vec![],
+                            settings::WorkingDirectoryDiscriminants::Always => vec![
+                                SettingItem {
+                                    files: USER | LOCAL,
+                                    title: "Directory",
+                                    description: "The directory path to use (will be shell expanded)",
+                                    field: Box::new(SettingField {
+                                        pick: |settings_content| {
+                                            match settings_content.terminal.as_ref()?.project.working_directory.as_ref() {
+                                                Some(settings::WorkingDirectory::Always { directory }) => Some(directory),
+                                                _ => None
+                                            }
+                                        },
+                                        write: |settings_content, value| {
+                                            let value = value.unwrap_or_default();
+                                            match settings_content
+                                                .terminal
+                                                .get_or_insert_default()
+                                                .project
+                                                .working_directory.as_mut() {
+                                                    Some(settings::WorkingDirectory::Always { directory }) => *directory = value,
+                                                    _ => return
+                                                }
+                                        },
+                                    }),
+                                    metadata: None,
+                                }
+                            ],
                         }
-                        .unimplemented(),
-                    ),
-                    metadata: None,
-                    files: USER | LOCAL,
+                    }).collect(),
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Environment Variables",
