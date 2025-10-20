@@ -85,9 +85,6 @@ pub fn variable_config() -> (
         "True".to_string(),
         "False".to_string(),
         "None".to_string(),
-        "__name__".to_string(),
-        "__main__".to_string(),
-        "__file__".to_string(),
     ];
 
     (
