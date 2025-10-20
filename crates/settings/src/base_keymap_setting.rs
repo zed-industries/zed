@@ -7,13 +7,13 @@ use settings::Settings;
 
 /// Base key bindings scheme. Base keymaps can be overridden with user keymaps.
 ///
-/// Default: VSCode
+/// Default: VS Code
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, Default)]
 pub enum BaseKeymap {
     #[default]
-    VSCode,
+    VS Code,
     JetBrains,
-    SublimeText,
+    Sublime Text,
     Atom,
     TextMate,
     Emacs,
