@@ -16,16 +16,22 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
             items: vec![
                 SettingsPageItem::SectionHeader("General Settings"),
                 SettingsPageItem::SettingItem(SettingItem {
-                    title: "Confirm Quit",
-                    description: "Confirm before quitting Zed",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| settings_content.workspace.confirm_quit.as_ref(),
-                        write: |settings_content, value| {
-                            settings_content.workspace.confirm_quit = value;
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
+                    files: LOCAL,
+                    title: "Project Name",
+                    description: "The Displayed Name Of This Project. If Left Empty, The Root Directory Name Will Be Displayed",
+                    field: Box::new(
+                        SettingField {
+                            pick: |settings_content| {
+                                const DEFAULT: String = String::new();
+                                const DEFAULT_EMPTY: Option<&String> = Some(&DEFAULT);
+                                settings_content.project.worktree.project_name.as_ref()?.as_ref().or(DEFAULT_EMPTY)
+                            },
+                            write: |settings_content, value| {
+                                settings_content.project.worktree.project_name = settings::Maybe::Set(value.filter(|name| !name.is_empty()));
+                            },
+                        }
+                    ),
+                    metadata: Some(Box::new(SettingsFieldMetadata { placeholder: Some("Project Name"), ..Default::default() })),
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "When Closing With No Tabs",

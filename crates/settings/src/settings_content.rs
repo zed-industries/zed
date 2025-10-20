@@ -1051,7 +1051,8 @@ impl std::fmt::Display for DelayMs {
 ///
 /// WARN: This type should not be wrapped in an option inside of settings, otherwise the default `serde_json` behavior
 /// of treating `null` and missing as the `Option::None` will be used
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, strum::EnumDiscriminants)]
+#[strum_discriminants(derive(strum::VariantArray, strum::VariantNames, strum::FromRepr))]
 pub enum Maybe<T> {
     /// An explicitly set value, which may be `None` (representing JSON `null`) or `Some(value)`.
     Set(Option<T>),
@@ -1067,6 +1068,15 @@ impl<T: Clone> merge_from::MergeFrom for Maybe<T> {
     }
 }
 
+impl<T> From<Option<Option<T>>> for Maybe<T> {
+    fn from(value: Option<Option<T>>) -> Self {
+        match value {
+            Some(value) => Maybe::Set(value),
+            None => Maybe::Unset,
+        }
+    }
+}
+
 impl<T> Maybe<T> {
     pub fn is_set(&self) -> bool {
         matches!(self, Maybe::Set(_))
@@ -1074,6 +1084,20 @@ impl<T> Maybe<T> {
 
     pub fn is_unset(&self) -> bool {
         matches!(self, Maybe::Unset)
+    }
+
+    pub fn into_inner(self) -> Option<T> {
+        match self {
+            Maybe::Set(value) => value,
+            Maybe::Unset => None,
+        }
+    }
+
+    pub fn as_ref(&self) -> Option<&Option<T>> {
+        match self {
+            Maybe::Set(value) => Some(value),
+            Maybe::Unset => None,
+        }
     }
 }
 

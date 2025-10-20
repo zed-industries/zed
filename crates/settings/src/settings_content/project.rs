@@ -59,7 +59,7 @@ pub struct WorktreeSettingsContent {
     /// The displayed name of this project. If not set or null, the root directory name
     /// will be displayed.
     ///
-    /// Default: ""
+    /// Default: null
     #[serde(default)]
     #[serde(skip_serializing_if = "Maybe::is_unset")]
     pub project_name: Maybe<String>,
