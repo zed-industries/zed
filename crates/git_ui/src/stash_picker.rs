@@ -4,16 +4,17 @@ use chrono;
 use git::stash::StashEntry;
 use gpui::{
     Action, AnyElement, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
-    InteractiveElement, IntoElement, Modifiers, ModifiersChangedEvent, MouseButton, MouseUpEvent,
-    ParentElement, Render, SharedString, Styled, Subscription, Task, WeakEntity, Window, actions,
-    rems,
+    InteractiveElement, IntoElement, Modifiers, ModifiersChangedEvent, ParentElement, Render,
+    SharedString, Styled, Subscription, Task, WeakEntity, Window, actions, rems, svg,
 };
 use picker::{Picker, PickerDelegate};
 use project::git_store::{Repository, RepositoryEvent};
 use std::sync::Arc;
 use time::{OffsetDateTime, UtcOffset};
 use time_format;
-use ui::{HighlightedLabel, KeyBinding, ListItem, ListItemSpacing, Tooltip, prelude::*};
+use ui::{
+    ButtonLike, HighlightedLabel, KeyBinding, ListItem, ListItemSpacing, Tooltip, prelude::*,
+};
 use util::ResultExt;
 use workspace::notifications::DetachAndPromptErr;
 use workspace::{ModalView, Workspace};
@@ -476,17 +477,20 @@ impl PickerDelegate for StashListDelegate {
             );
 
         let show_button = div()
-            .id("show-button")
-            .on_mouse_up(
-                MouseButton::Right,
-                cx.listener(move |picker, _: &MouseUpEvent, window, cx| {
-                    cx.stop_propagation();
-                    picker.delegate.show_stash_at(ix, window, cx);
-                }),
-            )
+            .group("show-button-hover")
             .child(
-                IconButton::new("show_stash", IconName::Eye)
-                    .icon_size(IconSize::Small)
+                ButtonLike::new("show-button")
+                    .child(
+                        svg()
+                            .size(IconSize::Medium.rems())
+                            .flex_none()
+                            .path(IconName::Eye.path())
+                            .text_color(Color::Default.color(cx))
+                            .group_hover("show-button-hover", |this| {
+                                this.text_color(Color::Accent.color(cx))
+                            })
+                            .hover(|this| this.text_color(Color::Accent.color(cx))),
+                    )
                     .tooltip(Tooltip::for_action_title("Show Stash", &ShowStashItem))
                     .on_click(cx.listener(move |picker, _, window, cx| {
                         cx.stop_propagation();
