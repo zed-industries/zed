@@ -3267,6 +3267,13 @@ impl LineEnding {
         }
     }
 
+    pub fn label(&self) -> &'static str {
+        match self {
+            LineEnding::Unix => "LF",
+            LineEnding::Windows => "CRLF",
+        }
+    }
+
     pub fn detect(text: &str) -> Self {
         let mut max_ix = cmp::min(text.len(), 1000);
         while !text.is_char_boundary(max_ix) {
