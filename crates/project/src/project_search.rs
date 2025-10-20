@@ -23,7 +23,7 @@ use smol::{
 };
 
 use text::BufferId;
-use util::{ResultExt, maybe};
+use util::{ResultExt, maybe, paths::compare_rel_paths};
 use worktree::{Entry, ProjectEntryId, Snapshot, Worktree};
 
 use crate::{
@@ -50,6 +50,7 @@ enum SearchKind {
         remote_id: u64,
         models: Arc<Mutex<RemotelyCreatedModels>>,
     },
+    OpenBuffersOnly,
 }
 
 /// Represents results of project search and allows one to either obtain match positions OR
@@ -92,6 +93,7 @@ enum FindSearchCandidates {
         get_buffer_for_full_scan_tx: Sender<ProjectPath>,
     },
     Remote,
+    OpenBuffersOnly,
 }
 
 impl Search {
@@ -99,7 +101,6 @@ impl Search {
         fs: Arc<dyn Fs>,
         buffer_store: Entity<BufferStore>,
         worktree_store: Entity<WorktreeStore>,
-
         limit: usize,
         cx: &mut App,
     ) -> Self {
@@ -124,6 +125,18 @@ impl Search {
                 remote_id: client_state.1,
                 models: client_state.2,
             },
+            buffer_store,
+            worktree_store,
+            limit,
+        }
+    }
+    pub(crate) fn open_buffers_only(
+        buffer_store: Entity<BufferStore>,
+        worktree_store: Entity<WorktreeStore>,
+        limit: usize,
+    ) -> Self {
+        Self {
+            kind: SearchKind::OpenBuffersOnly,
             buffer_store,
             worktree_store,
             limit,
@@ -164,6 +177,22 @@ impl Search {
                     bounded(MAX_CONCURRENT_BUFFER_OPENS);
 
                 let (candidate_searcher, tasks) = match self.kind {
+                    SearchKind::OpenBuffersOnly => {
+                        let Ok(open_buffers) = cx.update(|cx| self.all_loaded_buffers(&query, cx))
+                        else {
+                            return;
+                        };
+                        let fill_requests = cx
+                            .background_spawn(async move {
+                                for buffer in open_buffers {
+                                    if let Err(_) = grab_buffer_snapshot_tx.send(buffer).await {
+                                        return;
+                                    }
+                                }
+                            })
+                            .boxed_local();
+                        (FindSearchCandidates::OpenBuffersOnly, vec![fill_requests])
+                    }
                     SearchKind::Local {
                         fs,
                         ref mut worktrees,
@@ -434,6 +463,45 @@ impl Search {
         })
         .await;
     }
+
+    fn all_loaded_buffers(&self, search_query: &SearchQuery, cx: &App) -> Vec<Entity<Buffer>> {
+        let worktree_store = self.worktree_store.read(cx);
+        let mut buffers = search_query
+            .buffers()
+            .into_iter()
+            .flatten()
+            .filter(|buffer| {
+                let b = buffer.read(cx);
+                if let Some(file) = b.file() {
+                    if !search_query.match_path(file.path().as_std_path()) {
+                        return false;
+                    }
+                    if !search_query.include_ignored()
+                        && let Some(entry) = b
+                            .entry_id(cx)
+                            .and_then(|entry_id| worktree_store.entry_for_id(entry_id, cx))
+                        && entry.is_ignored
+                    {
+                        return false;
+                    }
+                }
+                true
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        buffers.sort_by(|a, b| {
+            let a = a.read(cx);
+            let b = b.read(cx);
+            match (a.file(), b.file()) {
+                (None, None) => a.remote_id().cmp(&b.remote_id()),
+                (None, Some(_)) => std::cmp::Ordering::Less,
+                (Some(_), None) => std::cmp::Ordering::Greater,
+                (Some(a), Some(b)) => compare_rel_paths((a.path(), true), (b.path(), true)),
+            }
+        });
+
+        buffers
+    }
 }
 
 struct Worker<'search> {
@@ -470,7 +538,7 @@ impl Worker<'_> {
                 get_buffer_for_full_scan_tx,
                 Some(fs),
             ),
-            FindSearchCandidates::Remote => (
+            FindSearchCandidates::Remote | FindSearchCandidates::OpenBuffersOnly => (
                 unbounded().1,
                 unbounded().1,
                 unbounded().0,
