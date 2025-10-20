@@ -88,9 +88,11 @@ impl Ord for PathMatch {
 pub fn match_fixed_path_set(
     candidates: Vec<PathMatchCandidate>,
     worktree_id: usize,
+    worktree_root_name: Option<Arc<RelPath>>,
     query: &str,
     smart_case: bool,
     max_results: usize,
+    path_style: PathStyle,
 ) -> Vec<PathMatch> {
     let lowercase_query = query.to_lowercase().chars().collect::<Vec<_>>();
     let query = query.chars().collect::<Vec<_>>();
@@ -98,10 +100,31 @@ pub fn match_fixed_path_set(
 
     let mut matcher = Matcher::new(&query, &lowercase_query, query_char_bag, smart_case, true);
 
-    let mut results = Vec::new();
+    let mut results = Vec::with_capacity(candidates.len());
+    let (path_prefix, path_prefix_chars, lowercase_prefix) = match worktree_root_name {
+        Some(worktree_root_name) => {
+            let mut path_prefix_chars = worktree_root_name
+                .display(path_style)
+                .chars()
+                .collect::<Vec<_>>();
+            path_prefix_chars.extend(path_style.separator().chars());
+            let lowercase_pfx = path_prefix_chars
+                .iter()
+                .map(|c| c.to_ascii_lowercase())
+                .collect::<Vec<_>>();
+
+            (worktree_root_name, path_prefix_chars, lowercase_pfx)
+        }
+        None => (
+            RelPath::empty().into(),
+            Default::default(),
+            Default::default(),
+        ),
+    };
+
     matcher.match_candidates(
-        &[],
-        &[],
+        &path_prefix_chars,
+        &lowercase_prefix,
         candidates.into_iter(),
         &mut results,
         &AtomicBool::new(false),
@@ -111,7 +134,7 @@ pub fn match_fixed_path_set(
             positions: positions.clone(),
             is_dir: candidate.is_dir,
             path: candidate.path.into(),
-            path_prefix: RelPath::empty().into(),
+            path_prefix: path_prefix.clone(),
             distance_to_relative_ancestor: usize::MAX,
         },
     );
