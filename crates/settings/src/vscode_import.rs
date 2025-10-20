@@ -635,6 +635,7 @@ impl VsCodeSettings {
             show: self.read_bool("workbench.statusBar.visible"),
             active_language_button: None,
             cursor_position_button: None,
+            line_endings_button: None,
         })
     }
 
