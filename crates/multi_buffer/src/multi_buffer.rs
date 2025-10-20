@@ -215,17 +215,11 @@ impl std::ops::Add<usize> for MultiBufferRow {
 
 pub trait ToOffset: 'static + fmt::Debug {
     fn to_offset(&self, snapshot: &MultiBufferSnapshot) -> usize;
-}
-
-pub trait ToOffsetUtf16: 'static + fmt::Debug {
     fn to_offset_utf16(&self, snapshot: &MultiBufferSnapshot) -> OffsetUtf16;
 }
 
 pub trait ToPoint: 'static + fmt::Debug {
     fn to_point(&self, snapshot: &MultiBufferSnapshot) -> Point;
-}
-
-pub trait ToPointUtf16: 'static + fmt::Debug {
     fn to_point_utf16(&self, snapshot: &MultiBufferSnapshot) -> PointUtf16;
 }
 
@@ -4108,8 +4102,16 @@ impl MultiBufferSnapshot {
         self.convert_dimension(point, text::BufferSnapshot::point_to_point_utf16)
     }
 
+    pub fn point_utf16_to_point(&self, point: PointUtf16) -> Point {
+        self.convert_dimension(point, text::BufferSnapshot::point_utf16_to_point)
+    }
+
     pub fn point_to_offset(&self, point: Point) -> usize {
         self.convert_dimension(point, text::BufferSnapshot::point_to_offset)
+    }
+
+    pub fn point_to_offset_utf16(&self, point: Point) -> OffsetUtf16 {
+        self.convert_dimension(point, text::BufferSnapshot::point_to_offset_utf16)
     }
 
     pub fn offset_utf16_to_offset(&self, offset: OffsetUtf16) -> usize {
@@ -4122,6 +4124,10 @@ impl MultiBufferSnapshot {
 
     pub fn point_utf16_to_offset(&self, point: PointUtf16) -> usize {
         self.convert_dimension(point, text::BufferSnapshot::point_utf16_to_offset)
+    }
+
+    pub fn point_utf16_to_offset_utf16(&self, point: PointUtf16) -> OffsetUtf16 {
+        self.convert_dimension(point, text::BufferSnapshot::point_utf16_to_offset_utf16)
     }
 
     fn clip_dimension<D>(
@@ -7429,6 +7435,9 @@ impl ToOffset for Point {
     fn to_offset<'a>(&self, snapshot: &MultiBufferSnapshot) -> usize {
         snapshot.point_to_offset(*self)
     }
+    fn to_offset_utf16(&self, snapshot: &MultiBufferSnapshot) -> OffsetUtf16 {
+        snapshot.point_to_offset_utf16(*self)
+    }
 }
 
 impl ToOffset for usize {
@@ -7442,11 +7451,18 @@ impl ToOffset for usize {
         );
         *self
     }
+    fn to_offset_utf16(&self, snapshot: &MultiBufferSnapshot) -> OffsetUtf16 {
+        snapshot.offset_to_offset_utf16(*self)
+    }
 }
 
 impl ToOffset for OffsetUtf16 {
     fn to_offset<'a>(&self, snapshot: &MultiBufferSnapshot) -> usize {
         snapshot.offset_utf16_to_offset(*self)
+    }
+
+    fn to_offset_utf16(&self, _snapshot: &MultiBufferSnapshot) -> OffsetUtf16 {
+        *self
     }
 }
 
@@ -7454,17 +7470,8 @@ impl ToOffset for PointUtf16 {
     fn to_offset<'a>(&self, snapshot: &MultiBufferSnapshot) -> usize {
         snapshot.point_utf16_to_offset(*self)
     }
-}
-
-impl ToOffsetUtf16 for OffsetUtf16 {
-    fn to_offset_utf16(&self, _snapshot: &MultiBufferSnapshot) -> OffsetUtf16 {
-        *self
-    }
-}
-
-impl ToOffsetUtf16 for usize {
     fn to_offset_utf16(&self, snapshot: &MultiBufferSnapshot) -> OffsetUtf16 {
-        snapshot.offset_to_offset_utf16(*self)
+        snapshot.point_utf16_to_offset_utf16(*self)
     }
 }
 
@@ -7472,27 +7479,24 @@ impl ToPoint for usize {
     fn to_point<'a>(&self, snapshot: &MultiBufferSnapshot) -> Point {
         snapshot.offset_to_point(*self)
     }
+    fn to_point_utf16<'a>(&self, snapshot: &MultiBufferSnapshot) -> PointUtf16 {
+        snapshot.offset_to_point_utf16(*self)
+    }
 }
 
 impl ToPoint for Point {
     fn to_point<'a>(&self, _: &MultiBufferSnapshot) -> Point {
         *self
     }
-}
-
-impl ToPointUtf16 for usize {
-    fn to_point_utf16<'a>(&self, snapshot: &MultiBufferSnapshot) -> PointUtf16 {
-        snapshot.offset_to_point_utf16(*self)
-    }
-}
-
-impl ToPointUtf16 for Point {
     fn to_point_utf16<'a>(&self, snapshot: &MultiBufferSnapshot) -> PointUtf16 {
         snapshot.point_to_point_utf16(*self)
     }
 }
 
-impl ToPointUtf16 for PointUtf16 {
+impl ToPoint for PointUtf16 {
+    fn to_point<'a>(&self, snapshot: &MultiBufferSnapshot) -> Point {
+        snapshot.point_utf16_to_point(*self)
+    }
     fn to_point_utf16<'a>(&self, _: &MultiBufferSnapshot) -> PointUtf16 {
         *self
     }

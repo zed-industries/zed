@@ -2051,6 +2051,14 @@ impl BufferSnapshot {
         self.visible_text.point_to_offset(point)
     }
 
+    pub fn point_to_offset_utf16(&self, point: Point) -> OffsetUtf16 {
+        self.visible_text.point_to_offset_utf16(point)
+    }
+
+    pub fn point_utf16_to_offset_utf16(&self, point: PointUtf16) -> OffsetUtf16 {
+        self.visible_text.point_utf16_to_offset_utf16(point)
+    }
+
     pub fn point_utf16_to_offset(&self, point: PointUtf16) -> usize {
         self.visible_text.point_utf16_to_offset(point)
     }
@@ -2081,6 +2089,10 @@ impl BufferSnapshot {
 
     pub fn point_to_point_utf16(&self, point: Point) -> PointUtf16 {
         self.visible_text.point_to_point_utf16(point)
+    }
+
+    pub fn point_utf16_to_point(&self, point: PointUtf16) -> Point {
+        self.visible_text.point_utf16_to_point(point)
     }
 
     pub fn version(&self) -> &clock::Global {

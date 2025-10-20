@@ -449,6 +449,19 @@ impl<'a> ChunkSlice<'a> {
     }
 
     #[inline(always)]
+    pub fn point_to_offset_utf16(&self, point: Point) -> OffsetUtf16 {
+        if point.row > self.lines().row {
+            debug_panic!(
+                "point {:?} extends beyond rows for string {:?}",
+                point,
+                self.text
+            );
+            return self.len_utf16();
+        }
+        self.offset_to_offset_utf16(self.point_to_offset(point))
+    }
+
+    #[inline(always)]
     pub fn offset_to_offset_utf16(&self, offset: usize) -> OffsetUtf16 {
         let mask = (1 as Bitmap).unbounded_shl(offset as u32).wrapping_sub(1);
         OffsetUtf16((self.chars_utf16 & mask).count_ones() as usize)
