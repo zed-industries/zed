@@ -30,7 +30,7 @@ use std::env;
 use std::sync::Arc;
 pub use util::serde::default_true;
 
-use crate::{merge_from, ActiveSettingsProfileName};
+use crate::{ActiveSettingsProfileName, merge_from};
 
 #[skip_serializing_none]
 #[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
