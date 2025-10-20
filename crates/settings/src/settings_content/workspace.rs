@@ -7,8 +7,8 @@ use serde_with::skip_serializing_none;
 use settings_macros::MergeFrom;
 
 use crate::{
-    CenteredPaddingSettings, DockPosition, DockSide, InactiveOpacity, ScrollbarSettingsContent,
-    ShowIndentGuides,
+    CenteredPaddingSettings, DelayMs, DockPosition, DockSide, InactiveOpacity,
+    ScrollbarSettingsContent, ShowIndentGuides,
 };
 
 #[skip_serializing_none]
@@ -389,7 +389,7 @@ pub enum AutosaveSetting {
     /// Disable autosave.
     Off,
     /// Save after inactivity period of `milliseconds`.
-    AfterDelay { milliseconds: u64 },
+    AfterDelay { milliseconds: DelayMs },
     /// Autosave when focus changes.
     OnFocusChange,
     /// Autosave when the active window changes.

@@ -558,7 +558,14 @@ impl Fs for RealFs {
     }
 
     async fn open_handle(&self, path: &Path) -> Result<Arc<dyn FileHandle>> {
-        Ok(Arc::new(std::fs::File::open(path)?))
+        let mut options = std::fs::OpenOptions::new();
+        options.read(true);
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::OpenOptionsExt;
+            options.custom_flags(windows::Win32::Storage::FileSystem::FILE_FLAG_BACKUP_SEMANTICS.0);
+        }
+        Ok(Arc::new(options.open(path)?))
     }
 
     async fn load(&self, path: &Path) -> Result<String> {
