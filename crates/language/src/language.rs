@@ -1202,6 +1202,10 @@ pub struct HighlightsConfig {
     /// LSP semantic token types that represent variable-like identifiers.
     /// Examples: "variable", "parameter", "const"
     pub variable_lsp_token_types: Vec<String>,
+    /// Identifiers that should be excluded from rainbow highlighting.
+    /// Language-specific keywords and builtin identifiers (case-insensitive).
+    /// Examples: "self", "super", "true", "false", "null"
+    pub excluded_identifiers: std::collections::HashSet<String>,
 }
 
 impl HighlightsConfig {
@@ -1222,6 +1226,12 @@ impl HighlightsConfig {
         self.variable_lsp_token_types
             .iter()
             .any(|t| t == token_type)
+    }
+
+    /// Checks if an identifier should be excluded from rainbow highlighting.
+    /// Uses case-insensitive matching for keywords.
+    pub fn is_excluded_identifier(&self, identifier: &str) -> bool {
+        self.excluded_identifiers.contains(&identifier.to_lowercase())
     }
 }
 
@@ -1536,6 +1546,7 @@ impl Language {
             variable_capture_indices,
             variable_parent_kinds: Self::default_variable_parent_kinds(),
             variable_lsp_token_types: Self::default_variable_lsp_token_types(),
+            excluded_identifiers: std::collections::HashSet::new(),
         });
 
         Ok(self)
@@ -1567,6 +1578,36 @@ impl Language {
         let grammar = self.grammar_mut()?;
         if let Some(highlights_config) = &mut grammar.highlights_config {
             highlights_config.variable_lsp_token_types = types;
+        }
+        Ok(self)
+    }
+
+    /// Sets language-specific identifiers that should be excluded from rainbow highlighting.
+    /// 
+    /// Identifiers are converted to lowercase for case-insensitive matching.
+    /// 
+    /// # Example (in a language extension)
+    /// ```ignore
+    /// // In your language's load_language implementation:
+    /// LoadedLanguage {
+    ///     config,
+    ///     queries,
+    ///     excluded_identifiers: Some(vec![
+    ///         "self".to_string(),
+    ///         "super".to_string(),
+    ///         "true".to_string(),
+    ///         "false".to_string(),
+    ///     ]),
+    ///     // ... other fields
+    /// }
+    /// ```
+    pub fn with_excluded_identifiers(mut self, identifiers: Vec<String>) -> Result<Self> {
+        let grammar = self.grammar_mut()?;
+        if let Some(highlights_config) = &mut grammar.highlights_config {
+            highlights_config.excluded_identifiers = identifiers
+                .into_iter()
+                .map(|s| s.to_lowercase())
+                .collect();
         }
         Ok(self)
     }

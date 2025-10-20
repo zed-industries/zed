@@ -263,6 +263,7 @@ pub struct LoadedLanguage {
     pub variable_capture_names: Option<Vec<String>>,
     pub variable_parent_kinds: Option<Vec<String>>,
     pub variable_lsp_token_types: Option<Vec<String>>,
+    pub excluded_identifiers: Option<Vec<String>>,
 }
 
 impl LanguageRegistry {
@@ -362,6 +363,7 @@ impl LanguageRegistry {
                     variable_capture_names: None,
                     variable_parent_kinds: None,
                     variable_lsp_token_types: None,
+                    excluded_identifiers: None,
                     context_provider: None,
                     manifest_name: None,
                 })
@@ -978,6 +980,9 @@ impl LanguageRegistry {
                                 }
                                 if let Some(types) = loaded_language.variable_lsp_token_types {
                                     language = language.with_variable_lsp_token_types(types)?;
+                                }
+                                if let Some(excluded) = loaded_language.excluded_identifiers {
+                                    language = language.with_excluded_identifiers(excluded)?;
                                 }
 
                                 Ok(language)

@@ -28,8 +28,10 @@ use util::{merge_json_value_into, rel_path::RelPath};
 
 use crate::{PackageJson, PackageJsonData};
 
-/// Returns TypeScript/JavaScript-specific variable capture names, parent kinds, and LSP token types for rainbow highlighting.
+/// Returns TypeScript/JavaScript-specific variable capture names, parent kinds, LSP token types,
+/// and excluded identifiers for rainbow highlighting.
 pub fn variable_config() -> (
+    Option<Vec<String>>,
     Option<Vec<String>>,
     Option<Vec<String>>,
     Option<Vec<String>>,
@@ -72,10 +74,24 @@ pub fn variable_config() -> (
         "const".to_string(),
     ];
 
+    // TypeScript/JavaScript keywords and common globals that should NOT be rainbow highlighted
+    let excluded_identifiers = vec![
+        "this".to_string(),
+        "super".to_string(),
+        "arguments".to_string(),
+        "true".to_string(),
+        "false".to_string(),
+        "null".to_string(),
+        "undefined".to_string(),
+        "NaN".to_string(),
+        "Infinity".to_string(),
+    ];
+
     (
         Some(capture_names),
         Some(parent_kinds),
         Some(lsp_token_types),
+        Some(excluded_identifiers),
     )
 }
 

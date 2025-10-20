@@ -39,8 +39,10 @@ use std::{
 use task::{ShellKind, TaskTemplate, TaskTemplates, VariableName};
 use util::{ResultExt, maybe};
 
-/// Returns Python-specific variable capture names, parent kinds, and LSP token types for rainbow highlighting.
+/// Returns Python-specific variable capture names, parent kinds, LSP token types,
+/// and excluded identifiers for rainbow highlighting.
 pub fn variable_config() -> (
+    Option<Vec<String>>,
     Option<Vec<String>>,
     Option<Vec<String>>,
     Option<Vec<String>>,
@@ -76,10 +78,23 @@ pub fn variable_config() -> (
 
     let lsp_token_types = vec!["variable".to_string(), "parameter".to_string()];
 
+    // Python keywords and common builtins that should NOT be rainbow highlighted
+    let excluded_identifiers = vec![
+        "self".to_string(),
+        "cls".to_string(),
+        "True".to_string(),
+        "False".to_string(),
+        "None".to_string(),
+        "__name__".to_string(),
+        "__main__".to_string(),
+        "__file__".to_string(),
+    ];
+
     (
         Some(capture_names),
         Some(parent_kinds),
         Some(lsp_token_types),
+        Some(excluded_identifiers),
     )
 }
 

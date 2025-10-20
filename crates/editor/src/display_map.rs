@@ -267,14 +267,25 @@ impl SyntaxTokenView {
 
             // Check if this identifier has a variable-like capture (cached lookup)
             if Self::is_variable_context_cached(&node, start..end, snapshot, variable_captures) {
+                // Validate identifier and check against language-specific excluded list
                 if let Some(validated) =
                     crate::rainbow::validate_identifier_for_rainbow(&identifier)
                 {
-                    let style = cache.get_or_insert(validated, theme);
-                    tokens.push(SyntaxToken {
-                        range: start..end,
-                        style,
-                    });
+                    // Check if this identifier is excluded by the language configuration
+                    let is_excluded = snapshot
+                        .syntax_layers()
+                        .find_map(|layer| layer.language.grammar())
+                        .and_then(|grammar| grammar.highlights_config.as_ref())
+                        .map(|config| config.is_excluded_identifier(validated))
+                        .unwrap_or(false);
+                    
+                    if !is_excluded {
+                        let style = cache.get_or_insert(validated, theme);
+                        tokens.push(SyntaxToken {
+                            range: start..end,
+                            style,
+                        });
+                    }
                 }
             }
         }
@@ -2095,13 +2106,20 @@ impl<'a> SemanticTokenStylizer<'a> {
 
         if is_variable && self.rainbow_config.enabled {
             if let Some(cache) = variable_color_cache {
-                let variable_name: String = buffer.text_for_range(range).collect();
+                let variable_name: String = buffer.text_for_range(range.clone()).collect();
                 if let Some(validated) =
                     crate::rainbow::validate_identifier_for_rainbow(&variable_name)
                 {
-                    return Some(cache.get_or_insert(validated, theme));
+                    // Check if this identifier is excluded by the language configuration
+                    let is_excluded = highlights_config
+                        .map(|config| config.is_excluded_identifier(validated))
+                        .unwrap_or(false);
+                    
+                    if !is_excluded {
+                        return Some(cache.get_or_insert(validated, theme));
+                    }
                 }
-                // Validation failed (keyword, single char, etc.) - fall through to theme color
+                // Validation failed (keyword, excluded, etc.) - fall through to theme color
             }
         }
 

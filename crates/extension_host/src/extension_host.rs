@@ -1307,6 +1307,7 @@ impl ExtensionStore {
                         variable_capture_names: None,
                         variable_parent_kinds: None,
                         variable_lsp_token_types: None,
+                        excluded_identifiers: None
                     })
                 }),
             );

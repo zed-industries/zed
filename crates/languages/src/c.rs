@@ -12,8 +12,10 @@ use smol::fs;
 use std::{env::consts, path::PathBuf, sync::Arc};
 use util::{ResultExt, fs::remove_matching, maybe, merge_json_value_into};
 
-/// Returns C/C++-specific variable capture names, parent kinds, and LSP token types for rainbow highlighting.
+/// Returns C/C++-specific variable capture names, parent kinds, LSP token types,
+/// and excluded identifiers for rainbow highlighting.
 pub fn variable_config() -> (
+    Option<Vec<String>>,
     Option<Vec<String>>,
     Option<Vec<String>>,
     Option<Vec<String>>,
@@ -46,10 +48,20 @@ pub fn variable_config() -> (
 
     let lsp_token_types = vec!["variable".to_string(), "parameter".to_string()];
 
+    // C/C++ keywords and common defines that should NOT be rainbow highlighted
+    let excluded_identifiers = vec![
+        "true".to_string(),
+        "false".to_string(),
+        "NULL".to_string(),
+        "nullptr".to_string(),
+        "this".to_string(),
+    ];
+
     (
         Some(capture_names),
         Some(parent_kinds),
         Some(lsp_token_types),
+        Some(excluded_identifiers),
     )
 }
 

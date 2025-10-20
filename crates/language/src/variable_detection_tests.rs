@@ -32,6 +32,7 @@ fn test_highlights_config_is_variable_lsp_token_type() {
             "parameter".to_string(),
             "const".to_string(),
         ],
+        excluded_identifiers: std::collections::HashSet::new(),
     };
 
     assert!(highlights_config.is_variable_lsp_token_type("variable"));
@@ -52,6 +53,7 @@ fn test_highlights_config_is_variable_parent_kind() {
             "assignment_expression".to_string(),
         ],
         variable_lsp_token_types: vec![],
+        excluded_identifiers: std::collections::HashSet::new(),
     };
 
     assert!(highlights_config.is_variable_parent_kind("let_declaration"));
@@ -67,6 +69,7 @@ fn test_highlights_config_is_variable_capture() {
         variable_capture_indices: vec![1, 2, 5],
         variable_parent_kinds: vec![],
         variable_lsp_token_types: vec![],
+        excluded_identifiers: std::collections::HashSet::new(),
     };
 
     assert!(highlights_config.is_variable_capture(1));
@@ -84,6 +87,7 @@ fn test_empty_lsp_token_types() {
         variable_capture_indices: vec![],
         variable_parent_kinds: vec![],
         variable_lsp_token_types: vec![],
+        excluded_identifiers: std::collections::HashSet::new(),
     };
 
     assert!(!highlights_config.is_variable_lsp_token_type("variable"));
@@ -102,6 +106,7 @@ fn test_duplicate_lsp_token_types() {
             "variable".to_string(),
             "parameter".to_string(),
         ],
+        excluded_identifiers: std::collections::HashSet::new(),
     };
 
     assert!(highlights_config.is_variable_lsp_token_type("variable"));
@@ -115,6 +120,7 @@ fn test_case_sensitive_lsp_token_types() {
         variable_capture_indices: vec![],
         variable_parent_kinds: vec![],
         variable_lsp_token_types: vec!["Variable".to_string()],
+        excluded_identifiers: std::collections::HashSet::new(),
     };
 
     assert!(highlights_config.is_variable_lsp_token_type("Variable"));

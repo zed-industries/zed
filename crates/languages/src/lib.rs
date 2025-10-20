@@ -363,7 +363,7 @@ fn register_language(
         config.hidden,
         manifest_name.clone(),
         Arc::new(move || {
-            let (variable_capture_names, variable_parent_kinds, variable_lsp_token_types) =
+            let (variable_capture_names, variable_parent_kinds, variable_lsp_token_types, excluded_identifiers) =
                 match name {
                     "rust" => rust::variable_config(),
                     "typescript" | "tsx" | "javascript" => typescript::variable_config(),
@@ -371,7 +371,7 @@ fn register_language(
                     "go" => go::variable_config(),
                     "c" | "cpp" => c::variable_config(),
                     "bash" => bash::variable_config(),
-                    _ => (None, None, None),
+                    _ => (None, None, None, None),
                 };
             Ok(LoadedLanguage {
                 config: config.clone(),
@@ -382,6 +382,7 @@ fn register_language(
                 variable_capture_names,
                 variable_parent_kinds,
                 variable_lsp_token_types,
+                excluded_identifiers,
             })
         }),
     );

@@ -29,9 +29,11 @@ use util::{ResultExt, maybe};
 
 use crate::language_settings::language_settings;
 
-/// Returns Rust-specific variable capture names, parent kinds, and LSP token types for rainbow highlighting.
+/// Returns Rust-specific variable capture names, parent kinds, LSP token types, 
+/// and excluded identifiers for rainbow highlighting.
 /// These patterns identify variables, parameters, constants, and macro parameters in Rust code.
 pub fn variable_config() -> (
+    Option<Vec<String>>,
     Option<Vec<String>>,
     Option<Vec<String>>,
     Option<Vec<String>>,
@@ -69,10 +71,25 @@ pub fn variable_config() -> (
         "const".to_string(),
     ];
 
+    // Rust keywords and common builtins that should NOT be rainbow highlighted
+    let excluded_identifiers = vec![
+        "self".to_string(),
+        "Self".to_string(),
+        "super".to_string(),
+        "crate".to_string(),
+        "true".to_string(),
+        "false".to_string(),
+        "Some".to_string(),
+        "None".to_string(),
+        "Ok".to_string(),
+        "Err".to_string(),
+    ];
+
     (
         Some(capture_names),
         Some(parent_kinds),
         Some(lsp_token_types),
+        Some(excluded_identifiers),
     )
 }
 
