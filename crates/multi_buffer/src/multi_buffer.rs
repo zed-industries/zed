@@ -53,8 +53,6 @@ use text::{
 use theme::SyntaxTheme;
 use util::{post_inc, rel_path::RelPath};
 
-const NEWLINES: &[u8] = &[b'\n'; rope::Chunk::MASK_BITS];
-
 #[derive(Debug, Default, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ExcerptId(u32);
 
@@ -535,7 +533,7 @@ struct MultiBufferRegion<'a, D: TextDimension> {
 struct ExcerptChunks<'a> {
     excerpt_id: ExcerptId,
     content_chunks: BufferChunks<'a>,
-    footer_height: usize,
+    has_footer: bool,
 }
 
 #[derive(Debug)]
@@ -6502,21 +6500,16 @@ impl Excerpt {
         let chunks_start = content_start + range.start;
         let chunks_end = content_start + cmp::min(range.end, self.text_summary.len);
 
-        let footer_height = if self.has_trailing_newline
+        let has_footer = self.has_trailing_newline
             && range.start <= self.text_summary.len
-            && range.end > self.text_summary.len
-        {
-            1
-        } else {
-            0
-        };
+            && range.end > self.text_summary.len;
 
         let content_chunks = self.buffer.chunks(chunks_start..chunks_end, language_aware);
 
         ExcerptChunks {
             excerpt_id: self.id,
             content_chunks,
-            footer_height,
+            has_footer,
         }
     }
 
@@ -6525,14 +6518,9 @@ impl Excerpt {
         let chunks_start = content_start + range.start;
         let chunks_end = content_start + cmp::min(range.end, self.text_summary.len);
         excerpt_chunks.content_chunks.seek(chunks_start..chunks_end);
-        excerpt_chunks.footer_height = if self.has_trailing_newline
+        excerpt_chunks.has_footer = self.has_trailing_newline
             && range.start <= self.text_summary.len
-            && range.end > self.text_summary.len
-        {
-            1
-        } else {
-            0
-        };
+            && range.end > self.text_summary.len;
     }
 
     fn clip_anchor(&self, text_anchor: text::Anchor) -> text::Anchor {
@@ -7422,12 +7410,10 @@ impl<'a> Iterator for ExcerptChunks<'a> {
             return Some(chunk);
         }
 
-        if self.footer_height > 0 {
-            let text = unsafe { str::from_utf8_unchecked(&NEWLINES[..self.footer_height]) };
-            let chars = 1u128
-                .unbounded_shl(self.footer_height as u32)
-                .wrapping_sub(1);
-            self.footer_height = 0;
+        if self.has_footer {
+            let text = "\n";
+            let chars = 0b1;
+            self.has_footer = false;
             return Some(Chunk {
                 text,
                 chars,
