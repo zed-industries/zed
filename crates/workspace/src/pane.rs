@@ -376,6 +376,7 @@ pub struct Pane {
     render_tab_bar: Rc<dyn Fn(&mut Pane, &mut Window, &mut Context<Pane>) -> AnyElement>,
     show_tab_bar_buttons: bool,
     max_tabs: Option<NonZeroUsize>,
+    ignore_max_tabs: Option<bool>,
     _subscriptions: Vec<Subscription>,
     tab_bar_scroll_handle: ScrollHandle,
     /// This is set to true if a user scroll has occurred more recently than a system scroll
@@ -475,8 +476,14 @@ impl Pane {
         double_click_dispatch_action: Box<dyn Action>,
         window: &mut Window,
         cx: &mut Context<Self>,
+        ignore_max_tabs: Option<bool>,
     ) -> Self {
         let focus_handle = cx.focus_handle();
+        let max_tabs = if ignore_max_tabs.unwrap_or(false) {
+            None
+        } else {
+            WorkspaceSettings::get_global(cx).max_tabs
+        };
 
         let subscriptions = vec![
             cx.on_focus(&focus_handle, window, Pane::focus_in),
@@ -498,7 +505,8 @@ impl Pane {
             zoomed: false,
             active_item_index: 0,
             preview_item_id: None,
-            max_tabs: WorkspaceSettings::get_global(cx).max_tabs,
+            max_tabs,
+            ignore_max_tabs,
             last_focus_handle_by_item: Default::default(),
             nav_history: NavHistory(Arc::new(Mutex::new(NavHistoryState {
                 mode: NavigationMode::Normal,
@@ -706,7 +714,7 @@ impl Pane {
             self.preview_item_id = None;
         }
 
-        if new_max_tabs != self.max_tabs {
+        if !self.ignore_max_tabs.unwrap_or(false) && new_max_tabs != self.max_tabs {
             self.max_tabs = new_max_tabs;
             self.close_items_on_settings_change(window, cx);
         }

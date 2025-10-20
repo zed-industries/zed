@@ -1105,6 +1105,7 @@ pub fn new_terminal_pane(
             NewTerminal.boxed_clone(),
             window,
             cx,
+            Some(true),
         );
         pane.set_zoomed(zoomed, cx);
         pane.set_can_navigate(false, cx);

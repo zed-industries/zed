@@ -1327,6 +1327,7 @@ impl Workspace {
                 NewFile.boxed_clone(),
                 window,
                 cx,
+                None,
             );
             center_pane.set_can_split(Some(Arc::new(|_, _, _, _| true)));
             center_pane
@@ -3231,6 +3232,7 @@ impl Workspace {
                 NewFile.boxed_clone(),
                 window,
                 cx,
+                None,
             );
             pane.set_can_split(Some(Arc::new(|_, _, _, _| true)));
             pane
