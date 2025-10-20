@@ -30,8 +30,9 @@ collections.workspace = true
 fs.workspace = true
 futures.workspace = true
 feature_flags.workspace = true
-gpui = { workspace = true, features = ["screen-capture"] }
+gpui.workspace = true
 language.workspace = true
+libwebrtc.workspace = true
 log.workspace = true
 postage.workspace = true
 project.workspace = true
