@@ -1400,11 +1400,9 @@ impl AcpThread {
             this.update(cx, |this, cx| {
                 let project = this.project.clone();
 
-                for location in &resolved_locations {
-                    if let Some((_, buffer)) = location {
-                        let snapshot = buffer.read(cx).snapshot();
-                        this.shared_buffers.insert(buffer.clone(), snapshot);
-                    }
+                for (_, buffer) in resolved_locations.iter().flatten() {
+                    let snapshot = buffer.read(cx).snapshot();
+                    this.shared_buffers.insert(buffer.clone(), snapshot);
                 }
 
                 let resolved_locations = resolved_locations
