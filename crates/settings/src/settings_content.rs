@@ -1034,3 +1034,143 @@ impl std::fmt::Display for DelayMs {
         write!(f, "{}ms", self.0)
     }
 }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Maybe<T> {
+    Set(Option<T>),
+    Unset,
+}
+
+impl<T: Clone> merge_from::MergeFrom for Maybe<T> {
+    fn merge_from(&mut self, other: &Self) {
+        if self.is_unset() {
+            *self = other.clone();
+        }
+    }
+}
+
+impl<T> Maybe<T> {
+    pub fn is_set(&self) -> bool {
+        matches!(self, Maybe::Set(_))
+    }
+
+    pub fn is_unset(&self) -> bool {
+        matches!(self, Maybe::Unset)
+    }
+}
+
+impl<T: serde::Serialize> serde::Serialize for Maybe<T> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        match self {
+            Maybe::Set(value) => value.serialize(serializer),
+            Maybe::Unset => serializer.serialize_none(),
+        }
+    }
+}
+
+impl<'de, T: serde::Deserialize<'de>> serde::Deserialize<'de> for Maybe<T> {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        Option::<T>::deserialize(deserializer).map(Maybe::Set)
+    }
+}
+
+impl<T> Default for Maybe<T> {
+    fn default() -> Self {
+        Maybe::Unset
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json;
+
+    #[test]
+    fn test_maybe() {
+        #[derive(Debug, PartialEq, Serialize, Deserialize)]
+        struct TestStruct {
+            #[serde(default)]
+            #[serde(skip_serializing_if = "Maybe::is_unset")]
+            field: Maybe<String>,
+        }
+
+        #[derive(Debug, PartialEq, Serialize, Deserialize)]
+        struct NumericTest {
+            #[serde(default)]
+            value: Maybe<i32>,
+        }
+
+        let json = "{}";
+        let result: TestStruct = serde_json::from_str(json).unwrap();
+        assert!(result.field.is_unset());
+        assert_eq!(result.field, Maybe::Unset);
+
+        let json = r#"{"field": null}"#;
+        let result: TestStruct = serde_json::from_str(json).unwrap();
+        assert!(result.field.is_set());
+        assert_eq!(result.field, Maybe::Set(None));
+
+        let json = r#"{"field": "hello"}"#;
+        let result: TestStruct = serde_json::from_str(json).unwrap();
+        assert!(result.field.is_set());
+        assert_eq!(result.field, Maybe::Set(Some("hello".to_string())));
+
+        let test = TestStruct {
+            field: Maybe::Unset,
+        };
+        let json = serde_json::to_string(&test).unwrap();
+        assert_eq!(json, "{}");
+
+        let test = TestStruct {
+            field: Maybe::Set(None),
+        };
+        let json = serde_json::to_string(&test).unwrap();
+        assert_eq!(json, r#"{"field":null}"#);
+
+        let test = TestStruct {
+            field: Maybe::Set(Some("world".to_string())),
+        };
+        let json = serde_json::to_string(&test).unwrap();
+        assert_eq!(json, r#"{"field":"world"}"#);
+
+        let default_maybe: Maybe<i32> = Maybe::default();
+        assert!(default_maybe.is_unset());
+
+        let unset: Maybe<String> = Maybe::Unset;
+        assert!(unset.is_unset());
+        assert!(!unset.is_set());
+
+        let set_none: Maybe<String> = Maybe::Set(None);
+        assert!(set_none.is_set());
+        assert!(!set_none.is_unset());
+
+        let set_some: Maybe<String> = Maybe::Set(Some("value".to_string()));
+        assert!(set_some.is_set());
+        assert!(!set_some.is_unset());
+
+        let original = TestStruct {
+            field: Maybe::Set(Some("test".to_string())),
+        };
+        let json = serde_json::to_string(&original).unwrap();
+        let deserialized: TestStruct = serde_json::from_str(&json).unwrap();
+        assert_eq!(original, deserialized);
+
+        let json = r#"{"value": 42}"#;
+        let result: NumericTest = serde_json::from_str(json).unwrap();
+        assert_eq!(result.value, Maybe::Set(Some(42)));
+
+        let json = r#"{"value": null}"#;
+        let result: NumericTest = serde_json::from_str(json).unwrap();
+        assert_eq!(result.value, Maybe::Set(None));
+
+        let json = "{}";
+        let result: NumericTest = serde_json::from_str(json).unwrap();
+        assert_eq!(result.value, Maybe::Unset);
+    }
+}
