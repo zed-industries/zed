@@ -197,7 +197,7 @@ impl TerminalOutput {
         }
     }
 
-    fn full_text(&self) -> String {
+    pub fn full_text(&self) -> String {
         let mut full_text = String::new();
 
         // Get the total number of lines, including history
