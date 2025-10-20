@@ -18,6 +18,10 @@ use crate::{
     WindowBounds, WindowControls, WindowDecorations, WindowOptions, WindowParams, WindowTextSystem,
     point, prelude::*, px, rems, size, transparent_black,
 };
+
+thread_local! {
+    static CURRENT_WINDOW_CONTEXT: RefCell<Option<WindowId>> = RefCell::new(None);
+}
 use anyhow::{Context as _, Result, anyhow};
 use collections::{FxHashMap, FxHashSet};
 #[cfg(target_os = "macos")]
@@ -927,6 +931,14 @@ fn default_bounds(display_id: Option<DisplayId>, cx: &mut App) -> Bounds<Pixels>
 }
 
 impl Window {
+    /// Get the current window ID from the rendering context.
+    ///
+    /// Returns `Some(WindowId)` if called during a window render, `None` otherwise.
+    /// This is used to enable workspace-aware theme and settings resolution.
+    pub fn current_window_id() -> Option<WindowId> {
+        CURRENT_WINDOW_CONTEXT.with(|ctx| *ctx.borrow())
+    }
+
     pub(crate) fn new(
         handle: AnyWindowHandle,
         options: WindowOptions,
@@ -1912,6 +1924,11 @@ impl Window {
     /// the contents of the new [`Scene`], use [`Self::present`].
     #[profiling::function]
     pub fn draw(&mut self, cx: &mut App) -> ArenaClearNeeded {
+        // Set window context for this render
+        CURRENT_WINDOW_CONTEXT.with(|ctx| {
+            *ctx.borrow_mut() = Some(self.handle.window_id());
+        });
+
         self.invalidate_entities();
         cx.entities.clear_accessed();
         debug_assert!(self.rendered_entity_stack.is_empty());
@@ -1976,6 +1993,11 @@ impl Window {
         self.refreshing = false;
         self.invalidator.set_phase(DrawPhase::None);
         self.needs_present.set(true);
+
+        // Clear window context after render
+        CURRENT_WINDOW_CONTEXT.with(|ctx| {
+            *ctx.borrow_mut() = None;
+        });
 
         ArenaClearNeeded
     }
