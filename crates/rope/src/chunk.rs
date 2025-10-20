@@ -79,7 +79,7 @@ impl Chunk {
     }
 
     #[inline(always)]
-    pub fn chars(&self) -> u128 {
+    pub const fn chars(&self) -> u128 {
         self.chars
     }
 }
@@ -107,17 +107,17 @@ impl Into<Chunk> for ChunkSlice<'_> {
 
 impl<'a> ChunkSlice<'a> {
     #[inline(always)]
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.text.is_empty()
     }
 
     #[inline(always)]
-    pub fn is_char_boundary(self, offset: usize) -> bool {
+    pub const fn is_char_boundary(self, offset: usize) -> bool {
         self.text.is_char_boundary(offset)
     }
 
     #[inline(always)]
-    pub fn split_at(self, mid: usize) -> (ChunkSlice<'a>, ChunkSlice<'a>) {
+    pub const fn split_at(self, mid: usize) -> (ChunkSlice<'a>, ChunkSlice<'a>) {
         if mid == MAX_BASE {
             let left = self;
             let right = ChunkSlice {
@@ -206,19 +206,19 @@ impl<'a> ChunkSlice<'a> {
 
     /// Get length in bytes
     #[inline(always)]
-    pub fn len(&self) -> usize {
+    pub const fn len(&self) -> usize {
         self.text.len()
     }
 
     /// Get length in UTF-16 code units
     #[inline(always)]
-    pub fn len_utf16(&self) -> OffsetUtf16 {
+    pub const fn len_utf16(&self) -> OffsetUtf16 {
         OffsetUtf16(self.chars_utf16.count_ones() as usize)
     }
 
     /// Get point representing number of lines and length of last line
     #[inline(always)]
-    pub fn lines(&self) -> Point {
+    pub const fn lines(&self) -> Point {
         let row = self.newlines.count_ones();
         let column = self.newlines.leading_zeros() - (u128::BITS - self.text.len() as u32);
         Point::new(row, column)
@@ -226,7 +226,7 @@ impl<'a> ChunkSlice<'a> {
 
     /// Get number of chars in first line
     #[inline(always)]
-    pub fn first_line_chars(&self) -> u32 {
+    pub const fn first_line_chars(&self) -> u32 {
         if self.newlines == 0 {
             self.chars.count_ones()
         } else {
@@ -237,7 +237,7 @@ impl<'a> ChunkSlice<'a> {
 
     /// Get number of chars in last line
     #[inline(always)]
-    pub fn last_line_chars(&self) -> u32 {
+    pub const fn last_line_chars(&self) -> u32 {
         if self.newlines == 0 {
             self.chars.count_ones()
         } else {
@@ -248,7 +248,7 @@ impl<'a> ChunkSlice<'a> {
 
     /// Get number of UTF-16 code units in last line
     #[inline(always)]
-    pub fn last_line_len_utf16(&self) -> u32 {
+    pub const fn last_line_len_utf16(&self) -> u32 {
         if self.newlines == 0 {
             self.chars_utf16.count_ones()
         } else {
@@ -294,7 +294,7 @@ impl<'a> ChunkSlice<'a> {
     }
 
     #[inline(always)]
-    pub fn offset_to_point(&self, offset: usize) -> Point {
+    pub const fn offset_to_point(&self, offset: usize) -> Point {
         let mask = if offset == MAX_BASE {
             u128::MAX
         } else {
@@ -331,7 +331,7 @@ impl<'a> ChunkSlice<'a> {
     }
 
     #[inline(always)]
-    pub fn offset_to_offset_utf16(&self, offset: usize) -> OffsetUtf16 {
+    pub const fn offset_to_offset_utf16(&self, offset: usize) -> OffsetUtf16 {
         let mask = if offset == MAX_BASE {
             u128::MAX
         } else {
@@ -359,7 +359,7 @@ impl<'a> ChunkSlice<'a> {
     }
 
     #[inline(always)]
-    pub fn offset_to_point_utf16(&self, offset: usize) -> PointUtf16 {
+    pub const fn offset_to_point_utf16(&self, offset: usize) -> PointUtf16 {
         let mask = if offset == MAX_BASE {
             u128::MAX
         } else {
@@ -536,7 +536,7 @@ impl<'a> ChunkSlice<'a> {
     }
 
     #[inline(always)]
-    pub fn tabs(&self) -> Tabs {
+    pub const fn tabs(&self) -> Tabs {
         Tabs {
             tabs: self.tabs,
             chars: self.chars,
@@ -581,7 +581,7 @@ impl Iterator for Tabs {
 
 /// Finds the n-th bit that is set to 1.
 #[inline(always)]
-fn nth_set_bit(v: u128, n: usize) -> usize {
+const fn nth_set_bit(v: u128, n: usize) -> usize {
     let low = v as u64;
     let high = (v >> 64) as u64;
 
@@ -594,7 +594,7 @@ fn nth_set_bit(v: u128, n: usize) -> usize {
 }
 
 #[inline(always)]
-fn nth_set_bit_u64(v: u64, mut n: u64) -> u64 {
+const fn nth_set_bit_u64(v: u64, mut n: u64) -> u64 {
     let v = v.reverse_bits();
     let mut s: u64 = 64;
 

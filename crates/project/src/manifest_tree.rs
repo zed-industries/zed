@@ -206,7 +206,7 @@ pub(crate) struct ManifestQueryDelegate {
 }
 
 impl ManifestQueryDelegate {
-    pub fn new(worktree: Snapshot) -> Self {
+    pub const fn new(worktree: Snapshot) -> Self {
         Self { worktree }
     }
 }

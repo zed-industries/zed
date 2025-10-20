@@ -1203,14 +1203,14 @@ pub enum DataCollectionChoice {
 }
 
 impl DataCollectionChoice {
-    pub fn is_enabled(self) -> bool {
+    pub const fn is_enabled(self) -> bool {
         match self {
             Self::Enabled => true,
             Self::NotAnswered | Self::Disabled => false,
         }
     }
 
-    pub fn is_answered(self) -> bool {
+    pub const fn is_answered(self) -> bool {
         match self {
             Self::Enabled | Self::Disabled => true,
             Self::NotAnswered => false,
@@ -1218,7 +1218,7 @@ impl DataCollectionChoice {
     }
 
     #[must_use]
-    pub fn toggle(&self) -> DataCollectionChoice {
+    pub const fn toggle(&self) -> DataCollectionChoice {
         match self {
             Self::Enabled => Self::Disabled,
             Self::Disabled => Self::Enabled,
@@ -1574,7 +1574,7 @@ impl edit_prediction::EditPredictionProvider for ZetaEditPredictionProvider {
 /// intentionally low to err on the side of underestimating limits.
 const BYTES_PER_TOKEN_GUESS: usize = 3;
 
-fn guess_token_count(bytes: usize) -> usize {
+const fn guess_token_count(bytes: usize) -> usize {
     bytes / BYTES_PER_TOKEN_GUESS
 }
 

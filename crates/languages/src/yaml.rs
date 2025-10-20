@@ -31,7 +31,7 @@ pub struct YamlLspAdapter {
 impl YamlLspAdapter {
     const SERVER_NAME: LanguageServerName = LanguageServerName::new_static("yaml-language-server");
     const PACKAGE_NAME: &str = "yaml-language-server";
-    pub fn new(node: NodeRuntime) -> Self {
+    pub const fn new(node: NodeRuntime) -> Self {
         YamlLspAdapter { node }
     }
 }

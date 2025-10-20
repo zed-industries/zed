@@ -25,7 +25,7 @@ pub struct SupermavenCompletionProvider {
 }
 
 impl SupermavenCompletionProvider {
-    pub fn new(supermaven: Entity<Supermaven>) -> Self {
+    pub const fn new(supermaven: Entity<Supermaven>) -> Self {
         Self {
             supermaven,
             buffer_id: None,

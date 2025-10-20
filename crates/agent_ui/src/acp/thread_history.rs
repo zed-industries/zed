@@ -42,7 +42,7 @@ enum ListItemType {
 }
 
 impl ListItemType {
-    fn history_entry(&self) -> Option<&HistoryEntry> {
+    const fn history_entry(&self) -> Option<&HistoryEntry> {
         match self {
             ListItemType::Entry { entry, .. } => Some(entry),
             ListItemType::SearchResult { entry, .. } => Some(entry),
@@ -540,7 +540,7 @@ impl AcpHistoryEntryElement {
         }
     }
 
-    pub fn hovered(mut self, hovered: bool) -> Self {
+    pub const fn hovered(mut self, hovered: bool) -> Self {
         self.hovered = hovered;
         self
     }

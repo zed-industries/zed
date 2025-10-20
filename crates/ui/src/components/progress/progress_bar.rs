@@ -30,31 +30,31 @@ impl ProgressBar {
     }
 
     /// Sets the current value of the progress bar.
-    pub fn value(mut self, value: f32) -> Self {
+    pub const fn value(mut self, value: f32) -> Self {
         self.value = value;
         self
     }
 
     /// Sets the maximum value of the progress bar.
-    pub fn max_value(mut self, max_value: f32) -> Self {
+    pub const fn max_value(mut self, max_value: f32) -> Self {
         self.max_value = max_value;
         self
     }
 
     /// Sets the background color of the progress bar.
-    pub fn bg_color(mut self, color: Hsla) -> Self {
+    pub const fn bg_color(mut self, color: Hsla) -> Self {
         self.bg_color = color;
         self
     }
 
     /// Sets the foreground color of the progress bar.
-    pub fn fg_color(mut self, color: Hsla) -> Self {
+    pub const fn fg_color(mut self, color: Hsla) -> Self {
         self.fg_color = color;
         self
     }
 
     /// Sets the over limit color of the progress bar.
-    pub fn over_color(mut self, color: Hsla) -> Self {
+    pub const fn over_color(mut self, color: Hsla) -> Self {
         self.over_color = color;
         self
     }

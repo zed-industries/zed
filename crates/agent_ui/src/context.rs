@@ -34,7 +34,7 @@ pub enum ContextKind {
 }
 
 impl ContextKind {
-    pub fn icon(&self) -> IconName {
+    pub const fn icon(&self) -> IconName {
         match self {
             ContextKind::File => IconName::File,
             ContextKind::Directory => IconName::Folder,
@@ -68,7 +68,7 @@ pub enum AgentContextHandle {
 }
 
 impl AgentContextHandle {
-    pub fn id(&self) -> ContextId {
+    pub const fn id(&self) -> ContextId {
         match self {
             Self::File(context) => context.context_id,
             Self::Directory(context) => context.context_id,
@@ -82,7 +82,7 @@ impl AgentContextHandle {
         }
     }
 
-    pub fn element_id(&self, name: SharedString) -> ElementId {
+    pub const fn element_id(&self, name: SharedString) -> ElementId {
         ElementId::NamedInteger(name, self.id().0)
     }
 }
@@ -130,11 +130,11 @@ impl AgentContext {
 pub struct ContextId(u64);
 
 impl ContextId {
-    pub fn zero() -> Self {
+    pub const fn zero() -> Self {
         ContextId(0)
     }
 
-    fn for_lookup() -> Self {
+    const fn for_lookup() -> Self {
         ContextId(u64::MAX)
     }
 
@@ -519,7 +519,7 @@ impl FetchedUrlContext {
         }))
     }
 
-    pub fn load(self) -> Task<Option<AgentContext>> {
+    pub const fn load(self) -> Task<Option<AgentContext>> {
         Task::ready(Some(AgentContext::FetchedUrl(self)))
     }
 }
@@ -649,7 +649,7 @@ impl RulesContextHandle {
         self.prompt_id.hash(state)
     }
 
-    pub fn lookup_key(prompt_id: UserPromptId) -> AgentContextKey {
+    pub const fn lookup_key(prompt_id: UserPromptId) -> AgentContextKey {
         AgentContextKey(AgentContextHandle::Rules(RulesContextHandle {
             prompt_id,
             context_id: ContextId::for_lookup(),

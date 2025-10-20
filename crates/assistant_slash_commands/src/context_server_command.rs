@@ -23,7 +23,7 @@ pub struct ContextServerSlashCommand {
 }
 
 impl ContextServerSlashCommand {
-    pub fn new(store: Entity<ContextServerStore>, id: ContextServerId, prompt: Prompt) -> Self {
+    pub const fn new(store: Entity<ContextServerStore>, id: ContextServerId, prompt: Prompt) -> Self {
         Self {
             server_id: id,
             prompt,
@@ -242,7 +242,7 @@ fn prompt_arguments(prompt: &Prompt, arguments: &[String]) -> Result<HashMap<Str
 /// MCP servers can return prompts with multiple arguments. Since we only
 /// support one argument, we ignore all others. This is the necessary predicate
 /// for this.
-pub fn acceptable_prompt(prompt: &Prompt) -> bool {
+pub const fn acceptable_prompt(prompt: &Prompt) -> bool {
     match &prompt.arguments {
         None => true,
         Some(args) if args.len() <= 1 => true,

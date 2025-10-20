@@ -243,7 +243,7 @@ pub struct ContextPickerCompletionProvider {
 }
 
 impl ContextPickerCompletionProvider {
-    pub fn new(
+    pub const fn new(
         workspace: WeakEntity<Workspace>,
         context_store: WeakEntity<ContextStore>,
         thread_store: Option<WeakEntity<HistoryStore>>,

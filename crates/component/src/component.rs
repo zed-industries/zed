@@ -283,7 +283,7 @@ pub enum ComponentStatus {
 }
 
 impl ComponentStatus {
-    pub fn description(&self) -> &str {
+    pub const fn description(&self) -> &str {
         match self {
             ComponentStatus::WorkInProgress => {
                 "These components are still being designed or refined. They shouldn't be used in the app yet."

@@ -49,14 +49,14 @@ impl<M: Migrator> ThreadSafeConnectionBuilder<M> {
     /// Sets the query to run every time a connection is opened. This must
     /// be infallible (EG only use pragma statements) and not cause writes.
     /// to the db or it will panic.
-    pub fn with_connection_initialize_query(mut self, initialize_query: &'static str) -> Self {
+    pub const fn with_connection_initialize_query(mut self, initialize_query: &'static str) -> Self {
         self.connection.connection_initialize_query = Some(initialize_query);
         self
     }
 
     /// Queues an initialization query for the database file. This must be infallible
     /// but may cause changes to the database file such as with `PRAGMA journal_mode`
-    pub fn with_db_initialization_query(mut self, initialize_query: &'static str) -> Self {
+    pub const fn with_db_initialization_query(mut self, initialize_query: &'static str) -> Self {
         self.db_initialize_query = Some(initialize_query);
         self
     }

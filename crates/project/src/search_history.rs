@@ -23,7 +23,7 @@ pub struct SearchHistoryCursor {
 
 impl SearchHistoryCursor {
     /// Resets the selection to `None`.
-    pub fn reset(&mut self) {
+    pub const fn reset(&mut self) {
         self.selection = None;
     }
 }
@@ -36,7 +36,7 @@ pub struct SearchHistory {
 }
 
 impl SearchHistory {
-    pub fn new(max_history_len: Option<usize>, insertion_behavior: QueryInsertionBehavior) -> Self {
+    pub const fn new(max_history_len: Option<usize>, insertion_behavior: QueryInsertionBehavior) -> Self {
         SearchHistory {
             max_history_len,
             insertion_behavior,

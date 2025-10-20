@@ -204,7 +204,7 @@ impl Markdown {
         this
     }
 
-    pub fn is_parsing(&self) -> bool {
+    pub const fn is_parsing(&self) -> bool {
         self.pending_parse.is_some()
     }
 
@@ -411,7 +411,7 @@ struct Selection {
 }
 
 impl Selection {
-    fn set_head(&mut self, head: usize) {
+    const fn set_head(&mut self, head: usize) {
         if head < self.tail() {
             if !self.reversed {
                 self.end = self.start;
@@ -427,7 +427,7 @@ impl Selection {
         }
     }
 
-    fn tail(&self) -> usize {
+    const fn tail(&self) -> usize {
         if self.reversed { self.end } else { self.start }
     }
 }
@@ -441,11 +441,11 @@ pub struct ParsedMarkdown {
 }
 
 impl ParsedMarkdown {
-    pub fn source(&self) -> &SharedString {
+    pub const fn source(&self) -> &SharedString {
         &self.source
     }
 
-    pub fn events(&self) -> &Arc<[(Range<usize>, MarkdownEvent)]> {
+    pub const fn events(&self) -> &Arc<[(Range<usize>, MarkdownEvent)]> {
         &self.events
     }
 }

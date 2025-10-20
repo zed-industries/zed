@@ -139,7 +139,7 @@ pub struct ActiveScrollbarState {
 }
 
 impl ActiveScrollbarState {
-    pub fn new(axis: Axis, thumb_state: ScrollbarThumbState) -> Self {
+    pub const fn new(axis: Axis, thumb_state: ScrollbarThumbState) -> Self {
         ActiveScrollbarState { axis, thumb_state }
     }
 
@@ -189,16 +189,16 @@ impl ScrollManager {
         }
     }
 
-    pub fn clone_state(&mut self, other: &Self) {
+    pub const fn clone_state(&mut self, other: &Self) {
         self.anchor = other.anchor;
         self.ongoing = other.ongoing;
     }
 
-    pub fn anchor(&self) -> ScrollAnchor {
+    pub const fn anchor(&self) -> ScrollAnchor {
         self.anchor
     }
 
-    pub fn ongoing_scroll(&self) -> OngoingScroll {
+    pub const fn ongoing_scroll(&self) -> OngoingScroll {
         self.ongoing
     }
 
@@ -345,15 +345,15 @@ impl ScrollManager {
         }
     }
 
-    pub fn scrollbars_visible(&self) -> bool {
+    pub const fn scrollbars_visible(&self) -> bool {
         self.show_scrollbars
     }
 
-    pub fn take_autoscroll_request(&mut self) -> Option<(Autoscroll, bool)> {
+    pub const fn take_autoscroll_request(&mut self) -> Option<(Autoscroll, bool)> {
         self.autoscroll_request.take()
     }
 
-    pub fn active_scrollbar_state(&self) -> Option<&ActiveScrollbarState> {
+    pub const fn active_scrollbar_state(&self) -> Option<&ActiveScrollbarState> {
         self.active_scrollbar.as_ref()
     }
 
@@ -440,7 +440,7 @@ impl ScrollManager {
         }
     }
 
-    pub fn minimap_thumb_state(&self) -> Option<ScrollbarThumbState> {
+    pub const fn minimap_thumb_state(&self) -> Option<ScrollbarThumbState> {
         self.minimap_thumb_state
     }
 
@@ -453,17 +453,17 @@ impl ScrollManager {
         }
     }
 
-    pub fn set_forbid_vertical_scroll(&mut self, forbid: bool) {
+    pub const fn set_forbid_vertical_scroll(&mut self, forbid: bool) {
         self.forbid_vertical_scroll = forbid;
     }
 
-    pub fn forbid_vertical_scroll(&self) -> bool {
+    pub const fn forbid_vertical_scroll(&self) -> bool {
         self.forbid_vertical_scroll
     }
 }
 
 impl Editor {
-    pub fn vertical_scroll_margin(&self) -> usize {
+    pub const fn vertical_scroll_margin(&self) -> usize {
         self.scroll_manager.vertical_scroll_margin as usize
     }
 
@@ -472,7 +472,7 @@ impl Editor {
         cx.notify();
     }
 
-    pub fn visible_line_count(&self) -> Option<f64> {
+    pub const fn visible_line_count(&self) -> Option<f64> {
         self.scroll_manager.visible_line_count
     }
 
@@ -481,7 +481,7 @@ impl Editor {
             .map(|line_count| line_count as u32 - 1)
     }
 
-    pub fn visible_column_count(&self) -> Option<f64> {
+    pub const fn visible_column_count(&self) -> Option<f64> {
         self.scroll_manager.visible_column_count
     }
 
@@ -506,7 +506,7 @@ impl Editor {
         }
     }
 
-    pub(crate) fn set_visible_column_count(&mut self, columns: f64) {
+    pub(crate) const fn set_visible_column_count(&mut self, columns: f64) {
         self.scroll_manager.visible_column_count = Some(columns);
     }
 

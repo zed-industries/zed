@@ -19,7 +19,7 @@ impl ToastIcon {
         }
     }
 
-    pub fn color(mut self, color: Color) -> Self {
+    pub const fn color(mut self, color: Color) -> Self {
         self.color = color;
         self
     }
@@ -67,7 +67,7 @@ impl StatusToast {
         })
     }
 
-    pub fn icon(mut self, icon: ToastIcon) -> Self {
+    pub const fn icon(mut self, icon: ToastIcon) -> Self {
         self.icon = Some(icon);
         self
     }
@@ -90,7 +90,7 @@ impl StatusToast {
         self
     }
 
-    pub fn dismiss_button(mut self, show: bool) -> Self {
+    pub const fn dismiss_button(mut self, show: bool) -> Self {
         self.show_dismiss = show;
         self
     }

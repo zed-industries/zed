@@ -190,7 +190,7 @@ pub fn interpolate_edits(
     if edits.is_empty() { None } else { Some(edits) }
 }
 
-pub fn line_range_to_point_range(range: Range<predict_edits_v3::Line>) -> Range<language::Point> {
+pub const fn line_range_to_point_range(range: Range<predict_edits_v3::Line>) -> Range<language::Point> {
     language::Point::new(range.start.0, 0)..language::Point::new(range.end.0, 0)
 }
 

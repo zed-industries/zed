@@ -16,14 +16,14 @@ pub struct Model {
 }
 
 impl Model {
-    pub fn leader_connection(&self) -> ConnectionId {
+    pub const fn leader_connection(&self) -> ConnectionId {
         ConnectionId {
             owner_id: self.leader_connection_server_id.0 as u32,
             id: self.leader_connection_id as u32,
         }
     }
 
-    pub fn follower_connection(&self) -> ConnectionId {
+    pub const fn follower_connection(&self) -> ConnectionId {
         ConnectionId {
             owner_id: self.follower_connection_server_id.0 as u32,
             id: self.follower_connection_id as u32,

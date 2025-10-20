@@ -945,7 +945,7 @@ impl StatusItemView for EditPredictionButton {
 }
 
 impl SupermavenButtonStatus {
-    fn to_icon(&self) -> IconName {
+    const fn to_icon(&self) -> IconName {
         match self {
             SupermavenButtonStatus::Ready => IconName::Supermaven,
             SupermavenButtonStatus::Errored(_) => IconName::SupermavenError,
@@ -963,7 +963,7 @@ impl SupermavenButtonStatus {
         }
     }
 
-    fn has_menu(&self) -> bool {
+    const fn has_menu(&self) -> bool {
         match self {
             SupermavenButtonStatus::Ready | SupermavenButtonStatus::NeedsActivation(_) => true,
             SupermavenButtonStatus::Errored(_) | SupermavenButtonStatus::Initializing => false,

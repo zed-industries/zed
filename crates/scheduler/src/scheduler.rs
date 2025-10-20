@@ -38,7 +38,7 @@ pub trait Scheduler: Send + Sync {
 pub struct SessionId(u16);
 
 impl SessionId {
-    pub fn new(id: u16) -> Self {
+    pub const fn new(id: u16) -> Self {
         SessionId(id)
     }
 }
@@ -46,7 +46,7 @@ impl SessionId {
 pub struct Timer(oneshot::Receiver<()>);
 
 impl Timer {
-    pub fn new(rx: oneshot::Receiver<()>) -> Self {
+    pub const fn new(rx: oneshot::Receiver<()>) -> Self {
         Timer(rx)
     }
 }

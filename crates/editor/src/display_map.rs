@@ -384,7 +384,7 @@ impl DisplayMap {
         self.block_map.folded_buffers.contains(&buffer_id)
     }
 
-    pub(crate) fn folded_buffers(&self) -> &HashSet<BufferId> {
+    pub(crate) const fn folded_buffers(&self) -> &HashSet<BufferId> {
         &self.block_map.folded_buffers
     }
 
@@ -767,18 +767,18 @@ pub struct DisplaySnapshot {
     pub(crate) fold_placeholder: FoldPlaceholder,
 }
 impl DisplaySnapshot {
-    pub fn wrap_snapshot(&self) -> &WrapSnapshot {
+    pub const fn wrap_snapshot(&self) -> &WrapSnapshot {
         &self.block_snapshot.wrap_snapshot
     }
-    pub fn tab_snapshot(&self) -> &TabSnapshot {
+    pub const fn tab_snapshot(&self) -> &TabSnapshot {
         &self.block_snapshot.wrap_snapshot.tab_snapshot
     }
 
-    pub fn fold_snapshot(&self) -> &FoldSnapshot {
+    pub const fn fold_snapshot(&self) -> &FoldSnapshot {
         &self.block_snapshot.wrap_snapshot.tab_snapshot.fold_snapshot
     }
 
-    pub fn inlay_snapshot(&self) -> &InlaySnapshot {
+    pub const fn inlay_snapshot(&self) -> &InlaySnapshot {
         &self
             .block_snapshot
             .wrap_snapshot
@@ -787,7 +787,7 @@ impl DisplaySnapshot {
             .inlay_snapshot
     }
 
-    pub fn buffer_snapshot(&self) -> &MultiBufferSnapshot {
+    pub const fn buffer_snapshot(&self) -> &MultiBufferSnapshot {
         &self
             .block_snapshot
             .wrap_snapshot
@@ -1394,11 +1394,11 @@ impl DisplaySnapshot {
         self.inlay_highlights.get(&type_id)
     }
 
-    pub fn buffer_header_height(&self) -> u32 {
+    pub const fn buffer_header_height(&self) -> u32 {
         self.block_snapshot.buffer_header_height
     }
 
-    pub fn excerpt_header_height(&self) -> u32 {
+    pub const fn excerpt_header_height(&self) -> u32 {
         self.block_snapshot.excerpt_header_height
     }
 
@@ -1489,11 +1489,11 @@ impl Sub<u32> for DisplayRow {
 }
 
 impl DisplayPoint {
-    pub fn new(row: DisplayRow, column: u32) -> Self {
+    pub const fn new(row: DisplayRow, column: u32) -> Self {
         Self(BlockPoint(Point::new(row.0, column)))
     }
 
-    pub fn zero() -> Self {
+    pub const fn zero() -> Self {
         Self::new(DisplayRow(0), 0)
     }
 

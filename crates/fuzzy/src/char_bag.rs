@@ -4,11 +4,11 @@ use std::iter::FromIterator;
 pub struct CharBag(u64);
 
 impl CharBag {
-    pub fn is_superset(self, other: CharBag) -> bool {
+    pub const fn is_superset(self, other: CharBag) -> bool {
         self.0 & other.0 == other.0
     }
 
-    fn insert(&mut self, c: char) {
+    const fn insert(&mut self, c: char) {
         let c = c.to_ascii_lowercase();
         if c.is_ascii_lowercase() {
             let mut count = self.0;

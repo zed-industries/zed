@@ -34,7 +34,7 @@ impl ShellBuilder {
             redirect_stdin: false,
         }
     }
-    pub fn non_interactive(mut self) -> Self {
+    pub const fn non_interactive(mut self) -> Self {
         self.interactive = false;
         self
     }
@@ -68,7 +68,7 @@ impl ShellBuilder {
         }
     }
 
-    pub fn redirect_stdin_to_dev_null(mut self) -> Self {
+    pub const fn redirect_stdin_to_dev_null(mut self) -> Self {
         self.redirect_stdin = true;
         self
     }

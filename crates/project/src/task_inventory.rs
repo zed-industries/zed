@@ -825,7 +825,7 @@ fn task_lru_comparator(
         })
 }
 
-fn task_source_kind_preference(kind: &TaskSourceKind) -> u32 {
+const fn task_source_kind_preference(kind: &TaskSourceKind) -> u32 {
     match kind {
         TaskSourceKind::Lsp { .. } => 0,
         TaskSourceKind::Language { .. } => 1,
@@ -967,7 +967,7 @@ pub struct BasicContextProvider {
 }
 
 impl BasicContextProvider {
-    pub fn new(worktree_store: Entity<WorktreeStore>) -> Self {
+    pub const fn new(worktree_store: Entity<WorktreeStore>) -> Self {
         Self { worktree_store }
     }
 }
@@ -1075,7 +1075,7 @@ pub struct ContextProviderWithTasks {
 }
 
 impl ContextProviderWithTasks {
-    pub fn new(definitions: TaskTemplates) -> Self {
+    pub const fn new(definitions: TaskTemplates) -> Self {
         Self {
             templates: definitions,
         }

@@ -15,7 +15,7 @@ enum AlacModifiers {
 }
 
 impl AlacModifiers {
-    fn new(ks: &Keystroke) -> Self {
+    const fn new(ks: &Keystroke) -> Self {
         match (
             ks.modifiers.alt,
             ks.modifiers.control,
@@ -31,7 +31,7 @@ impl AlacModifiers {
         }
     }
 
-    fn any(&self) -> bool {
+    const fn any(&self) -> bool {
         match &self {
             AlacModifiers::None => false,
             AlacModifiers::Alt => true,
@@ -246,7 +246,7 @@ pub fn to_esc_str(
 ///    8     | Shift + Alt + Control
 /// ---------+---------------------------
 /// from: https://invisible-island.net/xterm/ctlseqs/ctlseqs.html#h2-PC-Style-Function-Keys
-fn modifier_code(keystroke: &Keystroke) -> u32 {
+const fn modifier_code(keystroke: &Keystroke) -> u32 {
     let mut modifier_code = 0;
     if keystroke.modifiers.shift {
         modifier_code |= 1;

@@ -12,7 +12,7 @@ pub struct KernelListItem {
 }
 
 impl KernelListItem {
-    pub fn new(kernel_specification: KernelSpecification) -> Self {
+    pub const fn new(kernel_specification: KernelSpecification) -> Self {
         Self {
             kernel_specification,
             status_color: Color::Disabled,
@@ -21,7 +21,7 @@ impl KernelListItem {
         }
     }
 
-    pub fn status_color(mut self, color: Color) -> Self {
+    pub const fn status_color(mut self, color: Color) -> Self {
         self.status_color = color;
         self
     }

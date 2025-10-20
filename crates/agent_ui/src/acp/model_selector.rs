@@ -95,7 +95,7 @@ impl AcpModelPickerDelegate {
         }
     }
 
-    pub fn active_model(&self) -> Option<&AgentModelInfo> {
+    pub const fn active_model(&self) -> Option<&AgentModelInfo> {
         self.selected_model.as_ref()
     }
 }

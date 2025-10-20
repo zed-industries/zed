@@ -178,7 +178,7 @@ pub enum KernelStatus {
 }
 
 impl KernelStatus {
-    pub fn is_connected(&self) -> bool {
+    pub const fn is_connected(&self) -> bool {
         matches!(self, KernelStatus::Idle | KernelStatus::Busy)
     }
 }
@@ -240,7 +240,7 @@ impl Kernel {
         }
     }
 
-    pub fn is_shutting_down(&self) -> bool {
+    pub const fn is_shutting_down(&self) -> bool {
         match self {
             Kernel::Restarting | Kernel::ShuttingDown => true,
             Kernel::RunningKernel(_)

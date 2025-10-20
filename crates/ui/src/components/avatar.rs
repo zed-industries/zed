@@ -184,7 +184,7 @@ pub struct AvatarAvailabilityIndicator {
 
 impl AvatarAvailabilityIndicator {
     /// Creates a new indicator
-    pub fn new(availability: CollaboratorAvailability) -> Self {
+    pub const fn new(availability: CollaboratorAvailability) -> Self {
         Self {
             availability,
             avatar_size: None,

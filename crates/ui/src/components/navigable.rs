@@ -35,7 +35,7 @@ impl NavigableEntry {
 }
 impl Navigable {
     /// Creates new empty [Navigable] wrapper.
-    pub fn new(child: AnyElement) -> Self {
+    pub const fn new(child: AnyElement) -> Self {
         Self {
             child,
             selectable_children: vec![],

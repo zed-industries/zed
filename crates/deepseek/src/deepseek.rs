@@ -64,7 +64,7 @@ pub enum Model {
 }
 
 impl Model {
-    pub fn default_fast() -> Self {
+    pub const fn default_fast() -> Self {
         Model::Chat
     }
 
@@ -94,14 +94,14 @@ impl Model {
         }
     }
 
-    pub fn max_token_count(&self) -> u64 {
+    pub const fn max_token_count(&self) -> u64 {
         match self {
             Self::Chat | Self::Reasoner => 128_000,
             Self::Custom { max_tokens, .. } => *max_tokens,
         }
     }
 
-    pub fn max_output_tokens(&self) -> Option<u64> {
+    pub const fn max_output_tokens(&self) -> Option<u64> {
         match self {
             Self::Chat => Some(8_192),
             Self::Reasoner => Some(64_000),

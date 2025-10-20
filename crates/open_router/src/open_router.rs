@@ -126,11 +126,11 @@ impl Model {
         self.display_name.as_ref().unwrap_or(&self.name)
     }
 
-    pub fn max_token_count(&self) -> u64 {
+    pub const fn max_token_count(&self) -> u64 {
         self.max_tokens
     }
 
-    pub fn max_output_tokens(&self) -> Option<u64> {
+    pub const fn max_output_tokens(&self) -> Option<u64> {
         None
     }
 
@@ -138,7 +138,7 @@ impl Model {
         self.supports_tools.unwrap_or(false)
     }
 
-    pub fn supports_parallel_tool_calls(&self) -> bool {
+    pub const fn supports_parallel_tool_calls(&self) -> bool {
         false
     }
 }
@@ -236,7 +236,7 @@ pub enum MessageContent {
 }
 
 impl MessageContent {
-    pub fn empty() -> Self {
+    pub const fn empty() -> Self {
         Self::Plain(String::new())
     }
 
@@ -726,7 +726,7 @@ impl std::fmt::Display for ApiErrorCode {
 }
 
 impl ApiErrorCode {
-    pub fn from_status(status: u16) -> Self {
+    pub const fn from_status(status: u16) -> Self {
         match status {
             400 => ApiErrorCode::InvalidRequestError,
             401 => ApiErrorCode::AuthenticationError,

@@ -84,7 +84,7 @@ impl Database {
         })
     }
 
-    pub fn options(&self) -> &ConnectOptions {
+    pub const fn options(&self) -> &ConnectOptions {
         &self.options
     }
 
@@ -319,7 +319,7 @@ pub enum Contact {
 }
 
 impl Contact {
-    pub fn user_id(&self) -> UserId {
+    pub const fn user_id(&self) -> UserId {
         match self {
             Contact::Accepted { user_id, .. } => *user_id,
             Contact::Outgoing { user_id } => *user_id,
@@ -675,7 +675,7 @@ pub struct ExtensionVersionConstraints {
 }
 
 impl LocalSettingsKind {
-    pub fn from_proto(proto_kind: proto::LocalSettingsKind) -> Self {
+    pub const fn from_proto(proto_kind: proto::LocalSettingsKind) -> Self {
         match proto_kind {
             proto::LocalSettingsKind::Settings => Self::Settings,
             proto::LocalSettingsKind::Tasks => Self::Tasks,
@@ -684,7 +684,7 @@ impl LocalSettingsKind {
         }
     }
 
-    pub fn to_proto(self) -> proto::LocalSettingsKind {
+    pub const fn to_proto(self) -> proto::LocalSettingsKind {
         match self {
             Self::Settings => proto::LocalSettingsKind::Settings,
             Self::Tasks => proto::LocalSettingsKind::Tasks,

@@ -31,7 +31,7 @@ impl BasedPyrightBanner {
         }
     }
 
-    fn onboarding_banner_enabled(&self) -> bool {
+    const fn onboarding_banner_enabled(&self) -> bool {
         !self.dismissed && self.have_basedpyright
     }
 }

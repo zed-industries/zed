@@ -341,7 +341,7 @@ impl PyrightLspAdapter {
     const SERVER_PATH: &str = "node_modules/pyright/langserver.index.js";
     const NODE_MODULE_RELATIVE_SERVER_PATH: &str = "pyright/langserver.index.js";
 
-    pub fn new(node: NodeRuntime) -> Self {
+    pub const fn new(node: NodeRuntime) -> Self {
         PyrightLspAdapter { node }
     }
 
@@ -905,7 +905,7 @@ fn python_module_name_from_relative_path(relative_path: &str) -> String {
         .to_string()
 }
 
-fn is_python_env_global(k: &PythonEnvironmentKind) -> bool {
+const fn is_python_env_global(k: &PythonEnvironmentKind) -> bool {
     matches!(
         k,
         PythonEnvironmentKind::Homebrew
@@ -920,7 +920,7 @@ fn is_python_env_global(k: &PythonEnvironmentKind) -> bool {
     )
 }
 
-fn python_env_kind_display(k: &PythonEnvironmentKind) -> &'static str {
+const fn python_env_kind_display(k: &PythonEnvironmentKind) -> &'static str {
     match k {
         PythonEnvironmentKind::Conda => "Conda",
         PythonEnvironmentKind::Pixi => "pixi",
@@ -1320,7 +1320,7 @@ pub(crate) struct PyLspAdapter {
 }
 impl PyLspAdapter {
     const SERVER_NAME: LanguageServerName = LanguageServerName::new_static("pylsp");
-    pub(crate) fn new() -> Self {
+    pub(crate) const fn new() -> Self {
         Self {
             python_venv_base: OnceCell::new(),
         }
@@ -1631,7 +1631,7 @@ impl BasedPyrightLspAdapter {
     const SERVER_PATH: &str = "node_modules/basedpyright/langserver.index.js";
     const NODE_MODULE_RELATIVE_SERVER_PATH: &str = "basedpyright/langserver.index.js";
 
-    pub(crate) fn new(node: NodeRuntime) -> Self {
+    pub(crate) const fn new(node: NodeRuntime) -> Self {
         BasedPyrightLspAdapter { node }
     }
 

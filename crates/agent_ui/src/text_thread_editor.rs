@@ -338,11 +338,11 @@ impl TextThreadEditor {
         });
     }
 
-    pub fn context(&self) -> &Entity<AssistantContext> {
+    pub const fn context(&self) -> &Entity<AssistantContext> {
         &self.context
     }
 
-    pub fn editor(&self) -> &Entity<Editor> {
+    pub const fn editor(&self) -> &Entity<Editor> {
         &self.editor
     }
 

@@ -32,7 +32,7 @@ pub struct DeletePathTool {
 }
 
 impl DeletePathTool {
-    pub fn new(project: Entity<Project>, action_log: Entity<ActionLog>) -> Self {
+    pub const fn new(project: Entity<Project>, action_log: Entity<ActionLog>) -> Self {
         Self {
             project,
             action_log,

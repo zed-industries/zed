@@ -61,18 +61,18 @@ struct DisplayCursor {
 }
 
 impl DisplayCursor {
-    fn from(cursor_point: AlacPoint, display_offset: usize) -> Self {
+    const fn from(cursor_point: AlacPoint, display_offset: usize) -> Self {
         Self {
             line: cursor_point.line.0 + display_offset as i32,
             col: cursor_point.column.0,
         }
     }
 
-    pub fn line(&self) -> i32 {
+    pub const fn line(&self) -> i32 {
         self.line
     }
 
-    pub fn col(&self) -> usize {
+    pub const fn col(&self) -> usize {
         self.col
     }
 }
@@ -163,7 +163,7 @@ pub struct LayoutRect {
 }
 
 impl LayoutRect {
-    fn new(point: AlacPoint<i32, i32>, num_of_cells: usize, color: Hsla) -> LayoutRect {
+    const fn new(point: AlacPoint<i32, i32>, num_of_cells: usize, color: Hsla) -> LayoutRect {
         LayoutRect {
             point,
             num_of_cells,
@@ -200,7 +200,7 @@ struct BackgroundRegion {
 }
 
 impl BackgroundRegion {
-    fn new(line: i32, col: i32, color: Hsla) -> Self {
+    const fn new(line: i32, col: i32, color: Hsla) -> Self {
         BackgroundRegion {
             start_line: line,
             start_col: col,
@@ -527,7 +527,7 @@ impl TerminalElement {
     /// Regular icons (git, folders, etc.) are excluded as they need to remain readable.
     ///
     /// Fixes https://github.com/zed-industries/zed/issues/34234
-    fn is_decorative_character(ch: char) -> bool {
+    const fn is_decorative_character(ch: char) -> bool {
         matches!(
             ch as u32,
             // Unicode Box Drawing and Block Elements

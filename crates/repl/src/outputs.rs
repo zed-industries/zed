@@ -58,7 +58,7 @@ use user_error::ErrorView;
 use workspace::Workspace;
 
 /// When deciding what to render from a collection of mediatypes, we need to rank them in order of importance
-fn rank_mime_type(mimetype: &MimeType) -> usize {
+const fn rank_mime_type(mimetype: &MimeType) -> usize {
     match mimetype {
         MimeType::DataTable(_) => 6,
         MimeType::Png(_) => 4,

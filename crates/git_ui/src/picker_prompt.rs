@@ -98,7 +98,7 @@ pub struct PickerPromptDelegate {
 }
 
 impl PickerPromptDelegate {
-    pub fn new(
+    pub const fn new(
         prompt: Arc<str>,
         options: Vec<SharedString>,
         tx: oneshot::Sender<usize>,

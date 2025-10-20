@@ -376,7 +376,7 @@ impl ActionRegistry {
         })
     }
 
-    pub fn all_action_names(&self) -> &[&'static str] {
+    pub const fn all_action_names(&self) -> &[&'static str] {
         self.all_names.as_slice()
     }
 
@@ -397,15 +397,15 @@ impl ActionRegistry {
             .collect::<Vec<_>>()
     }
 
-    pub fn deprecated_aliases(&self) -> &HashMap<&'static str, &'static str> {
+    pub const fn deprecated_aliases(&self) -> &HashMap<&'static str, &'static str> {
         &self.deprecated_aliases
     }
 
-    pub fn deprecation_messages(&self) -> &HashMap<&'static str, &'static str> {
+    pub const fn deprecation_messages(&self) -> &HashMap<&'static str, &'static str> {
         &self.deprecation_messages
     }
 
-    pub fn documentation(&self) -> &HashMap<&'static str, &'static str> {
+    pub const fn documentation(&self) -> &HashMap<&'static str, &'static str> {
         &self.documentation
     }
 }

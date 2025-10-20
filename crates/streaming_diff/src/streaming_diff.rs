@@ -15,7 +15,7 @@ struct Matrix {
 }
 
 impl Matrix {
-    fn new() -> Self {
+    const fn new() -> Self {
         Self {
             cells: Vec::new(),
             rows: 0,
@@ -492,7 +492,7 @@ impl LineDiff {
     }
 }
 
-fn is_line_start(point: Point) -> bool {
+const fn is_line_start(point: Point) -> bool {
     point.column == 0
 }
 

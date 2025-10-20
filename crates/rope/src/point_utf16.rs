@@ -15,15 +15,15 @@ impl PointUtf16 {
         column: u32::MAX,
     };
 
-    pub fn new(row: u32, column: u32) -> Self {
+    pub const fn new(row: u32, column: u32) -> Self {
         PointUtf16 { row, column }
     }
 
-    pub fn zero() -> Self {
+    pub const fn zero() -> Self {
         PointUtf16::new(0, 0)
     }
 
-    pub fn is_zero(&self) -> bool {
+    pub const fn is_zero(&self) -> bool {
         self.row == 0 && self.column == 0
     }
 

@@ -893,7 +893,7 @@ impl std::ops::BitOr for FileMask {
 }
 
 impl FileMask {
-    fn contains(&self, other: FileMask) -> bool {
+    const fn contains(&self, other: FileMask) -> bool {
         self.0 & other.0 != 0
     }
 }
@@ -951,11 +951,11 @@ enum SettingsUiFile {
 }
 
 impl SettingsUiFile {
-    fn is_server(&self) -> bool {
+    const fn is_server(&self) -> bool {
         matches!(self, SettingsUiFile::Server(_))
     }
 
-    fn worktree_id(&self) -> Option<WorktreeId> {
+    const fn worktree_id(&self) -> Option<WorktreeId> {
         match self {
             SettingsUiFile::User => None,
             SettingsUiFile::Project((worktree_id, _)) => Some(*worktree_id),
@@ -980,7 +980,7 @@ impl SettingsUiFile {
         }
     }
 
-    fn mask(&self) -> FileMask {
+    const fn mask(&self) -> FileMask {
         match self {
             SettingsUiFile::User => USER,
             SettingsUiFile::Project(_) => LOCAL,
@@ -2478,7 +2478,7 @@ impl SettingsWindow {
         self.navbar_entries[index].page_index
     }
 
-    fn is_navbar_entry_selected(&self, ix: usize) -> bool {
+    const fn is_navbar_entry_selected(&self, ix: usize) -> bool {
         ix == self.navbar_entry
     }
 

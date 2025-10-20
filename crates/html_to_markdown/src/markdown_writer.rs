@@ -38,14 +38,14 @@ impl Default for MarkdownWriter {
 }
 
 impl MarkdownWriter {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             current_element_stack: VecDeque::new(),
             markdown: String::new(),
         }
     }
 
-    pub fn current_element_stack(&self) -> &VecDeque<HtmlElement> {
+    pub const fn current_element_stack(&self) -> &VecDeque<HtmlElement> {
         &self.current_element_stack
     }
 

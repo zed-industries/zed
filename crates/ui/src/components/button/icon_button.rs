@@ -45,22 +45,22 @@ impl IconButton {
         this
     }
 
-    pub fn shape(mut self, shape: IconButtonShape) -> Self {
+    pub const fn shape(mut self, shape: IconButtonShape) -> Self {
         self.shape = shape;
         self
     }
 
-    pub fn icon_size(mut self, icon_size: IconSize) -> Self {
+    pub const fn icon_size(mut self, icon_size: IconSize) -> Self {
         self.icon_size = icon_size;
         self
     }
 
-    pub fn icon_color(mut self, icon_color: Color) -> Self {
+    pub const fn icon_color(mut self, icon_color: Color) -> Self {
         self.icon_color = icon_color;
         self
     }
 
-    pub fn alpha(mut self, alpha: f32) -> Self {
+    pub const fn alpha(mut self, alpha: f32) -> Self {
         self.alpha = Some(alpha);
         self
     }
@@ -89,7 +89,7 @@ impl IconButton {
         self
     }
 
-    pub fn indicator_border_color(mut self, color: Option<Hsla>) -> Self {
+    pub const fn indicator_border_color(mut self, color: Option<Hsla>) -> Self {
         self.indicator_border_color = color;
 
         self

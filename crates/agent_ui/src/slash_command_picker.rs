@@ -56,7 +56,7 @@ where
     T: PopoverTrigger + ButtonCommon,
     TT: Fn(&mut Window, &mut App) -> AnyView + 'static,
 {
-    pub(crate) fn new(
+    pub(crate) const fn new(
         working_set: Arc<SlashCommandWorkingSet>,
         active_context_editor: WeakEntity<TextThreadEditor>,
         trigger: T,

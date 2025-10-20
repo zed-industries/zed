@@ -74,7 +74,7 @@ impl KeyBinding {
     }
 
     /// Sets the [`PlatformStyle`] for this [`KeyBinding`].
-    pub fn platform_style(mut self, platform_style: PlatformStyle) -> Self {
+    pub const fn platform_style(mut self, platform_style: PlatformStyle) -> Self {
         self.platform_style = platform_style;
         self
     }
@@ -87,12 +87,12 @@ impl KeyBinding {
 
     /// Sets whether this keybinding is currently disabled.
     /// Disabled keybinds will be rendered in a dimmed state.
-    pub fn disabled(mut self, disabled: bool) -> Self {
+    pub const fn disabled(mut self, disabled: bool) -> Self {
         self.disabled = disabled;
         self
     }
 
-    pub fn vim_mode(mut self, enabled: bool) -> Self {
+    pub const fn vim_mode(mut self, enabled: bool) -> Self {
         self.vim_mode = enabled;
         self
     }
@@ -370,7 +370,7 @@ impl RenderOnce for KeyIcon {
 }
 
 impl KeyIcon {
-    pub fn new(icon: IconName, color: Option<Color>) -> Self {
+    pub const fn new(icon: IconName, color: Option<Color>) -> Self {
         Self {
             icon,
             color,

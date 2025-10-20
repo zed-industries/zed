@@ -38,7 +38,7 @@ pub struct Callout {
 
 impl Callout {
     /// Creates a new `Callout` component with default styling.
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             severity: Severity::Info,
             icon: None,
@@ -52,13 +52,13 @@ impl Callout {
     }
 
     /// Sets the severity of the callout.
-    pub fn severity(mut self, severity: Severity) -> Self {
+    pub const fn severity(mut self, severity: Severity) -> Self {
         self.severity = severity;
         self
     }
 
     /// Sets the icon to display in the callout.
-    pub fn icon(mut self, icon: IconName) -> Self {
+    pub const fn icon(mut self, icon: IconName) -> Self {
         self.icon = Some(icon);
         self
     }
@@ -90,13 +90,13 @@ impl Callout {
     }
 
     /// Sets a custom line height for the callout content.
-    pub fn line_height(mut self, line_height: Pixels) -> Self {
+    pub const fn line_height(mut self, line_height: Pixels) -> Self {
         self.line_height = Some(line_height);
         self
     }
 
     /// Sets the border position in the callout.
-    pub fn border_position(mut self, border_position: BorderPosition) -> Self {
+    pub const fn border_position(mut self, border_position: BorderPosition) -> Self {
         self.border_position = border_position;
         self
     }

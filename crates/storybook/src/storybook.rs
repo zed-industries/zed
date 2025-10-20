@@ -117,7 +117,7 @@ pub struct StoryWrapper {
 }
 
 impl StoryWrapper {
-    pub(crate) fn new(story: AnyView) -> Self {
+    pub(crate) const fn new(story: AnyView) -> Self {
         Self { story }
     }
 }

@@ -818,13 +818,13 @@ pub fn font(family: impl Into<SharedString>) -> Font {
 
 impl Font {
     /// Set this Font to be bold
-    pub fn bold(mut self) -> Self {
+    pub const fn bold(mut self) -> Self {
         self.weight = FontWeight::BOLD;
         self
     }
 
     /// Set this Font to be italic
-    pub fn italic(mut self) -> Self {
+    pub const fn italic(mut self) -> Self {
         self.style = FontStyle::Italic;
         self
     }

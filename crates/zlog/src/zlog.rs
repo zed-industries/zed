@@ -327,7 +327,7 @@ impl Timer {
         }
     }
 
-    pub fn warn_if_gt(mut self, warn_limit: std::time::Duration) -> Self {
+    pub const fn warn_if_gt(mut self, warn_limit: std::time::Duration) -> Self {
         self.warn_if_longer_than = Some(warn_limit);
         self
     }

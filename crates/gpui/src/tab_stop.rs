@@ -23,7 +23,7 @@ pub enum TabStopOperation {
 }
 
 impl TabStopOperation {
-    fn focus_handle(&self) -> Option<&FocusHandle> {
+    const fn focus_handle(&self) -> Option<&FocusHandle> {
         match self {
             TabStopOperation::Insert(focus_handle) => Some(focus_handle),
             _ => None,
@@ -192,7 +192,7 @@ impl TabStopMap {
         }
     }
 
-    pub fn paint_index(&self) -> usize {
+    pub const fn paint_index(&self) -> usize {
         self.insertion_history.len()
     }
 

@@ -202,7 +202,7 @@ impl PathBuilder {
 
     /// Applies a transform to the path.
     #[inline]
-    pub fn transform(&mut self, transform: Transform) {
+    pub const fn transform(&mut self, transform: Transform) {
         self.transform = Some(transform);
     }
 

@@ -24,7 +24,7 @@ where
 {
     /// Creates a new `Minifier` instance.
     #[inline]
-    pub fn new(w: &'a mut W, options: MinifierOptions) -> Self {
+    pub const fn new(w: &'a mut W, options: MinifierOptions) -> Self {
         Self {
             w,
             options,

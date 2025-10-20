@@ -83,12 +83,12 @@ impl DropdownMenu {
         }
     }
 
-    pub fn style(mut self, style: DropdownStyle) -> Self {
+    pub const fn style(mut self, style: DropdownStyle) -> Self {
         self.style = style;
         self
     }
 
-    pub fn trigger_size(mut self, size: ButtonSize) -> Self {
+    pub const fn trigger_size(mut self, size: ButtonSize) -> Self {
         self.trigger_size = size;
         self
     }
@@ -101,12 +101,12 @@ impl DropdownMenu {
         self
     }
 
-    pub fn trigger_icon(mut self, icon: IconName) -> Self {
+    pub const fn trigger_icon(mut self, icon: IconName) -> Self {
         self.trigger_icon = Some(icon);
         self
     }
 
-    pub fn full_width(mut self, full_width: bool) -> Self {
+    pub const fn full_width(mut self, full_width: bool) -> Self {
         self.full_width = full_width;
         self
     }
@@ -117,23 +117,23 @@ impl DropdownMenu {
     }
 
     /// Defines which corner of the handle to attach the menu's anchor to.
-    pub fn attach(mut self, attach: Corner) -> Self {
+    pub const fn attach(mut self, attach: Corner) -> Self {
         self.attach = Some(attach);
         self
     }
 
     /// Offsets the position of the menu by that many pixels.
-    pub fn offset(mut self, offset: Point<Pixels>) -> Self {
+    pub const fn offset(mut self, offset: Point<Pixels>) -> Self {
         self.offset = Some(offset);
         self
     }
 
-    pub fn tab_index(mut self, arg: isize) -> Self {
+    pub const fn tab_index(mut self, arg: isize) -> Self {
         self.tab_index = Some(arg);
         self
     }
 
-    pub fn no_chevron(mut self) -> Self {
+    pub const fn no_chevron(mut self) -> Self {
         self.chevron = false;
         self
     }

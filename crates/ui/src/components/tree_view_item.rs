@@ -77,17 +77,17 @@ impl TreeViewItem {
         self
     }
 
-    pub fn tab_index(mut self, tab_index: isize) -> Self {
+    pub const fn tab_index(mut self, tab_index: isize) -> Self {
         self.tab_index = Some(tab_index);
         self
     }
 
-    pub fn expanded(mut self, toggle: bool) -> Self {
+    pub const fn expanded(mut self, toggle: bool) -> Self {
         self.expanded = toggle;
         self
     }
 
-    pub fn default_expanded(mut self, default_expanded: bool) -> Self {
+    pub const fn default_expanded(mut self, default_expanded: bool) -> Self {
         self.default_expanded = default_expanded;
         self
     }
@@ -100,12 +100,12 @@ impl TreeViewItem {
         self
     }
 
-    pub fn root_item(mut self, root_item: bool) -> Self {
+    pub const fn root_item(mut self, root_item: bool) -> Self {
         self.root_item = root_item;
         self
     }
 
-    pub fn focused(mut self, focused: bool) -> Self {
+    pub const fn focused(mut self, focused: bool) -> Self {
         self.focused = focused;
         self
     }

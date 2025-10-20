@@ -53,7 +53,7 @@ pub enum UiDensity {
 impl UiDensity {
     /// The spacing ratio of a given density.
     /// TODO: Standardize usage throughout the app or remove
-    pub fn spacing_ratio(self) -> f32 {
+    pub const fn spacing_ratio(self) -> f32 {
         match self {
             UiDensity::Compact => 0.75,
             UiDensity::Default => 1.0,
@@ -142,7 +142,7 @@ pub(crate) const DEFAULT_LIGHT_THEME: &'static str = "One Light";
 pub(crate) const DEFAULT_DARK_THEME: &'static str = "One Dark";
 
 /// Returns the name of the default theme for the given [`Appearance`].
-pub fn default_theme(appearance: Appearance) -> &'static str {
+pub const fn default_theme(appearance: Appearance) -> &'static str {
     match appearance {
         Appearance::Light => DEFAULT_LIGHT_THEME,
         Appearance::Dark => DEFAULT_DARK_THEME,
@@ -244,7 +244,7 @@ impl ThemeSelection {
     }
 
     /// Returns the [ThemeMode] for the [ThemeSelection].
-    pub fn mode(&self) -> Option<ThemeMode> {
+    pub const fn mode(&self) -> Option<ThemeMode> {
         match self {
             ThemeSelection::Static(_) => None,
             ThemeSelection::Dynamic { mode, .. } => Some(*mode),
@@ -296,7 +296,7 @@ impl IconThemeSelection {
     }
 
     /// Returns the [`ThemeMode`] for the [`IconThemeSelection`].
-    pub fn mode(&self) -> Option<ThemeMode> {
+    pub const fn mode(&self) -> Option<ThemeMode> {
         match self {
             IconThemeSelection::Static(_) => None,
             IconThemeSelection::Dynamic { mode, .. } => Some(*mode),
@@ -437,7 +437,7 @@ impl From<settings::BufferLineHeight> for BufferLineHeight {
 
 impl BufferLineHeight {
     /// Returns the value of the line height.
-    pub fn value(&self) -> f32 {
+    pub const fn value(&self) -> f32 {
         match self {
             BufferLineHeight::Comfortable => 1.618,
             BufferLineHeight::Standard => 1.3,
@@ -487,7 +487,7 @@ impl ThemeSettings {
     ///
     /// The real buffer font size is stored in-memory, to support temporary font size changes.
     /// Use [`Self::buffer_font_size`] to get the real font size.
-    pub fn buffer_font_size_settings(&self) -> Pixels {
+    pub const fn buffer_font_size_settings(&self) -> Pixels {
         self.buffer_font_size
     }
 
@@ -495,7 +495,7 @@ impl ThemeSettings {
     ///
     /// The real UI font size is stored in-memory, to support temporary font size changes.
     /// Use [`Self::ui_font_size`] to get the real font size.
-    pub fn ui_font_size_settings(&self) -> Pixels {
+    pub const fn ui_font_size_settings(&self) -> Pixels {
         self.ui_font_size
     }
 
@@ -503,7 +503,7 @@ impl ThemeSettings {
     ///
     /// The real agent font size is stored in-memory, to support temporary font size changes.
     /// Use [`Self::agent_ui_font_size`] to get the real font size.
-    pub fn agent_ui_font_size_settings(&self) -> Option<Pixels> {
+    pub const fn agent_ui_font_size_settings(&self) -> Option<Pixels> {
         self.agent_ui_font_size
     }
 
@@ -511,13 +511,13 @@ impl ThemeSettings {
     ///
     /// The real agent buffer font size is stored in-memory, to support temporary font size changes.
     /// Use [`Self::agent_buffer_font_size`] to get the real font size.
-    pub fn agent_buffer_font_size_settings(&self) -> Option<Pixels> {
+    pub const fn agent_buffer_font_size_settings(&self) -> Option<Pixels> {
         self.agent_buffer_font_size
     }
 
     // TODO: Rename: `line_height` -> `buffer_line_height`
     /// Returns the buffer's line height.
-    pub fn line_height(&self) -> f32 {
+    pub const fn line_height(&self) -> f32 {
         f32::max(self.buffer_line_height.value(), MIN_LINE_HEIGHT)
     }
 
@@ -670,7 +670,7 @@ pub fn clamp_font_size(size: Pixels) -> Pixels {
     size.clamp(MIN_FONT_SIZE, MAX_FONT_SIZE)
 }
 
-fn clamp_font_weight(weight: f32) -> FontWeight {
+const fn clamp_font_weight(weight: f32) -> FontWeight {
     FontWeight(weight.clamp(100., 950.))
 }
 

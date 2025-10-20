@@ -89,7 +89,7 @@ pub enum BlockPlacement<T> {
 }
 
 impl<T> BlockPlacement<T> {
-    pub fn start(&self) -> &T {
+    pub const fn start(&self) -> &T {
         match self {
             BlockPlacement::Above(position) => position,
             BlockPlacement::Below(position) => position,
@@ -98,7 +98,7 @@ impl<T> BlockPlacement<T> {
         }
     }
 
-    fn end(&self) -> &T {
+    const fn end(&self) -> &T {
         match self {
             BlockPlacement::Above(position) => position,
             BlockPlacement::Below(position) => position,
@@ -107,7 +107,7 @@ impl<T> BlockPlacement<T> {
         }
     }
 
-    pub fn as_ref(&self) -> BlockPlacement<&T> {
+    pub const fn as_ref(&self) -> BlockPlacement<&T> {
         match self {
             BlockPlacement::Above(position) => BlockPlacement::Above(position),
             BlockPlacement::Below(position) => BlockPlacement::Below(position),
@@ -128,7 +128,7 @@ impl<T> BlockPlacement<T> {
         }
     }
 
-    fn tie_break(&self) -> u8 {
+    const fn tie_break(&self) -> u8 {
         match self {
             BlockPlacement::Replace(_) => 0,
             BlockPlacement::Above(_) => 1,
@@ -379,7 +379,7 @@ impl Block {
         }
     }
 
-    fn is_header(&self) -> bool {
+    const fn is_header(&self) -> bool {
         match self {
             Block::Custom(_) => false,
             Block::FoldedBuffer { .. } => true,
@@ -388,7 +388,7 @@ impl Block {
         }
     }
 
-    pub fn is_buffer_header(&self) -> bool {
+    pub const fn is_buffer_header(&self) -> bool {
         match self {
             Block::Custom(_) => false,
             Block::FoldedBuffer { .. } => true,
@@ -949,7 +949,7 @@ fn push_isomorphic(tree: &mut SumTree<Transform>, rows: u32, wrap_snapshot: &Wra
 }
 
 impl BlockPoint {
-    pub fn new(row: u32, column: u32) -> Self {
+    pub const fn new(row: u32, column: u32) -> Self {
         Self(Point::new(row, column))
     }
 }
@@ -1913,15 +1913,15 @@ impl CustomBlock {
         self.render.lock()(cx)
     }
 
-    pub fn start(&self) -> Anchor {
+    pub const fn start(&self) -> Anchor {
         *self.placement.start()
     }
 
-    pub fn end(&self) -> Anchor {
+    pub const fn end(&self) -> Anchor {
         *self.placement.end()
     }
 
-    pub fn style(&self) -> BlockStyle {
+    pub const fn style(&self) -> BlockStyle {
         self.style
     }
 }

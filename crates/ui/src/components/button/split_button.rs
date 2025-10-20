@@ -29,7 +29,7 @@ pub struct SplitButton {
 }
 
 impl SplitButton {
-    pub fn new(left: ButtonLike, right: AnyElement) -> Self {
+    pub const fn new(left: ButtonLike, right: AnyElement) -> Self {
         Self {
             left,
             right,
@@ -37,7 +37,7 @@ impl SplitButton {
         }
     }
 
-    pub fn style(mut self, style: SplitButtonStyle) -> Self {
+    pub const fn style(mut self, style: SplitButtonStyle) -> Self {
         self.style = style;
         self
     }

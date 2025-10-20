@@ -466,7 +466,7 @@ enum Match {
 }
 
 impl Match {
-    fn relative_path(&self) -> Option<&Arc<RelPath>> {
+    const fn relative_path(&self) -> Option<&Arc<RelPath>> {
         match self {
             Match::History { path, .. } => Some(&path.project.path),
             Match::Search(panel_match) => Some(&panel_match.0.path),
@@ -488,7 +488,7 @@ impl Match {
         }
     }
 
-    fn panel_match(&self) -> Option<&ProjectPanelOrdMatch> {
+    const fn panel_match(&self) -> Option<&ProjectPanelOrdMatch> {
         match self {
             Match::History { panel_match, .. } => panel_match.as_ref(),
             Match::Search(panel_match) => Some(panel_match),
@@ -498,7 +498,7 @@ impl Match {
 }
 
 impl Matches {
-    fn len(&self) -> usize {
+    const fn len(&self) -> usize {
         self.matches.len()
     }
 
@@ -771,7 +771,7 @@ struct FoundPath {
 }
 
 impl FoundPath {
-    fn new(project: ProjectPath, absolute: PathBuf) -> Self {
+    const fn new(project: ProjectPath, absolute: PathBuf) -> Self {
         Self { project, absolute }
     }
 }

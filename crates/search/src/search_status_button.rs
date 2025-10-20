@@ -8,7 +8,7 @@ pub const SEARCH_ICON: IconName = IconName::MagnifyingGlass;
 pub struct SearchButton;
 
 impl SearchButton {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {}
     }
 }

@@ -16,49 +16,49 @@ pub enum Autoscroll {
 
 impl Autoscroll {
     /// scrolls the minimal amount to (try) and fit all cursors onscreen
-    pub fn fit() -> Self {
+    pub const fn fit() -> Self {
         Self::Strategy(AutoscrollStrategy::Fit, None)
     }
 
     /// scrolls the minimal amount to fit the newest cursor
-    pub fn newest() -> Self {
+    pub const fn newest() -> Self {
         Self::Strategy(AutoscrollStrategy::Newest, None)
     }
 
     /// scrolls so the newest cursor is vertically centered
-    pub fn center() -> Self {
+    pub const fn center() -> Self {
         Self::Strategy(AutoscrollStrategy::Center, None)
     }
 
     /// scrolls so the newest cursor is near the top
     /// (offset by vertical_scroll_margin)
-    pub fn focused() -> Self {
+    pub const fn focused() -> Self {
         Self::Strategy(AutoscrollStrategy::Focused, None)
     }
 
     /// Scrolls so that the newest cursor is roughly an n-th line from the top.
-    pub fn top_relative(n: usize) -> Self {
+    pub const fn top_relative(n: usize) -> Self {
         Self::Strategy(AutoscrollStrategy::TopRelative(n), None)
     }
 
     /// Scrolls so that the newest cursor is at the top.
-    pub fn top() -> Self {
+    pub const fn top() -> Self {
         Self::Strategy(AutoscrollStrategy::Top, None)
     }
 
     /// Scrolls so that the newest cursor is roughly an n-th line from the bottom.
-    pub fn bottom_relative(n: usize) -> Self {
+    pub const fn bottom_relative(n: usize) -> Self {
         Self::Strategy(AutoscrollStrategy::BottomRelative(n), None)
     }
 
     /// Scrolls so that the newest cursor is at the bottom.
-    pub fn bottom() -> Self {
+    pub const fn bottom() -> Self {
         Self::Strategy(AutoscrollStrategy::Bottom, None)
     }
 
     /// Applies a given auto-scroll strategy to a given anchor instead of a cursor.
     /// E.G: Autoscroll::center().for_anchor(...) results in the anchor being at the center of the screen.
-    pub fn for_anchor(self, anchor: Anchor) -> Self {
+    pub const fn for_anchor(self, anchor: Anchor) -> Self {
         match self {
             Autoscroll::Next => self,
             Autoscroll::Strategy(autoscroll_strategy, _) => {
@@ -91,7 +91,7 @@ pub enum AutoscrollStrategy {
 }
 
 impl AutoscrollStrategy {
-    fn next(&self) -> Self {
+    const fn next(&self) -> Self {
         match self {
             AutoscrollStrategy::Center => AutoscrollStrategy::Top,
             AutoscrollStrategy::Top => AutoscrollStrategy::Bottom,

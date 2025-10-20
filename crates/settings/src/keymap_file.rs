@@ -944,7 +944,7 @@ impl KeybindUpdateOperation<'_> {
 }
 
 impl<'a> KeybindUpdateOperation<'a> {
-    pub fn add(source: KeybindUpdateTarget<'a>) -> Self {
+    pub const fn add(source: KeybindUpdateTarget<'a>) -> Self {
         Self::Add { source, from: None }
     }
 }
@@ -1014,7 +1014,7 @@ impl KeybindSource {
     const VIM: KeyBindingMetaIndex = KeyBindingMetaIndex(KeybindSource::Vim as u32);
     const USER: KeyBindingMetaIndex = KeyBindingMetaIndex(KeybindSource::User as u32);
 
-    pub fn name(&self) -> &'static str {
+    pub const fn name(&self) -> &'static str {
         match self {
             KeybindSource::User => "User",
             KeybindSource::Default => "Default",
@@ -1024,7 +1024,7 @@ impl KeybindSource {
         }
     }
 
-    pub fn meta(&self) -> KeyBindingMetaIndex {
+    pub const fn meta(&self) -> KeyBindingMetaIndex {
         match self {
             KeybindSource::User => Self::USER,
             KeybindSource::Default => Self::DEFAULT,
@@ -1034,7 +1034,7 @@ impl KeybindSource {
         }
     }
 
-    pub fn from_meta(index: KeyBindingMetaIndex) -> Self {
+    pub const fn from_meta(index: KeyBindingMetaIndex) -> Self {
         match index {
             Self::USER => KeybindSource::User,
             Self::BASE => KeybindSource::Base,

@@ -168,7 +168,7 @@ pub struct TabSnapshot {
 }
 
 impl TabSnapshot {
-    pub fn buffer_snapshot(&self) -> &MultiBufferSnapshot {
+    pub const fn buffer_snapshot(&self) -> &MultiBufferSnapshot {
         &self.fold_snapshot.inlay_snapshot.buffer
     }
 
@@ -428,19 +428,19 @@ impl TabSnapshot {
 pub struct TabPoint(pub Point);
 
 impl TabPoint {
-    pub fn new(row: u32, column: u32) -> Self {
+    pub const fn new(row: u32, column: u32) -> Self {
         Self(Point::new(row, column))
     }
 
-    pub fn zero() -> Self {
+    pub const fn zero() -> Self {
         Self::new(0, 0)
     }
 
-    pub fn row(self) -> u32 {
+    pub const fn row(self) -> u32 {
         self.0.row
     }
 
-    pub fn column(self) -> u32 {
+    pub const fn column(self) -> u32 {
         self.0.column
     }
 }
@@ -1544,11 +1544,11 @@ where
         None
     }
 
-    fn byte_offset(&self) -> u32 {
+    const fn byte_offset(&self) -> u32 {
         self.byte_offset
     }
 
-    fn char_offset(&self) -> u32 {
+    const fn char_offset(&self) -> u32 {
         self.char_offset
     }
 }

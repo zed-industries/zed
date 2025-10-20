@@ -53,7 +53,7 @@ pub struct State {
 }
 
 impl State {
-    fn is_authenticated(&self) -> bool {
+    const fn is_authenticated(&self) -> bool {
         self.api_key_state.has_key()
     }
 
@@ -798,7 +798,7 @@ struct RawToolUse {
 }
 
 /// Updates usage data by preferring counts from `new`.
-fn update_usage(usage: &mut Usage, new: &Usage) {
+const fn update_usage(usage: &mut Usage, new: &Usage) {
     if let Some(input_tokens) = new.input_tokens {
         usage.input_tokens = Some(input_tokens);
     }

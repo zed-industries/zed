@@ -17,7 +17,7 @@ pub struct MacWatcher {
 }
 
 impl MacWatcher {
-    pub fn new(
+    pub const fn new(
         events_tx: smol::channel::Sender<Vec<fsevent::Event>>,
         handles: Weak<Mutex<BTreeMap<PathBuf, fsevent::Handle>>>,
         latency: Duration,

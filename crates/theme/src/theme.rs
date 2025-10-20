@@ -67,7 +67,7 @@ pub enum Appearance {
 
 impl Appearance {
     /// Returns whether the appearance is light.
-    pub fn is_light(&self) -> bool {
+    pub const fn is_light(&self) -> bool {
         match self {
             Self::Light => true,
             Self::Dark => false,
@@ -337,37 +337,37 @@ pub struct Theme {
 impl Theme {
     /// Returns the [`SystemColors`] for the theme.
     #[inline(always)]
-    pub fn system(&self) -> &SystemColors {
+    pub const fn system(&self) -> &SystemColors {
         &self.styles.system
     }
 
     /// Returns the [`AccentColors`] for the theme.
     #[inline(always)]
-    pub fn accents(&self) -> &AccentColors {
+    pub const fn accents(&self) -> &AccentColors {
         &self.styles.accents
     }
 
     /// Returns the [`PlayerColors`] for the theme.
     #[inline(always)]
-    pub fn players(&self) -> &PlayerColors {
+    pub const fn players(&self) -> &PlayerColors {
         &self.styles.player
     }
 
     /// Returns the [`ThemeColors`] for the theme.
     #[inline(always)]
-    pub fn colors(&self) -> &ThemeColors {
+    pub const fn colors(&self) -> &ThemeColors {
         &self.styles.colors
     }
 
     /// Returns the [`SyntaxTheme`] for the theme.
     #[inline(always)]
-    pub fn syntax(&self) -> &Arc<SyntaxTheme> {
+    pub const fn syntax(&self) -> &Arc<SyntaxTheme> {
         &self.styles.syntax
     }
 
     /// Returns the [`StatusColors`] for the theme.
     #[inline(always)]
-    pub fn status(&self) -> &StatusColors {
+    pub const fn status(&self) -> &StatusColors {
         &self.styles.status
     }
 
@@ -379,13 +379,13 @@ impl Theme {
 
     /// Returns the [`Appearance`] for the theme.
     #[inline(always)]
-    pub fn appearance(&self) -> Appearance {
+    pub const fn appearance(&self) -> Appearance {
         self.appearance
     }
 
     /// Returns the [`WindowBackgroundAppearance`] for the theme.
     #[inline(always)]
-    pub fn window_background_appearance(&self) -> WindowBackgroundAppearance {
+    pub const fn window_background_appearance(&self) -> WindowBackgroundAppearance {
         self.styles.window_background_appearance
     }
 

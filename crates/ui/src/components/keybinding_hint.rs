@@ -53,7 +53,7 @@ impl KeybindingHint {
     /// );
     /// # }
     /// ```
-    pub fn new(keybinding: KeyBinding, background_color: Hsla) -> Self {
+    pub const fn new(keybinding: KeyBinding, background_color: Hsla) -> Self {
         Self {
             prefix: None,
             suffix: None,

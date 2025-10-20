@@ -34,13 +34,13 @@ impl<M: ManagedView> RightClickMenu<M> {
 
     /// anchor defines which corner of the menu to anchor to the attachment point
     /// (by default the cursor position, but see attach)
-    pub fn anchor(mut self, anchor: Corner) -> Self {
+    pub const fn anchor(mut self, anchor: Corner) -> Self {
         self.anchor = Some(anchor);
         self
     }
 
     /// attach defines which corner of the handle to attach the menu's anchor to
-    pub fn attach(mut self, attach: Corner) -> Self {
+    pub const fn attach(mut self, attach: Corner) -> Self {
         self.attach = Some(attach);
         self
     }

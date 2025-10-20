@@ -67,7 +67,7 @@ pub struct WikipediaCodeHandler {
 }
 
 impl WikipediaCodeHandler {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self { language: None }
     }
 }

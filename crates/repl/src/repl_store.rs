@@ -67,7 +67,7 @@ impl ReplStore {
         &self.fs
     }
 
-    pub fn is_enabled(&self) -> bool {
+    pub const fn is_enabled(&self) -> bool {
         self.enabled
     }
 

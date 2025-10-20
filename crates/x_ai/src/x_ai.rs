@@ -47,7 +47,7 @@ pub enum Model {
 }
 
 impl Model {
-    pub fn default_fast() -> Self {
+    pub const fn default_fast() -> Self {
         Self::Grok3Fast
     }
 
@@ -98,7 +98,7 @@ impl Model {
         }
     }
 
-    pub fn max_token_count(&self) -> u64 {
+    pub const fn max_token_count(&self) -> u64 {
         match self {
             Self::Grok3 | Self::Grok3Mini | Self::Grok3Fast | Self::Grok3MiniFast => 131_072,
             Self::Grok4 | Self::GrokCodeFast1 => 256_000,
@@ -108,7 +108,7 @@ impl Model {
         }
     }
 
-    pub fn max_output_tokens(&self) -> Option<u64> {
+    pub const fn max_output_tokens(&self) -> Option<u64> {
         match self {
             Self::Grok3 | Self::Grok3Mini | Self::Grok3Fast | Self::Grok3MiniFast => Some(8_192),
             Self::Grok4
@@ -122,7 +122,7 @@ impl Model {
         }
     }
 
-    pub fn supports_parallel_tool_calls(&self) -> bool {
+    pub const fn supports_parallel_tool_calls(&self) -> bool {
         match self {
             Self::Grok2Vision
             | Self::Grok3
@@ -140,11 +140,11 @@ impl Model {
         }
     }
 
-    pub fn supports_prompt_cache_key(&self) -> bool {
+    pub const fn supports_prompt_cache_key(&self) -> bool {
         false
     }
 
-    pub fn supports_tool(&self) -> bool {
+    pub const fn supports_tool(&self) -> bool {
         match self {
             Self::Grok2Vision
             | Self::Grok3
@@ -163,7 +163,7 @@ impl Model {
         }
     }
 
-    pub fn supports_images(&self) -> bool {
+    pub const fn supports_images(&self) -> bool {
         match self {
             Self::Grok2Vision => true,
             Self::Custom {

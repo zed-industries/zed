@@ -20,7 +20,7 @@ pub struct CopilotCompletionProvider {
 }
 
 impl CopilotCompletionProvider {
-    pub fn new(copilot: Entity<Copilot>) -> Self {
+    pub const fn new(copilot: Entity<Copilot>) -> Self {
         Self {
             cycled: false,
             buffer_id: None,

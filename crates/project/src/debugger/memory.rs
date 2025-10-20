@@ -209,7 +209,7 @@ impl MemoryPageBuilder {
         (self.base_address, contents)
     }
     /// Drives the fetching of memory, in an iterator-esque style.
-    pub(super) fn next_request(&self) -> Option<UnknownMemory> {
+    pub(super) const fn next_request(&self) -> Option<UnknownMemory> {
         if self.left_to_read == 0 {
             None
         } else {

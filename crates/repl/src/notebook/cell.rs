@@ -36,7 +36,7 @@ pub enum CellControlType {
 }
 
 impl CellControlType {
-    fn icon_name(&self) -> IconName {
+    const fn icon_name(&self) -> IconName {
         match self {
             CellControlType::RunCell => IconName::PlayFilled,
             CellControlType::RerunCell => IconName::ArrowCircle,
@@ -444,7 +444,7 @@ impl CodeCell {
     pub fn is_dirty(&self, cx: &App) -> bool {
         self.editor.read(cx).buffer().read(cx).is_dirty(cx)
     }
-    pub fn has_outputs(&self) -> bool {
+    pub const fn has_outputs(&self) -> bool {
         !self.outputs.is_empty()
     }
 
@@ -452,7 +452,7 @@ impl CodeCell {
         self.outputs.clear();
     }
 
-    fn output_control(&self) -> Option<CellControlType> {
+    const fn output_control(&self) -> Option<CellControlType> {
         if self.has_outputs() {
             Some(CellControlType::ClearCell)
         } else {

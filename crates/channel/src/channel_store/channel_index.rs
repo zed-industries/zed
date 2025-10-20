@@ -11,7 +11,7 @@ pub struct ChannelIndex {
 }
 
 impl ChannelIndex {
-    pub fn by_id(&self) -> &BTreeMap<ChannelId, Arc<Channel>> {
+    pub const fn by_id(&self) -> &BTreeMap<ChannelId, Arc<Channel>> {
         &self.channels_by_id
     }
 
@@ -32,7 +32,7 @@ impl ChannelIndex {
             .retain(|channel_id| !channels.contains(channel_id));
     }
 
-    pub fn bulk_insert(&mut self) -> ChannelPathsInsertGuard<'_> {
+    pub const fn bulk_insert(&mut self) -> ChannelPathsInsertGuard<'_> {
         ChannelPathsInsertGuard {
             channels_ordered: &mut self.channels_ordered,
             channels_by_id: &mut self.channels_by_id,

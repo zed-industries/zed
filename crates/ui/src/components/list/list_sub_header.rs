@@ -21,7 +21,7 @@ impl ListSubHeader {
         }
     }
 
-    pub fn left_icon(mut self, left_icon: Option<IconName>) -> Self {
+    pub const fn left_icon(mut self, left_icon: Option<IconName>) -> Self {
         self.start_slot = left_icon;
         self
     }
@@ -31,7 +31,7 @@ impl ListSubHeader {
         self
     }
 
-    pub fn inset(mut self, inset: bool) -> Self {
+    pub const fn inset(mut self, inset: bool) -> Self {
         self.inset = inset;
         self
     }

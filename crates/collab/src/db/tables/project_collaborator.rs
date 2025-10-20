@@ -18,7 +18,7 @@ pub struct Model {
 }
 
 impl Model {
-    pub fn connection(&self) -> ConnectionId {
+    pub const fn connection(&self) -> ConnectionId {
         ConnectionId {
             owner_id: self.connection_server_id.0 as u32,
             id: self.connection_id as u32,

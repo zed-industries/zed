@@ -80,7 +80,7 @@ const CURRENT_SCHEMA_VERSION: SchemaVersion = SchemaVersion(1);
 const SUPPRESSED_EXTENSIONS: &[&str] = &["snippets", "ruff", "ty", "basedpyright"];
 
 /// Returns the [`SchemaVersion`] range that is compatible with this version of Zed.
-pub fn schema_version_range() -> RangeInclusive<SchemaVersion> {
+pub const fn schema_version_range() -> RangeInclusive<SchemaVersion> {
     SchemaVersion::ZERO..=CURRENT_SCHEMA_VERSION
 }
 
@@ -428,11 +428,11 @@ impl ExtensionStore {
         self.installed_dir.clone()
     }
 
-    pub fn outstanding_operations(&self) -> &BTreeMap<Arc<str>, ExtensionOperation> {
+    pub const fn outstanding_operations(&self) -> &BTreeMap<Arc<str>, ExtensionOperation> {
         &self.outstanding_operations
     }
 
-    pub fn installed_extensions(&self) -> &BTreeMap<Arc<str>, ExtensionIndexEntry> {
+    pub const fn installed_extensions(&self) -> &BTreeMap<Arc<str>, ExtensionIndexEntry> {
         &self.extension_index.extensions
     }
 

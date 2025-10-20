@@ -27,7 +27,7 @@ pub enum Message {
 }
 
 impl<S> MessageStream<S> {
-    pub fn new(stream: S) -> Self {
+    pub const fn new(stream: S) -> Self {
         Self {
             stream,
             encoding_buffer: Vec::new(),

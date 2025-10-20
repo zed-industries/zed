@@ -311,7 +311,7 @@ pub enum CloseWindowWhenNoItems {
 }
 
 impl CloseWindowWhenNoItems {
-    pub fn should_close(&self) -> bool {
+    pub const fn should_close(&self) -> bool {
         match self {
             CloseWindowWhenNoItems::PlatformDefault => cfg!(target_os = "macos"),
             CloseWindowWhenNoItems::CloseWindow => true,
@@ -394,7 +394,7 @@ pub enum AutosaveSetting {
 }
 
 impl AutosaveSetting {
-    pub fn should_save_on_close(&self) -> bool {
+    pub const fn should_save_on_close(&self) -> bool {
         matches!(
             &self,
             AutosaveSetting::OnFocusChange
@@ -481,7 +481,7 @@ pub enum OnLastWindowClosed {
 }
 
 impl OnLastWindowClosed {
-    pub fn is_quit_app(&self) -> bool {
+    pub const fn is_quit_app(&self) -> bool {
         match self {
             OnLastWindowClosed::PlatformDefault => false,
             OnLastWindowClosed::QuitApp => true,

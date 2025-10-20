@@ -14,7 +14,7 @@ pub struct UnboundedSyncSender<T: Send> {
 }
 
 impl<T: Send> UnboundedSyncSender<T> {
-    pub fn new(sender: Sender<T>) -> Self {
+    pub const fn new(sender: Sender<T>) -> Self {
         Self {
             cloneable_sender: Mutex::new(sender),
             local_senders: ThreadLocal::new(),

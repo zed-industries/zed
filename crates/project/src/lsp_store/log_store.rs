@@ -172,7 +172,7 @@ impl std::fmt::Debug for LanguageServerKind {
 }
 
 impl LanguageServerKind {
-    pub fn project(&self) -> Option<&WeakEntity<Project>> {
+    pub const fn project(&self) -> Option<&WeakEntity<Project>> {
         match self {
             Self::Local { project } => Some(project),
             Self::Remote { project } => Some(project),
@@ -204,7 +204,7 @@ pub enum LogKind {
 }
 
 impl LogKind {
-    pub fn from_server_log_type(log_type: &LanguageServerLogType) -> Self {
+    pub const fn from_server_log_type(log_type: &LanguageServerLogType) -> Self {
         match log_type {
             LanguageServerLogType::Log(_) => Self::Logs,
             LanguageServerLogType::Trace { .. } => Self::Trace,

@@ -122,7 +122,7 @@ pub struct TableHandler {
 }
 
 impl TableHandler {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             current_table_columns: 0,
             is_first_th: true,

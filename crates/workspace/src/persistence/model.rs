@@ -71,7 +71,7 @@ pub struct DockStructure {
 }
 
 impl RemoteConnectionKind {
-    pub(crate) fn serialize(&self) -> &'static str {
+    pub(crate) const fn serialize(&self) -> &'static str {
         match self {
             RemoteConnectionKind::Ssh => "ssh",
             RemoteConnectionKind::Wsl => "wsl",
@@ -254,7 +254,7 @@ pub struct SerializedPane {
 }
 
 impl SerializedPane {
-    pub fn new(children: Vec<SerializedItem>, active: bool, pinned_count: usize) -> Self {
+    pub const fn new(children: Vec<SerializedItem>, active: bool, pinned_count: usize) -> Self {
         SerializedPane {
             children,
             active,

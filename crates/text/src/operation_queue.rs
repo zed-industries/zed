@@ -21,7 +21,7 @@ pub struct OperationSummary {
 }
 
 impl OperationKey {
-    pub fn new(timestamp: clock::Lamport) -> Self {
+    pub const fn new(timestamp: clock::Lamport) -> Self {
         Self(timestamp)
     }
 }

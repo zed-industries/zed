@@ -126,7 +126,7 @@ enum TaskState<T> {
 
 impl<T> Task<T> {
     /// Creates a new task that will resolve with the value
-    pub fn ready(val: T) -> Self {
+    pub const fn ready(val: T) -> Self {
         Task(TaskState::Ready(Some(val)))
     }
 

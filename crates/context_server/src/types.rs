@@ -660,7 +660,7 @@ pub enum CompletionTotal {
 }
 
 impl CompletionTotal {
-    pub fn from_options(has_more: Option<bool>, total: Option<u32>) -> Self {
+    pub const fn from_options(has_more: Option<bool>, total: Option<u32>) -> Self {
         match (has_more, total) {
             (_, Some(count)) => CompletionTotal::Exact(count),
             (Some(true), _) => CompletionTotal::HasMore,

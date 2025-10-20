@@ -188,7 +188,7 @@ pub struct Component<C: RenderOnce> {
 impl<C: RenderOnce> Component<C> {
     /// Create a new component from the given RenderOnce type.
     #[track_caller]
-    pub fn new(component: C) -> Self {
+    pub const fn new(component: C) -> Self {
         Component {
             component: Some(component),
             #[cfg(debug_assertions)]
@@ -341,7 +341,7 @@ enum ElementDrawPhase<RequestLayoutState, PrepaintState> {
 
 /// A wrapper around an implementer of [`Element`] that allows it to be drawn in a window.
 impl<E: Element> Drawable<E> {
-    pub(crate) fn new(element: E) -> Self {
+    pub(crate) const fn new(element: E) -> Self {
         Drawable {
             element,
             phase: ElementDrawPhase::Start,

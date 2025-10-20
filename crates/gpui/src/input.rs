@@ -83,7 +83,7 @@ impl<V: 'static> ElementInputHandler<V> {
     /// Used in [`Element::paint`][element_paint] with the element's bounds, a `Window`, and a `App` context.
     ///
     /// [element_paint]: crate::Element::paint
-    pub fn new(element_bounds: Bounds<Pixels>, view: Entity<V>) -> Self {
+    pub const fn new(element_bounds: Bounds<Pixels>, view: Entity<V>) -> Self {
         ElementInputHandler {
             view,
             element_bounds,

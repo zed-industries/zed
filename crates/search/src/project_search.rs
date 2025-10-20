@@ -269,14 +269,14 @@ impl ProjectSearch {
             search_excluded_history_cursor: self.search_excluded_history_cursor.clone(),
         })
     }
-    fn cursor(&self, kind: SearchInputKind) -> &SearchHistoryCursor {
+    const fn cursor(&self, kind: SearchInputKind) -> &SearchHistoryCursor {
         match kind {
             SearchInputKind::Query => &self.search_history_cursor,
             SearchInputKind::Include => &self.search_included_history_cursor,
             SearchInputKind::Exclude => &self.search_excluded_history_cursor,
         }
     }
-    fn cursor_mut(&mut self, kind: SearchInputKind) -> &mut SearchHistoryCursor {
+    const fn cursor_mut(&mut self, kind: SearchInputKind) -> &mut SearchHistoryCursor {
         match kind {
             SearchInputKind::Query => &mut self.search_history_cursor,
             SearchInputKind::Include => &mut self.search_included_history_cursor,
@@ -654,7 +654,7 @@ impl ProjectSearchView {
         });
     }
 
-    fn current_settings(&self) -> ProjectSearchSettings {
+    const fn current_settings(&self) -> ProjectSearchSettings {
         ProjectSearchSettings {
             search_options: self.search_options,
             filters_enabled: self.filters_enabled,
@@ -672,7 +672,7 @@ impl ProjectSearchView {
         self.adjust_query_regex_language(cx);
     }
 
-    fn toggle_opened_only(&mut self, _window: &mut Window, _cx: &mut Context<Self>) {
+    const fn toggle_opened_only(&mut self, _window: &mut Window, _cx: &mut Context<Self>) {
         self.included_opened_only = !self.included_opened_only;
     }
 
@@ -1440,7 +1440,7 @@ impl ProjectSearchView {
         }
     }
 
-    pub fn has_matches(&self) -> bool {
+    pub const fn has_matches(&self) -> bool {
         self.active_match_index.is_some()
     }
 
@@ -1605,7 +1605,7 @@ impl Default for ProjectSearchBar {
 }
 
 impl ProjectSearchBar {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             active_project_search: None,
             subscription: None,

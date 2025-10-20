@@ -47,21 +47,21 @@ pub(crate) enum ContextPickerEntry {
 }
 
 impl ContextPickerEntry {
-    pub fn keyword(&self) -> &'static str {
+    pub const fn keyword(&self) -> &'static str {
         match self {
             Self::Mode(mode) => mode.keyword(),
             Self::Action(action) => action.keyword(),
         }
     }
 
-    pub fn label(&self) -> &'static str {
+    pub const fn label(&self) -> &'static str {
         match self {
             Self::Mode(mode) => mode.label(),
             Self::Action(action) => action.label(),
         }
     }
 
-    pub fn icon(&self) -> IconName {
+    pub const fn icon(&self) -> IconName {
         match self {
             Self::Mode(mode) => mode.icon(),
             Self::Action(action) => action.icon(),
@@ -84,19 +84,19 @@ pub(crate) enum ContextPickerAction {
 }
 
 impl ContextPickerAction {
-    pub fn keyword(&self) -> &'static str {
+    pub const fn keyword(&self) -> &'static str {
         match self {
             Self::AddSelections => "selection",
         }
     }
 
-    pub fn label(&self) -> &'static str {
+    pub const fn label(&self) -> &'static str {
         match self {
             Self::AddSelections => "Selection",
         }
     }
 
-    pub fn icon(&self) -> IconName {
+    pub const fn icon(&self) -> IconName {
         match self {
             Self::AddSelections => IconName::Reader,
         }
@@ -119,7 +119,7 @@ impl TryFrom<&str> for ContextPickerMode {
 }
 
 impl ContextPickerMode {
-    pub fn keyword(&self) -> &'static str {
+    pub const fn keyword(&self) -> &'static str {
         match self {
             Self::File => "file",
             Self::Symbol => "symbol",
@@ -129,7 +129,7 @@ impl ContextPickerMode {
         }
     }
 
-    pub fn label(&self) -> &'static str {
+    pub const fn label(&self) -> &'static str {
         match self {
             Self::File => "Files & Directories",
             Self::Symbol => "Symbols",
@@ -139,7 +139,7 @@ impl ContextPickerMode {
         }
     }
 
-    pub fn icon(&self) -> IconName {
+    pub const fn icon(&self) -> IconName {
         match self {
             Self::File => IconName::File,
             Self::Symbol => IconName::Code,
@@ -281,7 +281,7 @@ impl ContextPicker {
     }
 
     /// Whether threads are allowed as context.
-    pub fn allow_threads(&self) -> bool {
+    pub const fn allow_threads(&self) -> bool {
         self.thread_store.is_some()
     }
 

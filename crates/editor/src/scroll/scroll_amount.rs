@@ -10,7 +10,7 @@ pub enum ScrollDirection {
 }
 
 impl ScrollDirection {
-    pub fn is_upwards(&self) -> bool {
+    pub const fn is_upwards(&self) -> bool {
         matches!(self, ScrollDirection::Upwards)
     }
 }
@@ -70,7 +70,7 @@ impl ScrollAmount {
         matches!(self, ScrollAmount::Page(count) if count.abs() == 1.0)
     }
 
-    pub fn direction(&self) -> ScrollDirection {
+    pub const fn direction(&self) -> ScrollDirection {
         match self {
             Self::Line(amount) if amount.is_sign_positive() => ScrollDirection::Downwards,
             Self::Page(amount) if amount.is_sign_positive() => ScrollDirection::Downwards,

@@ -16,7 +16,7 @@ enum MouseFormat {
 }
 
 impl MouseFormat {
-    fn from_mode(mode: TermMode) -> Self {
+    const fn from_mode(mode: TermMode) -> Self {
         if mode.contains(TermMode::SGR_MOUSE) {
             MouseFormat::Sgr
         } else if mode.contains(TermMode::UTF8_MOUSE) {
@@ -42,7 +42,7 @@ enum AlacMouseButton {
 }
 
 impl AlacMouseButton {
-    fn from_move_button(e: Option<MouseButton>) -> Self {
+    const fn from_move_button(e: Option<MouseButton>) -> Self {
         match e {
             Some(gpui::MouseButton::Left) => AlacMouseButton::LeftMove,
             Some(gpui::MouseButton::Middle) => AlacMouseButton::MiddleMove,
@@ -52,7 +52,7 @@ impl AlacMouseButton {
         }
     }
 
-    fn from_button(e: MouseButton) -> Self {
+    const fn from_button(e: MouseButton) -> Self {
         match e {
             gpui::MouseButton::Left => AlacMouseButton::LeftButton,
             gpui::MouseButton::Right => AlacMouseButton::MiddleButton,
@@ -74,7 +74,7 @@ impl AlacMouseButton {
         }
     }
 
-    fn is_other(&self) -> bool {
+    const fn is_other(&self) -> bool {
         matches!(self, AlacMouseButton::Other)
     }
 }

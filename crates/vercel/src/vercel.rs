@@ -22,7 +22,7 @@ pub enum Model {
 }
 
 impl Model {
-    pub fn default_fast() -> Self {
+    pub const fn default_fast() -> Self {
         Self::VZeroOnePointFiveMedium
     }
 
@@ -49,14 +49,14 @@ impl Model {
         }
     }
 
-    pub fn max_token_count(&self) -> u64 {
+    pub const fn max_token_count(&self) -> u64 {
         match self {
             Self::VZeroOnePointFiveMedium => 128_000,
             Self::Custom { max_tokens, .. } => *max_tokens,
         }
     }
 
-    pub fn max_output_tokens(&self) -> Option<u64> {
+    pub const fn max_output_tokens(&self) -> Option<u64> {
         match self {
             Self::VZeroOnePointFiveMedium => Some(32_000),
             Self::Custom {
@@ -65,14 +65,14 @@ impl Model {
         }
     }
 
-    pub fn supports_parallel_tool_calls(&self) -> bool {
+    pub const fn supports_parallel_tool_calls(&self) -> bool {
         match self {
             Self::VZeroOnePointFiveMedium => true,
             Model::Custom { .. } => false,
         }
     }
 
-    pub fn supports_prompt_cache_key(&self) -> bool {
+    pub const fn supports_prompt_cache_key(&self) -> bool {
         false
     }
 }

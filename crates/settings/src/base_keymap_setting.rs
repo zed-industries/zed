@@ -87,7 +87,7 @@ impl BaseKeymap {
         ("Cursor", Self::Cursor),
     ];
 
-    pub fn asset_path(&self) -> Option<&'static str> {
+    pub const fn asset_path(&self) -> Option<&'static str> {
         #[cfg(target_os = "macos")]
         match self {
             BaseKeymap::JetBrains => Some("keymaps/macos/jetbrains.json"),

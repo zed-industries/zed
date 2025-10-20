@@ -86,7 +86,7 @@ pub enum Plan {
 }
 
 impl Plan {
-    pub fn is_v2(&self) -> bool {
+    pub const fn is_v2(&self) -> bool {
         matches!(self, Self::V2(_))
     }
 }

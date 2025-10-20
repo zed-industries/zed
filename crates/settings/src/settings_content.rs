@@ -164,7 +164,7 @@ pub struct SettingsContent {
 }
 
 impl SettingsContent {
-    pub fn languages_mut(&mut self) -> &mut HashMap<SharedString, LanguageSettingsContent> {
+    pub const fn languages_mut(&mut self) -> &mut HashMap<SharedString, LanguageSettingsContent> {
         &mut self.project.all_languages.languages.0
     }
 }

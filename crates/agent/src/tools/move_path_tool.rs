@@ -43,7 +43,7 @@ pub struct MovePathTool {
 }
 
 impl MovePathTool {
-    pub fn new(project: Entity<Project>) -> Self {
+    pub const fn new(project: Entity<Project>) -> Self {
         Self { project }
     }
 }

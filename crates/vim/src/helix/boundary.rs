@@ -715,11 +715,11 @@ fn try_find_preceding_boundary_data<T>(
     None
 }
 
-fn is_buffer_start(left: char) -> bool {
+const fn is_buffer_start(left: char) -> bool {
     left == '\0'
 }
 
-fn is_buffer_end(right: char) -> bool {
+const fn is_buffer_end(right: char) -> bool {
     right == '\0'
 }
 

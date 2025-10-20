@@ -100,21 +100,21 @@ enum DapEntry {
 }
 
 impl DapEntry {
-    fn as_watcher(&self) -> Option<&Watcher> {
+    const fn as_watcher(&self) -> Option<&Watcher> {
         match self {
             DapEntry::Watcher(watcher) => Some(watcher),
             _ => None,
         }
     }
 
-    fn as_variable(&self) -> Option<&dap::Variable> {
+    const fn as_variable(&self) -> Option<&dap::Variable> {
         match self {
             DapEntry::Variable(dap) => Some(dap),
             _ => None,
         }
     }
 
-    fn as_scope(&self) -> Option<&dap::Scope> {
+    const fn as_scope(&self) -> Option<&dap::Scope> {
         match self {
             DapEntry::Scope(dap) => Some(dap),
             _ => None,
@@ -138,15 +138,15 @@ struct ListEntry {
 }
 
 impl ListEntry {
-    fn as_watcher(&self) -> Option<&Watcher> {
+    const fn as_watcher(&self) -> Option<&Watcher> {
         self.entry.as_watcher()
     }
 
-    fn as_variable(&self) -> Option<&dap::Variable> {
+    const fn as_variable(&self) -> Option<&dap::Variable> {
         self.entry.as_variable()
     }
 
-    fn as_scope(&self) -> Option<&dap::Scope> {
+    const fn as_scope(&self) -> Option<&dap::Scope> {
         self.entry.as_scope()
     }
 
@@ -257,7 +257,7 @@ impl VariableList {
         }
     }
 
-    pub(super) fn has_open_context_menu(&self) -> bool {
+    pub(super) const fn has_open_context_menu(&self) -> bool {
         self.open_context_menu.is_some()
     }
 

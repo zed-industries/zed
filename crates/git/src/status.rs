@@ -62,23 +62,23 @@ pub enum StageStatus {
 }
 
 impl StageStatus {
-    pub fn is_fully_staged(&self) -> bool {
+    pub const fn is_fully_staged(&self) -> bool {
         matches!(self, StageStatus::Staged)
     }
 
-    pub fn is_fully_unstaged(&self) -> bool {
+    pub const fn is_fully_unstaged(&self) -> bool {
         matches!(self, StageStatus::Unstaged)
     }
 
-    pub fn has_staged(&self) -> bool {
+    pub const fn has_staged(&self) -> bool {
         matches!(self, StageStatus::Staged | StageStatus::PartiallyStaged)
     }
 
-    pub fn has_unstaged(&self) -> bool {
+    pub const fn has_unstaged(&self) -> bool {
         matches!(self, StageStatus::Unstaged | StageStatus::PartiallyStaged)
     }
 
-    pub fn as_bool(self) -> Option<bool> {
+    pub const fn as_bool(self) -> Option<bool> {
         match self {
             StageStatus::Staged => Some(true),
             StageStatus::Unstaged => Some(false),
@@ -139,7 +139,7 @@ impl FileStatus {
         Ok(status)
     }
 
-    pub fn staging(self) -> StageStatus {
+    pub const fn staging(self) -> StageStatus {
         match self {
             FileStatus::Untracked | FileStatus::Ignored | FileStatus::Unmerged { .. } => {
                 StageStatus::Unstaged
@@ -152,15 +152,15 @@ impl FileStatus {
         }
     }
 
-    pub fn is_conflicted(self) -> bool {
+    pub const fn is_conflicted(self) -> bool {
         matches!(self, FileStatus::Unmerged { .. })
     }
 
-    pub fn is_ignored(self) -> bool {
+    pub const fn is_ignored(self) -> bool {
         matches!(self, FileStatus::Ignored)
     }
 
-    pub fn has_changes(&self) -> bool {
+    pub const fn has_changes(&self) -> bool {
         self.is_modified()
             || self.is_created()
             || self.is_deleted()
@@ -168,7 +168,7 @@ impl FileStatus {
             || self.is_conflicted()
     }
 
-    pub fn is_modified(self) -> bool {
+    pub const fn is_modified(self) -> bool {
         match self {
             FileStatus::Tracked(tracked) => matches!(
                 (tracked.index_status, tracked.worktree_status),
@@ -178,7 +178,7 @@ impl FileStatus {
         }
     }
 
-    pub fn is_created(self) -> bool {
+    pub const fn is_created(self) -> bool {
         match self {
             FileStatus::Tracked(tracked) => matches!(
                 (tracked.index_status, tracked.worktree_status),
@@ -189,15 +189,15 @@ impl FileStatus {
         }
     }
 
-    pub fn is_deleted(self) -> bool {
+    pub const fn is_deleted(self) -> bool {
         matches!(self, FileStatus::Tracked(tracked) if matches!((tracked.index_status, tracked.worktree_status), (StatusCode::Deleted, _) | (_, StatusCode::Deleted)))
     }
 
-    pub fn is_untracked(self) -> bool {
+    pub const fn is_untracked(self) -> bool {
         matches!(self, FileStatus::Untracked)
     }
 
-    pub fn summary(self) -> GitSummary {
+    pub const fn summary(self) -> GitSummary {
         match self {
             FileStatus::Ignored => GitSummary::UNCHANGED,
             FileStatus::Untracked => GitSummary::UNTRACKED,
@@ -230,7 +230,7 @@ impl StatusCode {
         }
     }
 
-    fn to_summary(self) -> TrackedSummary {
+    const fn to_summary(self) -> TrackedSummary {
         match self {
             StatusCode::Modified | StatusCode::TypeChanged => TrackedSummary {
                 modified: 1,
@@ -250,14 +250,14 @@ impl StatusCode {
         }
     }
 
-    pub fn index(self) -> FileStatus {
+    pub const fn index(self) -> FileStatus {
         FileStatus::Tracked(TrackedStatus {
             index_status: self,
             worktree_status: StatusCode::Unmodified,
         })
     }
 
-    pub fn worktree(self) -> FileStatus {
+    pub const fn worktree(self) -> FileStatus {
         FileStatus::Tracked(TrackedStatus {
             index_status: StatusCode::Unmodified,
             worktree_status: self,

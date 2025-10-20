@@ -9,7 +9,7 @@ pub struct DecoratedIcon {
 }
 
 impl DecoratedIcon {
-    pub fn new(icon: Icon, decoration: Option<IconDecoration>) -> Self {
+    pub const fn new(icon: Icon, decoration: Option<IconDecoration>) -> Self {
         Self { icon, decoration }
     }
 }

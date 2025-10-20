@@ -24,63 +24,63 @@ pub struct TypedRow<T> {
 }
 
 impl<T> TypedOffset<T> {
-    pub fn new(offset: usize) -> Self {
+    pub const fn new(offset: usize) -> Self {
         Self {
             value: offset,
             _marker: PhantomData,
         }
     }
 
-    pub fn saturating_sub(self, n: TypedOffset<T>) -> Self {
+    pub const fn saturating_sub(self, n: TypedOffset<T>) -> Self {
         Self {
             value: self.value.saturating_sub(n.value),
             _marker: PhantomData,
         }
     }
 
-    pub fn zero() -> Self {
+    pub const fn zero() -> Self {
         Self::new(0)
     }
 
-    pub fn is_zero(&self) -> bool {
+    pub const fn is_zero(&self) -> bool {
         self.value == 0
     }
 }
 
 impl<T> TypedPoint<T> {
-    pub fn new(row: u32, column: u32) -> Self {
+    pub const fn new(row: u32, column: u32) -> Self {
         Self {
             value: Point::new(row, column),
             _marker: PhantomData,
         }
     }
 
-    pub fn wrap(point: Point) -> Self {
+    pub const fn wrap(point: Point) -> Self {
         Self {
             value: point,
             _marker: PhantomData,
         }
     }
 
-    pub fn row(&self) -> u32 {
+    pub const fn row(&self) -> u32 {
         self.value.row
     }
 
-    pub fn column(&self) -> u32 {
+    pub const fn column(&self) -> u32 {
         self.value.column
     }
 
-    pub fn zero() -> Self {
+    pub const fn zero() -> Self {
         Self::wrap(Point::zero())
     }
 
-    pub fn is_zero(&self) -> bool {
+    pub const fn is_zero(&self) -> bool {
         self.value.is_zero()
     }
 }
 
 impl<T> TypedRow<T> {
-    pub fn new(row: u32) -> Self {
+    pub const fn new(row: u32) -> Self {
         Self {
             value: row,
             _marker: PhantomData,

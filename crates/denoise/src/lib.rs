@@ -35,7 +35,7 @@ impl<S: Source> fmt::Debug for Denoiser<S> {
 struct Queue(VecDeque<[Sample; BLOCK_SHIFT]>);
 
 impl Queue {
-    fn new() -> Self {
+    const fn new() -> Self {
         Self(VecDeque::new())
     }
     fn push(&mut self, block: [Sample; BLOCK_SHIFT]) {
@@ -97,7 +97,7 @@ impl<S: Source> Denoiser<S> {
         })
     }
 
-    pub fn set_enabled(&mut self, enabled: bool) {
+    pub const fn set_enabled(&mut self, enabled: bool) {
         self.state = match (enabled, self.state) {
             (false, IterState::StartingMidAudio { .. }) | (false, IterState::Enabled) => {
                 IterState::Disabled

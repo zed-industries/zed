@@ -782,21 +782,21 @@ impl BufferStore {
         }
     }
 
-    fn as_local_mut(&mut self) -> Option<&mut LocalBufferStore> {
+    const fn as_local_mut(&mut self) -> Option<&mut LocalBufferStore> {
         match &mut self.state {
             BufferStoreState::Local(state) => Some(state),
             _ => None,
         }
     }
 
-    fn as_remote_mut(&mut self) -> Option<&mut RemoteBufferStore> {
+    const fn as_remote_mut(&mut self) -> Option<&mut RemoteBufferStore> {
         match &mut self.state {
             BufferStoreState::Remote(state) => Some(state),
             _ => None,
         }
     }
 
-    fn as_remote(&self) -> Option<&RemoteBufferStore> {
+    const fn as_remote(&self) -> Option<&RemoteBufferStore> {
         match &self.state {
             BufferStoreState::Remote(state) => Some(state),
             _ => None,

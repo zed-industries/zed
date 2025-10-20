@@ -74,7 +74,7 @@ actions!(
 );
 
 impl Deploy {
-    pub fn find() -> Self {
+    pub const fn find() -> Self {
         Self {
             focus: true,
             replace_enabled: false,
@@ -82,7 +82,7 @@ impl Deploy {
         }
     }
 
-    pub fn replace() -> Self {
+    pub const fn replace() -> Self {
         Self {
             focus: true,
             replace_enabled: true,
@@ -127,7 +127,7 @@ pub struct BufferSearchBar {
 }
 
 impl BufferSearchBar {
-    pub fn query_editor_focused(&self) -> bool {
+    pub const fn query_editor_focused(&self) -> bool {
         self.query_editor_focused
     }
 }
@@ -683,7 +683,7 @@ impl BufferSearchBar {
         }
     }
 
-    pub fn is_dismissed(&self) -> bool {
+    pub const fn is_dismissed(&self) -> bool {
         self.dismissed
     }
 
@@ -915,7 +915,7 @@ impl BufferSearchBar {
         cx.notify();
     }
 
-    pub fn has_search_option(&mut self, search_option: SearchOptions) -> bool {
+    pub const fn has_search_option(&mut self, search_option: SearchOptions) -> bool {
         self.search_options.contains(search_option)
     }
 
@@ -1169,7 +1169,7 @@ impl BufferSearchBar {
         }
     }
 
-    pub fn has_active_match(&self) -> bool {
+    pub const fn has_active_match(&self) -> bool {
         self.active_match_index.is_some()
     }
 
@@ -1303,7 +1303,7 @@ impl BufferSearchBar {
         done_rx
     }
 
-    fn reverse_direction_if_backwards(&self, direction: Direction) -> Direction {
+    const fn reverse_direction_if_backwards(&self, direction: Direction) -> Direction {
         if self.search_options.contains(SearchOptions::BACKWARDS) {
             direction.opposite()
         } else {

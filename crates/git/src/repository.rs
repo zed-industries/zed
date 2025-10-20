@@ -115,11 +115,11 @@ impl From<UpstreamTrackingStatus> for UpstreamTracking {
 }
 
 impl UpstreamTracking {
-    pub fn is_gone(&self) -> bool {
+    pub const fn is_gone(&self) -> bool {
         matches!(self, UpstreamTracking::Gone)
     }
 
-    pub fn status(&self) -> Option<UpstreamTrackingStatus> {
+    pub const fn status(&self) -> Option<UpstreamTrackingStatus> {
         match self {
             UpstreamTracking::Gone => None,
             UpstreamTracking::Tracked(status) => Some(*status),
@@ -134,7 +134,7 @@ pub struct RemoteCommandOutput {
 }
 
 impl RemoteCommandOutput {
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.stdout.is_empty() && self.stderr.is_empty()
     }
 }

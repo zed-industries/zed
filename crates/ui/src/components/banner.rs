@@ -29,7 +29,7 @@ pub struct Banner {
 
 impl Banner {
     /// Creates a new `Banner` component with default styling.
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             severity: Severity::Info,
             children: Vec::new(),
@@ -38,7 +38,7 @@ impl Banner {
     }
 
     /// Sets the severity of the banner.
-    pub fn severity(mut self, severity: Severity) -> Self {
+    pub const fn severity(mut self, severity: Severity) -> Self {
         self.severity = severity;
         self
     }

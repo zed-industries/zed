@@ -17,7 +17,7 @@ pub struct Indicator {
 }
 
 impl Indicator {
-    pub fn dot() -> Self {
+    pub const fn dot() -> Self {
         Self {
             kind: IndicatorKind::Dot,
             border_color: None,
@@ -25,7 +25,7 @@ impl Indicator {
         }
     }
 
-    pub fn bar() -> Self {
+    pub const fn bar() -> Self {
         Self {
             kind: IndicatorKind::Bar,
             border_color: None,
@@ -43,12 +43,12 @@ impl Indicator {
         }
     }
 
-    pub fn color(mut self, color: Color) -> Self {
+    pub const fn color(mut self, color: Color) -> Self {
         self.color = color;
         self
     }
 
-    pub fn border_color(mut self, color: Color) -> Self {
+    pub const fn border_color(mut self, color: Color) -> Self {
         self.border_color = Some(color);
         self
     }
