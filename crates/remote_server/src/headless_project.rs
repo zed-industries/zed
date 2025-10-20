@@ -647,7 +647,7 @@ impl HeadlessProject {
                 message.limit as _,
                 cx,
             )
-            .into_results(query, cx)
+            .into_handle(query, cx)
             .matching_buffers(cx)
         })?;
 

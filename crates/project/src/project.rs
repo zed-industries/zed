@@ -4037,7 +4037,7 @@ impl Project {
                 ),
             }
         };
-        searcher.into_results(query, cx)
+        searcher.into_handle(query, cx)
     }
 
     pub fn search(&mut self, query: SearchQuery, cx: &mut Context<Self>) -> Receiver<SearchResult> {
