@@ -12760,7 +12760,16 @@ impl LspAdapterDelegate for LocalLspAdapterDelegate {
         if self.fs.is_file(&worktree_abs_path).await {
             worktree_abs_path.pop();
         }
-        let shell_path = self.shell_env().await.get("PATH").cloned();
+
+        let env = self.shell_env().await;
+
+        // On Windows, PATH might be "Path" instead of "PATH"
+        let shell_path = env
+            .get("PATH")
+            .or_else(|| env.get("Path"))
+            .or_else(|| env.get("path"))
+            .cloned();
+
         which::which_in(command, shell_path.as_ref(), worktree_abs_path).ok()
     }
 
