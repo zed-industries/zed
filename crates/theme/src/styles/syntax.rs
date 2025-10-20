@@ -86,45 +86,45 @@ impl SyntaxTheme {
     }
 
     const fn fallback_rainbow_palette() -> &'static [u32] {
-        // Catppuccin-inspired pastel palette optimized for dark themes (32 colors)
-        // - Soft, pleasant pastel colors with good contrast
-        // - No red/reddish (avoids error message confusion)
-        // - No dark colors (good visibility)
+        // Pastel palette with enhanced saturation (32 colors)
+        // - More saturated but still milky/soft
+        // - Excludes red/reddish (error confusion), white, black, grey
+        // - Balanced brightness with stronger color presence
         // - Well-distributed across color spectrum
-        // - Each color maximally distinct from adjacent indices
+        // - Similar colors separated by at least 2 indices to prevent clustering
         &[
-            0xa6e3a1, // 0: Mint green - soft, distinct
-            0x89b4fa, // 1: Blue - gentle sky
-            0xf9e2af, // 2: Yellow - warm cream
-            0xcba6f7, // 3: Mauve - soft purple
-            0x94e2d5, // 4: Teal - refreshing aqua
-            0xfab387, // 5: Peach - soft orange
-            0xb4befe, // 6: Lavender - ethereal
-            0x74c7ec, // 7: Sky - vibrant light blue
-            0xa6da95, // 8: Light green - spring
-            0xf5c2e7, // 9: Pink - delicate rose
-            0x89dceb, // 10: Sapphire - calm cyan
-            0xeed49f, // 11: Tan - warm neutral
-            0xc6a0f6, // 12: Light purple - soft violet
-            0x8bd5ca, // 13: Aqua - cool mint
-            0xf0c6c6, // 14: Rose - pale pink
-            0xa5adcb, // 15: Periwinkle - soft blue-purple
-            0xb7bdf8, // 16: Light blue - pale sky
-            0xf5a97f, // 17: Apricot - warm peach
-            0x91d7e3, // 18: Light cyan - pale aqua
-            0xddb6f2, // 19: Lilac - soft purple-pink
-            0x7dc4e4, // 20: Light blue - ocean
-            0xc4b5fd, // 21: Pale violet - soft purple
-            0x8dd5c4, // 22: Seafoam - pale teal
-            0xf4dbd6, // 23: Cream - very light
-            0xb8c0e0, // 24: Pale blue-grey
-            0xe8a2af, // 25: Dusty rose - muted pink
-            0xa8dadc, // 26: Powder blue - light aqua
-            0xc9cbff, // 27: Very light lavender
-            0x9dd9d2, // 28: Pale teal-green
-            0xedd1f5, // 29: Very pale purple
-            0xa2d2ff, // 30: Baby blue - soft sky
-            0xdcc7aa, // 31: Sand - warm beige
+            0x90ffa0, // 0: Saturated mint green
+            0xd090ff, // 1: Saturated purple
+            0xffb070, // 2: Saturated peach
+            0x70a8ff, // 3: Saturated blue
+            0xfff070, // 4: Saturated yellow
+            0x60f8d0, // 5: Saturated aqua
+            0xffa0e8, // 6: Saturated pink
+            0x50c8ff, // 7: Saturated sky blue
+            0xffc060, // 8: Saturated golden
+            0xc8a8ff, // 9: Saturated lavender
+            0x70f0d8, // 10: Saturated teal
+            0xe898ff, // 11: Saturated lilac
+            0xff9850, // 12: Saturated apricot
+            0x60d8ff, // 13: Saturated cyan
+            0xa8ff70, // 14: Saturated lime
+            0xc070ff, // 15: Saturated violet
+            0xf0d070, // 16: Saturated gold
+            0x50b8ff, // 17: Saturated ocean
+            0x80f8d0, // 18: Saturated mint teal
+            0xf0c0ff, // 19: Saturated pale lavender
+            0xffb0d8, // 20: Saturated light pink
+            0x98b0ff, // 21: Saturated periwinkle
+            0x60d0b8, // 22: Saturated seafoam
+            0xd8a0ff, // 23: Saturated light violet
+            0xffe090, // 24: Saturated cream
+            0x70d0f0, // 25: Saturated light cyan
+            0x90e0f0, // 26: Saturated powder cyan
+            0xff98c0, // 27: Saturated rose
+            0xa0b8ff, // 28: Saturated light sky
+            0xe0c8ff, // 29: Saturated very light lavender
+            0x80d0ff, // 30: Saturated light blue
+            0xa8b8e8, // 31: Saturated pale periwinkle
         ]
     }
 
@@ -317,12 +317,12 @@ mod tests {
             }
         }
 
-        assert_eq!(colors.len(), 12, "Should have 12 colors");
+        assert_eq!(colors.len(), 32, "Should have 32 colors");
         let unique_count = colors
             .iter()
             .collect::<std::collections::HashSet<_>>()
             .len();
-        assert_eq!(unique_count, 12, "All 12 colors should be distinct");
+        assert_eq!(unique_count, 32, "All 32 colors should be distinct");
     }
 
     #[test]
