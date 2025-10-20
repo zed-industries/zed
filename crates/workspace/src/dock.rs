@@ -109,7 +109,7 @@ where
     fn persistent_name(&self) -> &'static str {
         T::persistent_name()
     }
-    
+
     fn panel_key(&self) -> &'static str {
         T::panel_key()
     }
@@ -1025,7 +1025,7 @@ pub mod test {
         fn panel_key() -> &'static str {
             "TestPanel"
         }
-        
+
         fn position(&self, _window: &Window, _: &App) -> super::DockPosition {
             self.position
         }

@@ -1398,7 +1398,7 @@ impl Panel for AgentPanel {
     fn panel_key() -> &'static str {
         AGENT_PANEL_KEY
     }
-    
+
     fn position(&self, _window: &Window, cx: &App) -> DockPosition {
         agent_panel_dock_position(cx)
     }

@@ -1419,7 +1419,7 @@ impl Panel for DebugPanel {
     fn panel_key() -> &'static str {
         DEBUG_PANEL_KEY
     }
-    
+
     fn position(&self, _window: &Window, cx: &App) -> DockPosition {
         DebuggerSettings::get_global(cx).dock.into()
     }

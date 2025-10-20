@@ -4841,7 +4841,7 @@ impl Panel for OutlinePanel {
     fn panel_key() -> &'static str {
         OUTLINE_PANEL_KEY
     }
-    
+
     fn position(&self, _: &Window, cx: &App) -> DockPosition {
         match OutlinePanelSettings::get_global(cx).dock {
             DockSide::Left => DockPosition::Left,
