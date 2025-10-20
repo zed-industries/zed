@@ -416,8 +416,8 @@ impl Editor {
                 }
             }
             InlayHintRefreshReason::ExcerptsRemoved(excerpts_removed) => {
-                self.display_map.update(cx, |display_map, _| {
-                    display_map.remove_inlays_for_excerpts(excerpts_removed)
+                self.display_map.update(cx, |display_map, cx| {
+                    display_map.remove_inlays_for_excerpts(excerpts_removed, cx)
                 });
                 return None;
             }
