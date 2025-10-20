@@ -5120,10 +5120,6 @@ async fn compute_snapshot(
         events.push(RepositoryEvent::MergeHeadsChanged);
     }
 
-    if branch != prev_snapshot.branch {
-        events.push(RepositoryEvent::BranchChanged);
-    }
-
     if statuses_by_path != prev_snapshot.statuses_by_path {
         events.push(RepositoryEvent::StatusesChanged { full_scan: true })
     }
@@ -5133,6 +5129,10 @@ async fn compute_snapshot(
         Some(head_sha) => backend.show(head_sha).await.log_err(),
         None => None,
     };
+
+    if branch != prev_snapshot.branch || head_commit != prev_snapshot.head_commit {
+        events.push(RepositoryEvent::BranchChanged);
+    }
 
     // Used by edit prediction data collection
     let remote_origin_url = backend.remote_url("origin");
