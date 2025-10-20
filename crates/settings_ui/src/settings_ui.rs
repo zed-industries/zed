@@ -25,7 +25,6 @@ use std::{
     rc::Rc,
     sync::{Arc, LazyLock, RwLock},
 };
-use theme::ThemeRegistry;
 use title_bar::platform_title_bar::PlatformTitleBar;
 use ui::{
     ContextMenu, Divider, DividerColor, DropdownMenu, DropdownStyle, IconButtonShape, KeyBinding,

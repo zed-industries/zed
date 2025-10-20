@@ -1069,7 +1069,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                         settings::AutosaveSettingDiscriminants::AfterDelay => {
                                             let milliseconds = match settings_value {
                                                 settings::AutosaveSetting::AfterDelay { milliseconds } => *milliseconds,
-                                                _ => 1000,
+                                                _ => settings::DelayMs(1000),
                                             };
                                             settings::AutosaveSetting::AfterDelay { milliseconds }
                                         },
