@@ -2413,7 +2413,6 @@ impl SettingsWindow {
                     window.focus_prev();
                     return;
                 }
-                dbg!("select prev");
                 let mut prev_was_header = false;
                 for (logical_index, (actual_index, item)) in this.visible_page_items().enumerate() {
                     let is_header = matches!(item, SettingsPageItem::SectionHeader(_));
@@ -2425,7 +2424,6 @@ impl SettingsWindow {
                         offset -= 1;
                     }
                     if handle.contains_focused(window, cx) {
-                        dbg!("found focus handle and scroll to reveal item two");
                         let next_logical_index = logical_index + offset - 1;
                         this.list_state.scroll_to_reveal_item(next_logical_index);
                         // We need to render the next item to ensure it's focus handle is in the element tree
