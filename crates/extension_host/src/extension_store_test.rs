@@ -150,10 +150,13 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                         themes: Default::default(),
                         icon_themes: Vec::new(),
                         lib: Default::default(),
-                        languages: vec!["languages/ruby".into()],
-                        grammars: [("ruby".into(), GrammarManifestEntry::default())]
-                            .into_iter()
-                            .collect(),
+                        languages: vec!["languages/erb".into(), "languages/ruby".into()],
+                        grammars: [
+                            ("embedded_template".into(), GrammarManifestEntry::default()),
+                            ("ruby".into(), GrammarManifestEntry::default()),
+                        ]
+                        .into_iter()
+                        .collect(),
                         language_servers: BTreeMap::default(),
                         context_servers: BTreeMap::default(),
                         agent_servers: BTreeMap::default(),

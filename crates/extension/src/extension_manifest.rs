@@ -470,7 +470,7 @@ version = "1.0.0"
 schema_version = 0
 
 [agent_servers.foo]
-[agent_servers.foo.launcher.Npm]
+[agent_servers.foo.launcher]
 package = "@example/agent-server"
 entrypoint = "node_modules/@example/agent-server/dist/index.js"
 min_version = "1.0.0"
