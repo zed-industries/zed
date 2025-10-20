@@ -915,10 +915,6 @@ jobs:
           # This exports RELEASE_CHANNEL into env (GITHUB_ENV)
           script/determine-release-channel.ps1
 
-      - name: Add clang to PATH
-        run: |
-          echo "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\Llvm\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-
       - name: Build Zed installer
         working-directory: ${{ env.ZED_WORKSPACE }}
         run: script/bundle-windows.ps1 -Architecture aarch64
