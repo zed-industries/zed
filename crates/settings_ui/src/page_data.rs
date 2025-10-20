@@ -9,6 +9,16 @@ use crate::{
     SettingsPageItem, SubPageLink, USER, all_language_names, sub_page_stack,
 };
 
+const DEFAULT_STRING: String = String::new();
+/// A default empty string reference. Useful in `pick` functions for cases either in dynamic item fields, or when dealing with `settings::Maybe`
+/// to avoid the "NO DEFAULT" case.
+const DEFAULT_EMPTY_STRING: Option<&String> = Some(&DEFAULT_STRING);
+
+const DEFAULT_SHARED_STRING: SharedString = SharedString::new_static("");
+/// A default empty string reference. Useful in `pick` functions for cases either in dynamic item fields, or when dealing with `settings::Maybe`
+/// to avoid the "NO DEFAULT" case.
+const DEFAULT_EMPTY_SHARED_STRING: Option<&SharedString> = Some(&DEFAULT_SHARED_STRING);
+
 pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
     vec![
         SettingsPage {
@@ -22,9 +32,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     field: Box::new(
                         SettingField {
                             pick: |settings_content| {
-                                const DEFAULT: String = String::new();
-                                const DEFAULT_EMPTY: Option<&String> = Some(&DEFAULT);
-                                settings_content.project.worktree.project_name.as_ref()?.as_ref().or(DEFAULT_EMPTY)
+                                settings_content.project.worktree.project_name.as_ref()?.as_ref().or(DEFAULT_EMPTY_STRING)
                             },
                             write: |settings_content, value| {
                                 settings_content.project.worktree.project_name = settings::Maybe::Set(value.filter(|name| !name.is_empty()));
@@ -4368,7 +4376,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                     field: Box::new(SettingField {
                                         pick: |settings_content| {
                                             match settings_content.terminal.as_ref()?.project.shell.as_ref() {
-                                                Some(settings::Shell::WithArguments { title_override, .. }) => title_override.as_ref(),
+                                                Some(settings::Shell::WithArguments { title_override, .. }) => title_override.as_ref().or(DEFAULT_EMPTY_SHARED_STRING),
                                                 _ => None
                                             }
                                         },
@@ -4378,7 +4386,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                                 .get_or_insert_default()
                                                 .project
                                                 .shell.as_mut() {
-                                                    Some(settings::Shell::WithArguments { title_override, .. }) => *title_override = value,
+                                                    Some(settings::Shell::WithArguments { title_override, .. }) => *title_override = value.filter(|s| !s.is_empty()),
                                                     _ => return
                                                 }
                                         },
