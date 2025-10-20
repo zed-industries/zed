@@ -455,7 +455,7 @@ impl TestAppContext {
             .windows
             .get_mut(window.id)
             .unwrap()
-            .as_mut()
+            .as_deref_mut()
             .unwrap()
             .platform_window
             .as_test()

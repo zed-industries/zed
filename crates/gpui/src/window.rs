@@ -4718,7 +4718,7 @@ impl<V: 'static + Render> WindowHandle<V> {
             .get(self.id)
             .and_then(|window| {
                 window
-                    .as_ref()
+                    .as_deref()
                     .and_then(|window| window.root.clone())
                     .map(|root_view| root_view.downcast::<V>())
             })
