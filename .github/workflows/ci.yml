@@ -882,7 +882,7 @@ jobs:
   bundle-windows-aarch64:
     timeout-minutes: 120
     name: Create a Windows installer for aarch64
-    runs-on: [hel1-windows-3]
+    runs-on: [self-32vcpu-windows-2022]
     if: |
       ( startsWith(github.ref, 'refs/tags/v')
       || contains(github.event.pull_request.labels.*.name, 'run-bundling') )
