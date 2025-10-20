@@ -162,7 +162,7 @@ impl ProjectEnvironment {
                             .get("PATH")
                             .map(|path| path.as_str())
                             .unwrap_or_default();
-                        log::info!(
+                        log::debug!(
                             "using project environment variables shell launched in {:?}. PATH={:?}",
                             abs_path,
                             path

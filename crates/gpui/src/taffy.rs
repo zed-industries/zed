@@ -3,7 +3,6 @@ use crate::{
     point, size,
 };
 use collections::{FxHashMap, FxHashSet};
-use smallvec::SmallVec;
 use stacksafe::{StackSafe, stacksafe};
 use std::{fmt::Debug, ops::Range};
 use taffy::{
@@ -31,6 +30,7 @@ pub struct TaffyLayoutEngine {
     taffy: TaffyTree<NodeContext>,
     absolute_layout_bounds: FxHashMap<LayoutId, Bounds<Pixels>>,
     computed_layouts: FxHashSet<LayoutId>,
+    layout_bounds_scratch_space: Vec<LayoutId>,
 }
 
 const EXPECT_MESSAGE: &str = "we should avoid taffy layout errors by construction if possible";
@@ -43,6 +43,7 @@ impl TaffyLayoutEngine {
             taffy,
             absolute_layout_bounds: FxHashMap::default(),
             computed_layouts: FxHashSet::default(),
+            layout_bounds_scratch_space: Vec::new(),
         }
     }
 
@@ -168,7 +169,7 @@ impl TaffyLayoutEngine {
         //
 
         if !self.computed_layouts.insert(id) {
-            let mut stack = SmallVec::<[LayoutId; 64]>::new();
+            let mut stack = &mut self.layout_bounds_scratch_space;
             stack.push(id);
             while let Some(id) = stack.pop() {
                 self.absolute_layout_bounds.remove(&id);
@@ -177,7 +178,7 @@ impl TaffyLayoutEngine {
                         .children(id.into())
                         .expect(EXPECT_MESSAGE)
                         .into_iter()
-                        .map(Into::into),
+                        .map(LayoutId::from),
                 );
             }
         }
