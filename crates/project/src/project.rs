@@ -3946,20 +3946,28 @@ impl Project {
         } else {
             None
         };
-        let searcher = match client {
-            Some((client, remote_id)) => project_search::Search::remote(
+        let searcher = if query.is_opened_only() {
+            project_search::Search::open_buffers_only(
                 self.buffer_store.clone(),
                 self.worktree_store.clone(),
                 project_search::Search::MAX_SEARCH_RESULT_FILES + 1,
-                (client, remote_id, self.remotely_created_models.clone()),
-            ),
-            None => project_search::Search::local(
-                self.fs.clone(),
-                self.buffer_store.clone(),
-                self.worktree_store.clone(),
-                project_search::Search::MAX_SEARCH_RESULT_FILES + 1,
-                cx,
-            ),
+            )
+        } else {
+            match client {
+                Some((client, remote_id)) => project_search::Search::remote(
+                    self.buffer_store.clone(),
+                    self.worktree_store.clone(),
+                    project_search::Search::MAX_SEARCH_RESULT_FILES + 1,
+                    (client, remote_id, self.remotely_created_models.clone()),
+                ),
+                None => project_search::Search::local(
+                    self.fs.clone(),
+                    self.buffer_store.clone(),
+                    self.worktree_store.clone(),
+                    project_search::Search::MAX_SEARCH_RESULT_FILES + 1,
+                    cx,
+                ),
+            }
         };
         searcher.into_results(query, cx)
     }
