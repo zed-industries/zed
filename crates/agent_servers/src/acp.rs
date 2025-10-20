@@ -40,7 +40,7 @@ pub struct AcpConnection {
     // NB: Don't move this into the wait_task, since we need to ensure the process is
     // killed on drop (setting kill_on_drop on the command seems to not always work).
     child: smol::process::Child,
-    _io_task: Task<Result<()>>,
+    _io_task: Task<Result<(), acp::Error>>,
     _wait_task: Task<Result<()>>,
     _stderr_task: Task<Result<()>>,
 }
