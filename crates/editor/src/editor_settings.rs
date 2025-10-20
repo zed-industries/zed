@@ -189,9 +189,9 @@ impl Settings for EditorSettings {
             current_line_highlight: editor.current_line_highlight.unwrap(),
             selection_highlight: editor.selection_highlight.unwrap(),
             rounded_selection: editor.rounded_selection.unwrap(),
-            lsp_highlight_debounce: editor.lsp_highlight_debounce.unwrap().into(),
+            lsp_highlight_debounce: editor.lsp_highlight_debounce.unwrap(),
             hover_popover_enabled: editor.hover_popover_enabled.unwrap(),
-            hover_popover_delay: editor.hover_popover_delay.unwrap().into(),
+            hover_popover_delay: editor.hover_popover_delay.unwrap(),
             toolbar: Toolbar {
                 breadcrumbs: toolbar.breadcrumbs.unwrap(),
                 quick_actions: toolbar.quick_actions.unwrap(),
@@ -262,7 +262,7 @@ impl Settings for EditorSettings {
             inline_code_actions: editor.inline_code_actions.unwrap(),
             drag_and_drop_selection: DragAndDropSelection {
                 enabled: drag_and_drop_selection.enabled.unwrap(),
-                delay: drag_and_drop_selection.delay.unwrap().into(),
+                delay: drag_and_drop_selection.delay.unwrap(),
             },
             lsp_document_colors: editor.lsp_document_colors.unwrap(),
             minimum_contrast_for_highlights: editor.minimum_contrast_for_highlights.unwrap().0,

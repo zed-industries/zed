@@ -452,7 +452,7 @@ impl Settings for ProjectSettings {
                 let inline = git.inline_blame.unwrap();
                 InlineBlameSettings {
                     enabled: inline.enabled.unwrap(),
-                    delay_ms: inline.delay_ms.unwrap().into(),
+                    delay_ms: inline.delay_ms.unwrap(),
                     padding: inline.padding.unwrap(),
                     min_column: inline.min_column.unwrap(),
                     show_commit_summary: inline.show_commit_summary.unwrap(),
