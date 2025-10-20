@@ -954,6 +954,11 @@ impl Pane {
             if allow_preview {
                 pane.set_preview_item_id(Some(new_item.item_id()), cx);
             }
+
+            if let Some(text) = new_item.telemetry_event_text(cx) {
+                telemetry::event!(text);
+            }
+
             pane.add_item_inner(
                 new_item,
                 true,
@@ -1170,6 +1175,10 @@ impl Pane {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if let Some(text) = item.telemetry_event_text(cx) {
+            telemetry::event!(text);
+        }
+
         self.add_item_inner(
             item,
             activate_pane,
@@ -6565,8 +6574,8 @@ mod tests {
         let scroll_bounds = tab_bar_scroll_handle.bounds();
         let scroll_offset = tab_bar_scroll_handle.offset();
         assert!(tab_bounds.right() <= scroll_bounds.right() + scroll_offset.x);
-        // -39.75 is the magic number for this setup
-        assert_eq!(scroll_offset.x, px(-39.75));
+        // -39.5 is the magic number for this setup
+        assert_eq!(scroll_offset.x, px(-39.5));
         assert!(
             !tab_bounds.intersects(&new_tab_button_bounds),
             "Tab should not overlap with the new tab button, if this is failing check if there's been a redesign!"

@@ -262,11 +262,15 @@ impl TransportDelegate {
                     break;
                 }
             }
+
+            // Clean up logs by trimming unnecessary whitespace/newlines before inserting into log.
+            let line = line.trim();
+
             log::debug!("stderr: {line}");
 
             for (kind, handler) in log_handlers.lock().iter_mut() {
                 if matches!(kind, LogKind::Adapter) {
-                    handler(iokind, None, line.as_str());
+                    handler(iokind, None, line);
                 }
             }
         }
@@ -649,7 +653,7 @@ impl Drop for TcpTransport {
 }
 
 pub struct StdioTransport {
-    process: Mutex<Option<Child>>,
+    process: Mutex<Child>,
     _stderr_task: Option<Task<()>>,
 }
 
@@ -676,7 +680,7 @@ impl StdioTransport {
 
         let mut process = Child::spawn(command, Stdio::piped())?;
 
-        let err_task = process.stderr.take().map(|stderr| {
+        let _stderr_task = process.stderr.take().map(|stderr| {
             cx.background_spawn(TransportDelegate::handle_adapter_log(
                 stderr,
                 IoKind::StdErr,
@@ -684,24 +688,22 @@ impl StdioTransport {
             ))
         });
 
-        let process = Mutex::new(Some(process));
+        let process = Mutex::new(process);
 
         Ok(Self {
             process,
-            _stderr_task: err_task,
+            _stderr_task,
         })
     }
 }
 
 impl Transport for StdioTransport {
     fn has_adapter_logs(&self) -> bool {
-        false
+        true
     }
 
     fn kill(&mut self) {
-        if let Some(process) = &mut *self.process.lock() {
-            process.kill();
-        }
+        self.process.lock().kill();
     }
 
     fn connect(
@@ -713,8 +715,7 @@ impl Transport for StdioTransport {
         )>,
     > {
         let result = util::maybe!({
-            let mut guard = self.process.lock();
-            let process = guard.as_mut().context("oops")?;
+            let mut process = self.process.lock();
             Ok((
                 Box::new(process.stdin.take().context("Cannot reconnect")?) as _,
                 Box::new(process.stdout.take().context("Cannot reconnect")?) as _,
@@ -730,9 +731,7 @@ impl Transport for StdioTransport {
 
 impl Drop for StdioTransport {
     fn drop(&mut self) {
-        if let Some(process) = &mut *self.process.lock() {
-            process.kill();
-        }
+        self.process.lock().kill();
     }
 }
 

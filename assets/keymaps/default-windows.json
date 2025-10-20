@@ -29,8 +29,8 @@
       "ctrl-shift-=": ["zed::IncreaseBufferFontSize", { "persist": false }],
       "ctrl--": ["zed::DecreaseBufferFontSize", { "persist": false }],
       "ctrl-0": ["zed::ResetBufferFontSize", { "persist": false }],
-      "ctrl-,": "zed::OpenSettingsEditor",
-      "ctrl-alt-,": "zed::OpenSettings",
+      "ctrl-,": "zed::OpenSettings",
+      "ctrl-alt-,": "zed::OpenSettingsFile",
       "ctrl-q": "zed::Quit",
       "f4": "debugger::Start",
       "shift-f5": "debugger::Stop",
@@ -134,7 +134,7 @@
       "ctrl-k z": "editor::ToggleSoftWrap",
       "ctrl-f": "buffer_search::Deploy",
       "ctrl-h": "buffer_search::DeployReplace",
-      "ctrl-shift-.": "assistant::QuoteSelection",
+      "ctrl-shift-.": "agent::QuoteSelection",
       "ctrl-shift-,": "assistant::InsertIntoEditor",
       "shift-alt-e": "editor::SelectEnclosingSymbol",
       "ctrl-shift-backspace": "editor::GoToPreviousChange",
@@ -244,7 +244,7 @@
       "ctrl-shift-i": "agent::ToggleOptionsMenu",
       // "ctrl-shift-alt-n": "agent::ToggleNewThreadMenu",
       "shift-alt-escape": "agent::ExpandMessageEditor",
-      "ctrl-shift-.": "assistant::QuoteSelection",
+      "ctrl-shift-.": "agent::QuoteSelection",
       "shift-alt-e": "agent::RemoveAllContext",
       "ctrl-shift-e": "project_panel::ToggleFocus",
       "ctrl-shift-enter": "agent::ContinueThread",
@@ -270,7 +270,7 @@
     }
   },
   {
-    "context": "AgentPanel && prompt_editor",
+    "context": "AgentPanel && text_thread",
     "use_key_equivalents": true,
     "bindings": {
       "ctrl-n": "agent::NewTextThread",
@@ -278,7 +278,7 @@
     }
   },
   {
-    "context": "AgentPanel && external_agent_thread",
+    "context": "AgentPanel && acp_thread",
     "use_key_equivalents": true,
     "bindings": {
       "ctrl-n": "agent::NewExternalAgentThread",
@@ -500,8 +500,8 @@
     "bindings": {
       "ctrl-[": "editor::Outdent",
       "ctrl-]": "editor::Indent",
-      "ctrl-shift-alt-up": "editor::AddSelectionAbove", // Insert Cursor Above
-      "ctrl-shift-alt-down": "editor::AddSelectionBelow", // Insert Cursor Below
+      "ctrl-shift-alt-up": ["editor::AddSelectionAbove", { "skip_soft_wrap": true }], // Insert Cursor Above
+      "ctrl-shift-alt-down": ["editor::AddSelectionBelow", { "skip_soft_wrap": true }], // Insert Cursor Below
       "ctrl-shift-k": "editor::DeleteLine",
       "alt-up": "editor::MoveLineUp",
       "alt-down": "editor::MoveLineDown",
@@ -536,19 +536,19 @@
       "ctrl-k ctrl-l": "editor::ToggleFold",
       "ctrl-k ctrl-[": "editor::FoldRecursive",
       "ctrl-k ctrl-]": "editor::UnfoldRecursive",
-      "ctrl-k ctrl-1": ["editor::FoldAtLevel", 1],
-      "ctrl-k ctrl-2": ["editor::FoldAtLevel", 2],
-      "ctrl-k ctrl-3": ["editor::FoldAtLevel", 3],
-      "ctrl-k ctrl-4": ["editor::FoldAtLevel", 4],
-      "ctrl-k ctrl-5": ["editor::FoldAtLevel", 5],
-      "ctrl-k ctrl-6": ["editor::FoldAtLevel", 6],
-      "ctrl-k ctrl-7": ["editor::FoldAtLevel", 7],
-      "ctrl-k ctrl-8": ["editor::FoldAtLevel", 8],
-      "ctrl-k ctrl-9": ["editor::FoldAtLevel", 9],
+      "ctrl-k ctrl-1": "editor::FoldAtLevel_1",
+      "ctrl-k ctrl-2": "editor::FoldAtLevel_2",
+      "ctrl-k ctrl-3": "editor::FoldAtLevel_3",
+      "ctrl-k ctrl-4": "editor::FoldAtLevel_4",
+      "ctrl-k ctrl-5": "editor::FoldAtLevel_5",
+      "ctrl-k ctrl-6": "editor::FoldAtLevel_6",
+      "ctrl-k ctrl-7": "editor::FoldAtLevel_7",
+      "ctrl-k ctrl-8": "editor::FoldAtLevel_8",
+      "ctrl-k ctrl-9": "editor::FoldAtLevel_9",
       "ctrl-k ctrl-0": "editor::FoldAll",
       "ctrl-k ctrl-j": "editor::UnfoldAll",
       "ctrl-space": "editor::ShowCompletions",
-      "ctrl-shift-space": "editor::ShowWordCompletions",
+      "ctrl-shift-space": "editor::ShowSignatureHelp",
       "ctrl-.": "editor::ToggleCodeActions",
       "ctrl-k r": "editor::RevealInFileManager",
       "ctrl-k p": "editor::CopyPath",
@@ -623,7 +623,7 @@
       "ctrl-shift-f": "pane::DeploySearch",
       "ctrl-shift-h": ["pane::DeploySearch", { "replace_enabled": true }],
       "ctrl-shift-t": "pane::ReopenClosedItem",
-      "ctrl-k ctrl-s": "zed::OpenKeymapEditor",
+      "ctrl-k ctrl-s": "zed::OpenKeymap",
       "ctrl-k ctrl-t": "theme_selector::Toggle",
       "ctrl-alt-super-p": "settings_profile_selector::Toggle",
       "ctrl-t": "project_symbols::Toggle",
@@ -812,7 +812,7 @@
       "ctrl-shift-e": "pane::RevealInProjectPanel",
       "ctrl-f8": "editor::GoToHunk",
       "ctrl-shift-f8": "editor::GoToPreviousHunk",
-      "ctrl-enter": "assistant::InlineAssist",
+      "ctrl-i": "assistant::InlineAssist",
       "ctrl-shift-;": "editor::ToggleInlayHints"
     }
   },
@@ -1117,8 +1117,9 @@
       "ctrl-insert": "terminal::Copy",
       "ctrl-shift-c": "terminal::Copy",
       "shift-insert": "terminal::Paste",
+      "ctrl-v": "terminal::Paste",
       "ctrl-shift-v": "terminal::Paste",
-      "ctrl-enter": "assistant::InlineAssist",
+      "ctrl-i": "assistant::InlineAssist",
       "alt-b": ["terminal::SendText", "\u001bb"],
       "alt-f": ["terminal::SendText", "\u001bf"],
       "alt-.": ["terminal::SendText", "\u001b."],
@@ -1151,6 +1152,12 @@
       "ctrl-shift-r": "terminal::RerunTask",
       "ctrl-alt-r": "terminal::RerunTask",
       "alt-t": "terminal::RerunTask"
+    }
+  },
+  {
+    "context": "Terminal && selection",
+    "bindings": {
+      "ctrl-c": "terminal::Copy"
     }
   },
   {
@@ -1257,9 +1264,6 @@
     "context": "Onboarding",
     "use_key_equivalents": true,
     "bindings": {
-      "ctrl-1": "onboarding::ActivateBasicsPage",
-      "ctrl-2": "onboarding::ActivateEditingPage",
-      "ctrl-3": "onboarding::ActivateAISetupPage",
       "ctrl-enter": "onboarding::Finish",
       "alt-shift-l": "onboarding::SignIn",
       "shift-alt-a": "onboarding::OpenAccount"
@@ -1270,8 +1274,10 @@
     "use_key_equivalents": true,
     "bindings": {
       "ctrl-w": "workspace::CloseWindow",
+      "escape": "workspace::CloseWindow",
       "ctrl-m": "settings_editor::Minimize",
       "ctrl-f": "search::FocusSearch",
+      "left": "settings_editor::ToggleFocusNav",
       "ctrl-shift-e": "settings_editor::ToggleFocusNav",
       // todo(settings_ui): cut this down based on the max files and overflow UI
       "ctrl-1": ["settings_editor::FocusFile", 0],
@@ -1286,6 +1292,20 @@
       "ctrl-0": ["settings_editor::FocusFile", 9],
       "ctrl-pageup": "settings_editor::FocusPreviousFile",
       "ctrl-pagedown": "settings_editor::FocusNextFile"
+    }
+  },
+  {
+    "context": "SettingsWindow > NavigationMenu",
+    "use_key_equivalents": true,
+    "bindings": {
+      "up": "settings_editor::FocusPreviousNavEntry",
+      "down": "settings_editor::FocusNextNavEntry",
+      "right": "settings_editor::ExpandNavEntry",
+      "left": "settings_editor::CollapseNavEntry",
+      "pageup": "settings_editor::FocusPreviousRootNavEntry",
+      "pagedown": "settings_editor::FocusNextRootNavEntry",
+      "home": "settings_editor::FocusFirstNavEntry",
+      "end": "settings_editor::FocusLastNavEntry"
     }
   }
 ]

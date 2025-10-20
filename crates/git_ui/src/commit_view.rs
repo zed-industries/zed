@@ -8,7 +8,7 @@ use gpui::{
 };
 use language::{
     Anchor, Buffer, Capability, DiskState, File, LanguageRegistry, LineEnding, OffsetRangeExt as _,
-    Point, Rope, TextBuffer,
+    Point, ReplicaId, Rope, TextBuffer,
 };
 use multi_buffer::PathKey;
 use project::{Project, WorktreeId, git_store::Repository};
@@ -43,8 +43,8 @@ struct CommitMetadataFile {
     worktree_id: WorktreeId,
 }
 
-const COMMIT_METADATA_NAMESPACE: u64 = 0;
-const FILE_NAMESPACE: u64 = 1;
+const COMMIT_METADATA_SORT_PREFIX: u64 = 0;
+const FILE_NAMESPACE_SORT_PREFIX: u64 = 1;
 
 impl CommitView {
     pub fn open(
@@ -135,7 +135,7 @@ impl CommitView {
             });
             let buffer = cx.new(|cx| {
                 let buffer = TextBuffer::new_normalized(
-                    0,
+                    ReplicaId::LOCAL,
                     cx.entity_id().as_non_zero_u64().into(),
                     LineEnding::default(),
                     format_commit(&commit).into(),
@@ -145,7 +145,7 @@ impl CommitView {
             });
             multibuffer.update(cx, |multibuffer, cx| {
                 multibuffer.set_excerpts_for_path(
-                    PathKey::namespaced(COMMIT_METADATA_NAMESPACE, file.title.clone()),
+                    PathKey::with_sort_prefix(COMMIT_METADATA_SORT_PREFIX, file.title.clone()),
                     buffer.clone(),
                     vec![Point::zero()..buffer.read(cx).max_point()],
                     0,
@@ -193,7 +193,7 @@ impl CommitView {
                             .collect::<Vec<_>>();
                         let path = snapshot.file().unwrap().path().clone();
                         let _is_newly_added = multibuffer.set_excerpts_for_path(
-                            PathKey::namespaced(FILE_NAMESPACE, path),
+                            PathKey::with_sort_prefix(FILE_NAMESPACE_SORT_PREFIX, path),
                             buffer,
                             diff_hunk_ranges,
                             multibuffer_context_lines(cx),
@@ -316,7 +316,7 @@ async fn build_buffer(
     };
     let buffer = cx.new(|cx| {
         let buffer = TextBuffer::new_normalized(
-            0,
+            ReplicaId::LOCAL,
             cx.entity_id().as_non_zero_u64().into(),
             line_ending,
             text,

@@ -84,6 +84,7 @@ impl GitHostingProvider for Gitee {
 
 #[cfg(test)]
 mod tests {
+    use git::repository::repo_path;
     use pretty_assertions::assert_eq;
 
     use super::*;
@@ -125,11 +126,11 @@ mod tests {
                 owner: "zed-industries".into(),
                 repo: "zed".into(),
             },
-            BuildPermalinkParams {
-                sha: "e5fe811d7ad0fc26934edd76f891d20bdc3bb194",
-                path: "crates/editor/src/git/permalink.rs",
-                selection: None,
-            },
+            BuildPermalinkParams::new(
+                "e5fe811d7ad0fc26934edd76f891d20bdc3bb194",
+                &repo_path("crates/editor/src/git/permalink.rs"),
+                None,
+            ),
         );
 
         let expected_url = "https://gitee.com/zed-industries/zed/blob/e5fe811d7ad0fc26934edd76f891d20bdc3bb194/crates/editor/src/git/permalink.rs";
@@ -143,11 +144,11 @@ mod tests {
                 owner: "zed-industries".into(),
                 repo: "zed".into(),
             },
-            BuildPermalinkParams {
-                sha: "e5fe811d7ad0fc26934edd76f891d20bdc3bb194",
-                path: "crates/editor/src/git/permalink.rs",
-                selection: Some(6..6),
-            },
+            BuildPermalinkParams::new(
+                "e5fe811d7ad0fc26934edd76f891d20bdc3bb194",
+                &repo_path("crates/editor/src/git/permalink.rs"),
+                Some(6..6),
+            ),
         );
 
         let expected_url = "https://gitee.com/zed-industries/zed/blob/e5fe811d7ad0fc26934edd76f891d20bdc3bb194/crates/editor/src/git/permalink.rs#L7";
@@ -161,11 +162,11 @@ mod tests {
                 owner: "zed-industries".into(),
                 repo: "zed".into(),
             },
-            BuildPermalinkParams {
-                sha: "e5fe811d7ad0fc26934edd76f891d20bdc3bb194",
-                path: "crates/editor/src/git/permalink.rs",
-                selection: Some(23..47),
-            },
+            BuildPermalinkParams::new(
+                "e5fe811d7ad0fc26934edd76f891d20bdc3bb194",
+                &repo_path("crates/editor/src/git/permalink.rs"),
+                Some(23..47),
+            ),
         );
 
         let expected_url = "https://gitee.com/zed-industries/zed/blob/e5fe811d7ad0fc26934edd76f891d20bdc3bb194/crates/editor/src/git/permalink.rs#L24-48";

@@ -6,7 +6,7 @@ use std::{cmp::Ordering, fmt::Debug, ops::Range};
 use sum_tree::{Bias, Dimensions};
 
 /// A timestamped position in a buffer
-#[derive(Copy, Clone, Eq, PartialEq, Debug, Hash, Default)]
+#[derive(Copy, Clone, Eq, PartialEq, Debug, Hash)]
 pub struct Anchor {
     pub timestamp: clock::Lamport,
     /// The byte offset in the buffer
@@ -45,19 +45,19 @@ impl Anchor {
             .then_with(|| self.bias.cmp(&other.bias))
     }
 
-    pub fn min(&self, other: &Self, buffer: &BufferSnapshot) -> Self {
+    pub fn min<'a>(&'a self, other: &'a Self, buffer: &BufferSnapshot) -> &'a Self {
         if self.cmp(other, buffer).is_le() {
-            *self
+            self
         } else {
-            *other
+            other
         }
     }
 
-    pub fn max(&self, other: &Self, buffer: &BufferSnapshot) -> Self {
+    pub fn max<'a>(&'a self, other: &'a Self, buffer: &BufferSnapshot) -> &'a Self {
         if self.cmp(other, buffer).is_ge() {
-            *self
+            self
         } else {
-            *other
+            other
         }
     }
 

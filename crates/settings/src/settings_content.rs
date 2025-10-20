@@ -234,7 +234,6 @@ impl UserSettingsContent {
     Eq,
     Default,
     strum::VariantArray,
-    strum::VariantNames,
 )]
 pub enum BaseKeymapContent {
     #[default]
@@ -246,6 +245,19 @@ pub enum BaseKeymapContent {
     Emacs,
     Cursor,
     None,
+}
+
+impl strum::VariantNames for BaseKeymapContent {
+    const VARIANTS: &'static [&'static str] = &[
+        "VSCode",
+        "JetBrains",
+        "Sublime Text",
+        "Atom",
+        "TextMate",
+        "Emacs",
+        "Cursor",
+        "None",
+    ];
 }
 
 #[skip_serializing_none]
@@ -502,7 +514,18 @@ pub struct GitPanelSettingsContent {
 }
 
 #[derive(
-    Default, Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq,
+    Default,
+    Copy,
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    Eq,
+    strum::VariantArray,
+    strum::VariantNames,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum StatusStyle {
@@ -512,7 +535,9 @@ pub enum StatusStyle {
 }
 
 #[skip_serializing_none]
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
+#[derive(
+    Copy, Clone, Default, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq,
+)]
 pub struct ScrollbarSettings {
     pub show: Option<ShowScrollbar>,
 }
@@ -787,7 +812,9 @@ pub enum ShowIndentGuides {
 }
 
 #[skip_serializing_none]
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
+#[derive(
+    Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq, Default,
+)]
 pub struct IndentGuidesSettingsContent {
     /// When to show the scrollbar in the outline panel.
     pub show: Option<ShowIndentGuides>,
@@ -812,7 +839,19 @@ pub struct ImageViewerSettingsContent {
 }
 
 #[skip_serializing_none]
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, Default, PartialEq)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    Default,
+    PartialEq,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum ImageFileSizeUnit {
     /// Displays file size in binary units (e.g., KiB, MiB).
@@ -944,5 +983,35 @@ impl From<SaturatingBool> for bool {
 impl merge_from::MergeFrom for SaturatingBool {
     fn merge_from(&mut self, other: &Self) {
         self.0 |= other.0
+    }
+}
+
+#[derive(
+    Copy,
+    Clone,
+    Default,
+    Debug,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Serialize,
+    Deserialize,
+    MergeFrom,
+    JsonSchema,
+    derive_more::FromStr,
+)]
+#[serde(transparent)]
+pub struct DelayMs(pub u64);
+
+impl From<u64> for DelayMs {
+    fn from(n: u64) -> Self {
+        Self(n)
+    }
+}
+
+impl std::fmt::Display for DelayMs {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}ms", self.0)
     }
 }

@@ -16,7 +16,7 @@ use editor::{
 use futures::StreamExt;
 use git::{
     Commit, StageAll, StageAndNext, ToggleStaged, UnstageAll, UnstageAndNext,
-    repository::{Branch, Upstream, UpstreamTracking, UpstreamTrackingStatus},
+    repository::{Branch, RepoPath, Upstream, UpstreamTracking, UpstreamTrackingStatus},
     status::FileStatus,
 };
 use gpui::{
@@ -27,7 +27,7 @@ use language::{Anchor, Buffer, Capability, OffsetRangeExt};
 use multi_buffer::{MultiBuffer, PathKey};
 use project::{
     Project, ProjectPath,
-    git_store::{GitStore, GitStoreEvent},
+    git_store::{GitStore, GitStoreEvent, Repository},
 };
 use settings::{Settings, SettingsStore};
 use std::any::{Any, TypeId};
@@ -73,9 +73,9 @@ struct DiffBuffer {
     file_status: FileStatus,
 }
 
-const CONFLICT_NAMESPACE: u64 = 1;
-const TRACKED_NAMESPACE: u64 = 2;
-const NEW_NAMESPACE: u64 = 3;
+const CONFLICT_SORT_PREFIX: u64 = 1;
+const TRACKED_SORT_PREFIX: u64 = 2;
+const NEW_SORT_PREFIX: u64 = 3;
 
 impl ProjectDiff {
     pub(crate) fn register(workspace: &mut Workspace, cx: &mut Context<Workspace>) {
@@ -234,16 +234,8 @@ impl ProjectDiff {
             return;
         };
         let repo = git_repo.read(cx);
-
-        let namespace = if repo.had_conflict_on_last_merge_head_change(&entry.repo_path) {
-            CONFLICT_NAMESPACE
-        } else if entry.status.is_created() {
-            NEW_NAMESPACE
-        } else {
-            TRACKED_NAMESPACE
-        };
-
-        let path_key = PathKey::namespaced(namespace, entry.repo_path.0);
+        let sort_prefix = sort_prefix(repo, &entry.repo_path, entry.status, cx);
+        let path_key = PathKey::with_sort_prefix(sort_prefix, entry.repo_path.0);
 
         self.move_to_path(path_key, window, cx)
     }
@@ -388,16 +380,8 @@ impl ProjectDiff {
                 else {
                     continue;
                 };
-                let namespace = if GitPanelSettings::get_global(cx).sort_by_path {
-                    TRACKED_NAMESPACE
-                } else if repo.had_conflict_on_last_merge_head_change(&entry.repo_path) {
-                    CONFLICT_NAMESPACE
-                } else if entry.status.is_created() {
-                    NEW_NAMESPACE
-                } else {
-                    TRACKED_NAMESPACE
-                };
-                let path_key = PathKey::namespaced(namespace, entry.repo_path.0.clone());
+                let sort_prefix = sort_prefix(repo, &entry.repo_path, entry.status, cx);
+                let path_key = PathKey::with_sort_prefix(sort_prefix, entry.repo_path.0.clone());
 
                 previous_paths.remove(&path_key);
                 let load_buffer = self
@@ -538,6 +522,18 @@ impl ProjectDiff {
             .map(|key| key.path())
             .cloned()
             .collect()
+    }
+}
+
+fn sort_prefix(repo: &Repository, repo_path: &RepoPath, status: FileStatus, cx: &App) -> u64 {
+    if GitPanelSettings::get_global(cx).sort_by_path {
+        TRACKED_SORT_PREFIX
+    } else if repo.had_conflict_on_last_merge_head_change(repo_path) {
+        CONFLICT_SORT_PREFIX
+    } else if status.is_created() {
+        NEW_SORT_PREFIX
+    } else {
+        TRACKED_SORT_PREFIX
     }
 }
 
@@ -951,6 +947,11 @@ impl Render for ProjectDiffToolbar {
                                     &StageAndNext,
                                     &focus_handle,
                                 ))
+                                .disabled(
+                                    !button_states.prev_next
+                                        && !button_states.stage_all
+                                        && !button_states.unstage_all,
+                                )
                                 .on_click(cx.listener(|this, _, window, cx| {
                                     this.dispatch_action(&StageAndNext, window, cx)
                                 })),
@@ -962,6 +963,11 @@ impl Render for ProjectDiffToolbar {
                                     &UnstageAndNext,
                                     &focus_handle,
                                 ))
+                                .disabled(
+                                    !button_states.prev_next
+                                        && !button_states.stage_all
+                                        && !button_states.unstage_all,
+                                )
                                 .on_click(cx.listener(|this, _, window, cx| {
                                     this.dispatch_action(&UnstageAndNext, window, cx)
                                 })),
@@ -1463,7 +1469,7 @@ mod tests {
 
         let editor = cx.update_window_entity(&diff, |diff, window, cx| {
             diff.move_to_path(
-                PathKey::namespaced(TRACKED_NAMESPACE, rel_path("foo").into_arc()),
+                PathKey::with_sort_prefix(TRACKED_SORT_PREFIX, rel_path("foo").into_arc()),
                 window,
                 cx,
             );
@@ -1484,7 +1490,7 @@ mod tests {
 
         let editor = cx.update_window_entity(&diff, |diff, window, cx| {
             diff.move_to_path(
-                PathKey::namespaced(TRACKED_NAMESPACE, rel_path("bar").into_arc()),
+                PathKey::with_sort_prefix(TRACKED_SORT_PREFIX, rel_path("bar").into_arc()),
                 window,
                 cx,
             );
@@ -1623,14 +1629,13 @@ mod tests {
         project_diff::{self, ProjectDiff},
     };
 
-    #[cfg_attr(windows, ignore = "currently fails on windows")]
     #[gpui::test]
     async fn test_go_to_prev_hunk_multibuffer(cx: &mut TestAppContext) {
         init_test(cx);
 
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
-            "/a",
+            path!("/a"),
             json!({
                 ".git": {},
                 "a.txt": "created\n",
@@ -1641,7 +1646,7 @@ mod tests {
         .await;
 
         fs.set_head_and_index_for_repo(
-            Path::new("/a/.git"),
+            Path::new(path!("/a/.git")),
             &[
                 ("b.txt", "before\n".to_string()),
                 ("c.txt", "unchanged\n".to_string()),
@@ -1649,7 +1654,7 @@ mod tests {
             ],
         );
 
-        let project = Project::test(fs, [Path::new("/a")], cx).await;
+        let project = Project::test(fs, [Path::new(path!("/a"))], cx).await;
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
 
@@ -1711,7 +1716,6 @@ mod tests {
         ));
     }
 
-    #[cfg_attr(windows, ignore = "currently fails on windows")]
     #[gpui::test]
     async fn test_excerpts_splitting_after_restoring_the_middle_excerpt(cx: &mut TestAppContext) {
         init_test(cx);
@@ -1751,7 +1755,7 @@ mod tests {
 
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
-            "/a",
+            path!("/a"),
             json!({
                 ".git": {},
                 "main.rs": buffer_contents,
@@ -1760,11 +1764,11 @@ mod tests {
         .await;
 
         fs.set_head_and_index_for_repo(
-            Path::new("/a/.git"),
+            Path::new(path!("/a/.git")),
             &[("main.rs", git_contents.to_owned())],
         );
 
-        let project = Project::test(fs, [Path::new("/a")], cx).await;
+        let project = Project::test(fs, [Path::new(path!("/a"))], cx).await;
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
 
@@ -1929,6 +1933,7 @@ mod tests {
         cx.run_until_parked();
 
         let editor = diff.read_with(cx, |diff, _| diff.editor.clone());
+
         assert_state_with_diff(
             &editor,
             cx,

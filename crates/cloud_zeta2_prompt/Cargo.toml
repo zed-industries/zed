@@ -19,4 +19,3 @@ ordered-float.workspace = true
 rustc-hash.workspace = true
 serde.workspace = true
 strum.workspace = true
-workspace-hack.workspace = true

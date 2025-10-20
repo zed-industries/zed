@@ -57,7 +57,7 @@ pub struct ThemeSettingsContent {
     /// The font size for agent responses in the agent panel. Falls back to the UI font size if unset.
     #[serde(default)]
     pub agent_ui_font_size: Option<f32>,
-    /// The font size for user messages in the agent panel. Falls back to the buffer font size if unset.
+    /// The font size for user messages in the agent panel.
     #[serde(default)]
     pub agent_buffer_font_size: Option<f32>,
     /// The name of the Zed theme to use.
@@ -112,6 +112,12 @@ impl Display for CodeFade {
     }
 }
 
+impl From<f32> for CodeFade {
+    fn from(x: f32) -> Self {
+        Self(x)
+    }
+}
+
 fn default_font_features() -> Option<FontFeatures> {
     Some(FontFeatures::default())
 }
@@ -125,7 +131,18 @@ fn default_buffer_font_weight() -> Option<FontWeight> {
 }
 
 /// Represents the selection of a theme, which can be either static or dynamic.
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
+#[derive(
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    Eq,
+    strum::EnumDiscriminants,
+)]
+#[strum_discriminants(derive(strum::VariantArray, strum::VariantNames, strum::FromRepr))]
 #[serde(untagged)]
 pub enum ThemeSelection {
     /// A static theme selection, represented by a single theme name.
@@ -167,7 +184,18 @@ pub enum IconThemeSelection {
 ///
 /// `System` will select the theme based on the system's appearance.
 #[derive(
-    Debug, PartialEq, Eq, Clone, Copy, Default, Serialize, Deserialize, JsonSchema, MergeFrom,
+    Debug,
+    PartialEq,
+    Eq,
+    Clone,
+    Copy,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum ThemeMode {

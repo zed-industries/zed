@@ -20,7 +20,7 @@ Your selected theme is stored in your settings file. You can open your settings 
 
 By default, Zed maintains two themes: one for light mode and one for dark mode. You can set the mode to `"dark"` or `"light"` to ignore the current system mode.
 
-```json
+```json [settings]
 {
   "theme": {
     "mode": "system",
@@ -36,7 +36,7 @@ To override specific attributes of a theme, use the `experimental.theme_override
 
 For example, add the following to your `settings.json` if you wish to override the background color of the editor and display comments and doc comments as italics:
 
-```json
+```json [settings]
 {
   "experimental.theme_overrides": {
     "editor.background": "#333",
@@ -58,7 +58,7 @@ To see a list of available theme attributes look at the JSON file for your theme
 
 ## Local Themes
 
-Store new themes locally by placing them in the `~/.config/zed/themes` directory.
+Store new themes locally by placing them in the `~/.config/zed/themes` directory (macOS and Linux) or `%USERPROFILE%\AppData\Roaming\Zed\themes\` (Windows).
 
 For example, to create a new theme called `my-cool-theme`, create a file called `my-cool-theme.json` in that directory. It will be available in the theme selector the next time Zed loads.
 

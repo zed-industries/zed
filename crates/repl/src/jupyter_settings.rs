@@ -19,7 +19,7 @@ impl JupyterSettings {
 }
 
 impl Settings for JupyterSettings {
-    fn from_settings(content: &settings::SettingsContent, _cx: &mut App) -> Self {
+    fn from_settings(content: &settings::SettingsContent) -> Self {
         let jupyter = content.editor.jupyter.clone().unwrap();
         Self {
             kernel_selections: jupyter.kernel_selections.unwrap_or_default(),

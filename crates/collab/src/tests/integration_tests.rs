@@ -25,7 +25,7 @@ use gpui::{
 use language::{
     Diagnostic, DiagnosticEntry, DiagnosticSourceKind, FakeLspAdapter, Language, LanguageConfig,
     LanguageMatcher, LineEnding, OffsetRangeExt, Point, Rope,
-    language_settings::{Formatter, FormatterList, SelectedFormatter},
+    language_settings::{Formatter, FormatterList},
     tree_sitter_rust, tree_sitter_typescript,
 };
 use lsp::{LanguageServerId, OneOf};
@@ -39,7 +39,7 @@ use project::{
 use prompt_store::PromptBuilder;
 use rand::prelude::*;
 use serde_json::json;
-use settings::{PrettierSettingsContent, SettingsStore};
+use settings::{LanguageServerFormatterSpecifier, PrettierSettingsContent, SettingsStore};
 use std::{
     cell::{Cell, RefCell},
     env, future, mem,
@@ -4077,7 +4077,7 @@ async fn test_collaborating_with_diagnostics(
         .receive_notification::<lsp::notification::DidOpenTextDocument>()
         .await;
     fake_language_server.notify::<lsp::notification::PublishDiagnostics>(
-        &lsp::PublishDiagnosticsParams {
+        lsp::PublishDiagnosticsParams {
             uri: lsp::Uri::from_file_path(path!("/a/a.rs")).unwrap(),
             version: None,
             diagnostics: vec![lsp::Diagnostic {
@@ -4097,7 +4097,7 @@ async fn test_collaborating_with_diagnostics(
         .await
         .unwrap();
     fake_language_server.notify::<lsp::notification::PublishDiagnostics>(
-        &lsp::PublishDiagnosticsParams {
+        lsp::PublishDiagnosticsParams {
             uri: lsp::Uri::from_file_path(path!("/a/a.rs")).unwrap(),
             version: None,
             diagnostics: vec![lsp::Diagnostic {
@@ -4171,7 +4171,7 @@ async fn test_collaborating_with_diagnostics(
 
     // Simulate a language server reporting more errors for a file.
     fake_language_server.notify::<lsp::notification::PublishDiagnostics>(
-        &lsp::PublishDiagnosticsParams {
+        lsp::PublishDiagnosticsParams {
             uri: lsp::Uri::from_file_path(path!("/a/a.rs")).unwrap(),
             version: None,
             diagnostics: vec![
@@ -4269,7 +4269,7 @@ async fn test_collaborating_with_diagnostics(
 
     // Simulate a language server reporting no errors for a file.
     fake_language_server.notify::<lsp::notification::PublishDiagnostics>(
-        &lsp::PublishDiagnosticsParams {
+        lsp::PublishDiagnosticsParams {
             uri: lsp::Uri::from_file_path(path!("/a/a.rs")).unwrap(),
             version: None,
             diagnostics: Vec::new(),
@@ -4365,7 +4365,7 @@ async fn test_collaborating_with_lsp_progress_updates_and_diagnostics_ordering(
         .await
         .into_response()
         .unwrap();
-    fake_language_server.notify::<lsp::notification::Progress>(&lsp::ProgressParams {
+    fake_language_server.notify::<lsp::notification::Progress>(lsp::ProgressParams {
         token: lsp::NumberOrString::String("the-disk-based-token".to_string()),
         value: lsp::ProgressParamsValue::WorkDone(lsp::WorkDoneProgress::Begin(
             lsp::WorkDoneProgressBegin {
@@ -4376,7 +4376,7 @@ async fn test_collaborating_with_lsp_progress_updates_and_diagnostics_ordering(
     });
     for file_name in file_names {
         fake_language_server.notify::<lsp::notification::PublishDiagnostics>(
-            &lsp::PublishDiagnosticsParams {
+            lsp::PublishDiagnosticsParams {
                 uri: lsp::Uri::from_file_path(Path::new(path!("/test")).join(file_name)).unwrap(),
                 version: None,
                 diagnostics: vec![lsp::Diagnostic {
@@ -4389,7 +4389,7 @@ async fn test_collaborating_with_lsp_progress_updates_and_diagnostics_ordering(
             },
         );
     }
-    fake_language_server.notify::<lsp::notification::Progress>(&lsp::ProgressParams {
+    fake_language_server.notify::<lsp::notification::Progress>(lsp::ProgressParams {
         token: lsp::NumberOrString::String("the-disk-based-token".to_string()),
         value: lsp::ProgressParamsValue::WorkDone(lsp::WorkDoneProgress::End(
             lsp::WorkDoneProgressEnd { message: None },
@@ -4610,14 +4610,13 @@ async fn test_formatting_buffer(
         cx_a.update(|cx| {
             SettingsStore::update_global(cx, |store, cx| {
                 store.update_user_settings(cx, |file| {
-                    file.project.all_languages.defaults.formatter = Some(SelectedFormatter::List(
-                        FormatterList::Single(Formatter::External {
+                    file.project.all_languages.defaults.formatter =
+                        Some(FormatterList::Single(Formatter::External {
                             command: "awk".into(),
                             arguments: Some(
                                 vec!["{sub(/two/,\"{buffer_path}\")}1".to_string()].into(),
                             ),
-                        }),
-                    ));
+                        }));
                 });
             });
         });
@@ -4708,7 +4707,7 @@ async fn test_prettier_formatting_buffer(
     cx_a.update(|cx| {
         SettingsStore::update_global(cx, |store, cx| {
             store.update_user_settings(cx, |file| {
-                file.project.all_languages.defaults.formatter = Some(SelectedFormatter::Auto);
+                file.project.all_languages.defaults.formatter = Some(FormatterList::default());
                 file.project.all_languages.defaults.prettier = Some(PrettierSettingsContent {
                     allowed: Some(true),
                     ..Default::default()
@@ -4719,8 +4718,8 @@ async fn test_prettier_formatting_buffer(
     cx_b.update(|cx| {
         SettingsStore::update_global(cx, |store, cx| {
             store.update_user_settings(cx, |file| {
-                file.project.all_languages.defaults.formatter = Some(SelectedFormatter::List(
-                    FormatterList::Single(Formatter::LanguageServer { name: None }),
+                file.project.all_languages.defaults.formatter = Some(FormatterList::Single(
+                    Formatter::LanguageServer(LanguageServerFormatterSpecifier::Current),
                 ));
                 file.project.all_languages.defaults.prettier = Some(PrettierSettingsContent {
                     allowed: Some(true),

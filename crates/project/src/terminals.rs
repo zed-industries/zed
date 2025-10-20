@@ -101,6 +101,8 @@ impl Project {
             None => settings.shell.program(),
         };
 
+        let is_windows = self.path_style(cx).is_windows();
+
         let project_path_contexts = self
             .active_entry()
             .and_then(|entry_id| self.path_for_entry(entry_id, cx))
@@ -120,7 +122,7 @@ impl Project {
         let lang_registry = self.languages.clone();
         let fs = self.fs.clone();
         cx.spawn(async move |project, cx| {
-            let shell_kind = ShellKind::new(&shell);
+            let shell_kind = ShellKind::new(&shell, is_windows);
             let activation_script = maybe!(async {
                 for toolchain in toolchains {
                     let Some(toolchain) = toolchain.await else {
@@ -201,15 +203,24 @@ impl Project {
                         },
                         None => match activation_script.clone() {
                             activation_script if !activation_script.is_empty() => {
-                                let activation_script = activation_script.join("; ");
+                                let separator = shell_kind.sequential_commands_separator();
+                                let activation_script =
+                                    activation_script.join(&format!("{separator} "));
                                 let to_run = format_to_run();
 
-                                let arg = format!("{activation_script}; {to_run}");
+                                let mut arg = format!("{activation_script}{separator} {to_run}");
+                                if shell_kind == ShellKind::Cmd {
+                                    // We need to put the entire command in quotes since otherwise CMD tries to execute them
+                                    // as separate commands rather than chaining one after another.
+                                    arg = format!("\"{arg}\"");
+                                }
+
+                                let args = shell_kind.args_for_shell(false, arg);
 
                                 (
                                     Shell::WithArguments {
                                         program: shell,
-                                        args: vec!["-c".to_owned(), arg],
+                                        args,
                                         title_override: None,
                                     },
                                     env,
@@ -235,7 +246,7 @@ impl Project {
                     task_state,
                     shell,
                     env,
-                    settings.cursor_shape.unwrap_or_default(),
+                    settings.cursor_shape,
                     settings.alternate_scroll,
                     settings.max_scroll_history_lines,
                     is_via_remote,
@@ -320,13 +331,15 @@ impl Project {
             .map(|p| self.active_toolchain(p, LanguageName::new("Python"), cx))
             .collect::<Vec<_>>();
         let remote_client = self.remote_client.clone();
-        let shell_kind = ShellKind::new(&match &remote_client {
+        let shell = match &remote_client {
             Some(remote_client) => remote_client
                 .read(cx)
                 .shell()
                 .unwrap_or_else(get_default_system_shell),
             None => settings.shell.program(),
-        });
+        };
+
+        let shell_kind = ShellKind::new(&shell, self.path_style(cx).is_windows());
 
         let lang_registry = self.languages.clone();
         let fs = self.fs.clone();
@@ -365,7 +378,7 @@ impl Project {
                     None,
                     shell,
                     env,
-                    settings.cursor_shape.unwrap_or_default(),
+                    settings.cursor_shape,
                     settings.alternate_scroll,
                     settings.max_scroll_history_lines,
                     is_via_remote,
@@ -467,7 +480,8 @@ impl Project {
             .and_then(|remote_client| remote_client.read(cx).shell())
             .map(Shell::Program)
             .unwrap_or_else(|| settings.shell.clone());
-        let builder = ShellBuilder::new(&shell).non_interactive();
+        let is_windows = self.path_style(cx).is_windows();
+        let builder = ShellBuilder::new(&shell, is_windows).non_interactive();
         let (command, args) = builder.build(Some(command), &Vec::new());
 
         let mut env = self
