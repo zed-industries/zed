@@ -48,6 +48,7 @@ pub use git_store::{
     git_traversal::{ChildEntriesGitIter, GitEntry, GitEntryRef, GitTraversal},
 };
 pub use manifest_tree::ManifestTree;
+pub use project_search::Search;
 
 use anyhow::{Context as _, Result, anyhow};
 use buffer_store::{BufferStore, BufferStoreEvent};
@@ -3945,14 +3946,20 @@ impl Project {
         } else {
             None
         };
-        let searcher = project_search::Search {
-            fs: self.fs.clone(),
-            buffer_store: self.buffer_store.clone(),
-            worktree_store: self.worktree_store.clone(),
-            worktrees: self.visible_worktrees(cx).collect::<Vec<_>>(),
-            limit: project_search::Search::MAX_SEARCH_RESULT_FILES + 1,
-            client,
-            remotely_created_models: self.remotely_created_models.clone(),
+        let searcher = match client {
+            Some((client, remote_id)) => project_search::Search::remote(
+                self.buffer_store.clone(),
+                self.worktree_store.clone(),
+                project_search::Search::MAX_SEARCH_RESULT_FILES + 1,
+                (client, remote_id, self.remotely_created_models.clone()),
+            ),
+            None => project_search::Search::local(
+                self.fs.clone(),
+                self.buffer_store.clone(),
+                self.worktree_store.clone(),
+                project_search::Search::MAX_SEARCH_RESULT_FILES + 1,
+                cx,
+            ),
         };
         searcher.into_results(query, cx)
     }
