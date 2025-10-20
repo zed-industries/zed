@@ -9,6 +9,16 @@ use crate::{
     SettingsPageItem, SubPageLink, USER, all_language_names, sub_page_stack,
 };
 
+const DEFAULT_STRING: String = String::new();
+/// A default empty string reference. Useful in `pick` functions for cases either in dynamic item fields, or when dealing with `settings::Maybe`
+/// to avoid the "NO DEFAULT" case.
+const DEFAULT_EMPTY_STRING: Option<&String> = Some(&DEFAULT_STRING);
+
+const DEFAULT_SHARED_STRING: SharedString = SharedString::new_static("");
+/// A default empty string reference. Useful in `pick` functions for cases either in dynamic item fields, or when dealing with `settings::Maybe`
+/// to avoid the "NO DEFAULT" case.
+const DEFAULT_EMPTY_SHARED_STRING: Option<&SharedString> = Some(&DEFAULT_SHARED_STRING);
+
 pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
     vec![
         SettingsPage {
@@ -16,16 +26,20 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
             items: vec![
                 SettingsPageItem::SectionHeader("General Settings"),
                 SettingsPageItem::SettingItem(SettingItem {
-                    title: "Confirm Quit",
-                    description: "Confirm before quitting Zed",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| settings_content.workspace.confirm_quit.as_ref(),
-                        write: |settings_content, value| {
-                            settings_content.workspace.confirm_quit = value;
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
+                    files: LOCAL,
+                    title: "Project Name",
+                    description: "The Displayed Name Of This Project. If Left Empty, The Root Directory Name Will Be Displayed",
+                    field: Box::new(
+                        SettingField {
+                            pick: |settings_content| {
+                                settings_content.project.worktree.project_name.as_ref()?.as_ref().or(DEFAULT_EMPTY_STRING)
+                            },
+                            write: |settings_content, value| {
+                                settings_content.project.worktree.project_name = settings::Maybe::Set(value.filter(|name| !name.is_empty()));
+                            },
+                        }
+                    ),
+                    metadata: Some(Box::new(SettingsFieldMetadata { placeholder: Some("Project Name"), ..Default::default() })),
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "When Closing With No Tabs",
@@ -4205,26 +4219,183 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
             title: "Terminal",
             items: vec![
                 SettingsPageItem::SectionHeader("Environment"),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Shell",
-                    description: "What shell to use when opening a terminal",
-                    field: Box::new(
-                        SettingField {
+                SettingsPageItem::DynamicItem(DynamicItem {
+                    discriminant: SettingItem {
+                        files: USER | LOCAL,
+                        title: "Shell",
+                        description: "What shell to use when opening a terminal",
+                        field: Box::new(SettingField {
                             pick: |settings_content| {
-                                settings_content.terminal.as_ref()?.project.shell.as_ref()
+                                Some(&dynamic_variants::<settings::Shell>()[
+                                    settings_content
+                                        .terminal
+                                        .as_ref()?
+                                        .project
+                                        .shell
+                                        .as_ref()?
+                                        .discriminant() as usize])
                             },
                             write: |settings_content, value| {
-                                settings_content
+                                let Some(value) = value else {
+                                    return;
+                                };
+                                let settings_value = settings_content
                                     .terminal
                                     .get_or_insert_default()
                                     .project
-                                    .shell = value;
+                                    .shell
+                                    .get_or_insert_with(|| settings::Shell::default());
+                                *settings_value = match value {
+                                    settings::ShellDiscriminants::System => {
+                                        settings::Shell::System
+                                    },
+                                    settings::ShellDiscriminants::Program => {
+                                        let program = match settings_value {
+                                            settings::Shell::Program(p) => p.clone(),
+                                            settings::Shell::WithArguments { program, .. } => program.clone(),
+                                            _ => String::from("sh"),
+                                        };
+                                        settings::Shell::Program(program)
+                                    },
+                                    settings::ShellDiscriminants::WithArguments => {
+                                        let (program, args, title_override) = match settings_value {
+                                            settings::Shell::Program(p) => (p.clone(), vec![], None),
+                                            settings::Shell::WithArguments { program, args, title_override } => {
+                                                (program.clone(), args.clone(), title_override.clone())
+                                            },
+                                            _ => (String::from("sh"), vec![], None),
+                                        };
+                                        settings::Shell::WithArguments {
+                                            program,
+                                            args,
+                                            title_override,
+                                        }
+                                    },
+                                };
                             },
+                        }),
+                        metadata: None,
+                    },
+                    pick_discriminant: |settings_content| {
+                        Some(settings_content.terminal.as_ref()?.project.shell.as_ref()?.discriminant() as usize)
+                    },
+                    fields: dynamic_variants::<settings::Shell>().into_iter().map(|variant| {
+                        match variant {
+                            settings::ShellDiscriminants::System => vec![],
+                            settings::ShellDiscriminants::Program => vec![
+                                SettingItem {
+                                    files: USER | LOCAL,
+                                    title: "Program",
+                                    description: "The shell program to use",
+                                    field: Box::new(SettingField {
+                                        pick: |settings_content| {
+                                            match settings_content.terminal.as_ref()?.project.shell.as_ref() {
+                                                Some(settings::Shell::Program(program)) => Some(program),
+                                                _ => None
+                                            }
+                                        },
+                                        write: |settings_content, value| {
+                                            let Some(value) = value else {
+                                                return;
+                                            };
+                                            match settings_content
+                                                .terminal
+                                                .get_or_insert_default()
+                                                .project
+                                                .shell.as_mut() {
+                                                    Some(settings::Shell::Program(program)) => *program = value,
+                                                    _ => return
+                                                }
+                                        },
+                                    }),
+                                    metadata: None,
+                                }
+                            ],
+                            settings::ShellDiscriminants::WithArguments => vec![
+                                SettingItem {
+                                    files: USER | LOCAL,
+                                    title: "Program",
+                                    description: "The shell program to run",
+                                    field: Box::new(SettingField {
+                                        pick: |settings_content| {
+                                            match settings_content.terminal.as_ref()?.project.shell.as_ref() {
+                                                Some(settings::Shell::WithArguments { program, .. }) => Some(program),
+                                                _ => None
+                                            }
+                                        },
+                                        write: |settings_content, value| {
+                                            let Some(value) = value else {
+                                                return;
+                                            };
+                                            match settings_content
+                                                .terminal
+                                                .get_or_insert_default()
+                                                .project
+                                                .shell.as_mut() {
+                                                    Some(settings::Shell::WithArguments { program, .. }) => *program = value,
+                                                    _ => return
+                                                }
+                                        },
+                                    }),
+                                    metadata: None,
+                                },
+                                SettingItem {
+                                    files: USER | LOCAL,
+                                    title: "Arguments",
+                                    description: "The arguments to pass to the shell program",
+                                    field: Box::new(
+                                        SettingField {
+                                            pick: |settings_content| {
+                                                match settings_content.terminal.as_ref()?.project.shell.as_ref() {
+                                                    Some(settings::Shell::WithArguments { args, .. }) => Some(args),
+                                                    _ => None
+                                                }
+                                            },
+                                            write: |settings_content, value| {
+                                                let Some(value) = value else {
+                                                    return;
+                                                };
+                                                match settings_content
+                                                    .terminal
+                                                    .get_or_insert_default()
+                                                    .project
+                                                    .shell.as_mut() {
+                                                        Some(settings::Shell::WithArguments { args, .. }) => *args = value,
+                                                        _ => return
+                                                    }
+                                            },
+                                        }
+                                        .unimplemented(),
+                                    ),
+                                    metadata: None,
+                                },
+                                SettingItem {
+                                    files: USER | LOCAL,
+                                    title: "Title Override",
+                                    description: "An optional string to override the title of the terminal tab",
+                                    field: Box::new(SettingField {
+                                        pick: |settings_content| {
+                                            match settings_content.terminal.as_ref()?.project.shell.as_ref() {
+                                                Some(settings::Shell::WithArguments { title_override, .. }) => title_override.as_ref().or(DEFAULT_EMPTY_SHARED_STRING),
+                                                _ => None
+                                            }
+                                        },
+                                        write: |settings_content, value| {
+                                            match settings_content
+                                                .terminal
+                                                .get_or_insert_default()
+                                                .project
+                                                .shell.as_mut() {
+                                                    Some(settings::Shell::WithArguments { title_override, .. }) => *title_override = value.filter(|s| !s.is_empty()),
+                                                    _ => return
+                                                }
+                                        },
+                                    }),
+                                    metadata: None,
+                                }
+                            ],
                         }
-                        .unimplemented(),
-                    ),
-                    metadata: None,
-                    files: USER | LOCAL,
+                    }).collect(),
                 }),
                 SettingsPageItem::DynamicItem(DynamicItem {
                     discriminant: SettingItem {

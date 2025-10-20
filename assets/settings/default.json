@@ -1,8 +1,8 @@
 {
   "$schema": "zed://schemas/settings",
-  /// The displayed name of this project. If not set or empty, the root directory name
+  /// The displayed name of this project. If not set or null, the root directory name
   /// will be displayed.
-  "project_name": "",
+  "project_name": null,
   // The name of the Zed theme to use for the UI.
   //
   // `mode` is one of:
