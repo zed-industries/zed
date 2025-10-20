@@ -1142,7 +1142,7 @@ impl Thread {
     pub fn latest_request_token_usage(&self) -> Option<language_model::TokenUsage> {
         let last_user_message = self.last_user_message()?;
         let tokens = self.request_token_usage.get(&last_user_message.id)?;
-        Some(tokens.clone())
+        Some(*tokens)
     }
 
     pub fn latest_token_usage(&self) -> Option<acp_thread::TokenUsage> {
