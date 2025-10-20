@@ -2101,7 +2101,7 @@ impl Terminal {
         let task = match &mut self.task {
             Some(task) => task,
             None => {
-                if self.child_exited.is_none_or(|e| e.code() == Some(0)) {
+                if self.is_ssh_terminal || self.child_exited.is_none_or(|e| e.code() == Some(0)) {
                     cx.emit(Event::CloseTerminal);
                 }
                 return;
@@ -2575,6 +2575,45 @@ mod tests {
                 .any(|event| event == &Event::CloseTerminal),
             "Wrong shell command should update the title but not should not close the terminal to show the error message, but got events: {all_events:?}",
         );
+    }
+
+    #[gpui::test]
+    async fn test_ssh_terminal_always_closes_on_exit(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+
+        let ssh_terminal = cx.new(|cx| {
+            TerminalBuilder::new(
+                None,
+                None,
+                task::Shell::System,
+                HashMap::default(),
+                CursorShape::default(),
+                AlternateScroll::On,
+                None,
+                true,
+                0,
+                None,
+                cx,
+                Vec::new(),
+            )
+            .unwrap()
+            .subscribe(cx)
+        });
+
+        let (event_sender, event_receiver) = smol::channel::unbounded::<Event>();
+        cx.update(|cx| {
+            cx.subscribe(&ssh_terminal, move |_, event, _| {
+                event_sender.send_blocking(event.clone()).unwrap();
+            })
+        })
+        .detach();
+
+        ssh_terminal.update(cx, |terminal, cx| {
+            terminal.register_task_finished(Some(1), cx);
+        });
+
+        let event = event_receiver.recv().await.unwrap();
+        assert_eq!(event, Event::CloseTerminal);
     }
 
     #[test]

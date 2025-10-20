@@ -959,7 +959,10 @@ fn subscribe_for_terminal_events(
                     ),
                 },
                 Event::BreadcrumbsChanged => cx.emit(ItemEvent::UpdateBreadcrumbs),
-                Event::CloseTerminal => cx.emit(ItemEvent::CloseItem),
+                Event::CloseTerminal => {
+                    terminal_view.has_bell = false;
+                    cx.emit(ItemEvent::CloseItem);
+                }
                 Event::SelectionsChanged => {
                     window.invalidate_character_coordinates();
                     cx.emit(SearchEvent::ActiveMatchChanged)
