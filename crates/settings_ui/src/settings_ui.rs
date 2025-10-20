@@ -473,6 +473,12 @@ pub fn open_settings_editor(
         let scale_factor = current_rem_size / default_rem_size;
         let scaled_bounds: gpui::Size<Pixels> = default_bounds.map(|axis| axis * scale_factor);
 
+        let window_decorations = match std::env::var("ZED_WINDOW_DECORATIONS") {
+            Ok(val) if val == "server" => gpui::WindowDecorations::Server,
+            Ok(val) if val == "client" => gpui::WindowDecorations::Client,
+            _ => gpui::WindowDecorations::Client,
+        };
+
         cx.open_window(
             WindowOptions {
                 titlebar: Some(TitlebarOptions {
@@ -485,6 +491,7 @@ pub fn open_settings_editor(
                 is_movable: true,
                 kind: gpui::WindowKind::Floating,
                 window_background: cx.theme().window_background_appearance(),
+                window_decorations: Some(window_decorations),
                 window_min_size: Some(scaled_bounds),
                 window_bounds: Some(WindowBounds::centered(scaled_bounds, cx)),
                 ..Default::default()
