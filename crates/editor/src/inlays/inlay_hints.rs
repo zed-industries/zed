@@ -49,7 +49,7 @@ pub struct LspInlayHintData {
     invalidate_debounce: Option<Duration>,
     append_debounce: Option<Duration>,
     hint_refresh_tasks: HashMap<BufferId, Vec<Task<()>>>,
-    hint_chunk_fetched: HashMap<BufferId, (Global, HashMap<ExcerptId, HashSet<Range<BufferRow>>>)>,
+    hint_chunk_fetched: HashMap<BufferId, (Global, HashSet<Range<BufferRow>>)>,
     pub added_hints: HashMap<InlayId, Option<InlayHintKind>>,
 }
 
@@ -657,10 +657,7 @@ impl Editor {
                     .filter(|_| !ignore_previous_fetches && !invalidate_cache.should_invalidate())
                     .cloned()
                     .map(|(buffer_version, excerpt_ranges)| {
-                        (
-                            buffer_version,
-                            excerpt_ranges.into_values().flatten().collect(),
-                        )
+                        (buffer_version, excerpt_ranges.clone())
                     }),
                 cx,
             )
@@ -675,14 +672,7 @@ impl Editor {
 
         let mut hint_tasks = Vec::new();
         for (row_range, new_hints_task) in new_hint_tasks {
-            let mut inserted = false;
-            for excerpt in &buffer_excerpts.excerpts {
-                inserted |= known_chunks
-                    .entry(*excerpt)
-                    .or_default()
-                    .insert(row_range.clone());
-            }
-
+            let inserted = known_chunks.insert(row_range.clone());
             if inserted || ignore_previous_fetches {
                 hint_tasks.push(cx.spawn(async move |_, _| (row_range, new_hints_task.await)));
             }
@@ -702,6 +692,7 @@ impl Editor {
         let visible_inlay_hint_ids = self
             .visible_inlay_hints(cx)
             .iter()
+            .filter(|inlay| inlay.position.buffer_id == Some(buffer_id))
             .map(|inlay| inlay.id)
             .collect::<Vec<_>>();
         let Some(inlay_hints) = &mut self.inlay_hints else {
@@ -735,10 +726,7 @@ impl Editor {
                         inlay_hints.hint_chunk_fetched.get_mut(&buffer_id)
                     {
                         if for_version == &query_version {
-                            chunks_fetched.retain(|_, queried_ranges| {
-                                queried_ranges.remove(&chunk_range);
-                                !queried_ranges.is_empty()
-                            });
+                            chunks_fetched.remove(&chunk_range);
                         }
                     }
                     None
@@ -848,6 +836,7 @@ pub mod tests {
     use text::{OffsetRangeExt, Point};
     use ui::App;
     use util::path;
+    use util::paths::natural_sort;
 
     #[gpui::test]
     async fn test_basic_cache_update_with_duplicate_hints(cx: &mut gpui::TestAppContext) {
@@ -2396,6 +2385,257 @@ pub mod tests {
     }
 
     #[gpui::test]
+    async fn test_editing_in_multi_buffer(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |settings| {
+            settings.defaults.inlay_hints = Some(InlayHintSettingsContent {
+                enabled: Some(true),
+                ..InlayHintSettingsContent::default()
+            })
+        });
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/a"),
+            json!({
+                "main.rs": format!("fn main() {{\n{}\n}}", (0..200).map(|i| format!("let i = {i};\n")).collect::<Vec<_>>().join("")),
+                "lib.rs": r#"let a = 1;
+let b = 2;
+let c = 3;"#
+            }),
+        )
+        .await;
+
+        let lsp_request_ranges = Arc::new(Mutex::new(Vec::new()));
+
+        let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
+        let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+        let language = rust_lang();
+        language_registry.add(language);
+
+        let closure_ranges_fetched = lsp_request_ranges.clone();
+        let mut fake_servers = language_registry.register_fake_lsp(
+            "Rust",
+            FakeLspAdapter {
+                capabilities: lsp::ServerCapabilities {
+                    inlay_hint_provider: Some(lsp::OneOf::Left(true)),
+                    ..lsp::ServerCapabilities::default()
+                },
+                initializer: Some(Box::new(move |fake_server| {
+                    let closure_ranges_fetched = closure_ranges_fetched.clone();
+                    fake_server.set_request_handler::<lsp::request::InlayHintRequest, _, _>(
+                        move |params, _| {
+                            let closure_ranges_fetched = closure_ranges_fetched.clone();
+                            async move {
+                                let prefix = if params.text_document.uri
+                                    == lsp::Uri::from_file_path(path!("/a/main.rs")).unwrap()
+                                {
+                                    closure_ranges_fetched
+                                        .lock()
+                                        .push(("main.rs", params.range.clone()));
+                                    "main.rs"
+                                } else if params.text_document.uri
+                                    == lsp::Uri::from_file_path(path!("/a/lib.rs")).unwrap()
+                                {
+                                    closure_ranges_fetched
+                                        .lock()
+                                        .push(("lib.rs", params.range.clone()));
+                                    "lib.rs"
+                                } else {
+                                    panic!("Unexpected file path {:?}", params.text_document.uri);
+                                };
+                                Ok(Some(
+                                    (params.range.start.line..params.range.end.line)
+                                        .into_iter()
+                                        .map(|row| lsp::InlayHint {
+                                            position: lsp::Position::new(row, 0),
+                                            label: lsp::InlayHintLabel::String(format!(
+                                                "{prefix} Inlay hint #{row}"
+                                            )),
+                                            kind: Some(lsp::InlayHintKind::TYPE),
+                                            text_edits: None,
+                                            tooltip: None,
+                                            padding_left: None,
+                                            padding_right: None,
+                                            data: None,
+                                        })
+                                        .collect(),
+                                ))
+                            }
+                        },
+                    );
+                })),
+                ..FakeLspAdapter::default()
+            },
+        );
+
+        let (buffer_1, _handle_1) = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer_with_lsp(path!("/a/main.rs"), cx)
+            })
+            .await
+            .unwrap();
+        let (buffer_2, _handle_2) = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer_with_lsp(path!("/a/lib.rs"), cx)
+            })
+            .await
+            .unwrap();
+        let multi_buffer = cx.new(|cx| {
+            let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);
+            multibuffer.push_excerpts(
+                buffer_1.clone(),
+                [
+                    // Have first excerpt to spawn over 2 chunks (50 lines each).
+                    ExcerptRange::new(Point::new(49, 0)..Point::new(53, 0)),
+                    // Have 2nd excerpt to be in the 2nd chunk only.
+                    ExcerptRange::new(Point::new(70, 0)..Point::new(73, 0)),
+                ],
+                cx,
+            );
+            multibuffer.push_excerpts(
+                buffer_2.clone(),
+                [ExcerptRange::new(Point::new(0, 0)..Point::new(4, 0))],
+                cx,
+            );
+            multibuffer
+        });
+
+        let editor = cx.add_window(|window, cx| {
+            let mut editor =
+                Editor::for_multibuffer(multi_buffer, Some(project.clone()), window, cx);
+            editor.change_selections(SelectionEffects::default(), window, cx, |s| {
+                s.select_ranges([0..0])
+            });
+            editor
+        });
+
+        let _fake_server = fake_servers.next().await.unwrap();
+        cx.executor().advance_clock(Duration::from_millis(100));
+        cx.executor().run_until_parked();
+
+        assert_eq!(
+            vec![
+                (
+                    "lib.rs",
+                    lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(2, 0))
+                ),
+                (
+                    "main.rs",
+                    lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(50, 0))
+                ),
+                (
+                    "main.rs",
+                    lsp::Range::new(lsp::Position::new(50, 0), lsp::Position::new(100, 0))
+                ),
+            ],
+            lsp_request_ranges
+                .lock()
+                .drain(..)
+                .sorted_by_key(|(prefix, r)| (prefix.to_owned(), r.start))
+                .collect::<Vec<_>>(),
+            "For large buffers, should query chunks that cover both visible excerpt"
+        );
+        editor
+            .update(cx, |editor, _window, cx| {
+                assert_eq!(
+                    (0..2)
+                        .into_iter()
+                        .map(|i| format!("lib.rs Inlay hint #{i}"))
+                        .chain(
+                            (0..100)
+                                .into_iter()
+                                .map(|i| format!("main.rs Inlay hint #{i}"))
+                        )
+                        .collect::<Vec<_>>(),
+                    sorted_cached_hint_labels(editor, cx),
+                    "Both chunks should provide their inlay hints"
+                );
+                assert_eq!(
+                    vec![
+                        "main.rs Inlay hint #49".to_owned(),
+                        "main.rs Inlay hint #50".to_owned(),
+                        "main.rs Inlay hint #51".to_owned(),
+                        "main.rs Inlay hint #52".to_owned(),
+                        "main.rs Inlay hint #53".to_owned(),
+                        "main.rs Inlay hint #70".to_owned(),
+                        "main.rs Inlay hint #71".to_owned(),
+                        "main.rs Inlay hint #72".to_owned(),
+                        "main.rs Inlay hint #73".to_owned(),
+                        "lib.rs Inlay hint #0".to_owned(),
+                        "lib.rs Inlay hint #1".to_owned(),
+                    ],
+                    visible_hint_labels(editor, cx),
+                    "Only hints from visible excerpt should be added into the editor"
+                );
+            })
+            .unwrap();
+
+        editor
+            .update(cx, |editor, window, cx| {
+                editor.handle_input("a", window, cx);
+            })
+            .unwrap();
+        cx.executor().advance_clock(Duration::from_millis(1000));
+        cx.executor().run_until_parked();
+        assert_eq!(
+            vec![
+                (
+                    "lib.rs",
+                    lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(2, 0))
+                ),
+                (
+                    "main.rs",
+                    lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(50, 0))
+                ),
+                (
+                    "main.rs",
+                    lsp::Range::new(lsp::Position::new(50, 0), lsp::Position::new(100, 0))
+                ),
+            ],
+            lsp_request_ranges
+                .lock()
+                .drain(..)
+                .sorted_by_key(|(prefix, r)| (prefix.to_owned(), r.start))
+                .collect::<Vec<_>>(),
+            "Same chunks should be re-queried on edit"
+        );
+        editor
+            .update(cx, |editor, _window, cx| {
+                assert_eq!(
+                    (0..2)
+                        .into_iter()
+                        .map(|i| format!("lib.rs Inlay hint #{i}"))
+                        .chain(
+                            (0..100)
+                                .into_iter()
+                                .map(|i| format!("main.rs Inlay hint #{i}"))
+                        )
+                        .collect::<Vec<_>>(),
+                    sorted_cached_hint_labels(editor, cx),
+                    "Same hints should be re-inserted after the edit"
+                );
+                assert_eq!(
+                    vec![
+                        "main.rs Inlay hint #49".to_owned(),
+                        "main.rs Inlay hint #50".to_owned(),
+                        "main.rs Inlay hint #51".to_owned(),
+                        "main.rs Inlay hint #52".to_owned(),
+                        "main.rs Inlay hint #53".to_owned(),
+                        "main.rs Inlay hint #70".to_owned(),
+                        "main.rs Inlay hint #71".to_owned(),
+                        "main.rs Inlay hint #72".to_owned(),
+                        "main.rs Inlay hint #73".to_owned(),
+                        "lib.rs Inlay hint #0".to_owned(),
+                        "lib.rs Inlay hint #1".to_owned(),
+                    ],
+                    visible_hint_labels(editor, cx),
+                    "Same hints should be re-inserted into the editor after the edit"
+                );
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
     async fn test_excerpts_removed(cx: &mut gpui::TestAppContext) {
         init_test(cx, |settings| {
             settings.defaults.inlay_hints = Some(InlayHintSettingsContent {
@@ -3320,7 +3560,7 @@ pub mod tests {
     // Ensure a stable order for testing.
     fn sorted_cached_hint_labels(editor: &Editor, cx: &mut App) -> Vec<String> {
         let mut labels = cached_hint_labels(editor, cx);
-        labels.sort();
+        labels.sort_by(|a, b| natural_sort(a, b));
         labels
     }
 
