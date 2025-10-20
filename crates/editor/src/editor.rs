@@ -2551,6 +2551,10 @@ impl Editor {
             key_context.add("selection_mode");
         }
 
+        if self.selections.all(self.snapshot(window, cx)).iter().all(|s| todo!("figure out if text is in selection")) {
+            key_context.add("end_of_line")
+        }
+
         key_context
     }
 
