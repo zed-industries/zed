@@ -351,21 +351,22 @@ impl Rope {
     /// This replaces all `\n` characters with the provided line ending.
     ///
     /// The rope internally stores all line breaks as `\n` (see `Display` impl).
-    /// Use this method to convert to different line endings (e.g., `\r\n` for Windows).
+    /// Use this method to convert to different line endings for file operations,
+    /// LSP communication, or other scenarios requiring specific line ending formats.
+    ///
+    /// Common line endings:
+    /// - `"\n"` for Unix/Linux/macOS
+    /// - `"\r\n"` for Windows
+    /// - `"\r"` for classic Mac OS (rarely used)
     pub fn to_string_with_line_ending(&self, line_ending: &str) -> String {
         if line_ending == "\n" {
-            // Fast path: if line ending is already \n, use Display impl
+            // Fast path: rope already uses \n internally
             self.to_string()
         } else {
-            // Replace \n with the specified line ending
+            // Convert \n to target line ending
             let mut result = String::new();
             for chunk in self.chunks() {
-                if line_ending == "\r\n" {
-                    // Optimize for Windows line endings
-                    result.push_str(&chunk.replace('\n', "\r\n"));
-                } else {
-                    result.push_str(&chunk.replace('\n', line_ending));
-                }
+                result.push_str(&chunk.replace('\n', line_ending));
             }
             result
         }

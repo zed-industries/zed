@@ -2033,10 +2033,10 @@ impl BufferSnapshot {
 
     /// Returns the buffer's text with the buffer's configured line endings preserved.
     ///
-    /// Unlike `text()`, this method formats the text using the buffer's actual line
-    /// ending setting (Unix `\n` or Windows `\r\n`). This is essential for LSP
-    /// communication, as language servers expect to receive text with the same line
-    /// endings as the file on disk.
+    /// Unlike `text()` which always uses `\n`, this method formats the text using
+    /// the buffer's actual line ending setting (Unix `\n` or Windows `\r\n`).
+    /// This is useful when the exact line ending format matters, such as for LSP
+    /// communication, file saving, or generating diffs.
     pub fn text_with_line_endings(&self) -> String {
         self.visible_text
             .to_string_with_line_ending(self.line_ending.as_str())

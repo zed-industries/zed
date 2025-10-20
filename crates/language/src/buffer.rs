@@ -1246,7 +1246,7 @@ impl Buffer {
     /// Retrieve the buffer's text preserving the original line endings for LSP communication.
     /// This ensures that language servers receive text with the same line endings as the file.
     pub fn text_for_lsp(&self) -> String {
-        fs::chunks(&self.as_rope(), self.line_ending()).collect()
+        self.text_snapshot().text_with_line_endings()
     }
 
     /// The file associated with the buffer, if any.
