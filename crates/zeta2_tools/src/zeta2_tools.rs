@@ -963,6 +963,7 @@ impl Zeta2Inspector {
                                         .into_any_element(),
                                 }),
                         )
+                        .child(ui::divider())
                         .child(
                             if prediction.request.can_collect_data
                                 && let LastPredictionState::Success {
@@ -977,7 +978,6 @@ impl Zeta2Inspector {
                                     .on_action(cx.listener(Self::handle_rate_negative))
                                     .gap_2()
                                     .p_2()
-                                    .child(ui::divider())
                                     .child(feedback_editor.clone())
                                     .child(
                                         h_flex()
