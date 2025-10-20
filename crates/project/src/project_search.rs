@@ -40,21 +40,26 @@ pub struct Search {
     kind: SearchKind,
 }
 
+/// Represents search setup, before it is actually kicked off with Search::into_results
 enum SearchKind {
+    /// Search for candidates by inspecting file contents on file system, avoiding loading the buffer unless we know that a given file contains a match.
     Local {
         fs: Arc<dyn Fs>,
         worktrees: Vec<Entity<Worktree>>,
     },
+    /// Query remote host for candidates. As of writing, the host runs a local search in "buffers with matches only" mode.
     Remote {
         client: AnyProtoClient,
         remote_id: u64,
         models: Arc<Mutex<RemotelyCreatedModels>>,
     },
+    /// Run search against a known set of candidates. Even when working with a remote host, this won't round-trip to host.
     OpenBuffersOnly,
 }
 
 /// Represents results of project search and allows one to either obtain match positions OR
-/// just the handles to buffers that may match the search.
+/// just the handles to buffers that may match the search. Grabbing the handles is cheaper than obtaining full match positions, because in that case we'll look for
+/// at most one match in each file.
 #[must_use]
 pub struct SearchResultsHandle {
     results: Receiver<SearchResult>,
@@ -145,9 +150,9 @@ impl Search {
 
     pub(crate) const MAX_SEARCH_RESULT_FILES: usize = 5_000;
     pub(crate) const MAX_SEARCH_RESULT_RANGES: usize = 10_000;
-    /// Prepares a project search run. The result has to be used to specify whether you're interested in matching buffers
+    /// Prepares a project search run. The resulting [`SearchResultsHandle`] has to be used to specify whether you're interested in matching buffers
     /// or full search results.
-    pub fn into_results(mut self, query: SearchQuery, cx: &mut App) -> SearchResultsHandle {
+    pub fn into_handle(mut self, query: SearchQuery, cx: &mut App) -> SearchResultsHandle {
         let mut open_buffers = HashSet::default();
         let mut unnamed_buffers = Vec::new();
         const MAX_CONCURRENT_BUFFER_OPENS: usize = 64;
