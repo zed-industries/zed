@@ -328,7 +328,7 @@ impl ToolCall {
         location: acp::ToolCallLocation,
         project: WeakEntity<Project>,
         cx: &mut AsyncApp,
-    ) -> Option<AgentLocation> {
+    ) -> Option<(AgentLocation, Entity<Buffer>)> {
         let buffer = project
             .update(cx, |project, cx| {
                 project
@@ -350,17 +350,20 @@ impl ToolCall {
             })
             .ok()?;
 
-        Some(AgentLocation {
-            buffer: buffer.downgrade(),
-            position,
-        })
+        Some((
+            AgentLocation {
+                buffer: buffer.downgrade(),
+                position,
+            },
+            buffer,
+        ))
     }
 
     fn resolve_locations(
         &self,
         project: Entity<Project>,
         cx: &mut App,
-    ) -> Task<Vec<Option<AgentLocation>>> {
+    ) -> Task<Vec<Option<(AgentLocation, Entity<Buffer>)>>> {
         let locations = self.locations.clone();
         project.update(cx, |_, cx| {
             cx.spawn(async move |project, cx| {
@@ -1393,19 +1396,34 @@ impl AcpThread {
         let task = tool_call.resolve_locations(project, cx);
         cx.spawn(async move |this, cx| {
             let resolved_locations = task.await;
+
             this.update(cx, |this, cx| {
                 let project = this.project.clone();
+
+                for location in &resolved_locations {
+                    if let Some((_, buffer)) = location {
+                        let snapshot = buffer.read(cx).snapshot();
+                        this.shared_buffers.insert(buffer.clone(), snapshot);
+                    }
+                }
+
+                let resolved_locations = resolved_locations
+                    .into_iter()
+                    .map(|l| l.map(|l| l.0))
+                    .collect::<Vec<_>>();
                 let Some((ix, tool_call)) = this.tool_call_mut(&id) else {
                     return;
                 };
+
                 if let Some(Some(location)) = resolved_locations.last() {
                     project.update(cx, |project, cx| {
-                        if let Some(agent_location) = project.agent_location() {
-                            let should_ignore = agent_location.buffer == location.buffer
+                        let should_ignore = if let Some(agent_location) = project.agent_location() {
+                            agent_location.buffer == location.buffer
                                 && location
                                     .buffer
-                                    .update(cx, |buffer, _| {
-                                        let snapshot = buffer.snapshot();
+                                    .upgrade()
+                                    .map(|buffer| {
+                                        let snapshot = buffer.read(cx).snapshot();
                                         let old_position =
                                             agent_location.position.to_point(&snapshot);
                                         let new_position = location.position.to_point(&snapshot);
@@ -1414,11 +1432,12 @@ impl AcpThread {
                                         old_position.row == new_position.row
                                             && old_position.column > new_position.column
                                     })
-                                    .ok()
-                                    .unwrap_or_default();
-                            if !should_ignore {
-                                project.set_agent_location(Some(location.clone()), cx);
-                            }
+                                    .unwrap_or_default()
+                        } else {
+                            false
+                        };
+                        if !should_ignore {
+                            project.set_agent_location(Some(location.clone()), cx);
                         }
                     });
                 }
