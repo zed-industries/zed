@@ -2428,7 +2428,11 @@ impl LocalLspStore {
                     let path = &disposition.path;
 
                     {
-                        let uri = Uri::from_file_path(worktree.read(cx).absolutize(&path.path));
+                        let absolute_path = worktree.read(cx).absolutize(&path.path);
+                        let uri = absolute_path
+                            .is_dir()
+                            .then(|| Uri::from_file_path(absolute_path))
+                            .transpose();
 
                         let server_id = self.get_or_insert_language_server(
                             &worktree,
@@ -2439,7 +2443,7 @@ impl LocalLspStore {
                         );
 
                         if let Some(state) = self.language_servers.get(&server_id)
-                            && let Ok(uri) = uri
+                            && let Ok(Some(uri)) = uri
                         {
                             state.add_workspace_folder(uri);
                         };
@@ -4651,7 +4655,11 @@ impl LspStore {
                     for node in nodes {
                         let server_id = node.server_id_or_init(|disposition| {
                             let path = &disposition.path;
-                            let uri = Uri::from_file_path(worktree.read(cx).absolutize(&path.path));
+                            let absolute_path = worktree.read(cx).absolutize(&path.path);
+                            let uri = absolute_path
+                                .is_dir()
+                                .then(|| Uri::from_file_path(absolute_path))
+                                .transpose();
                             let key = LanguageServerSeed {
                                 worktree_id,
                                 name: disposition.server_name.clone(),
@@ -4672,7 +4680,7 @@ impl LspStore {
                                 cx,
                             );
                             if let Some(state) = local.language_servers.get(&server_id)
-                                && let Ok(uri) = uri
+                                && let Ok(Some(uri)) = uri
                             {
                                 state.add_workspace_folder(uri);
                             };
