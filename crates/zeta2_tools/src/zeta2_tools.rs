@@ -377,7 +377,7 @@ impl Zeta2Inspector {
                                 let snippet_file = Arc::new(ExcerptMetadataFile {
                                     title: RelPath::unix(&format!(
                                         "{} (Score: {})",
-                                        snippet.path.display().to_string(),
+                                        snippet.path.display(),
                                         snippet.declaration_score
                                     ))
                                     .unwrap()
