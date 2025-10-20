@@ -96,13 +96,13 @@ use std::{
     borrow::Cow,
     cell::RefCell,
     cmp,
-    collections::{VecDeque, hash_map::DefaultHasher},
+    collections::{hash_map::DefaultHasher, VecDeque},
     env,
     hash::{Hash, Hasher},
     path::{Path, PathBuf},
     process::ExitStatus,
     rc::Rc,
-    sync::{Arc, LazyLock, Weak, atomic::AtomicUsize},
+    sync::{atomic::{AtomicBool, AtomicUsize}, Arc, LazyLock, Weak},
     time::Duration,
 };
 use task::{DebugScenario, SpawnInTerminal, TaskContext};
@@ -6356,6 +6356,10 @@ impl Render for DraggedDock {
 
 impl Render for Workspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        static FIRST_PAINT: AtomicBool = AtomicBool::new(true);
+        if FIRST_PAINT.swap(false, std::sync::atomic::Ordering::Relaxed) {
+            log::info!("Rendered first frame");
+        }
         let mut context = KeyContext::new_with_defaults();
         context.add("Workspace");
         context.set("keyboard_layout", cx.keyboard_layout().name().to_string());
