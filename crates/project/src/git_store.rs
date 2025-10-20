@@ -3880,6 +3880,7 @@ impl Repository {
                     environment,
                     ..
                 } => {
+                    // TODO would be nice to not have to do this manually
                     let result = backend.stash_drop(index, environment).await;
                     if result.is_ok()
                         && let Ok(stash_entries) = backend.stash_entries().await
@@ -4047,7 +4048,7 @@ impl Repository {
                                 cx.clone(),
                             )
                             .await;
-                        // FIXME force a reload in some other way
+                        // TODO would be nice to not have to do this manually
                         if result.is_ok() {
                             let branches = backend.branches().await?;
                             let branch = branches.into_iter().find(|branch| branch.is_head);
@@ -4454,7 +4455,7 @@ impl Repository {
     pub(crate) fn apply_remote_update(
         &mut self,
         update: proto::UpdateRepository,
-        _cx: &mut Context<Self>,
+        cx: &mut Context<Self>,
     ) -> Result<()> {
         let conflicted_paths = TreeSet::from_ordered_entries(
             update
@@ -4462,23 +4463,30 @@ impl Repository {
                 .into_iter()
                 .filter_map(|path| RepoPath::from_proto(&path).log_err()),
         );
-        self.snapshot.branch = update.branch_summary.as_ref().map(proto_to_branch);
-        self.snapshot.head_commit = update
+        let new_branch = update.branch_summary.as_ref().map(proto_to_branch);
+        let new_head_commit = update
             .head_commit_details
             .as_ref()
             .map(proto_to_commit_details);
-        // FIXME branch changed
+        if self.snapshot.branch != new_branch || self.snapshot.head_commit != new_head_commit {
+            cx.emit(RepositoryEvent::BranchChanged)
+        }
+        self.snapshot.branch = new_branch;
+        self.snapshot.head_commit = new_head_commit;
 
         self.snapshot.merge.conflicted_paths = conflicted_paths;
         self.snapshot.merge.message = update.merge_message.map(SharedString::from);
-        self.snapshot.stash_entries = GitStash {
+        let new_stash_entries = GitStash {
             entries: update
                 .stash_entries
                 .iter()
                 .filter_map(|entry| proto_to_stash(entry).ok())
                 .collect(),
         };
-        // FIXME stash changed
+        if self.snapshot.stash_entries != new_stash_entries {
+            cx.emit(RepositoryEvent::StashEntriesChanged)
+        }
+        self.snapshot.stash_entries = new_stash_entries;
 
         let edits = update
             .removed_statuses
@@ -4497,12 +4505,13 @@ impl Repository {
                     }),
             )
             .collect::<Vec<_>>();
+        if !edits.is_empty() {
+            cx.emit(RepositoryEvent::StatusesChanged { full_scan: true });
+        }
         self.snapshot.statuses_by_path.edit(edits, ());
-        // FIXME statuses changed
         if update.is_last_update {
             self.snapshot.scan_id = update.scan_id;
         }
-        // FIXME did git scan
         Ok(())
     }
 
