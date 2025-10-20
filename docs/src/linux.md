@@ -14,7 +14,7 @@ We also offer a preview build of Zed which receives updates about a week ahead o
 curl -f https://zed.dev/install.sh | ZED_CHANNEL=preview sh
 ```
 
-The Zed installed by the script works best on systems that:y 
+The Zed installed by the script works best on systems that:
 
 - have a Vulkan compatible GPU available (for example Linux on an M-series macBook)
 - have a system-wide glibc (NixOS and Alpine do not by default)
