@@ -1561,7 +1561,7 @@ impl Project {
         })?;
 
         let agent_server_store = cx.new(|cx| AgentServerStore::collab(cx))?;
-        let replica_id = response.payload.replica_id as ReplicaId;
+        let replica_id = ReplicaId::new(response.payload.replica_id as u16);
 
         let project = cx.new(|cx| {
             let snippets = SnippetProvider::new(fs.clone(), BTreeSet::from_iter([]), cx);
@@ -1976,9 +1976,9 @@ impl Project {
             ProjectClientState::Remote { replica_id, .. } => replica_id,
             _ => {
                 if self.remote_client.is_some() {
-                    1
+                    ReplicaId::REMOTE_SERVER
                 } else {
-                    0
+                    ReplicaId::LOCAL
                 }
             }
         }
