@@ -594,7 +594,11 @@ impl DisplayMap {
         self.block_map.read(snapshot, edits);
     }
 
-    pub fn remove_inlays_for_excerpts(&mut self, excerpts_removed: &[ExcerptId]) {
+    pub fn remove_inlays_for_excerpts(
+        &mut self,
+        excerpts_removed: &[ExcerptId],
+        cx: &mut Context<Self>,
+    ) {
         let to_remove = self
             .inlay_map
             .current_inlays()
@@ -606,7 +610,7 @@ impl DisplayMap {
                 }
             })
             .collect::<Vec<_>>();
-        self.inlay_map.splice(&to_remove, Vec::new());
+        self.splice_inlays(&to_remove, Vec::new(), cx);
     }
 
     fn tab_size(buffer: &Entity<MultiBuffer>, cx: &App) -> NonZeroU32 {
