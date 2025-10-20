@@ -39,6 +39,7 @@ git2 = { workspace = true, features = ["vendored-libgit2"] }
 gpui.workspace = true
 gpui_tokio.workspace = true
 http_client.workspace = true
+json_schema_store.workspace = true
 language.workspace = true
 language_extension.workspace = true
 languages.workspace = true
@@ -59,6 +60,7 @@ settings.workspace = true
 shellexpand.workspace = true
 smol.workspace = true
 sysinfo.workspace = true
+task.workspace = true
 util.workspace = true
 watch.workspace = true
 worktree.workspace = true
@@ -73,8 +75,7 @@ minidumper.workspace = true
 
 [dev-dependencies]
 action_log.workspace = true
-assistant_tool.workspace = true
-assistant_tools.workspace = true
+agent = { workspace = true, features = ["test-support"] }
 client = { workspace = true, features = ["test-support"] }
 clock = { workspace = true, features = ["test-support"] }
 collections.workspace = true

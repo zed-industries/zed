@@ -234,9 +234,7 @@ impl TerminalView {
                 terminal_view.focus_out(window, cx);
             },
         );
-        let cursor_shape = TerminalSettings::get_global(cx)
-            .cursor_shape
-            .unwrap_or_default();
+        let cursor_shape = TerminalSettings::get_global(cx).cursor_shape;
 
         let scroll_handle = TerminalScrollHandle::new(terminal.read(cx));
 
@@ -427,7 +425,7 @@ impl TerminalView {
         let breadcrumb_visibility_changed = self.show_breadcrumbs != settings.toolbar.breadcrumbs;
         self.show_breadcrumbs = settings.toolbar.breadcrumbs;
 
-        let new_cursor_shape = settings.cursor_shape.unwrap_or_default();
+        let new_cursor_shape = settings.cursor_shape;
         let old_cursor_shape = self.cursor_shape;
         if old_cursor_shape != new_cursor_shape {
             self.cursor_shape = new_cursor_shape;
@@ -1142,7 +1140,7 @@ impl Item for TerminalView {
     fn tab_tooltip_content(&self, cx: &App) -> Option<TabTooltipContent> {
         let terminal = self.terminal().read(cx);
         let title = terminal.title(false);
-        let pid = terminal.pty_info.pid_getter().fallback_pid();
+        let pid = terminal.pid_getter()?.fallback_pid();
 
         Some(TabTooltipContent::Custom(Box::new(move |_window, cx| {
             cx.new(|_| TerminalTooltip::new(title.clone(), pid)).into()
@@ -1213,6 +1211,10 @@ impl Item for TerminalView {
         None
     }
 
+    fn buffer_kind(&self, _: &App) -> workspace::item::ItemBufferKind {
+        workspace::item::ItemBufferKind::Singleton
+    }
+
     fn clone_on_split(
         &self,
         workspace_id: Option<WorkspaceId>,
@@ -1225,7 +1227,7 @@ impl Item for TerminalView {
                 let cwd = project
                     .active_project_directory(cx)
                     .map(|it| it.to_path_buf());
-                project.clone_terminal(self.terminal(), cx, || cwd)
+                project.clone_terminal(self.terminal(), cx, cwd)
             })
             .ok()?
             .log_err()?;
@@ -1255,10 +1257,6 @@ impl Item for TerminalView {
 
     fn can_save_as(&self, _cx: &App) -> bool {
         false
-    }
-
-    fn is_singleton(&self, _cx: &App) -> bool {
-        true
     }
 
     fn as_searchable(&self, handle: &Entity<Self>) -> Option<Box<dyn SearchableItemHandle>> {
@@ -1574,6 +1572,7 @@ mod tests {
     use gpui::TestAppContext;
     use project::{Entry, Project, ProjectPath, Worktree};
     use std::path::Path;
+    use util::rel_path::RelPath;
     use workspace::AppState;
 
     // Working directory calculation tests
@@ -1735,7 +1734,7 @@ mod tests {
         let entry = cx
             .update(|cx| {
                 wt.update(cx, |wt, cx| {
-                    wt.create_entry(Path::new(""), is_dir, None, cx)
+                    wt.create_entry(RelPath::empty().into(), is_dir, None, cx)
                 })
             })
             .await

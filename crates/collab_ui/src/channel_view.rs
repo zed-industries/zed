@@ -248,7 +248,7 @@ impl ChannelView {
             .editor
             .update(cx, |editor, cx| editor.snapshot(window, cx));
 
-        if let Some(outline) = snapshot.buffer_snapshot.outline(None)
+        if let Some(outline) = snapshot.buffer_snapshot().outline(None)
             && let Some(item) = outline
                 .items
                 .iter()
@@ -287,9 +287,12 @@ impl ChannelView {
     }
 
     fn copy_link(&mut self, _: &CopyLink, window: &mut Window, cx: &mut Context<Self>) {
-        let position = self
-            .editor
-            .update(cx, |editor, cx| editor.selections.newest_display(cx).start);
+        let position = self.editor.update(cx, |editor, cx| {
+            editor
+                .selections
+                .newest_display(&editor.display_snapshot(cx))
+                .start
+        });
         self.copy_link_for_position(position, window, cx)
     }
 
@@ -305,7 +308,7 @@ impl ChannelView {
 
         let mut closest_heading = None;
 
-        if let Some(outline) = snapshot.buffer_snapshot.outline(None) {
+        if let Some(outline) = snapshot.buffer_snapshot().outline(None) {
             for item in outline.items {
                 if item.range.start.to_display_point(&snapshot) > position {
                     break;
@@ -506,10 +509,6 @@ impl Item for ChannelView {
                 cx,
             )
         }))
-    }
-
-    fn is_singleton(&self, _cx: &App) -> bool {
-        false
     }
 
     fn navigate(

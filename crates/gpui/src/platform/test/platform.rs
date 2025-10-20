@@ -1,5 +1,5 @@
 use crate::{
-    Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DevicePixels,
+    AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DevicePixels,
     DummyKeyboardMapper, ForegroundExecutor, Keymap, NoopTextSystem, Platform, PlatformDisplay,
     PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem, PromptButton,
     ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream, SourceMetadata, Task,
@@ -377,8 +377,6 @@ impl Platform for TestPlatform {
     fn on_will_open_app_menu(&self, _callback: Box<dyn FnMut()>) {}
 
     fn on_validate_app_menu_command(&self, _callback: Box<dyn FnMut(&dyn crate::Action) -> bool>) {}
-
-    fn on_action_triggered(&self, _action: &dyn Action) {}
 
     fn app_path(&self) -> Result<std::path::PathBuf> {
         unimplemented!()

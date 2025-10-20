@@ -140,8 +140,8 @@ impl TextSize {
             Self::Default => rems_from_px(14.),
             Self::Small => rems_from_px(12.),
             Self::XSmall => rems_from_px(10.),
-            Self::Ui => rems_from_px(theme_settings.ui_font_size(cx).into()),
-            Self::Editor => rems_from_px(theme_settings.buffer_font_size(cx).into()),
+            Self::Ui => rems_from_px(theme_settings.ui_font_size(cx)),
+            Self::Editor => rems_from_px(theme_settings.buffer_font_size(cx)),
         }
     }
 }

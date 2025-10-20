@@ -65,7 +65,7 @@ pub struct PreviewTabsSettings {
 }
 
 impl Settings for ItemSettings {
-    fn from_settings(content: &settings::SettingsContent, _cx: &mut App) -> Self {
+    fn from_settings(content: &settings::SettingsContent) -> Self {
         let tabs = content.tabs.as_ref().unwrap();
         Self {
             git_status: tabs.git_status.unwrap(),
@@ -76,44 +76,10 @@ impl Settings for ItemSettings {
             show_close_button: tabs.show_close_button.unwrap(),
         }
     }
-
-    fn import_from_vscode(
-        vscode: &settings::VsCodeSettings,
-        current: &mut settings::SettingsContent,
-    ) {
-        if let Some(b) = vscode.read_bool("workbench.editor.tabActionCloseVisibility") {
-            current.tabs.get_or_insert_default().show_close_button = Some(if b {
-                ShowCloseButton::Always
-            } else {
-                ShowCloseButton::Hidden
-            })
-        }
-        if let Some(s) = vscode.read_enum("workbench.editor.tabActionLocation", |s| match s {
-            "right" => Some(ClosePosition::Right),
-            "left" => Some(ClosePosition::Left),
-            _ => None,
-        }) {
-            current.tabs.get_or_insert_default().close_position = Some(s)
-        }
-        if let Some(b) = vscode.read_bool("workbench.editor.focusRecentEditorAfterClose") {
-            current.tabs.get_or_insert_default().activate_on_close = Some(if b {
-                ActivateOnClose::History
-            } else {
-                ActivateOnClose::LeftNeighbour
-            })
-        }
-
-        if let Some(b) = vscode.read_bool("workbench.editor.showIcons") {
-            current.tabs.get_or_insert_default().file_icons = Some(b);
-        };
-        if let Some(b) = vscode.read_bool("git.decorations.enabled") {
-            current.tabs.get_or_insert_default().git_status = Some(b);
-        }
-    }
 }
 
 impl Settings for PreviewTabsSettings {
-    fn from_settings(content: &settings::SettingsContent, _cx: &mut App) -> Self {
+    fn from_settings(content: &settings::SettingsContent) -> Self {
         let preview_tabs = content.preview_tabs.as_ref().unwrap();
         Self {
             enabled: preview_tabs.enabled.unwrap(),
@@ -121,31 +87,6 @@ impl Settings for PreviewTabsSettings {
             enable_preview_from_code_navigation: preview_tabs
                 .enable_preview_from_code_navigation
                 .unwrap(),
-        }
-    }
-
-    fn import_from_vscode(
-        vscode: &settings::VsCodeSettings,
-        current: &mut settings::SettingsContent,
-    ) {
-        if let Some(enabled) = vscode.read_bool("workbench.editor.enablePreview") {
-            current.preview_tabs.get_or_insert_default().enabled = Some(enabled);
-        }
-        if let Some(enable_preview_from_code_navigation) =
-            vscode.read_bool("workbench.editor.enablePreviewFromCodeNavigation")
-        {
-            current
-                .preview_tabs
-                .get_or_insert_default()
-                .enable_preview_from_code_navigation = Some(enable_preview_from_code_navigation)
-        }
-        if let Some(enable_preview_from_file_finder) =
-            vscode.read_bool("workbench.editor.enablePreviewFromQuickOpen")
-        {
-            current
-                .preview_tabs
-                .get_or_insert_default()
-                .enable_preview_from_file_finder = Some(enable_preview_from_file_finder)
         }
     }
 }
@@ -194,6 +135,13 @@ impl TabContentParams {
 pub enum TabTooltipContent {
     Text(SharedString),
     Custom(Box<dyn Fn(&mut Window, &mut App) -> AnyView>),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ItemBufferKind {
+    Multibuffer,
+    Singleton,
+    None,
 }
 
 pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
@@ -260,8 +208,8 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
         _: &mut dyn FnMut(EntityId, &dyn project::ProjectItem),
     ) {
     }
-    fn is_singleton(&self, _cx: &App) -> bool {
-        false
+    fn buffer_kind(&self, _cx: &App) -> ItemBufferKind {
+        ItemBufferKind::None
     }
     fn set_nav_history(&mut self, _: ItemNavHistory, _window: &mut Window, _: &mut Context<Self>) {}
     fn clone_on_split(
@@ -467,7 +415,7 @@ pub trait ItemHandle: 'static + Send {
         _: &App,
         _: &mut dyn FnMut(EntityId, &dyn project::ProjectItem),
     );
-    fn is_singleton(&self, cx: &App) -> bool;
+    fn buffer_kind(&self, cx: &App) -> ItemBufferKind;
     fn boxed_clone(&self) -> Box<dyn ItemHandle>;
     fn clone_on_split(
         &self,
@@ -616,7 +564,7 @@ impl<T: Item> ItemHandle for Entity<T> {
     fn project_path(&self, cx: &App) -> Option<ProjectPath> {
         let this = self.read(cx);
         let mut result = None;
-        if this.is_singleton(cx) {
+        if this.buffer_kind(cx) == ItemBufferKind::Singleton {
             this.for_each_project_item(cx, &mut |_, item| {
                 result = item.project_path(cx);
             });
@@ -674,8 +622,8 @@ impl<T: Item> ItemHandle for Entity<T> {
         self.read(cx).for_each_project_item(cx, f)
     }
 
-    fn is_singleton(&self, cx: &App) -> bool {
-        self.read(cx).is_singleton(cx)
+    fn buffer_kind(&self, cx: &App) -> ItemBufferKind {
+        self.read(cx).buffer_kind(cx)
     }
 
     fn boxed_clone(&self) -> Box<dyn ItemHandle> {
@@ -863,7 +811,7 @@ impl<T: Item> ItemHandle for Entity<T> {
                             let autosave = item.workspace_settings(cx).autosave;
 
                             if let AutosaveSetting::AfterDelay { milliseconds } = autosave {
-                                let delay = Duration::from_millis(milliseconds);
+                                let delay = Duration::from_millis(milliseconds.0);
                                 let item = item.clone();
                                 pending_autosave.fire_new(
                                     delay,
@@ -1292,13 +1240,17 @@ impl<T: FollowableItem> WeakFollowableItemHandle for WeakEntity<T> {
 #[cfg(any(test, feature = "test-support"))]
 pub mod test {
     use super::{Item, ItemEvent, SerializableItem, TabContentParams};
-    use crate::{ItemId, ItemNavHistory, Workspace, WorkspaceId, item::SaveOptions};
+    use crate::{
+        ItemId, ItemNavHistory, Workspace, WorkspaceId,
+        item::{ItemBufferKind, SaveOptions},
+    };
     use gpui::{
         AnyElement, App, AppContext as _, Context, Entity, EntityId, EventEmitter, Focusable,
         InteractiveElement, IntoElement, Render, SharedString, Task, WeakEntity, Window,
     };
     use project::{Project, ProjectEntryId, ProjectPath, WorktreeId};
-    use std::{any::Any, cell::Cell, path::Path};
+    use std::{any::Any, cell::Cell};
+    use util::rel_path::rel_path;
 
     pub struct TestProjectItem {
         pub entry_id: Option<ProjectEntryId>,
@@ -1314,7 +1266,7 @@ pub mod test {
         pub save_as_count: usize,
         pub reload_count: usize,
         pub is_dirty: bool,
-        pub is_singleton: bool,
+        pub buffer_kind: ItemBufferKind,
         pub has_conflict: bool,
         pub has_deleted_file: bool,
         pub project_items: Vec<Entity<TestProjectItem>>,
@@ -1355,7 +1307,7 @@ pub mod test {
             let entry_id = Some(ProjectEntryId::from_proto(id));
             let project_path = Some(ProjectPath {
                 worktree_id: WorktreeId::from_usize(0),
-                path: Path::new(path).into(),
+                path: rel_path(path).into(),
             });
             cx.new(|_| Self {
                 entry_id,
@@ -1376,7 +1328,7 @@ pub mod test {
             let entry_id = Some(ProjectEntryId::from_proto(id));
             let project_path = Some(ProjectPath {
                 worktree_id: WorktreeId::from_usize(0),
-                path: Path::new(path).into(),
+                path: rel_path(path).into(),
             });
             cx.new(|_| Self {
                 entry_id,
@@ -1398,7 +1350,7 @@ pub mod test {
                 has_conflict: false,
                 has_deleted_file: false,
                 project_items: Vec::new(),
-                is_singleton: true,
+                buffer_kind: ItemBufferKind::Singleton,
                 nav_history: None,
                 tab_descriptions: None,
                 tab_detail: Default::default(),
@@ -1419,8 +1371,8 @@ pub mod test {
             self
         }
 
-        pub fn with_singleton(mut self, singleton: bool) -> Self {
-            self.is_singleton = singleton;
+        pub fn with_buffer_kind(mut self, buffer_kind: ItemBufferKind) -> Self {
+            self.buffer_kind = buffer_kind;
             self
         }
 
@@ -1515,8 +1467,8 @@ pub mod test {
                 .for_each(|item| f(item.entity_id(), item.read(cx)))
         }
 
-        fn is_singleton(&self, _: &App) -> bool {
-            self.is_singleton
+        fn buffer_kind(&self, _: &App) -> ItemBufferKind {
+            self.buffer_kind
         }
 
         fn set_nav_history(
@@ -1563,7 +1515,7 @@ pub mod test {
                 save_as_count: self.save_as_count,
                 reload_count: self.reload_count,
                 is_dirty: self.is_dirty,
-                is_singleton: self.is_singleton,
+                buffer_kind: self.buffer_kind,
                 has_conflict: self.has_conflict,
                 has_deleted_file: self.has_deleted_file,
                 project_items: self.project_items.clone(),
@@ -1597,7 +1549,7 @@ pub mod test {
         }
 
         fn can_save_as(&self, _cx: &App) -> bool {
-            self.is_singleton
+            self.buffer_kind == ItemBufferKind::Singleton
         }
 
         fn save(

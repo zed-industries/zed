@@ -19,7 +19,7 @@ use crate::{
 use anyhow::{Context as _, anyhow};
 use collections::FxHashMap;
 use core::fmt;
-use derive_more::Deref;
+use derive_more::{Add, Deref, FromStr, Sub};
 use itertools::Itertools;
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 use smallvec::{SmallVec, smallvec};
@@ -43,11 +43,12 @@ pub struct FontFamilyId(pub usize);
 
 pub(crate) const SUBPIXEL_VARIANTS_X: u8 = 4;
 
-pub(crate) const SUBPIXEL_VARIANTS_Y: u8 = if cfg!(target_os = "windows") {
-    1
-} else {
-    SUBPIXEL_VARIANTS_X
-};
+pub(crate) const SUBPIXEL_VARIANTS_Y: u8 =
+    if cfg!(target_os = "windows") || cfg!(target_os = "linux") {
+        1
+    } else {
+        SUBPIXEL_VARIANTS_X
+    };
 
 /// The GPUI text rendering sub system.
 pub struct TextSystem {
@@ -72,12 +73,15 @@ impl TextSystem {
             fallback_font_stack: smallvec![
                 // TODO: Remove this when Linux have implemented setting fallbacks.
                 font(".ZedMono"),
+                font(".ZedSans"),
                 font("Helvetica"),
-                font("Segoe UI"),  // Windows
-                font("Cantarell"), // Gnome
-                font("Ubuntu"),    // Gnome (Ubuntu)
-                font("Noto Sans"), // KDE
-                font("DejaVu Sans")
+                font("Segoe UI"),     // Windows
+                font("Ubuntu"),       // Gnome (Ubuntu)
+                font("Adwaita Sans"), // Gnome 47
+                font("Cantarell"),    // Gnome
+                font("Noto Sans"),    // KDE
+                font("DejaVu Sans"),
+                font("Arial"), // macOS, Windows
             ],
         }
     }
@@ -419,9 +423,10 @@ impl WindowTextSystem {
         let mut wrapped_lines = 0;
 
         let mut process_line = |line_text: SharedString| {
+            font_runs.clear();
             let line_end = line_start + line_text.len();
 
-            let mut last_font: Option<Font> = None;
+            let mut last_font: Option<FontId> = None;
             let mut decoration_runs = SmallVec::<[DecorationRun; 32]>::new();
             let mut run_start = line_start;
             while run_start < line_end {
@@ -431,23 +436,14 @@ impl WindowTextSystem {
 
                 let run_len_within_line = cmp::min(line_end, run_start + run.len) - run_start;
 
-                if last_font == Some(run.font.clone()) {
-                    font_runs.last_mut().unwrap().len += run_len_within_line;
-                } else {
-                    last_font = Some(run.font.clone());
-                    font_runs.push(FontRun {
-                        len: run_len_within_line,
-                        font_id: self.resolve_font(&run.font),
-                    });
-                }
-
-                if decoration_runs.last().is_some_and(|last_run| {
-                    last_run.color == run.color
-                        && last_run.underline == run.underline
-                        && last_run.strikethrough == run.strikethrough
-                        && last_run.background_color == run.background_color
-                }) {
-                    decoration_runs.last_mut().unwrap().len += run_len_within_line as u32;
+                let decoration_changed = if let Some(last_run) = decoration_runs.last_mut()
+                    && last_run.color == run.color
+                    && last_run.underline == run.underline
+                    && last_run.strikethrough == run.strikethrough
+                    && last_run.background_color == run.background_color
+                {
+                    last_run.len += run_len_within_line as u32;
+                    false
                 } else {
                     decoration_runs.push(DecorationRun {
                         len: run_len_within_line as u32,
@@ -455,6 +451,21 @@ impl WindowTextSystem {
                         background_color: run.background_color,
                         underline: run.underline,
                         strikethrough: run.strikethrough,
+                    });
+                    true
+                };
+
+                if let Some(font_run) = font_runs.last_mut()
+                    && Some(font_run.font_id) == last_font
+                    && !decoration_changed
+                {
+                    font_run.len += run_len_within_line;
+                } else {
+                    let font_id = self.resolve_font(&run.font);
+                    last_font = Some(font_id);
+                    font_runs.push(FontRun {
+                        len: run_len_within_line,
+                        font_id,
                     });
                 }
 
@@ -490,8 +501,6 @@ impl WindowTextSystem {
                     runs.next();
                 }
             }
-
-            font_runs.clear();
         };
 
         let mut split_lines = text.split('\n');
@@ -525,37 +534,54 @@ impl WindowTextSystem {
     /// Subsets of the line can be styled independently with the `runs` parameter.
     /// Generally, you should prefer to use [`Self::shape_line`] instead, which
     /// can be painted directly.
-    pub fn layout_line<Text>(
+    pub fn layout_line(
         &self,
-        text: Text,
+        text: &str,
         font_size: Pixels,
         runs: &[TextRun],
         force_width: Option<Pixels>,
-    ) -> Arc<LineLayout>
-    where
-        Text: AsRef<str>,
-        SharedString: From<Text>,
-    {
+    ) -> Arc<LineLayout> {
+        let mut last_run = None::<&TextRun>;
+        let mut last_font: Option<FontId> = None;
         let mut font_runs = self.font_runs_pool.lock().pop().unwrap_or_default();
+        font_runs.clear();
+
         for run in runs.iter() {
-            let font_id = self.resolve_font(&run.font);
-            if let Some(last_run) = font_runs.last_mut()
-                && last_run.font_id == font_id
+            let decoration_changed = if let Some(last_run) = last_run
+                && last_run.color == run.color
+                && last_run.underline == run.underline
+                && last_run.strikethrough == run.strikethrough
+            // we do not consider differing background color relevant, as it does not affect glyphs
+            // && last_run.background_color == run.background_color
             {
-                last_run.len += run.len;
-                continue;
+                false
+            } else {
+                last_run = Some(run);
+                true
+            };
+
+            if let Some(font_run) = font_runs.last_mut()
+                && Some(font_run.font_id) == last_font
+                && !decoration_changed
+            {
+                font_run.len += run.len;
+            } else {
+                let font_id = self.resolve_font(&run.font);
+                last_font = Some(font_id);
+                font_runs.push(FontRun {
+                    len: run.len,
+                    font_id,
+                });
             }
-            font_runs.push(FontRun {
-                len: run.len,
-                font_id,
-            });
         }
 
-        let layout =
-            self.line_layout_cache
-                .layout_line_internal(text, font_size, &font_runs, force_width);
+        let layout = self.line_layout_cache.layout_line(
+            &SharedString::new(text),
+            font_size,
+            &font_runs,
+            force_width,
+        );
 
-        font_runs.clear();
         self.font_runs_pool.lock().push(font_runs);
 
         layout
@@ -604,8 +630,21 @@ impl DerefMut for LineWrapperHandle {
 
 /// The degree of blackness or stroke thickness of a font. This value ranges from 100.0 to 900.0,
 /// with 400.0 as normal.
-#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Serialize, Deserialize, Add, Sub, FromStr)]
+#[serde(transparent)]
 pub struct FontWeight(pub f32);
+
+impl Display for FontWeight {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl From<f32> for FontWeight {
+    fn from(weight: f32) -> Self {
+        FontWeight(weight)
+    }
+}
 
 impl Default for FontWeight {
     #[inline]
@@ -654,6 +693,23 @@ impl FontWeight {
         Self::EXTRA_BOLD,
         Self::BLACK,
     ];
+}
+
+impl schemars::JsonSchema for FontWeight {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "FontWeight".into()
+    }
+
+    fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        use schemars::json_schema;
+        json_schema!({
+            "type": "number",
+            "minimum": Self::THIN,
+            "maximum": Self::BLACK,
+            "default": Self::default(),
+            "description": "Font weight value between 100 (thin) and 900 (black)"
+        })
+    }
 }
 
 /// Allows italic or oblique faces to be selected.

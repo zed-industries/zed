@@ -95,6 +95,7 @@ pub trait BlameRenderer {
         _: Entity<Editor>,
         _: usize,
         _: Hsla,
+        window: &mut Window,
         _: &mut App,
     ) -> Option<AnyElement>;
 
@@ -142,6 +143,7 @@ impl BlameRenderer for () {
         _: Entity<Editor>,
         _: usize,
         _: Hsla,
+        _: &mut Window,
         _: &mut App,
     ) -> Option<AnyElement> {
         None
@@ -673,8 +675,8 @@ async fn parse_commit_messages(
             .as_ref()
             .map(|(provider, remote)| GitRemote {
                 host: provider.clone(),
-                owner: remote.owner.to_string(),
-                repo: remote.repo.to_string(),
+                owner: remote.owner.clone().into(),
+                repo: remote.repo.clone().into(),
             });
 
         let pull_request = parsed_remote_url
@@ -698,6 +700,7 @@ async fn parse_commit_messages(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use git::repository::repo_path;
     use gpui::Context;
     use language::{Point, Rope};
     use project::FakeFs;
@@ -850,7 +853,7 @@ mod tests {
         fs.set_blame_for_repo(
             Path::new("/my-repo/.git"),
             vec![(
-                "file.txt".into(),
+                repo_path("file.txt"),
                 Blame {
                     entries: vec![
                         blame_entry("1b1b1b", 0..1),
@@ -967,7 +970,7 @@ mod tests {
         fs.set_blame_for_repo(
             Path::new(path!("/my-repo/.git")),
             vec![(
-                "file.txt".into(),
+                repo_path("file.txt"),
                 Blame {
                     entries: vec![blame_entry("1b1b1b", 0..4)],
                     ..Default::default()
@@ -1135,7 +1138,7 @@ mod tests {
         fs.set_blame_for_repo(
             Path::new(path!("/my-repo/.git")),
             vec![(
-                "file.txt".into(),
+                repo_path("file.txt"),
                 Blame {
                     entries: blame_entries,
                     ..Default::default()
@@ -1178,7 +1181,7 @@ mod tests {
                     fs.set_blame_for_repo(
                         Path::new(path!("/my-repo/.git")),
                         vec![(
-                            "file.txt".into(),
+                            repo_path("file.txt"),
                             Blame {
                                 entries: blame_entries,
                                 ..Default::default()

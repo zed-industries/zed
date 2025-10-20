@@ -234,11 +234,7 @@ fn conflicts_updated(
                 continue;
             };
             let excerpt_id = *excerpt_id;
-            let Some(range) = snapshot
-                .anchor_in_excerpt(excerpt_id, conflict_range.start)
-                .zip(snapshot.anchor_in_excerpt(excerpt_id, conflict_range.end))
-                .map(|(start, end)| start..end)
-            else {
+            let Some(range) = snapshot.anchor_range_in_excerpt(excerpt_id, conflict_range) else {
                 continue;
             };
             removed_highlighted_ranges.push(range.clone());
@@ -321,27 +317,12 @@ fn update_conflict_highlighting(
     buffer: &editor::MultiBufferSnapshot,
     excerpt_id: editor::ExcerptId,
     cx: &mut Context<Editor>,
-) {
+) -> Option<()> {
     log::debug!("update conflict highlighting for {conflict:?}");
 
-    let outer_start = buffer
-        .anchor_in_excerpt(excerpt_id, conflict.range.start)
-        .unwrap();
-    let outer_end = buffer
-        .anchor_in_excerpt(excerpt_id, conflict.range.end)
-        .unwrap();
-    let our_start = buffer
-        .anchor_in_excerpt(excerpt_id, conflict.ours.start)
-        .unwrap();
-    let our_end = buffer
-        .anchor_in_excerpt(excerpt_id, conflict.ours.end)
-        .unwrap();
-    let their_start = buffer
-        .anchor_in_excerpt(excerpt_id, conflict.theirs.start)
-        .unwrap();
-    let their_end = buffer
-        .anchor_in_excerpt(excerpt_id, conflict.theirs.end)
-        .unwrap();
+    let outer = buffer.anchor_range_in_excerpt(excerpt_id, conflict.range.clone())?;
+    let ours = buffer.anchor_range_in_excerpt(excerpt_id, conflict.ours.clone())?;
+    let theirs = buffer.anchor_range_in_excerpt(excerpt_id, conflict.theirs.clone())?;
 
     let ours_background = cx.theme().colors().version_control_conflict_marker_ours;
     let theirs_background = cx.theme().colors().version_control_conflict_marker_theirs;
@@ -352,32 +333,29 @@ fn update_conflict_highlighting(
     };
 
     editor.insert_gutter_highlight::<ConflictsOuter>(
-        outer_start..their_end,
+        outer.start..theirs.end,
         |cx| cx.theme().colors().editor_background,
         cx,
     );
 
     // Prevent diff hunk highlighting within the entire conflict region.
-    editor.highlight_rows::<ConflictsOuter>(outer_start..outer_end, theirs_background, options, cx);
-    editor.highlight_rows::<ConflictsOurs>(our_start..our_end, ours_background, options, cx);
+    editor.highlight_rows::<ConflictsOuter>(outer.clone(), theirs_background, options, cx);
+    editor.highlight_rows::<ConflictsOurs>(ours.clone(), ours_background, options, cx);
     editor.highlight_rows::<ConflictsOursMarker>(
-        outer_start..our_start,
+        outer.start..ours.start,
         ours_background,
         options,
         cx,
     );
-    editor.highlight_rows::<ConflictsTheirs>(
-        their_start..their_end,
-        theirs_background,
-        options,
-        cx,
-    );
+    editor.highlight_rows::<ConflictsTheirs>(theirs.clone(), theirs_background, options, cx);
     editor.highlight_rows::<ConflictsTheirsMarker>(
-        their_end..outer_end,
+        theirs.end..outer.end,
         theirs_background,
         options,
         cx,
     );
+
+    Some(())
 }
 
 fn render_conflict_buttons(
@@ -488,20 +466,16 @@ pub(crate) fn resolve_conflict(
                     })
                     .ok()?;
                 let &(_, block_id) = &state.block_ids[ix];
-                let start = snapshot
-                    .anchor_in_excerpt(excerpt_id, resolved_conflict.range.start)
-                    .unwrap();
-                let end = snapshot
-                    .anchor_in_excerpt(excerpt_id, resolved_conflict.range.end)
-                    .unwrap();
+                let range =
+                    snapshot.anchor_range_in_excerpt(excerpt_id, resolved_conflict.range)?;
 
-                editor.remove_gutter_highlights::<ConflictsOuter>(vec![start..end], cx);
+                editor.remove_gutter_highlights::<ConflictsOuter>(vec![range.clone()], cx);
 
-                editor.remove_highlighted_rows::<ConflictsOuter>(vec![start..end], cx);
-                editor.remove_highlighted_rows::<ConflictsOurs>(vec![start..end], cx);
-                editor.remove_highlighted_rows::<ConflictsTheirs>(vec![start..end], cx);
-                editor.remove_highlighted_rows::<ConflictsOursMarker>(vec![start..end], cx);
-                editor.remove_highlighted_rows::<ConflictsTheirsMarker>(vec![start..end], cx);
+                editor.remove_highlighted_rows::<ConflictsOuter>(vec![range.clone()], cx);
+                editor.remove_highlighted_rows::<ConflictsOurs>(vec![range.clone()], cx);
+                editor.remove_highlighted_rows::<ConflictsTheirs>(vec![range.clone()], cx);
+                editor.remove_highlighted_rows::<ConflictsOursMarker>(vec![range.clone()], cx);
+                editor.remove_highlighted_rows::<ConflictsTheirsMarker>(vec![range], cx);
                 editor.remove_blocks(HashSet::from_iter([block_id]), None, cx);
                 Some((workspace, project, multibuffer, buffer))
             })

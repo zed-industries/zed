@@ -99,6 +99,10 @@ impl LanguageModelImage {
                     .and_then(image::DynamicImage::from_decoder),
                 ImageFormat::Gif => image::codecs::gif::GifDecoder::new(image_bytes)
                     .and_then(image::DynamicImage::from_decoder),
+                ImageFormat::Bmp => image::codecs::bmp::BmpDecoder::new(image_bytes)
+                    .and_then(image::DynamicImage::from_decoder),
+                ImageFormat::Tiff => image::codecs::tiff::TiffDecoder::new(image_bytes)
+                    .and_then(image::DynamicImage::from_decoder),
                 _ => return None,
             }
             .log_err()?;
@@ -119,8 +123,8 @@ impl LanguageModelImage {
                         image_size,
                     );
                     let resized_image = dynamic_image.resize(
-                        new_bounds.size.width.0 as u32,
-                        new_bounds.size.height.0 as u32,
+                        new_bounds.size.width.into(),
+                        new_bounds.size.height.into(),
                         image::imageops::FilterType::Triangle,
                     );
 

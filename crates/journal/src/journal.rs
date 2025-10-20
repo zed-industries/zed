@@ -33,7 +33,7 @@ pub struct JournalSettings {
 }
 
 impl settings::Settings for JournalSettings {
-    fn from_settings(content: &settings::SettingsContent, _cx: &mut App) -> Self {
+    fn from_settings(content: &settings::SettingsContent) -> Self {
         let journal = content.journal.clone().unwrap();
 
         Self {
@@ -94,7 +94,7 @@ pub fn new_journal_entry(workspace: &Workspace, window: &mut Window, cx: &mut Ap
             break;
         }
         for directory in worktree.read(cx).directories(true, 1) {
-            let full_directory_path = worktree_root.join(&directory.path);
+            let full_directory_path = worktree_root.join(directory.path.as_std_path());
             if full_directory_path.ends_with(&journal_dir_clone) {
                 open_new_workspace = false;
                 break 'outer;

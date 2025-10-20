@@ -23,8 +23,11 @@ use serde_json::{Value, json};
 use smol::lock::OnceCell;
 use std::cmp::Ordering;
 use std::env::consts;
+use util::command::new_smol_command;
 use util::fs::{make_file_executable, remove_matching};
+use util::rel_path::RelPath;
 
+use http_client::github_download::{GithubBinaryMetadata, download_server_binary};
 use parking_lot::Mutex;
 use std::str::FromStr;
 use std::{
@@ -35,8 +38,6 @@ use std::{
 };
 use task::{ShellKind, TaskTemplate, TaskTemplates, VariableName};
 use util::{ResultExt, maybe};
-
-use crate::github_download::{GithubBinaryMetadata, download_server_binary};
 
 pub(crate) struct PyprojectTomlManifestProvider;
 
@@ -52,9 +53,9 @@ impl ManifestProvider for PyprojectTomlManifestProvider {
             depth,
             delegate,
         }: ManifestQuery,
-    ) -> Option<Arc<Path>> {
+    ) -> Option<Arc<RelPath>> {
         for path in path.ancestors().take(depth) {
-            let p = path.join("pyproject.toml");
+            let p = path.join(RelPath::unix("pyproject.toml").unwrap());
             if delegate.exists(&p, Some(false)) {
                 return Some(path.into());
             }
@@ -106,13 +107,13 @@ impl TyLspAdapter {
 
 #[cfg(target_os = "linux")]
 impl TyLspAdapter {
-    const GITHUB_ASSET_KIND: AssetKind = AssetKind::Gz;
+    const GITHUB_ASSET_KIND: AssetKind = AssetKind::TarGz;
     const ARCH_SERVER_NAME: &str = "unknown-linux-gnu";
 }
 
 #[cfg(target_os = "freebsd")]
 impl TyLspAdapter {
-    const GITHUB_ASSET_KIND: AssetKind = AssetKind::Gz;
+    const GITHUB_ASSET_KIND: AssetKind = AssetKind::TarGz;
     const ARCH_SERVER_NAME: &str = "unknown-freebsd";
 }
 
@@ -153,11 +154,16 @@ impl LspAdapter for TyLspAdapter {
 
     async fn workspace_configuration(
         self: Arc<Self>,
-        _: &Arc<dyn LspAdapterDelegate>,
+        delegate: &Arc<dyn LspAdapterDelegate>,
         toolchain: Option<Toolchain>,
-        _cx: &mut AsyncApp,
+        cx: &mut AsyncApp,
     ) -> Result<Value> {
-        let mut ret = json!({});
+        let mut ret = cx
+            .update(|cx| {
+                language_server_settings(delegate.as_ref(), &self.name(), cx)
+                    .and_then(|s| s.settings.clone())
+            })?
+            .unwrap_or_else(|| json!({}));
         if let Some(toolchain) = toolchain.and_then(|toolchain| {
             serde_json::from_value::<PythonEnvironment>(toolchain.as_json).ok()
         }) {
@@ -170,10 +176,9 @@ impl LspAdapter for TyLspAdapter {
                         "sysPrefix": sys_prefix
                     }
                 });
-                ret.as_object_mut()?.insert(
-                    "pythonExtension".into(),
-                    json!({ "activeEnvironment": environment }),
-                );
+                ret.as_object_mut()?
+                    .entry("pythonExtension")
+                    .or_insert_with(|| json!({ "activeEnvironment": environment }));
                 Some(())
             });
         }
@@ -267,7 +272,7 @@ impl LspInstaller for TyLspAdapter {
         }
 
         download_server_binary(
-            delegate,
+            &*delegate.http_client(),
             &url,
             expected_digest.as_deref(),
             &destination_path,
@@ -402,11 +407,6 @@ impl LspAdapter for PyrightLspAdapter {
                 return None;
             }
         };
-        let filter_range = item
-            .filter_text
-            .as_deref()
-            .and_then(|filter| label.find(filter).map(|ix| ix..ix + filter.len()))
-            .unwrap_or(0..label.len());
         let mut text = label.clone();
         if let Some(completion_details) = item
             .label_details
@@ -415,14 +415,14 @@ impl LspAdapter for PyrightLspAdapter {
         {
             write!(&mut text, " {}", completion_details).ok();
         }
-        Some(language::CodeLabel {
-            runs: highlight_id
+        Some(language::CodeLabel::filtered(
+            text,
+            item.filter_text.as_deref(),
+            highlight_id
                 .map(|id| (0..label.len(), id))
                 .into_iter()
                 .collect(),
-            text,
-            filter_range,
-        })
+        ))
     }
 
     async fn label_for_symbol(
@@ -453,16 +453,15 @@ impl LspAdapter for PyrightLspAdapter {
             _ => return None,
         };
 
-        Some(language::CodeLabel {
-            runs: language.highlight_text(&text.as_str().into(), display_range.clone()),
-            text: text[display_range].to_string(),
+        Some(language::CodeLabel::new(
+            text[display_range.clone()].to_string(),
             filter_range,
-        })
+            language.highlight_text(&text.as_str().into(), display_range),
+        ))
     }
 
     async fn workspace_configuration(
         self: Arc<Self>,
-
         adapter: &Arc<dyn LspAdapterDelegate>,
         toolchain: Option<Toolchain>,
         cx: &mut AsyncApp,
@@ -679,7 +678,7 @@ impl ContextProvider for PythonContextProvider {
                     .as_ref()
                     .and_then(|f| f.path().parent())
                     .map(Arc::from)
-                    .unwrap_or_else(|| Arc::from("".as_ref()));
+                    .unwrap_or_else(|| RelPath::empty().into());
 
                 toolchains
                     .active_toolchain(worktree_id, file_path, "Python".into(), cx)
@@ -1007,12 +1006,22 @@ fn get_venv_parent_dir(env: &PythonEnvironment) -> Option<PathBuf> {
     venv.parent().map(|parent| parent.to_path_buf())
 }
 
+fn wr_distance(wr: &PathBuf, venv: Option<&PathBuf>) -> usize {
+    if let Some(venv) = venv
+        && let Ok(p) = venv.strip_prefix(wr)
+    {
+        p.components().count()
+    } else {
+        usize::MAX
+    }
+}
+
 #[async_trait]
 impl ToolchainLister for PythonToolchainProvider {
     async fn list(
         &self,
         worktree_root: PathBuf,
-        subroot_relative_path: Arc<Path>,
+        subroot_relative_path: Arc<RelPath>,
         project_env: Option<HashMap<String, String>>,
     ) -> ToolchainList {
         let env = project_env.unwrap_or_default();
@@ -1024,13 +1033,12 @@ impl ToolchainLister for PythonToolchainProvider {
         );
         let mut config = Configuration::default();
 
-        debug_assert!(subroot_relative_path.is_relative());
         // `.ancestors()` will yield at least one path, so in case of empty `subroot_relative_path`, we'll just use
         // worktree root as the workspace directory.
         config.workspace_directories = Some(
             subroot_relative_path
                 .ancestors()
-                .map(|ancestor| worktree_root.join(ancestor))
+                .map(|ancestor| worktree_root.join(ancestor.as_std_path()))
                 .collect(),
         );
         for locator in locators.iter() {
@@ -1069,12 +1077,7 @@ impl ToolchainLister for PythonToolchainProvider {
             let proj_ordering = || {
                 let lhs_project = lhs.project.clone().or_else(|| get_venv_parent_dir(lhs));
                 let rhs_project = rhs.project.clone().or_else(|| get_venv_parent_dir(rhs));
-                match (&lhs_project, &rhs_project) {
-                    (Some(l), Some(r)) => (r == &wr).cmp(&(l == &wr)),
-                    (Some(l), None) if l == &wr => Ordering::Less,
-                    (None, Some(r)) if r == &wr => Ordering::Greater,
-                    _ => Ordering::Equal,
-                }
+                wr_distance(&wr, lhs_project.as_ref()).cmp(&wr_distance(&wr, rhs_project.as_ref()))
             };
 
             // Compare environment priorities
@@ -1173,26 +1176,20 @@ impl ToolchainLister for PythonToolchainProvider {
             }
             Some(PythonEnvironmentKind::Venv | PythonEnvironmentKind::VirtualEnv) => {
                 if let Some(prefix) = &toolchain.prefix {
-                    let activate_keyword = match shell {
-                        ShellKind::Cmd => ".",
-                        ShellKind::Nushell => "overlay use",
-                        ShellKind::PowerShell => ".",
-                        ShellKind::Fish => "source",
-                        ShellKind::Csh => "source",
-                        ShellKind::Posix => "source",
-                    };
+                    let activate_keyword = shell.activate_keyword();
                     let activate_script_name = match shell {
-                        ShellKind::Posix => "activate",
+                        ShellKind::Posix | ShellKind::Rc => "activate",
                         ShellKind::Csh => "activate.csh",
+                        ShellKind::Tcsh => "activate.csh",
                         ShellKind::Fish => "activate.fish",
                         ShellKind::Nushell => "activate.nu",
                         ShellKind::PowerShell => "activate.ps1",
                         ShellKind::Cmd => "activate.bat",
+                        ShellKind::Xonsh => "activate.xsh",
                     };
                     let path = prefix.join(BINARY_DIR).join(activate_script_name);
 
-                    if let Ok(quoted) =
-                        shlex::try_quote(&path.to_string_lossy()).map(Cow::into_owned)
+                    if let Some(quoted) = shell.try_quote(&path.to_string_lossy())
                         && fs.is_file(&path).await
                     {
                         activation_script.push(format!("{activate_keyword} {quoted}"));
@@ -1212,7 +1209,10 @@ impl ToolchainLister for PythonToolchainProvider {
                     ShellKind::Nushell => Some(format!("\"{pyenv}\" shell - nu {version}")),
                     ShellKind::PowerShell => None,
                     ShellKind::Csh => None,
+                    ShellKind::Tcsh => None,
                     ShellKind::Cmd => None,
+                    ShellKind::Rc => None,
+                    ShellKind::Xonsh => None,
                 })
             }
             _ => {}
@@ -1328,7 +1328,13 @@ impl PyLspAdapter {
     async fn ensure_venv(delegate: &dyn LspAdapterDelegate) -> Result<Arc<Path>> {
         let python_path = Self::find_base_python(delegate)
             .await
-            .context("Could not find Python installation for PyLSP")?;
+            .with_context(|| {
+                let mut message = "Could not find Python installation for PyLSP".to_owned();
+                if cfg!(windows){
+                    message.push_str(". Install Python from the Microsoft Store, or manually from https://www.python.org/downloads/windows.")
+                }
+                message
+            })?;
         let work_dir = delegate
             .language_server_download_dir(&Self::SERVER_NAME)
             .await
@@ -1351,9 +1357,24 @@ impl PyLspAdapter {
     // Find "baseline", user python version from which we'll create our own venv.
     async fn find_base_python(delegate: &dyn LspAdapterDelegate) -> Option<PathBuf> {
         for path in ["python3", "python"] {
-            if let Some(path) = delegate.which(path.as_ref()).await {
-                return Some(path);
+            let Some(path) = delegate.which(path.as_ref()).await else {
+                continue;
+            };
+            // Try to detect situations where `python3` exists but is not a real Python interpreter.
+            // Notably, on fresh Windows installs, `python3` is a shim that opens the Microsoft Store app
+            // when run with no arguments, and just fails otherwise.
+            let Some(output) = new_smol_command(&path)
+                .args(["-c", "print(1 + 2)"])
+                .output()
+                .await
+                .ok()
+            else {
+                continue;
+            };
+            if output.stdout.trim_ascii() != b"3" {
+                continue;
             }
+            return Some(path);
         }
         None
     }
@@ -1398,16 +1419,11 @@ impl LspAdapter for PyLspAdapter {
             lsp::CompletionItemKind::CONSTANT => grammar.highlight_id_for_name("constant")?,
             _ => return None,
         };
-        let filter_range = item
-            .filter_text
-            .as_deref()
-            .and_then(|filter| label.find(filter).map(|ix| ix..ix + filter.len()))
-            .unwrap_or(0..label.len());
-        Some(language::CodeLabel {
-            text: label.clone(),
-            runs: vec![(0..label.len(), highlight_id)],
-            filter_range,
-        })
+        Some(language::CodeLabel::filtered(
+            label.clone(),
+            item.filter_text.as_deref(),
+            vec![(0..label.len(), highlight_id)],
+        ))
     }
 
     async fn label_for_symbol(
@@ -1437,12 +1453,11 @@ impl LspAdapter for PyLspAdapter {
             }
             _ => return None,
         };
-
-        Some(language::CodeLabel {
-            runs: language.highlight_text(&text.as_str().into(), display_range.clone()),
-            text: text[display_range].to_string(),
+        Some(language::CodeLabel::new(
+            text[display_range.clone()].to_string(),
             filter_range,
-        })
+            language.highlight_text(&text.as_str().into(), display_range),
+        ))
     }
 
     async fn workspace_configuration(
@@ -1682,11 +1697,6 @@ impl LspAdapter for BasedPyrightLspAdapter {
                 return None;
             }
         };
-        let filter_range = item
-            .filter_text
-            .as_deref()
-            .and_then(|filter| label.find(filter).map(|ix| ix..ix + filter.len()))
-            .unwrap_or(0..label.len());
         let mut text = label.clone();
         if let Some(completion_details) = item
             .label_details
@@ -1695,14 +1705,14 @@ impl LspAdapter for BasedPyrightLspAdapter {
         {
             write!(&mut text, " {}", completion_details).ok();
         }
-        Some(language::CodeLabel {
-            runs: highlight_id
+        Some(language::CodeLabel::filtered(
+            text,
+            item.filter_text.as_deref(),
+            highlight_id
                 .map(|id| (0..label.len(), id))
                 .into_iter()
                 .collect(),
-            text,
-            filter_range,
-        })
+        ))
     }
 
     async fn label_for_symbol(
@@ -1732,12 +1742,11 @@ impl LspAdapter for BasedPyrightLspAdapter {
             }
             _ => return None,
         };
-
-        Some(language::CodeLabel {
-            runs: language.highlight_text(&text.as_str().into(), display_range.clone()),
-            text: text[display_range].to_string(),
+        Some(language::CodeLabel::new(
+            text[display_range.clone()].to_string(),
             filter_range,
-        })
+            language.highlight_text(&text.as_str().into(), display_range),
+        ))
     }
 
     async fn workspace_configuration(
@@ -2104,7 +2113,7 @@ impl LspInstaller for RuffLspAdapter {
         }
 
         download_server_binary(
-            delegate,
+            &*delegate.http_client(),
             &url,
             expected_digest.as_deref(),
             &destination_path,

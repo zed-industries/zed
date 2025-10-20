@@ -3,6 +3,7 @@ use git::{repository::RepoPath, status::GitSummary};
 use std::{collections::BTreeMap, ops::Deref, path::Path};
 use sum_tree::Cursor;
 use text::Bias;
+use util::rel_path::RelPath;
 use worktree::{Entry, PathProgress, PathTarget, Traversal};
 
 use super::{RepositoryId, RepositorySnapshot, StatusEntry};
@@ -70,10 +71,7 @@ impl<'a> GitTraversal<'a> {
             return;
         };
 
-        let Ok(abs_path) = self.traversal.snapshot().absolutize(&entry.path) else {
-            self.repo_location = None;
-            return;
-        };
+        let abs_path = self.traversal.snapshot().absolutize(&entry.path);
 
         let Some((repo, repo_path)) = self.repo_root_for_path(&abs_path) else {
             self.repo_location = None;
@@ -97,13 +95,13 @@ impl<'a> GitTraversal<'a> {
 
         if entry.is_dir() {
             let mut statuses = statuses.clone();
-            statuses.seek_forward(&PathTarget::Path(repo_path.as_ref()), Bias::Left);
-            let summary = statuses.summary(&PathTarget::Successor(repo_path.as_ref()), Bias::Left);
+            statuses.seek_forward(&PathTarget::Path(&repo_path), Bias::Left);
+            let summary = statuses.summary(&PathTarget::Successor(&repo_path), Bias::Left);
 
             self.current_entry_summary = Some(summary);
         } else if entry.is_file() {
             // For a file entry, park the cursor on the corresponding status
-            if statuses.seek_forward(&PathTarget::Path(repo_path.as_ref()), Bias::Left) {
+            if statuses.seek_forward(&PathTarget::Path(&repo_path), Bias::Left) {
                 // TODO: Investigate statuses.item() being None here.
                 self.current_entry_summary = statuses.item().map(|item| item.status.into());
             } else {
@@ -159,7 +157,7 @@ impl<'a> Iterator for GitTraversal<'a> {
 }
 
 pub struct ChildEntriesGitIter<'a> {
-    parent_path: &'a Path,
+    parent_path: &'a RelPath,
     traversal: GitTraversal<'a>,
 }
 
@@ -167,7 +165,7 @@ impl<'a> ChildEntriesGitIter<'a> {
     pub fn new(
         repo_snapshots: &'a HashMap<RepositoryId, RepositorySnapshot>,
         worktree_snapshot: &'a worktree::Snapshot,
-        parent_path: &'a Path,
+        parent_path: &'a RelPath,
     ) -> Self {
         let mut traversal = GitTraversal::new(
             repo_snapshots,
@@ -265,7 +263,7 @@ mod tests {
     use gpui::TestAppContext;
     use serde_json::json;
     use settings::SettingsStore;
-    use util::path;
+    use util::{path, rel_path::rel_path};
 
     const CONFLICT: FileStatus = FileStatus::Unmerged(UnmergedStatus {
         first_head: UnmergedStatusCode::Updated,
@@ -312,17 +310,14 @@ mod tests {
         fs.set_status_for_repo(
             Path::new(path!("/root/x/.git")),
             &[
-                (Path::new("x2.txt"), StatusCode::Modified.index()),
-                (Path::new("z.txt"), StatusCode::Added.index()),
+                ("x2.txt", StatusCode::Modified.index()),
+                ("z.txt", StatusCode::Added.index()),
             ],
         );
-        fs.set_status_for_repo(
-            Path::new(path!("/root/x/y/.git")),
-            &[(Path::new("y1.txt"), CONFLICT)],
-        );
+        fs.set_status_for_repo(Path::new(path!("/root/x/y/.git")), &[("y1.txt", CONFLICT)]);
         fs.set_status_for_repo(
             Path::new(path!("/root/z/.git")),
-            &[(Path::new("z2.txt"), StatusCode::Added.index())],
+            &[("z2.txt", StatusCode::Added.index())],
         );
 
         let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
@@ -337,7 +332,7 @@ mod tests {
 
         let traversal = GitTraversal::new(
             &repo_snapshots,
-            worktree_snapshot.traverse_from_path(true, false, true, Path::new("x")),
+            worktree_snapshot.traverse_from_path(true, false, true, RelPath::unix("x").unwrap()),
         );
         let entries = traversal
             .map(|entry| (entry.path.clone(), entry.git_summary))
@@ -345,13 +340,13 @@ mod tests {
         pretty_assertions::assert_eq!(
             entries,
             [
-                (Path::new("x/x1.txt").into(), GitSummary::UNCHANGED),
-                (Path::new("x/x2.txt").into(), MODIFIED),
-                (Path::new("x/y/y1.txt").into(), GitSummary::CONFLICT),
-                (Path::new("x/y/y2.txt").into(), GitSummary::UNCHANGED),
-                (Path::new("x/z.txt").into(), ADDED),
-                (Path::new("z/z1.txt").into(), GitSummary::UNCHANGED),
-                (Path::new("z/z2.txt").into(), ADDED),
+                (rel_path("x/x1.txt").into(), GitSummary::UNCHANGED),
+                (rel_path("x/x2.txt").into(), MODIFIED),
+                (rel_path("x/y/y1.txt").into(), GitSummary::CONFLICT),
+                (rel_path("x/y/y2.txt").into(), GitSummary::UNCHANGED),
+                (rel_path("x/z.txt").into(), ADDED),
+                (rel_path("z/z1.txt").into(), GitSummary::UNCHANGED),
+                (rel_path("z/z2.txt").into(), ADDED),
             ]
         )
     }
@@ -386,18 +381,15 @@ mod tests {
         fs.set_status_for_repo(
             Path::new(path!("/root/x/.git")),
             &[
-                (Path::new("x2.txt"), StatusCode::Modified.index()),
-                (Path::new("z.txt"), StatusCode::Added.index()),
+                ("x2.txt", StatusCode::Modified.index()),
+                ("z.txt", StatusCode::Added.index()),
             ],
         );
-        fs.set_status_for_repo(
-            Path::new(path!("/root/x/y/.git")),
-            &[(Path::new("y1.txt"), CONFLICT)],
-        );
+        fs.set_status_for_repo(Path::new(path!("/root/x/y/.git")), &[("y1.txt", CONFLICT)]);
 
         fs.set_status_for_repo(
             Path::new(path!("/root/z/.git")),
-            &[(Path::new("z2.txt"), StatusCode::Added.index())],
+            &[("z2.txt", StatusCode::Added.index())],
         );
 
         let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
@@ -415,18 +407,18 @@ mod tests {
             &repo_snapshots,
             &worktree_snapshot,
             &[
-                (Path::new("x/y"), GitSummary::CONFLICT),
-                (Path::new("x/y/y1.txt"), GitSummary::CONFLICT),
-                (Path::new("x/y/y2.txt"), GitSummary::UNCHANGED),
+                ("x/y", GitSummary::CONFLICT),
+                ("x/y/y1.txt", GitSummary::CONFLICT),
+                ("x/y/y2.txt", GitSummary::UNCHANGED),
             ],
         );
         check_git_statuses(
             &repo_snapshots,
             &worktree_snapshot,
             &[
-                (Path::new("z"), ADDED),
-                (Path::new("z/z1.txt"), GitSummary::UNCHANGED),
-                (Path::new("z/z2.txt"), ADDED),
+                ("z", ADDED),
+                ("z/z1.txt", GitSummary::UNCHANGED),
+                ("z/z2.txt", ADDED),
             ],
         );
 
@@ -435,9 +427,9 @@ mod tests {
             &repo_snapshots,
             &worktree_snapshot,
             &[
-                (Path::new("x"), MODIFIED + ADDED),
-                (Path::new("x/y"), GitSummary::CONFLICT),
-                (Path::new("x/y/y1.txt"), GitSummary::CONFLICT),
+                ("x", MODIFIED + ADDED),
+                ("x/y", GitSummary::CONFLICT),
+                ("x/y/y1.txt", GitSummary::CONFLICT),
             ],
         );
 
@@ -446,13 +438,13 @@ mod tests {
             &repo_snapshots,
             &worktree_snapshot,
             &[
-                (Path::new("x"), MODIFIED + ADDED),
-                (Path::new("x/x1.txt"), GitSummary::UNCHANGED),
-                (Path::new("x/x2.txt"), MODIFIED),
-                (Path::new("x/y"), GitSummary::CONFLICT),
-                (Path::new("x/y/y1.txt"), GitSummary::CONFLICT),
-                (Path::new("x/y/y2.txt"), GitSummary::UNCHANGED),
-                (Path::new("x/z.txt"), ADDED),
+                ("x", MODIFIED + ADDED),
+                ("x/x1.txt", GitSummary::UNCHANGED),
+                ("x/x2.txt", MODIFIED),
+                ("x/y", GitSummary::CONFLICT),
+                ("x/y/y1.txt", GitSummary::CONFLICT),
+                ("x/y/y2.txt", GitSummary::UNCHANGED),
+                ("x/z.txt", ADDED),
             ],
         );
 
@@ -461,9 +453,9 @@ mod tests {
             &repo_snapshots,
             &worktree_snapshot,
             &[
-                (Path::new(""), GitSummary::UNCHANGED),
-                (Path::new("x"), MODIFIED + ADDED),
-                (Path::new("x/x1.txt"), GitSummary::UNCHANGED),
+                ("", GitSummary::UNCHANGED),
+                ("x", MODIFIED + ADDED),
+                ("x/x1.txt", GitSummary::UNCHANGED),
             ],
         );
 
@@ -472,17 +464,17 @@ mod tests {
             &repo_snapshots,
             &worktree_snapshot,
             &[
-                (Path::new(""), GitSummary::UNCHANGED),
-                (Path::new("x"), MODIFIED + ADDED),
-                (Path::new("x/x1.txt"), GitSummary::UNCHANGED),
-                (Path::new("x/x2.txt"), MODIFIED),
-                (Path::new("x/y"), GitSummary::CONFLICT),
-                (Path::new("x/y/y1.txt"), GitSummary::CONFLICT),
-                (Path::new("x/y/y2.txt"), GitSummary::UNCHANGED),
-                (Path::new("x/z.txt"), ADDED),
-                (Path::new("z"), ADDED),
-                (Path::new("z/z1.txt"), GitSummary::UNCHANGED),
-                (Path::new("z/z2.txt"), ADDED),
+                ("", GitSummary::UNCHANGED),
+                ("x", MODIFIED + ADDED),
+                ("x/x1.txt", GitSummary::UNCHANGED),
+                ("x/x2.txt", MODIFIED),
+                ("x/y", GitSummary::CONFLICT),
+                ("x/y/y1.txt", GitSummary::CONFLICT),
+                ("x/y/y2.txt", GitSummary::UNCHANGED),
+                ("x/z.txt", ADDED),
+                ("z", ADDED),
+                ("z/z1.txt", GitSummary::UNCHANGED),
+                ("z/z2.txt", ADDED),
             ],
         );
     }
@@ -520,9 +512,9 @@ mod tests {
         fs.set_status_for_repo(
             Path::new(path!("/root/.git")),
             &[
-                (Path::new("a/b/c1.txt"), StatusCode::Added.index()),
-                (Path::new("a/d/e2.txt"), StatusCode::Modified.index()),
-                (Path::new("g/h2.txt"), CONFLICT),
+                ("a/b/c1.txt", StatusCode::Added.index()),
+                ("a/d/e2.txt", StatusCode::Modified.index()),
+                ("g/h2.txt", CONFLICT),
             ],
         );
 
@@ -540,9 +532,9 @@ mod tests {
             &repo_snapshots,
             &worktree_snapshot,
             &[
-                (Path::new(""), GitSummary::CONFLICT + MODIFIED + ADDED),
-                (Path::new("g"), GitSummary::CONFLICT),
-                (Path::new("g/h2.txt"), GitSummary::CONFLICT),
+                ("", GitSummary::CONFLICT + MODIFIED + ADDED),
+                ("g", GitSummary::CONFLICT),
+                ("g/h2.txt", GitSummary::CONFLICT),
             ],
         );
 
@@ -550,17 +542,17 @@ mod tests {
             &repo_snapshots,
             &worktree_snapshot,
             &[
-                (Path::new(""), GitSummary::CONFLICT + ADDED + MODIFIED),
-                (Path::new("a"), ADDED + MODIFIED),
-                (Path::new("a/b"), ADDED),
-                (Path::new("a/b/c1.txt"), ADDED),
-                (Path::new("a/b/c2.txt"), GitSummary::UNCHANGED),
-                (Path::new("a/d"), MODIFIED),
-                (Path::new("a/d/e2.txt"), MODIFIED),
-                (Path::new("f"), GitSummary::UNCHANGED),
-                (Path::new("f/no-status.txt"), GitSummary::UNCHANGED),
-                (Path::new("g"), GitSummary::CONFLICT),
-                (Path::new("g/h2.txt"), GitSummary::CONFLICT),
+                ("", GitSummary::CONFLICT + ADDED + MODIFIED),
+                ("a", ADDED + MODIFIED),
+                ("a/b", ADDED),
+                ("a/b/c1.txt", ADDED),
+                ("a/b/c2.txt", GitSummary::UNCHANGED),
+                ("a/d", MODIFIED),
+                ("a/d/e2.txt", MODIFIED),
+                ("f", GitSummary::UNCHANGED),
+                ("f/no-status.txt", GitSummary::UNCHANGED),
+                ("g", GitSummary::CONFLICT),
+                ("g/h2.txt", GitSummary::CONFLICT),
             ],
         );
 
@@ -568,15 +560,15 @@ mod tests {
             &repo_snapshots,
             &worktree_snapshot,
             &[
-                (Path::new("a/b"), ADDED),
-                (Path::new("a/b/c1.txt"), ADDED),
-                (Path::new("a/b/c2.txt"), GitSummary::UNCHANGED),
-                (Path::new("a/d"), MODIFIED),
-                (Path::new("a/d/e1.txt"), GitSummary::UNCHANGED),
-                (Path::new("a/d/e2.txt"), MODIFIED),
-                (Path::new("f"), GitSummary::UNCHANGED),
-                (Path::new("f/no-status.txt"), GitSummary::UNCHANGED),
-                (Path::new("g"), GitSummary::CONFLICT),
+                ("a/b", ADDED),
+                ("a/b/c1.txt", ADDED),
+                ("a/b/c2.txt", GitSummary::UNCHANGED),
+                ("a/d", MODIFIED),
+                ("a/d/e1.txt", GitSummary::UNCHANGED),
+                ("a/d/e2.txt", MODIFIED),
+                ("f", GitSummary::UNCHANGED),
+                ("f/no-status.txt", GitSummary::UNCHANGED),
+                ("g", GitSummary::CONFLICT),
             ],
         );
 
@@ -584,11 +576,11 @@ mod tests {
             &repo_snapshots,
             &worktree_snapshot,
             &[
-                (Path::new("a/b/c1.txt"), ADDED),
-                (Path::new("a/b/c2.txt"), GitSummary::UNCHANGED),
-                (Path::new("a/d/e1.txt"), GitSummary::UNCHANGED),
-                (Path::new("a/d/e2.txt"), MODIFIED),
-                (Path::new("f/no-status.txt"), GitSummary::UNCHANGED),
+                ("a/b/c1.txt", ADDED),
+                ("a/b/c2.txt", GitSummary::UNCHANGED),
+                ("a/d/e1.txt", GitSummary::UNCHANGED),
+                ("a/d/e2.txt", MODIFIED),
+                ("f/no-status.txt", GitSummary::UNCHANGED),
             ],
         );
     }
@@ -621,18 +613,18 @@ mod tests {
 
         fs.set_status_for_repo(
             Path::new(path!("/root/x/.git")),
-            &[(Path::new("x1.txt"), StatusCode::Added.index())],
+            &[("x1.txt", StatusCode::Added.index())],
         );
         fs.set_status_for_repo(
             Path::new(path!("/root/y/.git")),
             &[
-                (Path::new("y1.txt"), CONFLICT),
-                (Path::new("y2.txt"), StatusCode::Modified.index()),
+                ("y1.txt", CONFLICT),
+                ("y2.txt", StatusCode::Modified.index()),
             ],
         );
         fs.set_status_for_repo(
             Path::new(path!("/root/z/.git")),
-            &[(Path::new("z2.txt"), StatusCode::Modified.index())],
+            &[("z2.txt", StatusCode::Modified.index())],
         );
 
         let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
@@ -648,47 +640,44 @@ mod tests {
         check_git_statuses(
             &repo_snapshots,
             &worktree_snapshot,
-            &[(Path::new("x"), ADDED), (Path::new("x/x1.txt"), ADDED)],
+            &[("x", ADDED), ("x/x1.txt", ADDED)],
         );
 
         check_git_statuses(
             &repo_snapshots,
             &worktree_snapshot,
             &[
-                (Path::new("y"), GitSummary::CONFLICT + MODIFIED),
-                (Path::new("y/y1.txt"), GitSummary::CONFLICT),
-                (Path::new("y/y2.txt"), MODIFIED),
+                ("y", GitSummary::CONFLICT + MODIFIED),
+                ("y/y1.txt", GitSummary::CONFLICT),
+                ("y/y2.txt", MODIFIED),
             ],
         );
 
         check_git_statuses(
             &repo_snapshots,
             &worktree_snapshot,
-            &[
-                (Path::new("z"), MODIFIED),
-                (Path::new("z/z2.txt"), MODIFIED),
-            ],
+            &[("z", MODIFIED), ("z/z2.txt", MODIFIED)],
         );
 
         check_git_statuses(
             &repo_snapshots,
             &worktree_snapshot,
-            &[(Path::new("x"), ADDED), (Path::new("x/x1.txt"), ADDED)],
+            &[("x", ADDED), ("x/x1.txt", ADDED)],
         );
 
         check_git_statuses(
             &repo_snapshots,
             &worktree_snapshot,
             &[
-                (Path::new("x"), ADDED),
-                (Path::new("x/x1.txt"), ADDED),
-                (Path::new("x/x2.txt"), GitSummary::UNCHANGED),
-                (Path::new("y"), GitSummary::CONFLICT + MODIFIED),
-                (Path::new("y/y1.txt"), GitSummary::CONFLICT),
-                (Path::new("y/y2.txt"), MODIFIED),
-                (Path::new("z"), MODIFIED),
-                (Path::new("z/z1.txt"), GitSummary::UNCHANGED),
-                (Path::new("z/z2.txt"), MODIFIED),
+                ("x", ADDED),
+                ("x/x1.txt", ADDED),
+                ("x/x2.txt", GitSummary::UNCHANGED),
+                ("y", GitSummary::CONFLICT + MODIFIED),
+                ("y/y1.txt", GitSummary::CONFLICT),
+                ("y/y2.txt", MODIFIED),
+                ("z", MODIFIED),
+                ("z/z1.txt", GitSummary::UNCHANGED),
+                ("z/z2.txt", MODIFIED),
             ],
         );
     }
@@ -722,7 +711,7 @@ mod tests {
         .await;
         fs.set_head_and_index_for_repo(
             path!("/root/.git").as_ref(),
-            &[("a.txt".into(), "".into()), ("b/c.txt".into(), "".into())],
+            &[("a.txt", "".into()), ("b/c.txt", "".into())],
         );
         cx.run_until_parked();
 
@@ -757,10 +746,7 @@ mod tests {
         // detected.
         fs.set_head_for_repo(
             path!("/root/.git").as_ref(),
-            &[
-                ("a.txt".into(), "".into()),
-                ("b/c.txt".into(), "something-else".into()),
-            ],
+            &[("a.txt", "".into()), ("b/c.txt", "something-else".into())],
             "deadbeef",
         );
         cx.executor().run_until_parked();
@@ -777,9 +763,9 @@ mod tests {
             &repo_snapshots,
             &worktree_snapshot,
             &[
-                (Path::new(""), MODIFIED),
-                (Path::new("a.txt"), GitSummary::UNCHANGED),
-                (Path::new("b/c.txt"), MODIFIED),
+                ("", MODIFIED),
+                ("a.txt", GitSummary::UNCHANGED),
+                ("b/c.txt", MODIFIED),
             ],
         );
     }
@@ -788,17 +774,17 @@ mod tests {
     fn check_git_statuses(
         repo_snapshots: &HashMap<RepositoryId, RepositorySnapshot>,
         worktree_snapshot: &worktree::Snapshot,
-        expected_statuses: &[(&Path, GitSummary)],
+        expected_statuses: &[(&str, GitSummary)],
     ) {
         let mut traversal = GitTraversal::new(
             repo_snapshots,
-            worktree_snapshot.traverse_from_path(true, true, false, "".as_ref()),
+            worktree_snapshot.traverse_from_path(true, true, false, RelPath::empty()),
         );
         let found_statuses = expected_statuses
             .iter()
             .map(|&(path, _)| {
                 let git_entry = traversal
-                    .find(|git_entry| &*git_entry.path == path)
+                    .find(|git_entry| git_entry.path.as_ref() == rel_path(path))
                     .unwrap_or_else(|| panic!("Traversal has no entry for {path:?}"));
                 (path, git_entry.git_summary)
             })

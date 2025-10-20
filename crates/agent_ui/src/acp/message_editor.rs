@@ -3,12 +3,11 @@ use crate::{
     context_picker::{ContextPickerAction, fetch_context_picker::fetch_url_content},
 };
 use acp_thread::{MentionUri, selection_name};
+use agent::{HistoryStore, outline};
 use agent_client_protocol as acp;
 use agent_servers::{AgentServer, AgentServerDelegate};
-use agent2::HistoryStore;
 use anyhow::{Result, anyhow};
 use assistant_slash_commands::codeblock_fence_for_path;
-use assistant_tool::outline;
 use collections::{HashMap, HashSet};
 use editor::{
     Addon, Anchor, AnchorRangeExt, ContextMenuOptions, ContextMenuPlacement, Editor, EditorElement,
@@ -48,7 +47,7 @@ use std::{
 use text::OffsetRangeExt;
 use theme::ThemeSettings;
 use ui::{ButtonLike, TintColor, Toggleable, prelude::*};
-use util::{ResultExt, debug_panic};
+use util::{ResultExt, debug_panic, rel_path::RelPath};
 use workspace::{Workspace, notifications::NotifyResultExt as _};
 use zed_actions::agent::Chat;
 
@@ -76,7 +75,7 @@ pub enum MessageEditorEvent {
 
 impl EventEmitter<MessageEditorEvent> for MessageEditor {}
 
-const COMMAND_HINT_INLAY_ID: usize = 0;
+const COMMAND_HINT_INLAY_ID: u32 = 0;
 
 impl MessageEditor {
     pub fn new(
@@ -141,7 +140,9 @@ impl MessageEditor {
 
         subscriptions.push(cx.subscribe_in(&editor, window, {
             move |this, editor, event, window, cx| {
-                if let EditorEvent::Edited { .. } = event {
+                if let EditorEvent::Edited { .. } = event
+                    && !editor.read(cx).read_only(cx)
+                {
                     let snapshot = editor.update(cx, |editor, cx| {
                         let new_hints = this
                             .command_hint(editor.buffer(), cx)
@@ -228,7 +229,7 @@ impl MessageEditor {
 
     pub fn insert_thread_summary(
         &mut self,
-        thread: agent2::DbThreadMetadata,
+        thread: agent::DbThreadMetadata,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -290,18 +291,13 @@ impl MessageEditor {
         let snapshot = self
             .editor
             .update(cx, |editor, cx| editor.snapshot(window, cx));
-        let Some((excerpt_id, _, _)) = snapshot.buffer_snapshot.as_singleton() else {
+        let Some(start_anchor) = snapshot.buffer_snapshot().as_singleton_anchor(start) else {
             return Task::ready(());
         };
-        let Some(start_anchor) = snapshot
-            .buffer_snapshot
-            .anchor_in_excerpt(*excerpt_id, start)
-        else {
-            return Task::ready(());
-        };
+        let excerpt_id = start_anchor.excerpt_id;
         let end_anchor = snapshot
-            .buffer_snapshot
-            .anchor_before(start_anchor.to_offset(&snapshot.buffer_snapshot) + content_len + 1);
+            .buffer_snapshot()
+            .anchor_before(start_anchor.to_offset(&snapshot.buffer_snapshot()) + content_len + 1);
 
         let crease = if let MentionUri::File { abs_path } = &mention_uri
             && let Some(extension) = abs_path.extension()
@@ -330,7 +326,7 @@ impl MessageEditor {
                 })
                 .shared();
             insert_crease_for_mention(
-                *excerpt_id,
+                excerpt_id,
                 start,
                 content_len,
                 mention_uri.name().into(),
@@ -342,7 +338,7 @@ impl MessageEditor {
             )
         } else {
             insert_crease_for_mention(
-                *excerpt_id,
+                excerpt_id,
                 start,
                 content_len,
                 crease_text,
@@ -452,9 +448,12 @@ impl MessageEditor {
             .update(cx, |project, cx| project.open_buffer(project_path, cx));
         cx.spawn(async move |_, cx| {
             let buffer = buffer.await?;
-            let buffer_content =
-                outline::get_buffer_content_or_outline(buffer.clone(), Some(&abs_path), &cx)
-                    .await?;
+            let buffer_content = outline::get_buffer_content_or_outline(
+                buffer.clone(),
+                Some(&abs_path.to_string_lossy()),
+                &cx,
+            )
+            .await?;
 
             Ok(Mention::Text {
                 content: buffer_content.text,
@@ -541,10 +540,7 @@ impl MessageEditor {
         cx: &mut Context<Self>,
     ) {
         let snapshot = self.editor.read(cx).buffer().read(cx).snapshot(cx);
-        let Some((&excerpt_id, _, _)) = snapshot.as_singleton() else {
-            return;
-        };
-        let Some(start) = snapshot.anchor_in_excerpt(excerpt_id, source_range.start) else {
+        let Some(start) = snapshot.as_singleton_anchor(source_range.start) else {
             return;
         };
 
@@ -602,7 +598,7 @@ impl MessageEditor {
         id: acp::SessionId,
         cx: &mut Context<Self>,
     ) -> Task<Result<Mention>> {
-        let server = Rc::new(agent2::NativeAgentServer::new(
+        let server = Rc::new(agent::NativeAgentServer::new(
             self.project.read(cx).fs().clone(),
             self.history_store.clone(),
         ));
@@ -615,7 +611,7 @@ impl MessageEditor {
         let connection = server.connect(None, delegate, cx);
         cx.spawn(async move |_, cx| {
             let (agent, _) = connection.await?;
-            let agent = agent.downcast::<agent2::NativeAgentConnection>().unwrap();
+            let agent = agent.downcast::<agent::NativeAgentConnection>().unwrap();
             let summary = agent
                 .0
                 .update(cx, |agent, cx| agent.thread_summary(id, cx))?
@@ -632,8 +628,8 @@ impl MessageEditor {
         path: PathBuf,
         cx: &mut Context<Self>,
     ) -> Task<Result<Mention>> {
-        let context = self.history_store.update(cx, |text_thread_store, cx| {
-            text_thread_store.load_text_thread(path.as_path().into(), cx)
+        let context = self.history_store.update(cx, |store, cx| {
+            store.load_text_thread(path.as_path().into(), cx)
         });
         cx.spawn(async move |_, cx| {
             let context = context.await?;
@@ -715,7 +711,7 @@ impl MessageEditor {
                             continue;
                         };
 
-                        let crease_range = crease.range().to_offset(&snapshot.buffer_snapshot);
+                        let crease_range = crease.range().to_offset(&snapshot.buffer_snapshot());
                         if crease_range.start > ix {
                             //todo(): Custom slash command ContentBlock?
                             // let chunk = if prevent_slash_commands
@@ -820,11 +816,18 @@ impl MessageEditor {
         });
     }
 
-    fn send(&mut self, _: &Chat, _: &mut Window, cx: &mut Context<Self>) {
+    pub fn send(&mut self, cx: &mut Context<Self>) {
         if self.is_empty(cx) {
             return;
         }
+        self.editor.update(cx, |editor, cx| {
+            editor.clear_inlay_hints(cx);
+        });
         cx.emit(MessageEditorEvent::Send)
+    }
+
+    fn chat(&mut self, _: &Chat, _: &mut Window, cx: &mut Context<Self>) {
+        self.send(cx);
     }
 
     fn cancel(&mut self, _: &editor::actions::Cancel, _: &mut Window, cx: &mut Context<Self>) {
@@ -862,11 +865,11 @@ impl MessageEditor {
                 self.editor.update(cx, |message_editor, cx| {
                     let snapshot = message_editor.snapshot(window, cx);
                     let (excerpt_id, _, buffer_snapshot) =
-                        snapshot.buffer_snapshot.as_singleton().unwrap();
+                        snapshot.buffer_snapshot().as_singleton().unwrap();
 
                     let text_anchor = buffer_snapshot.anchor_before(buffer_snapshot.len());
                     let multibuffer_anchor = snapshot
-                        .buffer_snapshot
+                        .buffer_snapshot()
                         .anchor_in_excerpt(*excerpt_id, text_anchor);
                     message_editor.edit(
                         [(
@@ -947,6 +950,7 @@ impl MessageEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let path_style = self.project.read(cx).path_style(cx);
         let buffer = self.editor.read(cx).buffer().clone();
         let Some(buffer) = buffer.read(cx).as_singleton() else {
             return;
@@ -956,18 +960,15 @@ impl MessageEditor {
             let Some(entry) = self.project.read(cx).entry_for_path(&path, cx) else {
                 continue;
             };
-            let Some(abs_path) = self.project.read(cx).absolute_path(&path, cx) else {
+            let Some(worktree) = self.project.read(cx).worktree_for_id(path.worktree_id, cx) else {
                 continue;
             };
-            let path_prefix = abs_path
-                .file_name()
-                .unwrap_or(path.path.as_os_str())
-                .display()
-                .to_string();
+            let abs_path = worktree.read(cx).absolutize(&path.path);
             let (file_name, _) =
                 crate::context_picker::file_context_picker::extract_file_name_and_directory(
                     &path.path,
-                    &path_prefix,
+                    worktree.read(cx).root_name(),
+                    path_style,
                 );
 
             let uri = if entry.is_dir() {
@@ -1029,6 +1030,7 @@ impl MessageEditor {
         ) else {
             return;
         };
+
         self.editor.update(cx, |message_editor, cx| {
             message_editor.edit([(cursor_anchor..cursor_anchor, completion.new_text)], cx);
         });
@@ -1176,14 +1178,20 @@ fn full_mention_for_directory(
     abs_path: &Path,
     cx: &mut App,
 ) -> Task<Result<Mention>> {
-    fn collect_files_in_path(worktree: &Worktree, path: &Path) -> Vec<(Arc<Path>, PathBuf)> {
+    fn collect_files_in_path(worktree: &Worktree, path: &RelPath) -> Vec<(Arc<RelPath>, String)> {
         let mut files = Vec::new();
 
         for entry in worktree.child_entries(path) {
             if entry.is_dir() {
                 files.extend(collect_files_in_path(worktree, &entry.path));
             } else if entry.is_file() {
-                files.push((entry.path.clone(), worktree.full_path(&entry.path)));
+                files.push((
+                    entry.path.clone(),
+                    worktree
+                        .full_path(&entry.path)
+                        .to_string_lossy()
+                        .to_string(),
+                ));
             }
         }
 
@@ -1261,7 +1269,7 @@ fn full_mention_for_directory(
     })
 }
 
-fn render_directory_contents(entries: Vec<(Arc<Path>, PathBuf, String)>) -> String {
+fn render_directory_contents(entries: Vec<(Arc<RelPath>, String, String)>) -> String {
     let mut output = String::new();
     for (_relative_path, full_path, content) in entries {
         let fence = codeblock_fence_for_path(Some(&full_path), None);
@@ -1280,7 +1288,7 @@ impl Render for MessageEditor {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .key_context("MessageEditor")
-            .on_action(cx.listener(Self::send))
+            .on_action(cx.listener(Self::chat))
             .on_action(cx.listener(Self::cancel))
             .capture_action(cx.listener(Self::paste))
             .flex_1()
@@ -1292,7 +1300,7 @@ impl Render for MessageEditor {
                     font_family: settings.buffer_font.family.clone(),
                     font_fallbacks: settings.buffer_font.fallbacks.clone(),
                     font_features: settings.buffer_font.features.clone(),
-                    font_size: settings.buffer_font_size(cx).into(),
+                    font_size: settings.agent_buffer_font_size(cx).into(),
                     line_height: relative(settings.buffer_line_height.value()),
                     ..Default::default()
                 };
@@ -1543,7 +1551,7 @@ impl MentionSet {
 
     fn remove_invalid(&mut self, snapshot: EditorSnapshot) {
         for (crease_id, crease) in snapshot.crease_snapshot.creases() {
-            if !crease.range().start.is_valid(&snapshot.buffer_snapshot) {
+            if !crease.range().start.is_valid(&snapshot.buffer_snapshot()) {
                 self.mentions.remove(&crease_id);
             }
         }
@@ -1580,10 +1588,9 @@ mod tests {
     use std::{cell::RefCell, ops::Range, path::Path, rc::Rc, sync::Arc};
 
     use acp_thread::MentionUri;
+    use agent::{HistoryStore, outline};
     use agent_client_protocol as acp;
-    use agent2::HistoryStore;
     use assistant_context::ContextStore;
-    use assistant_tool::outline;
     use editor::{AnchorRangeExt as _, Editor, EditorMode};
     use fs::FakeFs;
     use futures::StreamExt as _;
@@ -1595,7 +1602,7 @@ mod tests {
     use serde_json::json;
     use text::Point;
     use ui::{App, Context, IntoElement, Render, SharedString, Window};
-    use util::{path, uri};
+    use util::{path, paths::PathStyle, rel_path::rel_path};
     use workspace::{AppState, Item, Workspace};
 
     use crate::acp::{
@@ -1677,13 +1684,10 @@ mod tests {
 
         editor.update_in(cx, |editor, window, cx| {
             let snapshot = editor.buffer().read(cx).snapshot(cx);
-            let start = snapshot
-                .anchor_in_excerpt(excerpt_id, completion.replace_range.start)
+            let range = snapshot
+                .anchor_range_in_excerpt(excerpt_id, completion.replace_range)
                 .unwrap();
-            let end = snapshot
-                .anchor_in_excerpt(excerpt_id, completion.replace_range.end)
-                .unwrap();
-            editor.edit([(start..end, completion.new_text)], cx);
+            editor.edit([(range, completion.new_text)], cx);
             (completion.confirm.unwrap())(CompletionIntent::Complete, window, cx);
         });
 
@@ -2004,20 +2008,10 @@ mod tests {
         editor.update_in(&mut cx, |editor, _window, cx| {
             assert_eq!(editor.text(cx), "/say-hello ");
             assert_eq!(editor.display_text(cx), "/say-hello <name>");
-            assert!(editor.has_visible_completions_menu());
-
-            assert_eq!(
-                current_completion_labels_with_documentation(editor),
-                &[("say-hello".into(), "Say hello to whoever you want".into())]
-            );
+            assert!(!editor.has_visible_completions_menu());
         });
 
         cx.simulate_input("GPT5");
-
-        editor.update_in(&mut cx, |editor, window, cx| {
-            assert!(editor.has_visible_completions_menu());
-            editor.confirm_completion(&editor::actions::ConfirmCompletion::default(), window, cx);
-        });
 
         cx.run_until_parked();
 
@@ -2027,7 +2021,7 @@ mod tests {
             assert!(!editor.has_visible_completions_menu());
 
             // Delete argument
-            for _ in 0..4 {
+            for _ in 0..5 {
                 editor.backspace(&editor::actions::Backspace, window, cx);
             }
         });
@@ -2035,12 +2029,11 @@ mod tests {
         cx.run_until_parked();
 
         editor.update_in(&mut cx, |editor, window, cx| {
-            assert_eq!(editor.text(cx), "/say-hello ");
+            assert_eq!(editor.text(cx), "/say-hello");
             // Hint is visible because argument was deleted
             assert_eq!(editor.display_text(cx), "/say-hello <name>");
 
             // Delete last command letter
-            editor.backspace(&editor::actions::Backspace, window, cx);
             editor.backspace(&editor::actions::Backspace, window, cx);
         });
 
@@ -2105,15 +2098,17 @@ mod tests {
         let mut cx = VisualTestContext::from_window(*window, cx);
 
         let paths = vec![
-            path!("a/one.txt"),
-            path!("a/two.txt"),
-            path!("a/three.txt"),
-            path!("a/four.txt"),
-            path!("b/five.txt"),
-            path!("b/six.txt"),
-            path!("b/seven.txt"),
-            path!("b/eight.txt"),
+            rel_path("a/one.txt"),
+            rel_path("a/two.txt"),
+            rel_path("a/three.txt"),
+            rel_path("a/four.txt"),
+            rel_path("b/five.txt"),
+            rel_path("b/six.txt"),
+            rel_path("b/seven.txt"),
+            rel_path("b/eight.txt"),
         ];
+
+        let slash = PathStyle::local().separator();
 
         let mut opened_editors = Vec::new();
         for path in paths {
@@ -2122,7 +2117,7 @@ mod tests {
                     workspace.open_path(
                         ProjectPath {
                             worktree_id,
-                            path: Path::new(path).into(),
+                            path: path.into(),
                         },
                         None,
                         false,
@@ -2183,10 +2178,10 @@ mod tests {
             assert_eq!(
                 current_completion_labels(editor),
                 &[
-                    "eight.txt dir/b/",
-                    "seven.txt dir/b/",
-                    "six.txt dir/b/",
-                    "five.txt dir/b/",
+                    format!("eight.txt dir{slash}b{slash}"),
+                    format!("seven.txt dir{slash}b{slash}"),
+                    format!("six.txt dir{slash}b{slash}"),
+                    format!("five.txt dir{slash}b{slash}"),
                 ]
             );
             editor.set_text("", window, cx);
@@ -2214,14 +2209,14 @@ mod tests {
             assert_eq!(
                 current_completion_labels(editor),
                 &[
-                    "eight.txt dir/b/",
-                    "seven.txt dir/b/",
-                    "six.txt dir/b/",
-                    "five.txt dir/b/",
-                    "Files & Directories",
-                    "Symbols",
-                    "Threads",
-                    "Fetch"
+                    format!("eight.txt dir{slash}b{slash}"),
+                    format!("seven.txt dir{slash}b{slash}"),
+                    format!("six.txt dir{slash}b{slash}"),
+                    format!("five.txt dir{slash}b{slash}"),
+                    "Files & Directories".into(),
+                    "Symbols".into(),
+                    "Threads".into(),
+                    "Fetch".into()
                 ]
             );
         });
@@ -2248,7 +2243,10 @@ mod tests {
         editor.update(&mut cx, |editor, cx| {
             assert_eq!(editor.text(cx), "Lorem @file one");
             assert!(editor.has_visible_completions_menu());
-            assert_eq!(current_completion_labels(editor), vec!["one.txt dir/a/"]);
+            assert_eq!(
+                current_completion_labels(editor),
+                vec![format!("one.txt dir{slash}a{slash}")]
+            );
         });
 
         editor.update_in(&mut cx, |editor, window, cx| {
@@ -2256,7 +2254,11 @@ mod tests {
             editor.confirm_completion(&editor::actions::ConfirmCompletion::default(), window, cx);
         });
 
-        let url_one = uri!("file:///dir/a/one.txt");
+        let url_one = MentionUri::File {
+            abs_path: path!("/dir/a/one.txt").into(),
+        }
+        .to_uri()
+        .to_string();
         editor.update(&mut cx, |editor, cx| {
             let text = editor.text(cx);
             assert_eq!(text, format!("Lorem [@one.txt]({url_one}) "));
@@ -2361,7 +2363,11 @@ mod tests {
             .into_values()
             .collect::<Vec<_>>();
 
-        let url_eight = uri!("file:///dir/b/eight.txt");
+        let url_eight = MentionUri::File {
+            abs_path: path!("/dir/b/eight.txt").into(),
+        }
+        .to_uri()
+        .to_string();
 
         {
             let [_, (uri, Mention::Text { content, .. })] = contents.as_slice() else {
@@ -2460,6 +2466,12 @@ mod tests {
             editor.confirm_completion(&editor::actions::ConfirmCompletion::default(), window, cx);
         });
 
+        let symbol = MentionUri::Symbol {
+            abs_path: path!("/dir/a/one.txt").into(),
+            name: "MySymbol".into(),
+            line_range: 0..=0,
+        };
+
         let contents = message_editor
             .update(&mut cx, |message_editor, cx| {
                 message_editor.mention_set().contents(
@@ -2479,12 +2491,7 @@ mod tests {
                 panic!("Unexpected mentions");
             };
             pretty_assertions::assert_eq!(content, "1");
-            pretty_assertions::assert_eq!(
-                uri,
-                &format!("{url_one}?symbol=MySymbol#L1:1")
-                    .parse::<MentionUri>()
-                    .unwrap()
-            );
+            pretty_assertions::assert_eq!(uri, &symbol);
         }
 
         cx.run_until_parked();
@@ -2492,7 +2499,10 @@ mod tests {
         editor.read_with(&cx, |editor, cx| {
             assert_eq!(
                 editor.text(cx),
-                format!("Lorem [@one.txt]({url_one})  Ipsum [@eight.txt]({url_eight}) [@MySymbol]({url_one}?symbol=MySymbol#L1:1) ")
+                format!(
+                    "Lorem [@one.txt]({url_one})  Ipsum [@eight.txt]({url_eight}) [@MySymbol]({}) ",
+                    symbol.to_uri(),
+                )
             );
         });
 
@@ -2502,10 +2512,10 @@ mod tests {
         editor.update(&mut cx, |editor, cx| {
             assert_eq!(
                 editor.text(cx),
-                format!("Lorem [@one.txt]({url_one})  Ipsum [@eight.txt]({url_eight}) [@MySymbol]({url_one}?symbol=MySymbol#L1:1) @file x.png")
+                format!("Lorem [@one.txt]({url_one})  Ipsum [@eight.txt]({url_eight}) [@MySymbol]({}) @file x.png", symbol.to_uri())
             );
             assert!(editor.has_visible_completions_menu());
-            assert_eq!(current_completion_labels(editor), &["x.png dir/"]);
+            assert_eq!(current_completion_labels(editor), &[format!("x.png dir{slash}")]);
         });
 
         editor.update_in(&mut cx, |editor, window, cx| {
@@ -2531,7 +2541,10 @@ mod tests {
         editor.read_with(&cx, |editor, cx| {
             assert_eq!(
                 editor.text(cx),
-                format!("Lorem [@one.txt]({url_one})  Ipsum [@eight.txt]({url_eight}) [@MySymbol]({url_one}?symbol=MySymbol#L1:1) ")
+                format!(
+                    "Lorem [@one.txt]({url_one})  Ipsum [@eight.txt]({url_eight}) [@MySymbol]({}) ",
+                    symbol.to_uri()
+                )
             );
         });
 
@@ -2541,10 +2554,10 @@ mod tests {
         editor.update(&mut cx, |editor, cx| {
                     assert_eq!(
                         editor.text(cx),
-                        format!("Lorem [@one.txt]({url_one})  Ipsum [@eight.txt]({url_eight}) [@MySymbol]({url_one}?symbol=MySymbol#L1:1) @file x.png")
+                        format!("Lorem [@one.txt]({url_one})  Ipsum [@eight.txt]({url_eight}) [@MySymbol]({}) @file x.png", symbol.to_uri())
                     );
                     assert!(editor.has_visible_completions_menu());
-                    assert_eq!(current_completion_labels(editor), &["x.png dir/"]);
+                    assert_eq!(current_completion_labels(editor), &[format!("x.png dir{slash}")]);
                 });
 
         editor.update_in(&mut cx, |editor, window, cx| {
@@ -2556,11 +2569,14 @@ mod tests {
 
         // Mention was removed
         editor.read_with(&cx, |editor, cx| {
-                    assert_eq!(
-                        editor.text(cx),
-                        format!("Lorem [@one.txt]({url_one})  Ipsum [@eight.txt]({url_eight}) [@MySymbol]({url_one}?symbol=MySymbol#L1:1) ")
-                    );
-                });
+            assert_eq!(
+                editor.text(cx),
+                format!(
+                    "Lorem [@one.txt]({url_one})  Ipsum [@eight.txt]({url_eight}) [@MySymbol]({}) ",
+                    symbol.to_uri()
+                )
+            );
+        });
 
         // Now getting the contents succeeds, because the invalid mention was removed
         let contents = message_editor

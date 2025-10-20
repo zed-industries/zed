@@ -155,7 +155,7 @@ pub struct ParsedMarkdownText {
     /// Where the text is located in the source Markdown document.
     pub source_range: Range<usize>,
     /// The text content stripped of any formatting symbols.
-    pub contents: String,
+    pub contents: SharedString,
     /// The list of highlights contained in the Markdown document.
     pub highlights: Vec<(Range<usize>, MarkdownHighlight)>,
     /// The regions of the various ranges in the Markdown document.
@@ -202,6 +202,13 @@ impl MarkdownHighlight {
                     highlight.font_weight = Some(style.weight);
                 }
 
+                if style.link {
+                    highlight.underline = Some(UnderlineStyle {
+                        thickness: px(1.),
+                        ..Default::default()
+                    });
+                }
+
                 Some(highlight)
             }
 
@@ -221,6 +228,8 @@ pub struct MarkdownHighlightStyle {
     pub strikethrough: bool,
     /// The weight of the text.
     pub weight: FontWeight,
+    /// Whether the text should be stylized as link.
+    pub link: bool,
 }
 
 /// A parsed region in a Markdown document.

@@ -11,6 +11,7 @@ pub mod lsp_command;
 pub mod lsp_store;
 mod manifest_tree;
 pub mod prettier_store;
+mod project_search;
 pub mod project_settings;
 pub mod search;
 mod task_inventory;
@@ -33,17 +34,21 @@ pub mod search_history;
 mod yarn;
 
 use dap::inline_value::{InlineValueLocation, VariableLookupKind, VariableScope};
+use task::Shell;
 
 use crate::{
-    agent_server_store::{AgentServerStore, AllAgentServersSettings},
+    agent_server_store::AllAgentServersSettings,
     git_store::GitStore,
-    lsp_store::log_store::LogKind,
+    lsp_store::{SymbolLocation, log_store::LogKind},
+    project_search::SearchResultsHandle,
 };
+pub use agent_server_store::{AgentServerStore, AgentServersUpdated};
 pub use git_store::{
     ConflictRegion, ConflictSet, ConflictSetSnapshot, ConflictSetUpdate,
     git_traversal::{ChildEntriesGitIter, GitEntry, GitEntryRef, GitTraversal},
 };
 pub use manifest_tree::ManifestTree;
+pub use project_search::Search;
 
 use anyhow::{Context as _, Result, anyhow};
 use buffer_store::{BufferStore, BufferStoreEvent};
@@ -96,7 +101,7 @@ use project_settings::{ProjectSettings, SettingsObserver, SettingsObserverEvent}
 use remote::{RemoteClient, RemoteConnectionOptions};
 use rpc::{
     AnyProtoClient, ErrorCode,
-    proto::{FromProto, LanguageServerPromptResponse, REMOTE_SERVER_PROJECT_ID, ToProto},
+    proto::{LanguageServerPromptResponse, REMOTE_SERVER_PROJECT_ID},
 };
 use search::{SearchInputKind, SearchQuery, SearchResult};
 use search_history::SearchHistory;
@@ -107,8 +112,8 @@ use snippet_provider::SnippetProvider;
 use std::{
     borrow::Cow,
     collections::BTreeMap,
-    ops::Range,
-    path::{Component, Path, PathBuf},
+    ops::{Not as _, Range},
+    path::{Path, PathBuf},
     pin::pin,
     str,
     sync::Arc,
@@ -121,7 +126,8 @@ use text::{Anchor, BufferId, OffsetRangeExt, Point, Rope};
 use toolchain_store::EmptyToolchainStore;
 use util::{
     ResultExt as _, maybe,
-    paths::{PathStyle, RemotePathBuf, SanitizedPath, compare_paths},
+    paths::{PathStyle, SanitizedPath, is_absolute},
+    rel_path::RelPath,
 };
 use worktree::{CreatedEntry, Snapshot, Traversal};
 pub use worktree::{
@@ -147,8 +153,6 @@ pub use lsp_store::{
 };
 pub use toolchain_store::{ToolchainStore, Toolchains};
 const MAX_PROJECT_SEARCH_HISTORY_SIZE: usize = 500;
-const MAX_SEARCH_RESULT_FILES: usize = 5_000;
-const MAX_SEARCH_RESULT_RANGES: usize = 10_000;
 
 pub trait ProjectItem: 'static {
     fn try_open(
@@ -353,7 +357,7 @@ pub enum DebugAdapterClientState {
 #[derive(Clone, Debug, Eq, PartialEq, Hash, PartialOrd, Ord)]
 pub struct ProjectPath {
     pub worktree_id: WorktreeId,
-    pub path: Arc<Path>,
+    pub path: Arc<RelPath>,
 }
 
 impl ProjectPath {
@@ -364,11 +368,11 @@ impl ProjectPath {
         }
     }
 
-    pub fn from_proto(p: proto::ProjectPath) -> Self {
-        Self {
+    pub fn from_proto(p: proto::ProjectPath) -> Option<Self> {
+        Some(Self {
             worktree_id: WorktreeId::from_proto(p.worktree_id),
-            path: Arc::<Path>::from_proto(p.path),
-        }
+            path: RelPath::from_proto(&p.path).log_err()?,
+        })
     }
 
     pub fn to_proto(&self) -> proto::ProjectPath {
@@ -381,7 +385,7 @@ impl ProjectPath {
     pub fn root_path(worktree_id: WorktreeId) -> Self {
         Self {
             worktree_id,
-            path: Path::new("").into(),
+            path: RelPath::empty().into(),
         }
     }
 
@@ -743,12 +747,11 @@ pub struct Symbol {
     pub language_server_name: LanguageServerName,
     pub source_worktree_id: WorktreeId,
     pub source_language_server_id: LanguageServerId,
-    pub path: ProjectPath,
+    pub path: SymbolLocation,
     pub label: CodeLabel,
     pub name: String,
     pub kind: lsp::SymbolKind,
     pub range: Range<Unclipped<PointUtf16>>,
-    pub signature: [u8; 32],
 }
 
 #[derive(Clone, Debug)]
@@ -882,28 +885,29 @@ impl DirectoryLister {
     }
 
     pub fn default_query(&self, cx: &mut App) -> String {
-        let separator = std::path::MAIN_SEPARATOR_STR;
-        match self {
+        let project = match self {
             DirectoryLister::Project(project) => project,
             DirectoryLister::Local(project, _) => project,
         }
-        .read(cx)
-        .visible_worktrees(cx)
-        .next()
-        .map(|worktree| worktree.read(cx).abs_path())
-        .map(|dir| dir.to_string_lossy().to_string())
-        .or_else(|| std::env::home_dir().map(|dir| dir.to_string_lossy().to_string()))
-        .map(|mut s| {
-            s.push_str(separator);
-            s
-        })
-        .unwrap_or_else(|| {
-            if cfg!(target_os = "windows") {
-                format!("C:{separator}")
-            } else {
-                format!("~{separator}")
-            }
-        })
+        .read(cx);
+        let path_style = project.path_style(cx);
+        project
+            .visible_worktrees(cx)
+            .next()
+            .map(|worktree| worktree.read(cx).abs_path().to_string_lossy().into_owned())
+            .or_else(|| std::env::home_dir().map(|dir| dir.to_string_lossy().into_owned()))
+            .map(|mut s| {
+                s.push_str(path_style.separator());
+                s
+            })
+            .unwrap_or_else(|| {
+                if path_style.is_windows() {
+                    "C:\\"
+                } else {
+                    "~/"
+                }
+                .to_string()
+            })
     }
 
     pub fn list_directory(&self, path: String, cx: &mut App) -> Task<Result<Vec<DirectoryItem>>> {
@@ -977,16 +981,10 @@ pub struct DisableAiSettings {
 }
 
 impl settings::Settings for DisableAiSettings {
-    fn from_settings(content: &settings::SettingsContent, _cx: &mut App) -> Self {
+    fn from_settings(content: &settings::SettingsContent) -> Self {
         Self {
             disable_ai: content.disable_ai.unwrap().0,
         }
-    }
-
-    fn import_from_vscode(
-        _vscode: &settings::VsCodeSettings,
-        _current: &mut settings::SettingsContent,
-    ) {
     }
 }
 
@@ -1081,6 +1079,7 @@ impl Project {
                     toolchain_store.read(cx).as_language_toolchain_store(),
                     worktree_store.clone(),
                     breakpoint_store.clone(),
+                    false,
                     cx,
                 )
             });
@@ -1151,7 +1150,13 @@ impl Project {
             });
 
             let agent_server_store = cx.new(|cx| {
-                AgentServerStore::local(node.clone(), fs.clone(), environment.clone(), cx)
+                AgentServerStore::local(
+                    node.clone(),
+                    fs.clone(),
+                    environment.clone(),
+                    client.http_client(),
+                    cx,
+                )
             });
 
             cx.subscribe(&lsp_store, Self::on_lsp_store_event).detach();
@@ -1303,6 +1308,9 @@ impl Project {
                     remote.clone(),
                     breakpoint_store.clone(),
                     worktree_store.clone(),
+                    node.clone(),
+                    client.http_client(),
+                    fs.clone(),
                     cx,
                 )
             });
@@ -1318,7 +1326,7 @@ impl Project {
             });
 
             let agent_server_store =
-                cx.new(|cx| AgentServerStore::remote(REMOTE_SERVER_PROJECT_ID, remote.clone(), cx));
+                cx.new(|_| AgentServerStore::remote(REMOTE_SERVER_PROJECT_ID, remote.clone()));
 
             cx.subscribe(&remote, Self::on_remote_client_event).detach();
 
@@ -1469,14 +1477,18 @@ impl Project {
         let remote_id = response.payload.project_id;
         let role = response.payload.role();
 
-        // todo(zjk)
-        // Set the proper path style based on the remote
+        let path_style = if response.payload.windows_paths {
+            PathStyle::Windows
+        } else {
+            PathStyle::Posix
+        };
+
         let worktree_store = cx.new(|_| {
             WorktreeStore::remote(
                 true,
                 client.clone().into(),
                 response.payload.project_id,
-                PathStyle::Posix,
+                path_style,
             )
         })?;
         let buffer_store = cx.new(|cx| {
@@ -1496,6 +1508,7 @@ impl Project {
                 client.clone().into(),
                 breakpoint_store.clone(),
                 worktree_store.clone(),
+                fs.clone(),
                 cx,
             )
         })?;
@@ -1548,10 +1561,9 @@ impl Project {
         })?;
 
         let agent_server_store = cx.new(|cx| AgentServerStore::collab(cx))?;
+        let replica_id = ReplicaId::new(response.payload.replica_id as u16);
 
         let project = cx.new(|cx| {
-            let replica_id = response.payload.replica_id as ReplicaId;
-
             let snippets = SnippetProvider::new(fs.clone(), BTreeSet::from_iter([]), cx);
 
             let weak_self = cx.weak_entity();
@@ -1560,8 +1572,14 @@ impl Project {
 
             let mut worktrees = Vec::new();
             for worktree in response.payload.worktrees {
-                let worktree =
-                    Worktree::remote(remote_id, replica_id, worktree, client.clone().into(), cx);
+                let worktree = Worktree::remote(
+                    remote_id,
+                    replica_id,
+                    worktree,
+                    client.clone().into(),
+                    path_style,
+                    cx,
+                );
                 worktrees.push(worktree);
             }
 
@@ -1884,24 +1902,29 @@ impl Project {
 
     pub fn directory_environment(
         &self,
+        shell: &Shell,
         abs_path: Arc<Path>,
         cx: &mut App,
     ) -> Shared<Task<Option<HashMap<String, String>>>> {
         self.environment.update(cx, |environment, cx| {
-            environment.get_directory_environment(abs_path, cx)
+            if let Some(remote_client) = self.remote_client.clone() {
+                environment.get_remote_directory_environment(shell, abs_path, remote_client, cx)
+            } else {
+                environment.get_local_directory_environment(shell, abs_path, cx)
+            }
         })
     }
 
-    pub fn shell_environment_errors<'a>(
+    pub fn peek_environment_error<'a>(
         &'a self,
         cx: &'a App,
-    ) -> impl Iterator<Item = (&'a Arc<Path>, &'a EnvironmentErrorMessage)> {
-        self.environment.read(cx).environment_errors()
+    ) -> Option<&'a EnvironmentErrorMessage> {
+        self.environment.read(cx).peek_environment_error()
     }
 
-    pub fn remove_environment_error(&mut self, abs_path: &Path, cx: &mut Context<Self>) {
-        self.environment.update(cx, |environment, cx| {
-            environment.remove_environment_error(abs_path, cx);
+    pub fn pop_environment_error(&mut self, cx: &mut Context<Self>) {
+        self.environment.update(cx, |environment, _| {
+            environment.pop_environment_error();
         });
     }
 
@@ -1953,9 +1976,9 @@ impl Project {
             ProjectClientState::Remote { replica_id, .. } => replica_id,
             _ => {
                 if self.remote_client.is_some() {
-                    1
+                    ReplicaId::REMOTE_SERVER
                 } else {
-                    0
+                    ReplicaId::LOCAL
                 }
             }
         }
@@ -2022,7 +2045,7 @@ impl Project {
 
     pub fn worktree_root_names<'a>(&'a self, cx: &'a App) -> impl Iterator<Item = &'a str> {
         self.visible_worktrees(cx)
-            .map(|tree| tree.read(cx).root_name())
+            .map(|tree| tree.read(cx).root_name().as_unix_str())
     }
 
     pub fn worktree_for_id(&self, id: WorktreeId, cx: &App) -> Option<Entity<Worktree>> {
@@ -2120,15 +2143,11 @@ impl Project {
     pub fn copy_entry(
         &mut self,
         entry_id: ProjectEntryId,
-        relative_worktree_source_path: Option<PathBuf>,
-        new_path: impl Into<Arc<Path>>,
+        new_project_path: ProjectPath,
         cx: &mut Context<Self>,
     ) -> Task<Result<Option<Entry>>> {
-        let Some(worktree) = self.worktree_for_entry(entry_id, cx) else {
-            return Task::ready(Ok(None));
-        };
-        worktree.update(cx, |worktree, cx| {
-            worktree.copy_entry(entry_id, relative_worktree_source_path, new_path, cx)
+        self.worktree_store.update(cx, |worktree_store, cx| {
+            worktree_store.copy_entry(entry_id, new_project_path, cx)
         })
     }
 
@@ -2139,12 +2158,12 @@ impl Project {
     pub fn rename_entry(
         &mut self,
         entry_id: ProjectEntryId,
-        new_path: impl Into<Arc<Path>>,
+        new_path: ProjectPath,
         cx: &mut Context<Self>,
     ) -> Task<Result<CreatedEntry>> {
-        let worktree_store = self.worktree_store.read(cx);
-        let new_path = new_path.into();
+        let worktree_store = self.worktree_store.clone();
         let Some((worktree, old_path, is_dir)) = worktree_store
+            .read(cx)
             .worktree_and_entry_for_id(entry_id, cx)
             .map(|(worktree, entry)| (worktree, entry.path.clone(), entry.is_dir()))
         else {
@@ -2159,11 +2178,14 @@ impl Project {
             let (old_abs_path, new_abs_path) = {
                 let root_path = worktree.read_with(cx, |this, _| this.abs_path())?;
                 let new_abs_path = if is_root_entry {
-                    root_path.parent().unwrap().join(&new_path)
+                    root_path
+                        .parent()
+                        .unwrap()
+                        .join(new_path.path.as_std_path())
                 } else {
-                    root_path.join(&new_path)
+                    root_path.join(&new_path.path.as_std_path())
                 };
-                (root_path.join(&old_path), new_abs_path)
+                (root_path.join(old_path.as_std_path()), new_abs_path)
             };
             let transaction = LspStore::will_rename_entry(
                 lsp_store.clone(),
@@ -2175,9 +2197,9 @@ impl Project {
             )
             .await;
 
-            let entry = worktree
-                .update(cx, |worktree, cx| {
-                    worktree.rename_entry(entry_id, new_path.clone(), cx)
+            let entry = worktree_store
+                .update(cx, |worktree_store, cx| {
+                    worktree_store.rename_entry(entry_id, new_path.clone(), cx)
                 })?
                 .await?;
 
@@ -2559,8 +2581,8 @@ impl Project {
         let task = self.open_buffer(path, cx);
         cx.spawn(async move |_project, cx| {
             let buffer = task.await?;
-            let project_entry_id = buffer.read_with(cx, |buffer, cx| {
-                File::from_dyn(buffer.file()).and_then(|file| file.project_entry_id(cx))
+            let project_entry_id = buffer.read_with(cx, |buffer, _cx| {
+                File::from_dyn(buffer.file()).and_then(|file| file.project_entry_id())
             })?;
 
             Ok((project_entry_id, buffer))
@@ -3240,9 +3262,9 @@ impl Project {
         self.buffers_needing_diff.insert(buffer.downgrade());
         let first_insertion = self.buffers_needing_diff.len() == 1;
         let settings = ProjectSettings::get_global(cx);
-        let delay = if let Some(delay) = settings.git.gutter_debounce {
-            delay
-        } else {
+        let delay = settings.git.gutter_debounce;
+
+        if delay == 0 {
             if first_insertion {
                 let this = cx.weak_entity();
                 cx.defer(move |cx| {
@@ -3254,7 +3276,7 @@ impl Project {
                 });
             }
             return;
-        };
+        }
 
         const MIN_DELAY: u64 = 50;
         let delay = delay.max(MIN_DELAY);
@@ -3914,176 +3936,44 @@ impl Project {
         })
     }
 
-    pub fn search(&mut self, query: SearchQuery, cx: &mut Context<Self>) -> Receiver<SearchResult> {
-        let (result_tx, result_rx) = smol::channel::unbounded();
-
-        let matching_buffers_rx = if query.is_opened_only() {
-            self.sort_search_candidates(&query, cx)
-        } else {
-            self.find_search_candidate_buffers(&query, MAX_SEARCH_RESULT_FILES + 1, cx)
-        };
-
-        cx.spawn(async move |_, cx| {
-            let mut range_count = 0;
-            let mut buffer_count = 0;
-            let mut limit_reached = false;
-            let query = Arc::new(query);
-            let chunks = matching_buffers_rx.ready_chunks(64);
-
-            // Now that we know what paths match the query, we will load at most
-            // 64 buffers at a time to avoid overwhelming the main thread. For each
-            // opened buffer, we will spawn a background task that retrieves all the
-            // ranges in the buffer matched by the query.
-            let mut chunks = pin!(chunks);
-            'outer: while let Some(matching_buffer_chunk) = chunks.next().await {
-                let mut chunk_results = Vec::with_capacity(matching_buffer_chunk.len());
-                for buffer in matching_buffer_chunk {
-                    let query = query.clone();
-                    let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
-                    chunk_results.push(cx.background_spawn(async move {
-                        let ranges = query
-                            .search(&snapshot, None)
-                            .await
-                            .iter()
-                            .map(|range| {
-                                snapshot.anchor_before(range.start)
-                                    ..snapshot.anchor_after(range.end)
-                            })
-                            .collect::<Vec<_>>();
-                        anyhow::Ok((buffer, ranges))
-                    }));
-                }
-
-                let chunk_results = futures::future::join_all(chunk_results).await;
-                for result in chunk_results {
-                    if let Some((buffer, ranges)) = result.log_err() {
-                        range_count += ranges.len();
-                        buffer_count += 1;
-                        result_tx
-                            .send(SearchResult::Buffer { buffer, ranges })
-                            .await?;
-                        if buffer_count > MAX_SEARCH_RESULT_FILES
-                            || range_count > MAX_SEARCH_RESULT_RANGES
-                        {
-                            limit_reached = true;
-                            break 'outer;
-                        }
-                    }
-                }
-            }
-
-            if limit_reached {
-                result_tx.send(SearchResult::LimitReached).await?;
-            }
-
-            anyhow::Ok(())
-        })
-        .detach();
-
-        result_rx
-    }
-
-    fn find_search_candidate_buffers(
-        &mut self,
-        query: &SearchQuery,
-        limit: usize,
-        cx: &mut Context<Project>,
-    ) -> Receiver<Entity<Buffer>> {
-        if self.is_local() {
-            let fs = self.fs.clone();
-            self.buffer_store.update(cx, |buffer_store, cx| {
-                buffer_store.find_search_candidates(query, limit, fs, cx)
-            })
-        } else {
-            self.find_search_candidates_remote(query, limit, cx)
-        }
-    }
-
-    fn sort_search_candidates(
-        &mut self,
-        search_query: &SearchQuery,
-        cx: &mut Context<Project>,
-    ) -> Receiver<Entity<Buffer>> {
-        let worktree_store = self.worktree_store.read(cx);
-        let mut buffers = search_query
-            .buffers()
-            .into_iter()
-            .flatten()
-            .filter(|buffer| {
-                let b = buffer.read(cx);
-                if let Some(file) = b.file() {
-                    if !search_query.match_path(file.path()) {
-                        return false;
-                    }
-                    if let Some(entry) = b
-                        .entry_id(cx)
-                        .and_then(|entry_id| worktree_store.entry_for_id(entry_id, cx))
-                        && entry.is_ignored
-                        && !search_query.include_ignored()
-                    {
-                        return false;
-                    }
-                }
-                true
-            })
-            .collect::<Vec<_>>();
-        let (tx, rx) = smol::channel::unbounded();
-        buffers.sort_by(|a, b| match (a.read(cx).file(), b.read(cx).file()) {
-            (None, None) => a.read(cx).remote_id().cmp(&b.read(cx).remote_id()),
-            (None, Some(_)) => std::cmp::Ordering::Less,
-            (Some(_), None) => std::cmp::Ordering::Greater,
-            (Some(a), Some(b)) => compare_paths((a.path(), true), (b.path(), true)),
-        });
-        for buffer in buffers {
-            tx.send_blocking(buffer.clone()).unwrap()
-        }
-
-        rx
-    }
-
-    fn find_search_candidates_remote(
-        &mut self,
-        query: &SearchQuery,
-        limit: usize,
-        cx: &mut Context<Project>,
-    ) -> Receiver<Entity<Buffer>> {
-        let (tx, rx) = smol::channel::unbounded();
-
-        let (client, remote_id): (AnyProtoClient, _) = if let Some(ssh_client) = &self.remote_client
-        {
-            (ssh_client.read(cx).proto_client(), 0)
+    fn search_impl(&mut self, query: SearchQuery, cx: &mut Context<Self>) -> SearchResultsHandle {
+        let client: Option<(AnyProtoClient, _)> = if let Some(ssh_client) = &self.remote_client {
+            Some((ssh_client.read(cx).proto_client(), 0))
         } else if let Some(remote_id) = self.remote_id() {
-            (self.collab_client.clone().into(), remote_id)
+            self.is_local()
+                .not()
+                .then(|| (self.collab_client.clone().into(), remote_id))
         } else {
-            return rx;
+            None
         };
-
-        let request = client.request(proto::FindSearchCandidates {
-            project_id: remote_id,
-            query: Some(query.to_proto()),
-            limit: limit as _,
-        });
-        let guard = self.retain_remotely_created_models(cx);
-
-        cx.spawn(async move |project, cx| {
-            let response = request.await?;
-            for buffer_id in response.buffer_ids {
-                let buffer_id = BufferId::new(buffer_id)?;
-                let buffer = project
-                    .update(cx, |project, cx| {
-                        project.buffer_store.update(cx, |buffer_store, cx| {
-                            buffer_store.wait_for_remote_buffer(buffer_id, cx)
-                        })
-                    })?
-                    .await?;
-                let _ = tx.send(buffer).await;
+        let searcher = if query.is_opened_only() {
+            project_search::Search::open_buffers_only(
+                self.buffer_store.clone(),
+                self.worktree_store.clone(),
+                project_search::Search::MAX_SEARCH_RESULT_FILES + 1,
+            )
+        } else {
+            match client {
+                Some((client, remote_id)) => project_search::Search::remote(
+                    self.buffer_store.clone(),
+                    self.worktree_store.clone(),
+                    project_search::Search::MAX_SEARCH_RESULT_FILES + 1,
+                    (client, remote_id, self.remotely_created_models.clone()),
+                ),
+                None => project_search::Search::local(
+                    self.fs.clone(),
+                    self.buffer_store.clone(),
+                    self.worktree_store.clone(),
+                    project_search::Search::MAX_SEARCH_RESULT_FILES + 1,
+                    cx,
+                ),
             }
+        };
+        searcher.into_handle(query, cx)
+    }
 
-            drop(guard);
-            anyhow::Ok(())
-        })
-        .detach_and_log_err(cx);
-        rx
+    pub fn search(&mut self, query: SearchQuery, cx: &mut Context<Self>) -> Receiver<SearchResult> {
+        self.search_impl(query, cx).results(cx)
     }
 
     pub fn request_lsp<R: LspCommand>(
@@ -4139,13 +4029,17 @@ impl Project {
         abs_path: impl AsRef<Path>,
         visible: bool,
         cx: &mut Context<Self>,
-    ) -> Task<Result<(Entity<Worktree>, PathBuf)>> {
+    ) -> Task<Result<(Entity<Worktree>, Arc<RelPath>)>> {
         self.worktree_store.update(cx, |worktree_store, cx| {
             worktree_store.find_or_create_worktree(abs_path, visible, cx)
         })
     }
 
-    pub fn find_worktree(&self, abs_path: &Path, cx: &App) -> Option<(Entity<Worktree>, PathBuf)> {
+    pub fn find_worktree(
+        &self,
+        abs_path: &Path,
+        cx: &App,
+    ) -> Option<(Entity<Worktree>, Arc<RelPath>)> {
         self.worktree_store.read(cx).find_worktree(abs_path, cx)
     }
 
@@ -4164,11 +4058,10 @@ impl Project {
         buffer: &Entity<Buffer>,
         cx: &mut Context<Self>,
     ) -> Task<Option<ResolvedPath>> {
-        let path_buf = PathBuf::from(path);
-        if path_buf.is_absolute() || path.starts_with("~") {
+        if util::paths::is_absolute(path, self.path_style(cx)) || path.starts_with("~") {
             self.resolve_abs_path(path, cx)
         } else {
-            self.resolve_path_in_worktrees(path_buf, buffer, cx)
+            self.resolve_path_in_worktrees(path, buffer, cx)
         }
     }
 
@@ -4189,29 +4082,26 @@ impl Project {
             let expanded = PathBuf::from(shellexpand::tilde(&path).into_owned());
             let fs = self.fs.clone();
             cx.background_spawn(async move {
-                let path = expanded.as_path();
-                let metadata = fs.metadata(path).await.ok().flatten();
+                let metadata = fs.metadata(&expanded).await.ok().flatten();
 
                 metadata.map(|metadata| ResolvedPath::AbsPath {
-                    path: expanded,
+                    path: expanded.to_string_lossy().into_owned(),
                     is_dir: metadata.is_dir,
                 })
             })
         } else if let Some(ssh_client) = self.remote_client.as_ref() {
-            let path_style = ssh_client.read(cx).path_style();
-            let request_path = RemotePathBuf::from_str(path, path_style);
             let request = ssh_client
                 .read(cx)
                 .proto_client()
                 .request(proto::GetPathMetadata {
                     project_id: REMOTE_SERVER_PROJECT_ID,
-                    path: request_path.to_proto(),
+                    path: path.into(),
                 });
             cx.background_spawn(async move {
                 let response = request.await.log_err()?;
                 if response.exists {
                     Some(ResolvedPath::AbsPath {
-                        path: PathBuf::from_proto(response.path),
+                        path: response.path,
                         is_dir: response.is_dir,
                     })
                 } else {
@@ -4225,17 +4115,24 @@ impl Project {
 
     fn resolve_path_in_worktrees(
         &self,
-        path: PathBuf,
+        path: &str,
         buffer: &Entity<Buffer>,
         cx: &mut Context<Self>,
     ) -> Task<Option<ResolvedPath>> {
-        let mut candidates = vec![path.clone()];
+        let mut candidates = vec![];
+        let path_style = self.path_style(cx);
+        if let Ok(path) = RelPath::new(path.as_ref(), path_style) {
+            candidates.push(path.into_arc());
+        }
 
         if let Some(file) = buffer.read(cx).file()
             && let Some(dir) = file.path().parent()
         {
-            let joined = dir.to_path_buf().join(path);
-            candidates.push(joined);
+            if let Some(joined) = path_style.join(&*dir.display(path_style), path)
+                && let Some(joined) = RelPath::new(joined.as_ref(), path_style).ok()
+            {
+                candidates.push(joined.into_arc());
+            }
         }
 
         let buffer_worktree_id = buffer.read(cx).file().map(|file| file.worktree_id(cx));
@@ -4275,15 +4172,12 @@ impl Project {
 
     fn resolve_path_in_worktree(
         worktree: &Entity<Worktree>,
-        path: &PathBuf,
+        path: &RelPath,
         cx: &mut AsyncApp,
     ) -> Option<ResolvedPath> {
         worktree
             .read_with(cx, |worktree, _| {
-                let root_entry_path = &worktree.root_entry()?.path;
-                let resolved = resolve_path(root_entry_path, path);
-                let stripped = resolved.strip_prefix(root_entry_path).unwrap_or(&resolved);
-                worktree.entry_for_path(stripped).map(|entry| {
+                worktree.entry_for_path(path).map(|entry| {
                     let project_path = ProjectPath {
                         worktree_id: worktree.id(),
                         path: entry.path.clone(),
@@ -4305,10 +4199,9 @@ impl Project {
         if self.is_local() {
             DirectoryLister::Local(cx.entity(), self.fs.clone()).list_directory(query, cx)
         } else if let Some(session) = self.remote_client.as_ref() {
-            let path_buf = PathBuf::from(query);
             let request = proto::ListRemoteDirectory {
                 dev_server_id: REMOTE_SERVER_PROJECT_ID,
-                path: path_buf.to_proto(),
+                path: query,
                 config: Some(proto::ListRemoteDirectoryConfig { is_dir: true }),
             };
 
@@ -4358,7 +4251,7 @@ impl Project {
     pub fn set_active_path(&mut self, entry: Option<ProjectPath>, cx: &mut Context<Self>) {
         let new_active_entry = entry.and_then(|project_path| {
             let worktree = self.worktree_for_id(project_path.worktree_id, cx)?;
-            let entry = worktree.read(cx).entry_for_path(project_path.path)?;
+            let entry = worktree.read(cx).entry_for_path(&project_path.path)?;
             Some(entry.id)
         });
         if new_active_entry != self.active_entry {
@@ -4419,10 +4312,11 @@ impl Project {
     }
 
     pub fn absolute_path(&self, project_path: &ProjectPath, cx: &App) -> Option<PathBuf> {
-        self.worktree_for_id(project_path.worktree_id, cx)?
-            .read(cx)
-            .absolutize(&project_path.path)
-            .ok()
+        Some(
+            self.worktree_for_id(project_path.worktree_id, cx)?
+                .read(cx)
+                .absolutize(&project_path.path),
+        )
     }
 
     /// Attempts to find a `ProjectPath` corresponding to the given path. If the path
@@ -4435,7 +4329,7 @@ impl Project {
     ///
     /// # Arguments
     ///
-    /// * `path` - A full path that starts with a worktree root name, or alternatively a
+    /// * `path` - An absolute path, or a full path that starts with a worktree root name, or a
     ///   relative path within a visible worktree.
     /// * `cx` - A reference to the `AppContext`.
     ///
@@ -4443,34 +4337,41 @@ impl Project {
     ///
     /// Returns `Some(ProjectPath)` if a matching worktree is found, otherwise `None`.
     pub fn find_project_path(&self, path: impl AsRef<Path>, cx: &App) -> Option<ProjectPath> {
+        let path_style = self.path_style(cx);
         let path = path.as_ref();
         let worktree_store = self.worktree_store.read(cx);
 
-        if path.is_absolute() {
+        if is_absolute(&path.to_string_lossy(), path_style) {
             for worktree in worktree_store.visible_worktrees(cx) {
                 let worktree_abs_path = worktree.read(cx).abs_path();
 
-                if let Ok(relative_path) = path.strip_prefix(worktree_abs_path) {
+                if let Ok(relative_path) = path.strip_prefix(worktree_abs_path)
+                    && let Ok(path) = RelPath::new(relative_path, path_style)
+                {
                     return Some(ProjectPath {
                         worktree_id: worktree.read(cx).id(),
-                        path: relative_path.into(),
+                        path: path.into_arc(),
                     });
                 }
             }
         } else {
             for worktree in worktree_store.visible_worktrees(cx) {
                 let worktree_root_name = worktree.read(cx).root_name();
-                if let Ok(relative_path) = path.strip_prefix(worktree_root_name) {
+                if let Ok(relative_path) = path.strip_prefix(worktree_root_name.as_std_path())
+                    && let Ok(path) = RelPath::new(relative_path, path_style)
+                {
                     return Some(ProjectPath {
                         worktree_id: worktree.read(cx).id(),
-                        path: relative_path.into(),
+                        path: path.into_arc(),
                     });
                 }
             }
 
             for worktree in worktree_store.visible_worktrees(cx) {
                 let worktree = worktree.read(cx);
-                if let Some(entry) = worktree.entry_for_path(path) {
+                if let Ok(path) = RelPath::new(path, path_style)
+                    && let Some(entry) = worktree.entry_for_path(&path)
+                {
                     return Some(ProjectPath {
                         worktree_id: worktree.id(),
                         path: entry.path.clone(),
@@ -4489,13 +4390,18 @@ impl Project {
         &self,
         project_path: &ProjectPath,
         cx: &App,
-    ) -> Option<PathBuf> {
+    ) -> Option<String> {
+        let path_style = self.path_style(cx);
         if self.visible_worktrees(cx).take(2).count() < 2 {
-            return Some(project_path.path.to_path_buf());
+            return Some(project_path.path.display(path_style).to_string());
         }
         self.worktree_for_id(project_path.worktree_id, cx)
-            .and_then(|worktree| {
-                Some(Path::new(worktree.read(cx).abs_path().file_name()?).join(&project_path.path))
+            .map(|worktree| {
+                let worktree_name = worktree.read(cx).root_name();
+                worktree_name
+                    .join(&project_path.path)
+                    .display(path_style)
+                    .to_string()
             })
     }
 
@@ -4503,7 +4409,7 @@ impl Project {
         self.find_worktree(abs_path, cx)
             .map(|(worktree, relative_path)| ProjectPath {
                 worktree_id: worktree.read(cx).id(),
-                path: relative_path.into(),
+                path: relative_path,
             })
     }
 
@@ -4793,17 +4699,30 @@ impl Project {
         &mut self,
         cx: &mut Context<Self>,
     ) -> RemotelyCreatedModelGuard {
+        Self::retain_remotely_created_models_impl(
+            &self.remotely_created_models,
+            &self.buffer_store,
+            &self.worktree_store,
+            cx,
+        )
+    }
+
+    fn retain_remotely_created_models_impl(
+        models: &Arc<Mutex<RemotelyCreatedModels>>,
+        buffer_store: &Entity<BufferStore>,
+        worktree_store: &Entity<WorktreeStore>,
+        cx: &mut App,
+    ) -> RemotelyCreatedModelGuard {
         {
-            let mut remotely_create_models = self.remotely_created_models.lock();
+            let mut remotely_create_models = models.lock();
             if remotely_create_models.retain_count == 0 {
-                remotely_create_models.buffers = self.buffer_store.read(cx).buffers().collect();
-                remotely_create_models.worktrees =
-                    self.worktree_store.read(cx).worktrees().collect();
+                remotely_create_models.buffers = buffer_store.read(cx).buffers().collect();
+                remotely_create_models.worktrees = worktree_store.read(cx).worktrees().collect();
             }
             remotely_create_models.retain_count += 1;
         }
         RemotelyCreatedModelGuard {
-            remote_models: Arc::downgrade(&self.remotely_created_models),
+            remote_models: Arc::downgrade(&models),
         }
     }
 
@@ -4869,9 +4788,11 @@ impl Project {
     ) -> Result<proto::FindSearchCandidatesResponse> {
         let peer_id = envelope.original_sender_id()?;
         let message = envelope.payload;
-        let query = SearchQuery::from_proto(message.query.context("missing query field")?)?;
+        let path_style = this.read_with(&cx, |this, cx| this.path_style(cx))?;
+        let query =
+            SearchQuery::from_proto(message.query.context("missing query field")?, path_style)?;
         let results = this.update(&mut cx, |this, cx| {
-            this.find_search_candidate_buffers(&query, message.limit as _, cx)
+            this.search_impl(query, cx).matching_buffers(cx)
         })?;
 
         let mut response = proto::FindSearchCandidatesResponse {
@@ -4908,18 +4829,13 @@ impl Project {
     ) -> Result<proto::OpenBufferResponse> {
         let peer_id = envelope.original_sender_id()?;
         let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
-        let open_buffer = this.update(&mut cx, |this, cx| {
-            this.open_buffer(
-                ProjectPath {
-                    worktree_id,
-                    path: Arc::<Path>::from_proto(envelope.payload.path),
-                },
-                cx,
-            )
-        })?;
-
-        let buffer = open_buffer.await?;
-        Project::respond_to_open_buffer_request(this, buffer, peer_id, &mut cx)
+        let path = RelPath::from_proto(&envelope.payload.path)?;
+        let open_buffer = this
+            .update(&mut cx, |this, cx| {
+                this.open_buffer(ProjectPath { worktree_id, path }, cx)
+            })?
+            .await?;
+        Project::respond_to_open_buffer_request(this, open_buffer, peer_id, &mut cx)
     }
 
     async fn handle_open_new_buffer(
@@ -5263,6 +5179,55 @@ impl Project {
     pub fn agent_location(&self) -> Option<AgentLocation> {
         self.agent_location.clone()
     }
+
+    pub fn path_style(&self, cx: &App) -> PathStyle {
+        self.worktree_store.read(cx).path_style()
+    }
+
+    pub fn contains_local_settings_file(
+        &self,
+        worktree_id: WorktreeId,
+        rel_path: &RelPath,
+        cx: &App,
+    ) -> bool {
+        self.worktree_for_id(worktree_id, cx)
+            .map_or(false, |worktree| {
+                worktree.read(cx).entry_for_path(rel_path).is_some()
+            })
+    }
+
+    pub fn update_local_settings_file(
+        &self,
+        worktree_id: WorktreeId,
+        rel_path: Arc<RelPath>,
+        cx: &mut App,
+        update: impl 'static + Send + FnOnce(&mut settings::SettingsContent, &App),
+    ) {
+        let Some(worktree) = self.worktree_for_id(worktree_id, cx) else {
+            // todo(settings_ui) error?
+            return;
+        };
+        cx.spawn(async move |cx| {
+            let file = worktree
+                .update(cx, |worktree, cx| worktree.load_file(&rel_path, cx))?
+                .await
+                .context("Failed to load settings file")?;
+
+            let new_text = cx.read_global::<SettingsStore, _>(|store, cx| {
+                store.new_text_for_update(file.text, move |settings| update(settings, cx))
+            })?;
+            worktree
+                .update(cx, |worktree, cx| {
+                    let line_ending = text::LineEnding::detect(&new_text);
+                    worktree.write_file(rel_path.clone(), new_text.into(), line_ending, cx)
+                })?
+                .await
+                .context("Failed to write settings file")?;
+
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
+    }
 }
 
 pub struct PathMatchCandidateSet {
@@ -5316,14 +5281,20 @@ impl<'a> fuzzy::PathMatchCandidateSet<'a> for PathMatchCandidateSet {
         }
     }
 
-    fn prefix(&self) -> Arc<str> {
-        if self.snapshot.root_entry().is_some_and(|e| e.is_file()) {
+    fn prefix(&self) -> Arc<RelPath> {
+        if self.snapshot.root_entry().is_some_and(|e| e.is_file()) || self.include_root_name {
             self.snapshot.root_name().into()
-        } else if self.include_root_name {
-            format!("{}{}", self.snapshot.root_name(), std::path::MAIN_SEPARATOR).into()
         } else {
-            Arc::default()
+            RelPath::empty().into()
         }
+    }
+
+    fn root_is_file(&self) -> bool {
+        self.snapshot.root_entry().is_some_and(|f| f.is_file())
+    }
+
+    fn path_style(&self) -> PathStyle {
+        self.snapshot.path_style()
     }
 
     fn candidates(&'a self, start: usize) -> Self::Candidates {
@@ -5366,56 +5337,13 @@ impl<'a> From<&'a ProjectPath> for SettingsLocation<'a> {
     }
 }
 
-impl<P: AsRef<Path>> From<(WorktreeId, P)> for ProjectPath {
+impl<P: Into<Arc<RelPath>>> From<(WorktreeId, P)> for ProjectPath {
     fn from((worktree_id, path): (WorktreeId, P)) -> Self {
         Self {
             worktree_id,
-            path: path.as_ref().into(),
+            path: path.into(),
         }
     }
-}
-
-pub fn relativize_path(base: &Path, path: &Path) -> PathBuf {
-    let mut path_components = path.components();
-    let mut base_components = base.components();
-    let mut components: Vec<Component> = Vec::new();
-    loop {
-        match (path_components.next(), base_components.next()) {
-            (None, None) => break,
-            (Some(a), None) => {
-                components.push(a);
-                components.extend(path_components.by_ref());
-                break;
-            }
-            (None, _) => components.push(Component::ParentDir),
-            (Some(a), Some(b)) if components.is_empty() && a == b => (),
-            (Some(a), Some(Component::CurDir)) => components.push(a),
-            (Some(a), Some(_)) => {
-                components.push(Component::ParentDir);
-                for _ in base_components {
-                    components.push(Component::ParentDir);
-                }
-                components.push(a);
-                components.extend(path_components.by_ref());
-                break;
-            }
-        }
-    }
-    components.iter().map(|c| c.as_os_str()).collect()
-}
-
-fn resolve_path(base: &Path, path: &Path) -> PathBuf {
-    let mut result = base.to_path_buf();
-    for component in path.components() {
-        match component {
-            Component::ParentDir => {
-                result.pop();
-            }
-            Component::CurDir => (),
-            _ => result.push(component),
-        }
-    }
-    result
 }
 
 /// ResolvedPath is a path that has been resolved to either a ProjectPath
@@ -5427,20 +5355,20 @@ pub enum ResolvedPath {
         is_dir: bool,
     },
     AbsPath {
-        path: PathBuf,
+        path: String,
         is_dir: bool,
     },
 }
 
 impl ResolvedPath {
-    pub fn abs_path(&self) -> Option<&Path> {
+    pub fn abs_path(&self) -> Option<&str> {
         match self {
-            Self::AbsPath { path, .. } => Some(path.as_path()),
+            Self::AbsPath { path, .. } => Some(path),
             _ => None,
         }
     }
 
-    pub fn into_abs_path(self) -> Option<PathBuf> {
+    pub fn into_abs_path(self) -> Option<String> {
         match self {
             Self::AbsPath { path, .. } => Some(path),
             _ => None,
@@ -5475,8 +5403,8 @@ impl ProjectItem for Buffer {
         Some(project.update(cx, |project, cx| project.open_buffer(path.clone(), cx)))
     }
 
-    fn entry_id(&self, cx: &App) -> Option<ProjectEntryId> {
-        File::from_dyn(self.file()).and_then(|file| file.project_entry_id(cx))
+    fn entry_id(&self, _cx: &App) -> Option<ProjectEntryId> {
+        File::from_dyn(self.file()).and_then(|file| file.project_entry_id())
     }
 
     fn project_path(&self, cx: &App) -> Option<ProjectPath> {
@@ -5543,17 +5471,6 @@ impl Completion {
         }
         None
     }
-}
-
-pub fn sort_worktree_entries(entries: &mut [impl AsRef<Entry>]) {
-    entries.sort_by(|entry_a, entry_b| {
-        let entry_a = entry_a.as_ref();
-        let entry_b = entry_b.as_ref();
-        compare_paths(
-            (&entry_a.path, entry_a.is_file()),
-            (&entry_b.path, entry_b.is_file()),
-        )
-    });
 }
 
 fn proto_to_prompt(level: proto::language_server_prompt_request::Level) -> gpui::PromptLevel {

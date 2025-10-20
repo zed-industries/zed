@@ -27,10 +27,13 @@ pub use keymap_file::{
 pub use settings_file::*;
 pub use settings_json::*;
 pub use settings_store::{
-    InvalidSettingsError, LocalSettingsKind, Settings, SettingsKey, SettingsLocation, SettingsStore,
+    InvalidSettingsError, LocalSettingsKind, Settings, SettingsFile, SettingsKey, SettingsLocation,
+    SettingsStore,
 };
 
 pub use vscode_import::{VsCodeSettings, VsCodeSettingsSource};
+
+pub use keymap_file::ActionSequence;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ActiveSettingsProfileName(pub String);

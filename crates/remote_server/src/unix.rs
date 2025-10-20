@@ -6,7 +6,7 @@ use util::ResultExt;
 
 use extension::ExtensionHostProxy;
 use fs::{Fs, RealFs};
-use futures::channel::mpsc;
+use futures::channel::{mpsc, oneshot};
 use futures::{AsyncRead, AsyncWrite, AsyncWriteExt, FutureExt, SinkExt, select, select_biased};
 use git::GitHostingProviderRegistry;
 use gpui::{App, AppContext as _, Context, Entity, SemanticVersion, UpdateGlobal as _};
@@ -103,7 +103,9 @@ fn init_logging_server(log_file_path: PathBuf) -> Result<Receiver<Vec<u8>>> {
         buffer: Vec::new(),
     });
 
-    env_logger::Builder::from_default_env()
+    env_logger::Builder::new()
+        .filter_level(log::LevelFilter::Info)
+        .parse_default_env()
         .target(env_logger::Target::Pipe(target))
         .format(|buf, record| {
             let mut log_record = LogRecord::new(record);
@@ -349,6 +351,7 @@ pub fn execute_run(
         .spawn(crashes::init(crashes::InitCrashHandler {
             session_id: id,
             zed_version: VERSION.to_owned(),
+            binary: "zed-remote-server".to_string(),
             release_channel: release_channel::RELEASE_CHANNEL_NAME.clone(),
             commit_sha: option_env!("ZED_COMMIT_SHA").unwrap_or("no_sha").to_owned(),
         }))
@@ -366,6 +369,14 @@ pub fn execute_run(
         .with_context(|| format!("failed to write pid file: {:?}", &pid_file))?;
 
     let listeners = ServerListeners::new(stdin_socket, stdout_socket, stderr_socket)?;
+
+    let (shell_env_loaded_tx, shell_env_loaded_rx) = oneshot::channel();
+    app.background_executor()
+        .spawn(async {
+            util::load_login_shell_environment().await.log_err();
+            shell_env_loaded_tx.send(()).ok();
+        })
+        .detach();
 
     let git_hosting_provider_registry = Arc::new(GitHostingProviderRegistry::new());
     app.run(move |cx| {
@@ -387,6 +398,8 @@ pub fn execute_run(
 
         extension::init(cx);
         let extension_host_proxy = ExtensionHostProxy::global(cx);
+
+        json_schema_store::init(cx);
 
         let project = cx.new(|cx| {
             let fs = Arc::new(RealFs::new(None, cx.background_executor().clone()));
@@ -410,7 +423,11 @@ pub fn execute_run(
                 )
             };
 
-            let node_runtime = NodeRuntime::new(http_client.clone(), None, node_settings_rx);
+            let node_runtime = NodeRuntime::new(
+                http_client.clone(),
+                Some(shell_env_loaded_rx),
+                node_settings_rx,
+            );
 
             let mut languages = LanguageRegistry::new(cx.background_executor().clone());
             languages.set_language_server_download_dir(paths::languages_dir().clone());
@@ -541,38 +558,43 @@ pub(crate) fn execute_proxy(
     smol::spawn(crashes::init(crashes::InitCrashHandler {
         session_id: id,
         zed_version: VERSION.to_owned(),
+        binary: "zed-remote-server".to_string(),
         release_channel: release_channel::RELEASE_CHANNEL_NAME.clone(),
         commit_sha: option_env!("ZED_COMMIT_SHA").unwrap_or("no_sha").to_owned(),
     }))
     .detach();
 
     log::info!("starting proxy process. PID: {}", std::process::id());
+    smol::block_on(async {
+        let server_pid = check_pid_file(&server_paths.pid_file)
+            .await
+            .map_err(|source| ExecuteProxyError::CheckPidFile {
+                source,
+                path: server_paths.pid_file.clone(),
+            })?;
+        let server_running = server_pid.is_some();
+        if is_reconnecting {
+            if !server_running {
+                log::error!("attempted to reconnect, but no server running");
+                return Err(ExecuteProxyError::ServerNotRunning(
+                    ProxyLaunchError::ServerNotRunning,
+                ));
+            }
+        } else {
+            if let Some(pid) = server_pid {
+                log::info!(
+                    "proxy found server already running with PID {}. Killing process and cleaning up files...",
+                    pid
+                );
+                kill_running_server(pid, &server_paths).await?;
+            }
 
-    let server_pid = check_pid_file(&server_paths.pid_file).map_err(|source| {
-        ExecuteProxyError::CheckPidFile {
-            source,
-            path: server_paths.pid_file.clone(),
-        }
+            spawn_server(&server_paths)
+                .await
+                .map_err(ExecuteProxyError::SpawnServer)?;
+        };
+        Ok(())
     })?;
-    let server_running = server_pid.is_some();
-    if is_reconnecting {
-        if !server_running {
-            log::error!("attempted to reconnect, but no server running");
-            return Err(ExecuteProxyError::ServerNotRunning(
-                ProxyLaunchError::ServerNotRunning,
-            ));
-        }
-    } else {
-        if let Some(pid) = server_pid {
-            log::info!(
-                "proxy found server already running with PID {}. Killing process and cleaning up files...",
-                pid
-            );
-            kill_running_server(pid, &server_paths)?;
-        }
-
-        spawn_server(&server_paths).map_err(ExecuteProxyError::SpawnServer)?;
-    };
 
     let stdin_task = smol::spawn(async move {
         let stdin = Async::new(std::io::stdin())?;
@@ -626,11 +648,12 @@ pub(crate) fn execute_proxy(
     Ok(())
 }
 
-fn kill_running_server(pid: u32, paths: &ServerPaths) -> Result<(), ExecuteProxyError> {
+async fn kill_running_server(pid: u32, paths: &ServerPaths) -> Result<(), ExecuteProxyError> {
     log::info!("killing existing server with PID {}", pid);
-    std::process::Command::new("kill")
+    smol::process::Command::new("kill")
         .arg(pid.to_string())
         .output()
+        .await
         .map_err(|source| ExecuteProxyError::KillRunningServer { source, pid })?;
 
     for file in [
@@ -666,7 +689,7 @@ pub(crate) enum SpawnServerError {
     LaunchStatus { status: ExitStatus, paths: String },
 }
 
-fn spawn_server(paths: &ServerPaths) -> Result<(), SpawnServerError> {
+async fn spawn_server(paths: &ServerPaths) -> Result<(), SpawnServerError> {
     if paths.stdin_socket.exists() {
         std::fs::remove_file(&paths.stdin_socket).map_err(SpawnServerError::RemoveStdinSocket)?;
     }
@@ -678,7 +701,7 @@ fn spawn_server(paths: &ServerPaths) -> Result<(), SpawnServerError> {
     }
 
     let binary_name = std::env::current_exe().map_err(SpawnServerError::CurrentExe)?;
-    let mut server_process = std::process::Command::new(binary_name);
+    let mut server_process = smol::process::Command::new(binary_name);
     server_process
         .arg("run")
         .arg("--log-file")
@@ -694,6 +717,7 @@ fn spawn_server(paths: &ServerPaths) -> Result<(), SpawnServerError> {
 
     let status = server_process
         .status()
+        .await
         .map_err(SpawnServerError::ProcessStatus)?;
 
     if !status.success() {
@@ -733,7 +757,7 @@ pub(crate) struct CheckPidError {
     pid: u32,
 }
 
-fn check_pid_file(path: &Path) -> Result<Option<u32>, CheckPidError> {
+async fn check_pid_file(path: &Path) -> Result<Option<u32>, CheckPidError> {
     let Some(pid) = std::fs::read_to_string(&path)
         .ok()
         .and_then(|contents| contents.parse::<u32>().ok())
@@ -742,10 +766,11 @@ fn check_pid_file(path: &Path) -> Result<Option<u32>, CheckPidError> {
     };
 
     log::debug!("Checking if process with PID {} exists...", pid);
-    match std::process::Command::new("kill")
+    match smol::process::Command::new("kill")
         .arg("-0")
         .arg(pid.to_string())
         .output()
+        .await
     {
         Ok(output) if output.status.success() => {
             log::debug!(
@@ -953,7 +978,7 @@ fn cleanup_old_binaries() -> Result<()> {
     let release_channel = release_channel::RELEASE_CHANNEL.dev_name();
     let prefix = format!("zed-remote-server-{}-", release_channel);
 
-    for entry in std::fs::read_dir(server_dir)? {
+    for entry in std::fs::read_dir(server_dir.as_std_path())? {
         let path = entry?.path();
 
         if let Some(file_name) = path.file_name()
@@ -977,10 +1002,9 @@ fn is_new_version(version: &str) -> bool {
 }
 
 fn is_file_in_use(file_name: &OsStr) -> bool {
-    let info =
-        sysinfo::System::new_with_specifics(sysinfo::RefreshKind::new().with_processes(
-            sysinfo::ProcessRefreshKind::new().with_exe(sysinfo::UpdateKind::Always),
-        ));
+    let info = sysinfo::System::new_with_specifics(sysinfo::RefreshKind::nothing().with_processes(
+        sysinfo::ProcessRefreshKind::nothing().with_exe(sysinfo::UpdateKind::Always),
+    ));
 
     for process in info.processes().values() {
         if process

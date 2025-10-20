@@ -20,6 +20,7 @@ cloud_llm_client.workspace = true
 cloud_zeta2_prompt.workspace = true
 edit_prediction.workspace = true
 edit_prediction_context.workspace = true
+feature_flags.workspace = true
 futures.workspace = true
 gpui.workspace = true
 indoc.workspace = true
@@ -28,13 +29,21 @@ language_model.workspace = true
 log.workspace = true
 project.workspace = true
 release_channel.workspace = true
+serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 util.workspace = true
 uuid.workspace = true
-workspace-hack.workspace = true
 workspace.workspace = true
 worktree.workspace = true
 
 [dev-dependencies]
+clock = { workspace = true, features = ["test-support"] }
+cloud_llm_client = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
+lsp.workspace = true
+indoc.workspace = true
+language_model = { workspace = true, features = ["test-support"] }
+pretty_assertions.workspace = true
+project = { workspace = true, features = ["test-support"] }
+settings = { workspace = true, features = ["test-support"] }

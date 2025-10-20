@@ -8,7 +8,7 @@ Learn about all the settings you can customize in Zed's Agent Panel.
 
 If you're using [Zed's hosted LLM service](./subscription.md), it sets `claude-sonnet-4` as the default model for agentic work (agent panel, inline assistant) and `gpt-5-nano` as the default "fast" model (thread summarization, git commit messages). If you're not subscribed or want to change these defaults, you can manually edit the `default_model` object in your settings:
 
-```json
+```json [settings]
 {
   "agent": {
     "default_model": {
@@ -27,7 +27,7 @@ You can assign distinct and specific models for the following AI-powered feature
 - Inline assistant model: Used for the inline assistant feature
 - Commit message model: Used for generating Git commit messages
 
-```json
+```json [settings]
 {
   "agent": {
     "default_model": {
@@ -64,7 +64,7 @@ The models you specify here are always used in _addition_ to your [default model
 For example, the following configuration will generate two outputs for every assist.
 One with Claude Sonnet 4 (the default model), and one with GPT-5-mini.
 
-```json
+```json [settings]
 {
   "agent": {
     "default_model": {
@@ -85,7 +85,7 @@ One with Claude Sonnet 4 (the default model), and one with GPT-5-mini.
 
 Specify a custom temperature for a provider and/or model:
 
-```json
+```json [settings]
 "model_parameters": [
   // To set parameters for all requests to OpenAI models:
   {
@@ -114,7 +114,7 @@ Note that some of these settings are also surfaced in the Agent Panel's settings
 Use the `default_view` setting to change the default view of the Agent Panel.
 You can choose between `thread` (the default) and `text_thread`:
 
-```json
+```json [settings]
 {
   "agent": {
     "default_view": "text_thread"
@@ -126,7 +126,7 @@ You can choose between `thread` (the default) and `text_thread`:
 
 Use the `agent_font_size` setting to change the font size of rendered agent responses in the panel.
 
-```json
+```json [settings]
 {
   "agent": {
     "agent_font_size": 18
@@ -134,14 +134,14 @@ Use the `agent_font_size` setting to change the font size of rendered agent resp
 }
 ```
 
-> (Preview Version Note): Editors in the Agent Panel—whether that is the main message textarea or previous messages—use monospace fonts and therefore, are controlled by the `buffer_font_size` setting, which is defined globally in your `settings.json`.
+> Editors in the Agent Panel—whether that is the main message textarea or previous messages—use monospace fonts and therefore, are controlled by the `buffer_font_size` setting, which is defined globally in your `settings.json`.
 
 ### Auto-run Commands
 
-Control whether you want to allow the agent to run commands without asking you for permission.
+Control whether to allow the agent to run commands without asking you for permission.
 The default value is `false`.
 
-```json
+```json [settings]
 {
   "agent": {
     "always_allow_tool_actions": true
@@ -149,14 +149,12 @@ The default value is `false`.
 }
 ```
 
-> This setting is available via the Agent Panel's settings UI.
-
 ### Single-file Review
 
-Control whether you want to see review actions (accept & reject) in single buffers after the agent is done performing edits.
+Control whether to display review actions (accept & reject) in single buffers after the agent is done performing edits.
 The default value is `false`.
 
-```json
+```json [settings]
 {
   "agent": {
     "single_file_review": true
@@ -166,14 +164,12 @@ The default value is `false`.
 
 When set to false, these controls are only available in the multibuffer review tab.
 
-> This setting is available via the Agent Panel's settings UI.
-
 ### Sound Notification
 
-Control whether you want to hear a notification sound when the agent is done generating changes or needs your input.
+Control whether to hear a notification sound when the agent is done generating changes or needs your input.
 The default value is `false`.
 
-```json
+```json [settings]
 {
   "agent": {
     "play_sound_when_agent_done": true
@@ -181,14 +177,12 @@ The default value is `false`.
 }
 ```
 
-> This setting is available via the Agent Panel's settings UI.
-
 ### Message Editor Size
 
 Use the `message_editor_min_lines` setting to control minimum number of lines of height the agent message editor should have.
 It is set to `4` by default, and the max number of lines is always double of the minimum.
 
-```json
+```json [settings]
 {
   "agent": {
     "message_editor_min_lines": 4
@@ -202,7 +196,7 @@ Make a modifier (`cmd` on macOS, `ctrl` on Linux) required to send messages.
 This is encouraged for more thoughtful prompt crafting.
 The default value is `false`.
 
-```json
+```json [settings]
 {
   "agent": {
     "use_modifier_to_send": true
@@ -210,14 +204,12 @@ The default value is `false`.
 }
 ```
 
-> This setting is available via the Agent Panel's settings UI.
-
 ### Edit Card
 
 Use the `expand_edit_card` setting to control whether edit cards show the full diff in the Agent Panel.
 It is set to `true` by default, but if set to false, the card's height is capped to a certain number of lines, requiring a click to be expanded.
 
-```json
+```json [settings]
 {
   "agent": {
     "expand_edit_card": false
@@ -230,7 +222,7 @@ It is set to `true` by default, but if set to false, the card's height is capped
 Use the `expand_terminal_card` setting to control whether terminal cards show the command output in the Agent Panel.
 It is set to `true` by default, but if set to false, the card will be fully collapsed even while the command is running, requiring a click to be expanded.
 
-```json
+```json [settings]
 {
   "agent": {
     "expand_terminal_card": false
@@ -240,10 +232,10 @@ It is set to `true` by default, but if set to false, the card will be fully coll
 
 ### Feedback Controls
 
-Control whether you want to see the thumbs up/down buttons to give Zed feedback about the agent's performance.
+Control whether to display the thumbs up/down buttons at the bottom of each agent response, allowing to give Zed feedback about the agent's performance.
 The default value is `true`.
 
-```json
+```json [settings]
 {
   "agent": {
     "enable_feedback": false

@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+
+# Install wild-linker official binaries from GitHub Releases.
+
+set -euo pipefail
+
+WILD_VERSION="${WILD_VERSION:-${1:-0.6.0}}"
+if [ "$(uname -s)" != "Linux" ]; then
+    echo "Error: This script is intended for Linux systems only."
+    exit 1
+elif [ -z "$WILD_VERSION" ]; then
+    echo "Usage: $0 [version]"
+    exit 1
+elif which -s wild && wild --version | grep -Fq "$WILD_VERSION" ; then
+    echo "Warning: existing wild $WILD_VERSION found at $(which wild). Skipping installation."
+    exit 0
+fi
+
+if [ "$(whoami)" = root ]; then SUDO=; else SUDO="$(command -v sudo || command -v doas || true)"; fi
+
+ARCH="$(uname -m)"
+WILD_REPO="${WILD_REPO:-https://github.com/davidlattimore/wild}"
+WILD_PACKAGE="wild-linker-${WILD_VERSION}-${ARCH}-unknown-linux-gnu"
+WILD_URL="${WILD_URL:-$WILD_REPO}/releases/download/$WILD_VERSION/${WILD_PACKAGE}.tar.gz"
+DEST_DIR=/usr/local/bin
+
+echo "Downloading from $WILD_URL"
+curl -fsSL --output - "$WILD_URL" \
+    | $SUDO tar -C ${DEST_DIR} --strip-components=1 --no-overwrite-dir -xzf - \
+    "${WILD_PACKAGE}/wild"
+
+cat <<EOF
+Wild is installed to ${DEST_DIR}/wild
+
+To make it your default, add or merge these lines into your ~/.cargo/config.toml:
+
+[target.x86_64-unknown-linux-gnu]
+linker = "clang"
+rustflags = ["-C", "link-arg=--ld-path=wild"]
+
+[target.aarch64-unknown-linux-gnu]
+linker = "clang"
+rustflags = ["-C", "link-arg=--ld-path=wild"]
+EOF

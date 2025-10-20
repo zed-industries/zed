@@ -1213,7 +1213,7 @@ impl VariableList {
 
         let weak = cx.weak_entity();
         let focus_handle = self.focus_handle.clone();
-        let watcher_len = (self.list_handle.content_size().width.0 / 12.0).floor() - 3.0;
+        let watcher_len = (f32::from(self.list_handle.content_size().width / 12.0).floor()) - 3.0;
         let watcher_len = watcher_len as usize;
 
         div()

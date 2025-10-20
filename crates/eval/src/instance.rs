@@ -1,6 +1,5 @@
-use agent::{Message, MessageSegment, SerializedThread, ThreadStore};
+use agent::Message;
 use anyhow::{Context as _, Result, anyhow, bail};
-use assistant_tool::ToolWorkingSet;
 use client::proto::LspWorkProgress;
 use futures::channel::mpsc;
 use futures::{FutureExt as _, StreamExt as _, future};
@@ -164,7 +163,7 @@ impl ExampleInstance {
         } else {
             println!("{}Creating worktree", self.log_prefix);
 
-            let worktree_path_string = worktree_path.to_string_lossy().to_string();
+            let worktree_path_string = worktree_path.to_string_lossy().into_owned();
 
             run_git(
                 &self.repo_path,
@@ -250,7 +249,7 @@ impl ExampleInstance {
                     worktree
                         .files(false, 0)
                         .find_map(|e| {
-                            if e.path.clone().extension().and_then(|ext| ext.to_str())
+                            if e.path.clone().extension()
                                 == Some(&language_server.file_extension)
                             {
                                 Some(ProjectPath {
