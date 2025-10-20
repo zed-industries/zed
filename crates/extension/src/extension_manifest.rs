@@ -479,7 +479,7 @@ min_version = "1.0.0"
 
         let manifest: ExtensionManifest = toml::from_str(toml_src).expect("manifest should parse");
         assert_eq!(manifest.id.as_ref(), "example.agent-server-ext");
-        assert!(manifest.agent_servers.get("foo").is_some());
+        assert!(manifest.agent_servers.contains_key("foo"));
         let entry = manifest.agent_servers.get("foo").unwrap();
         match &entry.launcher {
             AgentServerLauncher::Npm {
