@@ -111,7 +111,7 @@ use snippet_provider::SnippetProvider;
 use std::{
     borrow::Cow,
     collections::BTreeMap,
-    ops::Range,
+    ops::{Not as _, Range},
     path::{Path, PathBuf},
     pin::pin,
     str,
@@ -3939,7 +3939,9 @@ impl Project {
         let client: Option<(AnyProtoClient, _)> = if let Some(ssh_client) = &self.remote_client {
             Some((ssh_client.read(cx).proto_client(), 0))
         } else if let Some(remote_id) = self.remote_id() {
-            Some((self.collab_client.clone().into(), remote_id))
+            self.is_local()
+                .not()
+                .then(|| (self.collab_client.clone().into(), remote_id))
         } else {
             None
         };
