@@ -1051,12 +1051,13 @@ impl std::fmt::Display for DelayMs {
 ///
 /// WARN: This type should not be wrapped in an option inside of settings, otherwise the default `serde_json` behavior
 /// of treating `null` and missing as the `Option::None` will be used
-#[derive(Debug, Clone, PartialEq, Eq, strum::EnumDiscriminants)]
+#[derive(Debug, Clone, PartialEq, Eq, strum::EnumDiscriminants, Default)]
 #[strum_discriminants(derive(strum::VariantArray, strum::VariantNames, strum::FromRepr))]
 pub enum Maybe<T> {
     /// An explicitly set value, which may be `None` (representing JSON `null`) or `Some(value)`.
     Set(Option<T>),
     /// A value that was not present in the configuration.
+    #[default]
     Unset,
 }
 
@@ -1119,12 +1120,6 @@ impl<'de, T: serde::Deserialize<'de>> serde::Deserialize<'de> for Maybe<T> {
         D: serde::Deserializer<'de>,
     {
         Option::<T>::deserialize(deserializer).map(Maybe::Set)
-    }
-}
-
-impl<T> Default for Maybe<T> {
-    fn default() -> Self {
-        Maybe::Unset
     }
 }
 
