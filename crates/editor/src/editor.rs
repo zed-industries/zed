@@ -229,6 +229,7 @@ pub(crate) const CURSORS_VISIBLE_FOR: Duration = Duration::from_millis(2000);
 #[doc(hidden)]
 pub const CODE_ACTIONS_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(250);
 pub const SELECTION_HIGHLIGHT_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(100);
+pub const HIGHLIGHTING_DEBOUNCE_DELAY: Duration = Duration::from_millis(250);
 
 pub(crate) const CODE_ACTION_TIMEOUT: Duration = Duration::from_secs(5);
 pub(crate) const FORMAT_TIMEOUT: Duration = Duration::from_secs(5);
@@ -1935,21 +1936,28 @@ impl Editor {
                             }
                         }
                         project::Event::LanguageServerBufferRegistered { buffer_id, .. } => {
-                        let buffer_id = *buffer_id;
-                        if editor.buffer().read(cx).buffer(buffer_id).is_some() {
-                            let registered = editor.register_buffer(buffer_id, cx);
-                            if registered {
-                                editor.update_lsp_data(Some(buffer_id), window, cx);
-                                editor.refresh_inlay_hints(
-                                    InlayHintRefreshReason::RefreshRequested,
-                                    cx,
-                                );
-                                refresh_linked_ranges(editor, window, cx);
-                                editor.refresh_code_actions(window, cx);
-                                editor.refresh_document_highlights(cx);
+                            let buffer_id = *buffer_id;
+                            let buffer = editor.buffer().read(cx).buffer(buffer_id);
+                            if buffer.is_some() {
+                                let registered = editor.register_buffer(buffer_id, cx);
+                                if registered {
+                                    editor.update_lsp_data(Some(buffer_id), window, cx);
+                                    editor.refresh_inlay_hints(
+                                        InlayHintRefreshReason::RefreshRequested,
+                                        cx,
+                                    );
+                                    refresh_linked_ranges(editor, window, cx);
+                                    editor.refresh_code_actions(window, cx);
+                                    editor.refresh_document_highlights(cx);
+                                    editor.refresh_syntax_tokens_debounced(buffer_id, cx);
+                                    editor.update_semantic_tokens_debounced(
+                                        &buffer.unwrap(),
+                                        window,
+                                        cx,
+                                    );
+                                }
                             }
                         }
-                    }
 
                         project::Event::EntryRenamed(transaction) => {
                             let Some(workspace) = editor.workspace() else {
@@ -2331,32 +2339,44 @@ impl Editor {
         editor.tasks_update_task = Some(editor.refresh_runnables(window, cx));
         editor._subscriptions.extend(project_subscriptions);
 
-        // Register singleton buffers with LSP servers to start language servers
-        if let Some(project) = editor.project.as_ref() {
-            if let Some(buffer) = multi_buffer.read(cx).as_singleton() {
+        // Register all buffers in multibuffers (not just visible ones, since at init time
+        // the editor hasn't been laid out yet and visible_line_count() returns 0)
+        if editor.project.is_some() && !multi_buffer.read(cx).is_singleton() {
+            for buffer in multi_buffer.read(cx).all_buffers() {
                 let buffer_id = buffer.read(cx).remote_id();
-                project.update(cx, |project, cx| {
-                    editor.registered_buffers.insert(
-                        buffer_id,
-                        project.register_buffer_with_language_servers(&buffer, cx),
-                    );
-                });
+                editor.register_buffer(buffer_id, cx);
+                
+                // Check if buffer needs parsing
+                let needs_parse = buffer.read(cx).snapshot().syntax_layers().next().is_none()
+                    && buffer.read(cx).language().is_some();
+                
+                if needs_parse {
+                    // Trigger parse - Reparsed event will handle highlighting initialization
+                    buffer.update(cx, |buffer, cx| buffer.reparse(cx));
+                } else {
+                    // Buffer already parsed - initialize highlighting immediately (non-debounced)
+                    // Must match the Reparsed event handler behavior for consistency
+                    editor.refresh_syntax_tokens(buffer_id, cx);
+                    editor.update_semantic_tokens(&buffer, window, cx);
+                }
             }
         }
 
-        // Initialize rainbow variable color cache (lock-free with DashMap)
+        // Initialize rainbow highlighting (reuses cache if compatible)
         let rainbow_config = EditorSettings::get_global(cx).rainbow_highlighting;
-        if rainbow_config.enabled {
-            editor.display_map.update(cx, |display_map, _| {
-                display_map.set_variable_color_cache(Some(Arc::new(
-                    rainbow::VariableColorCache::new(rainbow_config.mode),
-                )));
-            });
-        }
-
-        editor.request_initial_semantic_tokens(window, cx);
-        editor.request_initial_syntax_tokens(cx);
-
+        editor.display_map.update(cx, |display_map, _| {
+            let cache = if rainbow_config.enabled {
+                match display_map.get_variable_color_cache() {
+                    Some(existing) if existing.mode() == rainbow_config.mode => Some(existing),
+                    _ => Some(Arc::new(rainbow::VariableColorCache::new(
+                        rainbow_config.mode,
+                    ))),
+                }
+            } else {
+                None
+            };
+            display_map.set_variable_color_cache(cache);
+        });
         editor._subscriptions.push(cx.subscribe_in(
             &cx.entity(),
             window,
@@ -6773,22 +6793,18 @@ impl Editor {
         }));
     }
 
-    /// Debounced wrapper for semantic token updates during typing
-    /// Delays the actual update by 250ms to avoid performance issues
     pub(crate) fn update_semantic_tokens_debounced(
         &mut self,
         buffer: &Entity<Buffer>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        const DEBOUNCE_DELAY_MS: u64 = 250;
-
         let buffer = buffer.clone();
 
         // Cancel any pending debounce task
         self.semantic_tokens_debounce_task = Some(cx.spawn_in(window, async move |this, cx| {
             cx.background_executor()
-                .timer(std::time::Duration::from_millis(DEBOUNCE_DELAY_MS))
+                .timer(HIGHLIGHTING_DEBOUNCE_DELAY)
                 .await;
 
             this.update(cx, |this, cx| {
@@ -6804,11 +6820,9 @@ impl Editor {
         buffer_id: BufferId,
         cx: &mut Context<Self>,
     ) {
-        const DEBOUNCE_DELAY_MS: u64 = 250;
-
         self.syntax_tokens_debounce_task = Some(cx.spawn(async move |editor, cx| {
             cx.background_executor()
-                .timer(Duration::from_millis(DEBOUNCE_DELAY_MS))
+                .timer(HIGHLIGHTING_DEBOUNCE_DELAY)
                 .await;
 
             editor
@@ -6896,114 +6910,6 @@ impl Editor {
         }
     }
 
-    fn request_initial_semantic_tokens(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(project) = self.project.as_ref() else {
-            return;
-        };
-
-        let has_any_semantic_capable_server = project
-            .read(cx)
-            .lsp_store()
-            .read(cx)
-            .lsp_server_capabilities
-            .values()
-            .any(|caps| caps.semantic_tokens_provider.is_some());
-
-        if !has_any_semantic_capable_server {
-            return;
-        }
-
-        // Handle both singleton and multibuffer editors
-        let all_buffers: Vec<Entity<Buffer>> =
-            if let Some(buffer) = self.buffer.read(cx).as_singleton() {
-                vec![buffer]
-            } else {
-                // Multibuffer: get all buffers
-                self.buffer.read(cx).all_buffers().into_iter().collect()
-            };
-
-        // Deduplicate buffers by buffer_id to avoid redundant LSP requests
-        let mut seen = HashSet::default();
-        let buffers_to_request: Vec<_> = all_buffers
-            .into_iter()
-            .filter(|buffer| seen.insert(buffer.read(cx).remote_id()))
-            .collect();
-
-        if buffers_to_request.len() != seen.len() {
-            log::debug!(
-                "Deduplicated {} buffers to {} unique buffers for semantic tokens",
-                seen.len(),
-                buffers_to_request.len()
-            );
-        }
-
-        for buffer in buffers_to_request {
-            let should_request = {
-                let buffer_snapshot = buffer.read(cx);
-                let buffer_id = buffer_snapshot.remote_id();
-                buffer_snapshot.len() > 0
-                    && !self
-                        .display_map
-                        .read(cx)
-                        .semantic_tokens
-                        .contains_key(&buffer_id)
-            };
-
-            if should_request {
-                let buffer_id = buffer.read(cx).remote_id();
-                log::debug!(
-                    "Requesting initial semantic tokens for buffer {:?}",
-                    buffer_id
-                );
-                self.update_semantic_tokens(&buffer, window, cx);
-            }
-        }
-    }
-
-    fn request_initial_syntax_tokens(&mut self, cx: &mut Context<Self>) {
-        use crate::editor_settings::EditorSettings;
-        use settings::Settings;
-
-        let rainbow_config = EditorSettings::get_global(cx).rainbow_highlighting;
-        if !rainbow_config.enabled {
-            return;
-        }
-
-        // Handle both singleton and multibuffer editors
-        let all_buffers: Vec<Entity<Buffer>> =
-            if let Some(buffer) = self.buffer.read(cx).as_singleton() {
-                vec![buffer]
-            } else {
-                self.buffer.read(cx).all_buffers().into_iter().collect()
-            };
-
-        // Deduplicate by buffer_id
-        let mut seen = HashSet::default();
-        let buffers_to_process: Vec<_> = all_buffers
-            .into_iter()
-            .filter(|buffer| seen.insert(buffer.read(cx).remote_id()))
-            .collect();
-
-        // Spawn async task with small delay to allow tree-sitter parsing to complete
-        cx.spawn(async move |editor, cx| {
-            cx.background_executor()
-                .timer(Duration::from_millis(50))
-                .await;
-
-            editor
-                .update(cx, |editor, cx| {
-                    for buffer in buffers_to_process {
-                        let buffer_id = buffer.read(cx).remote_id();
-                        if buffer.read(cx).len() > 0 {
-                            editor.refresh_syntax_tokens(buffer_id, cx);
-                        }
-                    }
-                })
-                .log_err();
-        })
-        .detach();
-    }
-
     fn request_semantic_tokens_if_capable(
         &mut self,
         server_id: LanguageServerId,
@@ -7076,41 +6982,7 @@ impl Editor {
         }
     }
 
-    fn schedule_deferred_semantic_tokens(
-        &mut self,
-        buffer: &Entity<Buffer>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let buffer_id = buffer.read(cx).remote_id();
-
-        if self
-            .display_map
-            .read(cx)
-            .semantic_tokens
-            .contains_key(&buffer_id)
-        {
-            return;
-        }
-
-        let buffer = buffer.clone();
-        cx.spawn_in(window, async move |editor, cx| {
-            cx.background_executor()
-                .timer(Duration::from_millis(200))
-                .await;
-
-            editor
-                .update_in(cx, |editor, window, cx| {
-                    editor.update_semantic_tokens(&buffer, window, cx);
-                })
-                .log_err();
-        })
-        .detach();
-    }
-
     fn refresh_syntax_tokens(&mut self, buffer_id: BufferId, cx: &mut Context<Self>) {
-        self.syntax_tokens_debounce_task = None;
-
         let Some((cache, theme, buffer_snapshot)) =
             self.display_map.update(cx, |display_map, cx| {
                 let cache = display_map.get_variable_color_cache()?;
@@ -21398,8 +21270,25 @@ impl Editor {
                     )
                     .detach();
                 }
+                
+                // Register buffer with LSP and initialize highlighting
+                self.register_buffer(buffer_id, cx);
                 self.update_lsp_data(Some(buffer_id), window, cx);
                 self.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
+                
+                // Check if buffer needs parsing
+                let needs_parse = buffer.read(cx).snapshot().syntax_layers().next().is_none()
+                    && buffer.read(cx).language().is_some();
+                
+                if needs_parse {
+                    // Trigger parse - Reparsed event will handle highlighting initialization
+                    buffer.update(cx, |buf, cx| buf.reparse(cx));
+                } else {
+                    // Buffer already parsed - initialize highlighting immediately (non-debounced)
+                    self.refresh_syntax_tokens(buffer_id, cx);
+                    self.update_semantic_tokens(&buffer, window, cx);
+                }
+                
                 cx.emit(EditorEvent::ExcerptsAdded {
                     buffer: buffer.clone(),
                     predecessor: *predecessor,
@@ -21439,7 +21328,12 @@ impl Editor {
                 self.tasks_update_task = Some(self.refresh_runnables(window, cx));
                 jsx_tag_auto_close::refresh_enabled_in_any_buffer(self, multibuffer, cx);
 
+                // Refresh both syntax and semantic tokens after reparsing
                 self.refresh_syntax_tokens(*buffer_id, cx);
+                
+                if let Some(buffer) = self.buffer.read(cx).buffer(*buffer_id) {
+                    self.update_semantic_tokens(&buffer, window, cx);
+                }
 
                 cx.emit(EditorEvent::Reparsed(*buffer_id));
             }
@@ -21448,6 +21342,16 @@ impl Editor {
             }
             multi_buffer::Event::LanguageChanged(buffer_id) => {
                 self.registered_buffers.remove(&buffer_id);
+                // Re-register with new language and update LSP data
+                let registered = self.register_buffer(*buffer_id, cx);
+                if registered {
+                    self.update_lsp_data(Some(*buffer_id), window, cx);
+                    // Update rainbow highlighting tokens (syntax and semantic) for new language
+                    if let Some(buffer) = self.buffer.read(cx).buffer(*buffer_id) {
+                        self.refresh_syntax_tokens_debounced(*buffer_id, cx);
+                        self.update_semantic_tokens_debounced(&buffer, window, cx);
+                    }
+                }
                 jsx_tag_auto_close::refresh_enabled_in_any_buffer(self, multibuffer, cx);
                 cx.emit(EditorEvent::Reparsed(*buffer_id));
                 cx.notify();
@@ -22537,8 +22441,19 @@ impl Editor {
         if self.ignore_lsp_data() || self.buffer().read(cx).is_singleton() {
             return;
         }
-        for (_, (visible_buffer, _, _)) in self.visible_excerpts(None, cx) {
-            self.register_buffer(visible_buffer.read(cx).remote_id(), cx);
+        
+        // Try visible excerpts first (scroll-based), but if editor hasn't been laid out yet
+        // and visible_line_count is 0, fall back to registering all buffers
+        let visible = self.visible_excerpts(None, cx);
+        if visible.is_empty() {
+            // Fallback: register all buffers if nothing is visible (likely pre-layout)
+            for buffer in self.buffer().read(cx).all_buffers() {
+                self.register_buffer(buffer.read(cx).remote_id(), cx);
+            }
+        } else {
+            for (_, (visible_buffer, _, _)) in visible {
+                self.register_buffer(visible_buffer.read(cx).remote_id(), cx);
+            }
         }
     }
 

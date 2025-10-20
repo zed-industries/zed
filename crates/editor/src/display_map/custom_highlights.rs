@@ -153,9 +153,11 @@ fn create_highlight_endpoints(
                     continue;
                 }
 
-                if token.style.color.is_some() {
-                    lsp_covered_ranges.push(token_range.clone());
+                // Track ALL LSP tokens (including colorless ones) to suppress syntax highlighting
+                lsp_covered_ranges.push(token_range.clone());
 
+                // Only add highlight endpoints for tokens with colors
+                if token.style.color.is_some() {
                     highlight_endpoints.push(HighlightEndpoint {
                         offset: token_range.start,
                         tag: HighlightKey::Type(std::any::TypeId::of::<()>()),
