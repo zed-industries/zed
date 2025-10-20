@@ -416,13 +416,6 @@ impl Platform for WindowsPlatform {
         true
     }
 
-    #[cfg(feature = "screen-capture")]
-    fn screen_capture_sources(
-        &self,
-    ) -> oneshot::Receiver<Result<Vec<Rc<dyn ScreenCaptureSource>>>> {
-        crate::platform::scap_screen_capture::scap_screen_sources(&self.foreground_executor)
-    }
-
     fn active_window(&self) -> Option<AnyWindowHandle> {
         let active_window_hwnd = unsafe { GetActiveWindow() };
         self.window_from_hwnd(active_window_hwnd)

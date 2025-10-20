@@ -36,6 +36,8 @@ client.workspace = true
 cloud_llm_client.workspace = true
 db.workspace = true
 gpui = { workspace = true, features = ["screen-capture"] }
+livekit_client.workspace = true
+libwebrtc.workspace = true
 notifications.workspace = true
 project.workspace = true
 remote.workspace = true

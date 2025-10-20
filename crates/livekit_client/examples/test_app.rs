@@ -281,7 +281,7 @@ impl LivekitWindow {
             cx.notify();
         } else {
             let participant = self.room.local_participant();
-            let sources = cx.screen_capture_sources();
+            let sources = screen_capture_sources();
             cx.spawn_in(window, async move |this, cx| {
                 let sources = sources.await.unwrap()?;
                 let source = sources.into_iter().next().unwrap();

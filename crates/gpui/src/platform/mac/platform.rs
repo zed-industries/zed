@@ -606,15 +606,7 @@ impl Platform for MacPlatform {
 
     #[cfg(feature = "screen-capture")]
     fn is_screen_capture_supported(&self) -> bool {
-        let min_version = cocoa::foundation::NSOperatingSystemVersion::new(12, 3, 0);
-        super::is_macos_version_at_least(min_version)
-    }
-
-    #[cfg(feature = "screen-capture")]
-    fn screen_capture_sources(
-        &self,
-    ) -> oneshot::Receiver<Result<Vec<Rc<dyn crate::ScreenCaptureSource>>>> {
-        super::screen_capture::get_sources()
+        true
     }
 
     fn active_window(&self) -> Option<AnyWindowHandle> {

@@ -1,8 +1,7 @@
 use crate::{
     AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DevicePixels,
     DummyKeyboardMapper, ForegroundExecutor, Keymap, NoopTextSystem, Platform, PlatformDisplay,
-    PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem, PromptButton,
-    ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream, SourceMetadata, Task,
+    PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem, PromptButton, Task,
     TestDisplay, TestWindow, WindowAppearance, WindowParams, size,
 };
 use anyhow::Result;
@@ -33,49 +32,12 @@ pub(crate) struct TestPlatform {
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     current_primary_item: Mutex<Option<ClipboardItem>>,
     pub(crate) prompts: RefCell<TestPrompts>,
-    screen_capture_sources: RefCell<Vec<TestScreenCaptureSource>>,
     pub opened_url: RefCell<Option<String>>,
     pub text_system: Arc<dyn PlatformTextSystem>,
     pub expect_restart: RefCell<Option<oneshot::Sender<Option<PathBuf>>>>,
     #[cfg(target_os = "windows")]
     bitmap_factory: std::mem::ManuallyDrop<IWICImagingFactory>,
     weak: Weak<Self>,
-}
-
-#[derive(Clone)]
-/// A fake screen capture source, used for testing.
-pub struct TestScreenCaptureSource {}
-
-/// A fake screen capture stream, used for testing.
-pub struct TestScreenCaptureStream {}
-
-impl ScreenCaptureSource for TestScreenCaptureSource {
-    fn metadata(&self) -> Result<SourceMetadata> {
-        Ok(SourceMetadata {
-            id: 0,
-            is_main: None,
-            label: None,
-            resolution: size(DevicePixels(1), DevicePixels(1)),
-        })
-    }
-
-    fn stream(
-        &self,
-        _foreground_executor: &ForegroundExecutor,
-        _frame_callback: Box<dyn Fn(ScreenCaptureFrame) + Send>,
-    ) -> oneshot::Receiver<Result<Box<dyn ScreenCaptureStream>>> {
-        let (mut tx, rx) = oneshot::channel();
-        let stream = TestScreenCaptureStream {};
-        tx.send(Ok(Box::new(stream) as Box<dyn ScreenCaptureStream>))
-            .ok();
-        rx
-    }
-}
-
-impl ScreenCaptureStream for TestScreenCaptureStream {
-    fn metadata(&self) -> Result<SourceMetadata> {
-        TestScreenCaptureSource {}.metadata()
-    }
 }
 
 struct TestPrompt {
@@ -109,7 +71,6 @@ impl TestPlatform {
             background_executor: executor,
             foreground_executor,
             prompts: Default::default(),
-            screen_capture_sources: Default::default(),
             active_cursor: Default::default(),
             active_display: Rc::new(TestDisplay::new()),
             active_window: Default::default(),
@@ -168,10 +129,6 @@ impl TestPlatform {
             prompt.msg.clone(),
             prompt.detail.clone().unwrap_or_default(),
         ))
-    }
-
-    pub(crate) fn set_screen_capture_sources(&self, sources: Vec<TestScreenCaptureSource>) {
-        *self.screen_capture_sources.borrow_mut() = sources;
     }
 
     pub(crate) fn prompt(
@@ -285,21 +242,6 @@ impl Platform for TestPlatform {
     #[cfg(feature = "screen-capture")]
     fn is_screen_capture_supported(&self) -> bool {
         true
-    }
-
-    #[cfg(feature = "screen-capture")]
-    fn screen_capture_sources(
-        &self,
-    ) -> oneshot::Receiver<Result<Vec<Rc<dyn ScreenCaptureSource>>>> {
-        let (mut tx, rx) = oneshot::channel();
-        tx.send(Ok(self
-            .screen_capture_sources
-            .borrow()
-            .iter()
-            .map(|source| Rc::new(source.clone()) as Rc<dyn ScreenCaptureSource>)
-            .collect()))
-            .ok();
-        rx
     }
 
     fn active_window(&self) -> Option<crate::AnyWindowHandle> {
@@ -434,23 +376,6 @@ impl Platform for TestPlatform {
 
     fn open_with_system(&self, _path: &Path) {
         unimplemented!()
-    }
-}
-
-impl TestScreenCaptureSource {
-    /// Create a fake screen capture source, for testing.
-    pub fn new() -> Self {
-        Self {}
-    }
-}
-
-#[cfg(target_os = "windows")]
-impl Drop for TestPlatform {
-    fn drop(&mut self) {
-        unsafe {
-            std::mem::ManuallyDrop::drop(&mut self.bitmap_factory);
-            windows::Win32::System::Ole::OleUninitialize();
-        }
     }
 }
 
