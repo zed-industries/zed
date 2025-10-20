@@ -475,7 +475,7 @@ async-recursion = "1.0.0"
 async-tar = "0.5.1"
 async-task = "4.7"
 async-trait = "0.1"
-async-tungstenite = "0.31.0"
+async-tungstenite = "0.32.0"
 async_zip = { version = "0.0.18", features = ["deflate", "deflate64"] }
 aws-config = { version = "1.8.10", features = ["behavior-version-latest"] }
 aws-credential-types = { version = "1.2.8", features = [
@@ -555,6 +555,10 @@ jupyter-websocket-client = "0.15.0"
 libc = "0.2"
 libsqlite3-sys = { version = "0.30.1", features = ["bundled"] }
 linkify = "0.10.0"
+libwebrtc = { branch = "zed", git = "https://github.com/Be-ing/rust-sdks" }
+livekit = { branch = "zed", git = "https://github.com/Be-ing/rust-sdks", features = [
+    "__rustls-tls"
+] }
 log = { version = "0.4.16", features = ["kv_unstable_serde", "serde"] }
 lsp-types = { git = "https://github.com/zed-industries/lsp-types", rev = "b71ab4eeb27d9758be8092020a46fe33fbca4e33" }
 mach2 = "0.5"
@@ -640,8 +644,6 @@ rust-embed = { version = "8.4", features = ["include-exclude"] }
 rustc-hash = "2.1.0"
 rustls = { version = "0.23.26" }
 rustls-platform-verifier = "0.5.0"
-# WARNING: If you change this, you must also publish a new version of zed-scap to crates.io
-scap = { git = "https://github.com/zed-industries/scap", rev = "4afea48c3b002197176fb19cd0f9b180dd36eaac", default-features = false, package = "zed-scap", version = "0.0.8-zed" }
 schemars = { version = "1.0", features = ["indexmap2"] }
 semver = { version = "1.0", features = ["serde"] }
 serde = { version = "1.0.221", features = ["derive", "rc"] }
@@ -683,7 +685,7 @@ time = { version = "0.3", features = [
 ] }
 tiny_http = "0.8"
 tokio = { version = "1" }
-tokio-tungstenite = { version = "0.26", features = ["__rustls-tls"] }
+tokio-tungstenite = { version = "0.28", features = ["__rustls-tls"] }
 tokio-socks = { version = "0.5.2", default-features = false, features = ["futures-io", "tokio"] }
 toml = "0.8"
 toml_edit = { version = "0.22", default-features = false, features = ["display", "parse", "serde"] }
@@ -796,7 +798,6 @@ features = [
 async-task = { git = "https://github.com/smol-rs/async-task.git", rev = "b4486cd71e4e94fbda54ce6302444de14f4d190e" }
 notify = { git = "https://github.com/zed-industries/notify.git", rev = "6c550ac3c56cbd143c57ea6390e197af9d790908" }
 notify-types = { git = "https://github.com/zed-industries/notify.git", rev = "6c550ac3c56cbd143c57ea6390e197af9d790908" }
-windows-capture = { git = "https://github.com/zed-industries/windows-capture.git", rev = "f0d6c1b6691db75461b732f6d5ff56eed002eeb9" }
 calloop = { git = "https://github.com/zed-industries/calloop" }
 
 [profile.dev]

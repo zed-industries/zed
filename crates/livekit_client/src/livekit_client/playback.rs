@@ -4,10 +4,7 @@ use audio::{AudioSettings, CHANNEL_COUNT, LEGACY_CHANNEL_COUNT, LEGACY_SAMPLE_RA
 use cpal::traits::{DeviceTrait, StreamTrait as _};
 use futures::channel::mpsc::UnboundedSender;
 use futures::{Stream, StreamExt as _};
-use gpui::{
-    AsyncApp, BackgroundExecutor, ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream,
-    Task,
-};
+use gpui::{AsyncApp, BackgroundExecutor, Task};
 use libwebrtc::native::{apm, audio_mixer, audio_resampler};
 use livekit::track;
 
@@ -15,8 +12,7 @@ use livekit::webrtc::{
     audio_frame::AudioFrame,
     audio_source::{AudioSourceOptions, RtcAudioSource, native::NativeAudioSource},
     audio_stream::native::NativeAudioStream,
-    video_frame::{VideoBuffer, VideoFrame, VideoRotation},
-    video_source::{RtcVideoSource, VideoResolution, native::NativeVideoSource},
+    video_frame::VideoBuffer,
     video_stream::native::NativeVideoStream,
 };
 use log::info;
@@ -461,48 +457,9 @@ fn send_to_livekit(frame_tx: UnboundedSender<AudioFrame<'static>>, mut microphon
     }
 }
 
-use super::LocalVideoTrack;
-
 pub enum AudioStream {
     Input { _task: Task<()> },
     Output { _drop: Box<dyn std::any::Any> },
-}
-
-pub(crate) async fn capture_local_video_track(
-    capture_source: &dyn ScreenCaptureSource,
-    cx: &mut gpui::AsyncApp,
-) -> Result<(crate::LocalVideoTrack, Box<dyn ScreenCaptureStream>)> {
-    let metadata = capture_source.metadata()?;
-    let track_source = gpui_tokio::Tokio::spawn(cx, async move {
-        NativeVideoSource::new(VideoResolution {
-            width: metadata.resolution.width.0 as u32,
-            height: metadata.resolution.height.0 as u32,
-        })
-    })
-    .await?;
-
-    let capture_stream = capture_source
-        .stream(cx.foreground_executor(), {
-            let track_source = track_source.clone();
-            Box::new(move |frame| {
-                if let Some(buffer) = video_frame_buffer_to_webrtc(frame) {
-                    track_source.capture_frame(&VideoFrame {
-                        rotation: VideoRotation::VideoRotation0,
-                        timestamp_us: 0,
-                        buffer,
-                    });
-                }
-            })
-        })
-        .await??;
-
-    Ok((
-        LocalVideoTrack(track::LocalVideoTrack::create_video_track(
-            "screen share",
-            RtcVideoSource::Native(track_source),
-        )),
-        capture_stream,
-    ))
 }
 
 #[derive(Clone)]
@@ -734,75 +691,6 @@ fn video_frame_buffer_from_webrtc(buffer: Box<dyn VideoBuffer>) -> Option<Remote
         Frame::new(image),
         1,
     ))))
-}
-
-#[cfg(target_os = "macos")]
-fn video_frame_buffer_to_webrtc(frame: ScreenCaptureFrame) -> Option<impl AsRef<dyn VideoBuffer>> {
-    use livekit::webrtc;
-
-    let pixel_buffer = frame.0.as_concrete_TypeRef();
-    std::mem::forget(frame.0);
-    unsafe {
-        Some(webrtc::video_frame::native::NativeBuffer::from_cv_pixel_buffer(pixel_buffer as _))
-    }
-}
-
-#[cfg(not(target_os = "macos"))]
-fn video_frame_buffer_to_webrtc(frame: ScreenCaptureFrame) -> Option<impl AsRef<dyn VideoBuffer>> {
-    use libwebrtc::native::yuv_helper::{abgr_to_nv12, argb_to_nv12};
-    use livekit::webrtc::prelude::NV12Buffer;
-    match frame.0 {
-        scap::frame::Frame::BGRx(frame) => {
-            let mut buffer = NV12Buffer::new(frame.width as u32, frame.height as u32);
-            let (stride_y, stride_uv) = buffer.strides();
-            let (data_y, data_uv) = buffer.data_mut();
-            argb_to_nv12(
-                &frame.data,
-                frame.width as u32 * 4,
-                data_y,
-                stride_y,
-                data_uv,
-                stride_uv,
-                frame.width,
-                frame.height,
-            );
-            Some(buffer)
-        }
-        scap::frame::Frame::RGBx(frame) => {
-            let mut buffer = NV12Buffer::new(frame.width as u32, frame.height as u32);
-            let (stride_y, stride_uv) = buffer.strides();
-            let (data_y, data_uv) = buffer.data_mut();
-            abgr_to_nv12(
-                &frame.data,
-                frame.width as u32 * 4,
-                data_y,
-                stride_y,
-                data_uv,
-                stride_uv,
-                frame.width,
-                frame.height,
-            );
-            Some(buffer)
-        }
-        scap::frame::Frame::YUVFrame(yuvframe) => {
-            let mut buffer = NV12Buffer::with_strides(
-                yuvframe.width as u32,
-                yuvframe.height as u32,
-                yuvframe.luminance_stride as u32,
-                yuvframe.chrominance_stride as u32,
-            );
-            let (luminance, chrominance) = buffer.data_mut();
-            luminance.copy_from_slice(yuvframe.luminance_bytes.as_slice());
-            chrominance.copy_from_slice(yuvframe.chrominance_bytes.as_slice());
-            Some(buffer)
-        }
-        _ => {
-            log::error!(
-                "Expected BGRx or YUV frame from scap screen capture but got some other format."
-            );
-            None
-        }
-    }
 }
 
 trait DeviceChangeListenerApi: Stream<Item = ()> + Sized {

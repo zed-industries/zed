@@ -1,4 +1,5 @@
 use crate::test;
+use libwebrtc::desktop_capturer::CaptureSource;
 
 pub(crate) mod participant;
 pub(crate) mod publication;
@@ -36,4 +37,8 @@ pub(crate) fn play_remote_video_track(
     _: &gpui::BackgroundExecutor,
 ) -> impl futures::Stream<Item = RemoteVideoFrame> + use<> {
     futures::stream::pending()
+}
+
+pub fn screen_capture_sources() -> Vec<CaptureSource> {
+    Vec::new()
 }

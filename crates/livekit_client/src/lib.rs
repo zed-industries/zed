@@ -1,3 +1,8 @@
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
+
 use anyhow::Context as _;
 use collections::HashMap;
 
@@ -188,6 +193,18 @@ pub enum RoomEvent {
     },
     Reconnecting,
     Reconnected,
+}
+
+pub struct ScreenCaptureStreamHandle {
+    pub screen_id: u64,
+    stop_capture: Arc<AtomicBool>,
+    _spawn_handle: gpui::Task<Result<(), gpui_tokio::JoinError>>,
+}
+
+impl Drop for ScreenCaptureStreamHandle {
+    fn drop(&mut self) {
+        self.stop_capture.store(true, Ordering::Release);
+    }
 }
 
 pub(crate) fn default_device(

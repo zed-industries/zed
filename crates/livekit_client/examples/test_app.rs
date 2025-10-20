@@ -3,15 +3,15 @@ use std::sync::Arc;
 use futures::StreamExt;
 use gpui::{
     AppContext as _, AsyncApp, Bounds, Context, Entity, InteractiveElement, KeyBinding, Menu,
-    MenuItem, ParentElement, Pixels, Render, ScreenCaptureStream, SharedString,
-    StatefulInteractiveElement as _, Styled, Task, Window, WindowBounds, WindowHandle,
-    WindowOptions, actions, bounds, div, point,
+    MenuItem, ParentElement, Pixels, Render, SharedString, StatefulInteractiveElement as _, Styled,
+    Task, Window, WindowBounds, WindowHandle, WindowOptions, actions, bounds, div, point,
     prelude::{FluentBuilder as _, IntoElement},
     px, rgb, size,
 };
 use livekit_client::{
     AudioStream, LocalTrackPublication, Participant, ParticipantIdentity, RemoteParticipant,
     RemoteTrackPublication, RemoteVideoTrack, RemoteVideoTrackView, Room, RoomEvent,
+    ScreenCaptureStreamHandle, screen_capture_sources,
 };
 
 use livekit_api::token::{self, VideoGrant};
@@ -80,7 +80,7 @@ struct LivekitWindow {
     microphone_track: Option<LocalTrackPublication>,
     screen_share_track: Option<LocalTrackPublication>,
     microphone_stream: Option<livekit_client::AudioStream>,
-    screen_share_stream: Option<Box<dyn ScreenCaptureStream>>,
+    screen_share_stream: Option<ScreenCaptureStreamHandle>,
     remote_participants: Vec<(ParticipantIdentity, ParticipantState)>,
     _events_task: Task<()>,
 }
@@ -280,13 +280,12 @@ impl LivekitWindow {
             cx.notify();
         } else {
             let participant = self.room.local_participant();
-            let sources = cx.screen_capture_sources();
+            let sources = screen_capture_sources();
             cx.spawn_in(window, async move |this, cx| {
-                let sources = sources.await.unwrap()?;
                 let source = sources.into_iter().next().unwrap();
 
                 let (publication, stream) = participant
-                    .publish_screenshare_track(&*source, cx)
+                    .publish_screenshare_track(Some(source), cx)
                     .await
                     .unwrap();
                 this.update(cx, |this, cx| {

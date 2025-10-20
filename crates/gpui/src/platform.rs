@@ -26,18 +26,6 @@ mod visual_test;
 #[cfg(target_os = "windows")]
 mod windows;
 
-#[cfg(all(
-    feature = "screen-capture",
-    any(
-        target_os = "windows",
-        all(
-            any(target_os = "linux", target_os = "freebsd"),
-            any(feature = "wayland", feature = "x11"),
-        )
-    )
-))]
-pub(crate) mod scap_screen_capture;
-
 use crate::{
     Action, AnyWindowHandle, App, AsyncWindowContext, BackgroundExecutor, Bounds,
     DEFAULT_WINDOW_SIZE, DevicePixels, DispatchEventResult, Font, FontId, FontMetrics, FontRun,
@@ -91,7 +79,7 @@ pub(crate) use windows::*;
 pub use linux::layer_shell;
 
 #[cfg(any(test, feature = "test-support"))]
-pub use test::{TestDispatcher, TestScreenCaptureSource, TestScreenCaptureStream};
+pub use test::TestDispatcher;
 
 #[cfg(all(target_os = "macos", any(test, feature = "test-support")))]
 pub use visual_test::VisualTestPlatform;
@@ -107,6 +95,18 @@ pub(crate) fn current_platform(headless: bool) -> Rc<dyn Platform> {
 }
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+#[derive(strum::Display)]
+/// The available display systems for Linux
+pub enum LinuxCompositor {
+    /// Wayland
+    Wayland,
+    /// X11
+    X11,
+    /// Headless (no display)
+    Headless,
+}
+
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 pub(crate) fn current_platform(headless: bool) -> Rc<dyn Platform> {
     #[cfg(feature = "x11")]
     use anyhow::Context as _;
@@ -117,17 +117,18 @@ pub(crate) fn current_platform(headless: bool) -> Rc<dyn Platform> {
 
     match guess_compositor() {
         #[cfg(feature = "wayland")]
-        "Wayland" => Rc::new(WaylandClient::new()),
-
+        LinuxCompositor::Wayland => Rc::new(WaylandClient::new()),
+        #[cfg(not(feature = "wayland"))]
+        LinuxCompositor::Wayland => panic!("Running on Wayland but built without Wayland support"),
         #[cfg(feature = "x11")]
-        "X11" => Rc::new(
+        LinuxCompositor::X11 => Rc::new(
             X11Client::new()
                 .context("Failed to initialize X11 client.")
                 .unwrap(),
         ),
-
-        "Headless" => Rc::new(HeadlessClient::new()),
-        _ => unreachable!(),
+        #[cfg(not(feature = "x11"))]
+        LinuxCompositor::X11 => panic!("Running on X11 but built without X11 support"),
+        LinuxCompositor::Headless => Rc::new(HeadlessClient::new()),
     }
 }
 
@@ -144,9 +145,9 @@ pub(crate) fn current_platform(headless: bool) -> Rc<dyn Platform> {
 /// Does not attempt to connect to the given compositor
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 #[inline]
-pub fn guess_compositor() -> &'static str {
+pub fn guess_compositor() -> LinuxCompositor {
     if std::env::var_os("ZED_HEADLESS").is_some() {
-        return "Headless";
+        return LinuxCompositor::Headless;
     }
 
     #[cfg(feature = "wayland")]
@@ -163,11 +164,11 @@ pub fn guess_compositor() -> &'static str {
     let use_x11 = x11_display.is_some_and(|display| !display.is_empty());
 
     if use_wayland {
-        "Wayland"
+        LinuxCompositor::Wayland
     } else if use_x11 {
-        "X11"
+        LinuxCompositor::X11
     } else {
-        "Headless"
+        LinuxCompositor::Headless
     }
 }
 
@@ -189,28 +190,6 @@ pub(crate) trait Platform: 'static {
     fn active_window(&self) -> Option<AnyWindowHandle>;
     fn window_stack(&self) -> Option<Vec<AnyWindowHandle>> {
         None
-    }
-
-    #[cfg(feature = "screen-capture")]
-    fn is_screen_capture_supported(&self) -> bool;
-    #[cfg(not(feature = "screen-capture"))]
-    fn is_screen_capture_supported(&self) -> bool {
-        false
-    }
-    #[cfg(feature = "screen-capture")]
-    fn screen_capture_sources(&self)
-    -> oneshot::Receiver<Result<Vec<Rc<dyn ScreenCaptureSource>>>>;
-    #[cfg(not(feature = "screen-capture"))]
-    fn screen_capture_sources(
-        &self,
-    ) -> oneshot::Receiver<anyhow::Result<Vec<Rc<dyn ScreenCaptureSource>>>> {
-        let (sources_tx, sources_rx) = oneshot::channel();
-        sources_tx
-            .send(Err(anyhow::anyhow!(
-                "gpui was compiled without the screen-capture feature"
-            )))
-            .ok();
-        sources_rx
     }
 
     fn open_window(
@@ -322,42 +301,6 @@ pub trait PlatformDisplay: Send + Sync + Debug {
         Bounds::new(origin, clipped_window_size)
     }
 }
-
-/// Metadata for a given [ScreenCaptureSource]
-#[derive(Clone)]
-pub struct SourceMetadata {
-    /// Opaque identifier of this screen.
-    pub id: u64,
-    /// Human-readable label for this source.
-    pub label: Option<SharedString>,
-    /// Whether this source is the main display.
-    pub is_main: Option<bool>,
-    /// Video resolution of this source.
-    pub resolution: Size<DevicePixels>,
-}
-
-/// A source of on-screen video content that can be captured.
-pub trait ScreenCaptureSource {
-    /// Returns metadata for this source.
-    fn metadata(&self) -> Result<SourceMetadata>;
-
-    /// Start capture video from this source, invoking the given callback
-    /// with each frame.
-    fn stream(
-        &self,
-        foreground_executor: &ForegroundExecutor,
-        frame_callback: Box<dyn Fn(ScreenCaptureFrame) + Send>,
-    ) -> oneshot::Receiver<Result<Box<dyn ScreenCaptureStream>>>;
-}
-
-/// A video stream captured from a screen.
-pub trait ScreenCaptureStream {
-    /// Returns metadata for this source.
-    fn metadata(&self) -> Result<SourceMetadata>;
-}
-
-/// A frame of video captured from a screen.
-pub struct ScreenCaptureFrame(pub PlatformScreenCaptureFrame);
 
 /// An opaque identifier for a hardware display
 #[derive(PartialEq, Eq, Hash, Copy, Clone)]

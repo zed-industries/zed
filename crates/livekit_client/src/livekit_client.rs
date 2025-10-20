@@ -1,13 +1,29 @@
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
+use std::time::Duration;
+
+use crate::ScreenCaptureStreamHandle;
 
 use anyhow::{Context as _, Result, anyhow};
 use audio::AudioSettings;
 use collections::HashMap;
-use futures::{SinkExt, channel::mpsc};
-use gpui::{App, AsyncApp, ScreenCaptureSource, ScreenCaptureStream, Task};
+use futures::{SinkExt, channel::mpsc, stream::StreamExt};
+use gpui::{App, AsyncApp, Task};
 use gpui_tokio::Tokio;
+use livekit::options::{TrackPublishOptions, VideoCodec};
+use livekit::track::TrackSource;
+use livekit::webrtc::desktop_capturer::{
+    CaptureError, CaptureSource, DesktopCaptureSourceType, DesktopCapturer, DesktopCapturerOptions,
+    DesktopFrame,
+};
+use livekit::webrtc::native::yuv_helper;
+use livekit::webrtc::prelude::{
+    I420Buffer, RtcVideoSource, VideoFrame, VideoResolution, VideoRotation,
+};
+use livekit::webrtc::video_source::native::NativeVideoSource;
 use log::info;
-use playback::capture_local_video_track;
 use settings::Settings;
 
 mod playback;
@@ -29,6 +45,7 @@ pub struct RemoteTrackPublication(livekit::publication::RemoteTrackPublication);
 pub struct RemoteParticipant(livekit::participant::RemoteParticipant);
 
 #[derive(Clone, Debug)]
+#[allow(unused)]
 pub struct LocalVideoTrack(livekit::track::LocalVideoTrack);
 #[derive(Clone, Debug)]
 pub struct LocalAudioTrack(livekit::track::LocalAudioTrack);
@@ -36,6 +53,29 @@ pub struct LocalAudioTrack(livekit::track::LocalAudioTrack);
 pub struct LocalTrackPublication(livekit::publication::LocalTrackPublication);
 #[derive(Clone, Debug)]
 pub struct LocalParticipant(livekit::participant::LocalParticipant);
+
+fn desktop_capturer_options() -> DesktopCapturerOptions {
+    // Picking either a screen or a window with one DesktopCapturer is only implemented
+    // in libwebrtc on Wayland and macOS.
+    #[allow(unused_variables)]
+    let source_type = DesktopCaptureSourceType::Screen;
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    let source_type = match gpui::guess_compositor() {
+        gpui::LinuxCompositor::Wayland => DesktopCaptureSourceType::Generic,
+        _ => DesktopCaptureSourceType::Screen,
+    };
+    #[cfg(target_os = "macos")]
+    let source_type = DesktopCaptureSourceType::Generic;
+
+    let mut options = DesktopCapturerOptions::new(source_type);
+    options.set_include_cursor(true);
+    options
+}
+
+pub fn screen_capture_sources() -> Vec<CaptureSource> {
+    let capturer = DesktopCapturer::new(desktop_capturer_options()).unwrap();
+    capturer.get_source_list()
+}
 
 pub struct Room {
     room: livekit::Room,
@@ -164,20 +204,137 @@ impl Room {
 impl LocalParticipant {
     pub async fn publish_screenshare_track(
         &self,
-        source: &dyn ScreenCaptureSource,
+        source: Option<CaptureSource>,
         cx: &mut AsyncApp,
-    ) -> Result<(LocalTrackPublication, Box<dyn ScreenCaptureStream>)> {
-        let (track, stream) = capture_local_video_track(source, cx).await?;
-        let options = livekit::options::TrackPublishOptions {
-            source: livekit::track::TrackSource::Screenshare,
-            video_codec: livekit::options::VideoCodec::VP8,
-            ..Default::default()
-        };
-        let publication = self
-            .publish_track(livekit::track::LocalTrack::Video(track.0), options, cx)
-            .await?;
+    ) -> Result<(LocalTrackPublication, ScreenCaptureStreamHandle)> {
+        let stop_capture = Arc::new(AtomicBool::new(false));
+        let (mut video_source_sender, mut video_source_receiver) = mpsc::channel(0);
+        let callback = {
+            // These dimensions are arbitrary initial values.
+            // libwebrtc only exposes the resolution of the source in the DesktopFrame
+            // passed to the callback, so wait to publish the video track until
+            // the callback is called the first time.
+            let mut stream_width = 1920;
+            let mut stream_height = 1080;
 
-        Ok((publication, stream))
+            let mut video_frame = VideoFrame {
+                rotation: VideoRotation::VideoRotation0,
+                buffer: I420Buffer::new(stream_width, stream_height),
+                timestamp_us: 0,
+            };
+            let mut video_source: Option<NativeVideoSource> = None;
+            let stop_capture = stop_capture.clone();
+            move |result: Result<DesktopFrame, CaptureError>| {
+                let frame = match result {
+                    Ok(frame) => frame,
+                    // This error is expected on Wayland while waiting for the user
+                    // to pick a screen with the XDG Desktop Portal.
+                    Err(CaptureError::Temporary) => {
+                        log::debug!("Temporary error capturing screen");
+                        return;
+                    }
+                    Err(CaptureError::Permanent) => {
+                        log::error!("Error capturing screen");
+                        stop_capture.store(true, Ordering::Release);
+                        return;
+                    }
+                };
+                let height = frame.height().try_into().unwrap();
+                let width = frame.width().try_into().unwrap();
+
+                if width != stream_width || height != stream_height {
+                    stream_width = width;
+                    stream_height = height;
+                    video_frame.buffer = I420Buffer::new(width, height);
+                }
+
+                let stride = frame.stride();
+                let data = frame.data();
+
+                let (s_y, s_u, s_v) = video_frame.buffer.strides();
+                let (y, u, v) = video_frame.buffer.data_mut();
+                yuv_helper::argb_to_i420(
+                    data,
+                    stride,
+                    y,
+                    s_y,
+                    u,
+                    s_u,
+                    v,
+                    s_v,
+                    frame.width(),
+                    frame.height(),
+                );
+
+                if let Some(video_source) = &video_source {
+                    video_source.capture_frame(&video_frame);
+                } else {
+                    // This is the first time the callback has been called.
+                    // Use the resolution from the DesktopFrame to create a video source
+                    // and push it over a channel to be published from the async context.
+                    let video_source_inner = NativeVideoSource::new(VideoResolution {
+                        width: stream_width,
+                        height: stream_height,
+                    });
+
+                    video_source_sender
+                        .try_send(video_source_inner.clone())
+                        .unwrap();
+
+                    video_source = Some(video_source_inner);
+                }
+            }
+        };
+
+        // source should only be None in tests which have a different implementation
+        // of this function.
+        let source = source.unwrap();
+        let screen_id = source.id();
+
+        let mut capturer = DesktopCapturer::new(desktop_capturer_options())
+            .ok_or(anyhow!("Failed to create DesktopCapturer"))?;
+        capturer.start_capture(Some(source), callback);
+        log::debug!("Starting screen capture");
+
+        let spawn_handle = gpui_tokio::Tokio::spawn(cx, {
+            let stop_capture = stop_capture.clone();
+            async move {
+                loop {
+                    if stop_capture.load(Ordering::Acquire) {
+                        log::debug!("Stopping screen capture");
+                        break;
+                    }
+                    capturer.capture_frame();
+                    tokio::time::sleep(Duration::from_secs_f32(1.0 / 60.0)).await;
+                }
+            }
+        })?;
+
+        let video_source = video_source_receiver.next().await.ok_or(anyhow!(
+            "No NativeVideoSource received from DesktopCapturer"
+        ))?;
+        let track = livekit::track::LocalVideoTrack::create_video_track(
+            "screen_share",
+            RtcVideoSource::Native(video_source),
+        );
+
+        let publication = self
+            .publish_track(
+                livekit::track::LocalTrack::Video(track),
+                TrackPublishOptions {
+                    source: TrackSource::Screenshare,
+                    video_codec: VideoCodec::VP8,
+                    ..Default::default()
+                },
+                cx,
+            )
+            .await?;
+        let handle = ScreenCaptureStreamHandle {
+            screen_id,
+            stop_capture,
+            _spawn_handle: spawn_handle,
+        };
+        Ok((publication, handle))
     }
 
     async fn publish_track(

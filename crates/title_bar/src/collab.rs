@@ -4,11 +4,9 @@ use std::sync::Arc;
 use call::{ActiveCall, ParticipantLocation, Room};
 use channel::ChannelStore;
 use client::{User, proto::PeerId};
-use gpui::{
-    AnyElement, Hsla, IntoElement, MouseButton, Path, ScreenCaptureSource, Styled, WeakEntity,
-    canvas, point,
-};
-use gpui::{App, Task, Window};
+use gpui::{AnyElement, Hsla, IntoElement, MouseButton, Path, Styled, WeakEntity, canvas, point};
+use gpui::{App, Task, Window, actions};
+use libwebrtc::desktop_capturer::CaptureSource;
 use project::WorktreeSettings;
 use rpc::proto::{self};
 use settings::{Settings as _, SettingsLocation};
@@ -22,58 +20,59 @@ use workspace::notifications::DetachAndPromptErr;
 
 use crate::TitleBar;
 
-pub fn toggle_screen_sharing(
-    screen: anyhow::Result<Option<Rc<dyn ScreenCaptureSource>>>,
-    window: &mut Window,
-    cx: &mut App,
-) {
-    let call = ActiveCall::global(cx).read(cx);
-    let toggle_screen_sharing = match screen {
-        Ok(screen) => {
-            let Some(room) = call.room().cloned() else {
-                return;
-            };
+actions!(
+    collab,
+    [
+        /// Toggles screen sharing on or off.
+        ToggleScreenSharing,
+        /// Toggles microphone mute.
+        ToggleMute,
+        /// Toggles deafen mode (mute both microphone and speakers).
+        ToggleDeafen
+    ]
+);
 
-            room.update(cx, |room, cx| {
-                let clicked_on_currently_shared_screen =
-                    room.shared_screen_id().is_some_and(|screen_id| {
-                        Some(screen_id)
-                            == screen
-                                .as_deref()
-                                .and_then(|s| s.metadata().ok().map(|meta| meta.id))
-                    });
-                let should_unshare_current_screen = room.is_sharing_screen();
-                let unshared_current_screen = should_unshare_current_screen.then(|| {
+fn toggle_screen_sharing(screen: Option<CaptureSource>, window: &mut Window, cx: &mut App) {
+    let call = ActiveCall::global(cx).read(cx);
+    let toggle_screen_sharing = {
+        let Some(room) = call.room().cloned() else {
+            return;
+        };
+
+        room.update(cx, |room, cx| {
+            let clicked_on_currently_shared_screen = screen
+                .clone()
+                .is_some_and(|s| Some(s.id()) == room.shared_screen_id());
+            let should_unshare_current_screen = room.is_sharing_screen();
+            let unshared_current_screen = should_unshare_current_screen.then(|| {
+                telemetry::event!(
+                    "Screen Share Disabled",
+                    room_id = room.id(),
+                    channel_id = room.channel_id(),
+                );
+                room.unshare_screen(clicked_on_currently_shared_screen || screen.is_none(), cx)
+            });
+            if let Some(screen) = screen {
+                if !should_unshare_current_screen {
                     telemetry::event!(
-                        "Screen Share Disabled",
+                        "Screen Share Enabled",
                         room_id = room.id(),
                         channel_id = room.channel_id(),
                     );
-                    room.unshare_screen(clicked_on_currently_shared_screen || screen.is_none(), cx)
-                });
-                if let Some(screen) = screen {
-                    if !should_unshare_current_screen {
-                        telemetry::event!(
-                            "Screen Share Enabled",
-                            room_id = room.id(),
-                            channel_id = room.channel_id(),
-                        );
-                    }
-                    cx.spawn(async move |room, cx| {
-                        unshared_current_screen.transpose()?;
-                        if !clicked_on_currently_shared_screen {
-                            room.update(cx, |room, cx| room.share_screen(screen, cx))?
-                                .await
-                        } else {
-                            Ok(())
-                        }
-                    })
-                } else {
-                    Task::ready(Ok(()))
                 }
-            })
-        }
-        Err(e) => Task::ready(Err(e)),
+                cx.spawn(async move |room, cx| {
+                    unshared_current_screen.transpose()?;
+                    if !clicked_on_currently_shared_screen {
+                        room.update(cx, |room, cx| room.share_screen(Some(screen), cx))?
+                            .await
+                    } else {
+                        Ok(())
+                    }
+                })
+            } else {
+                Task::ready(Ok(()))
+            }
+        })
     };
     toggle_screen_sharing.detach_and_prompt_err("Sharing Screen Failed", window, cx, |e, _, _| Some(format!("{:?}\n\nPlease check that you have given Zed permissions to record your screen in Settings.", e)));
 }
@@ -344,7 +343,6 @@ impl TitleBar {
         let is_screen_sharing = room.is_sharing_screen();
         let can_use_microphone = room.can_use_microphone();
         let can_share_projects = room.can_share_projects();
-        let screen_sharing_supported = cx.is_screen_capture_supported();
 
         let channel_store = ChannelStore::global(cx);
         let channel = room
@@ -487,7 +485,7 @@ impl TitleBar {
             .into_any_element(),
         );
 
-        if can_use_microphone && screen_sharing_supported {
+        if can_use_microphone {
             let trigger = IconButton::new("screen-share", IconName::Screen)
                 .style(ButtonStyle::Subtle)
                 .icon_size(IconSize::Small)
@@ -499,18 +497,13 @@ impl TitleBar {
                     "Share Screen"
                 }))
                 .on_click(move |_, window, cx| {
-                    let should_share = ActiveCall::global(cx)
-                        .read(cx)
-                        .room()
-                        .is_some_and(|room| !room.read(cx).is_sharing_screen());
+                    let room = ActiveCall::global(cx).read(cx).room().unwrap().read(cx);
+                    let first_screen = room.available_screens().first().cloned();
+                    let should_share = !room.is_sharing_screen();
 
                     window
                         .spawn(cx, async move |cx| {
-                            let screen = if should_share {
-                                cx.update(|_, cx| pick_default_screen(cx))?.await
-                            } else {
-                                Ok(None)
-                            };
+                            let screen = if should_share { first_screen } else { None };
                             cx.update(|window, cx| toggle_screen_sharing(screen, window, cx))?;
 
                             Result::<_, anyhow::Error>::Ok(())
@@ -518,14 +511,18 @@ impl TitleBar {
                         .detach();
                 });
 
-            children.push(
-                SplitButton::new(
-                    trigger.render(window, cx),
-                    self.render_screen_list().into_any_element(),
-                )
-                .style(SplitButtonStyle::Transparent)
-                .into_any_element(),
-            );
+            match room.available_screens().len() {
+                0 => (),
+                1 => children.push(trigger.into_any_element()),
+                2.. => children.push(
+                    SplitButton::new(
+                        trigger.render(window, cx),
+                        self.render_screen_list().into_any_element(),
+                    )
+                    .style(SplitButtonStyle::Transparent)
+                    .into_any_element(),
+                ),
+            };
         }
 
         children.push(div().pr_2().into_any_element());
@@ -548,28 +545,15 @@ impl TitleBar {
                     .toggle_state(self.screen_share_popover_handle.is_deployed()),
             )
             .menu(|window, cx| {
-                let screens = cx.screen_capture_sources();
                 Some(ContextMenu::build(window, cx, |context_menu, _, cx| {
                     cx.spawn(async move |this: WeakEntity<ContextMenu>, cx| {
-                        let screens = screens.await??;
                         this.update(cx, |this, cx| {
-                            let active_screenshare_id = ActiveCall::global(cx)
-                                .read(cx)
-                                .room()
-                                .and_then(|room| room.read(cx).shared_screen_id());
+                            let room = ActiveCall::global(cx).read(cx).room().unwrap().read(cx);
+                            let screens = room.available_screens().clone();
+                            let active_screenshare_id = room.shared_screen_id();
                             for screen in screens {
-                                let Ok(meta) = screen.metadata() else {
-                                    continue;
-                                };
-
-                                let label = meta
-                                    .label
-                                    .clone()
-                                    .unwrap_or_else(|| SharedString::from("Unknown screen"));
-                                let resolution = SharedString::from(format!(
-                                    "{} × {}",
-                                    meta.resolution.width.0, meta.resolution.height.0
-                                ));
+                                let id = screen.id();
+                                let title = SharedString::from(screen.title().clone());
                                 this.push_item(ContextMenuItem::CustomEntry {
                                     entry_render: Box::new(move |_, _| {
                                         h_flex()
@@ -578,25 +562,20 @@ impl TitleBar {
                                                 Icon::new(IconName::Screen)
                                                     .size(IconSize::XSmall)
                                                     .map(|this| {
-                                                        if active_screenshare_id == Some(meta.id) {
+                                                        if active_screenshare_id == Some(id) {
                                                             this.color(Color::Accent)
                                                         } else {
                                                             this.color(Color::Muted)
                                                         }
                                                     }),
                                             )
-                                            .child(Label::new(label.clone()))
-                                            .child(
-                                                Label::new(resolution.clone())
-                                                    .color(Color::Muted)
-                                                    .size(LabelSize::Small),
-                                            )
+                                            .child(Label::new(title.clone()))
                                             .into_any()
                                     }),
                                     selectable: true,
                                     documentation_aside: None,
                                     handler: Rc::new(move |_, window, cx| {
-                                        toggle_screen_sharing(Ok(Some(screen.clone())), window, cx);
+                                        toggle_screen_sharing(Some(screen.clone()), window, cx);
                                     }),
                                 });
                             }
@@ -607,21 +586,4 @@ impl TitleBar {
                 }))
             })
     }
-}
-
-/// Picks the screen to share when clicking on the main screen sharing button.
-fn pick_default_screen(cx: &App) -> Task<anyhow::Result<Option<Rc<dyn ScreenCaptureSource>>>> {
-    let source = cx.screen_capture_sources();
-    cx.spawn(async move |_| {
-        let available_sources = source.await??;
-        Ok(available_sources
-            .iter()
-            .find(|it| {
-                it.as_ref()
-                    .metadata()
-                    .is_ok_and(|meta| meta.is_main.unwrap_or_default())
-            })
-            .or_else(|| available_sources.first())
-            .cloned())
-    })
 }
