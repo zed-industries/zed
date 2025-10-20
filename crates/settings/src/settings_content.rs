@@ -1035,9 +1035,27 @@ impl std::fmt::Display for DelayMs {
     }
 }
 
+/// A wrapper type that distinguishes between an explicitly set value (including null) and an unset value.
+///
+/// This is useful for configuration where you need to differentiate between:
+/// - A field that is not present in the configuration file (`Maybe::Unset`)
+/// - A field that is explicitly set to `null` (`Maybe::Set(None)`)
+/// - A field that is explicitly set to a value (`Maybe::Set(Some(value))`)
+///
+/// # Examples
+///
+/// In JSON:
+/// - `{}` (field missing) deserializes to `Maybe::Unset`
+/// - `{"field": null}` deserializes to `Maybe::Set(None)`
+/// - `{"field": "value"}` deserializes to `Maybe::Set(Some("value"))`
+///
+/// WARN: This type should not be wrapped in an option inside of settings, otherwise the default `serde_json` behavior
+/// of treating `null` and missing as the `Option::None` will be used
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Maybe<T> {
+    /// An explicitly set value, which may be `None` (representing JSON `null`) or `Some(value)`.
     Set(Option<T>),
+    /// A value that was not present in the configuration.
     Unset,
 }
 
@@ -1083,6 +1101,31 @@ impl<'de, T: serde::Deserialize<'de>> serde::Deserialize<'de> for Maybe<T> {
 impl<T> Default for Maybe<T> {
     fn default() -> Self {
         Maybe::Unset
+    }
+}
+
+impl<T: JsonSchema> JsonSchema for Maybe<T> {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        format!("Nullable<{}>", T::schema_name()).into()
+    }
+
+    fn json_schema(generator: &mut schemars::generate::SchemaGenerator) -> schemars::Schema {
+        let mut schema = generator.subschema_for::<Option<T>>();
+        // Add description explaining that null is an explicit value
+        let description = if let Some(existing_desc) =
+            schema.get("description").and_then(|desc| desc.as_str())
+        {
+            format!(
+                "{}. Note: `null` is treated as an explicit value, different from omitting the field entirely.",
+                existing_desc
+            )
+        } else {
+            "This field supports explicit `null` values. Omitting the field is different from setting it to `null`.".to_string()
+        };
+
+        schema.insert("description".to_string(), description.into());
+
+        schema
     }
 }
 
@@ -1172,5 +1215,18 @@ mod tests {
         let json = "{}";
         let result: NumericTest = serde_json::from_str(json).unwrap();
         assert_eq!(result.value, Maybe::Unset);
+
+        // Test JsonSchema implementation
+        use schemars::schema_for;
+        let schema = schema_for!(Maybe<String>);
+        let schema_json = serde_json::to_value(&schema).unwrap();
+
+        // Verify the description mentions that null is an explicit value
+        let description = schema_json["description"].as_str().unwrap();
+        assert!(
+            description.contains("null") && description.contains("explicit"),
+            "Schema description should mention that null is an explicit value. Got: {}",
+            description
+        );
     }
 }
