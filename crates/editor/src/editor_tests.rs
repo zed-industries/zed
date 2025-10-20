@@ -26853,7 +26853,6 @@ async fn test_end_of_editor_context(cx: &mut TestAppContext) {
     cx.set_state("ˇline1\nline2");
     cx.update_editor(|e, window, cx| {
         assert!(!e.key_context(window, cx).contains("end_of_input"));
-
     });
     cx.set_state("line1ˇ\nline2");
     cx.update_editor(|e, window, cx| {
