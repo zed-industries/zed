@@ -16849,6 +16849,68 @@ impl Editor {
         })
     }
 
+    fn go_to_next_reference(
+        &mut self,
+        _: &GoToNextReference,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+    }
+
+    fn go_to_prev_reference(
+        &mut self,
+        _: &GoToNextReference,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let selection = self.selections.newest_anchor().clone();
+        let Some((_, position)) = self
+            .buffer
+            .read(cx)
+            .text_anchor_for_position(selection.head(), cx)
+        else {
+            return;
+        };
+        let snapshot = self.buffer().read(cx).snapshot(cx);
+        self.go_to_reference_before_or_after_position(snapshot, position, direction, window, cx);
+    }
+    pub fn go_to_reference_before_or_after_position(
+        &mut self,
+        snapshot: BufferSnapshot,
+        position: Point,
+        direction: Direction,
+        window: &mut Window,
+        cx: &mut Context<Editor>,
+    ) -> Task<Result<()>> {
+        let buffer = self.buffer();
+        let workspace = self.workspace()?;
+        let project = workspace.read(cx).project().clone();
+        let references = project.update(cx, |project, cx| project.references(&buffer, head, cx));
+
+        cx.spawn_in(window, async move |editor, cx| -> Result<()> {
+            let Some(mut locations) = references.await? else {
+                return Ok(());
+            };
+
+            // TODO(cameron): comparing an `Entity<Buffer>` with an `Entity<MultiBuffer>`?
+            locations.retain(|loc| loc.buffer == buffer);
+            locations.sort_unstable(); // TODO(cameron): needed?
+
+            let iter = locations.iter().map(|loc| loc.range);
+
+            let location = match direction {
+                Direction::Next => iter
+                    .skip_while(|range| range.start.to_point(&snapshot) < point)
+                    .chain(locations.first().map(|loc| loc.range)),
+                Direction::Prev => iter
+                    .skip_while(|range| range.end.to_point(&snapshot) > point)
+                    .chain(locations.first().map(|loc| loc.range)),
+            };
+
+            if let Some(location) = location {}
+        })
+    }
+
     pub fn find_all_references(
         &mut self,
         _: &FindAllReferences,
