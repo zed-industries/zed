@@ -277,9 +277,9 @@ impl ExampleContext {
                     ThreadEvent::ToolCallUpdate(tool_call_update) => {
                         if let acp_thread::ToolCallUpdate::UpdateFields(update) = tool_call_update {
                             if let Some(raw_input) = update.fields.raw_input {
-                                tool_uses_by_id
-                                    .get_mut(&update.id)
-                                    .map(|tool_use| tool_use.value = raw_input);
+                                if let Some(tool_use) = tool_uses_by_id.get_mut(&update.id) {
+                                    tool_use.value = raw_input;
+                                }
                             }
 
                             if matches!(

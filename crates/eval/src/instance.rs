@@ -327,7 +327,7 @@ impl ExampleInstance {
                             last_diff_file_path.clone(),
                             this.run_directory.join("last.messages.json"),
                             this.worktree_path(),
-                            this.repo_url().to_string(),
+                            this.repo_url(),
                         ),
                         cx,
                     );
