@@ -1,7 +1,7 @@
-use gpui::{Action, Hsla, MouseButton, prelude::*, svg};
-use ui::prelude::*;
-use settings::{Settings, WindowControlsPosition};
 use crate::title_bar_settings::TitleBarSettings;
+use gpui::{Action, Hsla, MouseButton, prelude::*, svg};
+use settings::{Settings, WindowControlsPosition};
+use ui::prelude::*;
 
 #[derive(IntoElement)]
 pub struct LinuxWindowControls {
@@ -61,17 +61,17 @@ impl RenderOnce for LinuxWindowControls {
             cx,
         );
 
-        let mut flex = h_flex()
+        let mut element = h_flex()
             .id("generic-window-controls")
             .px_3()
             .gap_3()
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation());
 
         for control in controls {
-            flex = flex.child(control);
+            element = element.child(control);
         }
 
-        flex
+        element
     }
 }
 

@@ -30,7 +30,7 @@ use std::env;
 use std::sync::Arc;
 pub use util::serde::default_true;
 
-use crate::{ActiveSettingsProfileName, merge_from};
+use crate::{merge_from, ActiveSettingsProfileName};
 
 #[skip_serializing_none]
 #[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
@@ -260,6 +260,32 @@ impl strum::VariantNames for BaseKeymapContent {
     ];
 }
 
+/// Position of window control buttons on Linux.
+///
+/// Valid values: "left" (macOS style) or "right" (Windows/Linux style)
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    Eq,
+    Default,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum WindowControlsPosition {
+    /// Window controls on the left side (macOS style)
+    Left,
+    /// Window controls on the right side (Windows style)
+    #[default]
+    Right,
+}
+
 #[skip_serializing_none]
 #[derive(Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug)]
 pub struct TitleBarSettingsContent {
@@ -291,6 +317,10 @@ pub struct TitleBarSettingsContent {
     ///
     /// Default: false
     pub show_menus: Option<bool>,
+    /// Position of window control buttons (minimize, maximize, close) on Linux.
+    ///
+    /// Default: right
+    pub window_controls_position: Option<WindowControlsPosition>,
 }
 
 /// Configuration of audio in Zed.
