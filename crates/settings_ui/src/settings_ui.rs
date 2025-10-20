@@ -439,6 +439,13 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::ThemeSelectionDiscriminants>(render_dropdown)
         .add_basic_renderer::<settings::ThemeMode>(render_dropdown)
         .add_basic_renderer::<settings::ThemeName>(render_theme_picker)
+        .add_basic_renderer::<settings::IconThemeSelectionDiscriminants>(render_dropdown)
+        .add_basic_renderer::<settings::IconThemeName>(render_icon_theme_picker)
+        .add_basic_renderer::<settings::BufferLineHeightDiscriminants>(render_dropdown)
+        .add_basic_renderer::<settings::AutosaveSettingDiscriminants>(render_dropdown)
+        .add_basic_renderer::<settings::WorkingDirectoryDiscriminants>(render_dropdown)
+        .add_basic_renderer::<settings::IncludeIgnoredContent>(render_dropdown)
+        .add_basic_renderer::<settings::ShowIndentGuides>(render_dropdown)
         // please semicolon stay on next line
         ;
 }
@@ -474,6 +481,12 @@ pub fn open_settings_editor(
         let scale_factor = current_rem_size / default_rem_size;
         let scaled_bounds: gpui::Size<Pixels> = default_bounds.map(|axis| axis * scale_factor);
 
+        let window_decorations = match std::env::var("ZED_WINDOW_DECORATIONS") {
+            Ok(val) if val == "server" => gpui::WindowDecorations::Server,
+            Ok(val) if val == "client" => gpui::WindowDecorations::Client,
+            _ => gpui::WindowDecorations::Client,
+        };
+
         cx.open_window(
             WindowOptions {
                 titlebar: Some(TitlebarOptions {
@@ -486,6 +499,7 @@ pub fn open_settings_editor(
                 is_movable: true,
                 kind: gpui::WindowKind::Floating,
                 window_background: cx.theme().window_background_appearance(),
+                window_decorations: Some(window_decorations),
                 window_min_size: Some(scaled_bounds),
                 window_bounds: Some(WindowBounds::centered(scaled_bounds, cx)),
                 ..Default::default()
@@ -2917,6 +2931,63 @@ fn render_theme_picker(
                         let theme_name = theme_name.clone();
                         update_settings_file(file.clone(), cx, move |settings, _cx| {
                             (field.write)(settings, Some(settings::ThemeName(theme_name.into())));
+                        })
+                        .log_err(); // todo(settings_ui) don't log err
+                    },
+                );
+            }
+            menu
+        }),
+    )
+    .trigger_size(ButtonSize::Medium)
+    .style(DropdownStyle::Outlined)
+    .offset(gpui::Point {
+        x: px(0.0),
+        y: px(2.0),
+    })
+    .tab_index(0)
+    .into_any_element()
+}
+
+fn render_icon_theme_picker(
+    field: SettingField<settings::IconThemeName>,
+    file: SettingsUiFile,
+    _metadata: Option<&SettingsFieldMetadata>,
+    window: &mut Window,
+    cx: &mut App,
+) -> AnyElement {
+    let (_, value) = SettingsStore::global(cx).get_value_from_file(file.to_settings(), field.pick);
+    let current_value = value
+        .cloned()
+        .map(|icon_theme_name| icon_theme_name.0.into())
+        .unwrap_or_else(|| theme::default_icon_theme().name.clone());
+
+    DropdownMenu::new(
+        "font-picker",
+        current_value.clone(),
+        ContextMenu::build(window, cx, move |mut menu, _, cx| {
+            let all_theme_names = theme::ThemeRegistry::global(cx)
+                .list_icon_themes()
+                .into_iter()
+                .map(|theme| theme.name);
+            for theme_name in all_theme_names {
+                let file = file.clone();
+                let selected = theme_name.as_ref() == current_value.as_ref();
+                menu = menu.toggleable_entry(
+                    theme_name.clone(),
+                    selected,
+                    IconPosition::End,
+                    None,
+                    move |_, cx| {
+                        if selected {
+                            return;
+                        }
+                        let theme_name = theme_name.clone();
+                        update_settings_file(file.clone(), cx, move |settings, _cx| {
+                            (field.write)(
+                                settings,
+                                Some(settings::IconThemeName(theme_name.into())),
+                            );
                         })
                         .log_err(); // todo(settings_ui) don't log err
                     },

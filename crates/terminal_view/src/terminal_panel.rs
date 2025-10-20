@@ -1664,6 +1664,10 @@ impl Panel for TerminalPanel {
         "TerminalPanel"
     }
 
+    fn panel_key() -> &'static str {
+        TERMINAL_PANEL_KEY
+    }
+
     fn icon(&self, _window: &Window, cx: &App) -> Option<IconName> {
         if (self.is_enabled(cx) || !self.has_no_terminals(cx))
             && TerminalSettings::get_global(cx).button

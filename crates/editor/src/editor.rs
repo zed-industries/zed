@@ -358,6 +358,7 @@ pub fn init(cx: &mut App) {
     cx.observe_new(
         |workspace: &mut Workspace, _: Option<&mut Window>, _cx: &mut Context<Workspace>| {
             workspace.register_action(Editor::new_file);
+            workspace.register_action(Editor::new_file_split);
             workspace.register_action(Editor::new_file_vertical);
             workspace.register_action(Editor::new_file_horizontal);
             workspace.register_action(Editor::cancel_language_server_work);
@@ -2681,6 +2682,15 @@ impl Editor {
         cx: &mut Context<Workspace>,
     ) {
         Self::new_file_in_direction(workspace, SplitDirection::horizontal(cx), window, cx)
+    }
+
+    fn new_file_split(
+        workspace: &mut Workspace,
+        action: &workspace::NewFileSplit,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) {
+        Self::new_file_in_direction(workspace, action.0, window, cx)
     }
 
     fn new_file_in_direction(
@@ -18782,6 +18792,17 @@ impl Editor {
         });
     }
 
+    pub fn collapse_all_diff_hunks(
+        &mut self,
+        _: &CollapseAllDiffHunks,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.buffer.update(cx, |buffer, cx| {
+            buffer.collapse_diff_hunks(vec![Anchor::min()..Anchor::max()], cx)
+        });
+    }
+
     pub fn toggle_selected_diff_hunks(
         &mut self,
         _: &ToggleSelectedDiffHunks,
@@ -21030,6 +21051,7 @@ impl Editor {
             }
             multi_buffer::Event::ExcerptsExpanded { ids } => {
                 self.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
+                self.refresh_document_highlights(cx);
                 cx.emit(EditorEvent::ExcerptsExpanded { ids: ids.clone() })
             }
             multi_buffer::Event::Reparsed(buffer_id) => {

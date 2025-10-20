@@ -302,6 +302,12 @@ pub struct MoveItemToPaneInDirection {
     pub clone: bool,
 }
 
+/// Creates a new file in a split of the desired direction.
+#[derive(Clone, Deserialize, PartialEq, JsonSchema, Action)]
+#[action(namespace = workspace)]
+#[serde(deny_unknown_fields)]
+pub struct NewFileSplit(pub SplitDirection);
+
 fn default_right() -> SplitDirection {
     SplitDirection::Right
 }
@@ -6364,6 +6370,24 @@ impl Render for Workspace {
                 }
                 ThreadStatus::Stopped => context.add("debugger_stopped"),
                 ThreadStatus::Exited | ThreadStatus::Ended => {}
+            }
+        }
+
+        if self.left_dock.read(cx).is_open() {
+            if let Some(active_panel) = self.left_dock.read(cx).active_panel() {
+                context.set("left_dock", active_panel.panel_key());
+            }
+        }
+
+        if self.right_dock.read(cx).is_open() {
+            if let Some(active_panel) = self.right_dock.read(cx).active_panel() {
+                context.set("right_dock", active_panel.panel_key());
+            }
+        }
+
+        if self.bottom_dock.read(cx).is_open() {
+            if let Some(active_panel) = self.bottom_dock.read(cx).active_panel() {
+                context.set("bottom_dock", active_panel.panel_key());
             }
         }
 
