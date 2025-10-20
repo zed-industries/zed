@@ -608,14 +608,33 @@ pub struct FileFinderSettingsContent {
     /// Whether to use gitignored files when searching.
     /// Only the file Zed had indexed will be used, not necessary all the gitignored files.
     ///
-    /// Can accept 3 values:
-    /// * `Some(true)`: Use all gitignored files
-    /// * `Some(false)`: Use only the files Zed had indexed
-    /// * `None`: Be smart and search for ignored when called from a gitignored worktree
-    ///
-    /// Default: None
-    /// todo() -> Change this type to an enum
-    pub include_ignored: Option<bool>,
+    /// Default: Smart
+    pub include_ignored: Option<IncludeIgnoredContent>,
+}
+
+#[derive(
+    Debug,
+    PartialEq,
+    Eq,
+    Clone,
+    Copy,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum IncludeIgnoredContent {
+    /// Use all gitignored files
+    All,
+    /// Use only the files Zed had indexed
+    Indexed,
+    /// Be smart and search for ignored when called from a gitignored worktree
+    #[default]
+    Smart,
 }
 
 #[derive(
