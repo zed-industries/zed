@@ -1166,7 +1166,7 @@ impl SettingsWindow {
                 move |this: &mut SettingsWindow,
                       window: &mut Window,
                       cx: &mut Context<SettingsWindow>| {
-                    this.open_and_scroll_to_navbar_entry(entry_index, window, cx, false);
+                    this.open_and_scroll_to_navbar_entry(entry_index, None, false, window, cx);
                 },
             );
             focus_subscriptions.push(subscription);
@@ -1604,7 +1604,7 @@ impl SettingsWindow {
             .visible_navbar_entries()
             .any(|(index, _)| index == self.navbar_entry)
         {
-            self.open_and_scroll_to_navbar_entry(self.navbar_entry, window, cx, true);
+            self.open_and_scroll_to_navbar_entry(self.navbar_entry, None, true, window, cx);
         } else {
             self.open_first_nav_page();
         };
@@ -1903,7 +1903,13 @@ impl SettingsWindow {
                 let Some(next_entry_index) = next_index else {
                     return;
                 };
-                this.open_and_scroll_to_navbar_entry(next_entry_index, window, cx, false);
+                this.open_and_scroll_to_navbar_entry(
+                    next_entry_index,
+                    Some(gpui::ScrollStrategy::Bottom),
+                    false,
+                    window,
+                    cx,
+                );
             }))
             .on_action(cx.listener(|this, _: &FocusPreviousNavEntry, window, cx| {
                 let entry_index = this
@@ -1919,7 +1925,13 @@ impl SettingsWindow {
                 let Some(prev_entry_index) = prev_index else {
                     return;
                 };
-                this.open_and_scroll_to_navbar_entry(prev_entry_index, window, cx, false);
+                this.open_and_scroll_to_navbar_entry(
+                    prev_entry_index,
+                    Some(gpui::ScrollStrategy::Top),
+                    false,
+                    window,
+                    cx,
+                );
             }))
             .border_color(cx.theme().colors().border)
             .bg(cx.theme().colors().panel_background)
@@ -1939,21 +1951,22 @@ impl SettingsWindow {
                                 this.visible_navbar_entries()
                                     .skip(range.start.saturating_sub(1))
                                     .take(range.len())
-                                    .map(|(ix, entry)| {
+                                    .map(|(entry_index, entry)| {
                                         TreeViewItem::new(
-                                            ("settings-ui-navbar-entry", ix),
+                                            ("settings-ui-navbar-entry", entry_index),
                                             entry.title,
                                         )
                                         .track_focus(&entry.focus_handle)
                                         .root_item(entry.is_root)
-                                        .toggle_state(this.is_navbar_entry_selected(ix))
+                                        .toggle_state(this.is_navbar_entry_selected(entry_index))
                                         .when(entry.is_root, |item| {
                                             item.expanded(entry.expanded || this.has_query)
                                                 .on_toggle(cx.listener(
                                                     move |this, _, window, cx| {
-                                                        this.toggle_navbar_entry(ix);
+                                                        this.toggle_navbar_entry(entry_index);
                                                         window.focus(
-                                                            &this.navbar_entries[ix].focus_handle,
+                                                            &this.navbar_entries[entry_index]
+                                                                .focus_handle,
                                                         );
                                                         cx.notify();
                                                     },
@@ -1962,7 +1975,11 @@ impl SettingsWindow {
                                         .on_click(
                                             cx.listener(move |this, _, window, cx| {
                                                 this.open_and_scroll_to_navbar_entry(
-                                                    ix, window, cx, true,
+                                                    entry_index,
+                                                    None,
+                                                    true,
+                                                    window,
+                                                    cx,
                                                 );
                                             }),
                                         )
@@ -1999,12 +2016,15 @@ impl SettingsWindow {
     fn open_and_scroll_to_navbar_entry(
         &mut self,
         navbar_entry_index: usize,
+        scroll_strategy: Option<gpui::ScrollStrategy>,
+        focus_content: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
-        focus_content: bool,
     ) {
         self.open_navbar_entry_page(navbar_entry_index);
         cx.notify();
+
+        let mut handle_to_focus = None;
 
         if self.navbar_entries[navbar_entry_index].is_root
             || !self.is_nav_entry_visible(navbar_entry_index)
@@ -2017,9 +2037,17 @@ impl SettingsWindow {
                 else {
                     return;
                 };
-                self.focus_content_element(first_item_index, window, cx);
+                handle_to_focus = Some(self.focus_handle_for_content_element(first_item_index, cx));
+            } else if !self.is_nav_entry_visible(navbar_entry_index) {
+                let Some(first_visible_nav_entry_index) =
+                    self.visible_navbar_entries().next().map(|(index, _)| index)
+                else {
+                    return;
+                };
+                self.focus_and_scroll_to_nav_entry(first_visible_nav_entry_index, window, cx);
             } else {
-                window.focus(&self.navbar_entries[navbar_entry_index].focus_handle);
+                handle_to_focus =
+                    Some(self.navbar_entries[navbar_entry_index].focus_handle.clone());
             }
         } else {
             let entry_item_index = self.navbar_entries[navbar_entry_index]
@@ -2037,10 +2065,21 @@ impl SettingsWindow {
                 offset_in_item: px(0.),
             });
             if focus_content {
-                self.focus_content_element(entry_item_index, window, cx);
+                handle_to_focus = Some(self.focus_handle_for_content_element(entry_item_index, cx));
             } else {
-                window.focus(&self.navbar_entries[navbar_entry_index].focus_handle);
+                handle_to_focus =
+                    Some(self.navbar_entries[navbar_entry_index].focus_handle.clone());
             }
+        }
+
+        if let Some(scroll_strategy) = scroll_strategy
+            && let Some(logical_entry_index) = self
+                .visible_navbar_entries()
+                .into_iter()
+                .position(|(index, _)| index == navbar_entry_index)
+        {
+            self.navbar_scroll_handle
+                .scroll_to_item(logical_entry_index + 1, scroll_strategy);
         }
 
         // Page scroll handle updates the active item index
@@ -2048,7 +2087,11 @@ impl SettingsWindow {
         // The call after that updates the offset of the scroll handle. So to
         // ensure the scroll handle doesn't lag behind we need to render three frames
         // back to back.
-        cx.on_next_frame(window, |_, window, cx| {
+        cx.on_next_frame(window, move |_, window, cx| {
+            if let Some(handle) = handle_to_focus.as_ref() {
+                window.focus(handle);
+            }
+
             cx.on_next_frame(window, |_, _, cx| {
                 cx.notify();
             });
@@ -2584,12 +2627,26 @@ impl SettingsWindow {
         0
     }
 
-    fn focus_content_element(&self, actual_item_index: usize, window: &mut Window, cx: &mut App) {
+    fn focus_handle_for_content_element(
+        &self,
+        actual_item_index: usize,
+        cx: &Context<Self>,
+    ) -> FocusHandle {
+        let page_index = self.current_page_index();
+        self.content_handles[page_index][actual_item_index].focus_handle(cx)
+    }
+
+    fn focus_content_element(
+        &self,
+        actual_item_index: usize,
+        window: &mut Window,
+        cx: &mut Context<SettingsWindow>,
+    ) {
         if !sub_page_stack().is_empty() {
             return;
         }
-        let page_index = self.current_page_index();
-        window.focus(&self.content_handles[page_index][actual_item_index].focus_handle(cx));
+
+        window.focus(&self.focus_handle_for_content_element(actual_item_index, cx));
     }
 
     fn focused_nav_entry(&self, window: &Window, cx: &App) -> Option<usize> {
@@ -2650,9 +2707,10 @@ impl Render for SettingsWindow {
                             {
                                 this.open_and_scroll_to_navbar_entry(
                                     this.navbar_entry,
+                                    None,
+                                    true,
                                     window,
                                     cx,
-                                    true,
                                 );
                             } else {
                                 this.focus_and_scroll_to_nav_entry(this.navbar_entry, window, cx);
