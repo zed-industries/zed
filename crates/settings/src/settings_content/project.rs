@@ -311,7 +311,7 @@ pub struct InlineBlameSettings {
     /// after a delay once the cursor stops moving.
     ///
     /// Default: 0
-    pub delay_ms: Option<u64>,
+    pub delay_ms: Option<DelayMs>,
     /// The amount of padding between the end of the source line and the start
     /// of the inline blame in units of columns.
     ///
