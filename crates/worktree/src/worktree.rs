@@ -656,7 +656,7 @@ impl Worktree {
 
     pub fn replica_id(&self) -> ReplicaId {
         match self {
-            Worktree::Local(_) => 0,
+            Worktree::Local(_) => ReplicaId::LOCAL,
             Worktree::Remote(worktree) => worktree.replica_id,
         }
     }

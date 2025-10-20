@@ -4307,7 +4307,7 @@ async fn test_rescan_and_remote_updates(cx: &mut gpui::TestAppContext) {
     let remote = cx.update(|cx| {
         Worktree::remote(
             0,
-            1,
+            ReplicaId::REMOTE_SERVER,
             metadata,
             project.read(cx).client().into(),
             project.read(cx).path_style(cx),
