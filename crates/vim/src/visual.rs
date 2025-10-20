@@ -366,6 +366,7 @@ impl Vim {
 
             let mut selections = Vec::new();
             let mut row = tail.row();
+            let direction = if tail.row() > head.row() { -1 } else { 1 };
 
             loop {
                 let laid_out_line = map.layout_row(row, &text_layout_details);
@@ -396,13 +397,13 @@ impl Vim {
 
                     selections.push(selection);
                 }
-                if row == head.row() {
+
+                if direction == -1 && row <= head.row() || direction == 1 && row >= head.row() {
                     break;
                 }
 
                 // Move to the next or previous buffer row, ensuring that
                 // wrapped lines are handled correctly.
-                let direction = if tail.row() > head.row() { -1 } else { 1 };
                 row = map
                     .start_of_relative_buffer_row(DisplayPoint::new(row, 0), direction)
                     .row();
