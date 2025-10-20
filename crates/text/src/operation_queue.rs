@@ -1,5 +1,6 @@
+use clock::Lamport;
 use std::{fmt::Debug, ops::Add};
-use sum_tree::{Dimension, Edit, Item, KeyedItem, SumTree, Summary};
+use sum_tree::{ContextLessSummary, Dimension, Edit, Item, KeyedItem, SumTree};
 
 pub trait Operation: Clone + Debug {
     fn lamport_timestamp(&self) -> clock::Lamport;
@@ -11,10 +12,10 @@ struct OperationItem<T>(T);
 #[derive(Clone, Debug)]
 pub struct OperationQueue<T: Operation>(SumTree<OperationItem<T>>);
 
-#[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct OperationKey(clock::Lamport);
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct OperationSummary {
     pub key: OperationKey,
     pub len: usize,
@@ -52,7 +53,7 @@ impl<T: Operation> OperationQueue<T> {
             ops.into_iter()
                 .map(|op| Edit::Insert(OperationItem(op)))
                 .collect(),
-            &(),
+            (),
         );
     }
 
@@ -67,14 +68,15 @@ impl<T: Operation> OperationQueue<T> {
     }
 }
 
-impl Summary for OperationSummary {
-    type Context = ();
-
-    fn zero(_cx: &()) -> Self {
-        Default::default()
+impl ContextLessSummary for OperationSummary {
+    fn zero() -> Self {
+        OperationSummary {
+            key: OperationKey::new(Lamport::MIN),
+            len: 0,
+        }
     }
 
-    fn add_summary(&mut self, other: &Self, _: &()) {
+    fn add_summary(&mut self, other: &Self) {
         assert!(self.key < other.key);
         self.key = other.key;
         self.len += other.len;
@@ -94,11 +96,11 @@ impl Add<&Self> for OperationSummary {
 }
 
 impl Dimension<'_, OperationSummary> for OperationKey {
-    fn zero(_cx: &()) -> Self {
-        Default::default()
+    fn zero(_cx: ()) -> Self {
+        OperationKey::new(Lamport::MIN)
     }
 
-    fn add_summary(&mut self, summary: &OperationSummary, _: &()) {
+    fn add_summary(&mut self, summary: &OperationSummary, _: ()) {
         assert!(*self <= summary.key);
         *self = summary.key;
     }
@@ -107,7 +109,7 @@ impl Dimension<'_, OperationSummary> for OperationKey {
 impl<T: Operation> Item for OperationItem<T> {
     type Summary = OperationSummary;
 
-    fn summary(&self, _cx: &()) -> Self::Summary {
+    fn summary(&self, _cx: ()) -> Self::Summary {
         OperationSummary {
             key: OperationKey::new(self.0.lamport_timestamp()),
             len: 1,
@@ -125,11 +127,13 @@ impl<T: Operation> KeyedItem for OperationItem<T> {
 
 #[cfg(test)]
 mod tests {
+    use clock::ReplicaId;
+
     use super::*;
 
     #[test]
     fn test_len() {
-        let mut clock = clock::Lamport::new(0);
+        let mut clock = clock::Lamport::new(ReplicaId::LOCAL);
 
         let mut queue = OperationQueue::new();
         assert_eq!(queue.len(), 0);

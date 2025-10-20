@@ -1,14 +1,18 @@
 use client::{Client, UserStore};
+use codestral::CodestralCompletionProvider;
 use collections::HashMap;
 use copilot::{Copilot, CopilotCompletionProvider};
 use editor::Editor;
+use feature_flags::FeatureFlagAppExt;
 use gpui::{AnyWindowHandle, App, AppContext as _, Context, Entity, WeakEntity};
 use language::language_settings::{EditPredictionProvider, all_language_settings};
+use language_models::MistralLanguageModelProvider;
 use settings::SettingsStore;
 use std::{cell::RefCell, rc::Rc, sync::Arc};
 use supermaven::{Supermaven, SupermavenCompletionProvider};
 use ui::Window;
 use zeta::ZetaEditPredictionProvider;
+use zeta2::Zeta2FeatureFlag;
 
 pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
     let editors: Rc<RefCell<HashMap<WeakEntity<Editor>, AnyWindowHandle>>> = Rc::default();
@@ -97,6 +101,8 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
 fn clear_zeta_edit_history(_: &zeta::ClearHistory, cx: &mut App) {
     if let Some(zeta) = zeta::Zeta::global(cx) {
         zeta.update(cx, |zeta, _| zeta.clear_history());
+    } else if let Some(zeta) = zeta2::Zeta::try_global(cx) {
+        zeta.update(cx, |zeta, _| zeta.clear_history());
     }
 }
 
@@ -107,6 +113,10 @@ fn assign_edit_prediction_providers(
     user_store: Entity<UserStore>,
     cx: &mut App,
 ) {
+    if provider == EditPredictionProvider::Codestral {
+        let mistral = MistralLanguageModelProvider::global(client.http_client(), cx);
+        mistral.load_codestral_api_key(cx).detach();
+    }
     for (editor, window) in editors.borrow().iter() {
         _ = window.update(cx, |_window, window, cx| {
             _ = editor.update(cx, |editor, cx| {
@@ -187,6 +197,11 @@ fn assign_edit_prediction_provider(
                 editor.set_edit_prediction_provider(Some(provider), window, cx);
             }
         }
+        EditPredictionProvider::Codestral => {
+            let http_client = client.http_client();
+            let provider = cx.new(|_| CodestralCompletionProvider::new(http_client));
+            editor.set_edit_prediction_provider(Some(provider), window, cx);
+        }
         EditPredictionProvider::Zed => {
             if user_store.read(cx).current_user().is_some() {
                 let mut worktree = None;
@@ -203,21 +218,49 @@ fn assign_edit_prediction_provider(
                     }
                 }
 
-                let zeta = zeta::Zeta::register(worktree, client.clone(), user_store, cx);
+                if let Some(project) = editor.project() {
+                    if cx.has_flag::<Zeta2FeatureFlag>() {
+                        let zeta = zeta2::Zeta::global(client, &user_store, cx);
+                        let provider = cx.new(|cx| {
+                            zeta2::ZetaEditPredictionProvider::new(
+                                project.clone(),
+                                &client,
+                                &user_store,
+                                cx,
+                            )
+                        });
 
-                if let Some(buffer) = &singleton_buffer
-                    && buffer.read(cx).file().is_some()
-                    && let Some(project) = editor.project()
-                {
-                    zeta.update(cx, |zeta, cx| {
-                        zeta.register_buffer(buffer, project, cx);
-                    });
+                        // TODO [zeta2] handle multibuffers
+                        if let Some(buffer) = &singleton_buffer
+                            && buffer.read(cx).file().is_some()
+                        {
+                            zeta.update(cx, |zeta, cx| {
+                                zeta.register_buffer(buffer, project, cx);
+                            });
+                        }
+
+                        editor.set_edit_prediction_provider(Some(provider), window, cx);
+                    } else {
+                        let zeta = zeta::Zeta::register(worktree, client.clone(), user_store, cx);
+
+                        if let Some(buffer) = &singleton_buffer
+                            && buffer.read(cx).file().is_some()
+                        {
+                            zeta.update(cx, |zeta, cx| {
+                                zeta.register_buffer(buffer, project, cx);
+                            });
+                        }
+
+                        let provider = cx.new(|_| {
+                            zeta::ZetaEditPredictionProvider::new(
+                                zeta,
+                                project.clone(),
+                                singleton_buffer,
+                            )
+                        });
+                        editor.set_edit_prediction_provider(Some(provider), window, cx);
+                    }
                 }
-
-                let provider =
-                    cx.new(|_| zeta::ZetaEditPredictionProvider::new(zeta, singleton_buffer));
-
-                editor.set_edit_prediction_provider(Some(provider), window, cx);
             }
         }
     }

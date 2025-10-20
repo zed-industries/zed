@@ -14,4 +14,3 @@ path = "src/icons.rs"
 [dependencies]
 serde.workspace = true
 strum.workspace = true
-workspace-hack.workspace = true

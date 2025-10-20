@@ -31,11 +31,13 @@ use std::{
 };
 use task::{SpawnInTerminal, ZedDebugConfig};
 use url::Url;
-use util::{archive::extract_zip, fs::make_file_executable, maybe};
+use util::{
+    archive::extract_zip, fs::make_file_executable, maybe, paths::PathStyle, rel_path::RelPath,
+};
 use wasmtime::component::{Linker, Resource};
 
 pub const MIN_VERSION: SemanticVersion = SemanticVersion::new(0, 6, 0);
-pub const MAX_VERSION: SemanticVersion = SemanticVersion::new(0, 6, 0);
+pub const MAX_VERSION: SemanticVersion = SemanticVersion::new(0, 7, 0);
 
 wasmtime::component::bindgen!({
     async: true,
@@ -52,6 +54,7 @@ wasmtime::component::bindgen!({
 pub use self::zed::extension::*;
 
 mod settings {
+    #![allow(dead_code)]
     include!(concat!(env!("OUT_DIR"), "/since_v0.6.0/settings.rs"));
 }
 
@@ -309,7 +312,14 @@ impl TryFrom<SpawnInTerminal> for ResolvedTask {
             command: value.command.context("missing command")?,
             args: value.args,
             env: value.env.into_iter().collect(),
-            cwd: value.cwd.map(|s| s.to_string_lossy().into_owned()),
+            cwd: value.cwd.map(|s| {
+                let s = s.to_string_lossy();
+                if cfg!(target_os = "windows") {
+                    s.replace('\\', "/")
+                } else {
+                    s.into_owned()
+                }
+            }),
         })
     }
 }
@@ -556,7 +566,7 @@ impl HostWorktree for WasmState {
     ) -> wasmtime::Result<Result<String, String>> {
         let delegate = self.table.get(&delegate)?;
         Ok(delegate
-            .read_text_file(path.into())
+            .read_text_file(&RelPath::new(Path::new(&path), PathStyle::Posix)?)
             .await
             .map_err(|error| error.to_string()))
     }
@@ -714,7 +724,7 @@ impl nodejs::Host for WasmState {
             .node_runtime
             .binary_path()
             .await
-            .map(|path| path.to_string_lossy().to_string())
+            .map(|path| path.to_string_lossy().into_owned())
             .to_wasmtime_result()
     }
 
@@ -906,11 +916,15 @@ impl ExtensionImports for WasmState {
     ) -> wasmtime::Result<Result<String, String>> {
         self.on_main_thread(|cx| {
             async move {
-                let location = location
+                let path = location.as_ref().and_then(|location| {
+                    RelPath::new(Path::new(&location.path), PathStyle::Posix).ok()
+                });
+                let location = path
                     .as_ref()
-                    .map(|location| ::settings::SettingsLocation {
+                    .zip(location.as_ref())
+                    .map(|(path, location)| ::settings::SettingsLocation {
                         worktree_id: WorktreeId::from_proto(location.worktree_id),
-                        path: Path::new(&location.path),
+                        path,
                     });
 
                 cx.update(|cx| match category.as_str() {
@@ -1037,7 +1051,7 @@ impl ExtensionImports for WasmState {
             anyhow::ensure!(
                 response.status().is_success(),
                 "download failed with status {}",
-                response.status().to_string()
+                response.status()
             );
             let body = BufReader::new(response.body_mut());
 

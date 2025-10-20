@@ -16,8 +16,8 @@ use collections::{HashMap, HashSet};
 use futures::future;
 use gpui::{App, AsyncApp, Entity, Task};
 use language::{
-    Anchor, Bias, Buffer, BufferSnapshot, CachedLspAdapter, CharKind, OffsetRangeExt, PointUtf16,
-    ToOffset, ToPointUtf16, Transaction, Unclipped,
+    Anchor, Bias, Buffer, BufferSnapshot, CachedLspAdapter, CharKind, CharScopeContext,
+    OffsetRangeExt, PointUtf16, ToOffset, ToPointUtf16, Transaction, Unclipped,
     language_settings::{InlayHintKind, LanguageSettings, language_settings},
     point_from_lsp, point_to_lsp,
     proto::{deserialize_anchor, deserialize_version, serialize_anchor, serialize_version},
@@ -350,7 +350,7 @@ impl LspCommand for PrepareRename {
             }
             Some(lsp::PrepareRenameResponse::DefaultBehavior { .. }) => {
                 let snapshot = buffer.snapshot();
-                let (range, _) = snapshot.surrounding_word(self.position, false);
+                let (range, _) = snapshot.surrounding_word(self.position, None);
                 let range = snapshot.anchor_after(range.start)..snapshot.anchor_before(range.end);
                 Ok(PrepareRenameResponse::Success(range))
             }
@@ -1834,13 +1834,20 @@ impl LspCommand for GetSignatureHelp {
         message: Option<lsp::SignatureHelp>,
         lsp_store: Entity<LspStore>,
         _: Entity<Buffer>,
-        _: LanguageServerId,
+        id: LanguageServerId,
         cx: AsyncApp,
     ) -> Result<Self::Response> {
         let Some(message) = message else {
             return Ok(None);
         };
-        cx.update(|cx| SignatureHelp::new(message, Some(lsp_store.read(cx).languages.clone()), cx))
+        cx.update(|cx| {
+            SignatureHelp::new(
+                message,
+                Some(lsp_store.read(cx).languages.clone()),
+                Some(id),
+                cx,
+            )
+        })
     }
 
     fn to_proto(&self, project_id: u64, buffer: &Buffer) -> Self::ProtoRequest {
@@ -1900,7 +1907,12 @@ impl LspCommand for GetSignatureHelp {
                 .signature_help
                 .map(proto_to_lsp_signature)
                 .and_then(|signature| {
-                    SignatureHelp::new(signature, Some(lsp_store.read(cx).languages.clone()), cx)
+                    SignatureHelp::new(
+                        signature,
+                        Some(lsp_store.read(cx).languages.clone()),
+                        None,
+                        cx,
+                    )
                 })
         })
     }
@@ -2293,7 +2305,10 @@ impl LspCommand for GetCompletions {
                             range_for_token
                                 .get_or_insert_with(|| {
                                     let offset = self.position.to_offset(&snapshot);
-                                    let (range, kind) = snapshot.surrounding_word(offset, true);
+                                    let (range, kind) = snapshot.surrounding_word(
+                                        offset,
+                                        Some(CharScopeContext::Completion),
+                                    );
                                     let range = if kind == Some(CharKind::Word) {
                                         range
                                     } else {

@@ -13,7 +13,7 @@ use gpui::{
 use language::LanguageRegistry;
 use settings::Settings;
 use theme::ThemeSettings;
-use ui::prelude::*;
+use ui::{WithScrollbar, prelude::*};
 use workspace::item::{Item, ItemHandle};
 use workspace::{Pane, Workspace};
 
@@ -278,8 +278,12 @@ impl MarkdownPreviewView {
                         this.parse_markdown_from_active_editor(true, window, cx);
                     }
                     EditorEvent::SelectionsChanged { .. } => {
-                        let selection_range = editor
-                            .update(cx, |editor, cx| editor.selections.last::<usize>(cx).range());
+                        let selection_range = editor.update(cx, |editor, cx| {
+                            editor
+                                .selections
+                                .last::<usize>(&editor.display_snapshot(cx))
+                                .range()
+                        });
                         this.selected_block = this.get_block_index_under_cursor(selection_range);
                         this.list_state.scroll_to_reveal_item(this.selected_block);
                         cx.notify();
@@ -481,7 +485,7 @@ impl Item for MarkdownPreviewView {
 }
 
 impl Render for MarkdownPreviewView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let buffer_size = ThemeSettings::get_global(cx).buffer_font_size(cx);
         let buffer_line_height = ThemeSettings::get_global(cx).buffer_line_height;
 
@@ -598,5 +602,6 @@ impl Render for MarkdownPreviewView {
                     .size_full(),
                 )
             }))
+            .vertical_scrollbar_for(self.list_state.clone(), window, cx)
     }
 }

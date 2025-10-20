@@ -9,6 +9,7 @@ mod task_template;
 mod vscode_debug_format;
 mod vscode_format;
 
+use anyhow::Context as _;
 use collections::{HashMap, HashSet, hash_map};
 use gpui::SharedString;
 use schemars::JsonSchema;
@@ -16,6 +17,7 @@ use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 use std::path::PathBuf;
 use std::str::FromStr;
+use util::get_system_shell;
 
 pub use adapter_schema::{AdapterSchema, AdapterSchemas};
 pub use debug_format::{
@@ -317,7 +319,7 @@ pub struct TaskContext {
 pub struct RunnableTag(pub SharedString);
 
 /// Shell configuration to open the terminal with.
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum Shell {
     /// Use the system's default terminal configuration in /etc/passwd
@@ -334,6 +336,64 @@ pub enum Shell {
         /// An optional string to override the title of the terminal tab
         title_override: Option<SharedString>,
     },
+}
+
+impl Shell {
+    pub fn program(&self) -> String {
+        match self {
+            Shell::Program(program) => program.clone(),
+            Shell::WithArguments { program, .. } => program.clone(),
+            Shell::System => get_system_shell(),
+        }
+    }
+
+    pub fn program_and_args(&self) -> (String, &[String]) {
+        match self {
+            Shell::Program(program) => (program.clone(), &[]),
+            Shell::WithArguments { program, args, .. } => (program.clone(), args),
+            Shell::System => (get_system_shell(), &[]),
+        }
+    }
+
+    pub fn shell_kind(&self, is_windows: bool) -> ShellKind {
+        match self {
+            Shell::Program(program) => ShellKind::new(program, is_windows),
+            Shell::WithArguments { program, .. } => ShellKind::new(program, is_windows),
+            Shell::System => ShellKind::system(),
+        }
+    }
+
+    pub fn from_proto(proto: proto::Shell) -> anyhow::Result<Self> {
+        let shell_type = proto.shell_type.context("invalid shell type")?;
+        let shell = match shell_type {
+            proto::shell::ShellType::System(_) => Self::System,
+            proto::shell::ShellType::Program(program) => Self::Program(program),
+            proto::shell::ShellType::WithArguments(program) => Self::WithArguments {
+                program: program.program,
+                args: program.args,
+                title_override: None,
+            },
+        };
+        Ok(shell)
+    }
+
+    pub fn to_proto(self) -> proto::Shell {
+        let shell_type = match self {
+            Shell::System => proto::shell::ShellType::System(proto::System {}),
+            Shell::Program(program) => proto::shell::ShellType::Program(program),
+            Shell::WithArguments {
+                program,
+                args,
+                title_override: _,
+            } => proto::shell::ShellType::WithArguments(proto::shell::WithArguments {
+                program,
+                args,
+            }),
+        };
+        proto::Shell {
+            shell_type: Some(shell_type),
+        }
+    }
 }
 
 type VsCodeEnvVariable = String;

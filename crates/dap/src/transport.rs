@@ -263,9 +263,14 @@ impl TransportDelegate {
                 }
             }
 
+            // Clean up logs by trimming unnecessary whitespace/newlines before inserting into log.
+            let line = line.trim();
+
+            log::debug!("stderr: {line}");
+
             for (kind, handler) in log_handlers.lock().iter_mut() {
                 if matches!(kind, LogKind::Adapter) {
-                    handler(iokind, None, line.as_str());
+                    handler(iokind, None, line);
                 }
             }
         }
@@ -648,7 +653,7 @@ impl Drop for TcpTransport {
 }
 
 pub struct StdioTransport {
-    process: Mutex<Option<Child>>,
+    process: Mutex<Child>,
     _stderr_task: Option<Task<()>>,
 }
 
@@ -673,15 +678,9 @@ impl StdioTransport {
         command.args(&binary.arguments);
         command.envs(&binary.envs);
 
-        let mut process = Child::spawn(command, Stdio::piped()).with_context(|| {
-            format!(
-                "failed to spawn command `{} {}`.",
-                binary_command,
-                binary.arguments.join(" ")
-            )
-        })?;
+        let mut process = Child::spawn(command, Stdio::piped())?;
 
-        let err_task = process.stderr.take().map(|stderr| {
+        let _stderr_task = process.stderr.take().map(|stderr| {
             cx.background_spawn(TransportDelegate::handle_adapter_log(
                 stderr,
                 IoKind::StdErr,
@@ -689,24 +688,22 @@ impl StdioTransport {
             ))
         });
 
-        let process = Mutex::new(Some(process));
+        let process = Mutex::new(process);
 
         Ok(Self {
             process,
-            _stderr_task: err_task,
+            _stderr_task,
         })
     }
 }
 
 impl Transport for StdioTransport {
     fn has_adapter_logs(&self) -> bool {
-        false
+        true
     }
 
     fn kill(&mut self) {
-        if let Some(process) = &mut *self.process.lock() {
-            process.kill();
-        }
+        self.process.lock().kill();
     }
 
     fn connect(
@@ -718,8 +715,7 @@ impl Transport for StdioTransport {
         )>,
     > {
         let result = util::maybe!({
-            let mut guard = self.process.lock();
-            let process = guard.as_mut().context("oops")?;
+            let mut process = self.process.lock();
             Ok((
                 Box::new(process.stdin.take().context("Cannot reconnect")?) as _,
                 Box::new(process.stdout.take().context("Cannot reconnect")?) as _,
@@ -735,9 +731,7 @@ impl Transport for StdioTransport {
 
 impl Drop for StdioTransport {
     fn drop(&mut self) {
-        if let Some(process) = &mut *self.process.lock() {
-            process.kill();
-        }
+        self.process.lock().kill();
     }
 }
 
@@ -1057,11 +1051,13 @@ impl Child {
     #[cfg(not(windows))]
     fn spawn(mut command: std::process::Command, stdin: Stdio) -> Result<Self> {
         util::set_pre_exec_to_start_new_session(&mut command);
-        let process = smol::process::Command::from(command)
+        let mut command = smol::process::Command::from(command);
+        let process = command
             .stdin(stdin)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .spawn()?;
+            .spawn()
+            .with_context(|| format!("failed to spawn command `{command:?}`",))?;
         Ok(Self { process })
     }
 
@@ -1069,11 +1065,13 @@ impl Child {
     fn spawn(command: std::process::Command, stdin: Stdio) -> Result<Self> {
         // TODO(windows): create a job object and add the child process handle to it,
         // see https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects
-        let process = smol::process::Command::from(command)
+        let mut command = smol::process::Command::from(command);
+        let process = command
             .stdin(stdin)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .spawn()?;
+            .spawn()
+            .with_context(|| format!("failed to spawn command `{command:?}`",))?;
         Ok(Self { process })
     }
 

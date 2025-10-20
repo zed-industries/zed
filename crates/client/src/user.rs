@@ -754,6 +754,10 @@ impl UserStore {
     }
 
     pub fn model_request_usage(&self) -> Option<ModelRequestUsage> {
+        if self.plan().is_some_and(|plan| plan.is_v2()) {
+            return None;
+        }
+
         self.model_request_usage
     }
 
@@ -939,7 +943,7 @@ impl Collaborator {
     pub fn from_proto(message: proto::Collaborator) -> Result<Self> {
         Ok(Self {
             peer_id: message.peer_id.context("invalid peer id")?,
-            replica_id: message.replica_id as ReplicaId,
+            replica_id: ReplicaId::new(message.replica_id as u16),
             user_id: message.user_id as UserId,
             is_host: message.is_host,
             committer_name: message.committer_name,

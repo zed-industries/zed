@@ -88,6 +88,10 @@ pub enum ScrollStrategy {
     /// May not be possible if there's not enough list items above the item scrolled to:
     /// in this case, the element will be placed at the closest possible position.
     Center,
+    /// Attempt to place the element at the bottom of the list's viewport.
+    /// May not be possible if there's not enough list items above the item scrolled to:
+    /// in this case, the element will be placed at the closest possible position.
+    Bottom,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -99,6 +103,7 @@ pub struct DeferredScrollToItem {
     pub strategy: ScrollStrategy,
     /// The offset in number of items
     pub offset: usize,
+    pub scroll_strict: bool,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -133,25 +138,73 @@ impl UniformListScrollHandle {
         })))
     }
 
-    /// Scroll the list to the given item index.
+    /// Scroll the list so that the given item index is visible.
+    ///
+    /// This uses non-strict scrolling: if the item is already fully visible, no scrolling occurs.
+    /// If the item is out of view, it scrolls the minimum amount to bring it into view according
+    /// to the strategy.
     pub fn scroll_to_item(&self, ix: usize, strategy: ScrollStrategy) {
         self.0.borrow_mut().deferred_scroll_to_item = Some(DeferredScrollToItem {
             item_index: ix,
             strategy,
             offset: 0,
+            scroll_strict: false,
         });
     }
 
-    /// Scroll the list to the given item index with an offset.
+    /// Scroll the list so that the given item index is at scroll strategy position.
     ///
-    /// For ScrollStrategy::Top, the item will be placed at the offset position from the top.
+    /// This uses strict scrolling: the item will always be scrolled to match the strategy position,
+    /// even if it's already visible. Use this when you need precise positioning.
+    pub fn scroll_to_item_strict(&self, ix: usize, strategy: ScrollStrategy) {
+        self.0.borrow_mut().deferred_scroll_to_item = Some(DeferredScrollToItem {
+            item_index: ix,
+            strategy,
+            offset: 0,
+            scroll_strict: true,
+        });
+    }
+
+    /// Scroll the list to the given item index with an offset in number of items.
     ///
-    /// For ScrollStrategy::Center, the item will be centered between offset and the last visible item.
+    /// This uses non-strict scrolling: if the item is already visible within the offset region,
+    /// no scrolling occurs.
+    ///
+    /// The offset parameter shrinks the effective viewport by the specified number of items
+    /// from the corresponding edge, then applies the scroll strategy within that reduced viewport:
+    /// - `ScrollStrategy::Top`: Shrinks from top, positions item at the new top
+    /// - `ScrollStrategy::Center`: Shrinks from top, centers item in the reduced viewport
+    /// - `ScrollStrategy::Bottom`: Shrinks from bottom, positions item at the new bottom
     pub fn scroll_to_item_with_offset(&self, ix: usize, strategy: ScrollStrategy, offset: usize) {
         self.0.borrow_mut().deferred_scroll_to_item = Some(DeferredScrollToItem {
             item_index: ix,
             strategy,
             offset,
+            scroll_strict: false,
+        });
+    }
+
+    /// Scroll the list so that the given item index is at the exact scroll strategy position with an offset.
+    ///
+    /// This uses strict scrolling: the item will always be scrolled to match the strategy position,
+    /// even if it's already visible.
+    ///
+    /// The offset parameter shrinks the effective viewport by the specified number of items
+    /// from the corresponding edge, then applies the scroll strategy within that reduced viewport:
+    /// - `ScrollStrategy::Top`: Shrinks from top, positions item at the new top
+    /// - `ScrollStrategy::Center`: Shrinks from top, centers item in the reduced viewport
+    /// - `ScrollStrategy::Bottom`: Shrinks from bottom, positions item at the new bottom
+    pub fn scroll_to_item_strict_with_offset(
+        &self,
+        ix: usize,
+        strategy: ScrollStrategy,
+        offset: usize,
+    ) {
+        self.0.borrow_mut().deferred_scroll_to_item = Some(DeferredScrollToItem {
+            item_index: ix,
+            strategy,
+            offset,
+            scroll_strict: true,
         });
     }
 
@@ -311,17 +364,7 @@ impl Element for UniformList {
             content_size,
             window,
             cx,
-            |style, mut scroll_offset, hitbox, window, cx| {
-                let border = style.border_widths.to_pixels(window.rem_size());
-                let padding = style
-                    .padding
-                    .to_pixels(bounds.size.into(), window.rem_size());
-
-                let padded_bounds = Bounds::from_corners(
-                    bounds.origin + point(border.left + padding.left, border.top),
-                    bounds.bottom_right() - point(border.right + padding.right, border.bottom),
-                );
-
+            |_style, mut scroll_offset, hitbox, window, cx| {
                 let y_flipped = if let Some(scroll_handle) = &self.scroll_handle {
                     let scroll_state = scroll_handle.0.borrow();
                     scroll_state.y_flipped
@@ -368,24 +411,36 @@ impl Element for UniformList {
                             updated_scroll_offset.y = -(item_bottom - list_height) - padding.bottom;
                         }
 
-                        match deferred_scroll.strategy {
-                            ScrollStrategy::Top => {}
-                            ScrollStrategy::Center => {
-                                if scrolled_to_top {
+                        if deferred_scroll.scroll_strict
+                            || (scrolled_to_top
+                                && (item_top < scroll_top + offset_pixels
+                                    || item_bottom > scroll_top + list_height))
+                        {
+                            match deferred_scroll.strategy {
+                                ScrollStrategy::Top => {
+                                    updated_scroll_offset.y = -(item_top - offset_pixels)
+                                        .max(Pixels::ZERO)
+                                        .min(content_height - list_height)
+                                        .max(Pixels::ZERO);
+                                }
+                                ScrollStrategy::Center => {
                                     let item_center = item_top + item_height / 2.0;
 
                                     let viewport_height = list_height - offset_pixels;
                                     let viewport_center = offset_pixels + viewport_height / 2.0;
                                     let target_scroll_top = item_center - viewport_center;
 
-                                    if item_top < scroll_top + offset_pixels
-                                        || item_bottom > scroll_top + list_height
-                                    {
-                                        updated_scroll_offset.y = -target_scroll_top
-                                            .max(Pixels::ZERO)
-                                            .min(content_height - list_height)
-                                            .max(Pixels::ZERO);
-                                    }
+                                    updated_scroll_offset.y = -target_scroll_top
+                                        .max(Pixels::ZERO)
+                                        .min(content_height - list_height)
+                                        .max(Pixels::ZERO);
+                                }
+                                ScrollStrategy::Bottom => {
+                                    updated_scroll_offset.y = -(item_bottom - list_height
+                                        + offset_pixels)
+                                        .max(Pixels::ZERO)
+                                        .min(content_height - list_height)
+                                        .max(Pixels::ZERO);
                                 }
                             }
                         }

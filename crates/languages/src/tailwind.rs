@@ -146,6 +146,7 @@ impl LspAdapter for TailwindLspAdapter {
                 "html": "html",
                 "css": "css",
                 "javascript": "javascript",
+                "typescript": "typescript",
                 "typescriptreact": "typescriptreact",
             },
         })))
@@ -178,6 +179,7 @@ impl LspAdapter for TailwindLspAdapter {
             (LanguageName::new("HTML"), "html".to_string()),
             (LanguageName::new("CSS"), "css".to_string()),
             (LanguageName::new("JavaScript"), "javascript".to_string()),
+            (LanguageName::new("TypeScript"), "typescript".to_string()),
             (LanguageName::new("TSX"), "typescriptreact".to_string()),
             (LanguageName::new("Svelte"), "svelte".to_string()),
             (LanguageName::new("Elixir"), "phoenix-heex".to_string()),

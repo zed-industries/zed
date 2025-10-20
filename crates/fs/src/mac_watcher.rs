@@ -6,6 +6,7 @@ use parking_lot::Mutex;
 use std::{
     path::{Path, PathBuf},
     sync::Weak,
+    thread,
     time::Duration,
 };
 
@@ -31,6 +32,7 @@ impl MacWatcher {
 
 impl Watcher for MacWatcher {
     fn add(&self, path: &Path) -> Result<()> {
+        log::trace!("mac watcher add: {:?}", path);
         let handles = self
             .handles
             .upgrade()
@@ -43,14 +45,20 @@ impl Watcher for MacWatcher {
             .next_back()
             && path.starts_with(watched_path)
         {
+            log::trace!(
+                "mac watched path starts with existing watched path: {watched_path:?}, {path:?}"
+            );
             return Ok(());
         }
 
         let (stream, handle) = EventStream::new(&[path], self.latency);
         let tx = self.events_tx.clone();
-        std::thread::spawn(move || {
-            stream.run(move |events| smol::block_on(tx.send(events)).is_ok());
-        });
+        thread::Builder::new()
+            .name("MacWatcher".to_owned())
+            .spawn(move || {
+                stream.run(move |events| smol::block_on(tx.send(events)).is_ok());
+            })
+            .unwrap();
         handles.insert(path.into(), handle);
 
         Ok(())

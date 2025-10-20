@@ -17,7 +17,7 @@ The naming convention of these databases takes on the form of `0-<zed_channel>`:
 
 You can customize workspace restoration behavior with the following settings:
 
-```json
+```json [settings]
 {
   // Workspace restoration behavior.
   //   All workspaces ("last_session"), last workspace ("last_workspace") or "none"

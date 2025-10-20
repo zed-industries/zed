@@ -107,13 +107,15 @@ impl ModeSelector {
                                         .text_sm()
                                         .text_color(Color::Muted.color(cx))
                                         .child("Hold")
-                                        .child(div().pt_0p5().children(ui::render_modifiers(
-                                            &gpui::Modifiers::secondary_key(),
-                                            PlatformStyle::platform(),
-                                            None,
-                                            Some(ui::TextSize::Default.rems(cx).into()),
-                                            true,
-                                        )))
+                                        .child(h_flex().flex_shrink_0().children(
+                                            ui::render_modifiers(
+                                                &gpui::Modifiers::secondary_key(),
+                                                PlatformStyle::platform(),
+                                                None,
+                                                Some(ui::TextSize::Default.rems(cx).into()),
+                                                true,
+                                            ),
+                                        ))
                                         .child(div().map(|this| {
                                             if is_default {
                                                 this.child("to also unset as default")
@@ -172,11 +174,16 @@ impl Render for ModeSelector {
 
         let this = cx.entity();
 
+        let icon = if self.menu_handle.is_deployed() {
+            IconName::ChevronUp
+        } else {
+            IconName::ChevronDown
+        };
+
         let trigger_button = Button::new("mode-selector-trigger", current_mode_name)
             .label_size(LabelSize::Small)
-            .style(ButtonStyle::Subtle)
             .color(Color::Muted)
-            .icon(IconName::ChevronDown)
+            .icon(icon)
             .icon_size(IconSize::XSmall)
             .icon_position(IconPosition::End)
             .icon_color(Color::Muted)

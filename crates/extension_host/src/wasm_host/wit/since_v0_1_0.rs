@@ -16,6 +16,8 @@ use std::{
     path::{Path, PathBuf},
     sync::{Arc, OnceLock},
 };
+use util::paths::PathStyle;
+use util::rel_path::RelPath;
 use util::{archive::extract_zip, fs::make_file_executable, maybe};
 use wasmtime::component::{Linker, Resource};
 
@@ -421,11 +423,15 @@ impl ExtensionImports for WasmState {
     ) -> wasmtime::Result<Result<String, String>> {
         self.on_main_thread(|cx| {
             async move {
-                let location = location
+                let path = location.as_ref().and_then(|location| {
+                    RelPath::new(Path::new(&location.path), PathStyle::Posix).ok()
+                });
+                let location = path
                     .as_ref()
-                    .map(|location| ::settings::SettingsLocation {
+                    .zip(location.as_ref())
+                    .map(|(path, location)| ::settings::SettingsLocation {
                         worktree_id: WorktreeId::from_proto(location.worktree_id),
-                        path: Path::new(&location.path),
+                        path,
                     });
 
                 cx.update(|cx| match category.as_str() {
@@ -514,7 +520,7 @@ impl ExtensionImports for WasmState {
             anyhow::ensure!(
                 response.status().is_success(),
                 "download failed with status {}",
-                response.status().to_string()
+                response.status()
             );
             let body = BufReader::new(response.body_mut());
 

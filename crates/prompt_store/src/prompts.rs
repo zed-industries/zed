@@ -14,7 +14,9 @@ use std::{
     time::Duration,
 };
 use text::LineEnding;
-use util::{ResultExt, get_system_shell};
+use util::{
+    ResultExt, get_default_system_shell_preferring_bash, rel_path::RelPath, shell::ShellKind,
+};
 
 use crate::UserPromptId;
 
@@ -43,7 +45,8 @@ impl ProjectContext {
             user_rules: default_user_rules,
             os: std::env::consts::OS.to_string(),
             arch: std::env::consts::ARCH.to_string(),
-            shell: get_system_shell(),
+            shell: ShellKind::new(&get_default_system_shell_preferring_bash(), cfg!(windows))
+                .to_string(),
         }
     }
 }
@@ -80,7 +83,7 @@ pub struct WorktreeContext {
 
 #[derive(Debug, Clone, Eq, PartialEq, Serialize)]
 pub struct RulesFileContext {
-    pub path_in_worktree: Arc<Path>,
+    pub path_in_worktree: Arc<RelPath>,
     pub text: String,
     // This used for opening rules files. TODO: Since it isn't related to prompt templating, this
     // should be moved elsewhere.
@@ -447,6 +450,7 @@ impl PromptBuilder {
 mod test {
     use super::*;
     use serde_json;
+    use util::rel_path::rel_path;
     use uuid::Uuid;
 
     #[test]
@@ -455,7 +459,7 @@ mod test {
             root_name: "path".into(),
             abs_path: Path::new("/path/to/root").into(),
             rules_file: Some(RulesFileContext {
-                path_in_worktree: Path::new(".rules").into(),
+                path_in_worktree: rel_path(".rules").into(),
                 text: "".into(),
                 project_entry_id: 0,
             }),

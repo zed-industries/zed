@@ -243,29 +243,32 @@ impl WindowsPlatform {
         let validation_number = self.inner.validation_number;
         let all_windows = Arc::downgrade(&self.raw_window_handles);
         let text_system = Arc::downgrade(&self.text_system);
-        std::thread::spawn(move || {
-            let vsync_provider = VSyncProvider::new();
-            loop {
-                vsync_provider.wait_for_vsync();
-                if check_device_lost(&directx_device.device) {
-                    handle_gpu_device_lost(
-                        &mut directx_device,
-                        platform_window.as_raw(),
-                        validation_number,
-                        &all_windows,
-                        &text_system,
-                    );
-                }
-                let Some(all_windows) = all_windows.upgrade() else {
-                    break;
-                };
-                for hwnd in all_windows.read().iter() {
-                    unsafe {
-                        let _ = RedrawWindow(Some(hwnd.as_raw()), None, None, RDW_INVALIDATE);
+        std::thread::Builder::new()
+            .name("VSyncProvider".to_owned())
+            .spawn(move || {
+                let vsync_provider = VSyncProvider::new();
+                loop {
+                    vsync_provider.wait_for_vsync();
+                    if check_device_lost(&directx_device.device) {
+                        handle_gpu_device_lost(
+                            &mut directx_device,
+                            platform_window.as_raw(),
+                            validation_number,
+                            &all_windows,
+                            &text_system,
+                        );
+                    }
+                    let Some(all_windows) = all_windows.upgrade() else {
+                        break;
+                    };
+                    for hwnd in all_windows.read().iter() {
+                        unsafe {
+                            let _ = RedrawWindow(Some(hwnd.as_raw()), None, None, RDW_INVALIDATE);
+                        }
                     }
                 }
-            }
-        });
+            })
+            .unwrap();
     }
 }
 
@@ -346,6 +349,11 @@ impl Platform for WindowsPlatform {
             pid,
             app_path.display(),
         );
+
+        #[allow(
+            clippy::disallowed_methods,
+            reason = "We are restarting ourselves, using std command thus is fine"
+        )]
         let restart_process = util::command::new_std_command("powershell.exe")
             .arg("-command")
             .arg(script)
@@ -943,17 +951,30 @@ fn file_save_dialog(
 ) -> Result<Option<PathBuf>> {
     let dialog: IFileSaveDialog = unsafe { CoCreateInstance(&FileSaveDialog, None, CLSCTX_ALL)? };
     if !directory.to_string_lossy().is_empty()
-        && let Some(full_path) = directory.canonicalize().log_err()
+        && let Some(full_path) = directory
+            .canonicalize()
+            .context("failed to canonicalize directory")
+            .log_err()
     {
         let full_path = SanitizedPath::new(&full_path);
         let full_path_string = full_path.to_string();
         let path_item: IShellItem =
             unsafe { SHCreateItemFromParsingName(&HSTRING::from(full_path_string), None)? };
-        unsafe { dialog.SetFolder(&path_item).log_err() };
+        unsafe {
+            dialog
+                .SetFolder(&path_item)
+                .context("failed to set dialog folder")
+                .log_err()
+        };
     }
 
     if let Some(suggested_name) = suggested_name {
-        unsafe { dialog.SetFileName(&HSTRING::from(suggested_name)).log_err() };
+        unsafe {
+            dialog
+                .SetFileName(&HSTRING::from(suggested_name))
+                .context("failed to set file name")
+                .log_err()
+        };
     }
 
     unsafe {
@@ -1016,7 +1037,7 @@ fn handle_gpu_device_lost(
     all_windows: &std::sync::Weak<RwLock<SmallVec<[SafeHwnd; 4]>>>,
     text_system: &std::sync::Weak<DirectWriteTextSystem>,
 ) {
-    // Here we wait a bit to ensure the the system has time to recover from the device lost state.
+    // Here we wait a bit to ensure the system has time to recover from the device lost state.
     // If we don't wait, the final drawing result will be blank.
     std::thread::sleep(std::time::Duration::from_millis(350));
 

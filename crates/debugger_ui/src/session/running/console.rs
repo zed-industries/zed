@@ -12,7 +12,7 @@ use gpui::{
     Action as _, AppContext, Context, Corner, Entity, FocusHandle, Focusable, HighlightStyle, Hsla,
     Render, Subscription, Task, TextStyle, WeakEntity, actions,
 };
-use language::{Anchor, Buffer, CodeLabel, TextBufferSnapshot, ToOffset};
+use language::{Anchor, Buffer, CharScopeContext, CodeLabel, TextBufferSnapshot, ToOffset};
 use menu::{Confirm, SelectNext, SelectPrevious};
 use project::{
     Completion, CompletionDisplayOptions, CompletionResponse,
@@ -575,7 +575,9 @@ impl CompletionProvider for ConsoleQueryBarCompletionProvider {
             return false;
         }
 
-        let classifier = snapshot.char_classifier_at(position).for_completion(true);
+        let classifier = snapshot
+            .char_classifier_at(position)
+            .scope_context(Some(CharScopeContext::Completion));
         if trigger_in_words && classifier.is_word(char) {
             return true;
         }
@@ -667,11 +669,7 @@ impl ConsoleQueryBarCompletionProvider {
                             &snapshot,
                         ),
                         new_text: string_match.string.clone(),
-                        label: CodeLabel {
-                            filter_range: 0..string_match.string.len(),
-                            text: string_match.string.clone(),
-                            runs: Vec::new(),
-                        },
+                        label: CodeLabel::plain(string_match.string.clone(), None),
                         icon_path: None,
                         documentation: Some(CompletionDocumentation::MultiLineMarkdown(
                             variable_value.into(),
@@ -780,11 +778,7 @@ impl ConsoleQueryBarCompletionProvider {
                             &snapshot,
                         ),
                         new_text,
-                        label: CodeLabel {
-                            filter_range: 0..completion.label.len(),
-                            text: completion.label,
-                            runs: Vec::new(),
-                        },
+                        label: CodeLabel::plain(completion.label, None),
                         icon_path: None,
                         documentation: completion.detail.map(|detail| {
                             CompletionDocumentation::MultiLineMarkdown(detail.into())
@@ -969,8 +963,12 @@ mod tests {
     ) {
         cx.set_state(input);
 
-        let buffer_position =
-            cx.editor(|editor, _, cx| editor.selections.newest::<Point>(cx).start);
+        let buffer_position = cx.editor(|editor, _, cx| {
+            editor
+                .selections
+                .newest::<Point>(&editor.display_snapshot(cx))
+                .start
+        });
 
         let snapshot = &cx.buffer_snapshot();
 

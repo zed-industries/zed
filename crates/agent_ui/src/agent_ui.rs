@@ -4,8 +4,10 @@ mod agent_diff;
 mod agent_model_selector;
 mod agent_panel;
 mod buffer_codegen;
+mod context;
 mod context_picker;
 mod context_server_configuration;
+mod context_store;
 mod context_strip;
 mod inline_assistant;
 mod inline_prompt_editor;
@@ -14,7 +16,6 @@ mod message_editor;
 mod profile_selector;
 mod slash_command;
 mod slash_command_picker;
-mod slash_command_settings;
 mod terminal_codegen;
 mod terminal_inline_assistant;
 mod text_thread_editor;
@@ -23,8 +24,7 @@ mod ui;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use agent::ThreadId;
-use agent_settings::{AgentProfileId, AgentSettings, LanguageModelSelection};
+use agent_settings::{AgentProfileId, AgentSettings};
 use assistant_slash_command::SlashCommandRegistry;
 use client::Client;
 use command_palette_hooks::CommandPaletteFilter;
@@ -40,13 +40,12 @@ use project::agent_server_store::AgentServerCommand;
 use prompt_store::PromptBuilder;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings as _, SettingsStore};
+use settings::{LanguageModelSelection, Settings as _, SettingsStore};
 use std::any::TypeId;
 
 use crate::agent_configuration::{ConfigureContextServerModal, ManageProfilesModal};
 pub use crate::agent_panel::{AgentPanel, ConcreteAssistantPanelDelegate};
 pub use crate::inline_assistant::InlineAssistant;
-use crate::slash_command_settings::SlashCommandSettings;
 pub use agent_diff::{AgentDiffPane, AgentDiffToolbar};
 pub use text_thread_editor::{AgentPanelDelegate, TextThreadEditor};
 use zed_actions;
@@ -141,10 +140,7 @@ pub struct QuoteSelection;
 #[derive(Default, Clone, PartialEq, Deserialize, JsonSchema, Action)]
 #[action(namespace = agent)]
 #[serde(deny_unknown_fields)]
-pub struct NewThread {
-    #[serde(default)]
-    from_thread_id: Option<ThreadId>,
-}
+pub struct NewThread;
 
 /// Creates a new external agent conversation thread.
 #[derive(Default, Clone, PartialEq, Deserialize, JsonSchema, Action)]
@@ -163,12 +159,12 @@ pub struct NewNativeAgentThreadFromSummary {
 }
 
 // TODO unify this with AgentType
-#[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
-enum ExternalAgent {
-    #[default]
+pub enum ExternalAgent {
     Gemini,
     ClaudeCode,
+    Codex,
     NativeAgent,
     Custom {
         name: SharedString,
@@ -185,24 +181,26 @@ fn placeholder_command() -> AgentServerCommand {
 }
 
 impl ExternalAgent {
-    fn name(&self) -> &'static str {
-        match self {
-            Self::NativeAgent => "zed",
-            Self::Gemini => "gemini-cli",
-            Self::ClaudeCode => "claude-code",
-            Self::Custom { .. } => "custom",
+    pub fn parse_built_in(server: &dyn agent_servers::AgentServer) -> Option<Self> {
+        match server.telemetry_id() {
+            "gemini-cli" => Some(Self::Gemini),
+            "claude-code" => Some(Self::ClaudeCode),
+            "codex" => Some(Self::Codex),
+            "zed" => Some(Self::NativeAgent),
+            _ => None,
         }
     }
 
     pub fn server(
         &self,
         fs: Arc<dyn fs::Fs>,
-        history: Entity<agent2::HistoryStore>,
+        history: Entity<agent::HistoryStore>,
     ) -> Rc<dyn agent_servers::AgentServer> {
         match self {
             Self::Gemini => Rc::new(agent_servers::Gemini),
             Self::ClaudeCode => Rc::new(agent_servers::ClaudeCode),
-            Self::NativeAgent => Rc::new(agent2::NativeAgentServer::new(fs, history)),
+            Self::Codex => Rc::new(agent_servers::Codex),
+            Self::NativeAgent => Rc::new(agent::NativeAgentServer::new(fs, history)),
             Self::Custom { name, command: _ } => {
                 Rc::new(agent_servers::CustomAgentServer::new(name.clone()))
             }
@@ -257,7 +255,6 @@ pub fn init(
     cx: &mut App,
 ) {
     AgentSettings::register(cx);
-    SlashCommandSettings::register(cx);
 
     assistant_context::init(client.clone(), cx);
     rules_library::init(cx);
@@ -267,7 +264,6 @@ pub fn init(
         init_language_model_settings(cx);
     }
     assistant_slash_command::init(cx);
-    agent::init(cx);
     agent_panel::init(cx);
     context_server_configuration::init(language_registry.clone(), fs.clone(), cx);
     TextThreadEditor::init(cx);
@@ -413,8 +409,6 @@ fn register_slash_commands(cx: &mut App) {
     slash_command_registry.register_command(assistant_slash_commands::DeltaSlashCommand, true);
     slash_command_registry.register_command(assistant_slash_commands::OutlineSlashCommand, true);
     slash_command_registry.register_command(assistant_slash_commands::TabSlashCommand, true);
-    slash_command_registry
-        .register_command(assistant_slash_commands::CargoWorkspaceSlashCommand, true);
     slash_command_registry.register_command(assistant_slash_commands::PromptSlashCommand, true);
     slash_command_registry.register_command(assistant_slash_commands::SelectionCommand, true);
     slash_command_registry.register_command(assistant_slash_commands::DefaultSlashCommand, false);
@@ -434,21 +428,4 @@ fn register_slash_commands(cx: &mut App) {
         }
     })
     .detach();
-
-    update_slash_commands_from_settings(cx);
-    cx.observe_global::<SettingsStore>(update_slash_commands_from_settings)
-        .detach();
-}
-
-fn update_slash_commands_from_settings(cx: &mut App) {
-    let slash_command_registry = SlashCommandRegistry::global(cx);
-    let settings = SlashCommandSettings::get_global(cx);
-
-    if settings.cargo_workspace.enabled {
-        slash_command_registry
-            .register_command(assistant_slash_commands::CargoWorkspaceSlashCommand, true);
-    } else {
-        slash_command_registry
-            .unregister_command(assistant_slash_commands::CargoWorkspaceSlashCommand);
-    }
 }

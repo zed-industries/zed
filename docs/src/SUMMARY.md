@@ -15,6 +15,7 @@
 
 - [Configuring Zed](./configuring-zed.md)
 - [Configuring Languages](./configuring-languages.md)
+  - [Toolchains](./toolchains.md)
 - [Key bindings](./key-bindings.md)
   - [All Actions](./all-actions.md)
 - [Snippets](./snippets.md)
@@ -57,9 +58,9 @@
   - [LLM Providers](./ai/llm-providers.md)
   - [Agent Settings](./ai/agent-settings.md)
 - [Subscription](./ai/subscription.md)
+  - [Models](./ai/models.md)
   - [Plans and Usage](./ai/plans-and-usage.md)
   - [Billing](./ai/billing.md)
-  - [Models](./ai/models.md)
 - [Privacy and Security](./ai/privacy-and-security.md)
   - [AI Improvement](./ai/ai-improvement.md)
 
@@ -159,4 +160,5 @@
   - [Using Debuggers](./development/debuggers.md)
   - [Glossary](./development/glossary.md)
 - [Release Process](./development/releases.md)
+- [Release Notes](./development/release-notes.md)
 - [Debugging Crashes](./development/debugging-crashes.md)

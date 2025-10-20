@@ -6,6 +6,7 @@ mod callout;
 mod chip;
 mod content_group;
 mod context_menu;
+mod data_table;
 mod disclosure;
 mod divider;
 mod dropdown_menu;
@@ -22,7 +23,6 @@ mod list;
 mod modal;
 mod navigable;
 mod notification;
-mod numeric_stepper;
 mod popover;
 mod popover_menu;
 mod progress;
@@ -37,6 +37,7 @@ mod tab;
 mod tab_bar;
 mod toggle;
 mod tooltip;
+mod tree_view_item;
 
 #[cfg(feature = "stories")]
 mod stories;
@@ -49,6 +50,7 @@ pub use callout::*;
 pub use chip::*;
 pub use content_group::*;
 pub use context_menu::*;
+pub use data_table::*;
 pub use disclosure::*;
 pub use divider::*;
 pub use dropdown_menu::*;
@@ -65,7 +67,6 @@ pub use list::*;
 pub use modal::*;
 pub use navigable::*;
 pub use notification::*;
-pub use numeric_stepper::*;
 pub use popover::*;
 pub use popover_menu::*;
 pub use progress::*;
@@ -80,6 +81,7 @@ pub use tab::*;
 pub use tab_bar::*;
 pub use toggle::*;
 pub use tooltip::*;
+pub use tree_view_item::*;
 
 #[cfg(feature = "stories")]
 pub use stories::*;

@@ -24,6 +24,7 @@ test-support = [
 
 [dependencies]
 anyhow.workspace = true
+async-lock.workspace = true
 clock.workspace = true
 collections.workspace = true
 fs.workspace = true
@@ -38,7 +39,6 @@ parking_lot.workspace = true
 paths.workspace = true
 postage.workspace = true
 rpc = { workspace = true, features = ["gpui"] }
-schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
@@ -47,7 +47,6 @@ smol.workspace = true
 sum_tree.workspace = true
 text.workspace = true
 util.workspace = true
-workspace-hack.workspace = true
 
 [dev-dependencies]
 clock = { workspace = true, features = ["test-support"] }

@@ -23,11 +23,14 @@ use gpui::{
 use language::{Language, LanguageConfig, ToOffset as _};
 use notifications::status_toast::{StatusToast, ToastIcon};
 use project::{CompletionDisplayOptions, Project};
-use settings::{BaseKeymap, KeybindSource, KeymapFile, Settings as _, SettingsAssets};
+use settings::{
+    BaseKeymap, KeybindSource, KeymapFile, Settings as _, SettingsAssets, infer_json_indent_size,
+};
 use ui::{
     ActiveTheme as _, App, Banner, BorrowAppContext, ContextMenu, IconButtonShape, Indicator,
-    Modal, ModalFooter, ModalHeader, ParentElement as _, Render, Section, SharedString,
-    Styled as _, Tooltip, Window, prelude::*, right_click_menu,
+    Modal, ModalFooter, ModalHeader, ParentElement as _, PopoverMenu, Render, Section,
+    SharedString, Styled as _, Table, TableColumnWidths, TableInteractionState,
+    TableResizeBehavior, Tooltip, Window, prelude::*,
 };
 use ui_input::SingleLineInput;
 use util::ResultExt;
@@ -37,13 +40,12 @@ use workspace::{
 };
 
 pub use ui_components::*;
-use zed_actions::OpenKeymapEditor;
+use zed_actions::OpenKeymap;
 
 use crate::{
     persistence::KEYBINDING_EDITORS,
-    ui_components::{
-        keystroke_input::{ClearKeystrokes, KeystrokeInput, StartRecording, StopRecording},
-        table::{ColumnWidths, ResizeBehavior, Table, TableInteractionState},
+    ui_components::keystroke_input::{
+        ClearKeystrokes, KeystrokeInput, StartRecording, StopRecording,
     },
 };
 
@@ -77,7 +79,7 @@ pub fn init(cx: &mut App) {
     let keymap_event_channel = KeymapEventChannel::new();
     cx.set_global(keymap_event_channel);
 
-    cx.on_action(|_: &OpenKeymapEditor, cx| {
+    cx.on_action(|_: &OpenKeymap, cx| {
         workspace::with_active_or_new_workspace(cx, move |workspace, window, cx| {
             workspace
                 .with_local_workspace(window, cx, |workspace, window, cx| {
@@ -369,7 +371,7 @@ struct KeymapEditor {
     context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
     previous_edit: Option<PreviousEdit>,
     humanized_action_names: HumanizedActionNameCache,
-    current_widths: Entity<ColumnWidths<6>>,
+    current_widths: Entity<TableColumnWidths<6>>,
     show_hover_menus: bool,
     /// In order for the JSON LSP to run in the actions arguments editor, we
     /// require a backing file In order to avoid issues (primarily log spam)
@@ -425,7 +427,10 @@ impl KeymapEditor {
     fn new(workspace: WeakEntity<Workspace>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let _keymap_subscription =
             cx.observe_global_in::<KeymapEventChannel>(window, Self::on_keymap_changed);
-        let table_interaction_state = TableInteractionState::new(cx);
+        let table_interaction_state = cx.new(|cx| {
+            TableInteractionState::new(cx)
+                .with_custom_scrollbar(ui::Scrollbars::for_settings::<editor::EditorSettings>())
+        });
 
         let keystroke_editor = cx.new(|cx| {
             let mut keystroke_editor = KeystrokeInput::new(None, window, cx);
@@ -496,7 +501,7 @@ impl KeymapEditor {
             show_hover_menus: true,
             action_args_temp_dir: None,
             action_args_temp_dir_worktree: None,
-            current_widths: cx.new(|cx| ColumnWidths::new(cx)),
+            current_widths: cx.new(|cx| TableColumnWidths::new(cx)),
         };
 
         this.on_keymap_changed(window, cx);
@@ -1195,13 +1200,12 @@ impl KeymapEditor {
         else {
             return;
         };
-        let tab_size = cx.global::<settings::SettingsStore>().json_tab_size();
         self.previous_edit = Some(PreviousEdit::ScrollBarOffset(
             self.table_interaction_state.read(cx).scroll_offset(),
         ));
         let keyboard_mapper = cx.keyboard_mapper().clone();
         cx.spawn(async move |_, _| {
-            remove_keybinding(to_remove, &fs, tab_size, keyboard_mapper.as_ref()).await
+            remove_keybinding(to_remove, &fs, keyboard_mapper.as_ref()).await
         })
         .detach_and_notify_err(window, cx);
     }
@@ -1566,7 +1570,7 @@ impl Render for KeymapEditor {
                         h_flex()
                             .gap_2()
                             .child(
-                                div()
+                                h_flex()
                                     .key_context({
                                         let mut context = KeyContext::new_with_defaults();
                                         context.add("BufferSearchBar");
@@ -1660,56 +1664,61 @@ impl Render for KeymapEditor {
                                             }),
                                     )
                                     .child(
-                                        div()
-                                            .ml_1()
+                                        h_flex()
+                                            .w_full()
                                             .pl_2()
-                                            .border_l_1()
-                                            .border_color(cx.theme().colors().border_variant)
+                                            .gap_1()
+                                            .justify_end()
                                             .child(
-                                                right_click_menu("open-keymap-menu")
-                                                    .menu(|window, cx| {
-                                                        ContextMenu::build(window, cx, |menu, _, _| {
-                                                            menu.header("Open Keymap JSON")
+                                                PopoverMenu::new("open-keymap-menu")
+                                                    .menu(move |window, cx| {
+                                                        Some(ContextMenu::build(window, cx, |menu, _, _| {
+                                                            menu.header("View Default...")
                                                                 .action(
-                                                                    "User",
-                                                                    zed_actions::OpenKeymap.boxed_clone(),
-                                                                )
-                                                                .action(
-                                                                    "Zed Default",
+                                                                    "Zed Key Bindings",
                                                                     zed_actions::OpenDefaultKeymap
                                                                         .boxed_clone(),
                                                                 )
                                                                 .action(
-                                                                    "Vim Default",
+                                                                    "Vim Bindings",
                                                                     vim::OpenDefaultKeymap.boxed_clone(),
                                                                 )
-                                                        })
+                                                        }))
                                                     })
-                                                    .anchor(gpui::Corner::TopLeft)
-                                                    .trigger(|open, _, _| {
+                                                    .anchor(gpui::Corner::TopRight)
+                                                    .offset(gpui::Point {
+                                                        x: px(0.0),
+                                                        y: px(2.0),
+                                                    })
+                                                    .trigger_with_tooltip(
                                                         IconButton::new(
                                                             "OpenKeymapJsonButton",
-                                                            IconName::Json,
+                                                            IconName::Ellipsis,
                                                         )
-                                                        .icon_size(IconSize::Small)
-                                                        .when(!open, |this| {
-                                                            this.tooltip(move |window, cx| {
-                                                                Tooltip::with_meta(
-                                                                    "Open keymap.json",
-                                                                    Some(&zed_actions::OpenKeymap),
-                                                                    "Right click to view more options",
+                                                        .icon_size(IconSize::Small),
+                                                        {
+                                                            let focus_handle = focus_handle.clone();
+                                                            move |window, cx| {
+                                                                Tooltip::for_action_in(
+                                                                    "View Default...",
+                                                                    &zed_actions::OpenKeymapFile,
+                                                                    &focus_handle,
                                                                     window,
                                                                     cx,
                                                                 )
-                                                            })
-                                                        })
-                                                        .on_click(|_, window, cx| {
-                                                            window.dispatch_action(
-                                                                zed_actions::OpenKeymap.boxed_clone(),
-                                                                cx,
-                                                            );
-                                                        })
-                                                    }),
+                                                            }
+                                                        },
+                                                    ),
+                                            )
+                                            .child(
+                                                Button::new("edit-in-json", "Edit in keymap.json")
+                                                    .style(ButtonStyle::Outlined)
+                                                    .on_click(|_, window, cx| {
+                                                        window.dispatch_action(
+                                                            zed_actions::OpenKeymapFile.boxed_clone(),
+                                                            cx,
+                                                        );
+                                                    })
                                             ),
                                     )
                             ),
@@ -1780,12 +1789,12 @@ impl Render for KeymapEditor {
                     ])
                     .resizable_columns(
                         [
-                            ResizeBehavior::None,
-                            ResizeBehavior::Resizable,
-                            ResizeBehavior::Resizable,
-                            ResizeBehavior::Resizable,
-                            ResizeBehavior::Resizable,
-                            ResizeBehavior::Resizable, // this column doesn't matter
+                            TableResizeBehavior::None,
+                            TableResizeBehavior::Resizable,
+                            TableResizeBehavior::Resizable,
+                            TableResizeBehavior::Resizable,
+                            TableResizeBehavior::Resizable,
+                            TableResizeBehavior::Resizable, // this column doesn't matter
                         ],
                         &self.current_widths,
                         cx,
@@ -2280,7 +2289,6 @@ impl KeybindingEditorModal {
     fn save(&mut self, cx: &mut Context<Self>) -> Result<(), InputError> {
         let existing_keybind = self.editing_keybind.clone();
         let fs = self.fs.clone();
-        let tab_size = cx.global::<settings::SettingsStore>().json_tab_size();
 
         let mut new_keystrokes = self.validate_keystrokes(cx).map_err(InputError::error)?;
         new_keystrokes
@@ -2359,7 +2367,6 @@ impl KeybindingEditorModal {
                 &action_mapping,
                 new_action_args.as_deref(),
                 &fs,
-                tab_size,
                 keyboard_mapper.as_ref(),
             )
             .await
@@ -2705,10 +2712,7 @@ impl ActionArgumentsEditor {
                     )
                 })?;
 
-                let file_name =
-                    project::lsp_store::json_language_server_ext::normalized_action_file_name(
-                        action_name,
-                    );
+                let file_name = json_schema_store::normalized_action_file_name(action_name);
 
                 let (buffer, backup_temp_dir) =
                     Self::create_temp_buffer(temp_dir, file_name.clone(), project.clone(), fs, cx)
@@ -3014,12 +3018,13 @@ async fn save_keybinding_update(
     action_mapping: &ActionMapping,
     new_args: Option<&str>,
     fs: &Arc<dyn Fs>,
-    tab_size: usize,
     keyboard_mapper: &dyn PlatformKeyboardMapper,
 ) -> anyhow::Result<()> {
     let keymap_contents = settings::KeymapFile::load_keymap_file(fs)
         .await
         .context("Failed to load keymap file")?;
+
+    let tab_size = infer_json_indent_size(&keymap_contents);
 
     let existing_keystrokes = existing.keystrokes().unwrap_or_default();
     let existing_context = existing.context().and_then(KeybindContextString::local_str);
@@ -3084,7 +3089,6 @@ async fn save_keybinding_update(
 async fn remove_keybinding(
     existing: ProcessedBinding,
     fs: &Arc<dyn Fs>,
-    tab_size: usize,
     keyboard_mapper: &dyn PlatformKeyboardMapper,
 ) -> anyhow::Result<()> {
     let Some(keystrokes) = existing.keystrokes() else {
@@ -3093,6 +3097,7 @@ async fn remove_keybinding(
     let keymap_contents = settings::KeymapFile::load_keymap_file(fs)
         .await
         .context("Failed to load keymap file")?;
+    let tab_size = infer_json_indent_size(&keymap_contents);
 
     let operation = settings::KeybindUpdateOperation::Remove {
         target: settings::KeybindUpdateTarget {

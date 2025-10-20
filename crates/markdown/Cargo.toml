@@ -20,6 +20,7 @@ test-support = [
 
 [dependencies]
 base64.workspace = true
+collections.workspace = true
 futures.workspace = true
 gpui.workspace = true
 language.workspace = true
@@ -30,7 +31,6 @@ sum_tree.workspace = true
 theme.workspace = true
 ui.workspace = true
 util.workspace = true
-workspace-hack.workspace = true
 
 [dev-dependencies]
 assets.workspace = true

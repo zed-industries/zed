@@ -89,9 +89,9 @@ ui.workspace = true
 url.workspace = true
 util.workspace = true
 uuid.workspace = true
+vim_mode_setting.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
-workspace-hack.workspace = true
 
 [dev-dependencies]
 criterion.workspace = true

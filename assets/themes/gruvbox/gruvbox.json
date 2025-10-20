@@ -249,7 +249,7 @@
           "hint": {
             "color": "#8c957dff",
             "font_style": null,
-            "font_weight": 700
+            "font_weight": null
           },
           "keyword": {
             "color": "#fb4833ff",
@@ -655,7 +655,7 @@
           "hint": {
             "color": "#8c957dff",
             "font_style": null,
-            "font_weight": 700
+            "font_weight": null
           },
           "keyword": {
             "color": "#fb4833ff",
@@ -1061,7 +1061,7 @@
           "hint": {
             "color": "#8c957dff",
             "font_style": null,
-            "font_weight": 700
+            "font_weight": null
           },
           "keyword": {
             "color": "#fb4833ff",
@@ -1467,7 +1467,7 @@
           "hint": {
             "color": "#677562ff",
             "font_style": null,
-            "font_weight": 700
+            "font_weight": null
           },
           "keyword": {
             "color": "#9d0006ff",
@@ -1873,7 +1873,7 @@
           "hint": {
             "color": "#677562ff",
             "font_style": null,
-            "font_weight": 700
+            "font_weight": null
           },
           "keyword": {
             "color": "#9d0006ff",
@@ -2279,7 +2279,7 @@
           "hint": {
             "color": "#677562ff",
             "font_style": null,
-            "font_weight": 700
+            "font_weight": null
           },
           "keyword": {
             "color": "#9d0006ff",

@@ -1,19 +1,20 @@
 use std::cell::RefCell;
 use std::ops::Range;
+use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
 use acp_thread::MentionUri;
+use agent::{HistoryEntry, HistoryStore};
 use agent_client_protocol as acp;
-use agent2::{HistoryEntry, HistoryStore};
 use anyhow::Result;
 use editor::{CompletionProvider, Editor, ExcerptId};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{App, Entity, Task, WeakEntity};
-use language::{Buffer, CodeLabel, HighlightId};
+use language::{Buffer, CodeLabel, CodeLabelBuilder, HighlightId};
 use lsp::CompletionContext;
-use project::lsp_store::CompletionDocumentation;
+use project::lsp_store::{CompletionDocumentation, SymbolLocation};
 use project::{
     Completion, CompletionDisplayOptions, CompletionIntent, CompletionResponse, Project,
     ProjectPath, Symbol, WorktreeId,
@@ -22,14 +23,16 @@ use prompt_store::PromptStore;
 use rope::Point;
 use text::{Anchor, ToPoint as _};
 use ui::prelude::*;
+use util::rel_path::RelPath;
 use workspace::Workspace;
 
 use crate::AgentPanel;
-use crate::acp::message_editor::{MessageEditor, MessageEditorEvent};
+use crate::acp::message_editor::MessageEditor;
 use crate::context_picker::file_context_picker::{FileMatch, search_files};
 use crate::context_picker::rules_context_picker::{RulesContextEntry, search_rules};
 use crate::context_picker::symbol_context_picker::SymbolMatch;
 use crate::context_picker::symbol_context_picker::search_symbols;
+use crate::context_picker::thread_context_picker::search_threads;
 use crate::context_picker::{
     ContextPickerAction, ContextPickerEntry, ContextPickerMode, selection_ranges,
 };
@@ -187,7 +190,7 @@ impl ContextPickerCompletionProvider {
 
     pub(crate) fn completion_for_path(
         project_path: ProjectPath,
-        path_prefix: &str,
+        path_prefix: &RelPath,
         is_recent: bool,
         is_directory: bool,
         source_range: Range<Anchor>,
@@ -195,10 +198,12 @@ impl ContextPickerCompletionProvider {
         project: Entity<Project>,
         cx: &mut App,
     ) -> Option<Completion> {
+        let path_style = project.read(cx).path_style(cx);
         let (file_name, directory) =
             crate::context_picker::file_context_picker::extract_file_name_and_directory(
                 &project_path.path,
                 path_prefix,
+                path_style,
             );
 
         let label =
@@ -250,7 +255,15 @@ impl ContextPickerCompletionProvider {
 
         let label = CodeLabel::plain(symbol.name.clone(), None);
 
-        let abs_path = project.read(cx).absolute_path(&symbol.path, cx)?;
+        let abs_path = match &symbol.path {
+            SymbolLocation::InProject(project_path) => {
+                project.read(cx).absolute_path(&project_path, cx)?
+            }
+            SymbolLocation::OutsideProject {
+                abs_path,
+                signature: _,
+            } => PathBuf::from(abs_path.as_ref()),
+        };
         let uri = MentionUri::Symbol {
             abs_path,
             name: symbol.name.clone(),
@@ -639,7 +652,9 @@ impl ContextPickerCompletionProvider {
             .active_item(cx)
             .and_then(|item| item.downcast::<Editor>())
             .is_some_and(|editor| {
-                editor.update(cx, |editor, cx| editor.has_non_empty_selection(cx))
+                editor.update(cx, |editor, cx| {
+                    editor.has_non_empty_selection(&editor.display_snapshot(cx))
+                })
             });
         if has_selection {
             entries.push(ContextPickerEntry::Action(
@@ -661,7 +676,7 @@ impl ContextPickerCompletionProvider {
 
 fn build_code_label_for_full_path(file_name: &str, directory: Option<&str>, cx: &App) -> CodeLabel {
     let comment_id = cx.theme().syntax().highlight_id("comment").map(HighlightId);
-    let mut label = CodeLabel::default();
+    let mut label = CodeLabelBuilder::default();
 
     label.push_str(file_name, None);
     label.push_str(" ", None);
@@ -670,9 +685,7 @@ fn build_code_label_for_full_path(file_name: &str, directory: Option<&str>, cx: 
         label.push_str(directory, comment_id);
     }
 
-    label.filter_range = 0..label.text().len();
-
-    label
+    label.build()
 }
 
 impl CompletionProvider for ContextPickerCompletionProvider {
@@ -747,13 +760,13 @@ impl CompletionProvider for ContextPickerCompletionProvider {
                                                 let editor = editor.clone();
                                                 move |cx| {
                                                     editor
-                                                        .update(cx, |_editor, cx| {
+                                                        .update(cx, |editor, cx| {
                                                             match intent {
                                                                 CompletionIntent::Complete
                                                                 | CompletionIntent::CompleteWithInsert
                                                                 | CompletionIntent::CompleteWithReplace => {
                                                                     if !is_missing_argument {
-                                                                        cx.emit(MessageEditorEvent::Send);
+                                                                        editor.send(cx);
                                                                     }
                                                                 }
                                                                 CompletionIntent::Compose => {}
@@ -763,7 +776,7 @@ impl CompletionProvider for ContextPickerCompletionProvider {
                                                 }
                                             });
                                         }
-                                        is_missing_argument
+                                        false
                                     }
                                 })),
                             }
@@ -898,6 +911,17 @@ impl CompletionProvider for ContextPickerCompletionProvider {
                 offset_to_line,
                 self.prompt_capabilities.borrow().embedded_context,
             )
+            .filter(|completion| {
+                // Right now we don't support completing arguments of slash commands
+                let is_slash_command_with_argument = matches!(
+                    completion,
+                    ContextCompletion::SlashCommand(SlashCommandCompletion {
+                        argument: Some(_),
+                        ..
+                    })
+                );
+                !is_slash_command_with_argument
+            })
             .map(|completion| {
                 completion.source_range().start <= offset_to_line + position.column as usize
                     && completion.source_range().end >= offset_to_line + position.column as usize
@@ -915,42 +939,6 @@ impl CompletionProvider for ContextPickerCompletionProvider {
     fn filter_completions(&self) -> bool {
         false
     }
-}
-
-pub(crate) fn search_threads(
-    query: String,
-    cancellation_flag: Arc<AtomicBool>,
-    history_store: &Entity<HistoryStore>,
-    cx: &mut App,
-) -> Task<Vec<HistoryEntry>> {
-    let threads = history_store.read(cx).entries().collect();
-    if query.is_empty() {
-        return Task::ready(threads);
-    }
-
-    let executor = cx.background_executor().clone();
-    cx.background_spawn(async move {
-        let candidates = threads
-            .iter()
-            .enumerate()
-            .map(|(id, thread)| StringMatchCandidate::new(id, thread.title()))
-            .collect::<Vec<_>>();
-        let matches = fuzzy::match_strings(
-            &candidates,
-            &query,
-            false,
-            true,
-            100,
-            &cancellation_flag,
-            executor,
-        )
-        .await;
-
-        matches
-            .into_iter()
-            .map(|mat| threads[mat.candidate_id].clone())
-            .collect()
-    })
 }
 
 fn confirm_completion_callback(

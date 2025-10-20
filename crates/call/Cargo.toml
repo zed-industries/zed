@@ -35,14 +35,12 @@ language.workspace = true
 log.workspace = true
 postage.workspace = true
 project.workspace = true
-schemars.workspace = true
 serde.workspace = true
 settings.workspace = true
 telemetry.workspace = true
 util.workspace = true
 gpui_tokio.workspace = true
 livekit_client.workspace = true
-workspace-hack.workspace = true
 
 [dev-dependencies]
 client = { workspace = true, features = ["test-support"] }

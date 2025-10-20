@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
-use agent::context_store::ContextStore;
+use agent::{HistoryEntry, HistoryStore};
 use anyhow::Result;
 use editor::{CompletionProvider, Editor, ExcerptId, ToOffset as _};
 use file_icons::FileIcons;
@@ -11,23 +11,25 @@ use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{App, Entity, Task, WeakEntity};
 use http_client::HttpClientWithUrl;
 use itertools::Itertools;
-use language::{Buffer, CodeLabel, HighlightId};
+use language::{Buffer, CodeLabel, CodeLabelBuilder, HighlightId};
 use lsp::CompletionContext;
+use project::lsp_store::SymbolLocation;
 use project::{
-    Completion, CompletionDisplayOptions, CompletionIntent, CompletionResponse, ProjectPath,
-    Symbol, WorktreeId,
+    Completion, CompletionDisplayOptions, CompletionIntent, CompletionResponse, Project,
+    ProjectPath, Symbol, WorktreeId,
 };
 use prompt_store::PromptStore;
 use rope::Point;
 use text::{Anchor, OffsetRangeExt, ToPoint};
 use ui::prelude::*;
 use util::ResultExt as _;
+use util::paths::PathStyle;
+use util::rel_path::RelPath;
 use workspace::Workspace;
 
-use agent::{
-    Thread,
+use crate::{
     context::{AgentContextHandle, AgentContextKey, RULES_ICON},
-    thread_store::{TextThreadStore, ThreadStore},
+    context_store::ContextStore,
 };
 
 use super::fetch_context_picker::fetch_url_content;
@@ -35,7 +37,7 @@ use super::file_context_picker::{FileMatch, search_files};
 use super::rules_context_picker::{RulesContextEntry, search_rules};
 use super::symbol_context_picker::SymbolMatch;
 use super::symbol_context_picker::search_symbols;
-use super::thread_context_picker::{ThreadContextEntry, ThreadMatch, search_threads};
+use super::thread_context_picker::search_threads;
 use super::{
     ContextPickerAction, ContextPickerEntry, ContextPickerMode, MentionLink, RecentEntry,
     available_context_picker_entries, recent_context_picker_entries_with_store, selection_ranges,
@@ -45,7 +47,8 @@ use crate::message_editor::ContextCreasesAddon;
 pub(crate) enum Match {
     File(FileMatch),
     Symbol(SymbolMatch),
-    Thread(ThreadMatch),
+    Thread(HistoryEntry),
+    RecentThread(HistoryEntry),
     Fetch(SharedString),
     Rules(RulesContextEntry),
     Entry(EntryMatch),
@@ -62,6 +65,7 @@ impl Match {
             Match::File(file) => file.mat.score,
             Match::Entry(mode) => mode.mat.as_ref().map(|mat| mat.score).unwrap_or(1.),
             Match::Thread(_) => 1.,
+            Match::RecentThread(_) => 1.,
             Match::Symbol(_) => 1.,
             Match::Fetch(_) => 1.,
             Match::Rules(_) => 1.,
@@ -74,9 +78,8 @@ fn search(
     query: String,
     cancellation_flag: Arc<AtomicBool>,
     recent_entries: Vec<RecentEntry>,
-    prompt_store: Option<Entity<PromptStore>>,
-    thread_store: Option<WeakEntity<ThreadStore>>,
-    text_thread_context_store: Option<WeakEntity<assistant_context::ContextStore>>,
+    prompt_store: Option<WeakEntity<PromptStore>>,
+    thread_store: Option<WeakEntity<HistoryStore>>,
     workspace: Entity<Workspace>,
     cx: &mut App,
 ) -> Task<Vec<Match>> {
@@ -104,13 +107,9 @@ fn search(
         }
 
         Some(ContextPickerMode::Thread) => {
-            if let Some((thread_store, context_store)) = thread_store
-                .as_ref()
-                .and_then(|t| t.upgrade())
-                .zip(text_thread_context_store.as_ref().and_then(|t| t.upgrade()))
-            {
+            if let Some(thread_store) = thread_store.as_ref().and_then(|t| t.upgrade()) {
                 let search_threads_task =
-                    search_threads(query, cancellation_flag, thread_store, context_store, cx);
+                    search_threads(query, cancellation_flag, &thread_store, cx);
                 cx.background_spawn(async move {
                     search_threads_task
                         .await
@@ -132,8 +131,8 @@ fn search(
         }
 
         Some(ContextPickerMode::Rules) => {
-            if let Some(prompt_store) = prompt_store.as_ref() {
-                let search_rules_task = search_rules(query, cancellation_flag, prompt_store, cx);
+            if let Some(prompt_store) = prompt_store.as_ref().and_then(|p| p.upgrade()) {
+                let search_rules_task = search_rules(query, cancellation_flag, &prompt_store, cx);
                 cx.background_spawn(async move {
                     search_rules_task
                         .await
@@ -166,12 +165,7 @@ fn search(
                             },
                             is_recent: true,
                         }),
-                        super::RecentEntry::Thread(thread_context_entry) => {
-                            Match::Thread(ThreadMatch {
-                                thread: thread_context_entry,
-                                is_recent: true,
-                            })
-                        }
+                        super::RecentEntry::Thread(entry) => Match::RecentThread(entry),
                     })
                     .collect::<Vec<_>>();
 
@@ -242,8 +236,8 @@ fn search(
 pub struct ContextPickerCompletionProvider {
     workspace: WeakEntity<Workspace>,
     context_store: WeakEntity<ContextStore>,
-    thread_store: Option<WeakEntity<ThreadStore>>,
-    text_thread_store: Option<WeakEntity<TextThreadStore>>,
+    thread_store: Option<WeakEntity<HistoryStore>>,
+    prompt_store: Option<WeakEntity<PromptStore>>,
     editor: WeakEntity<Editor>,
     excluded_buffer: Option<WeakEntity<Buffer>>,
 }
@@ -252,8 +246,8 @@ impl ContextPickerCompletionProvider {
     pub fn new(
         workspace: WeakEntity<Workspace>,
         context_store: WeakEntity<ContextStore>,
-        thread_store: Option<WeakEntity<ThreadStore>>,
-        text_thread_store: Option<WeakEntity<TextThreadStore>>,
+        thread_store: Option<WeakEntity<HistoryStore>>,
+        prompt_store: Option<WeakEntity<PromptStore>>,
         editor: WeakEntity<Editor>,
         exclude_buffer: Option<WeakEntity<Buffer>>,
     ) -> Self {
@@ -261,7 +255,7 @@ impl ContextPickerCompletionProvider {
             workspace,
             context_store,
             thread_store,
-            text_thread_store,
+            prompt_store,
             editor,
             excluded_buffer: exclude_buffer,
         }
@@ -403,14 +397,14 @@ impl ContextPickerCompletionProvider {
     }
 
     fn completion_for_thread(
-        thread_entry: ThreadContextEntry,
+        thread_entry: HistoryEntry,
         excerpt_id: ExcerptId,
         source_range: Range<Anchor>,
         recent: bool,
         editor: Entity<Editor>,
         context_store: Entity<ContextStore>,
-        thread_store: Entity<ThreadStore>,
-        text_thread_store: Entity<TextThreadStore>,
+        thread_store: Entity<HistoryStore>,
+        project: Entity<Project>,
     ) -> Completion {
         let icon_for_completion = if recent {
             IconName::HistoryRerun
@@ -436,18 +430,16 @@ impl ContextPickerCompletionProvider {
                 editor,
                 context_store.clone(),
                 move |window, cx| match &thread_entry {
-                    ThreadContextEntry::Thread { id, .. } => {
-                        let thread_id = id.clone();
+                    HistoryEntry::AcpThread(thread) => {
                         let context_store = context_store.clone();
-                        let thread_store = thread_store.clone();
+                        let load_thread_task = agent::load_agent_thread(
+                            thread.id.clone(),
+                            thread_store.clone(),
+                            project.clone(),
+                            cx,
+                        );
                         window.spawn::<_, Option<_>>(cx, async move |cx| {
-                            let thread: Entity<Thread> = thread_store
-                                .update_in(cx, |thread_store, window, cx| {
-                                    thread_store.open_thread(&thread_id, window, cx)
-                                })
-                                .ok()?
-                                .await
-                                .log_err()?;
+                            let thread = load_thread_task.await.log_err()?;
                             let context = context_store
                                 .update(cx, |context_store, cx| {
                                     context_store.add_thread(thread, false, cx)
@@ -456,13 +448,13 @@ impl ContextPickerCompletionProvider {
                             Some(context)
                         })
                     }
-                    ThreadContextEntry::Context { path, .. } => {
-                        let path = path.clone();
+                    HistoryEntry::TextThread(thread) => {
+                        let path = thread.path.clone();
                         let context_store = context_store.clone();
-                        let text_thread_store = text_thread_store.clone();
+                        let thread_store = thread_store.clone();
                         cx.spawn::<_, Option<_>>(async move |cx| {
-                            let thread = text_thread_store
-                                .update(cx, |store, cx| store.open_local_context(path, cx))
+                            let thread = thread_store
+                                .update(cx, |store, cx| store.load_text_thread(path, cx))
                                 .ok()?
                                 .await
                                 .log_err()?;
@@ -574,11 +566,12 @@ impl ContextPickerCompletionProvider {
 
     fn completion_for_path(
         project_path: ProjectPath,
-        path_prefix: &str,
+        path_prefix: &RelPath,
         is_recent: bool,
         is_directory: bool,
         excerpt_id: ExcerptId,
         source_range: Range<Anchor>,
+        path_style: PathStyle,
         editor: Entity<Editor>,
         context_store: Entity<ContextStore>,
         cx: &App,
@@ -586,6 +579,7 @@ impl ContextPickerCompletionProvider {
         let (file_name, directory) = super::file_context_picker::extract_file_name_and_directory(
             &project_path.path,
             path_prefix,
+            path_style,
         );
 
         let label =
@@ -657,17 +651,22 @@ impl ContextPickerCompletionProvider {
         workspace: Entity<Workspace>,
         cx: &mut App,
     ) -> Option<Completion> {
+        let path_style = workspace.read(cx).path_style(cx);
+        let SymbolLocation::InProject(symbol_path) = &symbol.path else {
+            return None;
+        };
         let path_prefix = workspace
             .read(cx)
             .project()
             .read(cx)
-            .worktree_for_id(symbol.path.worktree_id, cx)?
+            .worktree_for_id(symbol_path.worktree_id, cx)?
             .read(cx)
             .root_name();
 
         let (file_name, directory) = super::file_context_picker::extract_file_name_and_directory(
-            &symbol.path.path,
+            &symbol_path.path,
             path_prefix,
+            path_style,
         );
         let full_path = if let Some(directory) = directory {
             format!("{}{}", directory, file_name)
@@ -676,7 +675,8 @@ impl ContextPickerCompletionProvider {
         };
 
         let comment_id = cx.theme().syntax().highlight_id("comment").map(HighlightId);
-        let mut label = CodeLabel::plain(symbol.name.clone(), None);
+        let mut label = CodeLabelBuilder::default();
+        label.push_str(&symbol.name, None);
         label.push_str(" ", None);
         label.push_str(&file_name, comment_id);
         label.push_str(&format!(" L{}", symbol.range.start.0.row + 1), comment_id);
@@ -686,7 +686,7 @@ impl ContextPickerCompletionProvider {
         Some(Completion {
             replace_range: source_range.clone(),
             new_text,
-            label,
+            label: label.build(),
             documentation: None,
             source: project::CompletionSource::Custom,
             icon_path: Some(IconName::Code.path().into()),
@@ -719,7 +719,7 @@ impl ContextPickerCompletionProvider {
 
 fn build_code_label_for_full_path(file_name: &str, directory: Option<&str>, cx: &App) -> CodeLabel {
     let comment_id = cx.theme().syntax().highlight_id("comment").map(HighlightId);
-    let mut label = CodeLabel::default();
+    let mut label = CodeLabelBuilder::default();
 
     label.push_str(file_name, None);
     label.push_str(" ", None);
@@ -728,9 +728,7 @@ fn build_code_label_for_full_path(file_name: &str, directory: Option<&str>, cx: 
         label.push_str(directory, comment_id);
     }
 
-    label.filter_range = 0..label.text().len();
-
-    label
+    label.build()
 }
 
 impl CompletionProvider for ContextPickerCompletionProvider {
@@ -743,15 +741,15 @@ impl CompletionProvider for ContextPickerCompletionProvider {
         _window: &mut Window,
         cx: &mut Context<Editor>,
     ) -> Task<Result<Vec<CompletionResponse>>> {
-        let state = buffer.update(cx, |buffer, _cx| {
-            let position = buffer_position.to_point(buffer);
-            let line_start = Point::new(position.row, 0);
-            let offset_to_line = buffer.point_to_offset(line_start);
-            let mut lines = buffer.text_for_range(line_start..position).lines();
-            let line = lines.next()?;
-            MentionCompletion::try_parse(line, offset_to_line)
-        });
-        let Some(state) = state else {
+        let snapshot = buffer.read(cx).snapshot();
+        let position = buffer_position.to_point(&snapshot);
+        let line_start = Point::new(position.row, 0);
+        let offset_to_line = snapshot.point_to_offset(line_start);
+        let mut lines = snapshot.text_for_range(line_start..position).lines();
+        let Some(line) = lines.next() else {
+            return Task::ready(Ok(Vec::new()));
+        };
+        let Some(state) = MentionCompletion::try_parse(line, offset_to_line) else {
             return Task::ready(Ok(Vec::new()));
         };
 
@@ -761,14 +759,14 @@ impl CompletionProvider for ContextPickerCompletionProvider {
             return Task::ready(Ok(Vec::new()));
         };
 
-        let snapshot = buffer.read(cx).snapshot();
         let source_range = snapshot.anchor_before(state.source_range.start)
             ..snapshot.anchor_after(state.source_range.end);
 
         let thread_store = self.thread_store.clone();
-        let text_thread_store = self.text_thread_store.clone();
+        let prompt_store = self.prompt_store.clone();
         let editor = self.editor.clone();
         let http_client = workspace.read(cx).client().http_client();
+        let path_style = workspace.read(cx).path_style(cx);
 
         let MentionCompletion { mode, argument, .. } = state;
         let query = argument.unwrap_or_else(|| "".to_string());
@@ -783,18 +781,10 @@ impl CompletionProvider for ContextPickerCompletionProvider {
         let recent_entries = recent_context_picker_entries_with_store(
             context_store.clone(),
             thread_store.clone(),
-            text_thread_store.clone(),
             workspace.clone(),
             excluded_path.clone(),
             cx,
         );
-
-        let prompt_store = thread_store.as_ref().and_then(|thread_store| {
-            thread_store
-                .read_with(cx, |thread_store, _cx| thread_store.prompt_store().clone())
-                .ok()
-                .flatten()
-        });
 
         let search_task = search(
             mode,
@@ -803,14 +793,14 @@ impl CompletionProvider for ContextPickerCompletionProvider {
             recent_entries,
             prompt_store,
             thread_store.clone(),
-            text_thread_store.clone(),
             workspace.clone(),
             cx,
         );
+        let project = workspace.read(cx).project().downgrade();
 
         cx.spawn(async move |_, cx| {
             let matches = search_task.await;
-            let Some(editor) = editor.upgrade() else {
+            let Some((editor, project)) = editor.upgrade().zip(project.upgrade()) else {
                 return Ok(Vec::new());
             };
 
@@ -835,6 +825,7 @@ impl CompletionProvider for ContextPickerCompletionProvider {
                                 mat.is_dir,
                                 excerpt_id,
                                 source_range.clone(),
+                                path_style,
                                 editor.clone(),
                                 context_store.clone(),
                                 cx,
@@ -850,25 +841,32 @@ impl CompletionProvider for ContextPickerCompletionProvider {
                             workspace.clone(),
                             cx,
                         ),
-
-                        Match::Thread(ThreadMatch {
-                            thread, is_recent, ..
-                        }) => {
+                        Match::Thread(thread) => {
                             let thread_store = thread_store.as_ref().and_then(|t| t.upgrade())?;
-                            let text_thread_store =
-                                text_thread_store.as_ref().and_then(|t| t.upgrade())?;
                             Some(Self::completion_for_thread(
                                 thread,
                                 excerpt_id,
                                 source_range.clone(),
-                                is_recent,
+                                false,
                                 editor.clone(),
                                 context_store.clone(),
                                 thread_store,
-                                text_thread_store,
+                                project.clone(),
                             ))
                         }
-
+                        Match::RecentThread(thread) => {
+                            let thread_store = thread_store.as_ref().and_then(|t| t.upgrade())?;
+                            Some(Self::completion_for_thread(
+                                thread,
+                                excerpt_id,
+                                source_range.clone(),
+                                true,
+                                editor.clone(),
+                                context_store.clone(),
+                                thread_store,
+                                project.clone(),
+                            ))
+                        }
                         Match::Rules(user_rules) => Some(Self::completion_for_rules(
                             user_rules,
                             excerpt_id,
@@ -1065,7 +1063,7 @@ mod tests {
     use serde_json::json;
     use settings::SettingsStore;
     use std::{ops::Deref, rc::Rc};
-    use util::path;
+    use util::{path, rel_path::rel_path};
     use workspace::{AppState, Item};
 
     #[test]
@@ -1216,15 +1214,17 @@ mod tests {
         let mut cx = VisualTestContext::from_window(*window.deref(), cx);
 
         let paths = vec![
-            path!("a/one.txt"),
-            path!("a/two.txt"),
-            path!("a/three.txt"),
-            path!("a/four.txt"),
-            path!("b/five.txt"),
-            path!("b/six.txt"),
-            path!("b/seven.txt"),
-            path!("b/eight.txt"),
+            rel_path("a/one.txt"),
+            rel_path("a/two.txt"),
+            rel_path("a/three.txt"),
+            rel_path("a/four.txt"),
+            rel_path("b/five.txt"),
+            rel_path("b/six.txt"),
+            rel_path("b/seven.txt"),
+            rel_path("b/eight.txt"),
         ];
+
+        let slash = PathStyle::local().separator();
 
         let mut opened_editors = Vec::new();
         for path in paths {
@@ -1233,7 +1233,7 @@ mod tests {
                     workspace.open_path(
                         ProjectPath {
                             worktree_id,
-                            path: Path::new(path).into(),
+                            path: path.into(),
                         },
                         None,
                         false,
@@ -1269,7 +1269,7 @@ mod tests {
             editor
         });
 
-        let context_store = cx.new(|_| ContextStore::new(project.downgrade(), None));
+        let context_store = cx.new(|_| ContextStore::new(project.downgrade()));
 
         let editor_entity = editor.downgrade();
         editor.update_in(&mut cx, |editor, window, cx| {
@@ -1309,13 +1309,13 @@ mod tests {
             assert_eq!(
                 current_completion_labels(editor),
                 &[
-                    "seven.txt dir/b/",
-                    "six.txt dir/b/",
-                    "five.txt dir/b/",
-                    "four.txt dir/a/",
-                    "Files & Directories",
-                    "Symbols",
-                    "Fetch"
+                    format!("seven.txt dir{slash}b{slash}"),
+                    format!("six.txt dir{slash}b{slash}"),
+                    format!("five.txt dir{slash}b{slash}"),
+                    format!("four.txt dir{slash}a{slash}"),
+                    "Files & Directories".into(),
+                    "Symbols".into(),
+                    "Fetch".into()
                 ]
             );
         });
@@ -1342,7 +1342,10 @@ mod tests {
         editor.update(&mut cx, |editor, cx| {
             assert_eq!(editor.text(cx), "Lorem @file one");
             assert!(editor.has_visible_completions_menu());
-            assert_eq!(current_completion_labels(editor), vec!["one.txt dir/a/"]);
+            assert_eq!(
+                current_completion_labels(editor),
+                vec![format!("one.txt dir{slash}a{slash}")]
+            );
         });
 
         editor.update_in(&mut cx, |editor, window, cx| {
@@ -1351,7 +1354,10 @@ mod tests {
         });
 
         editor.update(&mut cx, |editor, cx| {
-            assert_eq!(editor.text(cx), "Lorem [@one.txt](@file:dir/a/one.txt) ");
+            assert_eq!(
+                editor.text(cx),
+                format!("Lorem [@one.txt](@file:dir{slash}a{slash}one.txt) ")
+            );
             assert!(!editor.has_visible_completions_menu());
             assert_eq!(
                 fold_ranges(editor, cx),
@@ -1362,7 +1368,10 @@ mod tests {
         cx.simulate_input(" ");
 
         editor.update(&mut cx, |editor, cx| {
-            assert_eq!(editor.text(cx), "Lorem [@one.txt](@file:dir/a/one.txt)  ");
+            assert_eq!(
+                editor.text(cx),
+                format!("Lorem [@one.txt](@file:dir{slash}a{slash}one.txt)  ")
+            );
             assert!(!editor.has_visible_completions_menu());
             assert_eq!(
                 fold_ranges(editor, cx),
@@ -1375,7 +1384,7 @@ mod tests {
         editor.update(&mut cx, |editor, cx| {
             assert_eq!(
                 editor.text(cx),
-                "Lorem [@one.txt](@file:dir/a/one.txt)  Ipsum ",
+                format!("Lorem [@one.txt](@file:dir{slash}a{slash}one.txt)  Ipsum "),
             );
             assert!(!editor.has_visible_completions_menu());
             assert_eq!(
@@ -1389,7 +1398,7 @@ mod tests {
         editor.update(&mut cx, |editor, cx| {
             assert_eq!(
                 editor.text(cx),
-                "Lorem [@one.txt](@file:dir/a/one.txt)  Ipsum @file ",
+                format!("Lorem [@one.txt](@file:dir{slash}a{slash}one.txt)  Ipsum @file "),
             );
             assert!(editor.has_visible_completions_menu());
             assert_eq!(
@@ -1407,7 +1416,7 @@ mod tests {
         editor.update(&mut cx, |editor, cx| {
             assert_eq!(
                 editor.text(cx),
-                "Lorem [@one.txt](@file:dir/a/one.txt)  Ipsum [@seven.txt](@file:dir/b/seven.txt) "
+                format!("Lorem [@one.txt](@file:dir{slash}a{slash}one.txt)  Ipsum [@seven.txt](@file:dir{slash}b{slash}seven.txt) ")
             );
             assert!(!editor.has_visible_completions_menu());
             assert_eq!(
@@ -1424,7 +1433,7 @@ mod tests {
         editor.update(&mut cx, |editor, cx| {
             assert_eq!(
                 editor.text(cx),
-                "Lorem [@one.txt](@file:dir/a/one.txt)  Ipsum [@seven.txt](@file:dir/b/seven.txt) \n@"
+                format!("Lorem [@one.txt](@file:dir{slash}a{slash}one.txt)  Ipsum [@seven.txt](@file:dir{slash}b{slash}seven.txt) \n@")
             );
             assert!(editor.has_visible_completions_menu());
             assert_eq!(
@@ -1445,7 +1454,7 @@ mod tests {
         editor.update(&mut cx, |editor, cx| {
             assert_eq!(
                 editor.text(cx),
-                "Lorem [@one.txt](@file:dir/a/one.txt)  Ipsum [@seven.txt](@file:dir/b/seven.txt) \n[@six.txt](@file:dir/b/six.txt) "
+                format!("Lorem [@one.txt](@file:dir{slash}a{slash}one.txt)  Ipsum [@seven.txt](@file:dir{slash}b{slash}seven.txt) \n[@six.txt](@file:dir{slash}b{slash}six.txt) ")
             );
             assert!(!editor.has_visible_completions_menu());
             assert_eq!(

@@ -1,4 +1,4 @@
-use auto_update::{AutoUpdateStatus, AutoUpdater, DismissErrorMessage, VersionCheckType};
+use auto_update::{AutoUpdateStatus, AutoUpdater, DismissMessage, VersionCheckType};
 use editor::Editor;
 use extension_host::{ExtensionOperation, ExtensionStore};
 use futures::StreamExt;
@@ -20,7 +20,6 @@ use std::{
     cmp::Reverse,
     collections::HashSet,
     fmt::Write,
-    path::Path,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -280,18 +279,13 @@ impl ActivityIndicator {
         });
     }
 
-    fn dismiss_error_message(
-        &mut self,
-        _: &DismissErrorMessage,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let error_dismissed = if let Some(updater) = &self.auto_updater {
-            updater.update(cx, |updater, cx| updater.dismiss_error(cx))
+    fn dismiss_message(&mut self, _: &DismissMessage, _: &mut Window, cx: &mut Context<Self>) {
+        let dismissed = if let Some(updater) = &self.auto_updater {
+            updater.update(cx, |updater, cx| updater.dismiss(cx))
         } else {
             false
         };
-        if error_dismissed {
+        if dismissed {
             return;
         }
 
@@ -333,17 +327,13 @@ impl ActivityIndicator {
             .flatten()
     }
 
-    fn pending_environment_errors<'a>(
-        &'a self,
-        cx: &'a App,
-    ) -> impl Iterator<Item = (&'a Arc<Path>, &'a EnvironmentErrorMessage)> {
-        self.project.read(cx).shell_environment_errors(cx)
+    fn pending_environment_error<'a>(&'a self, cx: &'a App) -> Option<&'a EnvironmentErrorMessage> {
+        self.project.read(cx).peek_environment_error(cx)
     }
 
     fn content_to_render(&mut self, cx: &mut Context<Self>) -> Option<Content> {
         // Show if any direnv calls failed
-        if let Some((abs_path, error)) = self.pending_environment_errors(cx).next() {
-            let abs_path = abs_path.clone();
+        if let Some(error) = self.pending_environment_error(cx) {
             return Some(Content {
                 icon: Some(
                     Icon::new(IconName::Warning)
@@ -353,7 +343,7 @@ impl ActivityIndicator {
                 message: error.0.clone(),
                 on_click: Some(Arc::new(move |this, window, cx| {
                     this.project.update(cx, |project, cx| {
-                        project.remove_environment_error(&abs_path, cx);
+                        project.pop_environment_error(cx);
                     });
                     window.dispatch_action(Box::new(workspace::OpenLog), cx);
                 })),
@@ -513,7 +503,7 @@ impl ActivityIndicator {
                 on_click: Some(Arc::new(move |this, window, cx| {
                     this.statuses
                         .retain(|status| !downloading.contains(&status.name));
-                    this.dismiss_error_message(&DismissErrorMessage, window, cx)
+                    this.dismiss_message(&DismissMessage, window, cx)
                 })),
                 tooltip_message: None,
             });
@@ -542,7 +532,7 @@ impl ActivityIndicator {
                 on_click: Some(Arc::new(move |this, window, cx| {
                     this.statuses
                         .retain(|status| !checking_for_update.contains(&status.name));
-                    this.dismiss_error_message(&DismissErrorMessage, window, cx)
+                    this.dismiss_message(&DismissMessage, window, cx)
                 })),
                 tooltip_message: None,
             });
@@ -650,13 +640,14 @@ impl ActivityIndicator {
             .and_then(|updater| match &updater.read(cx).status() {
                 AutoUpdateStatus::Checking => Some(Content {
                     icon: Some(
-                        Icon::new(IconName::Download)
+                        Icon::new(IconName::LoadCircle)
                             .size(IconSize::Small)
+                            .with_rotate_animation(3)
                             .into_any_element(),
                     ),
                     message: "Checking for Zed updates…".to_string(),
                     on_click: Some(Arc::new(|this, window, cx| {
-                        this.dismiss_error_message(&DismissErrorMessage, window, cx)
+                        this.dismiss_message(&DismissMessage, window, cx)
                     })),
                     tooltip_message: None,
                 }),
@@ -668,19 +659,20 @@ impl ActivityIndicator {
                     ),
                     message: "Downloading Zed update…".to_string(),
                     on_click: Some(Arc::new(|this, window, cx| {
-                        this.dismiss_error_message(&DismissErrorMessage, window, cx)
+                        this.dismiss_message(&DismissMessage, window, cx)
                     })),
                     tooltip_message: Some(Self::version_tooltip_message(version)),
                 }),
                 AutoUpdateStatus::Installing { version } => Some(Content {
                     icon: Some(
-                        Icon::new(IconName::Download)
+                        Icon::new(IconName::LoadCircle)
                             .size(IconSize::Small)
+                            .with_rotate_animation(3)
                             .into_any_element(),
                     ),
                     message: "Installing Zed update…".to_string(),
                     on_click: Some(Arc::new(|this, window, cx| {
-                        this.dismiss_error_message(&DismissErrorMessage, window, cx)
+                        this.dismiss_message(&DismissMessage, window, cx)
                     })),
                     tooltip_message: Some(Self::version_tooltip_message(version)),
                 }),
@@ -690,17 +682,18 @@ impl ActivityIndicator {
                     on_click: Some(Arc::new(move |_, _, cx| workspace::reload(cx))),
                     tooltip_message: Some(Self::version_tooltip_message(version)),
                 }),
-                AutoUpdateStatus::Errored => Some(Content {
+                AutoUpdateStatus::Errored { error } => Some(Content {
                     icon: Some(
                         Icon::new(IconName::Warning)
                             .size(IconSize::Small)
                             .into_any_element(),
                     ),
-                    message: "Auto update failed".to_string(),
+                    message: "Failed to update Zed".to_string(),
                     on_click: Some(Arc::new(|this, window, cx| {
-                        this.dismiss_error_message(&DismissErrorMessage, window, cx)
+                        window.dispatch_action(Box::new(workspace::OpenLog), cx);
+                        this.dismiss_message(&DismissMessage, window, cx);
                     })),
-                    tooltip_message: None,
+                    tooltip_message: Some(format!("{error}")),
                 }),
                 AutoUpdateStatus::Idle => None,
             })
@@ -738,7 +731,7 @@ impl ActivityIndicator {
                         })),
                         message,
                         on_click: Some(Arc::new(|this, window, cx| {
-                            this.dismiss_error_message(&Default::default(), window, cx)
+                            this.dismiss_message(&Default::default(), window, cx)
                         })),
                         tooltip_message: None,
                     })
@@ -777,7 +770,7 @@ impl Render for ActivityIndicator {
         let result = h_flex()
             .id("activity-indicator")
             .on_action(cx.listener(Self::show_error_message))
-            .on_action(cx.listener(Self::dismiss_error_message));
+            .on_action(cx.listener(Self::dismiss_message));
         let Some(content) = self.content_to_render(cx) else {
             return result;
         };

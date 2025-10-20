@@ -1,7 +1,6 @@
 use std::{
     error::Error,
     fmt::{self, Debug},
-    path::Path,
     sync::{Arc, Mutex},
     time::Duration,
 };
@@ -10,7 +9,9 @@ use crate::{
     ToolMetrics,
     assertions::{AssertionsReport, RanAssertion, RanAssertionResult},
 };
-use agent::{ContextLoadResult, Thread, ThreadEvent};
+use acp_thread::UserMessageId;
+use agent::{Thread, ThreadEvent, UserMessageContent};
+use agent_client_protocol as acp;
 use agent_settings::AgentProfileId;
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
@@ -20,6 +21,7 @@ use collections::HashMap;
 use futures::{FutureExt as _, StreamExt, channel::mpsc, select_biased};
 use gpui::{App, AppContext, AsyncApp, Entity};
 use language_model::{LanguageModel, Role, StopReason};
+use util::rel_path::RelPath;
 
 pub const THREAD_EVENT_TIMEOUT: Duration = Duration::from_secs(60 * 2);
 
@@ -354,7 +356,7 @@ impl ExampleContext {
         Ok(response)
     }
 
-    pub fn edits(&self) -> HashMap<Arc<Path>, FileEdits> {
+    pub fn edits(&self) -> HashMap<Arc<RelPath>, FileEdits> {
         self.agent_thread
             .read_with(&self.app, |thread, cx| {
                 let action_log = thread.action_log().read(cx);

@@ -18,7 +18,6 @@ pub use young_account_banner::YoungAccountBanner;
 use std::sync::Arc;
 
 use client::{Client, UserStore, zed_urls};
-use feature_flags::{BillingV2FeatureFlag, FeatureFlagAppExt as _};
 use gpui::{AnyElement, Entity, IntoElement, ParentElement};
 use ui::{Divider, RegisterComponent, Tooltip, prelude::*};
 
@@ -85,10 +84,32 @@ impl ZedAiOnboarding {
         self
     }
 
-    fn render_sign_in_disclaimer(&self, cx: &mut App) -> AnyElement {
+    fn render_dismiss_button(&self) -> Option<AnyElement> {
+        self.dismiss_onboarding.as_ref().map(|dismiss_callback| {
+            let callback = dismiss_callback.clone();
+
+            h_flex()
+                .absolute()
+                .top_0()
+                .right_0()
+                .child(
+                    IconButton::new("dismiss_onboarding", IconName::Close)
+                        .icon_size(IconSize::Small)
+                        .tooltip(Tooltip::text("Dismiss"))
+                        .on_click(move |_, window, cx| {
+                            telemetry::event!("Banner Dismissed", source = "AI Onboarding",);
+                            callback(window, cx)
+                        }),
+                )
+                .into_any_element()
+        })
+    }
+
+    fn render_sign_in_disclaimer(&self, _cx: &mut App) -> AnyElement {
         let signing_in = matches!(self.sign_in_status, SignInStatus::SigningIn);
 
         v_flex()
+            .relative()
             .gap_1()
             .child(Headline::new("Welcome to Zed AI"))
             .child(
@@ -96,7 +117,7 @@ impl ZedAiOnboarding {
                     .color(Color::Muted)
                     .mb_2(),
             )
-            .child(PlanDefinitions.pro_plan(cx.has_flag::<BillingV2FeatureFlag>(), false))
+            .child(PlanDefinitions.pro_plan(true, false))
             .child(
                 Button::new("sign_in", "Try Zed Pro for Free")
                     .disabled(signing_in)
@@ -110,6 +131,7 @@ impl ZedAiOnboarding {
                         }
                     }),
             )
+            .children(self.render_dismiss_button())
             .into_any_element()
     }
 
@@ -181,27 +203,7 @@ impl ZedAiOnboarding {
                         )
                         .child(PlanDefinitions.free_plan(is_v2)),
                 )
-                .when_some(
-                    self.dismiss_onboarding.as_ref(),
-                    |this, dismiss_callback| {
-                        let callback = dismiss_callback.clone();
-
-                        this.child(
-                            h_flex().absolute().top_0().right_0().child(
-                                IconButton::new("dismiss_onboarding", IconName::Close)
-                                    .icon_size(IconSize::Small)
-                                    .tooltip(Tooltip::text("Dismiss"))
-                                    .on_click(move |_, window, cx| {
-                                        telemetry::event!(
-                                            "Banner Dismissed",
-                                            source = "AI Onboarding",
-                                        );
-                                        callback(window, cx)
-                                    }),
-                            ),
-                        )
-                    },
-                )
+                .children(self.render_dismiss_button())
                 .child(
                     v_flex()
                         .mt_2()
@@ -246,26 +248,7 @@ impl ZedAiOnboarding {
                     .mb_2(),
             )
             .child(PlanDefinitions.pro_trial(is_v2, false))
-            .when_some(
-                self.dismiss_onboarding.as_ref(),
-                |this, dismiss_callback| {
-                    let callback = dismiss_callback.clone();
-                    this.child(
-                        h_flex().absolute().top_0().right_0().child(
-                            IconButton::new("dismiss_onboarding", IconName::Close)
-                                .icon_size(IconSize::Small)
-                                .tooltip(Tooltip::text("Dismiss"))
-                                .on_click(move |_, window, cx| {
-                                    telemetry::event!(
-                                        "Banner Dismissed",
-                                        source = "AI Onboarding",
-                                    );
-                                    callback(window, cx)
-                                }),
-                        ),
-                    )
-                },
-            )
+            .children(self.render_dismiss_button())
             .into_any_element()
     }
 
@@ -279,26 +262,7 @@ impl ZedAiOnboarding {
                     .mb_2(),
             )
             .child(PlanDefinitions.pro_plan(is_v2, false))
-            .when_some(
-                self.dismiss_onboarding.as_ref(),
-                |this, dismiss_callback| {
-                    let callback = dismiss_callback.clone();
-                    this.child(
-                        h_flex().absolute().top_0().right_0().child(
-                            IconButton::new("dismiss_onboarding", IconName::Close)
-                                .icon_size(IconSize::Small)
-                                .tooltip(Tooltip::text("Dismiss"))
-                                .on_click(move |_, window, cx| {
-                                    telemetry::event!(
-                                        "Banner Dismissed",
-                                        source = "AI Onboarding",
-                                    );
-                                    callback(window, cx)
-                                }),
-                        ),
-                    )
-                },
-            )
+            .children(self.render_dismiss_button())
             .into_any_element()
     }
 }
@@ -307,7 +271,7 @@ impl RenderOnce for ZedAiOnboarding {
     fn render(self, _window: &mut ui::Window, cx: &mut App) -> impl IntoElement {
         if matches!(self.sign_in_status, SignInStatus::SignedIn) {
             match self.plan {
-                None => self.render_free_plan_state(cx.has_flag::<BillingV2FeatureFlag>(), cx),
+                None => self.render_free_plan_state(true, cx),
                 Some(plan @ (Plan::V1(PlanV1::ZedFree) | Plan::V2(PlanV2::ZedFree))) => {
                     self.render_free_plan_state(plan.is_v2(), cx)
                 }
@@ -372,7 +336,7 @@ impl Component for ZedAiOnboarding {
                         "Free Plan",
                         onboarding(
                             SignInStatus::SignedIn,
-                            Some(Plan::V1(PlanV1::ZedFree)),
+                            Some(Plan::V2(PlanV2::ZedFree)),
                             false,
                         ),
                     ),
@@ -380,7 +344,7 @@ impl Component for ZedAiOnboarding {
                         "Pro Trial",
                         onboarding(
                             SignInStatus::SignedIn,
-                            Some(Plan::V1(PlanV1::ZedProTrial)),
+                            Some(Plan::V2(PlanV2::ZedProTrial)),
                             false,
                         ),
                     ),
@@ -388,7 +352,7 @@ impl Component for ZedAiOnboarding {
                         "Pro Plan",
                         onboarding(
                             SignInStatus::SignedIn,
-                            Some(Plan::V1(PlanV1::ZedPro)),
+                            Some(Plan::V2(PlanV2::ZedPro)),
                             false,
                         ),
                     ),

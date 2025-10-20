@@ -1,3 +1,5 @@
+pub mod predict_edits_v3;
+
 use std::str::FromStr;
 use std::sync::Arc;
 
@@ -39,7 +41,7 @@ pub const EDIT_PREDICTIONS_RESOURCE_HEADER_VALUE: &str = "edit_predictions";
 /// The name of the header used to indicate that the maximum number of consecutive tool uses has been reached.
 pub const TOOL_USE_LIMIT_REACHED_HEADER_NAME: &str = "x-zed-tool-use-limit-reached";
 
-/// The name of the header used to indicate the the minimum required Zed version.
+/// The name of the header used to indicate the minimum required Zed version.
 ///
 /// This can be used to force a Zed upgrade in order to continue communicating
 /// with the LLM service.
@@ -52,6 +54,9 @@ pub const CLIENT_SUPPORTS_STATUS_MESSAGES_HEADER_NAME: &str =
 /// The name of the header used by the server to indicate to the client that it supports sending status messages.
 pub const SERVER_SUPPORTS_STATUS_MESSAGES_HEADER_NAME: &str =
     "x-zed-server-supports-status-messages";
+
+/// The name of the header used by the client to indicate that it supports receiving xAI models.
+pub const CLIENT_SUPPORTS_X_AI_HEADER_NAME: &str = "x-zed-client-supports-x-ai";
 
 #[derive(Debug, PartialEq, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -142,6 +147,7 @@ pub enum LanguageModelProvider {
     Anthropic,
     OpenAi,
     Google,
+    XAi,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -316,13 +322,16 @@ pub struct LanguageModel {
     pub supports_images: bool,
     pub supports_thinking: bool,
     pub supports_max_mode: bool,
+    // only used by OpenAI and xAI
+    #[serde(default)]
+    pub supports_parallel_tool_calls: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ListModelsResponse {
     pub models: Vec<LanguageModel>,
-    pub default_model: LanguageModelId,
-    pub default_fast_model: LanguageModelId,
+    pub default_model: Option<LanguageModelId>,
+    pub default_fast_model: Option<LanguageModelId>,
     pub recommended_models: Vec<LanguageModelId>,
 }
 

@@ -2,6 +2,7 @@ use ui::{HighlightedLabel, prelude::*};
 
 #[derive(Clone)]
 pub struct HighlightedMatchWithPaths {
+    pub prefix: Option<SharedString>,
     pub match_label: HighlightedMatch,
     pub paths: Vec<HighlightedMatch>,
 }
@@ -10,36 +11,36 @@ pub struct HighlightedMatchWithPaths {
 pub struct HighlightedMatch {
     pub text: String,
     pub highlight_positions: Vec<usize>,
-    pub char_count: usize,
     pub color: Color,
 }
 
 impl HighlightedMatch {
     pub fn join(components: impl Iterator<Item = Self>, separator: &str) -> Self {
-        let mut char_count = 0;
-        let separator_char_count = separator.chars().count();
+        // Track a running byte offset and insert separators between parts.
+        let mut first = true;
+        let mut byte_offset = 0;
         let mut text = String::new();
         let mut highlight_positions = Vec::new();
         for component in components {
-            if char_count != 0 {
+            if !first {
                 text.push_str(separator);
-                char_count += separator_char_count;
+                byte_offset += separator.len();
             }
+            first = false;
 
             highlight_positions.extend(
                 component
                     .highlight_positions
                     .iter()
-                    .map(|position| position + char_count),
+                    .map(|position| position + byte_offset),
             );
             text.push_str(&component.text);
-            char_count += component.text.chars().count();
+            byte_offset += component.text.len();
         }
 
         Self {
             text,
             highlight_positions,
-            char_count,
             color: Color::Default,
         }
     }
@@ -67,9 +68,49 @@ impl HighlightedMatchWithPaths {
 impl RenderOnce for HighlightedMatchWithPaths {
     fn render(mut self, _window: &mut Window, _: &mut App) -> impl IntoElement {
         v_flex()
-            .child(self.match_label.clone())
+            .child(
+                h_flex().gap_1().child(self.match_label.clone()).when_some(
+                    self.prefix.as_ref(),
+                    |this, prefix| {
+                        this.child(Label::new(format!("({})", prefix)).color(Color::Muted))
+                    },
+                ),
+            )
             .when(!self.paths.is_empty(), |this| {
                 self.render_paths_children(this)
             })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn join_offsets_positions_by_bytes_not_chars() {
+        // "αβγ" is 3 Unicode scalar values, 6 bytes in UTF-8.
+        let left_text = "αβγ".to_string();
+        let right_text = "label".to_string();
+        let left = HighlightedMatch {
+            text: left_text,
+            highlight_positions: vec![],
+            color: Color::Default,
+        };
+        let right = HighlightedMatch {
+            text: right_text,
+            highlight_positions: vec![0, 1],
+            color: Color::Default,
+        };
+        let joined = HighlightedMatch::join([left, right].into_iter(), "");
+
+        assert!(
+            joined
+                .highlight_positions
+                .iter()
+                .all(|&p| joined.text.is_char_boundary(p)),
+            "join produced non-boundary positions {:?} for text {:?}",
+            joined.highlight_positions,
+            joined.text
+        );
     }
 }

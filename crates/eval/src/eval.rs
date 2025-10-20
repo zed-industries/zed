@@ -340,10 +340,7 @@ pub fn init(cx: &mut App) -> Arc<AgentAppState> {
     release_channel::init(app_version, cx);
     gpui_tokio::init(cx);
 
-    let mut settings_store = SettingsStore::new(cx);
-    settings_store
-        .set_default_settings(settings::default_settings().as_ref(), cx)
-        .unwrap();
+    let settings_store = SettingsStore::new(cx, &settings::default_settings());
     cx.set_global(settings_store);
     client::init_settings(cx);
 
@@ -432,7 +429,6 @@ pub fn init(cx: &mut App) -> Arc<AgentAppState> {
         true,
         cx,
     );
-    assistant_tools::init(client.http_client(), cx);
 
     SettingsStore::update_global(cx, |store, cx| {
         store.set_user_settings(include_str!("../runner_settings.json"), cx)
