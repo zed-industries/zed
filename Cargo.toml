@@ -70,6 +70,7 @@ members = [
     "crates/file_finder",
     "crates/file_icons",
     "crates/fs",
+    "crates/fs_benchmarks",
     "crates/fsevent",
     "crates/fuzzy",
     "crates/git",

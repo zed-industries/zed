@@ -259,7 +259,7 @@ impl VsCodeSettings {
             gutter: self.gutter_content(),
             hide_mouse: None,
             horizontal_scroll_margin: None,
-            hover_popover_delay: self.read_u64("editor.hover.delay"),
+            hover_popover_delay: self.read_u64("editor.hover.delay").map(Into::into),
             hover_popover_enabled: self.read_bool("editor.hover.enabled"),
             inline_code_actions: None,
             jupyter: None,
@@ -791,7 +791,8 @@ impl VsCodeSettings {
                     milliseconds: self
                         .read_value("files.autoSaveDelay")
                         .and_then(|v| v.as_u64())
-                        .unwrap_or(1000),
+                        .unwrap_or(1000)
+                        .into(),
                 }),
                 "onFocusChange" => Some(AutosaveSetting::OnFocusChange),
                 "onWindowChange" => Some(AutosaveSetting::OnWindowChange),
@@ -843,7 +844,7 @@ impl VsCodeSettings {
         {
             Some(ActivePaneModifiers {
                 border_size: None,
-                inactive_opacity: Some(opacity),
+                inactive_opacity: Some(InactiveOpacity(opacity)),
             })
         } else {
             None
