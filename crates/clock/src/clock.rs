@@ -23,7 +23,7 @@ impl ReplicaId {
     /// A local branch.
     pub const LOCAL_BRANCH: ReplicaId = ReplicaId(3);
     /// The first collaborative replica ID, any replica equal or greater than this is a collaborative replica.
-    pub const FIRST_COLLAB_ID: ReplicaId = ReplicaId(Self::LOCAL_BRANCH.0 + 1);
+    pub const FIRST_COLLAB_ID: ReplicaId = ReplicaId(8);
 
     pub fn new(id: u16) -> Self {
         ReplicaId(id)
