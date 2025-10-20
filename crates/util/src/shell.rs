@@ -500,10 +500,22 @@ mod tests {
         let shell_kind = ShellKind::PowerShell;
         assert_eq!(
             shell_kind
-                .try_quote("pwsh.exe -c \"echo \"hello there\"\"")
+                .try_quote("C:\\Users\\johndoe\\dev\\python\\39007\\tests\\.venv\\Scripts\\python.exe -m pytest \"test_foo.py::test_foo\"")
                 .unwrap()
                 .into_owned(),
-            "\"echo `\"hello there`\"\"".to_string()
+            "\"C:\\Users\\johndoe\\dev\\python\\39007\\tests\\.venv\\Scripts\\python.exe -m pytest `\"test_foo.py::test_foo`\"\"".to_string()
+        );
+    }
+
+    #[test]
+    fn test_try_quote_cmd() {
+        let shell_kind = ShellKind::Cmd;
+        assert_eq!(
+            shell_kind
+                .try_quote("C:\\Users\\johndoe\\dev\\python\\39007\\tests\\.venv\\Scripts\\python.exe -m pytest \"test_foo.py::test_foo\"")
+                .unwrap()
+                .into_owned(),
+            "\"C:\\Users\\johndoe\\dev\\python\\39007\\tests\\.venv\\Scripts\\python.exe -m pytest \\\"test_foo.py::test_foo\\\"\"".to_string()
         );
     }
 }
