@@ -30,6 +30,8 @@ use client::{
 };
 use collections::{HashMap, HashSet, hash_map};
 use dock::{Dock, DockPosition, PanelButtons, PanelHandle, RESIZE_HANDLE_SIZE};
+use extension::ExtensionEvents;
+use extension_host::ExtensionStore;
 use futures::{
     Future, FutureExt, StreamExt,
     channel::{
@@ -1410,7 +1412,7 @@ impl Workspace {
             Self::serialize_items(&this, serializable_items_rx, cx).await
         });
 
-        let subscriptions = vec![
+        let mut subscriptions = vec![
             cx.observe_window_activation(window, Self::on_window_activation_changed),
             cx.observe_window_bounds(window, move |this, window, cx| {
                 if this.bounds_save_task_queued.is_some() {
@@ -1455,6 +1457,27 @@ impl Workspace {
                 })
             }),
         ];
+
+        // Subscribe to extension events to sync agent servers when extensions change
+        if let Some(extension_events) = ExtensionEvents::try_global(cx) {
+            subscriptions.push(cx.subscribe_in(
+                &extension_events,
+                window,
+                |workspace, _source, event, _window, cx| match event {
+                    extension::Event::ExtensionInstalled(_)
+                    | extension::Event::ExtensionUninstalled(_)
+                    | extension::Event::ExtensionsInstalledChanged => {
+                        workspace.sync_agent_servers_from_extensions(cx);
+                    }
+                    _ => {}
+                },
+            ));
+        }
+
+        // Initial sync of agent servers from extensions
+        cx.defer_in(window, |this, _window, cx| {
+            this.sync_agent_servers_from_extensions(cx);
+        });
 
         cx.defer_in(window, |this, window, cx| {
             this.update_window_title(window, cx);
@@ -5222,6 +5245,28 @@ impl Workspace {
             self.last_active_center_pane = None;
         }
         cx.notify();
+    }
+
+    fn sync_agent_servers_from_extensions(&mut self, cx: &mut Context<Self>) {
+        if let Some(extension_store) = ExtensionStore::try_global(cx) {
+            let manifests: Vec<_> = {
+                let installed = extension_store.read(cx).installed_extensions();
+                installed
+                    .iter()
+                    .map(|(id, entry)| (id.clone(), entry.manifest.clone()))
+                    .collect()
+            };
+
+            self.project.update(cx, |project, cx| {
+                project.agent_server_store().update(cx, |store, cx| {
+                    let manifest_refs: Vec<_> = manifests
+                        .iter()
+                        .map(|(id, manifest)| (id.as_ref(), manifest.as_ref()))
+                        .collect();
+                    store.sync_extension_agents(manifest_refs, cx);
+                });
+            });
+        }
     }
 
     fn serialize_workspace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
