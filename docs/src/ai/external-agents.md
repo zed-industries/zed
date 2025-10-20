@@ -210,11 +210,7 @@ When using external agents in Zed, you can access the debug view via with `dev: 
 
 ## MCP Servers
 
-Note that for external agents, access to MCP servers installed from Zed may vary depending on the ACP agent implementation.
+Note that for external agents, access to MCP servers [installed from Zed](./mcp.md) may vary depending on the ACP agent implementation.
 
-In case the ACP agent implementation doesn't support it, we recommend configuring MCP servers directly through the agent's own CLI.
-Learn how to do that for each built-in one through the documentation below:
-
-- [Anthropic's Claude Code](https://docs.claude.com/en/docs/claude-code/mcp#installing-mcp-servers)
-- [OpenAI's Codex](https://developers.openai.com/codex/mcp/#connect-codex-to-a-mcp-server)
-- [Google's Gemini CLI](https://github.com/google-gemini/gemini-cli?tab=readme-ov-file#using-mcp-servers)
+Regarding the built-in ones, Claude Code and Codex both support it, and Gemini CLI does not yet.
+In the meantime, learn how to add MCP server support to Gemini CLI through [their documentation](https://github.com/google-gemini/gemini-cli?tab=readme-ov-file#using-mcp-servers).
