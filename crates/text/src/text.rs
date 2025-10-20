@@ -2323,12 +2323,15 @@ impl BufferSnapshot {
                 );
             };
 
-            let mut fragment_cursor = self
+            let (start, _, item) = self
                 .fragments
-                .cursor::<Dimensions<Option<&Locator>, usize>>(&None);
-            fragment_cursor.seek(&Some(&insertion.fragment_id), Bias::Left);
-            let fragment = fragment_cursor.item().unwrap();
-            let mut fragment_offset = fragment_cursor.start().1;
+                .find::<Dimensions<Option<&Locator>, usize>, _>(
+                    &None,
+                    &Some(&insertion.fragment_id),
+                    Bias::Left,
+                );
+            let fragment = item.unwrap();
+            let mut fragment_offset = start.1;
             if fragment.visible {
                 fragment_offset += anchor.offset - insertion.split_offset;
             }
@@ -2410,10 +2413,9 @@ impl BufferSnapshot {
                     offset, ch, char_range,
                 );
             }
-            let mut fragment_cursor = self.fragments.cursor::<usize>(&None);
-            fragment_cursor.seek(&offset, bias);
-            let fragment = fragment_cursor.item().unwrap();
-            let overshoot = offset - *fragment_cursor.start();
+            let (start, _, item) = self.fragments.find::<usize, _>(&None, &offset, bias);
+            let fragment = item.unwrap();
+            let overshoot = offset - start;
             Anchor {
                 timestamp: fragment.timestamp,
                 offset: fragment.insertion_offset + overshoot,
@@ -2494,15 +2496,17 @@ impl BufferSnapshot {
             cursor.next();
             Some(cursor)
         };
-        let mut cursor = self
-            .fragments
-            .cursor::<Dimensions<Option<&Locator>, FragmentTextSummary>>(&None);
-
         let start_fragment_id = self.fragment_id_for_anchor(&range.start);
-        cursor.seek(&Some(start_fragment_id), Bias::Left);
-        let mut visible_start = cursor.start().1.visible;
-        let mut deleted_start = cursor.start().1.deleted;
-        if let Some(fragment) = cursor.item() {
+        let (start, _, item) = self
+            .fragments
+            .find::<Dimensions<Option<&Locator>, FragmentTextSummary>, _>(
+                &None,
+                &Some(start_fragment_id),
+                Bias::Left,
+            );
+        let mut visible_start = start.1.visible;
+        let mut deleted_start = start.1.deleted;
+        if let Some(fragment) = item {
             let overshoot = range.start.offset - fragment.insertion_offset;
             if fragment.visible {
                 visible_start += overshoot;

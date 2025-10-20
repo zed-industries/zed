@@ -6140,9 +6140,8 @@ impl MultiBufferSnapshot {
         } else if id == ExcerptId::max() {
             Locator::max_ref()
         } else {
-            let mut cursor = self.excerpt_ids.cursor::<ExcerptId>(());
-            cursor.seek(&id, Bias::Left);
-            if let Some(entry) = cursor.item()
+            let (_, _, item) = self.excerpt_ids.find::<ExcerptId, _>((), &id, Bias::Left);
+            if let Some(entry) = item
                 && entry.id == id
             {
                 return &entry.locator;
