@@ -445,7 +445,7 @@ impl TerminalBuilder {
             struct ShellParams {
                 program: String,
                 args: Option<Vec<String>>,
-                title_override: Option<SharedString>,
+                title_override: Option<String>,
             }
 
             impl ShellParams {
@@ -493,7 +493,6 @@ impl TerminalBuilder {
                     .log_err()
                     .unwrap_or(params.program.clone())
             });
-            dbg!(&alac_shell);
 
             // Note: when remoting, this shell_kind will scrutinize `ssh` or
             // `wsl.exe` as a shell and fall back to posix or powershell based on
@@ -509,16 +508,15 @@ impl TerminalBuilder {
                         params.args.clone().unwrap_or_default(),
                     )
                 });
+                dbg!(&alac_shell);
 
                 alacritty_terminal::tty::Options {
                     shell: alac_shell,
                     working_directory: working_directory.clone(),
                     drain_on_exit: true,
                     env: env.clone().into_iter().collect(),
-                    // We do not want to escape arguments if we are using CMD as our shell.
-                    // If we do we end up with too many quotes/escaped quotes for CMD to handle.
                     #[cfg(windows)]
-                    escape_args: shell_kind != util::shell::ShellKind::Cmd,
+                    escape_args: shell_kind.tty_escape_args(),
                 }
             };
 

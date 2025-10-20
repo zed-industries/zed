@@ -462,6 +462,23 @@ impl ShellKind {
             | ShellKind::Xonsh => "clear",
         }
     }
+
+    #[cfg(windows)]
+    /// We do not want to escape arguments if we are using CMD as our shell.
+    /// If we do we end up with too many quotes/escaped quotes for CMD to handle.
+    pub const fn tty_escape_args(&self) -> bool {
+        match self {
+            ShellKind::Cmd => false,
+            ShellKind::Posix
+            | ShellKind::Csh
+            | ShellKind::Tcsh
+            | ShellKind::Rc
+            | ShellKind::Fish
+            | ShellKind::PowerShell
+            | ShellKind::Nushell
+            | ShellKind::Xonsh => true,
+        }
+    }
 }
 
 #[cfg(test)]
