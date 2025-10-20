@@ -57,6 +57,7 @@ terminal
 dap
   = @kubkon
   = @osiewicz
+  = @Anthony-Eid
 
 extension
   = @kubkon
@@ -64,6 +65,7 @@ extension
 settings_ui
   = @probably-neb
   = @danilo-leal
+  = @Anthony-Eid
 
 crashes
   = @p1n3appl3
