@@ -2347,13 +2347,13 @@ impl Editor {
                 let (buffer_id, needs_parse) = {
                     let buf = buffer.read(cx);
                     let buffer_id = buf.remote_id();
-                    let needs_parse = buf.snapshot().syntax_layers().next().is_none()
-                        && buf.language().is_some();
+                    let needs_parse =
+                        buf.snapshot().syntax_layers().next().is_none() && buf.language().is_some();
                     (buffer_id, needs_parse)
                 };
-                
+
                 editor.register_buffer(buffer_id, cx);
-                
+
                 if needs_parse {
                     // Trigger parse - Reparsed event will handle highlighting initialization
                     buffer.update(cx, |buffer, cx| buffer.reparse(cx));
@@ -21300,18 +21300,18 @@ impl Editor {
                     )
                     .detach();
                 }
-                
+
                 // Register buffer with LSP and initialize highlighting
                 self.register_buffer(buffer_id, cx);
                 self.update_lsp_data(Some(buffer_id), window, cx);
                 self.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
-                
+
                 // Single read to extract all needed data, avoiding multiple lock acquisitions
                 let needs_parse = {
                     let buf = buffer.read(cx);
                     buf.snapshot().syntax_layers().next().is_none() && buf.language().is_some()
                 };
-                
+
                 if needs_parse {
                     // Trigger parse - Reparsed event will handle highlighting initialization
                     buffer.update(cx, |buf, cx| buf.reparse(cx));
@@ -21320,7 +21320,7 @@ impl Editor {
                     self.refresh_syntax_tokens(buffer_id, cx);
                     self.update_semantic_tokens(&buffer, window, cx);
                 }
-                
+
                 cx.emit(EditorEvent::ExcerptsAdded {
                     buffer: buffer.clone(),
                     predecessor: *predecessor,
@@ -21362,7 +21362,7 @@ impl Editor {
 
                 // Refresh both syntax and semantic tokens after reparsing
                 self.refresh_syntax_tokens(*buffer_id, cx);
-                
+
                 if let Some(buffer) = self.buffer.read(cx).buffer(*buffer_id) {
                     self.update_semantic_tokens(&buffer, window, cx);
                 }
@@ -22473,7 +22473,7 @@ impl Editor {
         if self.ignore_lsp_data() || self.buffer().read(cx).is_singleton() {
             return;
         }
-        
+
         // Try visible excerpts first (scroll-based), but if editor hasn't been laid out yet
         // and visible_line_count is 0, fall back to registering all buffers
         let visible = self.visible_excerpts(None, cx);

@@ -278,7 +278,7 @@ impl SyntaxTokenView {
                         .and_then(|grammar| grammar.highlights_config.as_ref())
                         .map(|config| config.is_excluded_identifier(validated))
                         .unwrap_or(false);
-                    
+
                     if !is_excluded {
                         let style = cache.get_or_insert(validated, theme);
                         tokens.push(SyntaxToken {
@@ -1865,7 +1865,7 @@ impl ToDisplayPoint for Anchor {
 }
 impl SemanticTokenView {
     /// Creates a SemanticTokenView from LSP tokens.
-    /// 
+    ///
     /// This function is designed to run on a background thread to avoid blocking the main thread
     /// when processing large token sets. All required context (theme, settings, buffer snapshot)
     /// must be extracted on the main thread before calling this.
@@ -2106,20 +2106,28 @@ impl<'a> SemanticTokenStylizer<'a> {
 
         if is_variable && self.rainbow_config.enabled {
             if let Some(cache) = variable_color_cache {
-                let variable_name: String = buffer.text_for_range(range.clone()).collect();
-                if let Some(validated) =
-                    crate::rainbow::validate_identifier_for_rainbow(&variable_name)
-                {
-                    // Check if this identifier is excluded by the language configuration
-                    let is_excluded = highlights_config
-                        .map(|config| config.is_excluded_identifier(validated))
-                        .unwrap_or(false);
-                    
-                    if !is_excluded {
-                        return Some(cache.get_or_insert(validated, theme));
+                // OPTIMIZATION: Validate+hash in single pass without allocating String first
+                // This eliminates format validation overhead and defers allocation
+                let text_chunks = buffer.text_for_range(range.clone());
+                let char_iter = text_chunks.clone().flat_map(|s| s.chars());
+
+                // Validate identifier format and compute hash in one pass (no allocation)
+                if let Some(style) = cache.get_or_insert_validated(char_iter, theme) {
+                    // Only allocate string if we need to check exclusions
+                    // Most identifiers won't be excluded, making this check cheap
+                    if let Some(config) = highlights_config {
+                        let variable_name: String = text_chunks.collect();
+                        if config.is_excluded_identifier(&variable_name) {
+                            // Excluded identifier - fall through to theme color
+                        } else {
+                            return Some(style);
+                        }
+                    } else {
+                        // No exclusion config - use rainbow color
+                        return Some(style);
                     }
                 }
-                // Validation failed (keyword, excluded, etc.) - fall through to theme color
+                // Validation failed (invalid format) - fall through to theme color
             }
         }
 

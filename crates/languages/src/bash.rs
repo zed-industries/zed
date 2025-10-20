@@ -28,10 +28,7 @@ pub fn variable_config() -> (
     let lsp_token_types = vec!["variable".to_string()];
 
     // Bash keywords and common builtins that should NOT be rainbow highlighted
-    let excluded_identifiers = vec![
-        "true".to_string(),
-        "false".to_string(),
-    ];
+    let excluded_identifiers = vec!["true".to_string(), "false".to_string()];
 
     (
         Some(capture_names),

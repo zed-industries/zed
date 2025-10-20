@@ -1231,7 +1231,8 @@ impl HighlightsConfig {
     /// Checks if an identifier should be excluded from rainbow highlighting.
     /// Uses case-insensitive matching for keywords.
     pub fn is_excluded_identifier(&self, identifier: &str) -> bool {
-        self.excluded_identifiers.contains(&identifier.to_lowercase())
+        self.excluded_identifiers
+            .contains(&identifier.to_lowercase())
     }
 }
 
@@ -1583,9 +1584,9 @@ impl Language {
     }
 
     /// Sets language-specific identifiers that should be excluded from rainbow highlighting.
-    /// 
+    ///
     /// Identifiers are converted to lowercase for case-insensitive matching.
-    /// 
+    ///
     /// # Example (in a language extension)
     /// ```ignore
     /// // In your language's load_language implementation:
@@ -1604,10 +1605,8 @@ impl Language {
     pub fn with_excluded_identifiers(mut self, identifiers: Vec<String>) -> Result<Self> {
         let grammar = self.grammar_mut()?;
         if let Some(highlights_config) = &mut grammar.highlights_config {
-            highlights_config.excluded_identifiers = identifiers
-                .into_iter()
-                .map(|s| s.to_lowercase())
-                .collect();
+            highlights_config.excluded_identifiers =
+                identifiers.into_iter().map(|s| s.to_lowercase()).collect();
         }
         Ok(self)
     }

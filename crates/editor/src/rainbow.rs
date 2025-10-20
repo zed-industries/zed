@@ -14,9 +14,10 @@ pub struct VariableColorCache {
 impl VariableColorCache {
     pub fn new(mode: VariableColorMode) -> Self {
         Self {
-            colors: DashMap::new(),
+            // Pre-allocate capacity to reduce realloc overhead
+            colors: DashMap::with_capacity(256),
             mode,
-            max_entries: 1000,
+            max_entries: 3000, // Increased limit for large codebases
         }
     }
 
@@ -24,6 +25,19 @@ impl VariableColorCache {
     pub fn get_or_insert(&self, identifier: &str, theme: &SyntaxTheme) -> HighlightStyle {
         let hash = hash_identifier(identifier);
         self.get_or_insert_by_hash(hash, theme)
+    }
+
+    /// Get or insert color from iterator without allocating String.
+    /// Returns None if the iterator doesn't represent a valid identifier.
+    /// This validates identifier format (starts with letter/_,  contains alphanumeric/_)
+    /// in a single pass while computing the hash.
+    #[inline]
+    pub fn get_or_insert_validated<I>(&self, iter: I, theme: &SyntaxTheme) -> Option<HighlightStyle>
+    where
+        I: Iterator<Item = char>,
+    {
+        let hash = hash_and_validate_identifier(iter)?;
+        Some(self.get_or_insert_by_hash(hash, theme))
     }
 
     #[inline]
@@ -95,6 +109,49 @@ pub fn hash_identifier(s: &str) -> u64 {
     s.bytes().fold(FNV_OFFSET, |hash, byte| {
         (hash ^ (byte as u64)).wrapping_mul(FNV_PRIME)
     })
+}
+
+/// Hash identifier from iterator WITH validation in a single pass.
+/// Returns None if not a valid identifier (must start with letter/underscore,
+/// contain only alphanumeric/underscore, non-empty, and ≤120 bytes).
+#[inline]
+pub fn hash_and_validate_identifier<I>(mut iter: I) -> Option<u64>
+where
+    I: Iterator<Item = char>,
+{
+    let mut hash = FNV_OFFSET;
+    let mut len = 0;
+    const MAX_LEN: usize = 120;
+
+    // Check first character
+    let first = iter.next()?;
+    if !first.is_alphabetic() && first != '_' {
+        return None;
+    }
+
+    // Hash first character
+    for byte in first.encode_utf8(&mut [0; 4]).bytes() {
+        hash = (hash ^ (byte as u64)).wrapping_mul(FNV_PRIME);
+    }
+    len += first.len_utf8();
+
+    // Process remaining characters
+    for ch in iter {
+        if !ch.is_alphanumeric() && ch != '_' {
+            return None;
+        }
+
+        len += ch.len_utf8();
+        if len > MAX_LEN {
+            return None;
+        }
+
+        for byte in ch.encode_utf8(&mut [0; 4]).bytes() {
+            hash = (hash ^ (byte as u64)).wrapping_mul(FNV_PRIME);
+        }
+    }
+
+    Some(hash)
 }
 pub fn validate_identifier_for_rainbow(text: &str) -> Option<&str> {
     let trimmed = text.trim();

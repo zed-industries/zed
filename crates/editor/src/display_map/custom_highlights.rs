@@ -77,6 +77,7 @@ impl<'a> CustomHighlightsChunks<'a> {
     }
 }
 
+#[inline]
 fn create_highlight_endpoints(
     range: &Range<usize>,
     text_highlights: Option<&TextHighlights>,
@@ -84,7 +85,10 @@ fn create_highlight_endpoints(
     syntax_tokens: Option<&HashMap<BufferId, Arc<SyntaxTokenView>>>,
     buffer: &MultiBufferSnapshot,
 ) -> iter::Peekable<vec::IntoIter<HighlightEndpoint>> {
-    let mut highlight_endpoints = Vec::new();
+    // Pre-allocate with reasonable capacity to minimize reallocations
+    let capacity_hint =
+        text_highlights.map_or(0, |h| h.iter().map(|(_, v)| v.1.len()).sum::<usize>() * 2) + 64; // Extra space for token highlights
+    let mut highlight_endpoints = Vec::with_capacity(capacity_hint);
     if let Some(text_highlights) = text_highlights {
         let start = buffer.anchor_after(range.start);
         let end = buffer.anchor_after(range.end);
@@ -127,7 +131,8 @@ fn create_highlight_endpoints(
         }
     }
 
-    let mut lsp_covered_ranges: Vec<Range<usize>> = Vec::new();
+    // Pre-allocate for LSP covered ranges to minimize reallocations during iteration
+    let mut lsp_covered_ranges: Vec<Range<usize>> = Vec::with_capacity(128);
 
     if let Some(tokens) = semantic_tokens {
         for mut excerpt in buffer.excerpts_for_range(range.clone()) {
@@ -154,6 +159,7 @@ fn create_highlight_endpoints(
                 }
 
                 // Track ALL LSP tokens (including colorless ones) to suppress syntax highlighting
+                // Ranges will be sorted after collection for efficient overlap detection
                 lsp_covered_ranges.push(token_range.clone());
 
                 // Only add highlight endpoints for tokens with colors
@@ -173,8 +179,16 @@ fn create_highlight_endpoints(
         }
     }
 
-    lsp_covered_ranges.sort_by_key(|range| range.start);
+    // Sort LSP ranges once for efficient merge-join overlap detection
+    // This is O(m log m) but only done once, vs O(n log m) for n binary searches
+    lsp_covered_ranges.sort_unstable_by_key(|range| range.start);
+
     if let Some(tokens) = syntax_tokens {
+        // Use merge-join approach: track position in sorted LSP ranges as we process syntax tokens
+        // This reduces complexity from O(n * log m) to O(n + m)
+        // lsp_idx persists across excerpts since both LSP ranges and syntax tokens are in document order
+        let mut lsp_idx = 0;
+
         for mut excerpt in buffer.excerpts_for_range(range.clone()) {
             let Some(tokens) = tokens.get(&excerpt.buffer_id()) else {
                 continue;
@@ -202,17 +216,17 @@ fn create_highlight_endpoints(
                 }
 
                 if token.style.color.is_some() {
-                    let overlaps_with_lsp = lsp_covered_ranges
-                        .binary_search_by(|lsp_range| {
-                            if lsp_range.end <= token_range.start {
-                                cmp::Ordering::Less
-                            } else if lsp_range.start >= token_range.end {
-                                cmp::Ordering::Greater
-                            } else {
-                                cmp::Ordering::Equal
-                            }
-                        })
-                        .is_ok();
+                    // Merge-join: advance lsp_idx to skip ranges that end before this token
+                    while lsp_idx < lsp_covered_ranges.len()
+                        && lsp_covered_ranges[lsp_idx].end <= token_range.start
+                    {
+                        lsp_idx += 1;
+                    }
+
+                    // Check if current LSP range overlaps with token
+                    // Since both lists are sorted, we only need to check the current position
+                    let overlaps_with_lsp = lsp_idx < lsp_covered_ranges.len()
+                        && lsp_covered_ranges[lsp_idx].start < token_range.end;
 
                     if !overlaps_with_lsp {
                         highlight_endpoints.push(HighlightEndpoint {
@@ -231,7 +245,8 @@ fn create_highlight_endpoints(
         }
     }
 
-    highlight_endpoints.sort();
+    // Use unstable sort for better performance (order of equal elements doesn't matter)
+    highlight_endpoints.sort_unstable();
     highlight_endpoints.into_iter().peekable()
 }
 

@@ -29,7 +29,7 @@ use util::{ResultExt, maybe};
 
 use crate::language_settings::language_settings;
 
-/// Returns Rust-specific variable capture names, parent kinds, LSP token types, 
+/// Returns Rust-specific variable capture names, parent kinds, LSP token types,
 /// and excluded identifiers for rainbow highlighting.
 /// These patterns identify variables, parameters, constants, and macro parameters in Rust code.
 pub fn variable_config() -> (
