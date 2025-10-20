@@ -96,13 +96,16 @@ use std::{
     borrow::Cow,
     cell::RefCell,
     cmp,
-    collections::{hash_map::DefaultHasher, VecDeque},
+    collections::{VecDeque, hash_map::DefaultHasher},
     env,
     hash::{Hash, Hasher},
     path::{Path, PathBuf},
     process::ExitStatus,
     rc::Rc,
-    sync::{atomic::{AtomicBool, AtomicUsize}, Arc, LazyLock, Weak},
+    sync::{
+        Arc, LazyLock, Weak,
+        atomic::{AtomicBool, AtomicUsize},
+    },
     time::Duration,
 };
 use task::{DebugScenario, SpawnInTerminal, TaskContext};
