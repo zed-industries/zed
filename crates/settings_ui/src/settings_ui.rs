@@ -1034,7 +1034,7 @@ impl SettingsWindow {
         };
 
         // high overdraw value so the list scrollbar len doesn't change too much
-        let list_state = gpui::ListState::new(0, gpui::ListAlignment::Top, px(100.0)).measure_all();
+        let list_state = gpui::ListState::new(0, gpui::ListAlignment::Top, px(0.0)).measure_all();
         list_state.set_scroll_handler(|_, _, _| {});
 
         let mut this = Self {
@@ -2115,7 +2115,7 @@ impl SettingsWindow {
 
     fn render_page_items(
         &mut self,
-        page_index: Option<usize>,
+        page_index: usize,
         _window: &mut Window,
         cx: &mut Context<SettingsWindow>,
     ) -> impl IntoElement {
@@ -2179,16 +2179,14 @@ impl SettingsWindow {
                         .unwrap_or(false);
                     let is_last = Some(actual_item_index) == last_non_header_index;
 
+                    let item_focus_handle =
+                        this.content_handles[page_index][actual_item_index].focus_handle(cx);
+
                     v_flex()
                         .id(("settings-page-item", actual_item_index))
                         .w_full()
                         .min_w_0()
-                        .when_some(page_index, |element, page_index| {
-                            element.track_focus(
-                                &this.content_handles[page_index][actual_item_index]
-                                    .focus_handle(cx),
-                            )
-                        })
+                        .track_focus(&item_focus_handle)
                         .child(item.render(
                             this,
                             actual_item_index,
@@ -2309,7 +2307,7 @@ impl SettingsWindow {
             page_header = self.render_files_header(window, cx).into_any_element();
 
             page_content = self
-                .render_page_items(Some(self.current_page_index()), window, cx)
+                .render_page_items(self.current_page_index(), window, cx)
                 .into_any_element();
         } else {
             page_header = h_flex()
@@ -2338,6 +2336,67 @@ impl SettingsWindow {
             .pb_8()
             .px_8()
             .bg(cx.theme().colors().editor_background)
+            .on_action(cx.listener(|this, _: &menu::SelectNext, window, cx| {
+                if !sub_page_stack().is_empty() {
+                    window.focus_next();
+                    return;
+                }
+                for (logical_index, (actual_index, _)) in this.visible_page_items().enumerate() {
+                    let handle = this.content_handles[this.current_page_index()][actual_index]
+                        .focus_handle(cx);
+                    let mut offset = 1; // for page header
+
+                    if let Some((_, next_item)) = this.visible_page_items().nth(logical_index + 1)
+                        && matches!(next_item, SettingsPageItem::SectionHeader(_))
+                    {
+                        offset += 1;
+                    }
+                    if handle.contains_focused(window, cx) {
+                        let next_logical_index = logical_index + offset + 1;
+                        this.list_state.scroll_to_reveal_item(next_logical_index);
+                        // We need to render the next item to ensure it's focus handle is in the element tree
+                        cx.on_next_frame(window, |_, window, cx| {
+                            window.focus_next();
+                            cx.notify();
+                        });
+                        cx.notify();
+                        return;
+                    }
+                }
+                window.focus_next();
+            }))
+            .on_action(cx.listener(|this, _: &menu::SelectPrevious, window, cx| {
+                if !sub_page_stack().is_empty() {
+                    window.focus_prev();
+                    return;
+                }
+                dbg!("select prev");
+                let mut prev_was_header = false;
+                for (logical_index, (actual_index, item)) in this.visible_page_items().enumerate() {
+                    let is_header = matches!(item, SettingsPageItem::SectionHeader(_));
+                    let handle = this.content_handles[this.current_page_index()][actual_index]
+                        .focus_handle(cx);
+                    let mut offset = 1; // for page header
+
+                    if prev_was_header {
+                        offset -= 1;
+                    }
+                    if handle.contains_focused(window, cx) {
+                        dbg!("found focus handle and scroll to reveal item two");
+                        let next_logical_index = logical_index + offset - 1;
+                        this.list_state.scroll_to_reveal_item(next_logical_index);
+                        // We need to render the next item to ensure it's focus handle is in the element tree
+                        cx.on_next_frame(window, |_, window, cx| {
+                            window.focus_prev();
+                            cx.notify();
+                        });
+                        cx.notify();
+                        return;
+                    }
+                    prev_was_header = is_header;
+                }
+                window.focus_prev();
+            }))
             .child(page_header)
             .when(sub_page_stack().is_empty(), |this| {
                 this.vertical_scrollbar_for(self.list_state.clone(), window, cx)
@@ -2525,12 +2584,12 @@ impl SettingsWindow {
         0
     }
 
-    fn focus_content_element(&self, item_index: usize, window: &mut Window, cx: &mut App) {
+    fn focus_content_element(&self, actual_item_index: usize, window: &mut Window, cx: &mut App) {
         if !sub_page_stack().is_empty() {
             return;
         }
         let page_index = self.current_page_index();
-        window.focus(&self.content_handles[page_index][item_index].focus_handle(cx));
+        window.focus(&self.content_handles[page_index][actual_item_index].focus_handle(cx));
     }
 
     fn focused_nav_entry(&self, window: &Window, cx: &App) -> Option<usize> {
