@@ -2466,15 +2466,15 @@ impl Editor {
             })
     }
 
-    pub fn key_context(&self, window: &Window, cx: &App) -> KeyContext {
+    pub fn key_context(&self, window: &mut Window, cx: &mut App) -> KeyContext {
         self.key_context_internal(self.has_active_edit_prediction(), window, cx)
     }
 
     fn key_context_internal(
         &self,
         has_active_edit_prediction: bool,
-        window: &Window,
-        cx: &App,
+        window: &mut Window,
+        cx: &mut App,
     ) -> KeyContext {
         let mut key_context = KeyContext::new_with_defaults();
         key_context.add("Editor");
@@ -2551,8 +2551,15 @@ impl Editor {
             key_context.add("selection_mode");
         }
 
-        if self.selections.all(self.snapshot(window, cx)).iter().all(|s| todo!("figure out if text is in selection")) {
-            key_context.add("end_of_line")
+        let disjoint = self.selections.disjoint_anchors();
+        let snapshot = self.snapshot(window, cx);
+        let snapshot = snapshot.buffer_snapshot();
+        if self.mode == EditorMode::SingleLine
+            && let [selection] = disjoint
+            && selection.start == selection.end
+            && selection.end.to_offset(snapshot) == snapshot.len()
+        {
+            key_context.add("end_of_input");
         }
 
         key_context
@@ -2608,8 +2615,8 @@ impl Editor {
     pub fn accept_edit_prediction_keybind(
         &self,
         accept_partial: bool,
-        window: &Window,
-        cx: &App,
+        window: &mut Window,
+        cx: &mut App,
     ) -> AcceptEditPredictionBinding {
         let key_context = self.key_context_internal(true, window, cx);
         let in_conflict = self.edit_prediction_in_conflict();
@@ -2751,7 +2758,7 @@ impl Editor {
         self.buffer().read(cx).title(cx)
     }
 
-    pub fn snapshot(&self, window: &mut Window, cx: &mut App) -> EditorSnapshot {
+    pub fn snapshot(&self, window: &Window, cx: &mut App) -> EditorSnapshot {
         let git_blame_gutter_max_author_length = self
             .render_git_blame_gutter(cx)
             .then(|| {
@@ -9289,7 +9296,7 @@ impl Editor {
     fn render_edit_prediction_accept_keybind(
         &self,
         window: &mut Window,
-        cx: &App,
+        cx: &mut App,
     ) -> Option<AnyElement> {
         let accept_binding = self.accept_edit_prediction_keybind(false, window, cx);
         let accept_keystroke = accept_binding.keystroke()?;
@@ -9335,7 +9342,7 @@ impl Editor {
         label: impl Into<SharedString>,
         icon: Option<IconName>,
         window: &mut Window,
-        cx: &App,
+        cx: &mut App,
     ) -> Stateful<Div> {
         let padding_right = if icon.is_some() { px(4.) } else { px(8.) };
 

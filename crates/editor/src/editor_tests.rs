@@ -1753,6 +1753,7 @@ fn test_beginning_end_of_line(cx: &mut TestAppContext) {
 
     _ = editor.update(cx, |editor, window, cx| {
         editor.move_to_beginning_of_line(&move_to_beg, window, cx);
+        assert!(!editor.key_context(window, cx).contains("end_of_buffer"));
         assert_eq!(
             editor.selections.display_ranges(cx),
             &[
@@ -1764,6 +1765,7 @@ fn test_beginning_end_of_line(cx: &mut TestAppContext) {
 
     _ = editor.update(cx, |editor, window, cx| {
         editor.move_to_end_of_line(&move_to_end, window, cx);
+        assert!(editor.key_context(window, cx).contains("end_of_buffer"));
         assert_eq!(
             editor.selections.display_ranges(cx),
             &[
@@ -1776,6 +1778,7 @@ fn test_beginning_end_of_line(cx: &mut TestAppContext) {
     // Moving to the end of line again is a no-op.
     _ = editor.update(cx, |editor, window, cx| {
         editor.move_to_end_of_line(&move_to_end, window, cx);
+        assert!(editor.key_context(window, cx).contains("end_of_buffer"));
         assert_eq!(
             editor.selections.display_ranges(cx),
             &[
@@ -1795,6 +1798,7 @@ fn test_beginning_end_of_line(cx: &mut TestAppContext) {
             window,
             cx,
         );
+        assert!(!editor.key_context(window, cx).contains("end_of_buffer"));
         assert_eq!(
             editor.selections.display_ranges(cx),
             &[
@@ -26837,4 +26841,26 @@ async fn test_copy_line_without_trailing_newline(cx: &mut TestAppContext) {
     cx.update_editor(|e, window, cx| e.paste(&Paste, window, cx));
 
     cx.assert_editor_state("line1\nline2\nˇ");
+}
+
+#[gpui::test]
+async fn test_end_of_editor_context(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state("line1\nline2ˇ");
+    cx.update_editor(|e, window, cx| {
+        e.set_mode(EditorMode::SingleLine);
+        assert!(e.key_context(window, cx).contains("end_of_input"));
+    });
+    cx.set_state("ˇline1\nline2");
+    cx.update_editor(|e, window, cx| {
+        assert!(!e.key_context(window, cx).contains("end_of_input"));
+
+    });
+    cx.set_state("line1ˇ\nline2");
+    cx.update_editor(|e, window, cx| {
+        assert!(!e.key_context(window, cx).contains("end_of_input"));
+    });
 }
