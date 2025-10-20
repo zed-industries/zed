@@ -92,6 +92,9 @@ the formatter:
 {
   "languages": {
     "JavaScript": {
+      "formatter": {
+        "code_action": "source.fixAll.eslint"
+      },
       "code_actions_on_format": {
         "source.fixAll.eslint": true
       }
