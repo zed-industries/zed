@@ -26,10 +26,12 @@ audio.workspace = true
 collections.workspace = true
 cpal.workspace = true
 futures.workspace = true
-gpui = { workspace = true, features = ["screen-capture", "x11", "wayland", "windows-manifest"] }
+gpui = { workspace = true, features = ["x11", "wayland", "windows-manifest"] }
 gpui_tokio.workspace = true
 http_client_tls.workspace = true
 image.workspace = true
+libwebrtc.workspace = true
+livekit.workspace = true
 livekit_api.workspace = true
 log.workspace = true
 nanoid.workspace = true
@@ -40,18 +42,10 @@ serde.workspace = true
 serde_urlencoded.workspace = true
 settings.workspace = true
 smallvec.workspace = true
+tokio.workspace = true
 tokio-tungstenite.workspace = true
 ui.workspace = true
 util.workspace = true
-
-[target.'cfg(not(any(all(target_os = "windows", target_env = "gnu"), target_os = "freebsd")))'.dependencies]
-libwebrtc = { rev = "5f04705ac3f356350ae31534ffbc476abc9ea83d", git = "https://github.com/zed-industries/livekit-rust-sdks" }
-livekit = { rev = "5f04705ac3f356350ae31534ffbc476abc9ea83d", git = "https://github.com/zed-industries/livekit-rust-sdks", features = [
-    "__rustls-tls"
-] }
-
-[target.'cfg(any(target_os = "linux", target_os = "freebsd", target_os = "windows"))'.dependencies]
-scap.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 cocoa.workspace = true

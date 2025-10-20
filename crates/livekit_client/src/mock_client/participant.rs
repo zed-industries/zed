@@ -1,13 +1,14 @@
+use std::sync::{Arc, atomic::AtomicBool};
+
 use crate::{
     AudioStream, LocalAudioTrack, LocalTrackPublication, LocalVideoTrack, Participant,
-    ParticipantIdentity, RemoteTrack, RemoteTrackPublication, TrackSid,
+    ParticipantIdentity, RemoteTrack, RemoteTrackPublication, ScreenCaptureStreamHandle, TrackSid,
     test::{Room, WeakRoom},
 };
 use anyhow::Result;
 use collections::HashMap;
-use gpui::{
-    AsyncApp, DevicePixels, ScreenCaptureSource, ScreenCaptureStream, SourceMetadata, size,
-};
+use gpui::AsyncApp;
+use livekit::webrtc::desktop_capturer::CaptureSource;
 
 #[derive(Clone, Debug)]
 pub struct LocalParticipant {
@@ -59,20 +60,26 @@ impl LocalParticipant {
 
     pub async fn publish_screenshare_track(
         &self,
-        _source: &dyn ScreenCaptureSource,
-        _cx: &mut AsyncApp,
-    ) -> Result<(LocalTrackPublication, Box<dyn ScreenCaptureStream>)> {
+        _source: Option<CaptureSource>,
+        cx: &mut AsyncApp,
+    ) -> Result<(LocalTrackPublication, ScreenCaptureStreamHandle)> {
         let this = self.clone();
         let server = this.room.test_server();
         let sid = server
             .publish_video_track(this.room.token(), LocalVideoTrack {})
             .await?;
+        let spawn_handle = gpui_tokio::Tokio::spawn(cx, async {})?;
+        let handle = ScreenCaptureStreamHandle {
+            screen_id: 0,
+            stop_capture: Arc::new(AtomicBool::new(false)),
+            _spawn_handle: spawn_handle,
+        };
         Ok((
             LocalTrackPublication {
                 room: self.room.downgrade(),
                 sid,
             },
-            Box::new(TestScreenCaptureStream {}),
+            handle,
         ))
     }
 }
@@ -119,18 +126,5 @@ impl RemoteParticipant {
 
     pub fn identity(&self) -> ParticipantIdentity {
         self.identity.clone()
-    }
-}
-
-struct TestScreenCaptureStream;
-
-impl ScreenCaptureStream for TestScreenCaptureStream {
-    fn metadata(&self) -> Result<SourceMetadata> {
-        Ok(SourceMetadata {
-            id: 0,
-            is_main: None,
-            label: None,
-            resolution: size(DevicePixels(1), DevicePixels(1)),
-        })
     }
 }

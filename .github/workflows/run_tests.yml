@@ -61,6 +61,9 @@ jobs:
   check_style:
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
     runs-on: namespace-profile-4x8-ubuntu-2204
+    env:
+      CC: clang
+      CXX: clang++
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -197,6 +200,9 @@ jobs:
     - orchestrate
     if: needs.orchestrate.outputs.run_tests == 'true'
     runs-on: namespace-profile-16x32-ubuntu-2204
+    env:
+      CC: clang
+      CXX: clang++
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -288,6 +294,9 @@ jobs:
     - orchestrate
     if: needs.orchestrate.outputs.run_tests == 'true'
     runs-on: namespace-profile-16x32-ubuntu-2204
+    env:
+      CC: clang
+      CXX: clang++
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -327,6 +336,9 @@ jobs:
     - orchestrate
     if: needs.orchestrate.outputs.run_tests == 'true'
     runs-on: namespace-profile-8x16-ubuntu-2204
+    env:
+      CC: clang
+      CXX: clang++
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -367,6 +379,9 @@ jobs:
     - orchestrate
     if: needs.orchestrate.outputs.run_tests == 'true'
     runs-on: namespace-profile-2x4-ubuntu-2404
+    env:
+      CC: clang
+      CXX: clang++
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -399,6 +414,9 @@ jobs:
     - orchestrate
     if: needs.orchestrate.outputs.run_docs == 'true'
     runs-on: namespace-profile-8x16-ubuntu-2204
+    env:
+      CC: clang
+      CXX: clang++
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -472,6 +490,9 @@ jobs:
     - orchestrate
     if: needs.orchestrate.outputs.run_action_checks == 'true'
     runs-on: namespace-profile-2x4-ubuntu-2404
+    env:
+      CC: clang
+      CXX: clang++
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683

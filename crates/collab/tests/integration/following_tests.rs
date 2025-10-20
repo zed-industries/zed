@@ -463,7 +463,6 @@ async fn test_basic_following(
     // #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
     {
         use collab::rpc::RECONNECT_TIMEOUT;
-        use gpui::TestScreenCaptureSource;
         use workspace::{
             dock::{DockPosition, test::TestPanel},
             item::test::TestItem,
@@ -471,25 +470,15 @@ async fn test_basic_following(
         };
 
         // Client B activates an external window, which causes a new screen-sharing item to be added to the pane.
-        let display = TestScreenCaptureSource::new();
         active_call_b
             .update(cx_b, |call, cx| call.set_location(None, cx))
             .await
-            .unwrap();
-        cx_b.set_screen_capture_sources(vec![display]);
-        let source = cx_b
-            .read(|cx| cx.screen_capture_sources())
-            .await
-            .unwrap()
-            .unwrap()
-            .into_iter()
-            .next()
             .unwrap();
         active_call_b
             .update(cx_b, |call, cx| {
                 call.room()
                     .unwrap()
-                    .update(cx, |room, cx| room.share_screen(source, cx))
+                    .update(cx, |room, cx| room.share_screen(None, cx))
             })
             .await
             .unwrap();

@@ -72,10 +72,6 @@ x11 = [
     "x11-clipboard",
     "filedescriptor",
     "open",
-    "scap?/x11",
-]
-screen-capture = [
-    "scap",
 ]
 windows-manifest = []
 
@@ -165,9 +161,6 @@ metal.workspace = true
 
 [target.'cfg(any(target_os = "linux", target_os = "freebsd", target_os = "macos"))'.dependencies]
 pathfinder_geometry = "0.5"
-
-[target.'cfg(any(target_os = "linux", target_os = "freebsd", target_os = "windows"))'.dependencies]
-scap = { workspace = true, optional = true }
 
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
 # Always used
