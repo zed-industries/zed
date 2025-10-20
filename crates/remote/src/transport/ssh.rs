@@ -170,35 +170,44 @@ impl RemoteConnection for SshRemoteConnection {
         dest_path: RemotePathBuf,
         cx: &App,
     ) -> Task<Result<()>> {
-        let mut command = util::command::new_smol_command("scp");
-        let output = self
-            .socket
-            .ssh_options(&mut command)
-            .args(
-                self.socket
-                    .connection_options
-                    .port
-                    .map(|port| vec!["-P".to_string(), port.to_string()])
-                    .unwrap_or_default(),
-            )
-            .arg("-C")
-            .arg("-r")
-            .arg(&src_path)
-            .arg(format!(
-                "{}:{}",
-                self.socket.connection_options.scp_url(),
-                dest_path
-            ))
-            .output();
+        let dest_path_str = dest_path.to_string();
+        let src_path_display = src_path.display().to_string();
+
+        let mut sftp_command = self.build_sftp_command();
+        let mut scp_command =
+            self.build_scp_command(&src_path, &dest_path_str, Some(&["-C", "-r"]));
 
         cx.background_spawn(async move {
-            let output = output.await?;
+            if Self::is_sftp_available().await {
+                log::debug!("using SFTP for directory upload");
+                let mut child = sftp_command.spawn()?;
+                if let Some(mut stdin) = child.stdin.take() {
+                    use futures::AsyncWriteExt;
+                    let sftp_batch = format!("put -r {} {}\n", src_path.display(), dest_path_str);
+                    stdin.write_all(sftp_batch.as_bytes()).await?;
+                    drop(stdin);
+                }
+
+                let output = child.output().await?;
+                anyhow::ensure!(
+                    output.status.success(),
+                    "failed to upload directory via SFTP {} -> {}: {}",
+                    src_path_display,
+                    dest_path_str,
+                    String::from_utf8_lossy(&output.stderr)
+                );
+
+                return Ok(());
+            }
+
+            log::debug!("using SCP for directory upload");
+            let output = scp_command.output().await?;
 
             anyhow::ensure!(
                 output.status.success(),
-                "failed to upload directory {} -> {}: {}",
-                src_path.display(),
-                dest_path.to_string(),
+                "failed to upload directory via SCP {} -> {}: {}",
+                src_path_display,
+                dest_path_str,
                 String::from_utf8_lossy(&output.stderr)
             );
 
@@ -643,36 +652,92 @@ impl SshRemoteConnection {
         Ok(())
     }
 
+    fn build_scp_command(
+        &self,
+        src_path: &Path,
+        dest_path_str: &str,
+        args: Option<&[&str]>,
+    ) -> process::Command {
+        let mut command = util::command::new_smol_command("scp");
+        self.socket.ssh_options(&mut command, false).args(
+            self.socket
+                .connection_options
+                .port
+                .map(|port| vec!["-P".to_string(), port.to_string()])
+                .unwrap_or_default(),
+        );
+        if let Some(args) = args {
+            command.args(args);
+        }
+        command.arg(src_path).arg(format!(
+            "{}:{}",
+            self.socket.connection_options.scp_url(),
+            dest_path_str
+        ));
+        command
+    }
+
+    fn build_sftp_command(&self) -> process::Command {
+        let mut command = util::command::new_smol_command("sftp");
+        self.socket.ssh_options(&mut command, false).args(
+            self.socket
+                .connection_options
+                .port
+                .map(|port| vec!["-P".to_string(), port.to_string()])
+                .unwrap_or_default(),
+        );
+        command.arg("-b").arg("-");
+        command.arg(self.socket.connection_options.scp_url());
+        command.stdin(Stdio::piped());
+        command
+    }
+
     async fn upload_file(&self, src_path: &Path, dest_path: &RelPath) -> Result<()> {
         log::debug!("uploading file {:?} to {:?}", src_path, dest_path);
-        let mut command = util::command::new_smol_command("scp");
-        let output = self
-            .socket
-            .ssh_options(&mut command)
-            .args(
-                self.socket
-                    .connection_options
-                    .port
-                    .map(|port| vec!["-P".to_string(), port.to_string()])
-                    .unwrap_or_default(),
-            )
-            .arg(src_path)
-            .arg(format!(
-                "{}:{}",
-                self.socket.connection_options.scp_url(),
-                dest_path.display(self.path_style())
-            ))
-            .output()
-            .await?;
 
-        anyhow::ensure!(
-            output.status.success(),
-            "failed to upload file {} -> {}: {}",
-            src_path.display(),
-            dest_path.display(self.path_style()),
-            String::from_utf8_lossy(&output.stderr)
-        );
-        Ok(())
+        let dest_path_str = dest_path.display(self.path_style());
+
+        if Self::is_sftp_available().await {
+            log::debug!("using SFTP for file upload");
+            let mut command = self.build_sftp_command();
+            let sftp_batch = format!("put {} {}\n", src_path.display(), dest_path_str);
+
+            let mut child = command.spawn()?;
+            if let Some(mut stdin) = child.stdin.take() {
+                use futures::AsyncWriteExt;
+                stdin.write_all(sftp_batch.as_bytes()).await?;
+                drop(stdin);
+            }
+
+            let output = child.output().await?;
+            anyhow::ensure!(
+                output.status.success(),
+                "failed to upload file via SFTP {} -> {}: {}",
+                src_path.display(),
+                dest_path_str,
+                String::from_utf8_lossy(&output.stderr)
+            );
+
+            Ok(())
+        } else {
+            log::debug!("using SCP for file upload");
+            let mut command = self.build_scp_command(src_path, &dest_path_str, None);
+            let output = command.output().await?;
+
+            anyhow::ensure!(
+                output.status.success(),
+                "failed to upload file via SCP {} -> {}: {}",
+                src_path.display(),
+                dest_path_str,
+                String::from_utf8_lossy(&output.stderr)
+            );
+
+            Ok(())
+        }
+    }
+
+    async fn is_sftp_available() -> bool {
+        which::which("sftp").is_ok()
     }
 }
 
@@ -729,7 +794,7 @@ impl SshSocket {
             to_run.push_str(&shlex::try_quote(arg.as_ref()).unwrap());
         }
         let to_run = format!("cd; {to_run}");
-        self.ssh_options(&mut command)
+        self.ssh_options(&mut command, true)
             .arg(self.connection_options.ssh_url())
             .arg("-T")
             .arg(to_run);
@@ -748,23 +813,43 @@ impl SshSocket {
     }
 
     #[cfg(not(target_os = "windows"))]
-    fn ssh_options<'a>(&self, command: &'a mut process::Command) -> &'a mut process::Command {
+    fn ssh_options<'a>(
+        &self,
+        command: &'a mut process::Command,
+        include_port_forwards: bool,
+    ) -> &'a mut process::Command {
+        let args = if include_port_forwards {
+            self.connection_options.additional_args()
+        } else {
+            self.connection_options.additional_args_for_scp()
+        };
+
         command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .args(self.connection_options.additional_args())
+            .args(args)
             .args(["-o", "ControlMaster=no", "-o"])
             .arg(format!("ControlPath={}", self.socket_path.display()))
     }
 
     #[cfg(target_os = "windows")]
-    fn ssh_options<'a>(&self, command: &'a mut process::Command) -> &'a mut process::Command {
+    fn ssh_options<'a>(
+        &self,
+        command: &'a mut process::Command,
+        include_port_forwards: bool,
+    ) -> &'a mut process::Command {
+        let args = if include_port_forwards {
+            self.connection_options.additional_args()
+        } else {
+            self.connection_options.additional_args_for_scp()
+        };
+
         command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .args(self.connection_options.additional_args())
+            .args(args)
             .envs(self.envs.clone())
     }
 
@@ -991,8 +1076,12 @@ impl SshConnectionOptions {
         result
     }
 
+    pub fn additional_args_for_scp(&self) -> Vec<String> {
+        self.args.iter().flatten().cloned().collect::<Vec<String>>()
+    }
+
     pub fn additional_args(&self) -> Vec<String> {
-        let mut args = self.args.iter().flatten().cloned().collect::<Vec<String>>();
+        let mut args = self.additional_args_for_scp();
 
         if let Some(forwards) = &self.port_forwards {
             args.extend(forwards.iter().map(|pf| {
@@ -1168,5 +1257,46 @@ mod tests {
         assert_eq!(command.env, env);
 
         Ok(())
+    }
+
+    #[test]
+    fn scp_args_exclude_port_forward_flags() {
+        let options = SshConnectionOptions {
+            host: "example.com".into(),
+            args: Some(vec![
+                "-p".to_string(),
+                "2222".to_string(),
+                "-o".to_string(),
+                "StrictHostKeyChecking=no".to_string(),
+            ]),
+            port_forwards: Some(vec![SshPortForwardOption {
+                local_host: Some("127.0.0.1".to_string()),
+                local_port: 8080,
+                remote_host: Some("127.0.0.1".to_string()),
+                remote_port: 80,
+            }]),
+            ..Default::default()
+        };
+
+        let ssh_args = options.additional_args();
+        assert!(
+            ssh_args.iter().any(|arg| arg.starts_with("-L")),
+            "expected ssh args to include port-forward: {ssh_args:?}"
+        );
+
+        let scp_args = options.additional_args_for_scp();
+        assert_eq!(
+            scp_args,
+            vec![
+                "-p".to_string(),
+                "2222".to_string(),
+                "-o".to_string(),
+                "StrictHostKeyChecking=no".to_string()
+            ]
+        );
+        assert!(
+            scp_args.iter().all(|arg| !arg.starts_with("-L")),
+            "scp args should not contain port forward flags: {scp_args:?}"
+        );
     }
 }

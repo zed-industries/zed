@@ -344,13 +344,9 @@ impl SystemWindowTabController {
         let tab_group = self
             .tab_groups
             .iter()
-            .find_map(|(group, tabs)| tabs.iter().find(|tab| tab.id == id).map(|_| *group));
+            .find_map(|(group, tabs)| tabs.iter().find(|tab| tab.id == id).map(|_| *group))?;
 
-        if let Some(tab_group) = tab_group {
-            self.tab_groups.get(&tab_group)
-        } else {
-            None
-        }
+        self.tab_groups.get(&tab_group)
     }
 
     /// Initialize the visibility of the system window tab controller.
@@ -415,7 +411,8 @@ impl SystemWindowTabController {
         for windows in controller.tab_groups.values_mut() {
             for tab in windows.iter_mut() {
                 if tab.id == id {
-                    tab.title = title.clone();
+                    tab.title = title;
+                    return;
                 }
             }
         }

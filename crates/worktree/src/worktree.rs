@@ -236,7 +236,7 @@ pub struct LocalSnapshot {
     /// All of the git repositories in the worktree, indexed by the project entry
     /// id of their parent directory.
     git_repositories: TreeMap<ProjectEntryId, LocalRepositoryEntry>,
-    /// The file handle of the worktree root. `None` if the worktree is a directory.
+    /// The file handle of the worktree root
     /// (so we can find it after it's been moved)
     root_file_handle: Option<Arc<dyn fs::FileHandle>>,
     executor: BackgroundExecutor,
@@ -3614,25 +3614,32 @@ impl BackgroundScanner {
 
         log::trace!("containing git repository: {containing_git_repository:?}");
 
-        let mut global_gitignore_events =
-            if let Some(global_gitignore_path) = &paths::global_gitignore_path() {
-                self.state.lock().await.snapshot.global_gitignore =
-                    if self.fs.is_file(&global_gitignore_path).await {
-                        build_gitignore(global_gitignore_path, self.fs.as_ref())
-                            .await
-                            .ok()
-                            .map(Arc::new)
-                    } else {
-                        None
-                    };
+        let mut global_gitignore_events = if let Some(global_gitignore_path) =
+            &paths::global_gitignore_path()
+        {
+            let is_file = self.fs.is_file(&global_gitignore_path).await;
+            self.state.lock().await.snapshot.global_gitignore = if is_file {
+                build_gitignore(global_gitignore_path, self.fs.as_ref())
+                    .await
+                    .ok()
+                    .map(Arc::new)
+            } else {
+                None
+            };
+            if is_file
+                || matches!(global_gitignore_path.parent(), Some(path) if self.fs.is_dir(path).await)
+            {
                 self.fs
                     .watch(global_gitignore_path, FS_WATCH_LATENCY)
                     .await
                     .0
             } else {
-                self.state.lock().await.snapshot.global_gitignore = None;
-                Box::pin(futures::stream::empty())
-            };
+                Box::pin(futures::stream::pending())
+            }
+        } else {
+            self.state.lock().await.snapshot.global_gitignore = None;
+            Box::pin(futures::stream::pending())
+        };
 
         let (scan_job_tx, scan_job_rx) = channel::unbounded();
         {
@@ -3740,7 +3747,7 @@ impl BackgroundScanner {
                         Some([event, ..]) => {
                             self.update_global_gitignore(&event.path).await;
                         }
-                        _ => {},
+                        _ => (),
                     }
                 }
             }
@@ -3823,7 +3830,7 @@ impl BackgroundScanner {
                         .unbounded_send(ScanState::RootUpdated { new_path })
                         .ok();
                 } else {
-                    log::warn!("root path could not be canonicalized: {}", err);
+                    log::warn!("root path could not be canonicalized: {:#}", err);
                 }
                 return;
             }
