@@ -4420,6 +4420,10 @@ impl Panel for GitPanel {
         "GitPanel"
     }
 
+    fn panel_key() -> &'static str {
+        GIT_PANEL_KEY
+    }
+
     fn position(&self, _: &Window, cx: &App) -> DockPosition {
         GitPanelSettings::get_global(cx).dock
     }
