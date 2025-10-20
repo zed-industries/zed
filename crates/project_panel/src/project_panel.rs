@@ -643,7 +643,7 @@ impl ProjectPanel {
                             .as_ref()
                             .is_some_and(|state| state.processing_filename.is_none())
                         {
-                            match project_panel.confirm_edit(window, cx) {
+                            match project_panel.confirm_edit(false, window, cx) {
                                 Some(task) => {
                                     task.detach_and_notify_err(window, cx);
                                 }
@@ -948,8 +948,11 @@ impl ProjectPanel {
     }
 
     fn focus_out(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        println!("meep");
         if !self.focus_handle.is_focused(window) {
-            self.confirm(&Confirm, window, cx);
+            if let Some(task) = self.confirm_edit(false, window, cx) {
+                task.detach_and_notify_err(window, cx);
+            }
         }
     }
 
@@ -1421,7 +1424,7 @@ impl ProjectPanel {
     }
 
     fn confirm(&mut self, _: &Confirm, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(task) = self.confirm_edit(window, cx) {
+        if let Some(task) = self.confirm_edit(true, window, cx) {
             task.detach_and_notify_err(window, cx);
         }
     }
@@ -1553,6 +1556,7 @@ impl ProjectPanel {
 
     fn confirm_edit(
         &mut self,
+        refocus: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Task<Result<()>>> {
@@ -1606,7 +1610,7 @@ impl ProjectPanel {
                 filename.clone()
             };
             if let Some(existing) = worktree.read(cx).entry_for_path(&new_path) {
-                if existing.id == entry.id {
+                if existing.id == entry.id && refocus {
                     window.focus(&self.focus_handle);
                 }
                 return None;
@@ -1617,7 +1621,9 @@ impl ProjectPanel {
             });
         };
 
-        window.focus(&self.focus_handle);
+        if refocus {
+            window.focus(&self.focus_handle);
+        }
         edit_state.processing_filename = Some(filename);
         cx.notify();
 
