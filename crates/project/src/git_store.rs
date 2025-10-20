@@ -35,7 +35,7 @@ use git::{
 };
 use gpui::{
     App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Subscription, Task,
-    WeakEntity,
+    TaskLabel, WeakEntity,
 };
 use language::{
     Buffer, BufferEvent, Language, LanguageRegistry,
@@ -56,7 +56,7 @@ use std::{
     ops::Range,
     path::{Path, PathBuf},
     sync::{
-        Arc,
+        Arc, LazyLock,
         atomic::{self, AtomicU64},
     },
     time::Instant,
@@ -4454,8 +4454,7 @@ impl Repository {
     pub(crate) fn apply_remote_update(
         &mut self,
         update: proto::UpdateRepository,
-        // is_new: bool,
-        cx: &mut Context<Self>,
+        _cx: &mut Context<Self>,
     ) -> Result<()> {
         let conflicted_paths = TreeSet::from_ordered_entries(
             update
@@ -4571,7 +4570,7 @@ impl Repository {
                 this.update(&mut cx, |this, cx| {
                     this.snapshot = snapshot.clone();
                     for event in events {
-                        cx.emit(dbg!(event));
+                        cx.emit(event);
                     }
                 })?;
                 if let Some(updates_tx) = updates_tx {

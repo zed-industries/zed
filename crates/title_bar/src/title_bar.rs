@@ -30,10 +30,7 @@ use gpui::{
     Subscription, WeakEntity, Window, actions, div,
 };
 use onboarding_banner::OnboardingBanner;
-use project::{
-    Project, WorktreeSettings,
-    git_store::{GitStoreEvent, RepositoryEvent},
-};
+use project::{Project, WorktreeSettings, git_store::GitStoreEvent};
 use remote::RemoteConnectionOptions;
 use settings::{Settings, SettingsLocation};
 use std::sync::Arc;

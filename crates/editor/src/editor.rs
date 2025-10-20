@@ -156,7 +156,7 @@ use project::{
         },
         session::{Session, SessionEvent},
     },
-    git_store::{GitStoreEvent, RepositoryEvent},
+    git_store::GitStoreEvent,
     lsp_store::{CompletionDocumentation, FormatTrigger, LspFormatTarget, OpenLspBufferHandle},
     project_settings::{DiagnosticSeverity, GoToDiagnosticSeverityFilter, ProjectSettings},
 };

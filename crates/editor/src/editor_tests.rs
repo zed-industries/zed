@@ -12652,7 +12652,6 @@ async fn test_strip_whitespace_and_format_via_lsp(cx: &mut TestAppContext) {
                 async move {
                     // When formatting is requested, trailing whitespace has already been stripped,
                     // and the trailing newline has already been added.
-                    // dbg!(&buffer_changes);
                     assert_eq!(
                         &buffer_changes.lock()[1..],
                         &[

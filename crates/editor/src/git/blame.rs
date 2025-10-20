@@ -16,7 +16,7 @@ use markdown::Markdown;
 use multi_buffer::{MultiBuffer, RowInfo};
 use project::{
     Project, ProjectItem as _,
-    git_store::{GitStoreEvent, Repository, RepositoryEvent},
+    git_store::{GitStoreEvent, Repository},
 };
 use smallvec::SmallVec;
 use std::{sync::Arc, time::Duration};

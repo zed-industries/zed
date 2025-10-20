@@ -11,13 +11,19 @@ use git::{
     },
     status::{FileStatus, GitStatus, StatusCode, TrackedStatus, UnmergedStatus},
 };
-use gpui::{AsyncApp, BackgroundExecutor, SharedString, Task};
+use gpui::{AsyncApp, BackgroundExecutor, SharedString, Task, TaskLabel};
 use ignore::gitignore::GitignoreBuilder;
 use parking_lot::Mutex;
 use rope::Rope;
 use smol::future::FutureExt as _;
-use std::{path::PathBuf, sync::Arc};
+use std::{
+    path::PathBuf,
+    sync::{Arc, LazyLock},
+};
 use util::{paths::PathStyle, rel_path::RelPath};
+
+pub static LOAD_INDEX_TEXT_TASK: LazyLock<TaskLabel> = LazyLock::new(TaskLabel::new);
+pub static LOAD_HEAD_TEXT_TASK: LazyLock<TaskLabel> = LazyLock::new(TaskLabel::new);
 
 #[derive(Clone)]
 pub struct FakeGitRepository {
@@ -79,33 +85,29 @@ impl GitRepository for FakeGitRepository {
     fn reload_index(&self) {}
 
     fn load_index_text(&self, path: RepoPath) -> BoxFuture<'_, Option<String>> {
-        async {
-            self.with_state_async(false, move |state| {
-                state
-                    .index_contents
-                    .get(&path)
-                    .context("not present in index")
-                    .cloned()
-            })
-            .await
-            .ok()
-        }
-        .boxed()
+        let fut = self.with_state_async(false, move |state| {
+            state
+                .index_contents
+                .get(&path)
+                .context("not present in index")
+                .cloned()
+        });
+        self.executor
+            .spawn_labeled(*LOAD_INDEX_TEXT_TASK, async move { fut.await.ok() })
+            .boxed()
     }
 
     fn load_committed_text(&self, path: RepoPath) -> BoxFuture<'_, Option<String>> {
-        async {
-            self.with_state_async(false, move |state| {
-                state
-                    .head_contents
-                    .get(&path)
-                    .context("not present in HEAD")
-                    .cloned()
-            })
-            .await
-            .ok()
-        }
-        .boxed()
+        let fut = self.with_state_async(false, move |state| {
+            state
+                .head_contents
+                .get(&path)
+                .context("not present in HEAD")
+                .cloned()
+        });
+        self.executor
+            .spawn_labeled(*LOAD_HEAD_TEXT_TASK, async move { fut.await.ok() })
+            .boxed()
     }
 
     fn load_commit(

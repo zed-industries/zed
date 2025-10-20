@@ -185,7 +185,6 @@ impl ProjectDiff {
                     true,
                 )
                 | GitStoreEvent::ConflictsUpdated => {
-                    dbg!();
                     *this.update_needed.borrow_mut() = ();
                 }
                 _ => {}
@@ -449,12 +448,9 @@ impl ProjectDiff {
 
         let snapshot = buffer.read(cx).snapshot();
         let diff = diff.read(cx);
-        dbg!("HERE");
         let diff_hunk_ranges = diff
             .hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot, cx)
-            // FIXME collect
-            .map(|diff_hunk| diff_hunk.buffer_range)
-            .collect::<Vec<_>>();
+            .map(|diff_hunk| diff_hunk.buffer_range);
         let conflicts = conflict_addon
             .conflict_set(snapshot.remote_id())
             .map(|conflict_set| conflict_set.read(cx).snapshot().conflicts)
@@ -462,17 +458,16 @@ impl ProjectDiff {
         let conflicts = conflicts.iter().map(|conflict| conflict.range.clone());
 
         let excerpt_ranges =
-            merge_anchor_ranges(dbg!(diff_hunk_ranges).into_iter(), conflicts, &snapshot)
+            merge_anchor_ranges(diff_hunk_ranges.into_iter(), conflicts, &snapshot)
                 .map(|range| range.to_point(&snapshot))
                 .collect::<Vec<_>>();
 
         let (was_empty, is_excerpt_newly_added) = self.multibuffer.update(cx, |multibuffer, cx| {
             let was_empty = multibuffer.is_empty();
-            dbg!();
             let (_, is_newly_added) = multibuffer.set_excerpts_for_path(
                 path_key.clone(),
                 buffer,
-                dbg!(excerpt_ranges),
+                excerpt_ranges,
                 multibuffer_context_lines(cx),
                 cx,
             );
@@ -520,9 +515,7 @@ impl ProjectDiff {
         cx: &mut AsyncWindowContext,
     ) -> Result<()> {
         while (recv.next().await).is_some() {
-            dbg!();
             let buffers_to_load = this.update(cx, |this, cx| this.load_buffers(cx))?;
-            dbg!(buffers_to_load.len());
             for buffer_to_load in buffers_to_load {
                 if let Some(buffer) = buffer_to_load.await.log_err() {
                     cx.update(|window, cx| {
@@ -1373,7 +1366,7 @@ mod tests {
     use db::indoc;
     use editor::test::editor_test_context::{EditorTestContext, assert_state_with_diff};
     use git::status::{UnmergedStatus, UnmergedStatusCode};
-    use gpui::TestAppContext;
+    use gpui::{BackgroundExecutor, TestAppContext};
     use project::FakeFs;
     use serde_json::json;
     use settings::SettingsStore;
@@ -2014,5 +2007,66 @@ mod tests {
             "
             .unindent(),
         );
+    }
+
+    #[gpui::test]
+    async fn test_update_on_uncommit(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "README.md": "# My cool project\n".to_owned()
+            }),
+        )
+        .await;
+        fs.set_head_and_index_for_repo(
+            Path::new(path!("/project/.git")),
+            &[("README.md", "# My cool project\n".to_owned())],
+        );
+        let project = Project::test(fs.clone(), [Path::new(path!("/project"))], cx).await;
+        let worktree_id = project.read_with(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        });
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        cx.run_until_parked();
+
+        let _editor = workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.open_path((worktree_id, rel_path("README.md")), None, true, window, cx)
+            })
+            .await
+            .unwrap()
+            .downcast::<Editor>()
+            .unwrap();
+
+        cx.focus(&workspace);
+        cx.update(|window, cx| {
+            window.dispatch_action(project_diff::Diff.boxed_clone(), cx);
+        });
+        cx.run_until_parked();
+        let item = workspace.update(cx, |workspace, cx| {
+            workspace.active_item_as::<ProjectDiff>(cx).unwrap()
+        });
+        cx.focus(&item);
+        let editor = item.read_with(cx, |item, _| item.editor.clone());
+
+        fs.set_head_and_index_for_repo(
+            Path::new(path!("/project/.git")),
+            &[(
+                "README.md",
+                "# My cool project\nDetails to come.\n".to_owned(),
+            )],
+        );
+        cx.run_until_parked();
+
+        let mut cx = EditorTestContext::for_editor_in(editor, cx).await;
+
+        cx.assert_excerpts_with_selections(&format!(
+            "[EXCERPT]\nˇ# My cool project\nDetails to come.\n"
+        ));
     }
 }
