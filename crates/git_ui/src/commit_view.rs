@@ -804,7 +804,6 @@ impl Render for CommitViewToolbar {
             h_group_sm()
                 .child(
                     Button::new("apply-stash", "Apply")
-                        .icon(IconName::ArrowDown)
                         .tooltip(Tooltip::for_action_title_in(
                             "Apply current stash",
                             &ApplyCurrentStash,
@@ -814,7 +813,6 @@ impl Render for CommitViewToolbar {
                 )
                 .child(
                     Button::new("pop-stash", "Pop")
-                        .icon(IconName::ArrowUp)
                         .tooltip(Tooltip::for_action_title_in(
                             "Pop current stash",
                             &PopCurrentStash,
