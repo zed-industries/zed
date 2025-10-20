@@ -561,6 +561,8 @@ impl Zeta2Inspector {
                         }
                     });
 
+                    let project_snapshot_task = TelemetrySnapshot::new(&this.project, cx);
+
                     this.last_prediction = Some(LastPrediction {
                         context_editor,
                         prompt_editor: cx.new(|cx| {
@@ -583,7 +585,10 @@ impl Zeta2Inspector {
                         buffer,
                         position,
                         state: LastPredictionState::Requested,
-                        project_snapshot: TelemetrySnapshot::new(&this.project, cx).shared(),
+                        project_snapshot: cx
+                            .foreground_executor()
+                            .spawn(async move { Arc::new(project_snapshot_task.await) })
+                            .shared(),
                         request: prediction.request,
                         _task: Some(task),
                     });

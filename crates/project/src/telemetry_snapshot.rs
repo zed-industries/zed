@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use git::repository::DiffType;
 use gpui::{App, Entity, Task};
 use serde::{Deserialize, Serialize};
@@ -16,7 +14,7 @@ pub struct TelemetrySnapshot {
 }
 
 impl TelemetrySnapshot {
-    pub fn new(project: &Entity<Project>, cx: &mut App) -> Task<Arc<TelemetrySnapshot>> {
+    pub fn new(project: &Entity<Project>, cx: &mut App) -> Task<TelemetrySnapshot> {
         let git_store = project.read(cx).git_store().clone();
         let worktree_snapshots: Vec<_> = project
             .read(cx)
@@ -27,7 +25,7 @@ impl TelemetrySnapshot {
         cx.spawn(async move |_| {
             let worktree_snapshots = futures::future::join_all(worktree_snapshots).await;
 
-            Arc::new(Self { worktree_snapshots })
+            Self { worktree_snapshots }
         })
     }
 }
