@@ -7,16 +7,20 @@ use chrono::TimeDelta;
 use client::{Client, UserStore};
 use cloud_llm_client::predict_edits_v3::{DeclarationScoreComponents, PromptFormat};
 use collections::HashMap;
-use editor::{Editor, EditorEvent, EditorMode, ExcerptRange, MultiBuffer};
+use editor::{
+    Editor, EditorElement, EditorEvent, EditorMode, EditorStyle, ExcerptRange, MultiBuffer,
+};
 use feature_flags::FeatureFlagAppExt as _;
 use futures::{StreamExt as _, channel::oneshot};
 use gpui::{
-    CursorStyle, Entity, EventEmitter, FocusHandle, Focusable, Subscription, Task, WeakEntity,
-    actions, prelude::*,
+    CursorStyle, Entity, EventEmitter, FocusHandle, Focusable, Subscription, Task, TextStyle,
+    WeakEntity, actions, prelude::*,
 };
 use language::{Buffer, DiskState};
 use ordered_float::OrderedFloat;
 use project::{Project, WorktreeId};
+use settings::Settings;
+use theme::ThemeSettings;
 use ui::{ContextMenu, ContextMenuEntry, DropdownMenu, prelude::*};
 use ui_input::SingleLineInput;
 use util::{ResultExt, paths::PathStyle, rel_path::RelPath};
@@ -85,6 +89,7 @@ enum ActiveView {
 struct LastPrediction {
     context_editor: Entity<Editor>,
     prompt_editor: Entity<Editor>,
+    feedback_editor: Entity<Editor>,
     retrieval_time: TimeDelta,
     buffer: WeakEntity<Buffer>,
     position: language::Anchor,
@@ -129,7 +134,7 @@ impl Zeta2Inspector {
             focus_handle: cx.focus_handle(),
             project: project.clone(),
             last_prediction: None,
-            active_view: ActiveView::Context,
+            active_view: ActiveView::Inference,
             max_excerpt_bytes_input: Self::number_input("Max Excerpt Bytes", window, cx),
             min_excerpt_bytes_input: Self::number_input("Min Excerpt Bytes", window, cx),
             cursor_context_ratio_input: Self::number_input("Cursor Context Ratio", window, cx),
@@ -504,6 +509,29 @@ impl Zeta2Inspector {
                             editor.set_show_scrollbars(false, cx);
                             editor
                         }),
+                        feedback_editor: cx.new(|cx| {
+                            let buffer = cx.new(|cx| {
+                                let mut buffer = Buffer::local("", cx);
+                                buffer.set_language(markdown_language.clone(), cx);
+                                buffer
+                            });
+                            let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+                            let mut editor = Editor::new(
+                                EditorMode::AutoHeight {
+                                    min_lines: 3,
+                                    max_lines: None,
+                                },
+                                buffer,
+                                None,
+                                window,
+                                cx,
+                            );
+                            editor.set_placeholder_text("Write feedback here", window, cx);
+                            editor.set_show_line_numbers(false, cx);
+                            editor.set_show_gutter(false, cx);
+                            editor.set_show_scrollbars(false, cx);
+                            editor
+                        }),
                         retrieval_time,
                         buffer,
                         position,
@@ -618,8 +646,14 @@ impl Zeta2Inspector {
                     ),
                     ui::ToggleButtonSimple::new(
                         "Inference",
-                        cx.listener(|this, _, _, cx| {
+                        cx.listener(|this, _, window, cx| {
                             this.active_view = ActiveView::Inference;
+                            if let Some(last_prediction) = this.last_prediction.as_ref() {
+                                last_prediction
+                                    .feedback_editor
+                                    .focus_handle(cx)
+                                    .focus(window);
+                            }
                             cx.notify();
                         }),
                     ),
@@ -748,24 +782,54 @@ impl Zeta2Inspector {
                         .flex_1()
                         .gap_2()
                         .h_full()
-                        .p_4()
-                        .child(ui::Headline::new("Model Response").size(ui::HeadlineSize::XSmall))
-                        .child(match &prediction.state {
-                            LastPredictionState::Success {
-                                model_response_editor,
-                                ..
-                            } => model_response_editor.clone().into_any_element(),
-                            LastPredictionState::Requested => v_flex()
-                                .p_4()
+                        .child(
+                            v_flex()
+                                .flex_1()
                                 .gap_2()
-                                .child(Label::new("Loading...").buffer_font(cx))
-                                .into_any(),
-                            LastPredictionState::Failed { message } => v_flex()
                                 .p_4()
+                                .child(
+                                    ui::Headline::new("Model Response")
+                                        .size(ui::HeadlineSize::XSmall),
+                                )
+                                .child(match &prediction.state {
+                                    LastPredictionState::Success {
+                                        model_response_editor,
+                                        ..
+                                    } => model_response_editor.clone().into_any_element(),
+                                    LastPredictionState::Requested => v_flex()
+                                        .p_4()
+                                        .gap_2()
+                                        .child(Label::new("Loading...").buffer_font(cx))
+                                        .into_any_element(),
+                                    LastPredictionState::Failed { message } => v_flex()
+                                        .p_4()
+                                        .gap_2()
+                                        .max_w_96()
+                                        .child(Label::new(message.clone()).buffer_font(cx))
+                                        .into_any_element(),
+                                }),
+                        )
+                        .child(ui::divider())
+                        .child(
+                            v_flex()
                                 .gap_2()
-                                .child(Label::new(message.clone()).buffer_font(cx))
-                                .into_any(),
-                        }),
+                                .p_2()
+                                .child(prediction.feedback_editor.clone())
+                                .child(
+                                    h_flex()
+                                        .justify_end()
+                                        .gap_2()
+                                        .w_full()
+                                        .child(
+                                            ui::Button::new("rate-good", "Rate Good")
+                                                .icon(ui::IconName::ThumbsUp),
+                                        )
+                                        .child(
+                                            ui::Button::new("rate-bad", "Rate Bad")
+                                                .icon(ui::IconName::ThumbsDown),
+                                        ),
+                                ),
+                        ),
                 ),
         }
     }

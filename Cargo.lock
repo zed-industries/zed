@@ -21534,6 +21534,7 @@ dependencies = [
  "serde_json",
  "settings",
  "text",
+ "theme",
  "ui",
  "ui_input",
  "util",
