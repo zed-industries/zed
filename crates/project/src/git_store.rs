@@ -35,7 +35,7 @@ use git::{
 };
 use gpui::{
     App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Subscription, Task,
-    TaskLabel, WeakEntity,
+    WeakEntity,
 };
 use language::{
     Buffer, BufferEvent, Language, LanguageRegistry,
@@ -56,7 +56,7 @@ use std::{
     ops::Range,
     path::{Path, PathBuf},
     sync::{
-        Arc, LazyLock,
+        Arc,
         atomic::{self, AtomicU64},
     },
     time::Instant,

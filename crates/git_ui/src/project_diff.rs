@@ -1366,7 +1366,7 @@ mod tests {
     use db::indoc;
     use editor::test::editor_test_context::{EditorTestContext, assert_state_with_diff};
     use git::status::{UnmergedStatus, UnmergedStatusCode};
-    use gpui::{BackgroundExecutor, TestAppContext};
+    use gpui::TestAppContext;
     use project::FakeFs;
     use serde_json::json;
     use settings::SettingsStore;
@@ -2065,8 +2065,6 @@ mod tests {
 
         let mut cx = EditorTestContext::for_editor_in(editor, cx).await;
 
-        cx.assert_excerpts_with_selections(&format!(
-            "[EXCERPT]\nˇ# My cool project\nDetails to come.\n"
-        ));
+        cx.assert_excerpts_with_selections("[EXCERPT]\nˇ# My cool project\nDetails to come.\n");
     }
 }
