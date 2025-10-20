@@ -51,7 +51,6 @@ pub fn open(
     cx: &mut Context<Workspace>,
 ) {
     let repository = workspace.project().read(cx).active_repository(cx);
-
     let style = BranchListStyle::Modal;
     workspace.toggle_modal(window, cx, |window, cx| {
         BranchList::new(repository, style, rems(34.), window, cx)
