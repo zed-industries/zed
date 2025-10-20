@@ -7,7 +7,7 @@ use serde_with::skip_serializing_none;
 use settings_macros::MergeFrom;
 
 use crate::{
-    DelayMs, DockPosition, DockSide, InactiveOpacity, ScrollbarSettingsContent, ShowIndentGuides,
+    DelayMs, DockPosition, DockSide, InactiveOpacity, ScrollbarSettingsContent, ShowIndentGuides, serialize_optional_f32_with_two_decimal_places
 };
 
 #[skip_serializing_none]
@@ -58,6 +58,7 @@ pub struct WorkspaceSettingsContent {
     /// Given as a fraction that will be multiplied by the smaller dimension of the workspace.
     ///
     /// Default: `0.2` (20% of the smaller dimension of the workspace)
+    #[serde(serialize_with = "serialize_optional_f32_with_two_decimal_places")]
     pub drop_target_size: Option<f32>,
     /// Whether to close the window when using 'close active item' on a workspace with no tabs
     ///
@@ -452,11 +453,13 @@ pub struct CenteredLayoutSettings {
     /// workspace when the centered layout is used.
     ///
     /// Default: 0.2
+    #[serde(serialize_with = "serialize_optional_f32_with_two_decimal_places")]
     pub left_padding: Option<f32>,
     // The relative width of the right padding of the central pane from the
     // workspace when the centered layout is used.
     ///
     /// Default: 0.2
+    #[serde(serialize_with = "serialize_optional_f32_with_two_decimal_places")]
     pub right_padding: Option<f32>,
 }
 

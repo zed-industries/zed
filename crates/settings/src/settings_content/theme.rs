@@ -9,6 +9,8 @@ use std::{fmt::Display, sync::Arc};
 
 use serde_with::skip_serializing_none;
 
+use crate::serialize_f32_with_two_decimal_places;
+
 /// Settings for rendering text in UI and text buffers.
 
 #[skip_serializing_none]
@@ -104,7 +106,7 @@ pub struct ThemeSettingsContent {
     derive_more::FromStr,
 )]
 #[serde(transparent)]
-pub struct CodeFade(pub f32);
+pub struct CodeFade(#[serde(serialize_with = "serialize_f32_with_two_decimal_places")] pub f32);
 
 impl Display for CodeFade {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
