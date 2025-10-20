@@ -21,7 +21,7 @@ use std::{
     io::Write as _,
     path::{Path, PathBuf},
     rc::Rc,
-    sync::Arc,
+    sync::{Arc, Mutex},
     time::Duration,
 };
 use unindent::Unindent as _;
@@ -325,56 +325,22 @@ impl ExampleInstance {
                 thread.update(cx, |thread, cx| {
                     thread.add_default_tools(Rc::new(FakeThreadEnvironment), cx);
                     thread.set_profile(meta.profile_id.clone());
+                    let model = thread.model().unwrap().clone();
+                    thread.set_model(
+                        LanguageModelInterceptor::new(
+                            model,
+                            this.run_directory.clone(),
+                            last_diff_file_path.clone(),
+                            this.run_directory.join("last.messages.json"),
+                            this.worktree_path(),
+                            this.repo_url().to_string(),
+                        ),
+                        cx,
+                    );
                 });
 
                 thread
             }).unwrap();
-
-
-            // thread.update(cx, |thread, _cx| {
-            //     let mut request_count = 0;
-            //     let previous_diff = Rc::new(RefCell::new("".to_string()));
-            //     let example_output_dir = this.run_directory.clone();
-            //     let last_diff_file_path = last_diff_file_path.clone();
-            //     let messages_json_file_path = example_output_dir.join("last.messages.json");
-            //     let this = this.clone();
-            //     thread.set_request_callback(move |request, response_events| {
-            //         request_count += 1;
-            //         let messages_file_path = example_output_dir.join(format!("{request_count}.messages.md"));
-            //         let diff_file_path = example_output_dir.join(format!("{request_count}.diff"));
-            //         let last_messages_file_path = example_output_dir.join("last.messages.md");
-            //         let request_markdown = RequestMarkdown::new(request);
-            //         let response_events_markdown = response_events_to_markdown(response_events);
-            //         let dialog = ThreadDialog::new(request, response_events);
-            //         let dialog_json = serde_json::to_string_pretty(&dialog.to_combined_request()).unwrap_or_default();
-
-            //         let messages = format!("{}\n\n{}", request_markdown.messages, response_events_markdown);
-            //         fs::write(&messages_file_path, messages.clone()).expect("failed to write messages file");
-            //         fs::write(&last_messages_file_path, messages).expect("failed to write last messages file");
-            //         fs::write(&messages_json_file_path, dialog_json).expect("failed to write last.messages.json");
-
-            //         let diff_result = smol::block_on(this.repository_diff());
-            //         match diff_result {
-            //             Ok(diff) => {
-            //                 if diff != previous_diff.borrow().clone() {
-            //                     fs::write(&diff_file_path, &diff).expect("failed to write diff file");
-            //                     fs::write(&last_diff_file_path, &diff).expect("failed to write last diff file");
-            //                     *previous_diff.borrow_mut() = diff;
-            //                 }
-            //             }
-            //             Err(err) => {
-            //                 let error_message = format!("{err:?}");
-            //                 fs::write(&diff_file_path, &error_message).expect("failed to write diff error to file");
-            //                 fs::write(&last_diff_file_path, &error_message).expect("failed to write last diff file");
-            //             }
-            //         }
-
-            //         if request_count == 1 {
-            //             let tools_file_path = example_output_dir.join("tools.md");
-            //             fs::write(tools_file_path, request_markdown.tools).expect("failed to write tools file");
-            //         }
-            //     });
-            // })?;
 
             let mut example_cx = ExampleContext::new(
                 meta.clone(),
@@ -393,7 +359,7 @@ impl ExampleInstance {
             println!("{}Stopped", this.log_prefix);
 
             println!("{}Getting repository diff", this.log_prefix);
-            let repository_diff = this.repository_diff().await?;
+            let repository_diff = Self::repository_diff(this.worktree_path(), &this.repo_url()).await?;
 
             std::fs::write(last_diff_file_path, &repository_diff)?;
 
@@ -443,14 +409,13 @@ impl ExampleInstance {
         })
     }
 
-    async fn repository_diff(&self) -> Result<String> {
-        let worktree_path = self.worktree_path();
-        run_git(&worktree_path, &["add", "."]).await?;
+    async fn repository_diff(repository_path: PathBuf, repository_url: &str) -> Result<String> {
+        run_git(&repository_path, &["add", "."]).await?;
         let mut diff_args = vec!["diff", "--staged"];
-        if self.thread.meta().url == ZED_REPO_URL {
+        if repository_url == ZED_REPO_URL {
             diff_args.push(":(exclude).rules");
         }
-        run_git(&worktree_path, &diff_args).await
+        run_git(&repository_path, &diff_args).await
     }
 
     pub async fn judge(
@@ -647,14 +612,225 @@ struct FakeThreadEnvironment;
 impl agent::ThreadEnvironment for FakeThreadEnvironment {
     fn create_terminal(
         &self,
-        command: String,
-        cwd: Option<PathBuf>,
-        output_byte_limit: Option<u64>,
-        cx: &mut AsyncApp,
+        _command: String,
+        _cwd: Option<PathBuf>,
+        _output_byte_limit: Option<u64>,
+        _cx: &mut AsyncApp,
     ) -> Task<Result<Rc<dyn agent::TerminalHandle>>> {
         Task::ready(Err(anyhow!(
             "Creating a terminal is not implemented in the eval"
         )))
+    }
+}
+
+struct LanguageModelInterceptor {
+    model: Arc<dyn LanguageModel>,
+    request_count: Arc<Mutex<usize>>,
+    previous_diff: Arc<Mutex<String>>,
+    example_output_dir: PathBuf,
+    last_diff_file_path: PathBuf,
+    messages_json_file_path: PathBuf,
+    repository_path: PathBuf,
+    repository_url: String,
+}
+
+impl LanguageModelInterceptor {
+    fn new(
+        model: Arc<dyn LanguageModel>,
+        example_output_dir: PathBuf,
+        last_diff_file_path: PathBuf,
+        messages_json_file_path: PathBuf,
+        repository_path: PathBuf,
+        repository_url: String,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            model,
+            request_count: Arc::new(Mutex::new(0)),
+            previous_diff: Arc::new(Mutex::new("".to_string())),
+            example_output_dir,
+            last_diff_file_path,
+            messages_json_file_path,
+            repository_path,
+            repository_url,
+        })
+    }
+}
+
+impl language_model::LanguageModel for LanguageModelInterceptor {
+    fn id(&self) -> language_model::LanguageModelId {
+        self.model.id()
+    }
+
+    fn name(&self) -> language_model::LanguageModelName {
+        self.model.name()
+    }
+
+    fn provider_id(&self) -> language_model::LanguageModelProviderId {
+        self.model.provider_id()
+    }
+
+    fn provider_name(&self) -> language_model::LanguageModelProviderName {
+        self.model.provider_name()
+    }
+
+    fn telemetry_id(&self) -> String {
+        self.model.telemetry_id()
+    }
+
+    fn supports_images(&self) -> bool {
+        self.model.supports_images()
+    }
+
+    fn supports_tools(&self) -> bool {
+        self.model.supports_tools()
+    }
+
+    fn supports_tool_choice(&self, choice: language_model::LanguageModelToolChoice) -> bool {
+        self.model.supports_tool_choice(choice)
+    }
+
+    fn max_token_count(&self) -> u64 {
+        self.model.max_token_count()
+    }
+
+    fn count_tokens(
+        &self,
+        request: LanguageModelRequest,
+        cx: &App,
+    ) -> future::BoxFuture<'static, Result<u64>> {
+        self.model.count_tokens(request, cx)
+    }
+
+    fn stream_completion(
+        &self,
+        request: LanguageModelRequest,
+        cx: &AsyncApp,
+    ) -> future::BoxFuture<
+        'static,
+        Result<
+            futures::stream::BoxStream<
+                'static,
+                Result<LanguageModelCompletionEvent, language_model::LanguageModelCompletionError>,
+            >,
+            language_model::LanguageModelCompletionError,
+        >,
+    > {
+        let stream = self.model.stream_completion(request.clone(), cx);
+        let request_count = self.request_count.clone();
+        let previous_diff = self.previous_diff.clone();
+        let example_output_dir = self.example_output_dir.clone();
+        let last_diff_file_path = self.last_diff_file_path.clone();
+        let messages_json_file_path = self.messages_json_file_path.clone();
+        let repository_path = self.repository_path.clone();
+        let repository_url = self.repository_url.clone();
+
+        Box::pin(async move {
+            let stream = stream.await?;
+
+            let response_events = Arc::new(Mutex::new(Vec::new()));
+            let request_clone = request.clone();
+
+            let wrapped_stream = stream.then(move |event| {
+                let response_events = response_events.clone();
+                let request = request_clone.clone();
+                let request_count = request_count.clone();
+                let previous_diff = previous_diff.clone();
+                let example_output_dir = example_output_dir.clone();
+                let last_diff_file_path = last_diff_file_path.clone();
+                let messages_json_file_path = messages_json_file_path.clone();
+                let repository_path = repository_path.clone();
+                let repository_url = repository_url.clone();
+
+                async move {
+                    let event_result = match &event {
+                        Ok(ev) => Ok(ev.clone()),
+                        Err(err) => Err(err.to_string()),
+                    };
+                    response_events.lock().unwrap().push(event_result);
+
+                    let should_execute = matches!(
+                        &event,
+                        Ok(LanguageModelCompletionEvent::Stop { .. }) | Err(_)
+                    );
+
+                    if should_execute {
+                        let current_request_count = {
+                            let mut count = request_count.lock().unwrap();
+                            *count += 1;
+                            *count
+                        };
+
+                        let messages_file_path =
+                            example_output_dir.join(format!("{current_request_count}.messages.md"));
+                        let diff_file_path =
+                            example_output_dir.join(format!("{current_request_count}.diff"));
+                        let last_messages_file_path = example_output_dir.join("last.messages.md");
+
+                        let collected_events = response_events.lock().unwrap().clone();
+                        let request_markdown = RequestMarkdown::new(&request);
+                        let response_events_markdown =
+                            response_events_to_markdown(&collected_events);
+                        let dialog = ThreadDialog::new(&request, &collected_events);
+                        let dialog_json =
+                            serde_json::to_string_pretty(&dialog.to_combined_request())
+                                .unwrap_or_default();
+
+                        let messages = format!(
+                            "{}\n\n{}",
+                            request_markdown.messages, response_events_markdown
+                        );
+                        fs::write(&messages_file_path, messages.clone())
+                            .expect("failed to write messages file");
+                        fs::write(&last_messages_file_path, messages)
+                            .expect("failed to write last messages file");
+                        fs::write(&messages_json_file_path, dialog_json)
+                            .expect("failed to write last.messages.json");
+
+                        // Get repository diff
+                        let diff_result =
+                            ExampleInstance::repository_diff(repository_path, &repository_url)
+                                .await;
+
+                        match diff_result {
+                            Ok(diff) => {
+                                let prev_diff = previous_diff.lock().unwrap().clone();
+                                if diff != prev_diff {
+                                    fs::write(&diff_file_path, &diff)
+                                        .expect("failed to write diff file");
+                                    fs::write(&last_diff_file_path, &diff)
+                                        .expect("failed to write last diff file");
+                                    *previous_diff.lock().unwrap() = diff;
+                                }
+                            }
+                            Err(err) => {
+                                let error_message = format!("{err:?}");
+                                fs::write(&diff_file_path, &error_message)
+                                    .expect("failed to write diff error to file");
+                                fs::write(&last_diff_file_path, &error_message)
+                                    .expect("failed to write last diff file");
+                            }
+                        }
+
+                        if current_request_count == 1 {
+                            let tools_file_path = example_output_dir.join("tools.md");
+                            fs::write(tools_file_path, request_markdown.tools)
+                                .expect("failed to write tools file");
+                        }
+                    }
+
+                    event
+                }
+            });
+
+            Ok(Box::pin(wrapped_stream)
+                as futures::stream::BoxStream<
+                    'static,
+                    Result<
+                        LanguageModelCompletionEvent,
+                        language_model::LanguageModelCompletionError,
+                    >,
+                >)
+        })
     }
 }
 
