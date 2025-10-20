@@ -68,7 +68,7 @@ To check if your MCP server is properly configured, go to the Agent Panel's sett
 If they're running correctly, the indicator will be green and its tooltip will say "Server is active".
 If not, other colors and tooltip messages will indicate what is happening.
 
-### Usage in the Agent Panel
+### Agent Panel Usage
 
 Once installation is complete, you can return to the Agent Panel and start prompting.
 
