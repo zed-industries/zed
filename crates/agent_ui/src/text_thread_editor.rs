@@ -431,9 +431,9 @@ impl TextThreadEditor {
     }
 
     fn cursors(&self, cx: &mut App) -> Vec<usize> {
-        let selections = self
-            .editor
-            .update(cx, |editor, cx| editor.selections.all::<usize>(cx));
+        let selections = self.editor.update(cx, |editor, cx| {
+            editor.selections.all::<usize>(&editor.display_snapshot(cx))
+        });
         selections
             .into_iter()
             .map(|selection| selection.head())
@@ -446,7 +446,10 @@ impl TextThreadEditor {
                 editor.transact(window, cx, |editor, window, cx| {
                     editor.change_selections(Default::default(), window, cx, |s| s.try_cancel());
                     let snapshot = editor.buffer().read(cx).snapshot(cx);
-                    let newest_cursor = editor.selections.newest::<Point>(cx).head();
+                    let newest_cursor = editor
+                        .selections
+                        .newest::<Point>(&editor.display_snapshot(cx))
+                        .head();
                     if newest_cursor.column > 0
                         || snapshot
                             .chars_at(newest_cursor)
@@ -602,10 +605,8 @@ impl TextThreadEditor {
                 if let Some((crease_id, start)) = self.pending_thought_process.take() {
                     self.editor.update(cx, |editor, cx| {
                         let multi_buffer_snapshot = editor.buffer().read(cx).snapshot(cx);
-                        let (excerpt_id, _, _) = multi_buffer_snapshot.as_singleton().unwrap();
-                        let start_anchor = multi_buffer_snapshot
-                            .anchor_in_excerpt(*excerpt_id, start)
-                            .unwrap();
+                        let start_anchor =
+                            multi_buffer_snapshot.as_singleton_anchor(start).unwrap();
 
                         editor.display_map.update(cx, |display_map, cx| {
                             display_map.unfold_intersecting(
@@ -696,13 +697,10 @@ impl TextThreadEditor {
                                 }
                             };
 
-                            let start = buffer
-                                .anchor_in_excerpt(excerpt_id, command.source_range.start)
+                            let range = buffer
+                                .anchor_range_in_excerpt(excerpt_id, command.source_range.clone())
                                 .unwrap();
-                            let end = buffer
-                                .anchor_in_excerpt(excerpt_id, command.source_range.end)
-                                .unwrap();
-                            Crease::inline(start..end, placeholder, render_toggle, render_trailer)
+                            Crease::inline(range, placeholder, render_toggle, render_trailer)
                         }),
                         cx,
                     );
@@ -773,14 +771,11 @@ impl TextThreadEditor {
                     let (&excerpt_id, _buffer_id, _buffer_snapshot) =
                         buffer.as_singleton().unwrap();
 
-                    let start = buffer
-                        .anchor_in_excerpt(excerpt_id, invoked_slash_command.range.start)
-                        .unwrap();
-                    let end = buffer
-                        .anchor_in_excerpt(excerpt_id, invoked_slash_command.range.end)
+                    let range = buffer
+                        .anchor_range_in_excerpt(excerpt_id, invoked_slash_command.range.clone())
                         .unwrap();
                     editor.remove_folds_with_type(
-                        &[start..end],
+                        &[range],
                         TypeId::of::<PendingSlashCommand>(),
                         false,
                         cx,
@@ -797,14 +792,11 @@ impl TextThreadEditor {
                     let (&excerpt_id, _buffer_id, _buffer_snapshot) =
                         buffer.as_singleton().unwrap();
                     let context = self.context.downgrade();
-                    let crease_start = buffer
-                        .anchor_in_excerpt(excerpt_id, invoked_slash_command.range.start)
-                        .unwrap();
-                    let crease_end = buffer
-                        .anchor_in_excerpt(excerpt_id, invoked_slash_command.range.end)
+                    let range = buffer
+                        .anchor_range_in_excerpt(excerpt_id, invoked_slash_command.range.clone())
                         .unwrap();
                     let crease = Crease::inline(
-                        crease_start..crease_end,
+                        range,
                         invoked_slash_command_fold_placeholder(command_id, context),
                         fold_toggle("invoked-slash-command"),
                         |_row, _folded, _window, _cx| Empty.into_any(),
@@ -842,17 +834,14 @@ impl TextThreadEditor {
             let mut buffer_rows_to_fold = BTreeSet::new();
             let mut creases = Vec::new();
             for (section, status) in sections {
-                let start = buffer
-                    .anchor_in_excerpt(excerpt_id, section.range.start)
+                let range = buffer
+                    .anchor_range_in_excerpt(excerpt_id, section.range)
                     .unwrap();
-                let end = buffer
-                    .anchor_in_excerpt(excerpt_id, section.range.end)
-                    .unwrap();
-                let buffer_row = MultiBufferRow(start.to_point(&buffer).row);
+                let buffer_row = MultiBufferRow(range.start.to_point(&buffer).row);
                 buffer_rows_to_fold.insert(buffer_row);
                 creases.push(
                     Crease::inline(
-                        start..end,
+                        range,
                         FoldPlaceholder {
                             render: render_thought_process_fold_icon_button(
                                 cx.entity().downgrade(),
@@ -894,17 +883,14 @@ impl TextThreadEditor {
             let mut buffer_rows_to_fold = BTreeSet::new();
             let mut creases = Vec::new();
             for section in sections {
-                let start = buffer
-                    .anchor_in_excerpt(excerpt_id, section.range.start)
+                let range = buffer
+                    .anchor_range_in_excerpt(excerpt_id, section.range)
                     .unwrap();
-                let end = buffer
-                    .anchor_in_excerpt(excerpt_id, section.range.end)
-                    .unwrap();
-                let buffer_row = MultiBufferRow(start.to_point(&buffer).row);
+                let buffer_row = MultiBufferRow(range.start.to_point(&buffer).row);
                 buffer_rows_to_fold.insert(buffer_row);
                 creases.push(
                     Crease::inline(
-                        start..end,
+                        range,
                         FoldPlaceholder {
                             render: render_fold_icon_button(
                                 cx.entity().downgrade(),
@@ -1265,11 +1251,19 @@ impl TextThreadEditor {
 
         let context_editor = context_editor_view.read(cx).editor.clone();
         context_editor.update(cx, |context_editor, cx| {
-            if context_editor.selections.newest::<Point>(cx).is_empty() {
+            let display_map = context_editor.display_snapshot(cx);
+            if context_editor
+                .selections
+                .newest::<Point>(&display_map)
+                .is_empty()
+            {
                 let snapshot = context_editor.buffer().read(cx).snapshot(cx);
                 let (_, _, snapshot) = snapshot.as_singleton()?;
 
-                let head = context_editor.selections.newest::<Point>(cx).head();
+                let head = context_editor
+                    .selections
+                    .newest::<Point>(&display_map)
+                    .head();
                 let offset = snapshot.point_to_offset(head);
 
                 let surrounding_code_block_range = find_surrounding_code_block(snapshot, offset)?;
@@ -1286,7 +1280,7 @@ impl TextThreadEditor {
 
                 (!text.is_empty()).then_some((text, true))
             } else {
-                let selection = context_editor.selections.newest_adjusted(cx);
+                let selection = context_editor.selections.newest_adjusted(&display_map);
                 let buffer = context_editor.buffer().read(cx).snapshot(cx);
                 let selected_text = buffer.text_for_range(selection.range()).collect::<String>();
 
@@ -1474,7 +1468,7 @@ impl TextThreadEditor {
             let selections = editor.update(cx, |editor, cx| {
                 editor
                     .selections
-                    .all_adjusted(cx)
+                    .all_adjusted(&editor.display_snapshot(cx))
                     .into_iter()
                     .filter_map(|s| {
                         (!s.is_empty())
@@ -1506,7 +1500,10 @@ impl TextThreadEditor {
         self.editor.update(cx, |editor, cx| {
             editor.insert("\n", window, cx);
             for (text, crease_title) in creases {
-                let point = editor.selections.newest::<Point>(cx).head();
+                let point = editor
+                    .selections
+                    .newest::<Point>(&editor.display_snapshot(cx))
+                    .head();
                 let start_row = MultiBufferRow(point.row);
 
                 editor.insert(&text, window, cx);
@@ -1578,7 +1575,9 @@ impl TextThreadEditor {
         cx: &mut Context<Self>,
     ) -> (String, CopyMetadata, Vec<text::Selection<usize>>) {
         let (mut selection, creases) = self.editor.update(cx, |editor, cx| {
-            let mut selection = editor.selections.newest_adjusted(cx);
+            let mut selection = editor
+                .selections
+                .newest_adjusted(&editor.display_snapshot(cx));
             let snapshot = editor.buffer().read(cx).snapshot(cx);
 
             selection.goal = SelectionGoal::None;
@@ -1697,7 +1696,10 @@ impl TextThreadEditor {
 
         if images.is_empty() {
             self.editor.update(cx, |editor, cx| {
-                let paste_position = editor.selections.newest::<usize>(cx).head();
+                let paste_position = editor
+                    .selections
+                    .newest::<usize>(&editor.display_snapshot(cx))
+                    .head();
                 editor.paste(action, window, cx);
 
                 if let Some(metadata) = metadata {
@@ -1744,13 +1746,13 @@ impl TextThreadEditor {
                 editor.transact(window, cx, |editor, _window, cx| {
                     let edits = editor
                         .selections
-                        .all::<usize>(cx)
+                        .all::<usize>(&editor.display_snapshot(cx))
                         .into_iter()
                         .map(|selection| (selection.start..selection.end, "\n"));
                     editor.edit(edits, cx);
 
                     let snapshot = editor.buffer().read(cx).snapshot(cx);
-                    for selection in editor.selections.all::<usize>(cx) {
+                    for selection in editor.selections.all::<usize>(&editor.display_snapshot(cx)) {
                         image_positions.push(snapshot.anchor_before(selection.end));
                     }
                 });
