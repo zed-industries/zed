@@ -17,6 +17,7 @@
   = @kubkon
   = @p1n3appl3
   = @dinocosta
+  = @smitbarmase
 
 vim
   = @ConradIrwin
@@ -33,6 +34,7 @@ git
 
 linux
   = @dvdsk
+  = @smitbarmase
 
 windows
   = @reflectronic
@@ -78,7 +80,12 @@ multi_buffer
 lsp
   = @osiewicz
   = @Veykril
+  = @smitbarmase
 
 languages
   = @osiewicz
   = @Veykril
+  = @smitbarmase
+
+project_panel
+  = @smitbarmase
