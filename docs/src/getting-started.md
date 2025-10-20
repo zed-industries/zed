@@ -2,47 +2,7 @@
 
 Welcome to Zed! We are excited to have you. Here is a jumping-off point to getting started.
 
-## Download Zed
-
-### macOS
-
-Get the latest stable builds via [the download page](https://zed.dev/download). If you want to download our preview build, you can find it on its [releases page](https://zed.dev/releases/preview). After the first manual installation, Zed will periodically check for install updates.
-
-You can also install Zed stable via Homebrew:
-
-```sh
-brew install --cask zed
-```
-
-As well as Zed preview:
-
-```sh
-brew install --cask zed@preview
-```
-
-### Windows
-
-Get the latest stable builds via [the download page](https://zed.dev/download). If you want to download our preview build, you can find it on its [releases page](https://zed.dev/releases/preview). After the first manual installation, Zed will periodically check for install updates.
-
-### Linux
-
-For most Linux users, the easiest way to install Zed is through our installation script:
-
-```sh
-curl -f https://zed.dev/install.sh | sh
-```
-
-If you'd like to help us test our new features, you can also install our preview build:
-
-```sh
-curl -f https://zed.dev/install.sh | ZED_CHANNEL=preview sh
-```
-
-This script supports `x86_64` and `AArch64`, as well as common Linux distributions: Ubuntu, Arch, Debian, RedHat, CentOS, Fedora, and more.
-
-If Zed is installed using this installation script, it can be uninstalled at any time by running the shell command `zed --uninstall`. The shell will then prompt you whether you'd like to keep your preferences or delete them. After making a choice, you should see a message that Zed was successfully uninstalled.
-
-If this script is insufficient for your use case, you run into problems running Zed, or there are errors in uninstalling Zed, please see our [Linux-specific documentation](./linux.md).
+<! -- Move command palette to configuration section -->
 
 ## Command Palette
 
@@ -54,7 +14,7 @@ Try it! Open the Command Palette and type in `new file`. You should see the list
 
 Any time you see instructions that include commands of the form `zed: ...` or `editor: ...` and so on that means you need to execute them in the Command Palette.
 
-## CLI
+## Command-line Interface
 
 Zed has a CLI, on Linux this should come with the distribution's Zed package (binary name can vary from distribution to distribution, `zed` will be used later for brevity).
 For macOS, the CLI comes in the same package with the editor binary, and could be installed into the system with the `cli: install` Zed command which will create a symlink to the `/usr/local/bin/zed`.

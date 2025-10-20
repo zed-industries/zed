@@ -1,15 +1,13 @@
 # Summary
 
-# General
+# Getting Started
 
 - [Getting Started](./getting-started.md)
-- [System Requirements](./system-requirements.md)
-- [Accounts](./accounts.md)
-- [Linux](./linux.md)
-- [Windows](./windows.md)
-- [Telemetry](./telemetry.md)
-- [Workspace Persistence](./workspace-persistence.md)
-- [Additional Learning Materials](./additional-learning-materials.md)
+- [Installation](./installation.md)
+  - [Quick Start](./quick-start.md)<!-- doesn't exist yet -->
+  - [Authentication](./authentication.md)
+  - [Update](./update.md)<!-- doesn't exist yet -->
+  - [Telemetry](./telemetry.md)
 
 # Configuration
 
