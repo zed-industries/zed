@@ -671,7 +671,7 @@ impl Zeta2Inspector {
                 };
 
                 telemetry::event!(
-                    "Zeta2 Prediction Rated (Testing)",
+                    "Zeta2 Prediction Rated",
                     id = response.request_id,
                     kind = kind,
                     text = text,
