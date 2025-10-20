@@ -423,14 +423,14 @@ impl ShellKind {
 
     pub fn try_quote<'a>(&self, arg: &'a str) -> Option<Cow<'a, str>> {
         shlex::try_quote(arg).ok().map(|arg| match self {
-            ShellKind::PowerShell => Cow::Owned(arg.replace("\\\"", "`\"")),
+            ShellKind::PowerShell => Cow::Owned(arg.replace("\\\"", "`\"").replace("\\\\", "\\")),
+            ShellKind::Cmd => Cow::Owned(arg.replace("\\\\", "\\")),
             ShellKind::Posix
             | ShellKind::Csh
             | ShellKind::Tcsh
             | ShellKind::Rc
             | ShellKind::Fish
             | ShellKind::Nushell
-            | ShellKind::Cmd
             | ShellKind::Xonsh => arg,
         })
     }
