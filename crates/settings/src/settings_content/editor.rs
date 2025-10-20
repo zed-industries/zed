@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 use settings_macros::MergeFrom;
 
-use crate::{DiagnosticSeverityContent, ShowScrollbar};
+use crate::{DelayMs, DiagnosticSeverityContent, ShowScrollbar};
 
 #[skip_serializing_none]
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
@@ -45,7 +45,7 @@ pub struct EditorSettingsContent {
     /// server based on the current cursor location.
     ///
     /// Default: 75
-    pub lsp_highlight_debounce: Option<u64>,
+    pub lsp_highlight_debounce: Option<DelayMs>,
     /// Whether to show the informational hover box when moving the mouse
     /// over symbols in the editor.
     ///
@@ -54,7 +54,7 @@ pub struct EditorSettingsContent {
     /// Time to wait in milliseconds before showing the informational hover box.
     ///
     /// Default: 300
-    pub hover_popover_delay: Option<u64>,
+    pub hover_popover_delay: Option<DelayMs>,
     /// Toolbar related settings
     pub toolbar: Option<ToolbarContent>,
     /// Scrollbar related settings
@@ -722,7 +722,7 @@ pub struct DragAndDropSelectionContent {
     /// The delay in milliseconds that must elapse before drag and drop is allowed. Otherwise, a new text selection is created.
     ///
     /// Default: 300
-    pub delay: Option<u64>,
+    pub delay: Option<DelayMs>,
 }
 
 /// When to show the minimap in the editor.
@@ -804,6 +804,12 @@ impl Display for MinimumContrast {
     }
 }
 
+impl From<f32> for MinimumContrast {
+    fn from(x: f32) -> Self {
+        Self(x)
+    }
+}
+
 /// Opacity of the inactive panes. 0 means transparent, 1 means opaque.
 ///
 /// Valid range: 0.0 to 1.0
@@ -826,5 +832,11 @@ pub struct InactiveOpacity(pub f32);
 impl Display for InactiveOpacity {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{:.1}", self.0)
+    }
+}
+
+impl From<f32> for InactiveOpacity {
+    fn from(x: f32) -> Self {
+        Self(x)
     }
 }
