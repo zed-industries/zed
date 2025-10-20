@@ -328,7 +328,7 @@ impl ToolCall {
         location: acp::ToolCallLocation,
         project: WeakEntity<Project>,
         cx: &mut AsyncApp,
-    ) -> Option<(AgentLocation, Entity<Buffer>)> {
+    ) -> Option<ResolvedLocation> {
         let buffer = project
             .update(cx, |project, cx| {
                 project
@@ -350,20 +350,14 @@ impl ToolCall {
             })
             .ok()?;
 
-        Some((
-            AgentLocation {
-                buffer: buffer.downgrade(),
-                position,
-            },
-            buffer,
-        ))
+        Some(ResolvedLocation { buffer, position })
     }
 
     fn resolve_locations(
         &self,
         project: Entity<Project>,
         cx: &mut App,
-    ) -> Task<Vec<Option<(AgentLocation, Entity<Buffer>)>>> {
+    ) -> Task<Vec<Option<ResolvedLocation>>> {
         let locations = self.locations.clone();
         project.update(cx, |_, cx| {
             cx.spawn(async move |project, cx| {
@@ -374,6 +368,23 @@ impl ToolCall {
                 new_locations
             })
         })
+    }
+}
+
+// Separate so we can hold a strong reference to the buffer
+// for saving on the thread
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ResolvedLocation {
+    buffer: Entity<Buffer>,
+    position: Anchor,
+}
+
+impl From<&ResolvedLocation> for AgentLocation {
+    fn from(value: &ResolvedLocation) -> Self {
+        Self {
+            buffer: value.buffer.downgrade(),
+            position: value.position,
+        }
     }
 }
 
@@ -1400,15 +1411,10 @@ impl AcpThread {
             this.update(cx, |this, cx| {
                 let project = this.project.clone();
 
-                for (_, buffer) in resolved_locations.iter().flatten() {
-                    let snapshot = buffer.read(cx).snapshot();
-                    this.shared_buffers.insert(buffer.clone(), snapshot);
+                for location in resolved_locations.iter().flatten() {
+                    this.shared_buffers
+                        .insert(location.buffer.clone(), location.buffer.read(cx).snapshot());
                 }
-
-                let resolved_locations = resolved_locations
-                    .into_iter()
-                    .map(|l| l.map(|l| l.0))
-                    .collect::<Vec<_>>();
                 let Some((ix, tool_call)) = this.tool_call_mut(&id) else {
                     return;
                 };
@@ -1416,29 +1422,28 @@ impl AcpThread {
                 if let Some(Some(location)) = resolved_locations.last() {
                     project.update(cx, |project, cx| {
                         let should_ignore = if let Some(agent_location) = project.agent_location() {
+                            let snapshot = location.buffer.read(cx).snapshot();
+                            let old_position = agent_location.position.to_point(&snapshot);
+                            let new_position = location.position.to_point(&snapshot);
                             agent_location.buffer == location.buffer
-                                && location
-                                    .buffer
-                                    .upgrade()
-                                    .map(|buffer| {
-                                        let snapshot = buffer.read(cx).snapshot();
-                                        let old_position =
-                                            agent_location.position.to_point(&snapshot);
-                                        let new_position = location.position.to_point(&snapshot);
-                                        // ignore this so that when we get updates from the edit tool
-                                        // the position doesn't reset to the startof line
-                                        old_position.row == new_position.row
-                                            && old_position.column > new_position.column
-                                    })
-                                    .unwrap_or_default()
+                                // ignore this so that when we get updates from the edit tool
+                                // the position doesn't reset to the startof line
+                                && (old_position.row == new_position.row
+                                    && old_position.column > new_position.column)
                         } else {
                             false
                         };
                         if !should_ignore {
-                            project.set_agent_location(Some(location.clone()), cx);
+                            project.set_agent_location(Some(location.into()), cx);
                         }
                     });
                 }
+
+                let resolved_locations = resolved_locations
+                    .iter()
+                    .map(|l| l.as_ref().map(|l| AgentLocation::from(l)))
+                    .collect::<Vec<_>>();
+
                 if tool_call.resolved_locations != resolved_locations {
                     tool_call.resolved_locations = resolved_locations;
                     cx.emit(AcpThreadEvent::EntryUpdated(ix));
