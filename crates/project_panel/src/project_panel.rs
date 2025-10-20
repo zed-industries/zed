@@ -26,7 +26,7 @@ use gpui::{
     linear_color_stop, linear_gradient, point, px, size, transparent_white, uniform_list,
 };
 use language::DiagnosticSeverity;
-use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrevious};
+use menu::{Cancel, Confirm, SelectFirst, SelectLast, SelectNext, SelectPrevious};
 use project::{
     Entry, EntryKind, Fs, GitEntry, GitEntryRef, GitTraversal, Project, ProjectEntryId,
     ProjectPath, Worktree, WorktreeId,
@@ -949,7 +949,8 @@ impl ProjectPanel {
 
     fn focus_out(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !self.focus_handle.is_focused(window) {
-            self.confirm(&Confirm, window, cx);
+            // Don't refocus panel when focus is lost (e.g., clicking elsewhere)
+            self.cancel_edit(false, window, cx);
         }
     }
 
@@ -1687,6 +1688,10 @@ impl ProjectPanel {
     }
 
     fn cancel(&mut self, _: &menu::Cancel, window: &mut Window, cx: &mut Context<Self>) {
+        self.cancel_edit(true, window, cx);
+    }
+
+    fn cancel_edit(&mut self, refocus_panel: bool, window: &mut Window, cx: &mut Context<Self>) {
         if cx.stop_active_drag(window) {
             self.drag_target_entry.take();
             self.hover_expand_task.take();
@@ -1703,8 +1708,10 @@ impl ProjectPanel {
             self.state.selection = Some(previously_focused);
             self.autoscroll(cx);
         }
-
-        window.focus(&self.focus_handle);
+        
+        if refocus_panel {
+            window.focus(&self.focus_handle);
+        }
         cx.notify();
     }
 
