@@ -18792,6 +18792,17 @@ impl Editor {
         });
     }
 
+    pub fn collapse_all_diff_hunks(
+        &mut self,
+        _: &CollapseAllDiffHunks,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.buffer.update(cx, |buffer, cx| {
+            buffer.collapse_diff_hunks(vec![Anchor::min()..Anchor::max()], cx)
+        });
+    }
+
     pub fn toggle_selected_diff_hunks(
         &mut self,
         _: &ToggleSelectedDiffHunks,
