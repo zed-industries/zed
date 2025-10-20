@@ -16,6 +16,7 @@ pub mod project_settings;
 pub mod search;
 mod task_inventory;
 pub mod task_store;
+pub mod telemetry_snapshot;
 pub mod terminals;
 pub mod toolchain_store;
 pub mod worktree_store;
