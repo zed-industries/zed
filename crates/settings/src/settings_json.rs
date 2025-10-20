@@ -66,10 +66,36 @@ pub fn update_value_in_json_text<'a>(
         if let Some(new_object) = new_value.as_object_mut() {
             new_object.retain(|_, v| !v.is_null());
         }
+
+        // Normalize floating point numbers to 2 decimal places
+        normalize_floats(&mut new_value);
+
         let (range, replacement) =
             replace_value_in_json_text(text, key_path, tab_size, Some(&new_value), None);
         text.replace_range(range.clone(), &replacement);
         edits.push((range, replacement));
+    }
+}
+
+fn normalize_floats(value: &mut Value) {
+    match value {
+        Value::Number(n) => {
+            if let Some(f) = n.as_f64() {
+                let rounded = (f * 100.0).round() / 100.0;
+                *value = serde_json::json!(rounded);
+            }
+        }
+        Value::Object(obj) => {
+            for (_, v) in obj.iter_mut() {
+                normalize_floats(v);
+            }
+        }
+        Value::Array(arr) => {
+            for v in arr.iter_mut() {
+                normalize_floats(v);
+            }
+        }
+        _ => {}
     }
 }
 

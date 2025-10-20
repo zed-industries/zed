@@ -8,7 +8,9 @@ use std::{
 use editor::{Editor, EditorStyle};
 use gpui::{ClickEvent, Entity, FocusHandle, Focusable, FontWeight, Modifiers};
 
-use settings::{CodeFade, InactiveOpacity, MinimumContrast};
+use settings::{
+    CenteredLayoutSettings, CenteredPaddingSettings, CodeFade, InactiveOpacity, MinimumContrast,
+};
 use ui::prelude::*;
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
@@ -76,6 +78,33 @@ impl NumberFieldType for settings::CodeFade {
     }
     fn saturating_sub(self, rhs: Self) -> Self {
         CodeFade((self.0 - rhs.0).max(Self::min_value().0))
+    }
+}
+
+impl NumberFieldType for settings::CenteredPaddingSettings {
+    fn default_format(value: &Self) -> String {
+        format!("{:.2}", value)
+    }
+    fn default_step() -> Self {
+        CenteredPaddingSettings(0.05)
+    }
+    fn large_step() -> Self {
+        CenteredPaddingSettings(0.2)
+    }
+    fn small_step() -> Self {
+        CenteredPaddingSettings(0.1)
+    }
+    fn min_value() -> Self {
+        CenteredPaddingSettings(CenteredLayoutSettings::MIN_PADDING)
+    }
+    fn max_value() -> Self {
+        CenteredPaddingSettings(CenteredLayoutSettings::MAX_PADDING)
+    }
+    fn saturating_add(self, rhs: Self) -> Self {
+        Self((self.0 + rhs.0).min(Self::max_value().0))
+    }
+    fn saturating_sub(self, rhs: Self) -> Self {
+        Self((self.0 - rhs.0).max(Self::min_value().0))
     }
 }
 

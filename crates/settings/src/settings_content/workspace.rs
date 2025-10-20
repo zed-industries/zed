@@ -6,7 +6,10 @@ use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 use settings_macros::MergeFrom;
 
-use crate::{DockPosition, DockSide, InactiveOpacity, ScrollbarSettingsContent, ShowIndentGuides};
+use crate::{
+    CenteredPaddingSettings, DockPosition, DockSide, InactiveOpacity, ScrollbarSettingsContent,
+    ShowIndentGuides,
+};
 
 #[skip_serializing_none]
 #[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
@@ -442,6 +445,12 @@ pub enum PaneSplitDirectionVertical {
     Right,
 }
 
+impl CenteredLayoutSettings {
+    pub const MIN_PADDING: f32 = 0.0;
+    pub const DEFAULT_PADDING: f32 = 0.2;
+    pub const MAX_PADDING: f32 = 0.4;
+}
+
 #[skip_serializing_none]
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Default)]
 #[serde(rename_all = "snake_case")]
@@ -450,12 +459,14 @@ pub struct CenteredLayoutSettings {
     /// workspace when the centered layout is used.
     ///
     /// Default: 0.2
-    pub left_padding: Option<f32>,
+    #[schemars(range(min = CenteredLayoutSettings::MIN_PADDING, max = CenteredLayoutSettings::MAX_PADDING))]
+    pub left_padding: Option<CenteredPaddingSettings>,
     // The relative width of the right padding of the central pane from the
     // workspace when the centered layout is used.
     ///
     /// Default: 0.2
-    pub right_padding: Option<f32>,
+    #[schemars(range(min = CenteredLayoutSettings::MIN_PADDING, max = CenteredLayoutSettings::MAX_PADDING))]
+    pub right_padding: Option<CenteredPaddingSettings>,
 }
 
 #[derive(
