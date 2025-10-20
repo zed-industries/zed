@@ -2636,19 +2636,6 @@ impl SettingsWindow {
         self.content_handles[page_index][actual_item_index].focus_handle(cx)
     }
 
-    fn focus_content_element(
-        &self,
-        actual_item_index: usize,
-        window: &mut Window,
-        cx: &mut Context<SettingsWindow>,
-    ) {
-        if !sub_page_stack().is_empty() {
-            return;
-        }
-
-        window.focus(&self.focus_handle_for_content_element(actual_item_index, cx));
-    }
-
     fn focused_nav_entry(&self, window: &Window, cx: &App) -> Option<usize> {
         if !self
             .navbar_focus_handle
