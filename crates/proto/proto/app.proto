@@ -23,6 +23,39 @@ message OpenServerSettings {
     uint64 project_id = 1;
 }
 
+// Request sent from the remote host to ask the local Zed app
+// to open paths/urls in the current window (or a new one).
+message RemoteCliOpen {
+    // Local file system paths on the remote host, possibly using
+    // path:line:column syntax. The local handler will canonicalize
+    // and choose an appropriate window.
+    repeated string paths = 1;
+
+    // URLs such as zed://, file://, http(s):// or ssh://.
+    repeated string urls = 2;
+
+    // Pairs of file paths to diff.
+    message DiffPair {
+        string old_path = 1;
+        string new_path = 2;
+    }
+    repeated DiffPair diff_paths = 3;
+
+    // Wait for the opened items to close before returning.
+    bool wait = 4;
+
+    // If set, overrides default window selection behavior.
+    optional bool open_new_workspace = 5;
+}
+
+message RemoteCliOpenResponse {
+    // Exit status code semantics: 0 success, non-zero indicates failure.
+    int32 status = 1;
+    // Optional stderr/stdout text for diagnostics.
+    string stderr = 2;
+    string stdout = 3;
+}
+
 message GetCrashFiles {
 }
 

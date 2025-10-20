@@ -145,6 +145,16 @@ impl Project {
             .unwrap_or_default();
 
             project.update(cx, move |this, cx| {
+                let mut activation_script = activation_script.clone();
+                // Make `zed` available in remote terminals by prepending the per-connection bin dir to PATH.
+                if let Some(rc) = remote_client.clone() {
+                    let identifier = rc.read(cx).unique_identifier();
+                    let prepend = format!(
+                        "export PATH=\"$HOME/.local/share/zed/server_state/{}/bin:$PATH\"",
+                        identifier
+                    );
+                    activation_script.insert(0, prepend);
+                }
                 let format_to_run = || {
                     if let Some(command) = &spawn_task.command {
                         let mut command: Option<Cow<str>> = shell_kind.try_quote(command);

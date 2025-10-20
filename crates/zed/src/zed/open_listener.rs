@@ -4,6 +4,7 @@ use anyhow::{Context as _, Result, anyhow};
 use cli::{CliRequest, CliResponse, ipc::IpcSender};
 use cli::{IpcHandshake, ipc};
 use client::parse_zed_link;
+use client::proto;
 use collections::HashMap;
 use db::kvp::KEY_VALUE_STORE;
 use editor::Editor;
@@ -192,6 +193,143 @@ impl OpenListener {
             .log_err();
     }
 }
+
+// Remote CLI bridge: allow commands from remote_server to open files in
+// the currently running local Zed instance.
+struct RemoteCliBridge(Arc<AppState>);
+
+impl RemoteCliBridge {
+    pub fn register(app_state: Arc<AppState>, client: Arc<client::Client>, cx: &mut App) {
+        let handler = cx.new(|_| RemoteCliBridge(app_state));
+        client.add_request_handler(handler.downgrade(), Self::handle_remote_cli_open);
+    }
+
+    async fn handle_remote_cli_open(
+        this: gpui::Entity<Self>,
+        envelope: client::TypedEnvelope<proto::RemoteCliOpen>,
+        mut cx: gpui::AsyncApp,
+    ) -> anyhow::Result<proto::RemoteCliOpenResponse> {
+        let app_state = this.read_with(&cx, |this, _| this.0.clone())?;
+
+        let request = envelope.payload;
+        let urls = request.urls.clone();
+        let paths = request.paths.clone();
+        let diff_paths: Vec<[String; 2]> = request
+            .diff_paths
+            .iter()
+            .map(|p| [p.old_path.clone(), p.new_path.clone()])
+            .collect();
+        let wait = request.wait;
+        let open_new_workspace = request.open_new_workspace;
+
+        if !urls.is_empty() {
+            if let Err(err) = cx
+                .update(|cx| {
+                    OpenRequest::parse(
+                        RawOpenRequest {
+                            urls,
+                            diff_paths: diff_paths.clone(),
+                            wsl: None,
+                        },
+                        cx,
+                    )
+                    .map(|open_request| handle_open_request(open_request, app_state.clone(), cx))
+                })
+                .ok()
+                .transpose()
+                .transpose()
+            {
+                return Ok(proto::RemoteCliOpenResponse {
+                    status: 1,
+                    stderr: err.to_string(),
+                    stdout: String::new(),
+                });
+            }
+            return Ok(proto::RemoteCliOpenResponse {
+                status: 0,
+                stderr: String::new(),
+                stdout: String::new(),
+            });
+        }
+
+        let mut errored = false;
+        let paths_with_position =
+            derive_paths_with_position(app_state.fs.as_ref(), paths).await;
+
+        match open_paths_with_positions(
+            &paths_with_position,
+            &diff_paths,
+            app_state.clone(),
+            OpenOptions {
+                open_new_workspace,
+                ..Default::default()
+            },
+            &mut cx,
+        )
+        .await
+        {
+            Ok((_workspace, items)) => {
+                let mut item_release_futures = Vec::new();
+
+                for item in items {
+                    match item {
+                        Some(Ok(item)) => {
+                            cx.update(|cx| {
+                                let released = oneshot::channel();
+                                item.on_release(
+                                    cx,
+                                    Box::new(move |_| {
+                                        let _ = released.0.send(());
+                                    }),
+                                )
+                                .detach();
+                                item_release_futures.push(released.1);
+                            })
+                            .ok();
+                        }
+                        Some(Err(_)) => {
+                            errored = true;
+                        }
+                        None => {}
+                    }
+                }
+
+                if wait {
+                    let background = cx.background_executor().clone();
+                    let wait = async move {
+                        for released in item_release_futures {
+                            let _ = released.await;
+                        }
+                    };
+                    background.block(wait);
+                }
+            }
+            Err(err) => {
+                return Ok(proto::RemoteCliOpenResponse {
+                    status: 1,
+                    stderr: err.to_string(),
+                    stdout: String::new(),
+                });
+            }
+        }
+
+        Ok(proto::RemoteCliOpenResponse {
+            status: if errored { 1 } else { 0 },
+            stderr: String::new(),
+            stdout: String::new(),
+        })
+    }
+}
+
+// Public entry point for main to register the remote CLI bridge.
+pub fn register_remote_cli_bridge(
+    app_state: Arc<AppState>,
+    client: Arc<client::Client>,
+    cx: &mut App,
+) {
+    RemoteCliBridge::register(app_state, client, cx);
+}
+
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 pub fn listen_for_cli_connections(opener: OpenListener) -> Result<()> {
