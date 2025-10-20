@@ -3936,11 +3936,21 @@ impl Project {
     }
 
     fn search_impl(&mut self, query: SearchQuery, cx: &mut Context<Self>) -> SearchResultsHandle {
+        let client: Option<(AnyProtoClient, _)> = if let Some(ssh_client) = &self.remote_client {
+            Some((ssh_client.read(cx).proto_client(), 0))
+        } else if let Some(remote_id) = self.remote_id() {
+            Some((self.collab_client.clone().into(), remote_id))
+        } else {
+            None
+        };
         let searcher = project_search::Search {
             fs: self.fs.clone(),
             buffer_store: self.buffer_store.clone(),
+            worktree_store: self.worktree_store.clone(),
             worktrees: self.visible_worktrees(cx).collect::<Vec<_>>(),
             limit: project_search::Search::MAX_SEARCH_RESULT_FILES + 1,
+            client,
+            remotely_created_models: self.remotely_created_models.clone(),
         };
         searcher.into_results(query, cx)
     }
@@ -4672,17 +4682,30 @@ impl Project {
         &mut self,
         cx: &mut Context<Self>,
     ) -> RemotelyCreatedModelGuard {
+        Self::retain_remotely_created_models_impl(
+            &self.remotely_created_models,
+            &self.buffer_store,
+            &self.worktree_store,
+            cx,
+        )
+    }
+
+    fn retain_remotely_created_models_impl(
+        models: &Arc<Mutex<RemotelyCreatedModels>>,
+        buffer_store: &Entity<BufferStore>,
+        worktree_store: &Entity<WorktreeStore>,
+        cx: &mut App,
+    ) -> RemotelyCreatedModelGuard {
         {
-            let mut remotely_create_models = self.remotely_created_models.lock();
+            let mut remotely_create_models = models.lock();
             if remotely_create_models.retain_count == 0 {
-                remotely_create_models.buffers = self.buffer_store.read(cx).buffers().collect();
-                remotely_create_models.worktrees =
-                    self.worktree_store.read(cx).worktrees().collect();
+                remotely_create_models.buffers = buffer_store.read(cx).buffers().collect();
+                remotely_create_models.worktrees = worktree_store.read(cx).worktrees().collect();
             }
             remotely_create_models.retain_count += 1;
         }
         RemotelyCreatedModelGuard {
-            remote_models: Arc::downgrade(&self.remotely_created_models),
+            remote_models: Arc::downgrade(&models),
         }
     }
 
