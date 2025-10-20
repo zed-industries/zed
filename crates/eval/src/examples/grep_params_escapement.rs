@@ -36,7 +36,6 @@ impl Example for GrepParamsEscapementExample {
     }
 
     async fn conversation(&self, cx: &mut ExampleContext) -> Result<()> {
-        // cx.push_user_message("How does the precedence/specificity work with Keymap contexts? I am seeing that `MessageEditor > Editor` is lower precendence than `Editor` which is surprising to me, but might be how it works");
         let response = cx
             .prompt_with_max_turns("Search for files containing the characters `>` or `<`", 2)
             .await?;

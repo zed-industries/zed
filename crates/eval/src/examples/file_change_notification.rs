@@ -58,7 +58,7 @@ impl Example for FileChangeNotificationExample {
 
         // Run for some more turns.
         // The model shouldn't thank us for letting it know about the file change.
-        cx.resume_with_max_turns(3).await?;
+        cx.proceed_with_max_turns(3).await?;
 
         Ok(())
     }

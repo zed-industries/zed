@@ -10,6 +10,7 @@ path = "src/agent.rs"
 
 [features]
 test-support = ["db/test-support"]
+eval = []
 e2e = []
 
 [lints]

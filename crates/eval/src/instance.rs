@@ -8,8 +8,8 @@ use gpui::{App, AppContext as _, AsyncApp, Entity, Task};
 use handlebars::Handlebars;
 use language::{Buffer, DiagnosticSeverity, OffsetRangeExt as _};
 use language_model::{
-    LanguageModel, LanguageModelCompletionEvent, LanguageModelRequest, LanguageModelRequestMessage,
-    LanguageModelToolResultContent, MessageContent, Role, TokenUsage,
+    LanguageModel, LanguageModelCompletionEvent, LanguageModelRegistry, LanguageModelRequest,
+    LanguageModelRequestMessage, LanguageModelToolResultContent, MessageContent, Role, TokenUsage,
 };
 use project::{DiagnosticSummary, Project, ProjectPath, lsp_store::OpenLspBufferHandle};
 use prompt_store::{ProjectContext, WorktreeContext};
@@ -320,10 +320,9 @@ impl ExampleInstance {
                 thread.update(cx, |thread, cx| {
                     thread.add_default_tools(Rc::new(FakeThreadEnvironment), cx);
                     thread.set_profile(meta.profile_id.clone());
-                    let model = thread.model().unwrap().clone();
                     thread.set_model(
                         LanguageModelInterceptor::new(
-                            model,
+                            LanguageModelRegistry::read_global(cx).default_model().expect("Missing model").model.clone(),
                             this.run_directory.clone(),
                             last_diff_file_path.clone(),
                             this.run_directory.join("last.messages.json"),

@@ -1193,6 +1193,14 @@ impl Thread {
         self.run_turn(cx)
     }
 
+    #[cfg(feature = "eval")]
+    pub fn proceed(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> Result<mpsc::UnboundedReceiver<Result<ThreadEvent>>> {
+        self.run_turn(cx)
+    }
+
     fn run_turn(
         &mut self,
         cx: &mut Context<Self>,

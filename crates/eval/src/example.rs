@@ -200,7 +200,7 @@ impl ExampleContext {
         self.run_turns(Some(content), max_turns).await
     }
 
-    pub async fn resume_with_max_turns(&mut self, max_turns: u32) -> Result<Response> {
+    pub async fn proceed_with_max_turns(&mut self, max_turns: u32) -> Result<Response> {
         self.run_turns(None, max_turns).await
     }
 
@@ -217,10 +217,9 @@ impl ExampleContext {
         let mut event_stream = self.agent_thread.update(&mut self.app, |thread, cx| {
             if let Some(prompt) = prompt {
                 let id = UserMessageId::new();
-
                 thread.send(id, prompt, cx)
             } else {
-                thread.resume(cx)
+                thread.proceed(cx)
             }
         })??;
 

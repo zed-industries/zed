@@ -36,7 +36,7 @@ impl Example for FileOverwriteExample {
     }
 
     async fn conversation(&self, cx: &mut ExampleContext) -> Result<()> {
-        let response = cx.resume_with_max_turns(1).await?;
+        let response = cx.proceed_with_max_turns(1).await?;
         let tool_use = response.expect_tool_call("edit_file", cx)?;
         let input = tool_use.parse_input::<EditFileToolInput>()?;
         let file_overwritten = match input.mode {
