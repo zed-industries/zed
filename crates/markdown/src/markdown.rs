@@ -22,8 +22,8 @@ use gpui::{
     AnyElement, App, BorderStyle, Bounds, ClipboardItem, CursorStyle, DispatchPhase, Edges, Entity,
     FocusHandle, Focusable, FontStyle, FontWeight, GlobalElementId, Hitbox, Hsla, Image,
     ImageFormat, KeyContext, Length, MouseDownEvent, MouseEvent, MouseMoveEvent, MouseUpEvent,
-    Point, Stateful, StrikethroughStyle, StyleRefinement, StyledText, Task, TextLayout, TextRun,
-    TextStyle, TextStyleRefinement, actions, img, point, quad,
+    Point, ScrollHandle, Stateful, StrikethroughStyle, StyleRefinement, StyledText, Task,
+    TextLayout, TextRun, TextStyle, TextStyleRefinement, actions, img, point, quad,
 };
 use language::{Language, LanguageRegistry, Rope};
 use parser::CodeBlockMetadata;
@@ -31,7 +31,7 @@ use parser::{MarkdownEvent, MarkdownTag, MarkdownTagEnd, parse_links_only, parse
 use pulldown_cmark::Alignment;
 use sum_tree::TreeMap;
 use theme::SyntaxTheme;
-use ui::{Tooltip, prelude::*};
+use ui::{ScrollAxes, Scrollbars, Tooltip, WithScrollbar, prelude::*};
 use util::ResultExt;
 
 use crate::parser::CodeBlockKind;
@@ -108,6 +108,7 @@ pub struct Markdown {
     fallback_code_block_language: Option<LanguageName>,
     options: Options,
     copied_code_blocks: HashSet<ElementId>,
+    code_block_scroll_handles: HashMap<usize, ScrollHandle>,
 }
 
 struct Options {
@@ -176,6 +177,7 @@ impl Markdown {
                 parse_links_only: false,
             },
             copied_code_blocks: HashSet::default(),
+            code_block_scroll_handles: HashMap::default(),
         };
         this.parse(cx);
         this
@@ -199,9 +201,26 @@ impl Markdown {
                 parse_links_only: true,
             },
             copied_code_blocks: HashSet::default(),
+            code_block_scroll_handles: HashMap::default(),
         };
         this.parse(cx);
         this
+    }
+
+    fn code_block_scroll_handle(&mut self, id: usize) -> ScrollHandle {
+        self.code_block_scroll_handles
+            .entry(id)
+            .or_insert_with(ScrollHandle::new)
+            .clone()
+    }
+
+    fn retain_code_block_scroll_handles(&mut self, ids: &HashSet<usize>) {
+        self.code_block_scroll_handles
+            .retain(|id, _| ids.contains(id));
+    }
+
+    fn clear_code_block_scroll_handles(&mut self) {
+        self.code_block_scroll_handles.clear();
     }
 
     pub fn is_parsing(&self) -> bool {
@@ -754,14 +773,19 @@ impl Element for MarkdownElement {
             self.style.base_text_style.clone(),
             self.style.syntax.clone(),
         );
-        let markdown = self.markdown.read(cx);
-        let parsed_markdown = &markdown.parsed_markdown;
-        let images = &markdown.images_by_source_offset;
+        let (parsed_markdown, images) = {
+            let markdown = self.markdown.read(cx);
+            (
+                markdown.parsed_markdown.clone(),
+                markdown.images_by_source_offset.clone(),
+            )
+        };
         let markdown_end = if let Some(last) = parsed_markdown.events.last() {
             last.0.end
         } else {
             0
         };
+        let mut code_block_ids = HashSet::default();
 
         let mut current_code_block_metadata = None;
         let mut current_img_block_range: Option<Range<usize>> = None;
@@ -841,39 +865,70 @@ impl Element for MarkdownElement {
                             current_code_block_metadata = Some(metadata.clone());
 
                             let is_indented = matches!(kind, CodeBlockKind::Indented);
+                            let scroll_handle = if self.style.code_block_overflow_x_scroll {
+                                code_block_ids.insert(range.start);
+                                Some(self.markdown.update(cx, |markdown, _| {
+                                    markdown.code_block_scroll_handle(range.start)
+                                }))
+                            } else {
+                                None
+                            };
 
                             match (&self.code_block_renderer, is_indented) {
                                 (CodeBlockRenderer::Default { .. }, _) | (_, true) => {
                                     // This is a parent container that we can position the copy button inside.
-                                    builder.push_div(
-                                        div().group("code_block").relative().w_full(),
-                                        range,
-                                        markdown_end,
-                                    );
+                                    // Create outer container with visual styling
+                                    let mut outer_container =
+                                        div().group("code_block").relative().w_full().rounded_lg();
 
-                                    let mut code_block = div()
-                                        .id(("code-block", range.start))
-                                        .rounded_lg()
-                                        .map(|mut code_block| {
-                                            if self.style.code_block_overflow_x_scroll {
-                                                code_block.style().restrict_scroll_to_axis =
-                                                    Some(true);
-                                                code_block.flex().overflow_x_scroll()
-                                            } else {
-                                                code_block.w_full()
-                                            }
-                                        });
-
+                                    // Apply code block styling to the outer container
                                     if let CodeBlockRenderer::Default { border: true, .. } =
                                         &self.code_block_renderer
                                     {
-                                        code_block = code_block
+                                        outer_container = outer_container
                                             .rounded_md()
                                             .border_1()
                                             .border_color(cx.theme().colors().border_variant);
                                     }
 
-                                    code_block.style().refine(&self.style.code_block);
+                                    outer_container.style().refine(&self.style.code_block);
+
+                                    // Add scrollbar to outer container if needed
+                                    let outer_container: AnyDiv = if let Some(scroll_handle) =
+                                        scroll_handle.as_ref()
+                                    {
+                                        let scrollbars = Scrollbars::new(ScrollAxes::Horizontal)
+                                            .id(("markdown-code-block-scrollbar", range.start))
+                                            .tracked_scroll_handle(scroll_handle.clone())
+                                            .with_track_along(
+                                                ScrollAxes::Horizontal,
+                                                cx.theme().colors().editor_background,
+                                            )
+                                            .notify_content();
+
+                                        outer_container
+                                            .custom_scrollbars(scrollbars, window, cx)
+                                            .into()
+                                    } else {
+                                        outer_container.into()
+                                    };
+
+                                    builder.push_div(outer_container, range, markdown_end);
+
+                                    // Create inner scrollable content WITHOUT visual styling
+                                    let mut code_block = div().id(("code-block", range.start));
+
+                                    if let Some(scroll_handle) = scroll_handle.as_ref() {
+                                        code_block.style().restrict_scroll_to_axis = Some(true);
+                                        code_block = code_block
+                                            .flex()
+                                            .overflow_x_scroll()
+                                            .track_scroll(scroll_handle);
+                                    } else {
+                                        code_block = code_block.w_full();
+                                    }
+
+                                    // Don't apply styling to inner div = it's already on outer container
                                     if let Some(code_block_text_style) = &self.style.code_block.text
                                     {
                                         builder.push_text_style(code_block_text_style.to_owned());
@@ -884,7 +939,7 @@ impl Element for MarkdownElement {
                                 (CodeBlockRenderer::Custom { render, .. }, _) => {
                                     let parent_container = render(
                                         kind,
-                                        parsed_markdown,
+                                        &parsed_markdown,
                                         range.clone(),
                                         metadata.clone(),
                                         window,
@@ -893,23 +948,44 @@ impl Element for MarkdownElement {
 
                                     builder.push_div(parent_container, range, markdown_end);
 
-                                    let mut code_block = div()
-                                        .id(("code-block", range.start))
-                                        .rounded_b_lg()
-                                        .map(|mut code_block| {
-                                            if self.style.code_block_overflow_x_scroll {
-                                                code_block.style().restrict_scroll_to_axis =
-                                                    Some(true);
-                                                code_block
-                                                    .flex()
-                                                    .overflow_x_scroll()
-                                                    .overflow_y_hidden()
-                                            } else {
-                                                code_block.w_full().overflow_hidden()
-                                            }
-                                        });
+                                    // Create wrapper with scrollbar (this is the intermediate layer)
+                                    let mut wrapper = div().w_full().rounded_b_lg();
 
-                                    code_block.style().refine(&self.style.code_block);
+                                    // Apply code block styling to wrapper (not ot the scrollable content)
+                                    wrapper.style().refine(&self.style.code_block);
+
+                                    // Attach scrollbar to wrapper if needed
+                                    let wrapper: AnyDiv = if let Some(scroll_handle) =
+                                        scroll_handle.as_ref()
+                                    {
+                                        let scrollbars = Scrollbars::new(ScrollAxes::Horizontal)
+                                            .id(("markdown-code-block-scrollbar", range.start))
+                                            .tracked_scroll_handle(scroll_handle.clone())
+                                            .with_track_along(
+                                                ScrollAxes::Horizontal,
+                                                cx.theme().colors().editor_background,
+                                            )
+                                            .notify_content();
+                                        wrapper.custom_scrollbars(scrollbars, window, cx).into()
+                                    } else {
+                                        wrapper.into()
+                                    };
+
+                                    builder.push_div(wrapper, range, markdown_end);
+
+                                    // Inner scrollable content WITHOUT visual styling
+                                    let mut code_block = div().id(("code-block", range.start));
+
+                                    if let Some(scroll_handle) = scroll_handle.as_ref() {
+                                        code_block.style().restrict_scroll_to_axis = Some(true);
+                                        code_block = code_block
+                                            .flex()
+                                            .overflow_x_scroll()
+                                            .overflow_y_hidden()
+                                            .track_scroll(scroll_handle);
+                                    } else {
+                                        code_block = code_block.w_full().overflow_hidden();
+                                    }
 
                                     if let Some(code_block_text_style) = &self.style.code_block.text
                                     {
@@ -1217,6 +1293,15 @@ impl Element for MarkdownElement {
                 MarkdownEvent::HardBreak => builder.push_text("\n", range.clone()),
                 _ => log::error!("unsupported markdown event {:?}", event),
             }
+        }
+        if self.style.code_block_overflow_x_scroll {
+            let code_block_ids = code_block_ids;
+            self.markdown.update(cx, move |markdown, _| {
+                markdown.retain_code_block_scroll_handles(&code_block_ids);
+            });
+        } else {
+            self.markdown
+                .update(cx, |markdown, _| markdown.clear_code_block_scroll_handles());
         }
         let mut rendered_markdown = builder.build();
         let child_layout_id = rendered_markdown.element.request_layout(window, cx);
