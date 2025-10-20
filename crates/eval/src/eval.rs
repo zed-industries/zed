@@ -144,13 +144,13 @@ fn main() {
 
         cx.spawn(async move |cx| {
             future::join_all(tasks).await;
-            let (agent_model, judge_model) = cx.update(|cx| {
+            let judge_model = cx.update(|cx| {
                 let agent_model = load_model(&args.model, cx).unwrap();
                 let judge_model = load_model(&args.judge_model, cx).unwrap();
                 LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
                     registry.set_default_model(Some(agent_model.clone()), cx);
                 });
-                (agent_model, judge_model)
+                judge_model
             })?;
 
             let mut examples = Vec::new();
@@ -281,7 +281,6 @@ fn main() {
 
             future::join_all((0..args.concurrency).map(|_| {
                 let app_state = app_state.clone();
-                let model = agent_model.model.clone();
                 let judge_model = judge_model.model.clone();
                 let zed_commit_sha = zed_commit_sha.clone();
                 let zed_branch_name = zed_branch_name.clone();
@@ -296,7 +295,7 @@ fn main() {
                         let result = async {
                             example.setup().await?;
                             let run_output = cx
-                                .update(|cx| example.run(model.clone(), app_state.clone(), cx))?
+                                .update(|cx| example.run(app_state.clone(), cx))?
                                 .await?;
                             let judge_output = judge_example(
                                 example.clone(),

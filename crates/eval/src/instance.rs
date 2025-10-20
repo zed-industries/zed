@@ -193,12 +193,7 @@ impl ExampleInstance {
             .join(self.thread.meta().repo_name())
     }
 
-    pub fn run(
-        &self,
-        model: Arc<dyn LanguageModel>,
-        app_state: Arc<AgentAppState>,
-        cx: &mut App,
-    ) -> Task<Result<RunOutput>> {
+    pub fn run(&self, app_state: Arc<AgentAppState>, cx: &mut App) -> Task<Result<RunOutput>> {
         let project = Project::local(
             app_state.client.clone(),
             app_state.node_runtime.clone(),
@@ -346,7 +341,6 @@ impl ExampleInstance {
                 meta.clone(),
                 this.log_prefix.clone(),
                 thread.clone(),
-                model.clone(),
                 cx.clone(),
             );
             let result = this.thread.conversation(&mut example_cx).await;

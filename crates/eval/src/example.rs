@@ -20,7 +20,7 @@ use buffer_diff::DiffHunkStatus;
 use collections::HashMap;
 use futures::{FutureExt as _, StreamExt, select_biased};
 use gpui::{App, AppContext, AsyncApp, Entity};
-use language_model::{LanguageModel, Role};
+use language_model::Role;
 use util::rel_path::RelPath;
 
 pub const THREAD_EVENT_TIMEOUT: Duration = Duration::from_secs(60 * 2);
@@ -93,7 +93,6 @@ pub struct ExampleContext {
     log_prefix: String,
     agent_thread: Entity<agent::Thread>,
     app: AsyncApp,
-    model: Arc<dyn LanguageModel>,
     pub assertions: AssertionsReport,
     pub tool_metrics: Arc<Mutex<ToolMetrics>>,
 }
@@ -103,7 +102,6 @@ impl ExampleContext {
         meta: ExampleMetadata,
         log_prefix: String,
         agent_thread: Entity<Thread>,
-        model: Arc<dyn LanguageModel>,
         app: AsyncApp,
     ) -> Self {
         let assertions = AssertionsReport::new(meta.max_assertions);
@@ -113,7 +111,6 @@ impl ExampleContext {
             log_prefix,
             agent_thread,
             assertions,
-            model,
             app,
             tool_metrics: Arc::new(Mutex::new(ToolMetrics::default())),
         }
@@ -229,6 +226,7 @@ impl ExampleContext {
 
         let task = self.app.background_spawn(async move {
             let mut messages = Vec::new();
+            let mut tool_uses_by_id = HashMap::default();
             while let Some(event) = event_stream.next().await {
                 match event? {
                     ThreadEvent::UserMessage(user_message) => {
@@ -256,24 +254,68 @@ impl ExampleContext {
                         }
                     }
                     ThreadEvent::ToolCall(tool_call) => {
-                        println!("{log_prefix} ToolCall: {tool_call:?}");
+                        let meta = tool_call.meta.expect("Missing meta field in tool_call");
+                        let tool_name = meta
+                            .get("tool_name")
+                            .expect("Missing tool_name field in meta")
+                            .as_str()
+                            .expect("Unknown tool_name content in meta");
+
+                        tool_uses_by_id.insert(
+                            tool_call.id,
+                            ToolUse {
+                                name: tool_name.to_string(),
+                                value: tool_call.raw_input.unwrap_or_default(),
+                            },
+                        );
                         if matches!(
                             tool_call.status,
                             acp::ToolCallStatus::Completed | acp::ToolCallStatus::Failed
                         ) {
-                            remaining_turns -= 1;
-                            if remaining_turns == 0 {
-                                return Ok(messages);
-                            }
+                            panic!("Tool call completed without update");
                         }
                     }
                     ThreadEvent::ToolCallUpdate(tool_call_update) => {
-                        println!("{log_prefix} ToolCallUpdate: {tool_call_update:?}");
                         if let acp_thread::ToolCallUpdate::UpdateFields(update) = tool_call_update {
+                            if let Some(raw_input) = update.fields.raw_input {
+                                tool_uses_by_id
+                                    .get_mut(&update.id)
+                                    .map(|tool_use| tool_use.value = raw_input);
+                            }
+
                             if matches!(
                                 update.fields.status,
                                 Some(acp::ToolCallStatus::Completed | acp::ToolCallStatus::Failed)
                             ) {
+                                let succeeded =
+                                    update.fields.status == Some(acp::ToolCallStatus::Completed);
+
+                                let tool_use = tool_uses_by_id
+                                    .remove(&update.id)
+                                    .expect("Unrecognized tool call completed");
+
+                                let log_message = if succeeded {
+                                    format!("✔︎ {}", tool_use.name)
+                                } else {
+                                    format!("✖︎ {}", tool_use.name)
+                                };
+                                println!("{log_prefix}{log_message}");
+
+                                tool_metrics
+                                    .lock()
+                                    .unwrap()
+                                    .insert(tool_use.name.clone().into(), succeeded);
+
+                                if let Some(message) = messages.last_mut() {
+                                    message.tool_use.push(tool_use);
+                                } else {
+                                    messages.push(Message {
+                                        role: Role::Assistant,
+                                        text: "".to_string(),
+                                        tool_use: vec![tool_use],
+                                    });
+                                }
+
                                 remaining_turns -= 1;
                                 if remaining_turns == 0 {
                                     return Ok(messages);
@@ -285,7 +327,9 @@ impl ExampleContext {
                         "{}Bug: Tool confirmation should not be required in eval",
                         log_prefix
                     ),
-                    ThreadEvent::Retry(_) => {}
+                    ThreadEvent::Retry(status) => {
+                        println!("{log_prefix} Got retry: {status:?}");
+                    }
                     ThreadEvent::Stop(stop_reason) => match stop_reason {
                         acp::StopReason::EndTurn => {}
                         acp::StopReason::MaxTokens => {

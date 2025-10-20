@@ -750,7 +750,13 @@ impl Thread {
 
         let title = tool.initial_title(tool_use.input.clone(), cx);
         let kind = tool.kind();
-        stream.send_tool_call(&tool_use.id, title, kind, tool_use.input.clone());
+        stream.send_tool_call(
+            &tool_use.id,
+            &tool_use.name,
+            title,
+            kind,
+            tool_use.input.clone(),
+        );
 
         let output = tool_result
             .as_ref()
@@ -1554,7 +1560,13 @@ impl Thread {
         });
 
         if push_new_tool_use {
-            event_stream.send_tool_call(&tool_use.id, title, kind, tool_use.input.clone());
+            event_stream.send_tool_call(
+                &tool_use.id,
+                &tool_use.name,
+                title,
+                kind,
+                tool_use.input.clone(),
+            );
             last_message
                 .content
                 .push(AgentMessageContent::ToolUse(tool_use.clone()));
@@ -2349,6 +2361,7 @@ impl ThreadEventStream {
     fn send_tool_call(
         &self,
         id: &LanguageModelToolUseId,
+        tool_name: &str,
         title: SharedString,
         kind: acp::ToolKind,
         input: serde_json::Value,
@@ -2356,6 +2369,7 @@ impl ThreadEventStream {
         self.0
             .unbounded_send(Ok(ThreadEvent::ToolCall(Self::initial_tool_call(
                 id,
+                tool_name,
                 title.to_string(),
                 kind,
                 input,
@@ -2365,12 +2379,15 @@ impl ThreadEventStream {
 
     fn initial_tool_call(
         id: &LanguageModelToolUseId,
+        tool_name: &str,
         title: String,
         kind: acp::ToolKind,
         input: serde_json::Value,
     ) -> acp::ToolCall {
         acp::ToolCall {
-            meta: None,
+            meta: Some(serde_json::json!({
+                "tool_name": tool_name
+            })),
             id: acp::ToolCallId(id.to_string().into()),
             title,
             kind,
