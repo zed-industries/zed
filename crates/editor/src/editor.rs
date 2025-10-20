@@ -2343,12 +2343,16 @@ impl Editor {
         // the editor hasn't been laid out yet and visible_line_count() returns 0)
         if editor.project.is_some() && !multi_buffer.read(cx).is_singleton() {
             for buffer in multi_buffer.read(cx).all_buffers() {
-                let buffer_id = buffer.read(cx).remote_id();
-                editor.register_buffer(buffer_id, cx);
+                // Single read to extract all needed data, avoiding multiple lock acquisitions
+                let (buffer_id, needs_parse) = {
+                    let buf = buffer.read(cx);
+                    let buffer_id = buf.remote_id();
+                    let needs_parse = buf.snapshot().syntax_layers().next().is_none()
+                        && buf.language().is_some();
+                    (buffer_id, needs_parse)
+                };
                 
-                // Check if buffer needs parsing
-                let needs_parse = buffer.read(cx).snapshot().syntax_layers().next().is_none()
-                    && buffer.read(cx).language().is_some();
+                editor.register_buffer(buffer_id, cx);
                 
                 if needs_parse {
                     // Trigger parse - Reparsed event will handle highlighting initialization
@@ -6861,42 +6865,68 @@ impl Editor {
                 if let Some(t) = task {
                     let (tokens, buffer_id) = t.await;
 
-                    this.update(cx, |this, cx| {
-                        if let (Some(tokens), Some(project)) = (tokens.log_err(), this.project()) {
-                            let lsp_store = project.read(cx).lsp_store().read(cx);
-                            let Some(semantic_token_provider) = tokens.server_id
-                                .and_then(|id| lsp_store.lsp_server_capabilities.get(&id))
-                                .and_then(|caps| caps.semantic_tokens_provider.as_ref()) else {
-                                return;
-                            };
+                    // Extract all required data on main thread
+                    let data = this.update(cx, |this, cx| {
+                        let Some(tokens) = tokens.log_err() else {
+                            return None;
+                        };
+                        let Some(project) = this.project() else {
+                            return None;
+                        };
+                        let Some(buffer) = this.buffer.read(cx).buffer(buffer_id) else {
+                            return None;
+                        };
+                        
+                        let lsp_store = project.read(cx).lsp_store().read(cx);
+                        let Some(semantic_token_provider) = tokens.server_id
+                            .and_then(|id| lsp_store.lsp_server_capabilities.get(&id))
+                            .and_then(|caps| caps.semantic_tokens_provider.as_ref()) else {
+                            return None;
+                        };
 
-                            let legend = match semantic_token_provider {
-                                lsp::SemanticTokensServerCapabilities::SemanticTokensOptions(opts) => &opts.legend,
-                                lsp::SemanticTokensServerCapabilities::SemanticTokensRegistrationOptions(opts) =>
-                                    &opts.semantic_tokens_options.legend,
-                            };
+                        let legend = match semantic_token_provider {
+                            lsp::SemanticTokensServerCapabilities::SemanticTokensOptions(opts) => &opts.legend,
+                            lsp::SemanticTokensServerCapabilities::SemanticTokensRegistrationOptions(opts) =>
+                                &opts.semantic_tokens_options.legend,
+                        };
 
-                            let legend = legend.clone();
+                        Some((
+                            legend.clone(),
+                            buffer.read(cx).snapshot(),
+                            cx.theme().syntax().clone(),
+                            EditorSettings::get_global(cx).rainbow_highlighting,
+                            this.display_map.read(cx).get_variable_color_cache(),
+                            tokens,
+                        ))
+                    }).log_err();
 
-                            this.display_map.update(cx, |display_map, cx| {
-                                let view = SemanticTokenView::new(
-                                    buffer_id,
-                                    this.buffer.read(cx),
-                                    &tokens,
-                                    &legend,
-                                    display_map.get_variable_color_cache().as_ref(),
-                                    cx
-                                );
-                                if let Some(view) = view {
-                                    log::debug!("Created semantic token view with {} tokens", view.tokens.len());
-                                    display_map.semantic_tokens.insert(buffer_id, Arc::new(view));
-                                } else {
-                                    log::warn!("Failed to create semantic token view");
-                                }
+                    let Some(Some((legend, buffer_snapshot, theme, rainbow_config, variable_color_cache, tokens))) = data else {
+                        return;
+                    };
+
+                    // Process tokens off main thread to avoid UI freeze in large files
+                    let view = cx.background_executor().spawn(async move {
+                        SemanticTokenView::new(
+                            buffer_snapshot,
+                            &tokens,
+                            &legend,
+                            &theme,
+                            &rainbow_config,
+                            variable_color_cache.as_ref(),
+                        )
+                    }).await;
+
+                    if let Some(view) = view {
+                        this.update(cx, |this, cx| {
+                            log::debug!("Created semantic token view with {} tokens", view.tokens.len());
+                            this.display_map.update(cx, |display_map, _| {
+                                display_map.semantic_tokens.insert(buffer_id, Arc::new(view));
                             });
                             cx.notify();
-                        }
-                    }).log_err();
+                        }).log_err();
+                    } else {
+                        log::warn!("Failed to create semantic token view for buffer {:?}", buffer_id);
+                    }
                 }
             });
 
@@ -21276,9 +21306,11 @@ impl Editor {
                 self.update_lsp_data(Some(buffer_id), window, cx);
                 self.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
                 
-                // Check if buffer needs parsing
-                let needs_parse = buffer.read(cx).snapshot().syntax_layers().next().is_none()
-                    && buffer.read(cx).language().is_some();
+                // Single read to extract all needed data, avoiding multiple lock acquisitions
+                let needs_parse = {
+                    let buf = buffer.read(cx);
+                    buf.snapshot().syntax_layers().next().is_none() && buf.language().is_some()
+                };
                 
                 if needs_parse {
                     // Trigger parse - Reparsed event will handle highlighting initialization

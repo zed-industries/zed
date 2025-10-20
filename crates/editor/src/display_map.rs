@@ -70,7 +70,7 @@ use std::{
 use sum_tree::{Bias, TreeMap};
 use tab_map::TabSnapshot;
 use text::{BufferId, LineIndent};
-use ui::{ActiveTheme, SharedString, px};
+use ui::{SharedString, px};
 use unicode_segmentation::UnicodeSegmentation;
 use wrap_map::{WrapMap, WrapSnapshot};
 
@@ -1853,46 +1853,42 @@ impl ToDisplayPoint for Anchor {
     }
 }
 impl SemanticTokenView {
+    /// Creates a SemanticTokenView from LSP tokens.
+    /// 
+    /// This function is designed to run on a background thread to avoid blocking the main thread
+    /// when processing large token sets. All required context (theme, settings, buffer snapshot)
+    /// must be extracted on the main thread before calling this.
     pub fn new(
-        buffer_id: BufferId,
-        multibuffer: &MultiBuffer,
+        buffer_snapshot: language::BufferSnapshot,
         lsp: &SemanticTokens,
         legend: &lsp::SemanticTokensLegend,
+        theme: &theme::SyntaxTheme,
+        rainbow_config: &crate::editor_settings::RainbowConfig,
         variable_color_cache: Option<&Arc<crate::rainbow::VariableColorCache>>,
-        cx: &App,
     ) -> Option<SemanticTokenView> {
-        use crate::editor_settings::EditorSettings;
-        use settings::Settings;
-
-        let Some(buffer) = multibuffer.buffer(buffer_id) else {
-            return None;
-        };
-        let buffer = buffer.read(cx);
-
-        let rainbow_config = EditorSettings::get_global(cx).rainbow_highlighting;
-        let highlights_config = buffer
+        let highlights_config = buffer_snapshot
             .language()
             .and_then(|lang| lang.grammar())
             .and_then(|grammar| grammar.highlights_config.as_ref());
-        let stylizer = SemanticTokenStylizer::new(legend, &rainbow_config);
+        let stylizer = SemanticTokenStylizer::new(legend, rainbow_config);
 
         let mut tokens = lsp
             .tokens()
             .filter_map(|token| {
                 let start = text::Unclipped(text::PointUtf16::new(token.line, token.start));
                 let (start_offset, end_offset) = point_offset_to_offsets(
-                    buffer.clip_point_utf16(start, Bias::Left),
+                    buffer_snapshot.clip_point_utf16(start, Bias::Left),
                     text::OffsetUtf16(token.length as usize),
-                    &buffer,
+                    &buffer_snapshot,
                 );
 
                 Some(MultibufferSemanticToken {
                     range: start_offset..end_offset,
                     style: stylizer.convert(
-                        cx.theme().syntax(),
+                        theme,
                         token.token_type,
                         token.token_modifiers,
-                        &buffer,
+                        &buffer_snapshot,
                         start_offset..end_offset,
                         variable_color_cache,
                         highlights_config,
@@ -1908,7 +1904,7 @@ impl SemanticTokenView {
 
         Some(SemanticTokenView {
             tokens,
-            version: buffer.version(),
+            version: buffer_snapshot.version().clone(),
         })
     }
 
@@ -1930,7 +1926,7 @@ impl SemanticTokenView {
 fn point_offset_to_offsets(
     point: text::PointUtf16,
     length: text::OffsetUtf16,
-    buffer: &text::Buffer,
+    buffer: &language::BufferSnapshot,
 ) -> (usize, usize) {
     let start = buffer.as_rope().point_utf16_to_offset(point);
     let start_offset = buffer.as_rope().offset_to_offset_utf16(start);
@@ -1986,7 +1982,7 @@ impl<'a> SemanticTokenStylizer<'a> {
         theme: &'a SyntaxTheme,
         token_type: u32,
         modifiers: u32,
-        buffer: &text::Buffer,
+        buffer: &language::BufferSnapshot,
         range: Range<usize>,
         variable_color_cache: Option<&Arc<crate::rainbow::VariableColorCache>>,
         highlights_config: Option<&language::HighlightsConfig>,
