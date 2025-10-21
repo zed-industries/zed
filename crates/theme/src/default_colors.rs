@@ -162,7 +162,7 @@ impl ThemeColors {
             vim_visual_block_background: system.transparent,
             vim_helix_normal_background: system.transparent,
             vim_helix_select_background: system.transparent,
-            vim_mode_text: neutral().light().step_12(),
+            vim_mode_text: system.transparent,
         }
     }
 
@@ -297,7 +297,7 @@ impl ThemeColors {
             vim_visual_block_background: system.transparent,
             vim_helix_normal_background: system.transparent,
             vim_helix_select_background: system.transparent,
-            vim_mode_text: neutral().dark().step_12(),
+            vim_mode_text: system.transparent,
         }
     }
 }
