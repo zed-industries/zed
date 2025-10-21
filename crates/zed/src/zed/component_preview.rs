@@ -17,7 +17,7 @@ use persistence::COMPONENT_PREVIEW_DB;
 use project::Project;
 use std::{iter::Iterator, ops::Range, sync::Arc};
 use ui::{ButtonLike, Divider, HighlightedLabel, ListItem, ListSubHeader, Tooltip, prelude::*};
-use ui_input::SingleLineInput;
+use ui_input::InputField;
 use workspace::{
     AppState, Item, ItemId, SerializableItem, Workspace, WorkspaceId, delete_unloaded_items,
     item::ItemEvent,
@@ -99,7 +99,7 @@ struct ComponentPreview {
     component_map: HashMap<ComponentId, ComponentMetadata>,
     components: Vec<ComponentMetadata>,
     cursor_index: usize,
-    filter_editor: Entity<SingleLineInput>,
+    filter_editor: Entity<InputField>,
     filter_text: String,
     focus_handle: FocusHandle,
     language_registry: Arc<LanguageRegistry>,
@@ -126,8 +126,7 @@ impl ComponentPreview {
         let sorted_components = component_registry.sorted_components();
         let selected_index = selected_index.into().unwrap_or(0);
         let active_page = active_page.unwrap_or(PreviewPage::AllComponents);
-        let filter_editor =
-            cx.new(|cx| SingleLineInput::new(window, cx, "Find components or usages…"));
+        let filter_editor = cx.new(|cx| InputField::new(window, cx, "Find components or usages…"));
 
         let component_list = ListState::new(
             sorted_components.len(),

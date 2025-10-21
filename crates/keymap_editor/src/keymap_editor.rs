@@ -32,7 +32,7 @@ use ui::{
     SharedString, Styled as _, Table, TableColumnWidths, TableInteractionState,
     TableResizeBehavior, Tooltip, Window, prelude::*,
 };
-use ui_input::SingleLineInput;
+use ui_input::InputField;
 use util::ResultExt;
 use workspace::{
     Item, ModalView, SerializableItem, Workspace, notifications::NotifyTaskExt as _,
@@ -2114,7 +2114,7 @@ struct KeybindingEditorModal {
     editing_keybind: ProcessedBinding,
     editing_keybind_idx: usize,
     keybind_editor: Entity<KeystrokeInput>,
-    context_editor: Entity<SingleLineInput>,
+    context_editor: Entity<InputField>,
     action_arguments_editor: Option<Entity<ActionArgumentsEditor>>,
     fs: Arc<dyn Fs>,
     error: Option<InputError>,
@@ -2148,8 +2148,8 @@ impl KeybindingEditorModal {
         let keybind_editor = cx
             .new(|cx| KeystrokeInput::new(editing_keybind.keystrokes().map(Vec::from), window, cx));
 
-        let context_editor: Entity<SingleLineInput> = cx.new(|cx| {
-            let input = SingleLineInput::new(window, cx, "Keybinding Context")
+        let context_editor: Entity<InputField> = cx.new(|cx| {
+            let input = InputField::new(window, cx, "Keybinding Context")
                 .label("Edit Context")
                 .label_size(LabelSize::Default);
 
