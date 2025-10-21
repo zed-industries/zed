@@ -70,6 +70,7 @@ members = [
     "crates/file_finder",
     "crates/file_icons",
     "crates/fs",
+    "crates/fs_benchmarks",
     "crates/fsevent",
     "crates/fuzzy",
     "crates/git",
@@ -125,6 +126,7 @@ members = [
     "crates/picker",
     "crates/prettier",
     "crates/project",
+    "crates/project_benchmarks",
     "crates/project_panel",
     "crates/project_symbols",
     "crates/prompt_store",
@@ -193,6 +195,7 @@ members = [
     "crates/web_search_providers",
     "crates/workspace",
     "crates/worktree",
+    "crates/worktree_benchmarks",
     "crates/x_ai",
     "crates/zed",
     "crates/zed_actions",
@@ -437,7 +440,7 @@ zlog_settings = { path = "crates/zlog_settings" }
 # External crates
 #
 
-agent-client-protocol = { version = "=0.4.3", features = ["unstable"] }
+agent-client-protocol = { version = "0.5.0", features = ["unstable"] }
 aho-corasick = "1.1"
 alacritty_terminal = "0.25.1-rc1"
 any_vec = "0.14"

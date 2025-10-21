@@ -612,6 +612,10 @@ impl Panel for NotificationPanel {
         "NotificationPanel"
     }
 
+    fn panel_key() -> &'static str {
+        NOTIFICATION_PANEL_KEY
+    }
+
     fn position(&self, _: &Window, cx: &App) -> DockPosition {
         NotificationPanelSettings::get_global(cx).dock
     }

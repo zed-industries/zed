@@ -493,6 +493,7 @@ impl EditorElement {
         register_action(editor, window, Editor::stage_and_next);
         register_action(editor, window, Editor::unstage_and_next);
         register_action(editor, window, Editor::expand_all_diff_hunks);
+        register_action(editor, window, Editor::collapse_all_diff_hunks);
         register_action(editor, window, Editor::go_to_previous_change);
         register_action(editor, window, Editor::go_to_next_change);
 
@@ -1070,7 +1071,10 @@ impl EditorElement {
                     ref mouse_down_time,
                 } => {
                     let drag_and_drop_delay = Duration::from_millis(
-                        EditorSettings::get_global(cx).drag_and_drop_selection.delay,
+                        EditorSettings::get_global(cx)
+                            .drag_and_drop_selection
+                            .delay
+                            .0,
                     );
                     if mouse_down_time.elapsed() >= drag_and_drop_delay {
                         let drop_cursor = Selection {
@@ -6172,7 +6176,10 @@ impl EditorElement {
                 } = &editor.selection_drag_state
                 {
                     let drag_and_drop_delay = Duration::from_millis(
-                        EditorSettings::get_global(cx).drag_and_drop_selection.delay,
+                        EditorSettings::get_global(cx)
+                            .drag_and_drop_selection
+                            .delay
+                            .0,
                     );
                     if mouse_down_time.elapsed() >= drag_and_drop_delay {
                         window.set_cursor_style(

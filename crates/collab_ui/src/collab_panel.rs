@@ -3037,6 +3037,10 @@ impl Panel for CollabPanel {
         "CollabPanel"
     }
 
+    fn panel_key() -> &'static str {
+        COLLABORATION_PANEL_KEY
+    }
+
     fn activation_priority(&self) -> u32 {
         6
     }

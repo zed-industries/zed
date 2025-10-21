@@ -112,6 +112,12 @@ impl Display for CodeFade {
     }
 }
 
+impl From<f32> for CodeFade {
+    fn from(x: f32) -> Self {
+        Self(x)
+    }
+}
+
 fn default_font_features() -> Option<FontFeatures> {
     Some(FontFeatures::default())
 }
@@ -154,7 +160,18 @@ pub enum ThemeSelection {
 }
 
 /// Represents the selection of an icon theme, which can be either static or dynamic.
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
+#[derive(
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    Eq,
+    strum::EnumDiscriminants,
+)]
+#[strum_discriminants(derive(strum::VariantArray, strum::VariantNames, strum::FromRepr))]
 #[serde(untagged)]
 pub enum IconThemeSelection {
     /// A static icon theme selection, represented by a single icon theme name.
@@ -284,7 +301,19 @@ impl From<FontFamilyName> for String {
 }
 
 /// The buffer's line height.
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom, Default)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    JsonSchema,
+    MergeFrom,
+    Default,
+    strum::EnumDiscriminants,
+)]
+#[strum_discriminants(derive(strum::VariantArray, strum::VariantNames, strum::FromRepr))]
 #[serde(rename_all = "snake_case")]
 pub enum BufferLineHeight {
     /// A less dense line height.

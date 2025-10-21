@@ -82,7 +82,7 @@ use anyhow::{Context as _, Result, anyhow};
 use blink_manager::BlinkManager;
 use buffer_diff::DiffHunkStatus;
 use client::{Collaborator, ParticipantIndex, parse_zed_link};
-use clock::{AGENT_REPLICA_ID, ReplicaId};
+use clock::ReplicaId;
 use code_context_menus::{
     AvailableCodeAction, CodeActionContents, CodeActionsItem, CodeActionsMenu, CodeContextMenu,
     CompletionsMenu, ContextMenuOrigin,
@@ -358,6 +358,7 @@ pub fn init(cx: &mut App) {
     cx.observe_new(
         |workspace: &mut Workspace, _: Option<&mut Window>, _cx: &mut Context<Workspace>| {
             workspace.register_action(Editor::new_file);
+            workspace.register_action(Editor::new_file_split);
             workspace.register_action(Editor::new_file_vertical);
             workspace.register_action(Editor::new_file_horizontal);
             workspace.register_action(Editor::cancel_language_server_work);
@@ -1301,7 +1302,7 @@ enum SelectionHistoryMode {
 
 #[derive(Clone, PartialEq, Eq, Hash)]
 struct HoveredCursor {
-    replica_id: u16,
+    replica_id: ReplicaId,
     selection_id: usize,
 }
 
@@ -2681,6 +2682,15 @@ impl Editor {
         cx: &mut Context<Workspace>,
     ) {
         Self::new_file_in_direction(workspace, SplitDirection::horizontal(cx), window, cx)
+    }
+
+    fn new_file_split(
+        workspace: &mut Workspace,
+        action: &workspace::NewFileSplit,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) {
+        Self::new_file_in_direction(workspace, action.0, window, cx)
     }
 
     fn new_file_in_direction(
@@ -5288,8 +5298,8 @@ impl Editor {
                 {
                     self.splice_inlays(&to_remove, to_insert, cx);
                 }
-                self.display_map.update(cx, |display_map, _| {
-                    display_map.remove_inlays_for_excerpts(&excerpts_removed)
+                self.display_map.update(cx, |display_map, cx| {
+                    display_map.remove_inlays_for_excerpts(&excerpts_removed, cx)
                 });
                 return;
             }
@@ -6772,7 +6782,7 @@ impl Editor {
         if let Some(state) = &mut self.inline_blame_popover {
             state.hide_task.take();
         } else {
-            let blame_popover_delay = EditorSettings::get_global(cx).hover_popover_delay;
+            let blame_popover_delay = EditorSettings::get_global(cx).hover_popover_delay.0;
             let blame_entry = blame_entry.clone();
             let show_task = cx.spawn(async move |editor, cx| {
                 if !ignore_timeout {
@@ -6863,7 +6873,7 @@ impl Editor {
             return None;
         }
 
-        let debounce = EditorSettings::get_global(cx).lsp_highlight_debounce;
+        let debounce = EditorSettings::get_global(cx).lsp_highlight_debounce.0;
         self.document_highlights_task = Some(cx.spawn(async move |this, cx| {
             cx.background_executor()
                 .timer(Duration::from_millis(debounce))
@@ -18782,6 +18792,17 @@ impl Editor {
         });
     }
 
+    pub fn collapse_all_diff_hunks(
+        &mut self,
+        _: &CollapseAllDiffHunks,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.buffer.update(cx, |buffer, cx| {
+            buffer.collapse_diff_hunks(vec![Anchor::min()..Anchor::max()], cx)
+        });
+    }
+
     pub fn toggle_selected_diff_hunks(
         &mut self,
         _: &ToggleSelectedDiffHunks,
@@ -21030,6 +21051,7 @@ impl Editor {
             }
             multi_buffer::Event::ExcerptsExpanded { ids } => {
                 self.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
+                self.refresh_document_highlights(cx);
                 cx.emit(EditorEvent::ExcerptsExpanded { ids: ids.clone() })
             }
             multi_buffer::Event::Reparsed(buffer_id) => {
@@ -23482,7 +23504,7 @@ impl EditorSnapshot {
         self.buffer_snapshot()
             .selections_in_range(range, false)
             .filter_map(move |(replica_id, line_mode, cursor_shape, selection)| {
-                if replica_id == AGENT_REPLICA_ID {
+                if replica_id == ReplicaId::AGENT {
                     Some(RemoteSelection {
                         replica_id,
                         selection,

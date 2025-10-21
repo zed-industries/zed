@@ -151,7 +151,7 @@ dependencies = [
  "context_server",
  "ctor",
  "db",
- "derive_more",
+ "derive_more 0.99.20",
  "editor",
  "env_logger 0.11.8",
  "fs",
@@ -210,16 +210,30 @@ dependencies = [
 
 [[package]]
 name = "agent-client-protocol"
-version = "0.4.3"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3aaa2bd05a2401887945f8bfd70026e90bc3cf96c62ab9eba2779835bf21dc60"
+checksum = "2f655394a107cd601bd2e5375c2d909ea83adc65678a0e0e8d77613d3c848a7d"
 dependencies = [
+ "agent-client-protocol-schema",
  "anyhow",
  "async-broadcast",
  "async-trait",
+ "derive_more 2.0.1",
  "futures 0.3.31",
  "log",
  "parking_lot",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "agent-client-protocol-schema"
+version = "0.4.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "61be4454304d7df1a5b44c4ae55e707ffe72eac4dfb1ef8762510ce8d8f6d924"
+dependencies = [
+ "anyhow",
+ "derive_more 2.0.1",
  "schemars 1.0.4",
  "serde",
  "serde_json",
@@ -842,7 +856,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "collections",
- "derive_more",
+ "derive_more 0.99.20",
  "extension",
  "futures 0.3.31",
  "gpui",
@@ -2064,7 +2078,7 @@ dependencies = [
  "bitflags 2.9.4",
  "cexpr",
  "clang-sys",
- "itertools 0.11.0",
+ "itertools 0.12.1",
  "log",
  "prettyplease",
  "proc-macro2",
@@ -2084,7 +2098,7 @@ dependencies = [
  "bitflags 2.9.4",
  "cexpr",
  "clang-sys",
- "itertools 0.11.0",
+ "itertools 0.12.1",
  "log",
  "prettyplease",
  "proc-macro2",
@@ -3079,7 +3093,7 @@ dependencies = [
  "cloud_llm_client",
  "collections",
  "credentials_provider",
- "derive_more",
+ "derive_more 0.99.20",
  "feature_flags",
  "fs",
  "futures 0.3.31",
@@ -3539,7 +3553,7 @@ name = "command_palette_hooks"
 version = "0.1.0"
 dependencies = [
  "collections",
- "derive_more",
+ "derive_more 0.99.20",
  "gpui",
  "workspace",
 ]
@@ -4857,6 +4871,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "derive_more"
+version = "2.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "093242cf7570c207c83073cf82f79706fe7b8317e98620a47d5be7c3d8497678"
+dependencies = [
+ "derive_more-impl",
+]
+
+[[package]]
+name = "derive_more-impl"
+version = "2.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bda628edc44c4bb645fbe0f758797143e4e07926f7ebf4e9bdfbd3d2ce621df3"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.106",
+ "unicode-xid",
+]
+
+[[package]]
 name = "derive_refineable"
 version = "0.1.0"
 dependencies = [
@@ -5002,7 +5037,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users 0.5.2",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5606,7 +5641,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -6342,6 +6377,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "fs_benchmarks"
+version = "0.1.0"
+dependencies = [
+ "fs",
+ "gpui",
+]
+
+[[package]]
 name = "fs_extra"
 version = "1.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6875,7 +6918,7 @@ dependencies = [
  "askpass",
  "async-trait",
  "collections",
- "derive_more",
+ "derive_more 0.99.20",
  "futures 0.3.31",
  "git2",
  "gpui",
@@ -7141,7 +7184,7 @@ dependencies = [
  "core-video",
  "cosmic-text",
  "ctor",
- "derive_more",
+ "derive_more 0.99.20",
  "embed-resource",
  "env_logger 0.11.8",
  "etagere",
@@ -7640,7 +7683,7 @@ dependencies = [
  "async-fs",
  "async-tar",
  "bytes 1.10.1",
- "derive_more",
+ "derive_more 0.99.20",
  "futures 0.3.31",
  "http 1.3.1",
  "http-body 1.0.1",
@@ -10294,7 +10337,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -12848,6 +12891,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "project_benchmarks"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "client",
+ "futures 0.3.31",
+ "gpui",
+ "http_client",
+ "language",
+ "node_runtime",
+ "project",
+ "settings",
+ "watch",
+]
+
+[[package]]
 name = "project_panel"
 version = "0.1.0"
 dependencies = [
@@ -13283,7 +13343,7 @@ dependencies = [
  "once_cell",
  "socket2 0.6.1",
  "tracing",
- "windows-sys 0.59.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -14366,7 +14426,7 @@ dependencies = [
  "errno 0.3.14",
  "libc",
  "linux-raw-sys 0.11.0",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -15151,7 +15211,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "collections",
- "derive_more",
+ "derive_more 0.99.20",
  "ec4rs",
  "fs",
  "futures 0.3.31",
@@ -16816,7 +16876,7 @@ dependencies = [
  "getrandom 0.3.4",
  "once_cell",
  "rustix 1.1.2",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -16944,7 +17004,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "collections",
- "derive_more",
+ "derive_more 0.99.20",
  "fs",
  "futures 0.3.31",
  "gpui",
@@ -19498,7 +19558,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -20545,6 +20605,16 @@ dependencies = [
  "text",
  "util",
  "zlog",
+]
+
+[[package]]
+name = "worktree_benchmarks"
+version = "0.1.0"
+dependencies = [
+ "fs",
+ "gpui",
+ "settings",
+ "worktree",
 ]
 
 [[package]]

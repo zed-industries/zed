@@ -302,6 +302,12 @@ pub struct MoveItemToPaneInDirection {
     pub clone: bool,
 }
 
+/// Creates a new file in a split of the desired direction.
+#[derive(Clone, Deserialize, PartialEq, JsonSchema, Action)]
+#[action(namespace = workspace)]
+#[serde(deny_unknown_fields)]
+pub struct NewFileSplit(pub SplitDirection);
+
 fn default_right() -> SplitDirection {
     SplitDirection::Right
 }
@@ -6369,6 +6375,24 @@ impl Render for Workspace {
             }
         }
 
+        if self.left_dock.read(cx).is_open() {
+            if let Some(active_panel) = self.left_dock.read(cx).active_panel() {
+                context.set("left_dock", active_panel.panel_key());
+            }
+        }
+
+        if self.right_dock.read(cx).is_open() {
+            if let Some(active_panel) = self.right_dock.read(cx).active_panel() {
+                context.set("right_dock", active_panel.panel_key());
+            }
+        }
+
+        if self.bottom_dock.read(cx).is_open() {
+            if let Some(active_panel) = self.bottom_dock.read(cx).active_panel() {
+                context.set("bottom_dock", active_panel.panel_key());
+            }
+        }
+
         let centered_layout = self.centered_layout
             && self.center.panes().len() == 1
             && self.active_item(cx).is_some();
@@ -8801,8 +8825,9 @@ mod tests {
         item.update(cx, |item, cx| {
             SettingsStore::update_global(cx, |settings, cx| {
                 settings.update_user_settings(cx, |settings| {
-                    settings.workspace.autosave =
-                        Some(AutosaveSetting::AfterDelay { milliseconds: 500 });
+                    settings.workspace.autosave = Some(AutosaveSetting::AfterDelay {
+                        milliseconds: 500.into(),
+                    });
                 })
             });
             item.is_dirty = true;

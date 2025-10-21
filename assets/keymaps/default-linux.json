@@ -1080,7 +1080,8 @@
   {
     "context": "StashList || (StashList > Picker > Editor)",
     "bindings": {
-      "ctrl-shift-backspace": "stash_picker::DropStashItem"
+      "ctrl-shift-backspace": "stash_picker::DropStashItem",
+      "ctrl-shift-v": "stash_picker::ShowStashItem"
     }
   },
   {
@@ -1267,11 +1268,21 @@
     }
   },
   {
+    "context": "StashDiff > Editor",
+    "bindings": {
+      "ctrl-space": "git::ApplyCurrentStash",
+      "ctrl-shift-space": "git::PopCurrentStash",
+      "ctrl-shift-backspace": "git::DropCurrentStash"
+    }
+  },
+  {
     "context": "SettingsWindow > NavigationMenu",
     "use_key_equivalents": true,
     "bindings": {
       "up": "settings_editor::FocusPreviousNavEntry",
+      "shift-tab": "settings_editor::FocusPreviousNavEntry",
       "down": "settings_editor::FocusNextNavEntry",
+      "tab": "settings_editor::FocusNextNavEntry",
       "right": "settings_editor::ExpandNavEntry",
       "left": "settings_editor::CollapseNavEntry",
       "pageup": "settings_editor::FocusPreviousRootNavEntry",

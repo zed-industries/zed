@@ -666,7 +666,7 @@ impl MultiBuffer {
             paths_by_excerpt: Default::default(),
             buffer_changed_since_sync: Default::default(),
             history: History {
-                next_transaction_id: clock::Lamport::default(),
+                next_transaction_id: clock::Lamport::MIN,
                 undo_stack: Vec::new(),
                 redo_stack: Vec::new(),
                 transaction_depth: 0,
@@ -6140,9 +6140,8 @@ impl MultiBufferSnapshot {
         } else if id == ExcerptId::max() {
             Locator::max_ref()
         } else {
-            let mut cursor = self.excerpt_ids.cursor::<ExcerptId>(());
-            cursor.seek(&id, Bias::Left);
-            if let Some(entry) = cursor.item()
+            let (_, _, item) = self.excerpt_ids.find::<ExcerptId, _>((), &id, Bias::Left);
+            if let Some(entry) = item
                 && entry.id == id
             {
                 return &entry.locator;

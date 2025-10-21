@@ -25,6 +25,7 @@ use feature_flags::{FeatureFlagAppExt, PanicFeatureFlag};
 use fs::Fs;
 use futures::future::Either;
 use futures::{StreamExt, channel::mpsc, select_biased};
+use git_ui::commit_view::CommitViewToolbar;
 use git_ui::git_panel::GitPanel;
 use git_ui::project_diff::ProjectDiffToolbar;
 use gpui::{
@@ -416,6 +417,8 @@ pub fn initialize_workspace(
 
         let cursor_position =
             cx.new(|_| go_to_line::cursor_position::CursorPosition::new(workspace));
+        let line_ending_indicator =
+            cx.new(|_| line_ending_selector::LineEndingIndicator::default());
         workspace.status_bar().update(cx, |status_bar, cx| {
             status_bar.add_left_item(search_button, window, cx);
             status_bar.add_left_item(lsp_button, window, cx);
@@ -424,6 +427,7 @@ pub fn initialize_workspace(
             status_bar.add_right_item(edit_prediction_button, window, cx);
             status_bar.add_right_item(active_buffer_language, window, cx);
             status_bar.add_right_item(active_toolchain_language, window, cx);
+            status_bar.add_right_item(line_ending_indicator, window, cx);
             status_bar.add_right_item(vim_mode_indicator, window, cx);
             status_bar.add_right_item(cursor_position, window, cx);
             status_bar.add_right_item(image_info, window, cx);
@@ -1049,6 +1053,8 @@ fn initialize_pane(
             toolbar.add_item(migration_banner, window, cx);
             let project_diff_toolbar = cx.new(|cx| ProjectDiffToolbar::new(workspace, cx));
             toolbar.add_item(project_diff_toolbar, window, cx);
+            let commit_view_toolbar = cx.new(|cx| CommitViewToolbar::new(workspace, cx));
+            toolbar.add_item(commit_view_toolbar, window, cx);
             let agent_diff_toolbar = cx.new(AgentDiffToolbar::new);
             toolbar.add_item(agent_diff_toolbar, window, cx);
             let basedpyright_banner = cx.new(|cx| BasedPyrightBanner::new(workspace, cx));
@@ -4563,6 +4569,7 @@ mod tests {
                     | "workspace::ActivatePane"
                     | "workspace::MoveItemToPane"
                     | "workspace::MoveItemToPaneInDirection"
+                    | "workspace::NewFileSplit"
                     | "workspace::OpenTerminal"
                     | "workspace::SendKeystrokes"
                     | "agent::NewNativeAgentThreadFromSummary"
@@ -4665,7 +4672,7 @@ mod tests {
                 "keymap_editor",
                 "keystroke_input",
                 "language_selector",
-                "line_ending",
+                "line_ending_selector",
                 "lsp_tool",
                 "markdown",
                 "menu",

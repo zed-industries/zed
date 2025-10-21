@@ -811,7 +811,7 @@ impl<T: Item> ItemHandle for Entity<T> {
                             let autosave = item.workspace_settings(cx).autosave;
 
                             if let AutosaveSetting::AfterDelay { milliseconds } = autosave {
-                                let delay = Duration::from_millis(milliseconds);
+                                let delay = Duration::from_millis(milliseconds.0);
                                 let item = item.clone();
                                 pending_autosave.fire_new(
                                     delay,
