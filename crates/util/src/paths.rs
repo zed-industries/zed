@@ -4,6 +4,7 @@ use itertools::Itertools;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
+use std::error::Error;
 use std::fmt::{Display, Formatter};
 use std::mem;
 use std::path::StripPrefixError;
@@ -182,6 +183,31 @@ impl<T: AsRef<Path>> PathExt for T {
             Ok(shlex::try_quote(path_str)?.into_owned())
         }
     }
+}
+
+pub fn path_ends_with(base: &Path, suffix: &Path) -> bool {
+    strip_path_suffix(base, suffix).is_some()
+}
+
+pub fn strip_path_suffix<'a>(base: &'a Path, suffix: &Path) -> Option<&'a Path> {
+    if let Some(remainder) = base
+        .as_os_str()
+        .as_encoded_bytes()
+        .strip_suffix(suffix.as_os_str().as_encoded_bytes())
+    {
+        if remainder
+            .last()
+            .is_none_or(|last_byte| std::path::is_separator(*last_byte as char))
+        {
+            let os_str = unsafe {
+                OsStr::from_encoded_bytes_unchecked(
+                    &remainder[0..remainder.len().saturating_sub(1)],
+                )
+            };
+            return Some(Path::new(os_str));
+        }
+    }
+    None
 }
 
 /// In memory, this is identical to `Path`. On non-Windows conversions to this type are no-ops. On
@@ -401,6 +427,82 @@ pub fn is_absolute(path_like: &str, path_style: PathStyle) -> bool {
                         .is_some_and(|path| path.starts_with('/') || path.starts_with('\\')))
 }
 
+#[derive(Debug, PartialEq)]
+#[non_exhaustive]
+pub struct NormalizeError;
+
+impl Error for NormalizeError {}
+
+impl std::fmt::Display for NormalizeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("parent reference `..` points outside of base directory")
+    }
+}
+
+/// Copied from stdlib where it's unstable.
+///
+/// Normalize a path, including `..` without traversing the filesystem.
+///
+/// Returns an error if normalization would leave leading `..` components.
+///
+/// <div class="warning">
+///
+/// This function always resolves `..` to the "lexical" parent.
+/// That is "a/b/../c" will always resolve to `a/c` which can change the meaning of the path.
+/// In particular, `a/c` and `a/b/../c` are distinct on many systems because `b` may be a symbolic link, so its parent isn't `a`.
+///
+/// </div>
+///
+/// [`path::absolute`](absolute) is an alternative that preserves `..`.
+/// Or [`Path::canonicalize`] can be used to resolve any `..` by querying the filesystem.
+pub fn normalize_lexically(path: &Path) -> Result<PathBuf, NormalizeError> {
+    use std::path::Component;
+
+    let mut lexical = PathBuf::new();
+    let mut iter = path.components().peekable();
+
+    // Find the root, if any, and add it to the lexical path.
+    // Here we treat the Windows path "C:\" as a single "root" even though
+    // `components` splits it into two: (Prefix, RootDir).
+    let root = match iter.peek() {
+        Some(Component::ParentDir) => return Err(NormalizeError),
+        Some(p @ Component::RootDir) | Some(p @ Component::CurDir) => {
+            lexical.push(p);
+            iter.next();
+            lexical.as_os_str().len()
+        }
+        Some(Component::Prefix(prefix)) => {
+            lexical.push(prefix.as_os_str());
+            iter.next();
+            if let Some(p @ Component::RootDir) = iter.peek() {
+                lexical.push(p);
+                iter.next();
+            }
+            lexical.as_os_str().len()
+        }
+        None => return Ok(PathBuf::new()),
+        Some(Component::Normal(_)) => 0,
+    };
+
+    for component in iter {
+        match component {
+            Component::RootDir => unreachable!(),
+            Component::Prefix(_) => return Err(NormalizeError),
+            Component::CurDir => continue,
+            Component::ParentDir => {
+                // It's an error if ParentDir causes us to go above the "root".
+                if lexical.as_os_str().len() == root {
+                    return Err(NormalizeError);
+                } else {
+                    lexical.pop();
+                }
+            }
+            Component::Normal(path) => lexical.push(path),
+        }
+    }
+    Ok(lexical)
+}
+
 /// A delimiter to use in `path_query:row_number:column_number` strings parsing.
 pub const FILE_ROW_COLUMN_DELIMITER: char = ':';
 
@@ -456,7 +558,7 @@ impl PathWithPosition {
     /// # Examples
     ///
     /// ```
-    /// # use zed_util::paths::PathWithPosition;
+    /// # use util::paths::PathWithPosition;
     /// # use std::path::PathBuf;
     /// assert_eq!(PathWithPosition::parse_str("test_file"), PathWithPosition {
     ///     path: PathBuf::from("test_file"),
@@ -487,7 +589,7 @@ impl PathWithPosition {
     ///
     /// # Expected parsing results when encounter ill-formatted inputs.
     /// ```
-    /// # use zed_util::paths::PathWithPosition;
+    /// # use util::paths::PathWithPosition;
     /// # use std::path::PathBuf;
     /// assert_eq!(PathWithPosition::parse_str("test_file.rs:a"), PathWithPosition {
     ///     path: PathBuf::from("test_file.rs:a"),
@@ -1797,5 +1899,36 @@ mod tests {
         // Longer sample extension
         let path = Path::new("/a/b/c/long.app.tar.gz");
         assert_eq!(path.multiple_extensions(), Some("app.tar.gz".to_string()));
+    }
+
+    #[test]
+    fn test_strip_path_suffix() {
+        let base = Path::new("/a/b/c/file_name");
+        let suffix = Path::new("file_name");
+        assert_eq!(strip_path_suffix(base, suffix), Some(Path::new("/a/b/c")));
+
+        let base = Path::new("/a/b/c/file_name.tsx");
+        let suffix = Path::new("file_name.tsx");
+        assert_eq!(strip_path_suffix(base, suffix), Some(Path::new("/a/b/c")));
+
+        let base = Path::new("/a/b/c/file_name.stories.tsx");
+        let suffix = Path::new("c/file_name.stories.tsx");
+        assert_eq!(strip_path_suffix(base, suffix), Some(Path::new("/a/b")));
+
+        let base = Path::new("/a/b/c/long.app.tar.gz");
+        let suffix = Path::new("b/c/long.app.tar.gz");
+        assert_eq!(strip_path_suffix(base, suffix), Some(Path::new("/a")));
+
+        let base = Path::new("/a/b/c/long.app.tar.gz");
+        let suffix = Path::new("/a/b/c/long.app.tar.gz");
+        assert_eq!(strip_path_suffix(base, suffix), Some(Path::new("")));
+
+        let base = Path::new("/a/b/c/long.app.tar.gz");
+        let suffix = Path::new("/a/b/c/no_match.app.tar.gz");
+        assert_eq!(strip_path_suffix(base, suffix), None);
+
+        let base = Path::new("/a/b/c/long.app.tar.gz");
+        let suffix = Path::new("app.tar.gz");
+        assert_eq!(strip_path_suffix(base, suffix), None);
     }
 }

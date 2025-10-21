@@ -229,8 +229,11 @@ impl LspLogView {
                         log_view.editor.update(cx, |editor, cx| {
                             editor.set_read_only(false);
                             let last_offset = editor.buffer().read(cx).len(cx);
-                            let newest_cursor_is_at_end =
-                                editor.selections.newest::<usize>(cx).start >= last_offset;
+                            let newest_cursor_is_at_end = editor
+                                .selections
+                                .newest::<usize>(&editor.display_snapshot(cx))
+                                .start
+                                >= last_offset;
                             editor.edit(
                                 vec![
                                     (last_offset..last_offset, text.as_str()),
@@ -606,7 +609,7 @@ impl LspLogView {
             });
 
             server
-                .notify::<SetTrace>(&SetTraceParams { value: level })
+                .notify::<SetTrace>(SetTraceParams { value: level })
                 .ok();
         }
     }

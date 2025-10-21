@@ -43,6 +43,8 @@ use workspace::{
 };
 use zed_actions::ToggleFocus;
 
+const DEBUG_PANEL_KEY: &str = "DebugPanel";
+
 pub struct DebugPanel {
     size: Pixels,
     active_session: Option<Entity<DebugSession>>,
@@ -268,12 +270,12 @@ impl DebugPanel {
 
             async move |_, cx| {
                 if let Err(error) = task.await {
-                    log::error!("{error}");
+                    log::error!("{error:#}");
                     session
                         .update(cx, |session, cx| {
                             session
                                 .console_output(cx)
-                                .unbounded_send(format!("error: {}", error))
+                                .unbounded_send(format!("error: {:#}", error))
                                 .ok();
                             session.shutdown(cx)
                         })?
@@ -1412,6 +1414,10 @@ impl Focusable for DebugPanel {
 impl Panel for DebugPanel {
     fn persistent_name() -> &'static str {
         "DebugPanel"
+    }
+
+    fn panel_key() -> &'static str {
+        DEBUG_PANEL_KEY
     }
 
     fn position(&self, _window: &Window, cx: &App) -> DockPosition {

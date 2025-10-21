@@ -48,7 +48,6 @@ use async_task::Runnable;
 use futures::channel::oneshot;
 use image::codecs::gif::GifDecoder;
 use image::{AnimationDecoder as _, Frame};
-use parking::Unparker;
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use schemars::JsonSchema;
 use seahash::SeaHasher;
@@ -290,10 +289,13 @@ pub trait PlatformDisplay: Send + Sync + Debug {
 
     /// Get the default bounds for this display to place a window
     fn default_bounds(&self) -> Bounds<Pixels> {
-        let center = self.bounds().center();
-        let offset = DEFAULT_WINDOW_SIZE / 2.0;
+        let bounds = self.bounds();
+        let center = bounds.center();
+        let clipped_window_size = DEFAULT_WINDOW_SIZE.min(&bounds.size);
+
+        let offset = clipped_window_size / 2.0;
         let origin = point(center.x - offset.width, center.y - offset.height);
-        Bounds::new(origin, DEFAULT_WINDOW_SIZE)
+        Bounds::new(origin, clipped_window_size)
     }
 }
 
@@ -348,8 +350,6 @@ impl Debug for DisplayId {
         write!(f, "DisplayId({})", self.0)
     }
 }
-
-unsafe impl Send for DisplayId {}
 
 /// Which part of the window to resize
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -564,8 +564,6 @@ pub trait PlatformDispatcher: Send + Sync {
     fn dispatch(&self, runnable: Runnable, label: Option<TaskLabel>);
     fn dispatch_on_main_thread(&self, runnable: Runnable);
     fn dispatch_after(&self, duration: Duration, runnable: Runnable);
-    fn park(&self, timeout: Option<Duration>) -> bool;
-    fn unparker(&self) -> Unparker;
     fn now(&self) -> Instant {
         Instant::now()
     }
@@ -1268,6 +1266,9 @@ pub enum WindowKind {
     /// A window that appears above all other windows, usually used for alerts or popups
     /// use sparingly!
     PopUp,
+
+    /// A floating window that appears on top of its parent window
+    Floating,
 }
 
 /// The appearance of the window, as defined by the operating system.

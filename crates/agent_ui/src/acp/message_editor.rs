@@ -3,12 +3,11 @@ use crate::{
     context_picker::{ContextPickerAction, fetch_context_picker::fetch_url_content},
 };
 use acp_thread::{MentionUri, selection_name};
+use agent::{HistoryStore, outline};
 use agent_client_protocol as acp;
 use agent_servers::{AgentServer, AgentServerDelegate};
-use agent2::HistoryStore;
 use anyhow::{Result, anyhow};
 use assistant_slash_commands::codeblock_fence_for_path;
-use assistant_tool::outline;
 use collections::{HashMap, HashSet};
 use editor::{
     Addon, Anchor, AnchorRangeExt, ContextMenuOptions, ContextMenuPlacement, Editor, EditorElement,
@@ -141,7 +140,9 @@ impl MessageEditor {
 
         subscriptions.push(cx.subscribe_in(&editor, window, {
             move |this, editor, event, window, cx| {
-                if let EditorEvent::Edited { .. } = event {
+                if let EditorEvent::Edited { .. } = event
+                    && !editor.read(cx).read_only(cx)
+                {
                     let snapshot = editor.update(cx, |editor, cx| {
                         let new_hints = this
                             .command_hint(editor.buffer(), cx)
@@ -228,7 +229,7 @@ impl MessageEditor {
 
     pub fn insert_thread_summary(
         &mut self,
-        thread: agent2::DbThreadMetadata,
+        thread: agent::DbThreadMetadata,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -290,15 +291,10 @@ impl MessageEditor {
         let snapshot = self
             .editor
             .update(cx, |editor, cx| editor.snapshot(window, cx));
-        let Some((excerpt_id, _, _)) = snapshot.buffer_snapshot().as_singleton() else {
+        let Some(start_anchor) = snapshot.buffer_snapshot().as_singleton_anchor(start) else {
             return Task::ready(());
         };
-        let Some(start_anchor) = snapshot
-            .buffer_snapshot()
-            .anchor_in_excerpt(*excerpt_id, start)
-        else {
-            return Task::ready(());
-        };
+        let excerpt_id = start_anchor.excerpt_id;
         let end_anchor = snapshot
             .buffer_snapshot()
             .anchor_before(start_anchor.to_offset(&snapshot.buffer_snapshot()) + content_len + 1);
@@ -330,7 +326,7 @@ impl MessageEditor {
                 })
                 .shared();
             insert_crease_for_mention(
-                *excerpt_id,
+                excerpt_id,
                 start,
                 content_len,
                 mention_uri.name().into(),
@@ -342,7 +338,7 @@ impl MessageEditor {
             )
         } else {
             insert_crease_for_mention(
-                *excerpt_id,
+                excerpt_id,
                 start,
                 content_len,
                 crease_text,
@@ -544,10 +540,7 @@ impl MessageEditor {
         cx: &mut Context<Self>,
     ) {
         let snapshot = self.editor.read(cx).buffer().read(cx).snapshot(cx);
-        let Some((&excerpt_id, _, _)) = snapshot.as_singleton() else {
-            return;
-        };
-        let Some(start) = snapshot.anchor_in_excerpt(excerpt_id, source_range.start) else {
+        let Some(start) = snapshot.as_singleton_anchor(source_range.start) else {
             return;
         };
 
@@ -605,7 +598,7 @@ impl MessageEditor {
         id: acp::SessionId,
         cx: &mut Context<Self>,
     ) -> Task<Result<Mention>> {
-        let server = Rc::new(agent2::NativeAgentServer::new(
+        let server = Rc::new(agent::NativeAgentServer::new(
             self.project.read(cx).fs().clone(),
             self.history_store.clone(),
         ));
@@ -618,7 +611,7 @@ impl MessageEditor {
         let connection = server.connect(None, delegate, cx);
         cx.spawn(async move |_, cx| {
             let (agent, _) = connection.await?;
-            let agent = agent.downcast::<agent2::NativeAgentConnection>().unwrap();
+            let agent = agent.downcast::<agent::NativeAgentConnection>().unwrap();
             let summary = agent
                 .0
                 .update(cx, |agent, cx| agent.thread_summary(id, cx))?
@@ -635,8 +628,8 @@ impl MessageEditor {
         path: PathBuf,
         cx: &mut Context<Self>,
     ) -> Task<Result<Mention>> {
-        let context = self.history_store.update(cx, |text_thread_store, cx| {
-            text_thread_store.load_text_thread(path.as_path().into(), cx)
+        let context = self.history_store.update(cx, |store, cx| {
+            store.load_text_thread(path.as_path().into(), cx)
         });
         cx.spawn(async move |_, cx| {
             let context = context.await?;
@@ -823,11 +816,18 @@ impl MessageEditor {
         });
     }
 
-    fn send(&mut self, _: &Chat, _: &mut Window, cx: &mut Context<Self>) {
+    pub fn send(&mut self, cx: &mut Context<Self>) {
         if self.is_empty(cx) {
             return;
         }
+        self.editor.update(cx, |editor, cx| {
+            editor.clear_inlay_hints(cx);
+        });
         cx.emit(MessageEditorEvent::Send)
+    }
+
+    fn chat(&mut self, _: &Chat, _: &mut Window, cx: &mut Context<Self>) {
+        self.send(cx);
     }
 
     fn cancel(&mut self, _: &editor::actions::Cancel, _: &mut Window, cx: &mut Context<Self>) {
@@ -1030,6 +1030,7 @@ impl MessageEditor {
         ) else {
             return;
         };
+
         self.editor.update(cx, |message_editor, cx| {
             message_editor.edit([(cursor_anchor..cursor_anchor, completion.new_text)], cx);
         });
@@ -1287,7 +1288,7 @@ impl Render for MessageEditor {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .key_context("MessageEditor")
-            .on_action(cx.listener(Self::send))
+            .on_action(cx.listener(Self::chat))
             .on_action(cx.listener(Self::cancel))
             .capture_action(cx.listener(Self::paste))
             .flex_1()
@@ -1587,10 +1588,9 @@ mod tests {
     use std::{cell::RefCell, ops::Range, path::Path, rc::Rc, sync::Arc};
 
     use acp_thread::MentionUri;
+    use agent::{HistoryStore, outline};
     use agent_client_protocol as acp;
-    use agent2::HistoryStore;
     use assistant_context::ContextStore;
-    use assistant_tool::outline;
     use editor::{AnchorRangeExt as _, Editor, EditorMode};
     use fs::FakeFs;
     use futures::StreamExt as _;
@@ -1684,13 +1684,10 @@ mod tests {
 
         editor.update_in(cx, |editor, window, cx| {
             let snapshot = editor.buffer().read(cx).snapshot(cx);
-            let start = snapshot
-                .anchor_in_excerpt(excerpt_id, completion.replace_range.start)
+            let range = snapshot
+                .anchor_range_in_excerpt(excerpt_id, completion.replace_range)
                 .unwrap();
-            let end = snapshot
-                .anchor_in_excerpt(excerpt_id, completion.replace_range.end)
-                .unwrap();
-            editor.edit([(start..end, completion.new_text)], cx);
+            editor.edit([(range, completion.new_text)], cx);
             (completion.confirm.unwrap())(CompletionIntent::Complete, window, cx);
         });
 
@@ -2011,20 +2008,10 @@ mod tests {
         editor.update_in(&mut cx, |editor, _window, cx| {
             assert_eq!(editor.text(cx), "/say-hello ");
             assert_eq!(editor.display_text(cx), "/say-hello <name>");
-            assert!(editor.has_visible_completions_menu());
-
-            assert_eq!(
-                current_completion_labels_with_documentation(editor),
-                &[("say-hello".into(), "Say hello to whoever you want".into())]
-            );
+            assert!(!editor.has_visible_completions_menu());
         });
 
         cx.simulate_input("GPT5");
-
-        editor.update_in(&mut cx, |editor, window, cx| {
-            assert!(editor.has_visible_completions_menu());
-            editor.confirm_completion(&editor::actions::ConfirmCompletion::default(), window, cx);
-        });
 
         cx.run_until_parked();
 
@@ -2034,7 +2021,7 @@ mod tests {
             assert!(!editor.has_visible_completions_menu());
 
             // Delete argument
-            for _ in 0..4 {
+            for _ in 0..5 {
                 editor.backspace(&editor::actions::Backspace, window, cx);
             }
         });
@@ -2042,12 +2029,11 @@ mod tests {
         cx.run_until_parked();
 
         editor.update_in(&mut cx, |editor, window, cx| {
-            assert_eq!(editor.text(cx), "/say-hello ");
+            assert_eq!(editor.text(cx), "/say-hello");
             // Hint is visible because argument was deleted
             assert_eq!(editor.display_text(cx), "/say-hello <name>");
 
             // Delete last command letter
-            editor.backspace(&editor::actions::Backspace, window, cx);
             editor.backspace(&editor::actions::Backspace, window, cx);
         });
 

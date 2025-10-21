@@ -403,13 +403,7 @@ impl Default for TextStyle {
         TextStyle {
             color: black(),
             // todo(linux) make this configurable or choose better default
-            font_family: if cfg!(any(target_os = "linux", target_os = "freebsd")) {
-                "FreeMono".into()
-            } else if cfg!(target_os = "windows") {
-                "Segoe UI".into()
-            } else {
-                "Helvetica".into()
-            },
+            font_family: ".SystemUIFont".into(),
             font_features: FontFeatures::default(),
             font_fallbacks: None,
             font_size: rems(1.).into(),

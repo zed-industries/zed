@@ -89,7 +89,7 @@ impl Render for ModeIndicator {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let vim = self.vim();
         let Some(vim) = vim else {
-            return div().into_any();
+            return div().hidden().into_any_element();
         };
 
         let vim_readable = vim.read(cx);

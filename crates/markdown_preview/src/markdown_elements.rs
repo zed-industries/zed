@@ -1,5 +1,5 @@
 use gpui::{
-    DefiniteLength, FontStyle, FontWeight, HighlightStyle, Hsla, SharedString, StrikethroughStyle,
+    DefiniteLength, FontStyle, FontWeight, HighlightStyle, SharedString, StrikethroughStyle,
     UnderlineStyle, px,
 };
 use language::HighlightId;
@@ -155,7 +155,7 @@ pub struct ParsedMarkdownText {
     /// Where the text is located in the source Markdown document.
     pub source_range: Range<usize>,
     /// The text content stripped of any formatting symbols.
-    pub contents: String,
+    pub contents: SharedString,
     /// The list of highlights contained in the Markdown document.
     pub highlights: Vec<(Range<usize>, MarkdownHighlight)>,
     /// The regions of the various ranges in the Markdown document.
@@ -175,11 +175,7 @@ pub enum MarkdownHighlight {
 
 impl MarkdownHighlight {
     /// Converts this [`MarkdownHighlight`] to a [`HighlightStyle`].
-    pub fn to_highlight_style(
-        &self,
-        theme: &theme::SyntaxTheme,
-        link_color: Hsla,
-    ) -> Option<HighlightStyle> {
+    pub fn to_highlight_style(&self, theme: &theme::SyntaxTheme) -> Option<HighlightStyle> {
         match self {
             MarkdownHighlight::Style(style) => {
                 let mut highlight = HighlightStyle::default();
@@ -209,10 +205,8 @@ impl MarkdownHighlight {
                 if style.link {
                     highlight.underline = Some(UnderlineStyle {
                         thickness: px(1.),
-                        color: Some(link_color),
                         ..Default::default()
                     });
-                    highlight.color = Some(link_color);
                 }
 
                 Some(highlight)

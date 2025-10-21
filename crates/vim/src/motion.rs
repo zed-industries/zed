@@ -1525,29 +1525,6 @@ fn wrapping_right_single(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayP
     }
 }
 
-/// Given a point, returns the start of the buffer row that is a given number of
-/// buffer rows away from the current position.
-///
-/// This moves by buffer rows instead of display rows, a distinction that is
-/// important when soft wrapping is enabled.
-pub(crate) fn start_of_relative_buffer_row(
-    map: &DisplaySnapshot,
-    point: DisplayPoint,
-    times: isize,
-) -> DisplayPoint {
-    let start = map.display_point_to_fold_point(point, Bias::Left);
-    let target = start.row() as isize + times;
-    let new_row = (target.max(0) as u32).min(map.fold_snapshot().max_point().row());
-
-    map.clip_point(
-        map.fold_point_to_display_point(
-            map.fold_snapshot()
-                .clip_point(FoldPoint::new(new_row, 0), Bias::Right),
-        ),
-        Bias::Right,
-    )
-}
-
 fn up_down_buffer_rows(
     map: &DisplaySnapshot,
     mut point: DisplayPoint,
@@ -2127,7 +2104,7 @@ pub(crate) fn end_of_line(
     times: usize,
 ) -> DisplayPoint {
     if times > 1 {
-        point = start_of_relative_buffer_row(map, point, times as isize - 1);
+        point = map.start_of_relative_buffer_row(point, times as isize - 1);
     }
     if display_lines {
         map.clip_point(
@@ -2388,6 +2365,7 @@ fn matching(map: &DisplaySnapshot, display_point: DisplayPoint) -> DisplayPoint 
     let display_point = map.clip_at_line_end(display_point);
     let point = display_point.to_point(map);
     let offset = point.to_offset(&map.buffer_snapshot());
+    let snapshot = map.buffer_snapshot();
 
     // Ensure the range is contained by the current line.
     let mut line_end = map.next_line_boundary(point).0;
@@ -2395,10 +2373,19 @@ fn matching(map: &DisplaySnapshot, display_point: DisplayPoint) -> DisplayPoint 
         line_end = map.max_point().to_point(map);
     }
 
-    if let Some((opening_range, closing_range)) = map
-        .buffer_snapshot()
-        .innermost_enclosing_bracket_ranges(offset..offset, None)
-    {
+    // Attempt to find the smallest enclosing bracket range that also contains
+    // the offset, which only happens if the cursor is currently in a bracket.
+    let range_filter = |_buffer: &language::BufferSnapshot,
+                        opening_range: Range<usize>,
+                        closing_range: Range<usize>| {
+        opening_range.contains(&offset) || closing_range.contains(&offset)
+    };
+
+    let bracket_ranges = snapshot
+        .innermost_enclosing_bracket_ranges(offset..offset, Some(&range_filter))
+        .or_else(|| snapshot.innermost_enclosing_bracket_ranges(offset..offset, None));
+
+    if let Some((opening_range, closing_range)) = bracket_ranges {
         if opening_range.contains(&offset) {
             return closing_range.start.to_display_point(map);
         } else if closing_range.contains(&offset) {
@@ -2440,7 +2427,6 @@ fn matching(map: &DisplaySnapshot, display_point: DisplayPoint) -> DisplayPoint 
                 if distance < closest_distance {
                     closest_pair_destination = Some(close_range.start);
                     closest_distance = distance;
-                    continue;
                 }
             }
 
@@ -2451,7 +2437,6 @@ fn matching(map: &DisplaySnapshot, display_point: DisplayPoint) -> DisplayPoint 
                 if distance < closest_distance {
                     closest_pair_destination = Some(open_range.start);
                     closest_distance = distance;
-                    continue;
                 }
             }
 
@@ -2724,17 +2709,17 @@ fn sneak_backward(
 }
 
 fn next_line_start(map: &DisplaySnapshot, point: DisplayPoint, times: usize) -> DisplayPoint {
-    let correct_line = start_of_relative_buffer_row(map, point, times as isize);
+    let correct_line = map.start_of_relative_buffer_row(point, times as isize);
     first_non_whitespace(map, false, correct_line)
 }
 
 fn previous_line_start(map: &DisplaySnapshot, point: DisplayPoint, times: usize) -> DisplayPoint {
-    let correct_line = start_of_relative_buffer_row(map, point, -(times as isize));
+    let correct_line = map.start_of_relative_buffer_row(point, -(times as isize));
     first_non_whitespace(map, false, correct_line)
 }
 
 fn go_to_column(map: &DisplaySnapshot, point: DisplayPoint, times: usize) -> DisplayPoint {
-    let correct_line = start_of_relative_buffer_row(map, point, 0);
+    let correct_line = map.start_of_relative_buffer_row(point, 0);
     right(map, correct_line, times.saturating_sub(1))
 }
 
@@ -2744,7 +2729,7 @@ pub(crate) fn next_line_end(
     times: usize,
 ) -> DisplayPoint {
     if times > 1 {
-        point = start_of_relative_buffer_row(map, point, times as isize - 1);
+        point = map.start_of_relative_buffer_row(point, times as isize - 1);
     }
     end_of_line(map, false, point, 1)
 }
@@ -3389,6 +3374,22 @@ mod test {
                 </div>
             );
         }"});
+    }
+
+    #[gpui::test]
+    async fn test_matching_nested_brackets(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new_tsx(cx).await;
+
+        cx.set_shared_state(indoc! {r"<Button onClick=ˇ{() => {}}></Button>"})
+            .await;
+        cx.simulate_shared_keystrokes("%").await;
+        cx.shared_state()
+            .await
+            .assert_eq(indoc! {r"<Button onClick={() => {}ˇ}></Button>"});
+        cx.simulate_shared_keystrokes("%").await;
+        cx.shared_state()
+            .await
+            .assert_eq(indoc! {r"<Button onClick=ˇ{() => {}}></Button>"});
     }
 
     #[gpui::test]

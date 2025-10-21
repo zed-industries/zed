@@ -530,8 +530,18 @@ impl WindowsWindowInner {
         };
         let scale_factor = lock.scale_factor;
         let wheel_scroll_amount = match modifiers.shift {
-            true => lock.system_settings.mouse_wheel_settings.wheel_scroll_chars,
-            false => lock.system_settings.mouse_wheel_settings.wheel_scroll_lines,
+            true => {
+                self.system_settings
+                    .borrow()
+                    .mouse_wheel_settings
+                    .wheel_scroll_chars
+            }
+            false => {
+                self.system_settings
+                    .borrow()
+                    .mouse_wheel_settings
+                    .wheel_scroll_lines
+            }
         };
         drop(lock);
 
@@ -574,7 +584,11 @@ impl WindowsWindowInner {
             return Some(1);
         };
         let scale_factor = lock.scale_factor;
-        let wheel_scroll_chars = lock.system_settings.mouse_wheel_settings.wheel_scroll_chars;
+        let wheel_scroll_chars = self
+            .system_settings
+            .borrow()
+            .mouse_wheel_settings
+            .wheel_scroll_chars;
         drop(lock);
 
         let wheel_distance =
@@ -707,11 +721,8 @@ impl WindowsWindowInner {
         // used by Chrome. However, it may result in one row of pixels being obscured
         // in our client area. But as Chrome says, "there seems to be no better solution."
         if is_maximized
-            && let Some(ref taskbar_position) = self
-                .state
-                .borrow()
-                .system_settings
-                .auto_hide_taskbar_position
+            && let Some(ref taskbar_position) =
+                self.system_settings.borrow().auto_hide_taskbar_position
         {
             // For the auto-hide taskbar, adjust in by 1 pixel on taskbar edge,
             // so the window isn't treated as a "fullscreen app", which would cause
@@ -1101,9 +1112,11 @@ impl WindowsWindowInner {
         if wparam.0 != 0 {
             let mut lock = self.state.borrow_mut();
             let display = lock.display;
-            lock.system_settings.update(display, wparam.0);
             lock.click_state.system_update(wparam.0);
             lock.border_offset.update(handle).log_err();
+            // system settings may emit a window message which wants to take the refcell lock, so drop it
+            drop(lock);
+            self.system_settings.borrow_mut().update(display, wparam.0);
         } else {
             self.handle_system_theme_changed(handle, lparam)?;
         };
@@ -1294,10 +1307,10 @@ where
     F: FnOnce(Keystroke) -> PlatformInput,
 {
     let virtual_key = VIRTUAL_KEY(wparam.loword());
-    let mut modifiers = current_modifiers();
+    let modifiers = current_modifiers();
 
     match virtual_key {
-        VK_SHIFT | VK_CONTROL | VK_MENU | VK_LWIN | VK_RWIN => {
+        VK_SHIFT | VK_CONTROL | VK_MENU | VK_LMENU | VK_RMENU | VK_LWIN | VK_RWIN => {
             if state
                 .last_reported_modifiers
                 .is_some_and(|prev_modifiers| prev_modifiers == modifiers)
@@ -1447,13 +1460,25 @@ fn is_virtual_key_pressed(vkey: VIRTUAL_KEY) -> bool {
     unsafe { GetKeyState(vkey.0 as i32) < 0 }
 }
 
+fn keyboard_uses_altgr() -> bool {
+    use crate::platform::windows::keyboard::WindowsKeyboardLayout;
+    WindowsKeyboardLayout::new()
+        .map(|layout| layout.uses_altgr())
+        .unwrap_or(false)
+}
+
 #[inline]
 pub(crate) fn current_modifiers() -> Modifiers {
-    let altgr = is_virtual_key_pressed(VK_RMENU) && is_virtual_key_pressed(VK_LCONTROL);
+    let lmenu_pressed = is_virtual_key_pressed(VK_LMENU);
+    let rmenu_pressed = is_virtual_key_pressed(VK_RMENU);
+    let lcontrol_pressed = is_virtual_key_pressed(VK_LCONTROL);
+
+    // Only treat right Alt + left Ctrl as AltGr on keyboards that actually use it
+    let altgr = keyboard_uses_altgr() && rmenu_pressed && lcontrol_pressed;
 
     Modifiers {
         control: is_virtual_key_pressed(VK_CONTROL) && !altgr,
-        alt: is_virtual_key_pressed(VK_MENU) && !altgr,
+        alt: (lmenu_pressed || rmenu_pressed) && !altgr,
         shift: is_virtual_key_pressed(VK_SHIFT),
         platform: is_virtual_key_pressed(VK_LWIN) || is_virtual_key_pressed(VK_RWIN),
         function: false,

@@ -37,7 +37,7 @@ You can open the same modal by clicking the "plus" button at the top right of th
 
 For languages that don't provide preconfigured debug tasks (this includes C, C++, and some extension-supported languages), you can define debug configurations in the `.zed/debug.json` file in your project root. This file should be an array of configuration objects:
 
-```json
+```json [debug]
 [
   {
     "adapter": "CodeLLDB",
@@ -68,9 +68,11 @@ Compared to launching, attaching to an existing process might seem inferior, but
 
 ## Configuration
 
-While configuration fields are debug adapter-dependent, most adapters support the following fields:
+Zed requires the `adapter` and `label` fields for all debug tasks. In addition, Zed will use the `build` field to run any necessary setup steps before the debugger starts [(see below)](#build-tasks), and can accept a `tcp_connection` field to connect to an existing process.
 
-```json
+All other fields are provided by the debug adapter and can contain [task variables](./tasks.md#variables). Most adapters support `request`, `program`, and `cwd`:
+
+```json [debug]
 [
   {
     // The label for the debug configuration and used to identify the debug session inside the debug panel & new process modal
@@ -89,13 +91,13 @@ While configuration fields are debug adapter-dependent, most adapters support th
 ]
 ```
 
-All configuration fields support [task variables](./tasks.md#variables).
+Check your debug adapter's documentation for more information on the fields it supports.
 
 ### Build tasks
 
-Zed also allows embedding a Zed task in a `build` field that is run before the debugger starts. This is useful for setting up the environment or running any necessary setup steps before the debugger starts.
+Zed allows embedding a Zed task in the `build` field that is run before the debugger starts. This is useful for setting up the environment or running any necessary setup steps before the debugger starts.
 
-```json
+```json [debug]
 [
   {
     "label": "Build Binary",
@@ -112,7 +114,7 @@ Zed also allows embedding a Zed task in a `build` field that is run before the d
 
 Build tasks can also refer to the existing tasks by unsubstituted label:
 
-```json
+```json [debug]
 [
   {
     "label": "Build Binary",
@@ -169,7 +171,7 @@ The settings for the debugger are grouped under the `debugger` key in `settings.
 2. `right` - The debug panel will be docked to the right side of the UI.
 3. `bottom` - The debug panel will be docked to the bottom of the UI.
 
-```json
+```json [settings]
 "debugger": {
   "dock": "bottom"
 },
@@ -187,7 +189,7 @@ The settings for the debugger are grouped under the `debugger` key in `settings.
    The meaning of a statement is determined by the adapter and it may be considered equivalent to a line.
    For example 'for(int i = 0; i < 10; i++)' could be considered to have 3 statements 'int i = 0', 'i < 10', and 'i++'.
 
-```json
+```json [settings]
 {
   "debugger": {
     "stepping_granularity": "statement"
@@ -197,7 +199,7 @@ The settings for the debugger are grouped under the `debugger` key in `settings.
 
 2. Line - The step should allow the program to run until the current source line has executed.
 
-```json
+```json [settings]
 {
   "debugger": {
     "stepping_granularity": "line"
@@ -207,7 +209,7 @@ The settings for the debugger are grouped under the `debugger` key in `settings.
 
 3. Instruction - The step should allow one instruction to execute (e.g. one x86 instruction).
 
-```json
+```json [settings]
 {
   "debugger": {
     "stepping_granularity": "instruction"
@@ -225,7 +227,7 @@ The settings for the debugger are grouped under the `debugger` key in `settings.
 
 `boolean` values
 
-```json
+```json [settings]
 {
   "debugger": {
     "save_breakpoints": true
@@ -243,7 +245,7 @@ The settings for the debugger are grouped under the `debugger` key in `settings.
 
 `boolean` values
 
-```json
+```json [settings]
 {
   "debugger": {
     "show_button": true
@@ -261,7 +263,7 @@ The settings for the debugger are grouped under the `debugger` key in `settings.
 
 `integer` values
 
-```json
+```json [settings]
 {
   "debugger": {
     "timeout": 3000
@@ -277,7 +279,7 @@ The settings for the debugger are grouped under the `debugger` key in `settings.
 
 **Options**
 
-```json
+```json [settings]
 {
   "inlay_hints": {
     "show_value_hints": false
@@ -297,7 +299,7 @@ Inline value hints can also be toggled from the Editor Controls menu in the edit
 
 `boolean` values
 
-```json
+```json [settings]
 {
   "debugger": {
     "log_dap_communications": true
@@ -315,7 +317,7 @@ Inline value hints can also be toggled from the Editor Controls menu in the edit
 
 `boolean` values
 
-```json
+```json [settings]
 {
   "debugger": {
     "format_dap_log_messages": true
@@ -331,7 +333,7 @@ Inline value hints can also be toggled from the Editor Controls menu in the edit
 
 You can pass `binary`, `args`, or both. `binary` should be a path to a _debug adapter_ (like `lldb-dap`) not a _debugger_ (like `lldb` itself). The `args` setting overrides any arguments that Zed would otherwise pass to the adapter.
 
-```json
+```json [settings]
 {
   "dap": {
     "CodeLLDB": {

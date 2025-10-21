@@ -18,8 +18,8 @@ pub use crate::{
     proto,
 };
 use anyhow::{Context as _, Result};
+use clock::Lamport;
 pub use clock::ReplicaId;
-use clock::{AGENT_REPLICA_ID, Lamport};
 use collections::HashMap;
 use fs::MTime;
 use futures::channel::oneshot;
@@ -828,7 +828,11 @@ impl Buffer {
     /// Create a new buffer with the given base text.
     pub fn local<T: Into<String>>(base_text: T, cx: &Context<Self>) -> Self {
         Self::build(
-            TextBuffer::new(0, cx.entity_id().as_non_zero_u64().into(), base_text.into()),
+            TextBuffer::new(
+                ReplicaId::LOCAL,
+                cx.entity_id().as_non_zero_u64().into(),
+                base_text.into(),
+            ),
             None,
             Capability::ReadWrite,
         )
@@ -842,7 +846,7 @@ impl Buffer {
     ) -> Self {
         Self::build(
             TextBuffer::new_normalized(
-                0,
+                ReplicaId::LOCAL,
                 cx.entity_id().as_non_zero_u64().into(),
                 line_ending,
                 base_text_normalized,
@@ -991,10 +995,10 @@ impl Buffer {
             language: None,
             remote_selections: Default::default(),
             diagnostics: Default::default(),
-            diagnostics_timestamp: Default::default(),
+            diagnostics_timestamp: Lamport::MIN,
             completion_triggers: Default::default(),
             completion_triggers_per_language_server: Default::default(),
-            completion_triggers_timestamp: Default::default(),
+            completion_triggers_timestamp: Lamport::MIN,
             deferred_ops: OperationQueue::new(),
             has_conflict: false,
             change_bits: Default::default(),
@@ -1012,7 +1016,8 @@ impl Buffer {
         let buffer_id = entity_id.as_non_zero_u64().into();
         async move {
             let text =
-                TextBuffer::new_normalized(0, buffer_id, Default::default(), text).snapshot();
+                TextBuffer::new_normalized(ReplicaId::LOCAL, buffer_id, Default::default(), text)
+                    .snapshot();
             let mut syntax = SyntaxMap::new(&text).snapshot();
             if let Some(language) = language.clone() {
                 let language_registry = language_registry.clone();
@@ -1033,8 +1038,13 @@ impl Buffer {
     pub fn build_empty_snapshot(cx: &mut App) -> BufferSnapshot {
         let entity_id = cx.reserve_entity::<Self>().entity_id();
         let buffer_id = entity_id.as_non_zero_u64().into();
-        let text =
-            TextBuffer::new_normalized(0, buffer_id, Default::default(), Rope::new()).snapshot();
+        let text = TextBuffer::new_normalized(
+            ReplicaId::LOCAL,
+            buffer_id,
+            Default::default(),
+            Rope::new(),
+        )
+        .snapshot();
         let syntax = SyntaxMap::new(&text).snapshot();
         BufferSnapshot {
             text,
@@ -1056,7 +1066,9 @@ impl Buffer {
     ) -> BufferSnapshot {
         let entity_id = cx.reserve_entity::<Self>().entity_id();
         let buffer_id = entity_id.as_non_zero_u64().into();
-        let text = TextBuffer::new_normalized(0, buffer_id, Default::default(), text).snapshot();
+        let text =
+            TextBuffer::new_normalized(ReplicaId::LOCAL, buffer_id, Default::default(), text)
+                .snapshot();
         let mut syntax = SyntaxMap::new(&text).snapshot();
         if let Some(language) = language.clone() {
             syntax.reparse(&text, language_registry, language);
@@ -2260,7 +2272,7 @@ impl Buffer {
     ) {
         let lamport_timestamp = self.text.lamport_clock.tick();
         self.remote_selections.insert(
-            AGENT_REPLICA_ID,
+            ReplicaId::AGENT,
             SelectionSet {
                 selections,
                 lamport_timestamp,
@@ -2917,7 +2929,7 @@ impl Buffer {
 
             edits.push((range, new_text));
         }
-        log::info!("mutating buffer {} with {:?}", self.replica_id(), edits);
+        log::info!("mutating buffer {:?} with {:?}", self.replica_id(), edits);
         self.edit(edits, None, cx);
     }
 
