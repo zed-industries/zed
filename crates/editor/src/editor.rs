@@ -15446,6 +15446,79 @@ impl Editor {
         }
     }
 
+    pub fn move_to_end_of_larger_syntax_node(
+        &mut self,
+        _: &MoveToEndOfLargerSyntaxNode,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.hide_mouse_cursor(HideMouseCursorOrigin::MovementAction, cx);
+        self.move_cursors_after_syntax_nodes(window, cx);
+    }
+    
+    fn move_cursors_after_syntax_nodes(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let old_selections: Box<[_]> = self
+            .selections
+            .all::<usize>(&self.display_snapshot(cx))
+            .into();
+        if old_selections.is_empty() {
+            return;
+        }
+
+        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+        let buffer = self.buffer.read(cx).snapshot(cx);
+
+        let mut any_cursor_moved = false;
+        let new_selections = old_selections
+            .iter()
+            .map(|selection| {
+                if !selection.is_empty() {
+                    return selection.clone();
+                }
+
+                let selection_pos = selection.head();
+                let old_range = selection_pos..selection_pos;
+
+                let mut new_pos = selection_pos;
+                let mut search_range = old_range.clone();
+                while let Some((node, range)) = buffer.syntax_ancestor(search_range.clone()) {
+                    search_range = range.clone();
+                    if !node.is_named()
+                        || display_map.intersects_fold(range.start)
+                        || display_map.intersects_fold(range.end)
+                        || node.kind() == "string_content"
+                        // If cursor is already at the end of the syntax node, continue searching
+                        || range.end == selection_pos
+                    {
+                        continue;
+                    }
+
+                    new_pos = range.end;
+                    break;
+                }
+
+                any_cursor_moved |= new_pos != selection_pos;
+
+                Selection {
+                    id: selection.id,
+                    start: new_pos,
+                    end: new_pos,
+                    goal: SelectionGoal::None,
+                    reversed: false,
+                }
+            })
+            .collect::<Vec<_>>();
+
+        self.change_selections(Default::default(), window, cx, |s| {
+            s.select(new_selections);
+        });
+        self.request_autoscroll(Autoscroll::newest(), cx);
+    }
+
     pub fn unwrap_syntax_node(
         &mut self,
         _: &UnwrapSyntaxNode,
