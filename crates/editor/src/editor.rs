@@ -15446,6 +15446,16 @@ impl Editor {
         }
     }
 
+    pub fn move_to_start_of_larger_syntax_node(
+            &mut self,
+            _: &MoveToStartOfLargerSyntaxNode,
+            window: &mut Window,
+            cx: &mut Context<Self>,
+        ) {
+            self.hide_mouse_cursor(HideMouseCursorOrigin::MovementAction, cx);
+            self.move_cursors_after_syntax_nodes(window, cx, Direction::Prev);
+        }
+
     pub fn move_to_end_of_larger_syntax_node(
         &mut self,
         _: &MoveToEndOfLargerSyntaxNode,
@@ -15453,13 +15463,14 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         self.hide_mouse_cursor(HideMouseCursorOrigin::MovementAction, cx);
-        self.move_cursors_after_syntax_nodes(window, cx);
+        self.move_cursors_after_syntax_nodes(window, cx, Direction::Next);
     }
     
     fn move_cursors_after_syntax_nodes(
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
+        direction: Direction,
     ) {
         let old_selections: Box<[_]> = self
             .selections
@@ -15490,14 +15501,21 @@ impl Editor {
                     if !node.is_named()
                         || display_map.intersects_fold(range.start)
                         || display_map.intersects_fold(range.end)
+                        // Skip out of string contents
                         || node.kind() == "string_content"
-                        // If cursor is already at the end of the syntax node, continue searching
-                        || range.end == selection_pos
+                        // If cursor is already at the end of the syntax node, continue searching (when direction = next)
+                        || (direction == Direction::Next && range.end == selection_pos)
+                        // If cursror is already at the start of the syntax node, continue searching (when direction = prev)
+                        || (direction == Direction::Prev && range.start == selection_pos)
                     {
                         continue;
                     }
 
-                    new_pos = range.end;
+                    match direction {
+                        Direction::Next => new_pos = range.end,
+                        Direction::Prev => new_pos = range.start,
+                    }
+
                     break;
                 }
 
