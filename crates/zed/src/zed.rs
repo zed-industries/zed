@@ -178,7 +178,7 @@ pub fn init(cx: &mut App) {
             open_log_file(workspace, window, cx);
         });
     });
-    cx.on_action(|_: &workspace::RevealLogInFinder, cx| {
+    cx.on_action(|_: &workspace::RevealLogInFileManager, cx| {
         cx.reveal_path(paths::log_file().as_path());
     });
     cx.on_action(|_: &zed_actions::OpenLicenses, cx| {

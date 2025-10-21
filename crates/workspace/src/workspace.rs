@@ -7017,7 +7017,7 @@ actions!(
         /// Opens the Zed log file.
         OpenLog,
         /// Reveals the Zed log file in the system file manager.
-        RevealLogInFinder
+        RevealLogInFileManager
     ]
 );
 
