@@ -720,7 +720,7 @@ impl Item for ComponentPreview {
         _workspace_id: Option<WorkspaceId>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Option<gpui::Entity<Self>>
+    ) -> Task<Option<gpui::Entity<Self>>>
     where
         Self: Sized,
     {
@@ -742,13 +742,13 @@ impl Item for ComponentPreview {
             cx,
         );
 
-        match self_result {
+        Task::ready(match self_result {
             Ok(preview) => Some(cx.new(|_cx| preview)),
             Err(e) => {
                 log::error!("Failed to clone component preview: {}", e);
                 None
             }
-        }
+        })
     }
 
     fn to_item_events(event: &Self::Event, mut f: impl FnMut(workspace::item::ItemEvent)) {

@@ -776,26 +776,30 @@ async fn test_peers_following_each_other(cx_a: &mut TestAppContext, cx_b: &mut T
         .unwrap();
 
     // Clients A and B follow each other in split panes
-    workspace_a.update_in(cx_a, |workspace, window, cx| {
-        workspace.split_and_clone(
-            workspace.active_pane().clone(),
-            SplitDirection::Right,
-            window,
-            cx,
-        );
-    });
+    workspace_a
+        .update_in(cx_a, |workspace, window, cx| {
+            workspace.split_and_clone(
+                workspace.active_pane().clone(),
+                SplitDirection::Right,
+                window,
+                cx,
+            )
+        })
+        .await;
     workspace_a.update_in(cx_a, |workspace, window, cx| {
         workspace.follow(client_b.peer_id().unwrap(), window, cx)
     });
     executor.run_until_parked();
-    workspace_b.update_in(cx_b, |workspace, window, cx| {
-        workspace.split_and_clone(
-            workspace.active_pane().clone(),
-            SplitDirection::Right,
-            window,
-            cx,
-        );
-    });
+    workspace_b
+        .update_in(cx_b, |workspace, window, cx| {
+            workspace.split_and_clone(
+                workspace.active_pane().clone(),
+                SplitDirection::Right,
+                window,
+                cx,
+            )
+        })
+        .await;
     workspace_b.update_in(cx_b, |workspace, window, cx| {
         workspace.follow(client_a.peer_id().unwrap(), window, cx)
     });
@@ -1369,9 +1373,11 @@ async fn test_auto_unfollowing(cx_a: &mut TestAppContext, cx_b: &mut TestAppCont
     );
 
     // When client B activates a different pane, it continues following client A in the original pane.
-    workspace_b.update_in(cx_b, |workspace, window, cx| {
-        workspace.split_and_clone(pane_b.clone(), SplitDirection::Right, window, cx)
-    });
+    workspace_b
+        .update_in(cx_b, |workspace, window, cx| {
+            workspace.split_and_clone(pane_b.clone(), SplitDirection::Right, window, cx)
+        })
+        .await;
     assert_eq!(
         workspace_b.update(cx_b, |workspace, _| workspace.leader_for_pane(&pane_b)),
         Some(leader_id.into())
