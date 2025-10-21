@@ -10943,7 +10943,7 @@ mod tests {
         });
 
         update_test_language_settings(cx, |s| {
-            s.defaults.preferred_line_length = Some(5 as u32);
+            s.defaults.preferred_line_length = Some(5_u32);
             s.defaults.soft_wrap = Some(language_settings::SoftWrap::PreferredLineLength);
         });
 

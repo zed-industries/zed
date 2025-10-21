@@ -205,9 +205,9 @@ pub struct EditorSettingsContent {
     MergeFrom,
     PartialEq,
     Eq,
-    strum::EnumDiscriminants,
+    strum::VariantArray,
+    strum::VariantNames,
 )]
-#[strum_discriminants(derive(strum::VariantArray, strum::VariantNames, strum::FromRepr))]
 #[serde(rename_all = "snake_case")]
 pub enum RelativeLineNumbers {
     Disabled,
