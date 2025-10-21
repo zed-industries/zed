@@ -275,10 +275,9 @@ impl VsCodeSettings {
             }),
             redact_private_values: None,
             relative_line_numbers: self.read_enum("editor.lineNumbers", |s| match s {
-                "relative" => Some(true),
+                "relative" => Some(RelativeLineNumbers::Enabled),
                 _ => None,
             }),
-            relative_line_numbers_for_wrapped_lines: None,
             rounded_selection: self.read_bool("editor.roundedSelection"),
             scroll_beyond_last_line: None,
             scroll_sensitivity: self.read_f32("editor.mouseWheelScrollSensitivity"),

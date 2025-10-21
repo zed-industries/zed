@@ -3224,49 +3224,38 @@ impl EditorElement {
             return Arc::default();
         }
 
-        let (newest_selection_head, is_relative, use_relative_for_wrapped_lines) =
-            self.editor.update(cx, |editor, cx| {
-                let newest_selection_head = newest_selection_head.unwrap_or_else(|| {
-                    let newest = editor
-                        .selections
-                        .newest::<Point>(&editor.display_snapshot(cx));
-                    SelectionLayout::new(
-                        newest,
-                        editor.selections.line_mode(),
-                        editor.cursor_shape,
-                        &snapshot.display_snapshot,
-                        true,
-                        true,
-                        None,
-                    )
-                    .head
-                });
-                let is_relative = editor.should_use_relative_line_numbers(cx);
-                let use_relative_for_wrapped_lines = is_relative
-                    && EditorSettings::get_global(cx).relative_line_numbers_for_wrapped_lines;
-                (
-                    newest_selection_head,
-                    is_relative,
-                    use_relative_for_wrapped_lines,
+        let (newest_selection_head, relative) = self.editor.update(cx, |editor, cx| {
+            let newest_selection_head = newest_selection_head.unwrap_or_else(|| {
+                let newest = editor
+                    .selections
+                    .newest::<Point>(&editor.display_snapshot(cx));
+                SelectionLayout::new(
+                    newest,
+                    editor.selections.line_mode(),
+                    editor.cursor_shape,
+                    &snapshot.display_snapshot,
+                    true,
+                    true,
+                    None,
                 )
+                .head
             });
+            let relative = editor.relative_line_numbers(cx);
+            (newest_selection_head, relative)
+        });
 
-        let relative_to = if is_relative {
+        let relative_to = if relative.enabled() {
             Some(newest_selection_head.row())
         } else {
             None
         };
-        let relative_rows = self.calculate_relative_line_numbers(
-            snapshot,
-            &rows,
-            relative_to,
-            use_relative_for_wrapped_lines,
-        );
+        let relative_rows =
+            self.calculate_relative_line_numbers(snapshot, &rows, relative_to, relative.wrapped());
         let mut line_number = String::new();
         let segments = buffer_rows.iter().enumerate().flat_map(|(ix, row_info)| {
             let display_row = DisplayRow(rows.start.0 + ix as u32);
             line_number.clear();
-            let non_relative_number = if use_relative_for_wrapped_lines {
+            let non_relative_number = if relative.wrapped() {
                 row_info.buffer_row.or(row_info.wrapped_buffer_row)? + 1
             } else {
                 row_info.buffer_row? + 1

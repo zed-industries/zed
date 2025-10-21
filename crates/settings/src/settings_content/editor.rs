@@ -91,13 +91,11 @@ pub struct EditorSettingsContent {
     /// Default: 4.0
     pub fast_scroll_sensitivity: Option<f32>,
     /// Whether the line numbers on editors gutter are relative or not.
+    /// When "enabled" shows relative number of buffer lines, when "wrapped" shows
+    /// relative number of display lines.
     ///
-    /// Default: false
-    pub relative_line_numbers: Option<bool>,
-    /// Whether to show relative line numbers for wrapped lines (visual lines) rather than just buffer lines.
-    ///
-    /// Default: false
-    pub relative_line_numbers_for_wrapped_lines: Option<bool>,
+    /// Default: "disabled"
+    pub relative_line_numbers: Option<RelativeLineNumbers>,
     /// When to populate a new search's query based on the text under the cursor.
     ///
     /// Default: always
@@ -195,6 +193,41 @@ pub struct EditorSettingsContent {
     ///
     /// Default: [`DocumentColorsRenderMode::Inlay`]
     pub lsp_document_colors: Option<DocumentColorsRenderMode>,
+}
+
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    Eq,
+    strum::EnumDiscriminants,
+)]
+#[strum_discriminants(derive(strum::VariantArray, strum::VariantNames, strum::FromRepr))]
+#[serde(rename_all = "snake_case")]
+pub enum RelativeLineNumbers {
+    Disabled,
+    Enabled,
+    Wrapped,
+}
+
+impl RelativeLineNumbers {
+    pub fn enabled(&self) -> bool {
+        match self {
+            RelativeLineNumbers::Enabled | RelativeLineNumbers::Wrapped => true,
+            RelativeLineNumbers::Disabled => false,
+        }
+    }
+    pub fn wrapped(&self) -> bool {
+        match self {
+            RelativeLineNumbers::Enabled | RelativeLineNumbers::Disabled => false,
+            RelativeLineNumbers::Wrapped => true,
+        }
+    }
 }
 
 // Toolbar related settings
