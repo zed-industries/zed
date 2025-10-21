@@ -11,6 +11,10 @@
 [target.'cfg(all())']
 rustflags = ["-D", "warnings"]
 
+# We don't need fullest debug information for dev stuff (tests etc.) in CI.
+[profile.dev]
+debug = "limited"
+
 # Use Mold on Linux, because it's faster than GNU ld and LLD.
 #
 # We no longer set this in the default `config.toml` so that developers can opt in to Wild, which
