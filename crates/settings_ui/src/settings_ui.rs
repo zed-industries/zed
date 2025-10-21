@@ -1828,12 +1828,6 @@ impl SettingsWindow {
         };
 
         v_flex()
-            .w_56()
-            .p_2p5()
-            .when(cfg!(target_os = "macos"), |c| c.pt_10())
-            .h_full()
-            .flex_none()
-            .border_r_1()
             .key_context("NavigationMenu")
             .on_action(cx.listener(|this, _: &CollapseNavEntry, window, cx| {
                 let Some(focused_entry) = this.focused_nav_entry(window, cx) else {
@@ -1951,6 +1945,12 @@ impl SettingsWindow {
                     cx,
                 );
             }))
+            .w_56()
+            .h_full()
+            .p_2p5()
+            .when(cfg!(target_os = "macos"), |this| this.pt_10())
+            .flex_none()
+            .border_r_1()
             .border_color(cx.theme().colors().border)
             .bg(cx.theme().colors().panel_background)
             .child(self.render_search(window, cx))
