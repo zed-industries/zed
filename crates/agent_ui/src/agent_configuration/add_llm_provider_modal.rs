@@ -10,7 +10,7 @@ use settings::{OpenAiCompatibleSettingsContent, update_settings_file};
 use ui::{
     Banner, Checkbox, KeyBinding, Modal, ModalFooter, ModalHeader, Section, ToggleState, prelude::*,
 };
-use ui_input::SingleLineInput;
+use ui_input::InputField;
 use workspace::{ModalView, Workspace};
 
 #[derive(Clone, Copy)]
@@ -33,9 +33,9 @@ impl LlmCompatibleProvider {
 }
 
 struct AddLlmProviderInput {
-    provider_name: Entity<SingleLineInput>,
-    api_url: Entity<SingleLineInput>,
-    api_key: Entity<SingleLineInput>,
+    provider_name: Entity<InputField>,
+    api_url: Entity<InputField>,
+    api_key: Entity<InputField>,
     models: Vec<ModelInput>,
 }
 
@@ -76,10 +76,10 @@ struct ModelCapabilityToggles {
 }
 
 struct ModelInput {
-    name: Entity<SingleLineInput>,
-    max_completion_tokens: Entity<SingleLineInput>,
-    max_output_tokens: Entity<SingleLineInput>,
-    max_tokens: Entity<SingleLineInput>,
+    name: Entity<InputField>,
+    max_completion_tokens: Entity<InputField>,
+    max_output_tokens: Entity<InputField>,
+    max_tokens: Entity<InputField>,
     capabilities: ModelCapabilityToggles,
 }
 
@@ -171,9 +171,9 @@ fn single_line_input(
     text: Option<&str>,
     window: &mut Window,
     cx: &mut App,
-) -> Entity<SingleLineInput> {
+) -> Entity<InputField> {
     cx.new(|cx| {
-        let input = SingleLineInput::new(window, cx, placeholder).label(label);
+        let input = InputField::new(window, cx, placeholder).label(label);
         if let Some(text) = text {
             input
                 .editor()
@@ -757,12 +757,7 @@ mod tests {
         models: Vec<(&str, &str, &str, &str)>,
         cx: &mut VisualTestContext,
     ) -> Option<SharedString> {
-        fn set_text(
-            input: &Entity<SingleLineInput>,
-            text: &str,
-            window: &mut Window,
-            cx: &mut App,
-        ) {
+        fn set_text(input: &Entity<InputField>, text: &str, window: &mut Window, cx: &mut App) {
             input.update(cx, |input, cx| {
                 input.editor().update(cx, |editor, cx| {
                     editor.set_text(text, window, cx);
