@@ -398,15 +398,27 @@ impl Vim {
                     selections.push(selection);
                 }
 
-                if direction == -1 && row <= head.row() || direction == 1 && row >= head.row() {
+                if row == head.row() {
                     break;
                 }
 
-                // Move to the next or previous buffer row, ensuring that
-                // wrapped lines are handled correctly.
-                row = map
+                // Find the next or previous buffer row where the `row` should
+                // be moved to, so that wrapped lines are skipped.
+                let buffer_row = map
                     .start_of_relative_buffer_row(DisplayPoint::new(row, 0), direction)
                     .row();
+
+                while row != buffer_row {
+                    if tail.row() > head.row() {
+                        row.0 -= 1;
+                    } else {
+                        row.0 += 1;
+                    }
+
+                    if row == head.row() {
+                        break;
+                    }
+                }
             }
 
             s.select(selections);
