@@ -521,9 +521,7 @@ fn render_markdown_table(parsed: &ParsedMarkdownTable, cx: &mut RenderContext) -
 
             let container = match alignment {
                 ParsedMarkdownTableAlignment::Left | ParsedMarkdownTableAlignment::None => div(),
-                ParsedMarkdownTableAlignment::Center => v_flex()
-                    .items_center()
-                    .when(cell.row_span > 1, |this| this.justify_center()),
+                ParsedMarkdownTableAlignment::Center => v_flex().items_center(),
                 ParsedMarkdownTableAlignment::Right => v_flex().items_end(),
             };
 
@@ -539,6 +537,7 @@ fn render_markdown_table(parsed: &ParsedMarkdownTable, cx: &mut RenderContext) -
                 .when(cell.is_header, |this| {
                     this.bg(cx.title_bar_background_color)
                 })
+                .when(cell.row_span > 1, |this| this.justify_center())
                 .when(row_idx % 2 == 1, |this| this.bg(cx.panel_background_color));
 
             cells.push(cell_element);
