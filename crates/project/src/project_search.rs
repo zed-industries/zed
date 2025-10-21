@@ -164,7 +164,7 @@ impl Search {
             } else if let Some(entry_id) = buffer.entry_id(cx) {
                 open_buffers.insert(entry_id);
             } else {
-                self.limit -= self.limit.saturating_sub(1);
+                self.limit = self.limit.saturating_sub(1);
                 unnamed_buffers.push(handle)
             };
         }
