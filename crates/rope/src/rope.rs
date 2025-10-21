@@ -47,6 +47,29 @@ impl Rope {
             .unwrap_or(false)
     }
 
+    #[track_caller]
+    #[inline(always)]
+    pub fn assert_char_boundary(&self, offset: usize) {
+        if self.is_char_boundary(offset) {
+            return;
+        }
+        panic_char_boundary(self, offset);
+
+        #[cold]
+        #[inline(never)]
+        fn panic_char_boundary(rope: &Rope, offset: usize) {
+            // find the character
+            let char_start = rope.floor_char_boundary(offset);
+            // `char_start` must be less than len and a char boundary
+            let ch = rope.chars_at(char_start).next().unwrap();
+            let char_range = char_start..char_start + ch.len_utf8();
+            panic!(
+                "byte index {} is not a char boundary; it is inside {:?} (bytes {:?})",
+                offset, ch, char_range,
+            );
+        }
+    }
+
     pub fn floor_char_boundary(&self, index: usize) -> usize {
         if index >= self.len() {
             self.len()
