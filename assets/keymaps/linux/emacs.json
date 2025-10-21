@@ -11,6 +11,18 @@
   {
     // Workaround to avoid falling back to default bindings.
     // Unbind so Zed ignores these keys and lets emacs handle them.
+    // NOTE: since `Editor` bindings always take precedence over `Workspace` ones, this can
+    // also be safely defined after the main bindings. Just in case though, define them beforehand.
+    // NOTE: in macos this is not needed, since the defaults are bound to 'cmd', not 'ctrl'
+    "context": "Workspace",
+    "bindings": {
+      "ctrl-p": null, // currently activates `file_finder::Toggle` when the cursor is on the first character of the buffer
+      "ctrl-n": null // currently activates `workspace::NewFile` when the cursor is on the last character of the buffer
+    }
+  },
+  {
+    // Workaround to avoid falling back to default bindings.
+    // Unbind so Zed ignores these keys and lets emacs handle them.
     // NOTE: must be declared before the `Editor` override.
     // NOTE: in macos the 'ctrl-x' rebind is not needed, since it defaults to 'cmd'.
     "context": "Editor",
@@ -153,16 +165,6 @@
       "ctrl-x ctrl-s": "workspace::Save", // save-buffer
       "ctrl-x ctrl-w": "workspace::SaveAs", // write-file
       "ctrl-x s": "workspace::SaveAll" // save-some-buffers
-    }
-  },
-  {
-    // Workaround to avoid falling back to default bindings.
-    // Unbind so Zed ignores these keys and lets emacs handle them.
-    // NOTE: in macos this is not needed, since the defaults are bound to 'cmd', not 'ctrl'
-    "context": "Workspace",
-    "bindings": {
-      "ctrl-p": null, // currently activates `file_finder::Toggle` when the cursor is on the first character of the buffer
-      "ctrl-n": null // currently activates `workspace::NewFile` when the cursor is on the last character of the buffer
     }
   },
   {
