@@ -1853,6 +1853,9 @@ impl SettingsWindow {
             .read(cx)
             .handle
             .contains_focused(window, cx)
+            || self
+                .visible_navbar_entries()
+                .any(|(_, entry)| entry.focus_handle.is_focused(window))
         {
             "Focus Content"
         } else {
@@ -2052,7 +2055,13 @@ impl SettingsWindow {
                     .border_t_1()
                     .border_color(cx.theme().colors().border_variant)
                     .children(
-                        KeyBinding::for_action(&ToggleFocusNav, window, cx).map(|this| {
+                        KeyBinding::for_action_in(
+                            &ToggleFocusNav,
+                            &self.navbar_focus_handle.focus_handle(cx),
+                            window,
+                            cx,
+                        )
+                        .map(|this| {
                             KeybindingHint::new(
                                 this,
                                 cx.theme().colors().surface_background.opacity(0.5),
@@ -2153,6 +2162,17 @@ impl SettingsWindow {
     fn is_nav_entry_visible(&self, nav_entry_index: usize) -> bool {
         self.visible_navbar_entries()
             .any(|(index, _)| index == nav_entry_index)
+    }
+
+    fn focus_and_scroll_to_first_visible_nav_entry(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(nav_entry_index) = self.visible_navbar_entries().next().map(|(index, _)| index)
+        {
+            self.focus_and_scroll_to_nav_entry(nav_entry_index, window, cx);
+        }
     }
 
     fn focus_and_scroll_to_nav_entry(
@@ -2760,9 +2780,17 @@ impl Render for SettingsWindow {
                             let prev_index = this.focused_file_index(window, cx).saturating_sub(1);
                             this.focus_file_at_index(prev_index, window);
                         }))
-                        .on_action(|_: &menu::SelectNext, window, _| {
-                            window.focus_next();
-                        })
+                        .on_action(cx.listener(|this, _: &menu::SelectNext, window, cx| {
+                            if this
+                                .search_bar
+                                .focus_handle(cx)
+                                .contains_focused(window, cx)
+                            {
+                                this.focus_and_scroll_to_first_visible_nav_entry(window, cx);
+                            } else {
+                                window.focus_next();
+                            }
+                        }))
                         .on_action(|_: &menu::SelectPrevious, window, _| {
                             window.focus_prev();
                         })
