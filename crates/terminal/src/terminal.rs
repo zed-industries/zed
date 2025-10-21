@@ -2241,7 +2241,8 @@ unsafe fn append_text_to_term(term: &mut Term<ZedListener>, text_lines: &[&str])
 
 impl Drop for Terminal {
     fn drop(&mut self) {
-        if let TerminalType::Pty { pty_tx, .. } = &self.terminal_type {
+        if let TerminalType::Pty { pty_tx, info } = &mut self.terminal_type {
+            info.kill_current_process();
             pty_tx.0.send(Msg::Shutdown).ok();
         }
     }
