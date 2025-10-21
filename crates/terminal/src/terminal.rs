@@ -402,6 +402,7 @@ impl TerminalBuilder {
                 window_id,
             },
             child_exited: None,
+            shell_started: false,
         };
 
         Ok(TerminalBuilder {
@@ -623,6 +624,7 @@ impl TerminalBuilder {
                     window_id,
                 },
                 child_exited: None,
+                shell_started: false,
             };
 
             if !activation_script.is_empty() && no_task {
@@ -839,6 +841,7 @@ pub struct Terminal {
     template: CopyTemplate,
     activation_script: Vec<String>,
     child_exited: Option<ExitStatus>,
+    shell_started: bool,
 }
 
 struct CopyTemplate {
@@ -938,6 +941,7 @@ impl Terminal {
                 //NOOP, Handled in render
             }
             AlacTermEvent::Wakeup => {
+                self.shell_started = true;
                 cx.emit(Event::Wakeup);
 
                 if let TerminalType::Pty { info, .. } = &mut self.terminal_type {
@@ -2108,16 +2112,11 @@ impl Terminal {
                 let should_close = if error_code.is_none() {
                     let is_interactive_shell =
                         !matches!(self.template.shell, Shell::WithArguments { .. });
+                    let exited_ok = self.child_exited.map_or(true, |e| e.code() == Some(0));
 
-                    if is_interactive_shell {
-                        // Always close regardless of prior exit codes
-                        true
-                    } else {
-                        // Respect exit codes to preserve error visibility
-                        match self.child_exited {
-                            None => true,
-                            Some(e) => e.code() == Some(0),
-                        }
+                    match (is_interactive_shell, self.shell_started) {
+                        (true, true) => true, // user exited manually after shell startup
+                        _ => exited_ok,
                     }
                 } else {
                     // ChildExit - only close on success
