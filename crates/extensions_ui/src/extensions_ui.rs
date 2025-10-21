@@ -801,7 +801,7 @@ impl ExtensionsPage {
                                     .color(Color::Muted),
                             )
                             .child(
-                                Label::new(format!("{}", extension.manifest.authors.join(", ")))
+                                Label::new(extension.manifest.authors.join(", ").to_string())
                                     .size(LabelSize::Small)
                                     .color(Color::Muted)
                                     .truncate(),
