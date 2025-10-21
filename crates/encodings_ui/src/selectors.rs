@@ -487,8 +487,6 @@ pub mod encoding {
                                         workspace
                                             .encoding_options
                                             .encoding
-                                            .lock()
-                                            .unwrap()
                                             .set(encoding_from_name(&current_selection));
 
                                         *workspace.encoding_options.force.get_mut() = false;
@@ -535,12 +533,7 @@ pub mod encoding {
                         encoding_from_name(self.matches[self.current_selection].string.as_str());
 
                     let open_task = workspace.update(cx, |workspace, cx| {
-                        workspace
-                            .encoding_options
-                            .encoding
-                            .lock()
-                            .unwrap()
-                            .set(encoding);
+                        workspace.encoding_options.encoding.set(encoding);
 
                         workspace.open_abs_path(path, OpenOptions::default(), window, cx)
                     });
