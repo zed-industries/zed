@@ -4871,7 +4871,7 @@ impl LspStore {
             ResolveState::CanResolve(server_id, resolve_data) => (*server_id, resolve_data.clone()),
         };
 
-        let resolve_task = self.resolve_inlay_hint(id, hint, buffer, server_id, cx);
+        let resolve_task = self.resolve_inlay_hint(hint, buffer, server_id, cx);
         let buffer_lsp_hints = &mut self.lsp_data.get_mut(&buffer_id)?.inlay_hints;
         let previous_task = buffer_lsp_hints.hint_resolves.insert(
             id,
@@ -4910,7 +4910,6 @@ impl LspStore {
 
     fn resolve_inlay_hint(
         &self,
-        id: InlayId,
         mut hint: InlayHint,
         buffer: Entity<Buffer>,
         server_id: LanguageServerId,
@@ -4926,7 +4925,7 @@ impl LspStore {
                 project_id,
                 buffer_id: buffer.read(cx).remote_id().into(),
                 language_server_id: server_id.0 as u64,
-                hint_id: id.id() as u64,
+                hint: Some(InlayHints::project_to_proto_hint(hint.clone())),
             };
             cx.background_spawn(async move {
                 let response = upstream_client
@@ -9716,34 +9715,29 @@ impl LspStore {
         envelope: TypedEnvelope<proto::ResolveInlayHint>,
         mut cx: AsyncApp,
     ) -> Result<proto::ResolveInlayHintResponse> {
-        let hint_id = InlayId::Hint(envelope.payload.hint_id as usize);
-        let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
-        let resolved_hint = lsp_store
+        let proto_hint = envelope
+            .payload
+            .hint
+            .expect("incorrect protobuf resolve inlay hint message: missing the inlay hint");
+        let hint = InlayHints::proto_to_project_hint(proto_hint)
+            .context("resolved proto inlay hint conversion")?;
+        let buffer = lsp_store.update(&mut cx, |lsp_store, cx| {
+            let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
+            lsp_store.buffer_store.read(cx).get_existing(buffer_id)
+        })??;
+        let response_hint = lsp_store
             .update(&mut cx, |lsp_store, cx| {
-                lsp_store.resolved_hint(buffer_id, hint_id, cx)
+                lsp_store.resolve_inlay_hint(
+                    hint,
+                    buffer,
+                    LanguageServerId(envelope.payload.language_server_id as usize),
+                    cx,
+                )
             })?
-            .with_context(|| format!("Missing inlay hint for id {hint_id:?}"))?;
-
-        let resolved_hint = match resolved_hint {
-            ResolvedHint::Resolved(resolved_hint) => resolved_hint,
-            ResolvedHint::Resolving(task) => {
-                task.await;
-                let now_resolved_hint = lsp_store
-                    .update(&mut cx, |lsp_store, cx| {
-                        lsp_store.resolved_hint(buffer_id, hint_id, cx)
-                    })?
-                    .with_context(|| format!("Missing resolved inlay hint for id {hint_id:?}"))?;
-                match now_resolved_hint {
-                    ResolvedHint::Resolved(resolved_hint) => resolved_hint,
-                    ResolvedHint::Resolving(_) => anyhow::bail!(
-                        "Unexpected: hint is not resolved after awaiting on its resolve task"
-                    ),
-                }
-            }
-        };
-
+            .await
+            .context("inlay hints fetch")?;
         Ok(proto::ResolveInlayHintResponse {
-            hint: Some(InlayHints::project_to_proto_hint(resolved_hint)),
+            hint: Some(InlayHints::project_to_proto_hint(response_hint)),
         })
     }
 

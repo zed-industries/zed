@@ -456,8 +456,7 @@ message ResolveInlayHint {
     uint64 project_id = 1;
     uint64 buffer_id = 2;
     uint64 language_server_id = 3;
-    reserved 4;
-    uint64 hint_id = 5;
+    InlayHint hint = 4;
 }
 
 message ResolveInlayHintResponse {
