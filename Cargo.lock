@@ -21535,7 +21535,6 @@ dependencies = [
  "settings",
  "telemetry",
  "text",
- "theme",
  "ui",
  "ui_input",
  "util",
