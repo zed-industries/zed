@@ -1537,7 +1537,7 @@
     //
     // "path_hyperlink_regexes": [
     //   "\\s+(Compiling|Checking|Documenting) [^(]+\\((?<path>.+)\\)$",
-    //   "\\s+(-->|:::|panicked at) (?<path>.+)$"
+    //   "\\s+(-->|:::|at) (?<path>.+?):?$"
     // ],
     "path_hyperlink_regexes": ["File \"(?<path>[^\"]+)\", line (?<line>\\d+)"],
     // Timeout for hover and Cmd-click path hyperlink discovery in milliseconds.

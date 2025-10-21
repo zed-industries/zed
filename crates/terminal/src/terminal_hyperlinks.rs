@@ -700,6 +700,10 @@ mod tests {
             test_path!("    ::: ‹«/例👈/Cool Spaces»›");
             test_path!("    --> ‹«/👉例/Cool Spaces»:«4»:«2»›");
             test_path!("    ::: ‹«/例👈/Cool Spaces»(«4»,«2»)›");
+            test_path!("    panicked at ‹«/👉例/Cool Spaces»:«4»:«2»›:");
+            test_path!("    panicked at ‹«/例👈/Cool Spaces»(«4»,«2»)›:");
+            test_path!("    at ‹«/👉例/Cool Spaces»:«4»:«2»›");
+            test_path!("    at ‹«/例👈/Cool Spaces»(«4»,«2»)›");
 
             // Python
             test_path!("‹«👉例wesome.py»›");
@@ -1458,7 +1462,7 @@ mod tests {
         const PYTHON_FILE_LINE_REGEX: &str = r#"File "(?<path>[^"]+)", line (?P<line>\d+)"#;
         const CARGO_DIR_REGEX: &str =
             r#"\s+(Compiling|Checking|Documenting) [^(]+\((?<path>.+)\)$"#;
-        const RUSTC_DIAGNOSTIC_REGEX: &str = r#"\s+(-->|:::|panicked at) (?<path>.+)$"#;
+        const RUST_DIAGNOSTIC_REGEX: &str = r#"\s+(-->|:::|at) (?<path>.+?):?$"#;
         const ISSUE_12338_REGEX: &str = r#"[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2} (?<path>.+)$"#;
         const MULTIPLE_SAME_LINE: &str = r#"(?<path>🦀 multiple_same_line 🦀):"#;
 
@@ -1469,7 +1473,7 @@ mod tests {
                 RefCell::new(RegexSearches::new(&vec![
                     PYTHON_FILE_LINE_REGEX.to_string(),
                     CARGO_DIR_REGEX.to_string(),
-                    RUSTC_DIAGNOSTIC_REGEX.to_string(),
+                    RUST_DIAGNOSTIC_REGEX.to_string(),
                     ISSUE_12338_REGEX.to_string(),
                     MULTIPLE_SAME_LINE.to_string(),
                 ], PATH_HYPERLINK_TIMEOUT_MS));
