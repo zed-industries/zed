@@ -80,11 +80,13 @@ design
 
 multi_buffer
   = @Veykril
+  = @SomeoneToIgnore
 
 lsp
   = @osiewicz
   = @Veykril
   = @smitbarmase
+  = @SomeoneToIgnore
 
 languages
   = @osiewicz
