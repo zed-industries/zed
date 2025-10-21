@@ -1533,11 +1533,11 @@
     // When either no capture groups are present, or only `path` is present, the default built-in
     // line and column suffix processing is used. The default value handles python diagnostics. This
     // can be extended or replaced to handle specific scenarios. For example, to enable support for
-    // hyperlinking paths containing spaces in rust tools output:
+    // hyperlinking paths containing spaces in rust output:
     //
     // "path_hyperlink_regexes": [
     //   "\\s+(Compiling|Checking|Documenting) [^(]+\\((?<path>.+)\\)$",
-    //   "\\s+(-->|:::) (?<path>.+)$"
+    //   "\\s+(-->|:::|panicked at) (?<path>.+)$"
     // ],
     "path_hyperlink_regexes": ["File \"(?<path>[^\"]+)\", line (?<line>\\d+)"],
     // Timeout for hover and Cmd-click path hyperlink discovery in milliseconds.
