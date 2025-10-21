@@ -44,11 +44,7 @@ async fn test_agent_servers_filter(db: &Arc<Database>) {
                     repository: "org/agent-servers".into(),
                     schema_version: 1,
                     wasm_api_version: None,
-                    provides: {
-                        let mut set = BTreeSet::new();
-                        set.insert(ExtensionProvides::AgentServers);
-                        set
-                    },
+                    provides: BTreeSet::from_iter([ExtensionProvides::AgentServers]),
                     published_at: t0,
                 }],
             ),
@@ -74,8 +70,7 @@ async fn test_agent_servers_filter(db: &Arc<Database>) {
     .unwrap();
 
     // Filter by AgentServers provides
-    let mut provides_filter = BTreeSet::new();
-    provides_filter.insert(ExtensionProvides::AgentServers);
+    let provides_filter = BTreeSet::from_iter([ExtensionProvides::AgentServers]);
 
     let filtered = db
         .get_extensions(None, Some(&provides_filter), 1, 10)
