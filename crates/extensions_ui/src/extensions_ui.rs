@@ -965,7 +965,7 @@ impl ExtensionsPage {
                     SharedString::from(extension.id.clone()),
                     "Install",
                 )
-                .style(ButtonStyle::Outlined)
+                .style(ButtonStyle::Tinted(ui::TintColor::Accent))
                 .icon(IconName::Download)
                 .icon_size(IconSize::Small)
                 .icon_color(Color::Muted)
@@ -987,7 +987,7 @@ impl ExtensionsPage {
                     SharedString::from(extension.id.clone()),
                     "Install",
                 )
-                .style(ButtonStyle::Outlined)
+                .style(ButtonStyle::Tinted(ui::TintColor::Accent))
                 .icon(IconName::Download)
                 .icon_size(IconSize::Small)
                 .icon_color(Color::Muted)
