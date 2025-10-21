@@ -7,9 +7,9 @@ use crate::markdown_elements::{
 use fs::normalize_path;
 use gpui::{
     AbsoluteLength, AnyElement, App, AppContext as _, ClipboardItem, Context, DefiniteLength, Div,
-    Element, ElementId, Entity, FontWeight, HighlightStyle, Hsla, ImageSource, InteractiveText,
-    IntoElement, Keystroke, Length, Modifiers, ParentElement, Render, Resource, SharedString,
-    Styled, StyledText, TextAlign, TextStyle, WeakEntity, Window, div, img, rems,
+    Element, ElementId, Entity, HighlightStyle, Hsla, ImageSource, InteractiveText, IntoElement,
+    Keystroke, Length, Modifiers, ParentElement, Render, Resource, SharedString, Styled,
+    StyledText, TextStyle, WeakEntity, Window, div, img, rems,
 };
 use settings::Settings;
 use std::{
@@ -19,10 +19,8 @@ use std::{
 };
 use theme::{ActiveTheme, SyntaxTheme, ThemeSettings};
 use ui::{
-    ButtonCommon, Clickable, Color, FluentBuilder, IconButton, IconName, IconSize,
-    InteractiveElement, Label, LabelCommon, LabelSize, LinkPreview, Pixels, Rems,
-    StatefulInteractiveElement, StyledExt, StyledImage, ToggleState, Tooltip, VisibleOnHover,
-    h_flex, relative, tooltip_container, v_flex,
+    Clickable, FluentBuilder, LinkPreview, StatefulInteractiveElement, StyledExt, StyledImage,
+    ToggleState, Tooltip, VisibleOnHover, prelude::*, tooltip_container,
 };
 use workspace::{OpenOptions, OpenVisible, Workspace};
 
@@ -206,7 +204,7 @@ fn render_markdown_heading(parsed: &ParsedMarkdownHeading, cx: &mut RenderContex
         .text_color(color)
         .pt(padding_top)
         .pb(padding_bottom)
-        .children(render_markdown_text(&parsed.contents, false, cx))
+        .children(render_markdown_text(&parsed.contents, cx))
         .whitespace_normal()
         .into_any()
 }
@@ -532,7 +530,7 @@ fn render_markdown_table_row(
             .copied()
             .unwrap_or(ParsedMarkdownTableAlignment::None);
 
-        let contents = render_markdown_text(cell, is_header, cx);
+        let contents = render_markdown_text(cell, cx);
 
         let container = match alignment {
             ParsedMarkdownTableAlignment::Left | ParsedMarkdownTableAlignment::None => div(),
@@ -555,9 +553,7 @@ fn render_markdown_table_row(
         }
 
         if is_header {
-            cell = cell
-                .bg(cx.title_bar_background_color)
-                .text_align(TextAlign::Center)
+            cell = cell.bg(cx.title_bar_background_color).opacity(0.6)
         }
 
         items.push(cell);
@@ -651,27 +647,19 @@ fn render_markdown_code_block(
 
 fn render_markdown_paragraph(parsed: &MarkdownParagraph, cx: &mut RenderContext) -> AnyElement {
     cx.with_common_p(div())
-        .children(render_markdown_text(parsed, false, cx))
+        .children(render_markdown_text(parsed, cx))
         .flex()
         .flex_col()
         .into_any_element()
 }
 
-fn render_markdown_text(
-    parsed_new: &MarkdownParagraph,
-    is_table_header: bool,
-    cx: &mut RenderContext,
-) -> Vec<AnyElement> {
+fn render_markdown_text(parsed_new: &MarkdownParagraph, cx: &mut RenderContext) -> Vec<AnyElement> {
     let mut any_element = vec![];
     // these values are cloned in-order satisfy borrow checker
     let syntax_theme = cx.syntax_theme.clone();
     let workspace_clone = cx.workspace.clone();
     let code_span_bg_color = cx.code_span_background_color;
-    let mut text_style = cx.text_style.clone();
-
-    if is_table_header {
-        text_style.font_weight = FontWeight::SEMIBOLD;
-    }
+    let text_style = cx.text_style.clone();
 
     for parsed_region in parsed_new {
         match parsed_region {
