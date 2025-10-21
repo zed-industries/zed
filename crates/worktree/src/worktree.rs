@@ -1706,9 +1706,9 @@ impl LocalWorktree {
             refresh.recv().await;
             log::trace!("refreshed entry {path:?} in {:?}", t0.elapsed());
             let new_entry = this.read_with(cx, |this, _| {
-                this.entry_for_path(&path)
-                    .cloned()
-                    .context("reading path after update")
+                this.entry_for_path(&path).cloned().with_context(|| {
+                    format!("Could not find entry in worktree for {path:?} after refresh")
+                })
             })??;
             Ok(Some(new_entry))
         })
