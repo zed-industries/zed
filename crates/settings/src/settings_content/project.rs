@@ -8,7 +8,7 @@ use settings_macros::MergeFrom;
 use util::serde::default_true;
 
 use crate::{
-    AllLanguageSettingsContent, DelayMs, ExtendingVec, ProjectTerminalSettingsContent,
+    AllLanguageSettingsContent, DelayMs, ExtendingVec, Maybe, ProjectTerminalSettingsContent,
     SlashCommandSettings,
 };
 
@@ -56,11 +56,13 @@ pub struct ProjectSettingsContent {
 #[skip_serializing_none]
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct WorktreeSettingsContent {
-    /// The displayed name of this project. If not set or empty, the root directory name
+    /// The displayed name of this project. If not set or null, the root directory name
     /// will be displayed.
     ///
-    /// Default: ""
-    pub project_name: Option<String>,
+    /// Default: null
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Maybe::is_unset")]
+    pub project_name: Maybe<String>,
 
     /// Completely ignore files matching globs from `file_scan_exclusions`. Overrides
     /// `file_scan_inclusions`.

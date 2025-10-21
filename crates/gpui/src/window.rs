@@ -4313,14 +4313,14 @@ impl Window {
     }
 
     /// Returns a generic handler that invokes the given handler with the view and context associated with the given view handle.
-    pub fn handler_for<V: Render, Callback: Fn(&mut V, &mut Window, &mut Context<V>) + 'static>(
+    pub fn handler_for<E: 'static, Callback: Fn(&mut E, &mut Window, &mut Context<E>) + 'static>(
         &self,
-        view: &Entity<V>,
+        entity: &Entity<E>,
         f: Callback,
-    ) -> impl Fn(&mut Window, &mut App) + use<V, Callback> {
-        let view = view.downgrade();
+    ) -> impl Fn(&mut Window, &mut App) + 'static {
+        let entity = entity.downgrade();
         move |window: &mut Window, cx: &mut App| {
-            view.update(cx, |view, cx| f(view, window, cx)).ok();
+            entity.update(cx, |entity, cx| f(entity, window, cx)).ok();
         }
     }
 
@@ -4718,7 +4718,7 @@ impl<V: 'static + Render> WindowHandle<V> {
             .get(self.id)
             .and_then(|window| {
                 window
-                    .as_ref()
+                    .as_deref()
                     .and_then(|window| window.root.clone())
                     .map(|root_view| root_view.downcast::<V>())
             })

@@ -17,7 +17,6 @@ use ui::{
     Divider, KeyBinding, ParentElement as _, StatefulInteractiveElement, Vector, VectorName,
     WithScrollbar as _, prelude::*, rems_from_px,
 };
-pub use ui_input::font_picker;
 use workspace::{
     AppState, Workspace, WorkspaceId,
     dock::DockPosition,
@@ -385,14 +384,14 @@ impl Item for Onboarding {
         _workspace_id: Option<WorkspaceId>,
         _: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Option<Entity<Self>> {
-        Some(cx.new(|cx| Onboarding {
+    ) -> Task<Option<Entity<Self>>> {
+        Task::ready(Some(cx.new(|cx| Onboarding {
             workspace: self.workspace.clone(),
             user_store: self.user_store.clone(),
             scroll_handle: ScrollHandle::new(),
             focus_handle: cx.focus_handle(),
             _settings_subscription: cx.observe_global::<SettingsStore>(move |_, cx| cx.notify()),
-        }))
+        })))
     }
 
     fn to_item_events(event: &Self::Event, mut f: impl FnMut(workspace::item::ItemEvent)) {

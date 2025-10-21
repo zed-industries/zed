@@ -1,8 +1,8 @@
 {
   "$schema": "zed://schemas/settings",
-  /// The displayed name of this project. If not set or empty, the root directory name
+  /// The displayed name of this project. If not set or null, the root directory name
   /// will be displayed.
-  "project_name": "",
+  "project_name": null,
   // The name of the Zed theme to use for the UI.
   //
   // `mode` is one of:
@@ -1350,7 +1350,9 @@
     // Whether to show the active language button in the status bar.
     "active_language_button": true,
     // Whether to show the cursor position button in the status bar.
-    "cursor_position_button": true
+    "cursor_position_button": true,
+    // Whether to show active line endings button in the status bar.
+    "line_endings_button": false
   },
   // Settings specific to the terminal
   "terminal": {
@@ -1739,7 +1741,7 @@
       }
     },
     "Kotlin": {
-      "language_servers": ["kotlin-language-server", "!kotlin-lsp", "..."]
+      "language_servers": ["!kotlin-language-server", "kotlin-lsp", "..."]
     },
     "LaTeX": {
       "formatter": "language_server",

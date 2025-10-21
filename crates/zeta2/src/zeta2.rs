@@ -11,7 +11,7 @@ use edit_prediction_context::{
     DeclarationId, DeclarationStyle, EditPredictionContext, EditPredictionContextOptions,
     EditPredictionExcerptOptions, EditPredictionScoreOptions, SyntaxIndex, SyntaxIndexState,
 };
-use feature_flags::FeatureFlag;
+use feature_flags::{FeatureFlag, FeatureFlagAppExt as _};
 use futures::AsyncReadExt as _;
 use futures::channel::{mpsc, oneshot};
 use gpui::http_client::{AsyncBody, Method};
@@ -32,7 +32,6 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use thiserror::Error;
 use util::rel_path::RelPathBuf;
-use util::some_or_debug_panic;
 use workspace::notifications::{ErrorMessagePrompt, NotificationId, show_app_notification};
 
 mod prediction;
@@ -103,12 +102,12 @@ pub struct ZetaOptions {
 }
 
 pub struct PredictionDebugInfo {
-    pub context: EditPredictionContext,
+    pub request: predict_edits_v3::PredictEditsRequest,
     pub retrieval_time: TimeDelta,
     pub buffer: WeakEntity<Buffer>,
     pub position: language::Anchor,
     pub local_prompt: Result<String, String>,
-    pub response_rx: oneshot::Receiver<Result<RequestDebugInfo, String>>,
+    pub response_rx: oneshot::Receiver<Result<predict_edits_v3::PredictEditsResponse, String>>,
 }
 
 pub type RequestDebugInfo = predict_edits_v3::DebugInfo;
@@ -571,6 +570,9 @@ impl Zeta {
             if path.pop() { Some(path) } else { None }
         });
 
+        // TODO data collection
+        let can_collect_data = cx.is_staff();
+
         let request_task = cx.background_spawn({
             let snapshot = snapshot.clone();
             let buffer = buffer.clone();
@@ -606,25 +608,22 @@ impl Zeta {
                         options.max_diagnostic_bytes,
                     );
 
-                let debug_context = debug_tx.map(|tx| (tx, context.clone()));
-
                 let request = make_cloud_request(
                     excerpt_path,
                     context,
                     events,
-                    // TODO data collection
-                    false,
+                    can_collect_data,
                     diagnostic_groups,
                     diagnostic_groups_truncated,
                     None,
-                    debug_context.is_some(),
+                    debug_tx.is_some(),
                     &worktree_snapshots,
                     index_state.as_deref(),
                     Some(options.max_prompt_bytes),
                     options.prompt_format,
                 );
 
-                let debug_response_tx = if let Some((debug_tx, context)) = debug_context {
+                let debug_response_tx = if let Some(debug_tx) = &debug_tx {
                     let (response_tx, response_rx) = oneshot::channel();
 
                     let local_prompt = PlannedPrompt::populate(&request)
@@ -633,7 +632,7 @@ impl Zeta {
 
                     debug_tx
                         .unbounded_send(PredictionDebugInfo {
-                            context,
+                            request: request.clone(),
                             retrieval_time,
                             buffer: buffer.downgrade(),
                             local_prompt,
@@ -660,12 +659,12 @@ impl Zeta {
 
                 if let Some(debug_response_tx) = debug_response_tx {
                     debug_response_tx
-                        .send(response.as_ref().map_err(|err| err.to_string()).and_then(
-                            |response| match some_or_debug_panic(response.0.debug_info.clone()) {
-                                Some(debug_info) => Ok(debug_info),
-                                None => Err("Missing debug info".to_string()),
-                            },
-                        ))
+                        .send(
+                            response
+                                .as_ref()
+                                .map_err(|err| err.to_string())
+                                .map(|response| response.0.clone()),
+                        )
                         .ok();
                 }
 

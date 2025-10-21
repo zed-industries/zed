@@ -177,7 +177,7 @@ jobs:
         uses: ./.github/actions/check_style
 
       - name: Check for typos
-        uses: crate-ci/typos@8e6a4285bcbde632c5d79900a7779746e8b7ea3f # v1.24.6
+        uses: crate-ci/typos@80c8a4945eec0f6d464eaf9e65ed98ef085283d1 # v1.38.1
         with:
           config: ./typos.toml
 
@@ -789,7 +789,7 @@ jobs:
 
   bundle-windows-x64:
     timeout-minutes: 120
-    name: Create a Windows installer
+    name: Create a Windows installer for x86_64
     runs-on: [self-32vcpu-windows-2022]
     if: |
       ( startsWith(github.ref, 'refs/tags/v')
@@ -844,12 +844,70 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+  bundle-windows-aarch64:
+    timeout-minutes: 120
+    name: Create a Windows installer for aarch64
+    runs-on: [self-32vcpu-windows-2022]
+    if: |
+      ( startsWith(github.ref, 'refs/tags/v')
+      || contains(github.event.pull_request.labels.*.name, 'run-bundling') )
+    needs: [windows_tests]
+    env:
+      AZURE_TENANT_ID: ${{ secrets.AZURE_SIGNING_TENANT_ID }}
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_SIGNING_CLIENT_ID }}
+      AZURE_CLIENT_SECRET: ${{ secrets.AZURE_SIGNING_CLIENT_SECRET }}
+      ACCOUNT_NAME: ${{ vars.AZURE_SIGNING_ACCOUNT_NAME }}
+      CERT_PROFILE_NAME: ${{ vars.AZURE_SIGNING_CERT_PROFILE_NAME }}
+      ENDPOINT: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+      FILE_DIGEST: SHA256
+      TIMESTAMP_DIGEST: SHA256
+      TIMESTAMP_SERVER: "http://timestamp.acs.microsoft.com"
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+        with:
+          clean: false
+
+      - name: Setup Sentry CLI
+        uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b #v2
+        with:
+          token: ${{ SECRETS.SENTRY_AUTH_TOKEN }}
+
+      - name: Determine version and release channel
+        working-directory: ${{ env.ZED_WORKSPACE }}
+        if: ${{ startsWith(github.ref, 'refs/tags/v') }}
+        run: |
+          # This exports RELEASE_CHANNEL into env (GITHUB_ENV)
+          script/determine-release-channel.ps1
+
+      - name: Build Zed installer
+        working-directory: ${{ env.ZED_WORKSPACE }}
+        run: script/bundle-windows.ps1 -Architecture aarch64
+
+      - name: Upload installer (aarch64) to Workflow - zed (run-bundling)
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: contains(github.event.pull_request.labels.*.name, 'run-bundling')
+        with:
+          name: Zed_${{ github.event.pull_request.head.sha || github.sha }}-aarch64.exe
+          path: ${{ env.SETUP_PATH }}
+
+      - name: Upload Artifacts to release
+        uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844 # v1
+        if: ${{ !(contains(github.event.pull_request.labels.*.name, 'run-bundling')) }}
+        with:
+          draft: true
+          prerelease: ${{ env.RELEASE_CHANNEL == 'preview' }}
+          files: ${{ env.SETUP_PATH }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   auto-release-preview:
     name: Auto release preview
     if: |
-      startsWith(github.ref, 'refs/tags/v')
+      false
+      && startsWith(github.ref, 'refs/tags/v')
       && endsWith(github.ref, '-pre') && !endsWith(github.ref, '.0-pre')
-    needs: [bundle-mac, bundle-linux-x86_x64, bundle-linux-aarch64, bundle-windows-x64]
+    needs: [bundle-mac, bundle-linux-x86_x64, bundle-linux-aarch64, bundle-windows-x64, bundle-windows-aarch64]
     runs-on:
       - self-mini-macos
     steps:

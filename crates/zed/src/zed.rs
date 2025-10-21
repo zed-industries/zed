@@ -178,6 +178,9 @@ pub fn init(cx: &mut App) {
             open_log_file(workspace, window, cx);
         });
     });
+    cx.on_action(|_: &workspace::RevealLogInFileManager, cx| {
+        cx.reveal_path(paths::log_file().as_path());
+    });
     cx.on_action(|_: &zed_actions::OpenLicenses, cx| {
         with_active_or_new_workspace(cx, |workspace, window, cx| {
             open_bundled_file(
@@ -417,6 +420,8 @@ pub fn initialize_workspace(
 
         let cursor_position =
             cx.new(|_| go_to_line::cursor_position::CursorPosition::new(workspace));
+        let line_ending_indicator =
+            cx.new(|_| line_ending_selector::LineEndingIndicator::default());
         workspace.status_bar().update(cx, |status_bar, cx| {
             status_bar.add_left_item(search_button, window, cx);
             status_bar.add_left_item(lsp_button, window, cx);
@@ -425,6 +430,7 @@ pub fn initialize_workspace(
             status_bar.add_right_item(edit_prediction_button, window, cx);
             status_bar.add_right_item(active_buffer_language, window, cx);
             status_bar.add_right_item(active_toolchain_language, window, cx);
+            status_bar.add_right_item(line_ending_indicator, window, cx);
             status_bar.add_right_item(vim_mode_indicator, window, cx);
             status_bar.add_right_item(cursor_position, window, cx);
             status_bar.add_right_item(image_info, window, cx);
@@ -2833,14 +2839,16 @@ mod tests {
         });
 
         // Split the pane with the first entry, then open the second entry again.
-        window
+        let (task1, task2) = window
             .update(cx, |w, window, cx| {
-                w.split_and_clone(w.active_pane().clone(), SplitDirection::Right, window, cx);
-                w.open_path(file2.clone(), None, true, window, cx)
+                (
+                    w.split_and_clone(w.active_pane().clone(), SplitDirection::Right, window, cx),
+                    w.open_path(file2.clone(), None, true, window, cx),
+                )
             })
-            .unwrap()
-            .await
             .unwrap();
+        task1.await.unwrap();
+        task2.await.unwrap();
 
         window
             .read_with(cx, |w, cx| {
@@ -3463,7 +3471,13 @@ mod tests {
                     SplitDirection::Right,
                     window,
                     cx,
-                );
+                )
+            })
+            .unwrap()
+            .await
+            .unwrap();
+        window
+            .update(cx, |workspace, window, cx| {
                 workspace.open_path(
                     (worktree.read(cx).id(), rel_path("the-new-name.rs")),
                     None,
@@ -4669,7 +4683,7 @@ mod tests {
                 "keymap_editor",
                 "keystroke_input",
                 "language_selector",
-                "line_ending",
+                "line_ending_selector",
                 "lsp_tool",
                 "markdown",
                 "menu",

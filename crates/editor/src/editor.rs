@@ -2466,15 +2466,15 @@ impl Editor {
             })
     }
 
-    pub fn key_context(&self, window: &Window, cx: &App) -> KeyContext {
+    pub fn key_context(&self, window: &mut Window, cx: &mut App) -> KeyContext {
         self.key_context_internal(self.has_active_edit_prediction(), window, cx)
     }
 
     fn key_context_internal(
         &self,
         has_active_edit_prediction: bool,
-        window: &Window,
-        cx: &App,
+        window: &mut Window,
+        cx: &mut App,
     ) -> KeyContext {
         let mut key_context = KeyContext::new_with_defaults();
         key_context.add("Editor");
@@ -2551,6 +2551,17 @@ impl Editor {
             key_context.add("selection_mode");
         }
 
+        let disjoint = self.selections.disjoint_anchors();
+        let snapshot = self.snapshot(window, cx);
+        let snapshot = snapshot.buffer_snapshot();
+        if self.mode == EditorMode::SingleLine
+            && let [selection] = disjoint
+            && selection.start == selection.end
+            && selection.end.to_offset(snapshot) == snapshot.len()
+        {
+            key_context.add("end_of_input");
+        }
+
         key_context
     }
 
@@ -2604,8 +2615,8 @@ impl Editor {
     pub fn accept_edit_prediction_keybind(
         &self,
         accept_partial: bool,
-        window: &Window,
-        cx: &App,
+        window: &mut Window,
+        cx: &mut App,
     ) -> AcceptEditPredictionBinding {
         let key_context = self.key_context_internal(true, window, cx);
         let in_conflict = self.edit_prediction_in_conflict();
@@ -2747,7 +2758,7 @@ impl Editor {
         self.buffer().read(cx).title(cx)
     }
 
-    pub fn snapshot(&self, window: &mut Window, cx: &mut App) -> EditorSnapshot {
+    pub fn snapshot(&self, window: &Window, cx: &mut App) -> EditorSnapshot {
         let git_blame_gutter_max_author_length = self
             .render_git_blame_gutter(cx)
             .then(|| {
@@ -3976,6 +3987,10 @@ impl Editor {
         cx: &mut Context<Self>,
     ) -> bool {
         if self.take_rename(false, window, cx).is_some() {
+            return true;
+        }
+
+        if self.hide_blame_popover(true, cx) {
             return true;
         }
 
@@ -5298,8 +5313,8 @@ impl Editor {
                 {
                     self.splice_inlays(&to_remove, to_insert, cx);
                 }
-                self.display_map.update(cx, |display_map, _| {
-                    display_map.remove_inlays_for_excerpts(&excerpts_removed)
+                self.display_map.update(cx, |display_map, cx| {
+                    display_map.remove_inlays_for_excerpts(&excerpts_removed, cx)
                 });
                 return;
             }
@@ -6828,13 +6843,15 @@ impl Editor {
         }
     }
 
-    fn hide_blame_popover(&mut self, cx: &mut Context<Self>) {
+    fn hide_blame_popover(&mut self, ignore_timeout: bool, cx: &mut Context<Self>) -> bool {
         self.inline_blame_popover_show_task.take();
         if let Some(state) = &mut self.inline_blame_popover {
             let hide_task = cx.spawn(async move |editor, cx| {
-                cx.background_executor()
-                    .timer(std::time::Duration::from_millis(100))
-                    .await;
+                if !ignore_timeout {
+                    cx.background_executor()
+                        .timer(std::time::Duration::from_millis(100))
+                        .await;
+                }
                 editor
                     .update(cx, |editor, cx| {
                         editor.inline_blame_popover.take();
@@ -6843,6 +6860,9 @@ impl Editor {
                     .ok();
             });
             state.hide_task = Some(hide_task);
+            true
+        } else {
+            false
         }
     }
 
@@ -9285,7 +9305,7 @@ impl Editor {
     fn render_edit_prediction_accept_keybind(
         &self,
         window: &mut Window,
-        cx: &App,
+        cx: &mut App,
     ) -> Option<AnyElement> {
         let accept_binding = self.accept_edit_prediction_keybind(false, window, cx);
         let accept_keystroke = accept_binding.keystroke()?;
@@ -9331,7 +9351,7 @@ impl Editor {
         label: impl Into<SharedString>,
         icon: Option<IconName>,
         window: &mut Window,
-        cx: &App,
+        cx: &mut App,
     ) -> Stateful<Div> {
         let padding_right = if icon.is_some() { px(4.) } else { px(8.) };
 
@@ -18789,6 +18809,17 @@ impl Editor {
     ) {
         self.buffer.update(cx, |buffer, cx| {
             buffer.expand_diff_hunks(vec![Anchor::min()..Anchor::max()], cx)
+        });
+    }
+
+    pub fn collapse_all_diff_hunks(
+        &mut self,
+        _: &CollapseAllDiffHunks,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.buffer.update(cx, |buffer, cx| {
+            buffer.collapse_diff_hunks(vec![Anchor::min()..Anchor::max()], cx)
         });
     }
 

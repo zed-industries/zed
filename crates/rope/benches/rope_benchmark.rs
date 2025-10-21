@@ -9,11 +9,21 @@ use rope::{Point, Rope};
 use sum_tree::Bias;
 use util::RandomCharIter;
 
-/// Generate a random text of the given length using the provided RNG.
+/// Returns a biased random string whose UTF-8 length is close to but no more than `len` bytes.
 ///
-/// *Note*: The length is in *characters*, not bytes.
-fn generate_random_text(rng: &mut StdRng, text_len: usize) -> String {
-    RandomCharIter::new(rng).take(text_len).collect()
+/// The string is biased towards characters expected to occur in text or likely to exercise edge
+/// cases.
+fn generate_random_text(rng: &mut StdRng, len: usize) -> String {
+    let mut str = String::with_capacity(len);
+    let mut chars = RandomCharIter::new(rng);
+    loop {
+        let ch = chars.next().unwrap();
+        if str.len() + ch.len_utf8() > len {
+            break;
+        }
+        str.push(ch);
+    }
+    str
 }
 
 fn generate_random_rope(rng: &mut StdRng, text_len: usize) -> Rope {
