@@ -2386,11 +2386,6 @@ impl SettingsWindow {
 
         return v_flex()
             .id("Settings-ui-page")
-            .flex_1()
-            .pt_6()
-            .pb_8()
-            .px_8()
-            .bg(cx.theme().colors().editor_background)
             .on_action(cx.listener(|this, _: &menu::SelectNext, window, cx| {
                 if !sub_page_stack().is_empty() {
                     window.focus_next();
@@ -2458,6 +2453,10 @@ impl SettingsWindow {
                 this.vertical_scrollbar_for(self.sub_page_scroll_handle.clone(), window, cx)
             })
             .track_focus(&self.content_focus_handle.focus_handle(cx))
+            .flex_1()
+            .pt_6()
+            .px_8()
+            .bg(cx.theme().colors().editor_background)
             .child(
                 div()
                     .size_full()
