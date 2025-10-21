@@ -1821,6 +1821,9 @@ impl SettingsWindow {
             .read(cx)
             .handle
             .contains_focused(window, cx)
+            || self
+                .visible_navbar_entries()
+                .any(|(_, entry)| entry.focus_handle.is_focused(window))
         {
             "Focus Content"
         } else {
@@ -2020,7 +2023,13 @@ impl SettingsWindow {
                     .border_t_1()
                     .border_color(cx.theme().colors().border_variant)
                     .children(
-                        KeyBinding::for_action(&ToggleFocusNav, window, cx).map(|this| {
+                        KeyBinding::for_action_in(
+                            &ToggleFocusNav,
+                            &self.navbar_focus_handle.focus_handle(cx),
+                            window,
+                            cx,
+                        )
+                        .map(|this| {
                             KeybindingHint::new(
                                 this,
                                 cx.theme().colors().surface_background.opacity(0.5),
