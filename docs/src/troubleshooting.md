@@ -11,6 +11,6 @@ If you want to view the full file, you can find it at the respective location on
 - Linux: `~/.local/share/zed/logs/Zed.log` or `$XDG_DATA_HOME`
 
 > Note: In some cases, it might be useful to monitor the log live, such as when [developing a Zed extension](https://zed.dev/docs/extensions/developing-extensions).
-  Example: `tail -f ~/Library/Logs/Zed/Zed.log`
+> Example: `tail -f ~/Library/Logs/Zed/Zed.log`
 
 The log may contain enough context to help you debug the issue yourself, or you may find specific errors that are useful when filing a [GitHub Issue](https://github.com/zed-industries/zed/issues/new/choose) or when talking to Zed staff in our [Discord server](https://zed.dev/community-links#forums-and-discussions).
