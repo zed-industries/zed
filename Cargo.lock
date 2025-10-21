@@ -15294,6 +15294,7 @@ dependencies = [
  "schemars 1.0.4",
  "search",
  "serde",
+ "serde_json",
  "session",
  "settings",
  "strum 0.27.2",

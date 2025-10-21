@@ -222,6 +222,81 @@ struct SettingFieldRenderer {
 
 impl Global for SettingFieldRenderer {}
 
+#[derive(Default, Clone)]
+struct SettingsJsonKeyFinder {
+    key_finders: Rc<RefCell<HashMap<TypeId, Box<dyn Fn(SettingsContent) -> Option<String>>>>>,
+}
+
+impl Global for SettingsJsonKeyFinder {}
+
+impl SettingsJsonKeyFinder {
+    fn add_basic_json_key_finder<T: 'static + Default + serde::Serialize>(
+        &mut self,
+        field: SettingField<T>,
+    ) -> &mut Self {
+        let key = TypeId::of::<T>();
+        let key_finder = Box::new(move |mut content: SettingsContent| {
+            // Write the field with a default value
+            (field.write)(&mut content, Some(T::default()));
+
+            // Serialize to a pretty-printed JSON string
+            let json_string = serde_json::to_string_pretty(&content)
+                .expect("Failed to serialize SettingsContent");
+
+            // Extract the JSON path from the string (should only have one entry)
+            extract_json_path_from_string(&json_string)
+        });
+        self.key_finders.borrow_mut().insert(key, key_finder);
+        self
+    }
+
+    fn find_json_path<T: 'static>(&self) -> Option<String> {
+        let key = TypeId::of::<T>();
+        let key_finders = self.key_finders.borrow();
+        let key_finder = key_finders.get(&key)?;
+        let content = SettingsContent::default();
+        key_finder(content)
+    }
+}
+
+/// Extracts the JSON key path from a serialized settings string.
+/// Assumes only one field is set in the JSON.
+fn extract_json_path_from_string(json: &str) -> Option<String> {
+    use serde_json::Value;
+
+    let value: Value = serde_json::from_str(json).ok()?;
+
+    fn find_non_empty_path(value: &Value, prefix: &str) -> Option<String> {
+        match value {
+            Value::Object(map) => {
+                for (key, val) in map {
+                    let new_prefix = if prefix.is_empty() {
+                        key.clone()
+                    } else {
+                        format!("{}.{}", prefix, key)
+                    };
+
+                    match val {
+                        Value::Null => continue,
+                        Value::Object(inner_map) if inner_map.is_empty() => continue,
+                        Value::Array(arr) if arr.is_empty() => continue,
+                        Value::Object(_) => {
+                            if let Some(path) = find_non_empty_path(val, &new_prefix) {
+                                return Some(path);
+                            }
+                        }
+                        _ => return Some(new_prefix),
+                    }
+                }
+                None
+            }
+            _ => None,
+        }
+    }
+
+    find_non_empty_path(&value, "")
+}
+
 impl SettingFieldRenderer {
     fn add_basic_renderer<T: 'static>(
         &mut self,
@@ -343,6 +418,7 @@ impl FeatureFlag for SettingsUiFeatureFlag {
 
 pub fn init(cx: &mut App) {
     init_renderers(cx);
+    init_json_key_finders(cx);
 
     cx.observe_new(|workspace: &mut workspace::Workspace, _, _| {
         workspace.register_action(|workspace, _: &OpenSettings, window, cx| {
@@ -354,6 +430,14 @@ pub fn init(cx: &mut App) {
         });
     })
     .detach();
+}
+
+fn init_json_key_finders(cx: &mut App) {
+    cx.default_global::<SettingsJsonKeyFinder>()
+        .add_basic_json_key_finder(SettingField::<bool> {
+            pick: |content| content.vim_mode.as_ref(),
+            write: |content, value| content.vim_mode = value,
+        });
 }
 
 fn init_renderers(cx: &mut App) {
@@ -3114,7 +3198,24 @@ fn render_icon_theme_picker(
 #[cfg(test)]
 mod test {
 
+    use gpui::TestAppContext;
+    use workspace::AppState;
+
     use super::*;
+
+    #[gpui::test]
+    fn test_json_path(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            register_settings(cx);
+            init_json_key_finders(cx);
+
+            let json_key_finder = cx.global::<SettingsJsonKeyFinder>();
+            let path = json_key_finder.find_json_path::<bool>();
+            dbg!(&path);
+
+            assert_eq!(path, Some("vim_mode".to_string()));
+        });
+    }
 
     impl SettingsWindow {
         fn navbar_entry(&self) -> usize {
@@ -3134,9 +3235,14 @@ mod test {
     }
 
     fn register_settings(cx: &mut App) {
+        let app_state = workspace::AppState::test(cx);
+
         settings::init(cx);
         theme::init(theme::LoadThemes::JustBase, cx);
-        workspace::init_settings(cx);
+        // workspace::init_settings(cx);
+        workspace::init(app_state.clone(), cx);
+        AppState::set_global(Arc::downgrade(&app_state), cx);
+
         project::Project::init_settings(cx);
         language::init(cx);
         editor::init(cx);
