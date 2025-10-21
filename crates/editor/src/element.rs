@@ -3170,9 +3170,9 @@ impl EditorElement {
         let mut i = head_idx + 1;
         let should_count_line = |row_info: &RowInfo| {
             if use_display_offset {
-                row_info.buffer_row.is_some()
+                row_info.buffer_row.is_some() || row_info.wrapped.is_some()
             } else {
-                row_info.buffer_row.is_some() && !row_info.wrapped
+                row_info.buffer_row.is_some()
             }
         };
         while i < buffer_rows.len() as u32 {
@@ -3266,8 +3266,8 @@ impl EditorElement {
         let segments = buffer_rows.iter().enumerate().flat_map(|(ix, row_info)| {
             let display_row = DisplayRow(rows.start.0 + ix as u32);
             line_number.clear();
-            let non_relative_number = if !use_relative_for_wrapped_lines && row_info.wrapped {
-                return None;
+            let non_relative_number = if use_relative_for_wrapped_lines {
+                row_info.buffer_row.or(row_info.wrapped)? + 1
             } else {
                 row_info.buffer_row? + 1
             };
