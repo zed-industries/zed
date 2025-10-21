@@ -138,15 +138,6 @@ impl<T: 'static> SettingField<T> {
             json_path: None,
         }
     }
-
-    fn unimplemented_boxed() -> Box<SettingField<UnimplementedSettingField>> {
-        SettingField {
-            pick: |_| Some(&UnimplementedSettingField),
-            write: |_, _| unreachable!(),
-            json_path: None,
-        }
-        .into()
-    }
 }
 
 trait AnySettingField {
@@ -519,7 +510,7 @@ pub fn open_settings_editor(
             log::error!("language-specific settings links are not currently supported");
             return;
         }
-        
+
         settings_window.current_file = SettingsUiFile::User;
         settings_window.build_ui(window, cx);
 
@@ -557,7 +548,7 @@ pub fn open_settings_editor(
 
         // todo! add expand behavior to open_navbar_entry_page
         settings_window.open_navbar_entry_page(navbar_entry_index);
-        settings_window.focus_content_element(item_index, window, cx);
+        window.focus(&settings_window.focus_handle_for_content_element(item_index, cx));
         settings_window.scroll_to_content_item(item_index, window, cx);
 
         // x set current file to user
