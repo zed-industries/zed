@@ -21,7 +21,10 @@ use serde::Serializer;
 /// ```
 /// struct ExampleStruct(#[serde(serialize_with = "serialize_f32_with_two_decimal_places")] f32);
 /// ```
-pub fn serialize_f32_with_two_decimal_places<S>(value: &f32, serializer: S) -> Result<S::Ok, S::Error>
+pub fn serialize_f32_with_two_decimal_places<S>(
+    value: &f32,
+    serializer: S,
+) -> Result<S::Ok, S::Error>
 where
     S: Serializer,
 {
@@ -62,7 +65,10 @@ where
 ///     optional_value: Option<f32>,
 /// }
 /// ```
-pub fn serialize_optional_f32_with_two_decimal_places<S>(value: &Option<f32>, serializer: S) -> Result<S::Ok, S::Error>
+pub fn serialize_optional_f32_with_two_decimal_places<S>(
+    value: &Option<f32>,
+    serializer: S,
+) -> Result<S::Ok, S::Error>
 where
     S: Serializer,
 {
@@ -74,5 +80,49 @@ where
             serializer.serialize_some(&clean_value)
         }
         None => serializer.serialize_none(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde::{Deserialize, Serialize};
+
+    #[derive(Serialize, Deserialize)]
+    struct TestOptional {
+        #[serde(serialize_with = "serialize_optional_f32_with_two_decimal_places")]
+        value: Option<f32>,
+    }
+
+    #[derive(Serialize, Deserialize)]
+    struct TestNonOptional {
+        #[serde(serialize_with = "serialize_f32_with_two_decimal_places")]
+        value: f32,
+    }
+
+    #[test]
+    fn test_serialize_optional_f32_with_two_decimal_places() {
+        let cases = [
+            (Some(123.456789), r#"{"value":123.46}"#),
+            (Some(1.2), r#"{"value":1.2}"#),
+            (Some(300.00000), r#"{"value":300.0}"#),
+        ];
+        for (value, expected) in cases {
+            let value = TestOptional { value };
+            assert_eq!(serde_json::to_string(&value).unwrap(), expected);
+        }
+    }
+
+    #[test]
+    fn test_serialize_f32_with_two_decimal_places() {
+        let cases = [
+            (123.456789, r#"{"value":123.46}"#),
+            (1.200, r#"{"value":1.2}"#),
+            (300.00000, r#"{"value":300.0}"#),
+        ];
+        for (value, expected) in cases {
+            let value = TestNonOptional { value };
+            assert_eq!(serde_json::to_string(&value).unwrap(), expected);
+        }
     }
 }
