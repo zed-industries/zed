@@ -57,10 +57,10 @@
       "alt-d": ["editor::DeleteToNextWordEnd", { "ignore_newlines": false, "ignore_brackets": false }], // kill-word
       "alt-backspace": "editor::DeleteToPreviousWordStart", // backward-kill-word
       "alt-delete": "editor::DeleteToPreviousWordStart", // backward-kill-word
-      "ctrl-k": "editor::CutToEndOfLine", // kill-line
+      "ctrl-k": "editor::KillRingCut", // kill-line
       "ctrl-w": "editor::Cut", // kill-region
       "alt-w": "editor::Copy", // kill-ring-save
-      "ctrl-y": "editor::Paste", // yank
+      "ctrl-y": "editor::KillRingYank", // yank
       "ctrl-_": "editor::Undo", // undo
       "ctrl-/": "editor::Undo", // undo
       "ctrl-x u": "editor::Undo", // undo
