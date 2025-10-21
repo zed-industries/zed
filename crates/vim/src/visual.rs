@@ -366,7 +366,8 @@ impl Vim {
 
             let mut selections = Vec::new();
             let mut row = tail.row();
-            let direction = if tail.row() > head.row() { -1 } else { 1 };
+            let going_up = tail.row() > head.row();
+            let direction = if going_up { -1 } else { 1 };
 
             loop {
                 let laid_out_line = map.layout_row(row, &text_layout_details);
@@ -398,27 +399,20 @@ impl Vim {
                     selections.push(selection);
                 }
 
-                if row == head.row() {
+                // When dealing with soft wrapped lines, it's possible that
+                // `row` ends up being set to a value other than `head.row()` as
+                // `head.row()` might be a `DisplayPoint` mapped to a soft
+                // wrapped line, hence the need for `<=` and `>=` instead of
+                // `==`.
+                if going_up && row <= head.row() || !going_up && row >= head.row() {
                     break;
                 }
 
                 // Find the next or previous buffer row where the `row` should
                 // be moved to, so that wrapped lines are skipped.
-                let buffer_row = map
+                row = map
                     .start_of_relative_buffer_row(DisplayPoint::new(row, 0), direction)
                     .row();
-
-                while row != buffer_row {
-                    if tail.row() > head.row() {
-                        row.0 -= 1;
-                    } else {
-                        row.0 += 1;
-                    }
-
-                    if row == head.row() {
-                        break;
-                    }
-                }
             }
 
             s.select(selections);
