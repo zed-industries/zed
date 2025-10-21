@@ -8,8 +8,8 @@ use fs::normalize_path;
 use gpui::{
     AbsoluteLength, AnyElement, App, AppContext as _, ClipboardItem, Context, DefiniteLength, Div,
     Element, ElementId, Entity, HighlightStyle, Hsla, ImageSource, InteractiveText, IntoElement,
-    Keystroke, Length, Modifiers, ParentElement, Render, Resource, SharedString, Styled,
-    StyledText, TextStyle, WeakEntity, Window, div, img, rems,
+    Keystroke, Modifiers, ParentElement, Render, Resource, SharedString, Styled, StyledText,
+    TextStyle, WeakEntity, Window, div, img, rems,
 };
 use settings::Settings;
 use std::{
@@ -22,7 +22,7 @@ use ui::{
     ButtonCommon, Clickable, Color, FluentBuilder, IconButton, IconName, IconSize,
     InteractiveElement, Label, LabelCommon, LabelSize, LinkPreview, Pixels, Rems,
     StatefulInteractiveElement, StyledExt, StyledImage, ToggleState, Tooltip, VisibleOnHover,
-    h_flex, relative, tooltip_container, v_flex,
+    h_flex, px, tooltip_container, v_flex,
 };
 use workspace::{OpenOptions, OpenVisible, Workspace};
 
@@ -467,17 +467,6 @@ impl gpui::RenderOnce for MarkdownCheckbox {
     }
 }
 
-fn paragraph_len(paragraphs: &MarkdownParagraph) -> usize {
-    paragraphs
-        .iter()
-        .map(|paragraph| match paragraph {
-            MarkdownParagraphChunk::Text(text) => text.contents.len(),
-            // TODO: Scale column width based on image size
-            MarkdownParagraphChunk::Image(_) => 1,
-        })
-        .sum()
-}
-
 fn calculate_table_columns_count(rows: &Vec<ParsedMarkdownTableRow>) -> usize {
     let mut actual_column_count = 0;
     for row in rows {
@@ -491,137 +480,86 @@ fn calculate_table_columns_count(rows: &Vec<ParsedMarkdownTableRow>) -> usize {
     actual_column_count
 }
 
-fn calculate_table_column_lengths(
-    max_lengths: &mut Vec<usize>,
-    rows: &Vec<ParsedMarkdownTableRow>,
-) {
-    for row in rows {
-        let mut col_index = 0;
-        for cell in row.columns.iter() {
-            let length = paragraph_len(&cell.children);
-
-            let length_per_col = length / cell.col_span;
-            for i in 0..cell.col_span {
-                if col_index + i < max_lengths.len() {
-                    max_lengths[col_index + i] = max_lengths[col_index + i].max(length_per_col);
-                }
-            }
-            col_index += cell.col_span;
-        }
-    }
-}
-
 fn render_markdown_table(parsed: &ParsedMarkdownTable, cx: &mut RenderContext) -> AnyElement {
     let actual_header_column_count = calculate_table_columns_count(&parsed.header);
     let actual_body_column_count = calculate_table_columns_count(&parsed.body);
-
     let max_column_count = std::cmp::max(actual_header_column_count, actual_body_column_count);
 
-    let mut max_lengths: Vec<usize> = vec![0; max_column_count];
+    let total_rows = parsed.header.len() + parsed.body.len();
 
-    calculate_table_column_lengths(&mut max_lengths, &parsed.header);
-    calculate_table_column_lengths(&mut max_lengths, &parsed.body);
+    // Track which grid cells are occupied by spanning cells
+    let mut grid_occupied = vec![vec![false; max_column_count]; total_rows];
 
-    let total_max_length: usize = max_lengths.iter().sum::<usize>().max(1);
-    let max_column_widths: Vec<f32> = max_lengths
-        .iter()
-        .map(|&length| length as f32 / total_max_length as f32)
-        .collect();
+    let mut cells = Vec::with_capacity(total_rows * max_column_count);
 
-    let mut row_span_tracker: Vec<usize> = vec![0; max_column_count];
-    let mut rendered_rows = Vec::with_capacity(parsed.header.len() + parsed.body.len());
+    for (row_idx, row) in parsed.header.iter().chain(parsed.body.iter()).enumerate() {
+        let mut col_idx = 0;
 
-    for row in parsed.header.iter().chain(parsed.body.iter()) {
-        rendered_rows.push(render_markdown_table_row_with_spans(
-            row,
-            &parsed.column_alignments,
-            &max_column_widths,
-            &mut row_span_tracker,
-            cx,
-        ));
-    }
-
-    cx.with_common_p(v_flex())
-        .w_full()
-        .border_t_1()
-        .border_color(cx.border_color)
-        .children(rendered_rows)
-        .into_any()
-}
-
-fn render_markdown_table_row_with_spans(
-    parsed: &ParsedMarkdownTableRow,
-    alignments: &Vec<ParsedMarkdownTableAlignment>,
-    max_column_widths: &Vec<f32>,
-    row_span_tracker: &mut Vec<usize>,
-    cx: &mut RenderContext,
-) -> AnyElement {
-    let mut spans = Vec::with_capacity(max_column_widths.len());
-    let mut col_index = 0;
-    let mut cell_iter = parsed.columns.iter().enumerate();
-    let mut current_cell = cell_iter.next();
-
-    fn base_cell(width: f32, cx: &mut RenderContext) -> Div {
-        div()
-            .w(Length::Definite(relative(width)))
-            .h_full()
-            .px_2()
-            .py_1()
-            .border_color(cx.border_color)
-            .border_r_1()
-    }
-
-    while col_index < max_column_widths.len() {
-        if row_span_tracker[col_index] > 0 {
-            spans.push(base_cell(max_column_widths[col_index], cx));
-
-            row_span_tracker[col_index] -= 1;
-            col_index += 1;
-        } else if let Some((cell_index, cell)) = current_cell {
-            let contents = render_markdown_text(&cell.children, cx);
-
-            let mut combined_width = 0.0;
-            for i in 0..cell.col_span {
-                if col_index + i < max_column_widths.len() {
-                    combined_width += max_column_widths[col_index + i];
-                }
+        for (cell_idx, cell) in row.columns.iter().enumerate() {
+            // Skip columns occupied by row-spanning cells from previous rows
+            while col_idx < max_column_count && grid_occupied[row_idx][col_idx] {
+                col_idx += 1;
             }
 
-            let container = base_cell(combined_width, cx);
-            let container = match alignments.get(cell_index).copied().unwrap_or_default() {
-                ParsedMarkdownTableAlignment::Center => container.v_flex().items_center(),
-                ParsedMarkdownTableAlignment::Right => container.v_flex().items_end(),
-                _ => container,
+            if col_idx >= max_column_count {
+                break;
+            }
+
+            let alignment = parsed
+                .column_alignments
+                .get(cell_idx)
+                .copied()
+                .unwrap_or_else(|| {
+                    if cell.is_header {
+                        ParsedMarkdownTableAlignment::Center
+                    } else {
+                        ParsedMarkdownTableAlignment::None
+                    }
+                });
+
+            let container = match alignment {
+                ParsedMarkdownTableAlignment::Left | ParsedMarkdownTableAlignment::None => div(),
+                ParsedMarkdownTableAlignment::Center => v_flex().items_center(),
+                ParsedMarkdownTableAlignment::Right => v_flex().items_end(),
             };
 
-            spans.push(
-                container
-                    .children(contents)
-                    .when(cell.is_header, |this| this.bg(cx.element_background_color)),
-            );
+            let cell_element = container
+                .col_span(cell.col_span.min(max_column_count - col_idx) as u16)
+                .row_span(cell.row_span.min(total_rows - row_idx) as u16)
+                .children(render_markdown_text(&cell.children, cx))
+                .px_2()
+                .py_1()
+                .border_1()
+                .size_full()
+                .border_color(cx.border_color)
+                .when(cell.is_header, |this| this.bg(cx.element_background_color));
 
-            if cell.row_span > 1 {
-                for i in 0..cell.col_span {
-                    if col_index + i < row_span_tracker.len() {
-                        row_span_tracker[col_index + i] = cell.row_span - 1;
+            cells.push(cell_element);
+
+            // Mark grid positions as occupied for row-spanning cells
+            for r in 0..cell.row_span {
+                for c in 0..cell.col_span {
+                    if row_idx + r < total_rows && col_idx + c < max_column_count {
+                        grid_occupied[row_idx + r][col_idx + c] = true;
                     }
                 }
             }
 
-            col_index += cell.col_span;
-            current_cell = cell_iter.next();
-        } else {
-            spans.push(base_cell(max_column_widths[col_index], cx));
-            col_index += 1;
+            col_idx += cell.col_span;
         }
     }
 
-    h_flex()
-        .border_b_1()
-        .border_l_1()
+    cx.with_common_p(div())
+        // .h(px(500.0))
+        .grid()
+        .w_full()
+        .h_full()
+        .grid_cols(max_column_count as u16)
+        .grid_rows(total_rows as u16)
+        .border_1()
         .border_color(cx.border_color)
-        .children(spans)
-        .into_any_element()
+        .children(cells)
+        .into_any()
 }
 
 fn render_markdown_block_quote(
@@ -1069,77 +1007,6 @@ mod tests {
                     column(3, 1, vec![text("spans 3 cols")]),
                 ])
             ])
-        );
-    }
-
-    #[test]
-    fn test_calculate_table_column_lengths() {
-        #[track_caller]
-        fn test(expect_max_lengths: Vec<usize>, rows: Vec<ParsedMarkdownTableRow>) {
-            let max_column_count = calculate_table_columns_count(&rows);
-
-            let mut max_lengths = vec![0; max_column_count];
-            calculate_table_column_lengths(&mut max_lengths, &rows);
-
-            assert_eq!(expect_max_lengths, max_lengths);
-        }
-
-        test(vec![], vec![]);
-
-        test(
-            vec![7],
-            vec![ParsedMarkdownTableRow::with_columns(vec![column(
-                1,
-                1,
-                vec![text("column1")],
-            )])],
-        );
-
-        test(
-            vec![7, 7],
-            vec![ParsedMarkdownTableRow::with_columns(vec![
-                column(1, 1, vec![text("column1")]),
-                column(1, 1, vec![text("column2")]),
-            ])],
-        );
-
-        test(
-            vec![3, 3],
-            vec![ParsedMarkdownTableRow::with_columns(vec![column(
-                2,
-                1,
-                vec![text("column1")],
-            )])],
-        );
-
-        test(
-            vec![7, 3, 3],
-            vec![ParsedMarkdownTableRow::with_columns(vec![
-                column(1, 1, vec![text("column1")]),
-                column(2, 1, vec![text("column2")]),
-            ])],
-        );
-
-        test(
-            vec![7, 7],
-            vec![
-                ParsedMarkdownTableRow::with_columns(vec![
-                    column(1, 1, vec![text("column1")]),
-                    column(1, 1, vec![text("column2")]),
-                ]),
-                ParsedMarkdownTableRow::with_columns(vec![column(1, 1, vec![text("column1")])]),
-            ],
-        );
-
-        test(
-            vec![7, 7, 2],
-            vec![
-                ParsedMarkdownTableRow::with_columns(vec![
-                    column(1, 1, vec![text("column1")]),
-                    column(1, 1, vec![text("column2")]),
-                ]),
-                ParsedMarkdownTableRow::with_columns(vec![column(3, 3, vec![text("column1")])]),
-            ],
         );
     }
 }
