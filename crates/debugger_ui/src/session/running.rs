@@ -386,9 +386,9 @@ pub(crate) fn new_debugger_pane(
             Default::default(),
             None,
             NoAction.boxed_clone(),
+            true,
             window,
             cx,
-            false,
         );
         let focus_handle = pane.focus_handle(cx);
         pane.set_can_split(Some(Arc::new({

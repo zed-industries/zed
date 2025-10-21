@@ -1331,9 +1331,9 @@ impl Workspace {
                 pane_history_timestamp.clone(),
                 None,
                 NewFile.boxed_clone(),
+                true,
                 window,
                 cx,
-                false,
             );
             center_pane.set_can_split(Some(Arc::new(|_, _, _, _| true)));
             center_pane
@@ -3236,9 +3236,9 @@ impl Workspace {
                 self.pane_history_timestamp.clone(),
                 None,
                 NewFile.boxed_clone(),
+                true,
                 window,
                 cx,
-                false,
             );
             pane.set_can_split(Some(Arc::new(|_, _, _, _| true)));
             pane

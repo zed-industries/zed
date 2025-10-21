@@ -1103,9 +1103,9 @@ pub fn new_terminal_pane(
             Default::default(),
             None,
             NewTerminal.boxed_clone(),
+            false,
             window,
             cx,
-            true,
         );
         pane.set_zoomed(zoomed, cx);
         pane.set_can_navigate(false, cx);
