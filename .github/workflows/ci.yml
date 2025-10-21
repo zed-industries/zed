@@ -177,7 +177,7 @@ jobs:
         uses: ./.github/actions/check_style
 
       - name: Check for typos
-        uses: crate-ci/typos@8e6a4285bcbde632c5d79900a7779746e8b7ea3f # v1.24.6
+        uses: crate-ci/typos@80c8a4945eec0f6d464eaf9e65ed98ef085283d1 # v1.38.1
         with:
           config: ./typos.toml
 
