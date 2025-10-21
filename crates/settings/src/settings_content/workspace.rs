@@ -7,8 +7,8 @@ use serde_with::skip_serializing_none;
 use settings_macros::MergeFrom;
 
 use crate::{
-    DelayMs, DockPosition, DockSide, InactiveOpacity, ScrollbarSettingsContent, ShowIndentGuides,
-    serialize_optional_f32_with_two_decimal_places,
+    CenteredPaddingSettings, DelayMs, DockPosition, DockSide, InactiveOpacity,
+    ScrollbarSettingsContent, ShowIndentGuides, serialize_optional_f32_with_two_decimal_places,
 };
 
 #[skip_serializing_none]
@@ -463,22 +463,20 @@ pub enum PaneSplitDirectionVertical {
     Right,
 }
 
-#[skip_serializing_none]
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Default)]
 #[serde(rename_all = "snake_case")]
+#[skip_serializing_none]
 pub struct CenteredLayoutSettings {
     /// The relative width of the left padding of the central pane from the
     /// workspace when the centered layout is used.
     ///
     /// Default: 0.2
-    #[serde(serialize_with = "serialize_optional_f32_with_two_decimal_places")]
-    pub left_padding: Option<f32>,
+    pub left_padding: Option<CenteredPaddingSettings>,
     // The relative width of the right padding of the central pane from the
     // workspace when the centered layout is used.
     ///
     /// Default: 0.2
-    #[serde(serialize_with = "serialize_optional_f32_with_two_decimal_places")]
-    pub right_padding: Option<f32>,
+    pub right_padding: Option<CenteredPaddingSettings>,
 }
 
 #[derive(
