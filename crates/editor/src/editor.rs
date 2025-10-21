@@ -16855,6 +16855,22 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let selection = self.selections.newest_anchor().clone();
+        let Some((_, position)) = self
+            .buffer
+            .read(cx)
+            .text_anchor_for_position(selection.head(), cx)
+        else {
+            return;
+        };
+        let snapshot = self.buffer().read(cx).snapshot(cx);
+        self.go_to_reference_before_or_after_position(
+            snapshot,
+            position,
+            Direction::Next,
+            window,
+            cx,
+        );
     }
 
     fn go_to_prev_reference(
@@ -16872,43 +16888,73 @@ impl Editor {
             return;
         };
         let snapshot = self.buffer().read(cx).snapshot(cx);
-        self.go_to_reference_before_or_after_position(snapshot, position, direction, window, cx);
+        self.go_to_reference_before_or_after_position(
+            &snapshot,
+            position,
+            Direction::Prev,
+            window,
+            cx,
+        );
     }
     pub fn go_to_reference_before_or_after_position(
         &mut self,
-        snapshot: BufferSnapshot,
+        snapshot: &BufferSnapshot,
         position: Point,
         direction: Direction,
         window: &mut Window,
         cx: &mut Context<Editor>,
-    ) -> Task<Result<()>> {
-        let buffer = self.buffer();
+    ) -> Option<Task<Result<()>>> {
+        let selection = self.selections.newest::<usize>(&self.display_snapshot(cx));
+        let multi_buffer = self.buffer.read(cx);
+        let head = selection.head();
+
+        let multi_buffer_snapshot = multi_buffer.snapshot(cx);
+        let head_anchor = multi_buffer_snapshot.anchor_at(
+            head,
+            if head < selection.tail() {
+                Bias::Right
+            } else {
+                Bias::Left
+            },
+        );
+
+        let (buffer, head) = multi_buffer.text_anchor_for_position(head, cx)?;
         let workspace = self.workspace()?;
         let project = workspace.read(cx).project().clone();
         let references = project.update(cx, |project, cx| project.references(&buffer, head, cx));
-
-        cx.spawn_in(window, async move |editor, cx| -> Result<()> {
+        Some(cx.spawn_in(window, async move |editor, cx| -> Result<()> {
             let Some(mut locations) = references.await? else {
                 return Ok(());
             };
 
             // TODO(cameron): comparing an `Entity<Buffer>` with an `Entity<MultiBuffer>`?
             locations.retain(|loc| loc.buffer == buffer);
-            locations.sort_unstable(); // TODO(cameron): needed?
+            locations.sort_unstable_by_key(|loc| loc.range.start.offset); // TODO(cameron): needed?
 
             let iter = locations.iter().map(|loc| loc.range);
 
-            let location = match direction {
+            let destination = match direction {
                 Direction::Next => iter
-                    .skip_while(|range| range.start.to_point(&snapshot) < point)
-                    .chain(locations.first().map(|loc| loc.range)),
+                    .skip_while(|range| range.start.offset < head)
+                    .chain(locations.first().map(|loc| loc.range))
+                    .next(),
                 Direction::Prev => iter
-                    .skip_while(|range| range.end.to_point(&snapshot) > point)
-                    .chain(locations.first().map(|loc| loc.range)),
+                    .skip_while(|range| range.end.offset > head)
+                    .chain(locations.first().map(|loc| loc.range))
+                    .next(),
             };
 
-            if let Some(location) = location {}
-        })
+            if let Some(destination) = destination {
+                let autoscroll = Autoscroll::center();
+
+                self.unfold_ranges(&[destination], false, false, cx);
+                self.change_selections(SelectionEffects::scroll(autoscroll), window, cx, |s| {
+                    s.select_ranges([destination..destination]);
+                });
+            }
+
+            Ok(())
+        }))
     }
 
     pub fn find_all_references(

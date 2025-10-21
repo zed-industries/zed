@@ -495,6 +495,8 @@ impl EditorElement {
         register_action(editor, window, Editor::expand_all_diff_hunks);
         register_action(editor, window, Editor::go_to_previous_change);
         register_action(editor, window, Editor::go_to_next_change);
+        register_action(editor, window, Editor::go_to_prev_reference);
+        register_action(editor, window, Editor::go_to_next_reference);
 
         register_action(editor, window, |editor, action, window, cx| {
             if let Some(task) = editor.format(action, window, cx) {
