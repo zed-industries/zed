@@ -3170,7 +3170,7 @@ impl EditorElement {
         let mut i = head_idx + 1;
         let should_count_line = |row_info: &RowInfo| {
             if use_display_offset {
-                row_info.buffer_row.is_some() || row_info.wrapped.is_some()
+                row_info.buffer_row.is_some() || row_info.wrapped_buffer_row.is_some()
             } else {
                 row_info.buffer_row.is_some()
             }
@@ -3267,7 +3267,7 @@ impl EditorElement {
             let display_row = DisplayRow(rows.start.0 + ix as u32);
             line_number.clear();
             let non_relative_number = if use_relative_for_wrapped_lines {
-                row_info.buffer_row.or(row_info.wrapped)? + 1
+                row_info.buffer_row.or(row_info.wrapped_buffer_row)? + 1
             } else {
                 row_info.buffer_row? + 1
             };
@@ -3333,7 +3333,7 @@ impl EditorElement {
             line_numbers
                 .entry(buffer_row)
                 .or_insert_with(|| LineNumberLayout {
-                    segments: Vec::new(),
+                    segments: Default::default(),
                 })
                 .segments
                 .push(segment);
@@ -9825,13 +9825,15 @@ impl EditorLayout {
     }
 }
 
+#[derive(Debug)]
 struct LineNumberSegment {
     shaped_line: ShapedLine,
     hitbox: Option<Hitbox>,
 }
 
+#[derive(Debug)]
 struct LineNumberLayout {
-    segments: Vec<LineNumberSegment>,
+    segments: SmallVec<[LineNumberSegment; 1]>,
 }
 
 struct ColoredRange<T> {
@@ -10996,7 +10998,7 @@ mod tests {
                 )
             })
             .unwrap();
-        assert_eq!(layouts.len(), 6);
+        assert_eq!(layouts.len(), 3);
 
         let relative_rows = window
             .update(cx, |editor, window, cx| {
@@ -11009,7 +11011,7 @@ mod tests {
                 )
             })
             .unwrap();
-        dbg!(&relative_rows);
+
         assert_eq!(relative_rows[&DisplayRow(0)], 3);
         assert_eq!(relative_rows[&DisplayRow(1)], 2);
         assert_eq!(relative_rows[&DisplayRow(2)], 1);
@@ -11131,7 +11133,13 @@ mod tests {
             state
                 .line_numbers
                 .get(&MultiBufferRow(0))
-                .map(|line_number| line_number.shaped_line.text.as_ref()),
+                .map(|line_number| line_number
+                    .segments
+                    .first()
+                    .unwrap()
+                    .shaped_line
+                    .text
+                    .as_ref()),
             Some("1")
         );
     }
