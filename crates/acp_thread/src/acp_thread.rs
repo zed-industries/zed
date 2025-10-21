@@ -796,6 +796,7 @@ pub struct AcpThread {
     action_log: Entity<ActionLog>,
     shared_buffers: HashMap<Entity<Buffer>, BufferSnapshot>,
     send_task: Option<Task<()>>,
+    is_generating: bool,
     connection: Rc<dyn AgentConnection>,
     session_id: acp::SessionId,
     token_usage: Option<TokenUsage>,
@@ -1017,6 +1018,7 @@ impl AcpThread {
             title: title.into(),
             project,
             send_task: None,
+            is_generating: false,
             connection,
             session_id,
             token_usage: None,
@@ -1057,7 +1059,7 @@ impl AcpThread {
     }
 
     pub fn status(&self) -> ThreadStatus {
-        if self.send_task.is_some() {
+        if self.send_task.is_some() || self.is_generating {
             ThreadStatus::Generating
         } else {
             ThreadStatus::Idle
@@ -1705,6 +1707,7 @@ impl AcpThread {
                 match response {
                     Ok(Err(e)) => {
                         this.send_task.take();
+                        this.is_generating = false;
                         cx.emit(AcpThreadEvent::Error);
                         Err(e)
                     }
@@ -1724,6 +1727,7 @@ impl AcpThread {
                         // would cause the next generation to be canceled.
                         if !canceled {
                             this.send_task.take();
+                            this.is_generating = false;
                         }
 
                         // Handle refusal - distinguish between user prompt and tool call refusals
@@ -1795,9 +1799,17 @@ impl AcpThread {
         }
 
         self.connection.cancel(&self.session_id, cx);
+        self.is_generating = false;
 
         // Wait for the send task to complete
         cx.foreground_executor().spawn(send_task)
+    }
+
+    pub fn detach_current_generation(&mut self) {
+        if let Some(send_task) = self.send_task.take() {
+            self.is_generating = true;
+            send_task.detach();
+        }
     }
 
     /// Restores the git working tree to the state at the given checkpoint (if one exists)

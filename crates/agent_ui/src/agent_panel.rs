@@ -428,6 +428,7 @@ pub struct AgentPanel {
     pending_serialization: Option<Task<Result<()>>>,
     onboarding: Entity<AgentPanelOnboarding>,
     selected_agent: AgentType,
+    detached_threads: Vec<Entity<AcpThread>>,
 }
 
 impl AgentPanel {
@@ -658,6 +659,7 @@ impl AgentPanel {
             acp_history,
             history_store,
             selected_agent: AgentType::default(),
+            detached_threads: Vec::new(),
             loading: false,
         }
     }
@@ -857,6 +859,18 @@ impl AgentPanel {
                         cx,
                     )
                 });
+
+                // Detach any running generation from the current thread so it continues in background
+                if let Some(current_thread_view) = this.active_thread_view() {
+                    let current_thread = current_thread_view.read(cx).thread().cloned();
+                    if let Some(current_thread) = current_thread {
+                        current_thread.update(cx, |thread, _| {
+                            thread.detach_current_generation();
+                        });
+                        // Keep the thread alive
+                        this.detached_threads.push(current_thread.clone());
+                    }
+                }
 
                 this.set_active_view(ActiveView::ExternalAgentThread { thread_view }, window, cx);
             })
