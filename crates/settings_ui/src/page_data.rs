@@ -9,6 +9,16 @@ use crate::{
     SettingsPageItem, SubPageLink, USER, all_language_names, sub_page_stack,
 };
 
+const DEFAULT_STRING: String = String::new();
+/// A default empty string reference. Useful in `pick` functions for cases either in dynamic item fields, or when dealing with `settings::Maybe`
+/// to avoid the "NO DEFAULT" case.
+const DEFAULT_EMPTY_STRING: Option<&String> = Some(&DEFAULT_STRING);
+
+const DEFAULT_SHARED_STRING: SharedString = SharedString::new_static("");
+/// A default empty string reference. Useful in `pick` functions for cases either in dynamic item fields, or when dealing with `settings::Maybe`
+/// to avoid the "NO DEFAULT" case.
+const DEFAULT_EMPTY_SHARED_STRING: Option<&SharedString> = Some(&DEFAULT_SHARED_STRING);
+
 pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
     vec![
         SettingsPage {
@@ -16,16 +26,20 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
             items: vec![
                 SettingsPageItem::SectionHeader("General Settings"),
                 SettingsPageItem::SettingItem(SettingItem {
-                    title: "Confirm Quit",
-                    description: "Confirm before quitting Zed",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| settings_content.workspace.confirm_quit.as_ref(),
-                        write: |settings_content, value| {
-                            settings_content.workspace.confirm_quit = value;
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
+                    files: LOCAL,
+                    title: "Project Name",
+                    description: "The Displayed Name Of This Project. If Left Empty, The Root Directory Name Will Be Displayed",
+                    field: Box::new(
+                        SettingField {
+                            pick: |settings_content| {
+                                settings_content.project.worktree.project_name.as_ref()?.as_ref().or(DEFAULT_EMPTY_STRING)
+                            },
+                            write: |settings_content, value| {
+                                settings_content.project.worktree.project_name = settings::Maybe::Set(value.filter(|name| !name.is_empty()));
+                            },
+                        }
+                    ),
+                    metadata: Some(Box::new(SettingsFieldMetadata { placeholder: Some("Project Name"), ..Default::default() })),
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "When Closing With No Tabs",
@@ -252,7 +266,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         description: "How to select the theme",
                         field: Box::new(SettingField {
                             pick: |settings_content| {
-                                Some(&<<settings::ThemeSelection as strum::IntoDiscriminant>::Discriminant as strum::VariantArray>::VARIANTS[
+                                Some(&dynamic_variants::<settings::ThemeSelection>()[
                                     settings_content
                                         .theme
                                         .theme
@@ -263,7 +277,9 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 let Some(value) = value else {
                                     return;
                                 };
-                                let settings_value = settings_content.theme.theme.as_mut().expect("Has Default");
+                                let settings_value = settings_content.theme.theme.get_or_insert_with(|| {
+                                    settings::ThemeSelection::Static(theme::ThemeName(theme::default_theme(theme::SystemAppearance::default().0).into()))
+                                });
                                 *settings_value = match value {
                                     settings::ThemeSelectionDiscriminants::Static => {
                                         let name = match settings_value {
@@ -298,7 +314,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     pick_discriminant: |settings_content| {
                         Some(settings_content.theme.theme.as_ref()?.discriminant() as usize)
                     },
-                    fields: <<settings::ThemeSelection as strum::IntoDiscriminant>::Discriminant as strum::VariantArray>::VARIANTS.into_iter().map(|variant| {
+                    fields: dynamic_variants::<settings::ThemeSelection>().into_iter().map(|variant| {
                         match variant {
                             settings::ThemeSelectionDiscriminants::Static => vec![
                                 SettingItem {
@@ -407,20 +423,169 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         }
                     }).collect(),
                 }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    files: USER,
-                    title: "Icon Theme",
-                    // todo(settings_ui)
-                    // This description is misleading because the icon theme is used in more places than the file explorer)
-                    description: "Choose the icon theme for file explorer",
-                    field: Box::new(
-                        SettingField {
-                            pick: |settings_content| settings_content.theme.icon_theme.as_ref(),
-                            write: |settings_content, value|{  settings_content.theme.icon_theme = value;},
+                SettingsPageItem::DynamicItem(DynamicItem {
+                    discriminant: SettingItem {
+                        files: USER,
+                        title: "Icon Theme",
+                        description: "The Icon Theme Zed Will Associate With Files And Directories",
+                        field: Box::new(SettingField {
+                            pick: |settings_content| {
+                                Some(&dynamic_variants::<settings::IconThemeSelection>()[
+                                    settings_content
+                                        .theme
+                                        .icon_theme
+                                        .as_ref()?
+                                        .discriminant() as usize])
+                            },
+                            write: |settings_content, value| {
+                                let Some(value) = value else {
+                                    return;
+                                };
+                                let settings_value = settings_content.theme.icon_theme.get_or_insert_with(|| {
+                                    settings::IconThemeSelection::Static(settings::IconThemeName(theme::default_icon_theme().name.clone().into()))
+                                });
+                                *settings_value = match value {
+                                    settings::IconThemeSelectionDiscriminants::Static => {
+                                        let name = match settings_value {
+                                            settings::IconThemeSelection::Static(_) => return,
+                                            settings::IconThemeSelection::Dynamic { mode, light, dark } => {
+                                                match mode {
+                                                    theme::ThemeMode::Light => light.clone(),
+                                                    theme::ThemeMode::Dark => dark.clone(),
+                                                    theme::ThemeMode::System => dark.clone(), // no cx, can't determine correct choice
+                                                }
+                                            },
+                                        };
+                                        settings::IconThemeSelection::Static(name)
+                                    },
+                                    settings::IconThemeSelectionDiscriminants::Dynamic => {
+                                        let static_name = match settings_value {
+                                            settings::IconThemeSelection::Static(theme_name) => theme_name.clone(),
+                                            settings::IconThemeSelection::Dynamic {..} => return,
+                                        };
+
+                                        settings::IconThemeSelection::Dynamic {
+                                            mode: settings::ThemeMode::System,
+                                            light: static_name.clone(),
+                                            dark: static_name,
+                                        }
+                                    },
+                                };
+                            },
+                        }),
+                        metadata: None,
+                    },
+                    pick_discriminant: |settings_content| {
+                        Some(settings_content.theme.icon_theme.as_ref()?.discriminant() as usize)
+                    },
+                    fields: dynamic_variants::<settings::IconThemeSelection>().into_iter().map(|variant| {
+                        match variant {
+                            settings::IconThemeSelectionDiscriminants::Static => vec![
+                                SettingItem {
+                                    files: USER,
+                                    title: "Icon Theme Name",
+                                    description: "The Name Of The Icon Theme To Use",
+                                    field: Box::new(SettingField {
+                                        pick: |settings_content| {
+                                            match settings_content.theme.icon_theme.as_ref() {
+                                                Some(settings::IconThemeSelection::Static(name)) => Some(name),
+                                                _ => None
+                                            }
+                                        },
+                                        write: |settings_content, value| {
+                                            let Some(value) = value else {
+                                                return;
+                                            };
+                                            match settings_content
+                                                .theme
+                                                .icon_theme.as_mut() {
+                                                    Some(settings::IconThemeSelection::Static(theme_name)) => *theme_name = value,
+                                                    _ => return
+                                                }
+                                        },
+                                    }),
+                                    metadata: None,
+                                }
+                            ],
+                            settings::IconThemeSelectionDiscriminants::Dynamic => vec![
+                                SettingItem {
+                                    files: USER,
+                                    title: "Mode",
+                                    description: "How To Determine Whether to Use a Light or Dark Icon Theme",
+                                    field: Box::new(SettingField {
+                                        pick: |settings_content| {
+                                            match settings_content.theme.icon_theme.as_ref() {
+                                                Some(settings::IconThemeSelection::Dynamic { mode, ..}) => Some(mode),
+                                                _ => None
+                                            }
+                                        },
+                                        write: |settings_content, value| {
+                                            let Some(value) = value else {
+                                                return;
+                                            };
+                                            match settings_content
+                                                .theme
+                                                .icon_theme.as_mut() {
+                                                    Some(settings::IconThemeSelection::Dynamic{ mode, ..}) => *mode = value,
+                                                    _ => return
+                                                }
+                                        },
+                                    }),
+                                    metadata: None,
+                                },
+                                SettingItem {
+                                    files: USER,
+                                    title: "Light Icon Theme",
+                                    description: "The Icon Theme To Use When Mode Is Set To Light, Or When Mode Is Set To System And The System Is In Light Mode",
+                                    field: Box::new(SettingField {
+                                        pick: |settings_content| {
+                                            match settings_content.theme.icon_theme.as_ref() {
+                                                Some(settings::IconThemeSelection::Dynamic { light, ..}) => Some(light),
+                                                _ => None
+                                            }
+                                        },
+                                        write: |settings_content, value| {
+                                            let Some(value) = value else {
+                                                return;
+                                            };
+                                            match settings_content
+                                                .theme
+                                                .icon_theme.as_mut() {
+                                                    Some(settings::IconThemeSelection::Dynamic{ light, ..}) => *light = value,
+                                                    _ => return
+                                                }
+                                        },
+                                    }),
+                                    metadata: None,
+                                },
+                                SettingItem {
+                                    files: USER,
+                                    title: "Dark Icon Theme",
+                                    description: "The Icon Theme To Use When Mode Is Set To Dark, Or When Mode Is Set To System And The System Is In Dark Mode",
+                                    field: Box::new(SettingField {
+                                        pick: |settings_content| {
+                                            match settings_content.theme.icon_theme.as_ref() {
+                                                Some(settings::IconThemeSelection::Dynamic { dark, ..}) => Some(dark),
+                                                _ => None
+                                            }
+                                        },
+                                        write: |settings_content, value| {
+                                            let Some(value) = value else {
+                                                return;
+                                            };
+                                            match settings_content
+                                                .theme
+                                                .icon_theme.as_mut() {
+                                                    Some(settings::IconThemeSelection::Dynamic{ dark, ..}) => *dark = value,
+                                                    _ => return
+                                                }
+                                        },
+                                    }),
+                                    metadata: None,
+                                }
+                            ],
                         }
-                        .unimplemented(),
-                    ),
-                    metadata: None,
+                    }).collect(),
                 }),
                 SettingsPageItem::SectionHeader("Buffer Font"),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -453,24 +618,79 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     metadata: None,
                     files: USER,
                 }),
-                // todo(settings_ui): This needs custom ui
-                SettingsPageItem::SettingItem(SettingItem {
-                    files: USER,
-                    title: "Line Height",
-                    description: "Line height for editor text",
-                    field: Box::new(
-                        SettingField {
+                SettingsPageItem::DynamicItem(DynamicItem {
+                    discriminant: SettingItem {
+                        files: USER,
+                        title: "Line Height",
+                        description: "Line height for editor text",
+                        field: Box::new(SettingField {
                             pick: |settings_content| {
-                                settings_content.theme.buffer_line_height.as_ref()
+                                Some(&dynamic_variants::<settings::BufferLineHeight>()[
+                                    settings_content
+                                        .theme
+                                        .buffer_line_height
+                                        .as_ref()?
+                                        .discriminant() as usize])
                             },
                             write: |settings_content, value| {
-                                settings_content.theme.buffer_line_height = value;
-
+                                let Some(value) = value else {
+                                    return;
+                                };
+                                let settings_value = settings_content.theme.buffer_line_height.get_or_insert_with(|| {
+                                    settings::BufferLineHeight::default()
+                                });
+                                *settings_value = match value {
+                                    settings::BufferLineHeightDiscriminants::Comfortable => {
+                                        settings::BufferLineHeight::Comfortable
+                                    },
+                                    settings::BufferLineHeightDiscriminants::Standard => {
+                                        settings::BufferLineHeight::Standard
+                                    },
+                                    settings::BufferLineHeightDiscriminants::Custom => {
+                                        let custom_value = theme::BufferLineHeight::from(*settings_value).value();
+                                        settings::BufferLineHeight::Custom(custom_value)
+                                    },
+                                };
                             },
+                        }),
+                        metadata: None,
+                    },
+                    pick_discriminant: |settings_content| {
+                        Some(settings_content.theme.buffer_line_height.as_ref()?.discriminant() as usize)
+                    },
+                    fields: dynamic_variants::<settings::BufferLineHeight>().into_iter().map(|variant| {
+                        match variant {
+                            settings::BufferLineHeightDiscriminants::Comfortable => vec![],
+                            settings::BufferLineHeightDiscriminants::Standard => vec![],
+                            settings::BufferLineHeightDiscriminants::Custom => vec![
+                                SettingItem {
+                                    files: USER,
+                                    title: "Custom Line Height",
+                                    description: "Custom line height value (must be at least 1.0)",
+                                    field: Box::new(SettingField {
+                                        pick: |settings_content| {
+                                            match settings_content.theme.buffer_line_height.as_ref() {
+                                                Some(settings::BufferLineHeight::Custom(value)) => Some(value),
+                                                _ => None
+                                            }
+                                        },
+                                        write: |settings_content, value| {
+                                            let Some(value) = value else {
+                                                return;
+                                            };
+                                            match settings_content
+                                                .theme
+                                                .buffer_line_height.as_mut() {
+                                                    Some(settings::BufferLineHeight::Custom(line_height)) => *line_height = f32::max(value, 1.0),
+                                                    _ => return
+                                                }
+                                        },
+                                    }),
+                                    metadata: None,
+                                }
+                            ],
                         }
-                        .unimplemented(),
-                    ),
-                    metadata: None,
+                    }).collect(),
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     files: USER,
@@ -835,22 +1055,86 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
             items: {
                 let mut items = vec![
                     SettingsPageItem::SectionHeader("Auto Save"),
-                    SettingsPageItem::SettingItem(SettingItem {
-                        title: "Auto Save Mode",
-                        description: "When to Auto Save Buffer Changes",
-                        field: Box::new(
-                            SettingField {
+                    SettingsPageItem::DynamicItem(DynamicItem {
+                        discriminant: SettingItem {
+                            files: USER,
+                            title: "Auto Save Mode",
+                            description: "When to Auto Save Buffer Changes",
+                            field: Box::new(SettingField {
                                 pick: |settings_content| {
-                                    settings_content.workspace.autosave.as_ref()
+                                    Some(&dynamic_variants::<settings::AutosaveSetting>()[
+                                        settings_content
+                                            .workspace
+                                            .autosave
+                                            .as_ref()?
+                                            .discriminant() as usize])
                                 },
                                 write: |settings_content, value| {
-                                    settings_content.workspace.autosave = value;
+                                    let Some(value) = value else {
+                                        return;
+                                    };
+                                    let settings_value = settings_content.workspace.autosave.get_or_insert_with(|| {
+                                        settings::AutosaveSetting::Off
+                                    });
+                                    *settings_value = match value {
+                                        settings::AutosaveSettingDiscriminants::Off => {
+                                            settings::AutosaveSetting::Off
+                                        },
+                                        settings::AutosaveSettingDiscriminants::AfterDelay => {
+                                            let milliseconds = match settings_value {
+                                                settings::AutosaveSetting::AfterDelay { milliseconds } => *milliseconds,
+                                                _ => settings::DelayMs(1000),
+                                            };
+                                            settings::AutosaveSetting::AfterDelay { milliseconds }
+                                        },
+                                        settings::AutosaveSettingDiscriminants::OnFocusChange => {
+                                            settings::AutosaveSetting::OnFocusChange
+                                        },
+                                        settings::AutosaveSettingDiscriminants::OnWindowChange => {
+                                            settings::AutosaveSetting::OnWindowChange
+                                        },
+                                    };
                                 },
+                            }),
+                            metadata: None,
+                        },
+                        pick_discriminant: |settings_content| {
+                            Some(settings_content.workspace.autosave.as_ref()?.discriminant() as usize)
+                        },
+                        fields: dynamic_variants::<settings::AutosaveSetting>().into_iter().map(|variant| {
+                            match variant {
+                                settings::AutosaveSettingDiscriminants::Off => vec![],
+                                settings::AutosaveSettingDiscriminants::AfterDelay => vec![
+                                    SettingItem {
+                                        files: USER,
+                                        title: "Delay (milliseconds)",
+                                        description: "Save after inactivity period (in milliseconds)",
+                                        field: Box::new(SettingField {
+                                            pick: |settings_content| {
+                                                match settings_content.workspace.autosave.as_ref() {
+                                                    Some(settings::AutosaveSetting::AfterDelay { milliseconds }) => Some(milliseconds),
+                                                    _ => None
+                                                }
+                                            },
+                                            write: |settings_content, value| {
+                                                let Some(value) = value else {
+                                                    return;
+                                                };
+                                                match settings_content
+                                                    .workspace
+                                                    .autosave.as_mut() {
+                                                        Some(settings::AutosaveSetting::AfterDelay { milliseconds }) => *milliseconds = value,
+                                                        _ => return
+                                                    }
+                                            },
+                                        }),
+                                        metadata: None,
+                                    }
+                                ],
+                                settings::AutosaveSettingDiscriminants::OnFocusChange => vec![],
+                                settings::AutosaveSettingDiscriminants::OnWindowChange => vec![],
                             }
-                            .unimplemented(),
-                        ),
-                        metadata: None,
-                        files: USER,
+                        }).collect(),
                     }),
                     SettingsPageItem::SectionHeader("Multibuffer"),
                     SettingsPageItem::SettingItem(SettingItem {
@@ -2088,7 +2372,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                     .include_ignored = value;
                             },
                         }
-                        .unimplemented(),
                     ),
                     metadata: None,
                     files: USER,
@@ -3174,8 +3457,8 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     files: USER,
-                    title: "Indent Guides Show",
-                    description: "Show indent guides in the project panel",
+                    title: "Show Indent Guides",
+                    description: "Show Indent Guides In The Project Panel",
                     field: Box::new(
                         SettingField {
                             pick: |settings_content| {
@@ -3196,7 +3479,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                     .show = value;
                             },
                         }
-                        .unimplemented(),
                     ),
                     metadata: None,
                 }),
@@ -3466,8 +3748,8 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     files: USER,
-                    title: "Indent Guides Show",
-                    description: "When to show indent guides in the outline panel",
+                    title: "Show Indent Guides",
+                    description: "When To Show Indent Guides In The Outline Panel",
                     field: Box::new(
                         SettingField {
                             pick: |settings_content| {
@@ -3488,7 +3770,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                     .show = value;
                             },
                         }
-                        .unimplemented(),
                     ),
                     metadata: None,
                 }),
@@ -3938,52 +4219,269 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
             title: "Terminal",
             items: vec![
                 SettingsPageItem::SectionHeader("Environment"),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Shell",
-                    description: "What shell to use when opening a terminal",
-                    field: Box::new(
-                        SettingField {
+                SettingsPageItem::DynamicItem(DynamicItem {
+                    discriminant: SettingItem {
+                        files: USER | LOCAL,
+                        title: "Shell",
+                        description: "What shell to use when opening a terminal",
+                        field: Box::new(SettingField {
                             pick: |settings_content| {
-                                settings_content.terminal.as_ref()?.project.shell.as_ref()
+                                Some(&dynamic_variants::<settings::Shell>()[
+                                    settings_content
+                                        .terminal
+                                        .as_ref()?
+                                        .project
+                                        .shell
+                                        .as_ref()?
+                                        .discriminant() as usize])
                             },
                             write: |settings_content, value| {
-                                settings_content
+                                let Some(value) = value else {
+                                    return;
+                                };
+                                let settings_value = settings_content
                                     .terminal
                                     .get_or_insert_default()
                                     .project
-                                    .shell = value;
+                                    .shell
+                                    .get_or_insert_with(|| settings::Shell::default());
+                                *settings_value = match value {
+                                    settings::ShellDiscriminants::System => {
+                                        settings::Shell::System
+                                    },
+                                    settings::ShellDiscriminants::Program => {
+                                        let program = match settings_value {
+                                            settings::Shell::Program(p) => p.clone(),
+                                            settings::Shell::WithArguments { program, .. } => program.clone(),
+                                            _ => String::from("sh"),
+                                        };
+                                        settings::Shell::Program(program)
+                                    },
+                                    settings::ShellDiscriminants::WithArguments => {
+                                        let (program, args, title_override) = match settings_value {
+                                            settings::Shell::Program(p) => (p.clone(), vec![], None),
+                                            settings::Shell::WithArguments { program, args, title_override } => {
+                                                (program.clone(), args.clone(), title_override.clone())
+                                            },
+                                            _ => (String::from("sh"), vec![], None),
+                                        };
+                                        settings::Shell::WithArguments {
+                                            program,
+                                            args,
+                                            title_override,
+                                        }
+                                    },
+                                };
                             },
+                        }),
+                        metadata: None,
+                    },
+                    pick_discriminant: |settings_content| {
+                        Some(settings_content.terminal.as_ref()?.project.shell.as_ref()?.discriminant() as usize)
+                    },
+                    fields: dynamic_variants::<settings::Shell>().into_iter().map(|variant| {
+                        match variant {
+                            settings::ShellDiscriminants::System => vec![],
+                            settings::ShellDiscriminants::Program => vec![
+                                SettingItem {
+                                    files: USER | LOCAL,
+                                    title: "Program",
+                                    description: "The shell program to use",
+                                    field: Box::new(SettingField {
+                                        pick: |settings_content| {
+                                            match settings_content.terminal.as_ref()?.project.shell.as_ref() {
+                                                Some(settings::Shell::Program(program)) => Some(program),
+                                                _ => None
+                                            }
+                                        },
+                                        write: |settings_content, value| {
+                                            let Some(value) = value else {
+                                                return;
+                                            };
+                                            match settings_content
+                                                .terminal
+                                                .get_or_insert_default()
+                                                .project
+                                                .shell.as_mut() {
+                                                    Some(settings::Shell::Program(program)) => *program = value,
+                                                    _ => return
+                                                }
+                                        },
+                                    }),
+                                    metadata: None,
+                                }
+                            ],
+                            settings::ShellDiscriminants::WithArguments => vec![
+                                SettingItem {
+                                    files: USER | LOCAL,
+                                    title: "Program",
+                                    description: "The shell program to run",
+                                    field: Box::new(SettingField {
+                                        pick: |settings_content| {
+                                            match settings_content.terminal.as_ref()?.project.shell.as_ref() {
+                                                Some(settings::Shell::WithArguments { program, .. }) => Some(program),
+                                                _ => None
+                                            }
+                                        },
+                                        write: |settings_content, value| {
+                                            let Some(value) = value else {
+                                                return;
+                                            };
+                                            match settings_content
+                                                .terminal
+                                                .get_or_insert_default()
+                                                .project
+                                                .shell.as_mut() {
+                                                    Some(settings::Shell::WithArguments { program, .. }) => *program = value,
+                                                    _ => return
+                                                }
+                                        },
+                                    }),
+                                    metadata: None,
+                                },
+                                SettingItem {
+                                    files: USER | LOCAL,
+                                    title: "Arguments",
+                                    description: "The arguments to pass to the shell program",
+                                    field: Box::new(
+                                        SettingField {
+                                            pick: |settings_content| {
+                                                match settings_content.terminal.as_ref()?.project.shell.as_ref() {
+                                                    Some(settings::Shell::WithArguments { args, .. }) => Some(args),
+                                                    _ => None
+                                                }
+                                            },
+                                            write: |settings_content, value| {
+                                                let Some(value) = value else {
+                                                    return;
+                                                };
+                                                match settings_content
+                                                    .terminal
+                                                    .get_or_insert_default()
+                                                    .project
+                                                    .shell.as_mut() {
+                                                        Some(settings::Shell::WithArguments { args, .. }) => *args = value,
+                                                        _ => return
+                                                    }
+                                            },
+                                        }
+                                        .unimplemented(),
+                                    ),
+                                    metadata: None,
+                                },
+                                SettingItem {
+                                    files: USER | LOCAL,
+                                    title: "Title Override",
+                                    description: "An optional string to override the title of the terminal tab",
+                                    field: Box::new(SettingField {
+                                        pick: |settings_content| {
+                                            match settings_content.terminal.as_ref()?.project.shell.as_ref() {
+                                                Some(settings::Shell::WithArguments { title_override, .. }) => title_override.as_ref().or(DEFAULT_EMPTY_SHARED_STRING),
+                                                _ => None
+                                            }
+                                        },
+                                        write: |settings_content, value| {
+                                            match settings_content
+                                                .terminal
+                                                .get_or_insert_default()
+                                                .project
+                                                .shell.as_mut() {
+                                                    Some(settings::Shell::WithArguments { title_override, .. }) => *title_override = value.filter(|s| !s.is_empty()),
+                                                    _ => return
+                                                }
+                                        },
+                                    }),
+                                    metadata: None,
+                                }
+                            ],
                         }
-                        .unimplemented(),
-                    ),
-                    metadata: None,
-                    files: USER | LOCAL,
+                    }).collect(),
                 }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Working Directory",
-                    description: "What working directory to use when launching the terminal",
-                    field: Box::new(
-                        SettingField {
+                SettingsPageItem::DynamicItem(DynamicItem {
+                    discriminant: SettingItem {
+                        files: USER | LOCAL,
+                        title: "Working Directory",
+                        description: "What working directory to use when launching the terminal",
+                        field: Box::new(SettingField {
                             pick: |settings_content| {
-                                settings_content
+                                Some(&dynamic_variants::<settings::WorkingDirectory>()[
+                                    settings_content
+                                        .terminal
+                                        .as_ref()?
+                                        .project
+                                        .working_directory
+                                        .as_ref()?
+                                        .discriminant() as usize])
+                            },
+                            write: |settings_content, value| {
+                                let Some(value) = value else {
+                                    return;
+                                };
+                                let settings_value = settings_content
                                     .terminal
-                                    .as_ref()?
+                                    .get_or_insert_default()
                                     .project
                                     .working_directory
-                                    .as_ref()
+                                    .get_or_insert_with(|| settings::WorkingDirectory::CurrentProjectDirectory);
+                                *settings_value = match value {
+                                    settings::WorkingDirectoryDiscriminants::CurrentProjectDirectory => {
+                                        settings::WorkingDirectory::CurrentProjectDirectory
+                                    },
+                                    settings::WorkingDirectoryDiscriminants::FirstProjectDirectory => {
+                                        settings::WorkingDirectory::FirstProjectDirectory
+                                    },
+                                    settings::WorkingDirectoryDiscriminants::AlwaysHome => {
+                                        settings::WorkingDirectory::AlwaysHome
+                                    },
+                                    settings::WorkingDirectoryDiscriminants::Always => {
+                                        let directory = match settings_value {
+                                            settings::WorkingDirectory::Always { .. } => return,
+                                            _ => String::new(),
+                                        };
+                                        settings::WorkingDirectory::Always { directory }
+                                    },
+                                };
                             },
-                            write: |settings_content, value| {
-                                settings_content
-                                    .terminal
-                                    .get_or_insert_default()
-                                    .project
-                                    .working_directory = value;
-                            },
+                        }),
+                        metadata: None,
+                    },
+                    pick_discriminant: |settings_content| {
+                        Some(settings_content.terminal.as_ref()?.project.working_directory.as_ref()?.discriminant() as usize)
+                    },
+                    fields: dynamic_variants::<settings::WorkingDirectory>().into_iter().map(|variant| {
+                        match variant {
+                            settings::WorkingDirectoryDiscriminants::CurrentProjectDirectory => vec![],
+                            settings::WorkingDirectoryDiscriminants::FirstProjectDirectory => vec![],
+                            settings::WorkingDirectoryDiscriminants::AlwaysHome => vec![],
+                            settings::WorkingDirectoryDiscriminants::Always => vec![
+                                SettingItem {
+                                    files: USER | LOCAL,
+                                    title: "Directory",
+                                    description: "The directory path to use (will be shell expanded)",
+                                    field: Box::new(SettingField {
+                                        pick: |settings_content| {
+                                            match settings_content.terminal.as_ref()?.project.working_directory.as_ref() {
+                                                Some(settings::WorkingDirectory::Always { directory }) => Some(directory),
+                                                _ => None
+                                            }
+                                        },
+                                        write: |settings_content, value| {
+                                            let value = value.unwrap_or_default();
+                                            match settings_content
+                                                .terminal
+                                                .get_or_insert_default()
+                                                .project
+                                                .working_directory.as_mut() {
+                                                    Some(settings::WorkingDirectory::Always { directory }) => *directory = value,
+                                                    _ => return
+                                                }
+                                        },
+                                    }),
+                                    metadata: None,
+                                }
+                            ],
                         }
-                        .unimplemented(),
-                    ),
-                    metadata: None,
-                    files: USER | LOCAL,
+                    }).collect(),
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Environment Variables",
@@ -4405,7 +4903,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
             items: vec![
                 SettingsPageItem::SectionHeader("Git Gutter"),
                 SettingsPageItem::SettingItem(SettingItem {
-                    title: "Visibilility",
+                    title: "Visibility",
                     description: "Control whether git status is shown in the editor's gutter",
                     field: Box::new(SettingField {
                         pick: |settings_content| settings_content.git.as_ref()?.git_gutter.as_ref(),
@@ -6292,4 +6790,12 @@ fn show_scrollbar_or_editor(
         .scrollbar
         .as_ref()
         .and_then(|scrollbar| scrollbar.show.as_ref()))
+}
+
+fn dynamic_variants<T>() -> &'static [T::Discriminant]
+where
+    T: strum::IntoDiscriminant,
+    T::Discriminant: strum::VariantArray,
+{
+    <<T as strum::IntoDiscriminant>::Discriminant as strum::VariantArray>::VARIANTS
 }

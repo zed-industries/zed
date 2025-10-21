@@ -1,4 +1,6 @@
+use crate::title_bar_settings::TitleBarSettings;
 use gpui::{Action, Hsla, MouseButton, prelude::*, svg};
+use settings::{Settings, WindowControlsPosition};
 use ui::prelude::*;
 
 #[derive(IntoElement)]
@@ -14,33 +16,62 @@ impl LinuxWindowControls {
     }
 }
 
+impl LinuxWindowControls {
+    /// Builds the window controls based on the position setting.
+    fn build_controls(
+        position: WindowControlsPosition,
+        window: &Window,
+        close_action: Box<dyn Action>,
+        cx: &mut App,
+    ) -> Vec<WindowControl> {
+        let maximize_type = if window.is_maximized() {
+            WindowControlType::Restore
+        } else {
+            WindowControlType::Maximize
+        };
+
+        match position {
+            WindowControlsPosition::Left => {
+                // Left side: Close, Minimize, Maximize (left to right)
+                vec![
+                    WindowControl::new_close("close", WindowControlType::Close, close_action, cx),
+                    WindowControl::new("minimize", WindowControlType::Minimize, cx),
+                    WindowControl::new("maximize-or-restore", maximize_type, cx),
+                ]
+            }
+            WindowControlsPosition::Right => {
+                // Right side: Minimize, Maximize, Close (left to right)
+                vec![
+                    WindowControl::new("minimize", WindowControlType::Minimize, cx),
+                    WindowControl::new("maximize-or-restore", maximize_type, cx),
+                    WindowControl::new_close("close", WindowControlType::Close, close_action, cx),
+                ]
+            }
+        }
+    }
+}
+
 impl RenderOnce for LinuxWindowControls {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        h_flex()
+        let title_bar_settings = TitleBarSettings::get(None, cx);
+        let controls = Self::build_controls(
+            title_bar_settings.window_controls_position,
+            window,
+            self.close_window_action,
+            cx,
+        );
+
+        let mut element = h_flex()
             .id("generic-window-controls")
             .px_3()
             .gap_3()
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .child(WindowControl::new(
-                "minimize",
-                WindowControlType::Minimize,
-                cx,
-            ))
-            .child(WindowControl::new(
-                "maximize-or-restore",
-                if window.is_maximized() {
-                    WindowControlType::Restore
-                } else {
-                    WindowControlType::Maximize
-                },
-                cx,
-            ))
-            .child(WindowControl::new_close(
-                "close",
-                WindowControlType::Close,
-                self.close_window_action,
-                cx,
-            ))
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation());
+
+        for control in controls {
+            element = element.child(control);
+        }
+
+        element
     }
 }
 
@@ -80,7 +111,7 @@ impl WindowControlStyle {
         let colors = cx.theme().colors();
 
         Self {
-            background: colors.ghost_element_background,
+            background: colors.title_bar_background,
             background_hover: colors.ghost_element_hover,
             icon: colors.icon,
             icon_hover: colors.icon_muted,
@@ -185,6 +216,7 @@ impl RenderOnce for WindowControl {
             .rounded_2xl()
             .w_5()
             .h_5()
+            .bg(self.style.background)
             .hover(|this| this.bg(self.style.background_hover))
             .active(|this| this.bg(self.style.background_hover))
             .child(icon)

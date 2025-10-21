@@ -123,3 +123,9 @@ pub(crate) mod m_2025_10_16 {
 
     pub(crate) use settings::restore_code_actions_on_format;
 }
+
+pub(crate) mod m_2025_10_17 {
+    mod settings;
+
+    pub(crate) use settings::make_file_finder_include_ignored_an_enum;
+}

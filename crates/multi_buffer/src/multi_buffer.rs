@@ -4454,10 +4454,23 @@ impl MultiBufferSnapshot {
             && region.has_trailing_newline
             && !region.is_main_buffer
         {
-            return Some((&cursor.excerpt()?.buffer, cursor.main_buffer_position()?));
+            let main_buffer_position = cursor.main_buffer_position()?;
+            let buffer_snapshot = &cursor.excerpt()?.buffer;
+            // remove this assert once we figure out the cause of the panics for #40453
+            buffer_snapshot
+                .text
+                .as_rope()
+                .assert_char_boundary(main_buffer_position);
+            return Some((buffer_snapshot, main_buffer_position));
         } else if buffer_offset > region.buffer.len() {
             return None;
         }
+        // remove this assert once we figure out the cause of the panics for #40453
+        region
+            .buffer
+            .text
+            .as_rope()
+            .assert_char_boundary(buffer_offset);
         Some((region.buffer, buffer_offset))
     }
 
@@ -6140,9 +6153,8 @@ impl MultiBufferSnapshot {
         } else if id == ExcerptId::max() {
             Locator::max_ref()
         } else {
-            let mut cursor = self.excerpt_ids.cursor::<ExcerptId>(());
-            cursor.seek(&id, Bias::Left);
-            if let Some(entry) = cursor.item()
+            let (_, _, item) = self.excerpt_ids.find::<ExcerptId, _>((), &id, Bias::Left);
+            if let Some(entry) = item
                 && entry.id == id
             {
                 return &entry.locator;
@@ -6158,22 +6170,20 @@ impl MultiBufferSnapshot {
     ) -> SmallVec<[Locator; 1]> {
         let mut sorted_ids = ids.into_iter().collect::<SmallVec<[_; 1]>>();
         sorted_ids.sort_unstable();
+        sorted_ids.dedup();
         let mut locators = SmallVec::new();
 
         while sorted_ids.last() == Some(&ExcerptId::max()) {
             sorted_ids.pop();
-            if let Some(mapping) = self.excerpt_ids.last() {
-                locators.push(mapping.locator.clone());
-            }
+            locators.push(Locator::max());
         }
 
-        let mut sorted_ids = sorted_ids.into_iter().dedup().peekable();
-        if sorted_ids.peek() == Some(&ExcerptId::min()) {
-            sorted_ids.next();
-            if let Some(mapping) = self.excerpt_ids.first() {
-                locators.push(mapping.locator.clone());
-            }
-        }
+        let mut sorted_ids = sorted_ids.into_iter().peekable();
+        locators.extend(
+            sorted_ids
+                .peeking_take_while(|excerpt| *excerpt == ExcerptId::min())
+                .map(|_| Locator::min()),
+        );
 
         let mut cursor = self.excerpt_ids.cursor::<ExcerptId>(());
         for id in sorted_ids {

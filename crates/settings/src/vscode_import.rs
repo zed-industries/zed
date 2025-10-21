@@ -635,6 +635,7 @@ impl VsCodeSettings {
             show: self.read_bool("workbench.statusBar.visible"),
             active_language_button: None,
             cursor_position_button: None,
+            line_endings_button: None,
         })
     }
 
@@ -853,7 +854,7 @@ impl VsCodeSettings {
 
     fn worktree_settings_content(&self) -> WorktreeSettingsContent {
         WorktreeSettingsContent {
-            project_name: None,
+            project_name: crate::Maybe::Unset,
             file_scan_exclusions: self
                 .read_value("files.watcherExclude")
                 .and_then(|v| v.as_array())

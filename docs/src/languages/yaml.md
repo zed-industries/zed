@@ -74,7 +74,7 @@ You can override any auto-detected schema via the `schemas` settings key (demons
 name: Issue Assignment
 on:
   issues:
-    types: [oppened]
+    types: [opened]
 ```
 
 You can disable the automatic detection and retrieval of schemas from the JSON Schema if desired:

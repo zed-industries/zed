@@ -493,6 +493,7 @@ impl EditorElement {
         register_action(editor, window, Editor::stage_and_next);
         register_action(editor, window, Editor::unstage_and_next);
         register_action(editor, window, Editor::expand_all_diff_hunks);
+        register_action(editor, window, Editor::collapse_all_diff_hunks);
         register_action(editor, window, Editor::go_to_previous_change);
         register_action(editor, window, Editor::go_to_next_change);
 
@@ -651,7 +652,6 @@ impl EditorElement {
     fn mouse_left_down(
         editor: &mut Editor,
         event: &MouseDownEvent,
-        hovered_hunk: Option<Range<Anchor>>,
         position_map: &PositionMap,
         line_numbers: &HashMap<MultiBufferRow, LineNumberLayout>,
         window: &mut Window,
@@ -667,7 +667,20 @@ impl EditorElement {
         let mut click_count = event.click_count;
         let mut modifiers = event.modifiers;
 
-        if let Some(hovered_hunk) = hovered_hunk {
+        if let Some(hovered_hunk) =
+            position_map
+                .display_hunks
+                .iter()
+                .find_map(|(hunk, hunk_hitbox)| match hunk {
+                    DisplayDiffHunk::Folded { .. } => None,
+                    DisplayDiffHunk::Unfolded {
+                        multi_buffer_range, ..
+                    } => hunk_hitbox
+                        .as_ref()
+                        .is_some_and(|hitbox| hitbox.is_hovered(window))
+                        .then(|| multi_buffer_range.clone()),
+                })
+        {
             editor.toggle_single_diff_hunk(hovered_hunk, cx);
             cx.notify();
             return;
@@ -7262,26 +7275,6 @@ impl EditorElement {
         window.on_mouse_event({
             let position_map = layout.position_map.clone();
             let editor = self.editor.clone();
-            let diff_hunk_range =
-                layout
-                    .display_hunks
-                    .iter()
-                    .find_map(|(hunk, hunk_hitbox)| match hunk {
-                        DisplayDiffHunk::Folded { .. } => None,
-                        DisplayDiffHunk::Unfolded {
-                            multi_buffer_range, ..
-                        } => {
-                            if hunk_hitbox
-                                .as_ref()
-                                .map(|hitbox| hitbox.is_hovered(window))
-                                .unwrap_or(false)
-                            {
-                                Some(multi_buffer_range.clone())
-                            } else {
-                                None
-                            }
-                        }
-                    });
             let line_numbers = layout.line_numbers.clone();
 
             move |event: &MouseDownEvent, phase, window, cx| {
@@ -7298,7 +7291,6 @@ impl EditorElement {
                             Self::mouse_left_down(
                                 editor,
                                 event,
-                                diff_hunk_range.clone(),
                                 &position_map,
                                 line_numbers.as_ref(),
                                 window,
