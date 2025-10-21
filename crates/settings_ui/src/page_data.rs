@@ -4903,7 +4903,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
             items: vec![
                 SettingsPageItem::SectionHeader("Git Gutter"),
                 SettingsPageItem::SettingItem(SettingItem {
-                    title: "Visibilility",
+                    title: "Visibility",
                     description: "Control whether git status is shown in the editor's gutter",
                     field: Box::new(SettingField {
                         pick: |settings_content| settings_content.git.as_ref()?.git_gutter.as_ref(),
