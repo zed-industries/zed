@@ -1331,6 +1331,7 @@ impl Workspace {
                 pane_history_timestamp.clone(),
                 None,
                 NewFile.boxed_clone(),
+                true,
                 window,
                 cx,
             );
@@ -3235,6 +3236,7 @@ impl Workspace {
                 self.pane_history_timestamp.clone(),
                 None,
                 NewFile.boxed_clone(),
+                true,
                 window,
                 cx,
             );
