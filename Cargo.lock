@@ -21533,6 +21533,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
+ "telemetry",
  "text",
  "ui",
  "ui_input",

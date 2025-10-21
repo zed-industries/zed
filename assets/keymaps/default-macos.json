@@ -1396,5 +1396,13 @@
       "home": "settings_editor::FocusFirstNavEntry",
       "end": "settings_editor::FocusLastNavEntry"
     }
+  },
+  {
+    "context": "Zeta2Feedback > Editor",
+    "bindings": {
+      "enter": "editor::Newline",
+      "cmd-enter up": "dev::Zeta2RatePredictionPositive",
+      "cmd-enter down": "dev::Zeta2RatePredictionNegative"
+    }
   }
 ]
