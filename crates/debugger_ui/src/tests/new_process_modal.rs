@@ -231,7 +231,10 @@ async fn test_save_debug_scenario_to_file(executor: BackgroundExecutor, cx: &mut
 
     editor.update(cx, |editor, cx| {
         assert_eq!(
-            editor.selections.newest::<Point>(cx).head(),
+            editor
+                .selections
+                .newest::<Point>(&editor.display_snapshot(cx))
+                .head(),
             Point::new(5, 2)
         )
     });

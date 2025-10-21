@@ -6,13 +6,15 @@ use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 use settings_macros::MergeFrom;
 
-use crate::{DockPosition, DockSide, ScrollbarSettingsContent, ShowIndentGuides};
+use crate::{
+    DelayMs, DockPosition, DockSide, InactiveOpacity, ScrollbarSettingsContent, ShowIndentGuides,
+};
 
 #[skip_serializing_none]
 #[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct WorkspaceSettingsContent {
     /// Active pane styling settings.
-    pub active_pane_modifiers: Option<ActivePanelModifiers>,
+    pub active_pane_modifiers: Option<ActivePaneModifiers>,
     /// Layout mode for the bottom dock
     ///
     /// Default: contained
@@ -243,7 +245,7 @@ pub enum ActivateOnClose {
 #[skip_serializing_none]
 #[derive(Copy, Clone, PartialEq, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 #[serde(rename_all = "snake_case")]
-pub struct ActivePanelModifiers {
+pub struct ActivePaneModifiers {
     /// Size of the border surrounding the active pane.
     /// When set to 0, the active pane doesn't have any border.
     /// The border is drawn inset.
@@ -256,7 +258,8 @@ pub struct ActivePanelModifiers {
     /// Values are clamped to the [0.0, 1.0] range.
     ///
     /// Default: `1.0`
-    pub inactive_opacity: Option<f32>,
+    #[schemars(range(min = 0.0, max = 1.0))]
+    pub inactive_opacity: Option<InactiveOpacity>,
 }
 
 #[derive(
@@ -377,15 +380,31 @@ pub struct StatusBarSettingsContent {
     ///
     /// Default: true
     pub cursor_position_button: Option<bool>,
+    /// Whether to show active line endings button in the status bar.
+    ///
+    /// Default: false
+    pub line_endings_button: Option<bool>,
 }
 
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom)]
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    JsonSchema,
+    MergeFrom,
+    strum::EnumDiscriminants,
+)]
+#[strum_discriminants(derive(strum::VariantArray, strum::VariantNames, strum::FromRepr))]
 #[serde(rename_all = "snake_case")]
 pub enum AutosaveSetting {
     /// Disable autosave.
     Off,
     /// Save after inactivity period of `milliseconds`.
-    AfterDelay { milliseconds: u64 },
+    AfterDelay { milliseconds: DelayMs },
     /// Autosave when focus changes.
     OnFocusChange,
     /// Autosave when the active window changes.
@@ -403,14 +422,38 @@ impl AutosaveSetting {
     }
 }
 
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom)]
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum PaneSplitDirectionHorizontal {
     Up,
     Down,
 }
 
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom)]
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum PaneSplitDirectionVertical {
     Left,
@@ -530,6 +573,10 @@ pub struct ProjectPanelSettingsContent {
     ///
     /// Default: false
     pub hide_root: Option<bool>,
+    /// Whether to hide the hidden entries in the project panel.
+    ///
+    /// Default: false
+    pub hide_hidden: Option<bool>,
     /// Whether to stick parent directories at top of the project panel.
     ///
     /// Default: true
@@ -538,6 +585,10 @@ pub struct ProjectPanelSettingsContent {
     ///
     /// Default: true
     pub drag_and_drop: Option<bool>,
+    /// Whether to automatically open files when pasting them in the project panel.
+    ///
+    /// Default: true
+    pub open_file_on_paste: Option<bool>,
 }
 
 #[derive(

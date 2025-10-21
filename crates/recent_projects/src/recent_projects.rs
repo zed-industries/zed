@@ -311,8 +311,7 @@ impl PickerDelegate for RecentProjectsDelegate {
             .filter(|(_, (id, _, _))| !self.is_current_workspace(*id, cx))
             .map(|(id, (_, _, paths))| {
                 let combined_string = paths
-                    .paths()
-                    .iter()
+                    .ordered_paths()
                     .map(|path| path.compact().to_string_lossy().into_owned())
                     .collect::<Vec<_>>()
                     .join("");
@@ -462,8 +461,7 @@ impl PickerDelegate for RecentProjectsDelegate {
         let mut path_start_offset = 0;
 
         let (match_labels, paths): (Vec<_>, Vec<_>) = paths
-            .paths()
-            .iter()
+            .ordered_paths()
             .map(|p| p.compact())
             .map(|path| {
                 let highlighted_text =
@@ -473,7 +471,15 @@ impl PickerDelegate for RecentProjectsDelegate {
             })
             .unzip();
 
+        let prefix = match &location {
+            SerializedWorkspaceLocation::Remote(RemoteConnectionOptions::Wsl(wsl)) => {
+                Some(SharedString::from(&wsl.distro_name))
+            }
+            _ => None,
+        };
+
         let highlighted_match = HighlightedMatchWithPaths {
+            prefix,
             match_label: HighlightedMatch::join(match_labels.into_iter().flatten(), ", "),
             paths,
         };

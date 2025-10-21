@@ -9,7 +9,10 @@ use rope::{Point, Rope};
 use sum_tree::Bias;
 use util::RandomCharIter;
 
-/// Returns a (biased) random string whose UTF-8 length is close to but no more than `len` bytes.
+/// Returns a biased random string whose UTF-8 length is close to but no more than `len` bytes.
+///
+/// The string is biased towards characters expected to occur in text or likely to exercise edge
+/// cases.
 fn generate_random_text(rng: &mut StdRng, len: usize) -> String {
     let mut str = String::with_capacity(len);
     let mut chars = RandomCharIter::new(rng);

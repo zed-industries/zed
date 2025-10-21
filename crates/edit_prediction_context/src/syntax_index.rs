@@ -854,7 +854,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_declarations_limt(cx: &mut TestAppContext) {
+    async fn test_declarations_limit(cx: &mut TestAppContext) {
         let (_, index, rust_lang_id) = init_test(cx).await;
 
         let index_state = index.read_with(cx, |index, _cx| index.state().clone());

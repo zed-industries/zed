@@ -49,7 +49,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{Arc, Once},
 };
-use task::{DebugScenario, SpawnInTerminal, TaskContext, TaskTemplate};
+use task::{DebugScenario, Shell, SpawnInTerminal, TaskContext, TaskTemplate};
 use util::{ResultExt as _, rel_path::RelPath};
 use worktree::Worktree;
 
@@ -264,13 +264,21 @@ impl DapStore {
                     DapBinary::Custom(binary) => Some(PathBuf::from(binary)),
                 });
                 let user_args = dap_settings.map(|s| s.args.clone());
+                let user_env = dap_settings.map(|s| s.env.clone());
 
                 let delegate = self.delegate(worktree, console, cx);
                 let cwd: Arc<Path> = worktree.read(cx).abs_path().as_ref().into();
 
                 cx.spawn(async move |this, cx| {
                     let mut binary = adapter
-                        .get_binary(&delegate, &definition, user_installed_path, user_args, cx)
+                        .get_binary(
+                            &delegate,
+                            &definition,
+                            user_installed_path,
+                            user_args,
+                            user_env,
+                            cx,
+                        )
                         .await?;
 
                     let env = this
@@ -279,7 +287,11 @@ impl DapStore {
                                 .unwrap()
                                 .environment
                                 .update(cx, |environment, cx| {
-                                    environment.get_directory_environment(cwd, cx)
+                                    environment.get_local_directory_environment(
+                                        &Shell::System,
+                                        cwd,
+                                        cx,
+                                    )
                                 })
                         })?
                         .await;

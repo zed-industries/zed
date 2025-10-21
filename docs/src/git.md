@@ -83,7 +83,7 @@ You can ask AI to generate a commit message by focusing on the message editor wi
 
 You can specify your preferred model to use by providing a `commit_message_model` agent setting. See [Feature-specific models](./ai/agent-settings.md#feature-specific-models) for more information.
 
-```json
+```json [settings]
 {
   "agent": {
     "version": "2",

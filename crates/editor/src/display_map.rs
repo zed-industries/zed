@@ -594,7 +594,11 @@ impl DisplayMap {
         self.block_map.read(snapshot, edits);
     }
 
-    pub fn remove_inlays_for_excerpts(&mut self, excerpts_removed: &[ExcerptId]) {
+    pub fn remove_inlays_for_excerpts(
+        &mut self,
+        excerpts_removed: &[ExcerptId],
+        cx: &mut Context<Self>,
+    ) {
         let to_remove = self
             .inlay_map
             .current_inlays()
@@ -606,7 +610,7 @@ impl DisplayMap {
                 }
             })
             .collect::<Vec<_>>();
-        self.inlay_map.splice(&to_remove, Vec::new());
+        self.splice_inlays(&to_remove, Vec::new(), cx);
     }
 
     fn tab_size(buffer: &Entity<MultiBuffer>, cx: &App) -> NonZeroU32 {
@@ -1400,6 +1404,26 @@ impl DisplaySnapshot {
 
     pub fn excerpt_header_height(&self) -> u32 {
         self.block_snapshot.excerpt_header_height
+    }
+
+    /// Given a `DisplayPoint`, returns another `DisplayPoint` corresponding to
+    /// the start of the buffer row that is a given number of buffer rows away
+    /// from the provided point.
+    ///
+    /// This moves by buffer rows instead of display rows, a distinction that is
+    /// important when soft wrapping is enabled.
+    pub fn start_of_relative_buffer_row(&self, point: DisplayPoint, times: isize) -> DisplayPoint {
+        let start = self.display_point_to_fold_point(point, Bias::Left);
+        let target = start.row() as isize + times;
+        let new_row = (target.max(0) as u32).min(self.fold_snapshot().max_point().row());
+
+        self.clip_point(
+            self.fold_point_to_display_point(
+                self.fold_snapshot()
+                    .clip_point(FoldPoint::new(new_row, 0), Bias::Right),
+            ),
+            Bias::Right,
+        )
     }
 }
 

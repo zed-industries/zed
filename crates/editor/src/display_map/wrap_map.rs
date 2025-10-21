@@ -568,14 +568,17 @@ impl WrapSnapshot {
             let mut old_start = old_cursor.start().output.lines;
             old_start += tab_edit.old.start.0 - old_cursor.start().input.lines;
 
+            // todo(lw): Should these be seek_forward?
             old_cursor.seek(&tab_edit.old.end, Bias::Right);
             let mut old_end = old_cursor.start().output.lines;
             old_end += tab_edit.old.end.0 - old_cursor.start().input.lines;
 
+            // todo(lw): Should these be seek_forward?
             new_cursor.seek(&tab_edit.new.start, Bias::Right);
             let mut new_start = new_cursor.start().output.lines;
             new_start += tab_edit.new.start.0 - new_cursor.start().input.lines;
 
+            // todo(lw): Should these be seek_forward?
             new_cursor.seek(&tab_edit.new.end, Bias::Right);
             let mut new_end = new_cursor.start().output.lines;
             new_end += tab_edit.new.end.0 - new_cursor.start().input.lines;
@@ -628,24 +631,22 @@ impl WrapSnapshot {
     }
 
     pub fn line_len(&self, row: u32) -> u32 {
-        let mut cursor = self
-            .transforms
-            .cursor::<Dimensions<WrapPoint, TabPoint>>(());
-        cursor.seek(&WrapPoint::new(row + 1, 0), Bias::Left);
-        if cursor
-            .item()
-            .is_some_and(|transform| transform.is_isomorphic())
-        {
-            let overshoot = row - cursor.start().0.row();
-            let tab_row = cursor.start().1.row() + overshoot;
+        let (start, _, item) = self.transforms.find::<Dimensions<WrapPoint, TabPoint>, _>(
+            (),
+            &WrapPoint::new(row + 1, 0),
+            Bias::Left,
+        );
+        if item.is_some_and(|transform| transform.is_isomorphic()) {
+            let overshoot = row - start.0.row();
+            let tab_row = start.1.row() + overshoot;
             let tab_line_len = self.tab_snapshot.line_len(tab_row);
             if overshoot == 0 {
-                cursor.start().0.column() + (tab_line_len - cursor.start().1.column())
+                start.0.column() + (tab_line_len - start.1.column())
             } else {
                 tab_line_len
             }
         } else {
-            cursor.start().0.column()
+            start.0.column()
         }
     }
 
@@ -711,9 +712,10 @@ impl WrapSnapshot {
     }
 
     pub fn soft_wrap_indent(&self, row: u32) -> Option<u32> {
-        let mut cursor = self.transforms.cursor::<WrapPoint>(());
-        cursor.seek(&WrapPoint::new(row + 1, 0), Bias::Right);
-        cursor.item().and_then(|transform| {
+        let (.., item) =
+            self.transforms
+                .find::<WrapPoint, _>((), &WrapPoint::new(row + 1, 0), Bias::Right);
+        item.and_then(|transform| {
             if transform.is_isomorphic() {
                 None
             } else {
@@ -749,13 +751,12 @@ impl WrapSnapshot {
     }
 
     pub fn to_tab_point(&self, point: WrapPoint) -> TabPoint {
-        let mut cursor = self
-            .transforms
-            .cursor::<Dimensions<WrapPoint, TabPoint>>(());
-        cursor.seek(&point, Bias::Right);
-        let mut tab_point = cursor.start().1.0;
-        if cursor.item().is_some_and(|t| t.is_isomorphic()) {
-            tab_point += point.0 - cursor.start().0.0;
+        let (start, _, item) =
+            self.transforms
+                .find::<Dimensions<WrapPoint, TabPoint>, _>((), &point, Bias::Right);
+        let mut tab_point = start.1.0;
+        if item.is_some_and(|t| t.is_isomorphic()) {
+            tab_point += point.0 - start.0.0;
         }
         TabPoint(tab_point)
     }
@@ -769,19 +770,19 @@ impl WrapSnapshot {
     }
 
     pub fn tab_point_to_wrap_point(&self, point: TabPoint) -> WrapPoint {
-        let mut cursor = self
-            .transforms
-            .cursor::<Dimensions<TabPoint, WrapPoint>>(());
-        cursor.seek(&point, Bias::Right);
-        WrapPoint(cursor.start().1.0 + (point.0 - cursor.start().0.0))
+        let (start, ..) =
+            self.transforms
+                .find::<Dimensions<TabPoint, WrapPoint>, _>((), &point, Bias::Right);
+        WrapPoint(start.1.0 + (point.0 - start.0.0))
     }
 
     pub fn clip_point(&self, mut point: WrapPoint, bias: Bias) -> WrapPoint {
         if bias == Bias::Left {
-            let mut cursor = self.transforms.cursor::<WrapPoint>(());
-            cursor.seek(&point, Bias::Right);
-            if cursor.item().is_some_and(|t| !t.is_isomorphic()) {
-                point = *cursor.start();
+            let (start, _, item) = self
+                .transforms
+                .find::<WrapPoint, _>((), &point, Bias::Right);
+            if item.is_some_and(|t| !t.is_isomorphic()) {
+                point = start;
                 *point.column_mut() -= 1;
             }
         }
