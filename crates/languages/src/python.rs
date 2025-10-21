@@ -19,10 +19,12 @@ use pet_core::python_environment::{PythonEnvironment, PythonEnvironmentKind};
 use pet_virtualenv::is_virtualenv_dir;
 use project::Fs;
 use project::lsp_store::language_server_settings;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use smol::lock::OnceCell;
 use std::cmp::Ordering;
 use std::env::consts;
+use std::ops::Deref;
 use util::command::new_smol_command;
 use util::fs::{make_file_executable, remove_matching};
 use util::rel_path::RelPath;
@@ -38,6 +40,22 @@ use std::{
 };
 use task::{ShellKind, TaskTemplate, TaskTemplates, VariableName};
 use util::{ResultExt, maybe};
+
+#[derive(Debug, Serialize, Deserialize)]
+pub(crate) struct PythonToolchainData {
+    #[serde(flatten)]
+    environment: PythonEnvironment,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    activation_scripts: Option<HashMap<ShellKind, PathBuf>>,
+}
+
+impl Deref for PythonToolchainData {
+    type Target = PythonEnvironment;
+
+    fn deref(&self) -> &Self::Target {
+        &self.environment
+    }
+}
 
 pub(crate) struct PyprojectTomlManifestProvider;
 
@@ -165,10 +183,10 @@ impl LspAdapter for TyLspAdapter {
             })?
             .unwrap_or_else(|| json!({}));
         if let Some(toolchain) = toolchain.and_then(|toolchain| {
-            serde_json::from_value::<PythonEnvironment>(toolchain.as_json).ok()
+            serde_json::from_value::<PythonToolchainData>(toolchain.as_json).ok()
         }) {
             _ = maybe!({
-                let uri = url::Url::from_file_path(toolchain.executable?).ok()?;
+                let uri = url::Url::from_file_path(toolchain.executable.as_ref()?).ok()?;
                 let sys_prefix = toolchain.prefix.clone()?;
                 let environment = json!({
                     "executable": {
@@ -474,9 +492,8 @@ impl LspAdapter for PyrightLspAdapter {
 
             // If we have a detected toolchain, configure Pyright to use it
             if let Some(toolchain) = toolchain
-                && let Ok(env) = serde_json::from_value::<
-                    pet_core::python_environment::PythonEnvironment,
-                >(toolchain.as_json.clone())
+                && let Ok(env) =
+                    serde_json::from_value::<PythonToolchainData>(toolchain.as_json.clone())
             {
                 if !user_settings.is_object() {
                     user_settings = Value::Object(serde_json::Map::default());
@@ -484,7 +501,7 @@ impl LspAdapter for PyrightLspAdapter {
                 let object = user_settings.as_object_mut().unwrap();
 
                 let interpreter_path = toolchain.path.to_string();
-                if let Some(venv_dir) = env.prefix {
+                if let Some(venv_dir) = &env.prefix {
                     // Set venvPath and venv at the root level
                     // This matches the format of a pyrightconfig.json file
                     if let Some(parent) = venv_dir.parent() {
@@ -1023,6 +1040,7 @@ impl ToolchainLister for PythonToolchainProvider {
         worktree_root: PathBuf,
         subroot_relative_path: Arc<RelPath>,
         project_env: Option<HashMap<String, String>>,
+        fs: &dyn Fs,
     ) -> ToolchainList {
         let env = project_env.unwrap_or_default();
         let environment = EnvironmentApi::from_env(&env);
@@ -1114,13 +1132,16 @@ impl ToolchainLister for PythonToolchainProvider {
                 .then_with(exe_ordering)
         });
 
-        let mut toolchains: Vec<_> = toolchains
-            .into_iter()
-            .filter_map(venv_to_toolchain)
-            .collect();
-        toolchains.dedup();
+        let mut out_toolchains = Vec::new();
+        for toolchain in toolchains {
+            let Some(toolchain) = venv_to_toolchain(toolchain, fs).await else {
+                continue;
+            };
+            out_toolchains.push(toolchain);
+        }
+        out_toolchains.dedup();
         ToolchainList {
-            toolchains,
+            toolchains: out_toolchains,
             default: None,
             groups: Default::default(),
         }
@@ -1139,6 +1160,7 @@ impl ToolchainLister for PythonToolchainProvider {
         &self,
         path: PathBuf,
         env: Option<HashMap<String, String>>,
+        fs: &dyn Fs,
     ) -> anyhow::Result<Toolchain> {
         let env = env.unwrap_or_default();
         let environment = EnvironmentApi::from_env(&env);
@@ -1150,20 +1172,20 @@ impl ToolchainLister for PythonToolchainProvider {
         let toolchain = pet::resolve::resolve_environment(&path, &locators, &environment)
             .context("Could not find a virtual environment in provided path")?;
         let venv = toolchain.resolved.unwrap_or(toolchain.discovered);
-        venv_to_toolchain(venv).context("Could not convert a venv into a toolchain")
+        venv_to_toolchain(venv, fs)
+            .await
+            .context("Could not convert a venv into a toolchain")
     }
 
-    async fn activation_script(
-        &self,
-        toolchain: &Toolchain,
-        shell: ShellKind,
-        fs: &dyn Fs,
-    ) -> Vec<String> {
-        let Ok(toolchain) = serde_json::from_value::<pet_core::python_environment::PythonEnvironment>(
-            toolchain.as_json.clone(),
-        ) else {
+    fn activation_script(&self, toolchain: &Toolchain, shell: ShellKind) -> Vec<String> {
+        let Ok(toolchain) =
+            serde_json::from_value::<PythonToolchainData>(toolchain.as_json.clone())
+        else {
             return vec![];
         };
+
+        log::debug!("Composing activation script for toolchain {toolchain:?}");
+
         let mut activation_script = vec![];
 
         match toolchain.kind {
@@ -1175,33 +1197,23 @@ impl ToolchainLister for PythonToolchainProvider {
                 }
             }
             Some(PythonEnvironmentKind::Venv | PythonEnvironmentKind::VirtualEnv) => {
-                if let Some(prefix) = &toolchain.prefix {
-                    let activate_keyword = shell.activate_keyword();
-                    let activate_script_name = match shell {
-                        ShellKind::Posix | ShellKind::Rc => "activate",
-                        ShellKind::Csh => "activate.csh",
-                        ShellKind::Tcsh => "activate.csh",
-                        ShellKind::Fish => "activate.fish",
-                        ShellKind::Nushell => "activate.nu",
-                        ShellKind::PowerShell => "activate.ps1",
-                        ShellKind::Cmd => "activate.bat",
-                        ShellKind::Xonsh => "activate.xsh",
-                    };
-                    let path = prefix.join(BINARY_DIR).join(activate_script_name);
-
-                    if let Some(quoted) = shell.try_quote(&path.to_string_lossy())
-                        && fs.is_file(&path).await
-                    {
-                        activation_script.push(format!("{activate_keyword} {quoted}"));
+                if let Some(activation_scripts) = &toolchain.activation_scripts {
+                    if let Some(activate_script_path) = activation_scripts.get(&shell) {
+                        let activate_keyword = shell.activate_keyword();
+                        if let Some(quoted) =
+                            shell.try_quote(&activate_script_path.to_string_lossy())
+                        {
+                            activation_script.push(format!("{activate_keyword} {quoted}"));
+                        }
                     }
                 }
             }
             Some(PythonEnvironmentKind::Pyenv) => {
-                let Some(manager) = toolchain.manager else {
+                let Some(manager) = &toolchain.manager else {
                     return vec![];
                 };
                 let version = toolchain.version.as_deref().unwrap_or("system");
-                let pyenv = manager.executable;
+                let pyenv = &manager.executable;
                 let pyenv = pyenv.display();
                 activation_script.extend(match shell {
                     ShellKind::Fish => Some(format!("\"{pyenv}\" shell - fish {version}")),
@@ -1221,7 +1233,7 @@ impl ToolchainLister for PythonToolchainProvider {
     }
 }
 
-fn venv_to_toolchain(venv: PythonEnvironment) -> Option<Toolchain> {
+async fn venv_to_toolchain(venv: PythonEnvironment, fs: &dyn Fs) -> Option<Toolchain> {
     let mut name = String::from("Python");
     if let Some(ref version) = venv.version {
         _ = write!(name, " {version}");
@@ -1238,12 +1250,53 @@ fn venv_to_toolchain(venv: PythonEnvironment) -> Option<Toolchain> {
         _ = write!(name, " {nk}");
     }
 
+    let mut activation_scripts = HashMap::default();
+    match venv.kind {
+        Some(PythonEnvironmentKind::Venv | PythonEnvironmentKind::VirtualEnv) => {
+            resolve_venv_activation_scripts(&venv, fs, &mut activation_scripts).await
+        }
+        _ => {}
+    }
+    let data = PythonToolchainData {
+        environment: venv,
+        activation_scripts: Some(activation_scripts),
+    };
+
     Some(Toolchain {
         name: name.into(),
-        path: venv.executable.as_ref()?.to_str()?.to_owned().into(),
+        path: data.executable.as_ref()?.to_str()?.to_owned().into(),
         language_name: LanguageName::new("Python"),
-        as_json: serde_json::to_value(venv).ok()?,
+        as_json: serde_json::to_value(data).ok()?,
     })
+}
+
+async fn resolve_venv_activation_scripts(
+    venv: &PythonEnvironment,
+    fs: &dyn Fs,
+    activation_scripts: &mut HashMap<ShellKind, PathBuf>,
+) {
+    log::debug!("Resolving activation scripts for venv toolchain {venv:?}");
+    if let Some(prefix) = &venv.prefix {
+        for (shell_kind, script_name) in &[
+            (ShellKind::Posix, "activate"),
+            (ShellKind::Rc, "activate"),
+            (ShellKind::Csh, "activate.csh"),
+            (ShellKind::Tcsh, "activate.csh"),
+            (ShellKind::Fish, "activate.fish"),
+            (ShellKind::Nushell, "activate.nu"),
+            (ShellKind::PowerShell, "activate.ps1"),
+            (ShellKind::Cmd, "activate.bat"),
+            (ShellKind::Xonsh, "activate.xsh"),
+        ] {
+            let path = prefix.join(BINARY_DIR).join(script_name);
+
+            log::debug!("Trying path: {}", path.display());
+
+            if fs.is_file(&path).await {
+                activation_scripts.insert(*shell_kind, path);
+            }
+        }
+    }
 }
 
 pub struct EnvironmentApi<'a> {
