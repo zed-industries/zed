@@ -170,35 +170,44 @@ impl RemoteConnection for SshRemoteConnection {
         dest_path: RemotePathBuf,
         cx: &App,
     ) -> Task<Result<()>> {
-        let mut command = util::command::new_smol_command("scp");
-        let output = self
-            .socket
-            .ssh_options(&mut command, false)
-            .args(
-                self.socket
-                    .connection_options
-                    .port
-                    .map(|port| vec!["-P".to_string(), port.to_string()])
-                    .unwrap_or_default(),
-            )
-            .arg("-C")
-            .arg("-r")
-            .arg(&src_path)
-            .arg(format!(
-                "{}:{}",
-                self.socket.connection_options.scp_url(),
-                dest_path
-            ))
-            .output();
+        let dest_path_str = dest_path.to_string();
+        let src_path_display = src_path.display().to_string();
+
+        let mut sftp_command = self.build_sftp_command();
+        let mut scp_command =
+            self.build_scp_command(&src_path, &dest_path_str, Some(&["-C", "-r"]));
 
         cx.background_spawn(async move {
-            let output = output.await?;
+            if Self::is_sftp_available().await {
+                log::debug!("using SFTP for directory upload");
+                let mut child = sftp_command.spawn()?;
+                if let Some(mut stdin) = child.stdin.take() {
+                    use futures::AsyncWriteExt;
+                    let sftp_batch = format!("put -r {} {}\n", src_path.display(), dest_path_str);
+                    stdin.write_all(sftp_batch.as_bytes()).await?;
+                    drop(stdin);
+                }
+
+                let output = child.output().await?;
+                anyhow::ensure!(
+                    output.status.success(),
+                    "failed to upload directory via SFTP {} -> {}: {}",
+                    src_path_display,
+                    dest_path_str,
+                    String::from_utf8_lossy(&output.stderr)
+                );
+
+                return Ok(());
+            }
+
+            log::debug!("using SCP for directory upload");
+            let output = scp_command.output().await?;
 
             anyhow::ensure!(
                 output.status.success(),
-                "failed to upload directory {} -> {}: {}",
-                src_path.display(),
-                dest_path,
+                "failed to upload directory via SCP {} -> {}: {}",
+                src_path_display,
+                dest_path_str,
                 String::from_utf8_lossy(&output.stderr)
             );
 
@@ -643,36 +652,92 @@ impl SshRemoteConnection {
         Ok(())
     }
 
+    fn build_scp_command(
+        &self,
+        src_path: &Path,
+        dest_path_str: &str,
+        args: Option<&[&str]>,
+    ) -> process::Command {
+        let mut command = util::command::new_smol_command("scp");
+        self.socket.ssh_options(&mut command, false).args(
+            self.socket
+                .connection_options
+                .port
+                .map(|port| vec!["-P".to_string(), port.to_string()])
+                .unwrap_or_default(),
+        );
+        if let Some(args) = args {
+            command.args(args);
+        }
+        command.arg(src_path).arg(format!(
+            "{}:{}",
+            self.socket.connection_options.scp_url(),
+            dest_path_str
+        ));
+        command
+    }
+
+    fn build_sftp_command(&self) -> process::Command {
+        let mut command = util::command::new_smol_command("sftp");
+        self.socket.ssh_options(&mut command, false).args(
+            self.socket
+                .connection_options
+                .port
+                .map(|port| vec!["-P".to_string(), port.to_string()])
+                .unwrap_or_default(),
+        );
+        command.arg("-b").arg("-");
+        command.arg(self.socket.connection_options.scp_url());
+        command.stdin(Stdio::piped());
+        command
+    }
+
     async fn upload_file(&self, src_path: &Path, dest_path: &RelPath) -> Result<()> {
         log::debug!("uploading file {:?} to {:?}", src_path, dest_path);
-        let mut command = util::command::new_smol_command("scp");
-        let output = self
-            .socket
-            .ssh_options(&mut command, false)
-            .args(
-                self.socket
-                    .connection_options
-                    .port
-                    .map(|port| vec!["-P".to_string(), port.to_string()])
-                    .unwrap_or_default(),
-            )
-            .arg(src_path)
-            .arg(format!(
-                "{}:{}",
-                self.socket.connection_options.scp_url(),
-                dest_path.display(self.path_style())
-            ))
-            .output()
-            .await?;
 
-        anyhow::ensure!(
-            output.status.success(),
-            "failed to upload file {} -> {}: {}",
-            src_path.display(),
-            dest_path.display(self.path_style()),
-            String::from_utf8_lossy(&output.stderr)
-        );
-        Ok(())
+        let dest_path_str = dest_path.display(self.path_style());
+
+        if Self::is_sftp_available().await {
+            log::debug!("using SFTP for file upload");
+            let mut command = self.build_sftp_command();
+            let sftp_batch = format!("put {} {}\n", src_path.display(), dest_path_str);
+
+            let mut child = command.spawn()?;
+            if let Some(mut stdin) = child.stdin.take() {
+                use futures::AsyncWriteExt;
+                stdin.write_all(sftp_batch.as_bytes()).await?;
+                drop(stdin);
+            }
+
+            let output = child.output().await?;
+            anyhow::ensure!(
+                output.status.success(),
+                "failed to upload file via SFTP {} -> {}: {}",
+                src_path.display(),
+                dest_path_str,
+                String::from_utf8_lossy(&output.stderr)
+            );
+
+            Ok(())
+        } else {
+            log::debug!("using SCP for file upload");
+            let mut command = self.build_scp_command(src_path, &dest_path_str, None);
+            let output = command.output().await?;
+
+            anyhow::ensure!(
+                output.status.success(),
+                "failed to upload file via SCP {} -> {}: {}",
+                src_path.display(),
+                dest_path_str,
+                String::from_utf8_lossy(&output.stderr)
+            );
+
+            Ok(())
+        }
+    }
+
+    async fn is_sftp_available() -> bool {
+        which::which("sftp").is_ok()
     }
 }
 

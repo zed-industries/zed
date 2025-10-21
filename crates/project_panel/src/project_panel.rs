@@ -6016,6 +6016,10 @@ impl Panel for ProjectPanel {
         "Project Panel"
     }
 
+    fn panel_key() -> &'static str {
+        PROJECT_PANEL_KEY
+    }
+
     fn starts_open(&self, _: &Window, cx: &App) -> bool {
         if !ProjectPanelSettings::get_global(cx).starts_open {
             return false;

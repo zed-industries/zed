@@ -22,7 +22,7 @@ use ui::{
     ButtonCommon, Clickable, Color, FluentBuilder, IconButton, IconName, IconSize,
     InteractiveElement, Label, LabelCommon, LabelSize, LinkPreview, Pixels, Rems,
     StatefulInteractiveElement, StyledExt, StyledImage, ToggleState, Tooltip, VisibleOnHover,
-    h_flex, px, tooltip_container, v_flex,
+    h_flex, tooltip_container, v_flex,
 };
 use workspace::{OpenOptions, OpenVisible, Workspace};
 
@@ -51,7 +51,8 @@ pub struct RenderContext {
     buffer_text_style: TextStyle,
     text_style: TextStyle,
     border_color: Hsla,
-    element_background_color: Hsla,
+    title_bar_background_color: Hsla,
+    panel_background_color: Hsla,
     text_color: Hsla,
     link_color: Hsla,
     window_rem_size: Pixels,
@@ -87,7 +88,8 @@ impl RenderContext {
             text_style: window.text_style(),
             syntax_theme: theme.syntax().clone(),
             border_color: theme.colors().border,
-            element_background_color: theme.colors().element_background,
+            title_bar_background_color: theme.colors().title_bar_background,
+            panel_background_color: theme.colors().panel_background,
             text_color: theme.colors().text,
             link_color: theme.colors().text_accent,
             window_rem_size: window.rem_size(),
@@ -534,7 +536,10 @@ fn render_markdown_table(parsed: &ParsedMarkdownTable, cx: &mut RenderContext) -
                 .border_1()
                 .size_full()
                 .border_color(cx.border_color)
-                .when(cell.is_header, |this| this.bg(cx.element_background_color));
+                .when(cell.is_header, |this| {
+                    this.bg(cx.title_bar_background_color)
+                })
+                .when(row_idx % 2 == 1, |this| this.bg(cx.panel_background_color));
 
             cells.push(cell_element);
 

@@ -4030,7 +4030,7 @@ impl Repository {
 
         let this = cx.weak_entity();
         self.send_job(
-            Some(format!("git push {} {} {}", args, branch, remote).into()),
+            Some(format!("git push {} {} {}", args, remote, branch).into()),
             move |git_repo, mut cx| async move {
                 match git_repo {
                     RepositoryState::Local {
