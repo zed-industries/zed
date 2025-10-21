@@ -22255,10 +22255,7 @@ impl Editor {
         for_buffer: Option<BufferId>,
         cx: &mut Context<Self>,
     ) {
-        log::debug!("refresh_semantic_tokens called with for_buffer={:?}", for_buffer);
-        
         let Some(project) = self.project.clone() else {
-            log::debug!("No project available for semantic tokens");
             return;
         };
 
@@ -22268,50 +22265,35 @@ impl Editor {
             self.buffer.read(cx).all_buffer_ids()
         };
 
-        log::debug!("Checking {} buffer(s) for semantic token capability", buffer_ids.len());
-
         for buffer_id in buffer_ids {
-            if let Some(buffer) = self.buffer.read(cx).buffer(buffer_id) {
-                log::debug!("Starting semantic token request for buffer {buffer_id}");
-                let project = project.clone();
-                cx.spawn(async move |_editor, cx| {
-                    let task = project
-                        .update(cx, |project, cx| {
-                            project.lsp_store().update(cx, |store, cx| {
-                                store.semantic_tokens(buffer, cx)
-                            })
-                        })
-                        .ok();
+            let Some(buffer) = self.buffer.read(cx).buffer(buffer_id) else {
+                continue;
+            };
+            
+            let project = project.clone();
+            cx.spawn(async move |_editor, cx| {
+                let Some(task) = project.update(cx, |project, cx| {
+                    project.lsp_store().update(cx, |store, cx| {
+                        store.semantic_tokens(buffer, cx)
+                    })
+                }).log_err() else {
+                    return anyhow::Ok(());
+                };
 
-                    if let Some(task) = task {
-                        match task.await {
-                            Ok(tokens) => {
-                                // Check if we got real tokens or empty default (LSP not ready)
-                                if tokens.server_id.is_some() {
-                                    log::info!("✓ Semantic tokens received for buffer {buffer_id} from LSP server");
-                                } else {
-                                    log::debug!("Semantic tokens request returned empty result for buffer {buffer_id} - LSP not ready. Will retry when LSP registers buffer.");
-                                }
-                            }
-                            Err(e) => {
-                                // Log error but don't crash - semantic tokens will be retried
-                                // Retries happen automatically on:
-                                // - Buffer edits (via Edited event -> update_lsp_data)
-                                // - New excerpts added (via ExcerptsAdded -> update_lsp_data)
-                                // - Language changes (via LanguageChanged -> update_lsp_data)
-                                // - LSP server added (via LanguageServerBufferRegistered -> update_lsp_data)
-                                log::warn!("✗ Failed to fetch semantic tokens for buffer {buffer_id}: {e:#}. Will retry when LSP is ready.");
-                            }
-                        }
-                    } else {
-                        log::warn!("Could not create semantic tokens task for buffer {buffer_id}");
+                match task.await {
+                    Ok(tokens) if tokens.server_id.is_some() => {
+                        log::info!("Semantic tokens received for buffer {buffer_id}");
                     }
-                    anyhow::Ok(())
-                })
-                .detach();
-            } else {
-                log::debug!("Buffer {buffer_id} not found in multibuffer");
-            }
+                    Ok(_) => {
+                        log::debug!("LSP not ready for buffer {buffer_id}");
+                    }
+                    Err(e) => {
+                        log::warn!("Failed to fetch semantic tokens for buffer {buffer_id}: {e:#}");
+                    }
+                }
+                anyhow::Ok(())
+            })
+            .detach();
         }
     }
 
