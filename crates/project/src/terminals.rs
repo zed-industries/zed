@@ -427,6 +427,12 @@ impl Project {
         cx: &mut Context<'_, Project>,
         cwd: Option<PathBuf>,
     ) -> Task<Result<Entity<Terminal>>> {
+        // We cannot clone the task's terminal, as it will effectively re-spawn the task, which might not be desirable.
+        // For now, create a new shell instead.
+        if terminal.read(cx).task().is_some() {
+            return self.create_terminal_shell(cwd, cx);
+        }
+
         let local_path = if self.is_via_remote_server() {
             None
         } else {
