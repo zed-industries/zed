@@ -74,17 +74,20 @@ impl Render for EncodingIndicator {
 
                             let weak_workspace = workspace.weak_handle();
 
-                            workspace.toggle_modal(window, cx, |window, cx| {
-                                let selector = EncodingSelector::new(
-                                    window,
-                                    cx,
-                                    Action::Save,
-                                    Some(buffer.downgrade()),
-                                    weak_workspace,
-                                    None,
-                                );
-                                selector
-                            })
+                            if let Some(path) = buffer.read(cx).file() {
+                                let path = path.clone().path().to_path_buf();
+                                workspace.toggle_modal(window, cx, |window, cx| {
+                                    let selector = EncodingSelector::new(
+                                        window,
+                                        cx,
+                                        Action::Save,
+                                        Some(buffer.downgrade()),
+                                        weak_workspace,
+                                        Some(path),
+                                    );
+                                    selector
+                                });
+                            }
                         }
                     })
                 }

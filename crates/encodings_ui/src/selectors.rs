@@ -117,19 +117,23 @@ pub mod save_or_reopen {
 
                     let weak_workspace = workspace.read(cx).weak_handle();
 
-                    workspace.update(cx, |workspace, cx| {
-                        workspace.toggle_modal(window, cx, |window, cx| {
-                            let selector = EncodingSelector::new(
-                                window,
-                                cx,
-                                Action::Save,
-                                Some(buffer.downgrade()),
-                                weak_workspace,
-                                None,
-                            );
-                            selector
-                        })
-                    });
+                    if let Some(file) = buffer.read(cx).file() {
+                        let path = file.as_local()?.abs_path(cx);
+
+                        workspace.update(cx, |workspace, cx| {
+                            workspace.toggle_modal(window, cx, |window, cx| {
+                                let selector = EncodingSelector::new(
+                                    window,
+                                    cx,
+                                    Action::Save,
+                                    Some(buffer.downgrade()),
+                                    weak_workspace,
+                                    Some(path),
+                                );
+                                selector
+                            })
+                        });
+                    }
                 }
             } else if self.current_selection == 1 {
                 if let Some(workspace) = self.workspace.upgrade() {
@@ -142,19 +146,23 @@ pub mod save_or_reopen {
 
                     let weak_workspace = workspace.read(cx).weak_handle();
 
-                    workspace.update(cx, |workspace, cx| {
-                        workspace.toggle_modal(window, cx, |window, cx| {
-                            let selector = EncodingSelector::new(
-                                window,
-                                cx,
-                                Action::Reopen,
-                                Some(buffer.downgrade()),
-                                weak_workspace,
-                                None,
-                            );
-                            selector
+                    if let Some(file) = buffer.read(cx).file() {
+                        let path = file.as_local()?.abs_path(cx);
+
+                        workspace.update(cx, |workspace, cx| {
+                            workspace.toggle_modal(window, cx, |window, cx| {
+                                let selector = EncodingSelector::new(
+                                    window,
+                                    cx,
+                                    Action::Reopen,
+                                    Some(buffer.downgrade()),
+                                    weak_workspace,
+                                    Some(path),
+                                );
+                                selector
+                            });
                         });
-                    });
+                    }
                 }
             }
 
@@ -290,7 +298,7 @@ pub mod encoding {
         Context, HighlightedLabel, ListItem, ListItemSpacing, ParentElement, Render, Styled,
         Window, rems, v_flex,
     };
-    use util::{ResultExt, TryFutureExt};
+    use util::ResultExt;
     use workspace::{CloseActiveItem, ModalView, OpenOptions, Workspace};
 
     use crate::encoding_from_name;
@@ -438,35 +446,81 @@ pub mod encoding {
                 .upgrade()
                 .unwrap();
 
-            if let Some(buffer) = &self.buffer
-                && let Some(buffer_entity) = buffer.upgrade()
-            {
-                let buffer = buffer_entity.read(cx);
+            let weak_workspace = workspace.read(cx).weak_handle();
 
+            let current_selection = self.matches[self.current_selection].string.clone();
+
+            if let Some(buffer) = &self.buffer
+                && let Some(buffer) = buffer.upgrade()
+            {
+                let path = self
+                    .selector
+                    .upgrade()
+                    .unwrap()
+                    .read(cx)
+                    .path
+                    .clone()
+                    .unwrap();
+
+                let reload = buffer.update(cx, |buffer, cx| buffer.reload(cx));
                 // Since the encoding will be accessed in `reload`,
                 // the lock must be released before calling `reload`.
                 // By limiting the scope, we ensure that it is released
+
                 {
+                    let buffer = buffer.read(cx);
+
                     let buffer_encoding = buffer.encoding.clone();
-                    buffer_encoding.set(encoding_from_name(
-                        self.matches[self.current_selection].string.as_str(),
-                    ));
+                    buffer_encoding.set(encoding_from_name(&current_selection.clone()));
                 }
 
                 self.dismissed(window, cx);
 
                 if self.action == Action::Reopen {
-                    buffer_entity.update(cx, |buffer, cx| {
-                        let rec = buffer.reload(cx);
-                        cx.spawn(async move |_, _| rec.await).detach()
+                    buffer.update(cx, |_, cx| {
+                        cx.spawn_in(window, async move |_, cx| {
+                            if let Err(_) | Ok(None) = reload.await {
+                                let workspace = weak_workspace.upgrade().unwrap();
+
+                                workspace
+                                    .update_in(cx, |workspace, window, cx| {
+                                        workspace
+                                            .encoding_options
+                                            .encoding
+                                            .lock()
+                                            .unwrap()
+                                            .set(encoding_from_name(&current_selection));
+
+                                        *workspace.encoding_options.force.get_mut() = false;
+
+                                        *workspace.encoding_options.detect_utf16.get_mut() = true;
+
+                                        workspace
+                                            .active_pane()
+                                            .update(cx, |pane, cx| {
+                                                pane.close_active_item(
+                                                    &CloseActiveItem::default(),
+                                                    window,
+                                                    cx,
+                                                )
+                                            })
+                                            .detach();
+
+                                        workspace
+                                            .open_abs_path(path, OpenOptions::default(), window, cx)
+                                            .detach()
+                                    })
+                                    .log_err();
+                            }
+                        })
+                        .detach()
                     });
                 } else if self.action == Action::Save {
-                    let task = workspace.update(cx, |workspace, cx| {
+                    workspace.update(cx, |workspace, cx| {
                         workspace
                             .save_active_item(workspace::SaveIntent::Save, window, cx)
-                            .log_err()
+                            .detach();
                     });
-                    cx.spawn(async |_, _| task).detach();
                 }
             } else {
                 if let Some(path) = self.selector.upgrade().unwrap().read(cx).path.clone() {

@@ -5520,6 +5520,7 @@ dependencies = [
 name = "encodings_ui"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "editor",
  "encoding_rs",
  "fs",

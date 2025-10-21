@@ -2,9 +2,9 @@ use std::{path::Path, sync::Arc};
 
 use gpui::{EventEmitter, FocusHandle, Focusable};
 use ui::{
-    h_flex, v_flex, App, Button, ButtonCommon, ButtonStyle, Clickable, Context, FluentBuilder,
-    InteractiveElement, KeyBinding, Label, LabelCommon, LabelSize, ParentElement, Render,
-    SharedString, Styled as _, TintColor, Window,
+    App, Button, ButtonCommon, ButtonStyle, Clickable, Context, FluentBuilder, InteractiveElement,
+    KeyBinding, Label, LabelCommon, LabelSize, ParentElement, Render, SharedString, Styled as _,
+    TintColor, Window, div, h_flex, v_flex,
 };
 use zed_actions::workspace::OpenWithSystem;
 
@@ -89,15 +89,18 @@ impl Render for InvalidItemView {
             .overflow_hidden()
             .key_context("InvalidBuffer")
             .child(
-                h_flex().size_full().justify_center().child(
+                h_flex().size_full().justify_center().items_center().child(
                     v_flex()
-                        .justify_center()
                         .gap_2()
+                        .max_w_96()
                         .child(h_flex().justify_center().child("Could not open file"))
                         .child(
-                            h_flex()
-                                .justify_center()
-                                .child(Label::new(self.error.clone()).size(LabelSize::Small)),
+                            h_flex().justify_center().child(
+                                div()
+                                    .whitespace_normal()
+                                    .text_center()
+                                    .child(Label::new(self.error.clone()).size(LabelSize::Small)),
+                            ),
                         )
                         .when(self.is_local, |contents| {
                             contents
