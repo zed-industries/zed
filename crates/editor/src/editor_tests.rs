@@ -26838,3 +26838,24 @@ async fn test_copy_line_without_trailing_newline(cx: &mut TestAppContext) {
 
     cx.assert_editor_state("line1\nline2\nˇ");
 }
+
+#[gpui::test]
+async fn test_end_of_editor_context(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state("line1\nline2ˇ");
+    cx.update_editor(|e, window, cx| {
+        e.set_mode(EditorMode::SingleLine);
+        assert!(e.key_context(window, cx).contains("end_of_input"));
+    });
+    cx.set_state("ˇline1\nline2");
+    cx.update_editor(|e, window, cx| {
+        assert!(!e.key_context(window, cx).contains("end_of_input"));
+    });
+    cx.set_state("line1ˇ\nline2");
+    cx.update_editor(|e, window, cx| {
+        assert!(!e.key_context(window, cx).contains("end_of_input"));
+    });
+}
