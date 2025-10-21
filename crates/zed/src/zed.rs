@@ -2836,14 +2836,16 @@ mod tests {
         });
 
         // Split the pane with the first entry, then open the second entry again.
-        window
+        let (task1, task2) = window
             .update(cx, |w, window, cx| {
-                w.split_and_clone(w.active_pane().clone(), SplitDirection::Right, window, cx);
-                w.open_path(file2.clone(), None, true, window, cx)
+                (
+                    w.split_and_clone(w.active_pane().clone(), SplitDirection::Right, window, cx),
+                    w.open_path(file2.clone(), None, true, window, cx),
+                )
             })
-            .unwrap()
-            .await
             .unwrap();
+        task1.await.unwrap();
+        task2.await.unwrap();
 
         window
             .read_with(cx, |w, cx| {
@@ -3459,25 +3461,28 @@ mod tests {
         // Open the same newly-created file in another pane item. The new editor should reuse
         // the same buffer.
         cx.dispatch_action(window.into(), NewFile);
-        window
+        let (task1, task2) = window
             .update(cx, |workspace, window, cx| {
-                workspace.split_and_clone(
-                    workspace.active_pane().clone(),
-                    SplitDirection::Right,
-                    window,
-                    cx,
-                );
-                workspace.open_path(
-                    (worktree.read(cx).id(), rel_path("the-new-name.rs")),
-                    None,
-                    true,
-                    window,
-                    cx,
+                (
+                    workspace.split_and_clone(
+                        workspace.active_pane().clone(),
+                        SplitDirection::Right,
+                        window,
+                        cx,
+                    ),
+                    workspace.open_path(
+                        (worktree.read(cx).id(), rel_path("the-new-name.rs")),
+                        None,
+                        true,
+                        window,
+                        cx,
+                    ),
                 )
             })
-            .unwrap()
-            .await
             .unwrap();
+        task1.await.unwrap();
+        task2.await.unwrap();
+        cx.run_until_parked();
         let editor2 = window
             .update(cx, |workspace, _, cx| {
                 workspace
