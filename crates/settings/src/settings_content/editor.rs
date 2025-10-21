@@ -7,7 +7,9 @@ use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 use settings_macros::MergeFrom;
 
-use crate::{DelayMs, DiagnosticSeverityContent, ShowScrollbar};
+use crate::{
+    DelayMs, DiagnosticSeverityContent, ShowScrollbar, serialize_f32_with_two_decimal_places,
+};
 
 #[skip_serializing_none]
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
@@ -70,6 +72,7 @@ pub struct EditorSettingsContent {
     /// The number of lines to keep above/below the cursor when auto-scrolling.
     ///
     /// Default: 3.
+    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
     pub vertical_scroll_margin: Option<f32>,
     /// Whether to scroll when clicking near the edge of the visible text area.
     ///
@@ -78,17 +81,20 @@ pub struct EditorSettingsContent {
     /// The number of characters to keep on either side when scrolling with the mouse.
     ///
     /// Default: 5.
+    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
     pub horizontal_scroll_margin: Option<f32>,
     /// Scroll sensitivity multiplier. This multiplier is applied
     /// to both the horizontal and vertical delta values while scrolling.
     ///
     /// Default: 1.0
+    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
     pub scroll_sensitivity: Option<f32>,
     /// Scroll sensitivity multiplier for fast scrolling. This multiplier is applied
     /// to both the horizontal and vertical delta values while scrolling. Fast scrolling
     /// happens when a user holds the alt or option key while scrolling.
     ///
     /// Default: 4.0
+    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
     pub fast_scroll_sensitivity: Option<f32>,
     /// Whether the line numbers on editors gutter are relative or not.
     ///
@@ -796,7 +802,9 @@ pub enum DisplayIn {
     derive_more::FromStr,
 )]
 #[serde(transparent)]
-pub struct MinimumContrast(pub f32);
+pub struct MinimumContrast(
+    #[serde(serialize_with = "crate::serialize_f32_with_two_decimal_places")] pub f32,
+);
 
 impl Display for MinimumContrast {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -827,7 +835,9 @@ impl From<f32> for MinimumContrast {
     derive_more::FromStr,
 )]
 #[serde(transparent)]
-pub struct InactiveOpacity(pub f32);
+pub struct InactiveOpacity(
+    #[serde(serialize_with = "serialize_f32_with_two_decimal_places")] pub f32,
+);
 
 impl Display for InactiveOpacity {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
