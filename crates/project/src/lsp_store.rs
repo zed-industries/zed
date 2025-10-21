@@ -6499,6 +6499,22 @@ impl LspStore {
         }
     }
 
+    pub fn applicable_inlay_chunks(
+        &self,
+        buffer_id: BufferId,
+        ranges: &[Range<text::Anchor>],
+    ) -> Vec<Range<BufferRow>> {
+        self.lsp_data
+            .get(&buffer_id)
+            .map(|data| {
+                data.inlay_hints
+                    .applicable_chunks(ranges)
+                    .map(|chunk| chunk.start..chunk.end)
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
     pub fn inlay_hints(
         &mut self,
         invalidate: InvalidationStrategy,
@@ -6533,7 +6549,9 @@ impl LspStore {
             return HashMap::default();
         }
 
-        for row_chunk in applicable_chunks {
+        let last_chunk_number = applicable_chunks.len() - 1;
+
+        for (i, row_chunk) in applicable_chunks.into_iter().enumerate() {
             match (
                 existing_inlay_hints
                     .cached_hints(&row_chunk)
@@ -6546,10 +6564,15 @@ impl LspStore {
                     .cloned(),
             ) {
                 (None, None) => {
+                    let end = if last_chunk_number == i {
+                        Point::new(row_chunk.end, buffer_snapshot.line_len(row_chunk.end))
+                    } else {
+                        Point::new(row_chunk.end, 0)
+                    };
                     ranges_to_query.push((
                         row_chunk,
                         buffer_snapshot.anchor_before(Point::new(row_chunk.start, 0))
-                            ..buffer_snapshot.anchor_after(Point::new(row_chunk.end, 0)),
+                            ..buffer_snapshot.anchor_after(end),
                     ));
                 }
                 (None, Some(fetched_hints)) => {

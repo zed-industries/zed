@@ -4288,8 +4288,8 @@ pub mod tests {
         });
 
         perform_search(search_view, "let ", cx);
-        cx.executor().advance_clock(Duration::from_millis(100));
         let _fake_server = fake_servers.next().await.unwrap();
+        cx.executor().advance_clock(Duration::from_secs(1));
         cx.executor().run_until_parked();
         search_view
             .update(cx, |search_view, _, cx| {

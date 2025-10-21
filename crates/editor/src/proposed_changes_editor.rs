@@ -8,7 +8,7 @@ use multi_buffer::{ExcerptRange, MultiBuffer};
 use project::{InvalidationStrategy, Project, lsp_store::CacheInlayHints};
 use smol::stream::StreamExt;
 use std::{any::TypeId, ops::Range, rc::Rc, time::Duration};
-use text::ToOffset;
+use text::{BufferId, ToOffset};
 use ui::{ButtonLike, KeyBinding, prelude::*};
 use workspace::{
     Item, ItemHandle as _, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
@@ -434,6 +434,15 @@ impl SemanticsProvider for BranchBufferSemanticsProvider {
     ) -> Option<Task<Option<Vec<project::Hover>>>> {
         let buffer = self.to_base(buffer, &[position], cx)?;
         self.0.hover(&buffer, position, cx)
+    }
+
+    fn applicable_inlay_chunks(
+        &self,
+        buffer_id: BufferId,
+        ranges: &[Range<text::Anchor>],
+        cx: &App,
+    ) -> Vec<Range<BufferRow>> {
+        self.0.applicable_inlay_chunks(buffer_id, ranges, cx)
     }
 
     fn inlay_hints(

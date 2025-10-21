@@ -1,4 +1,5 @@
 use std::{
+    collections::hash_map,
     ops::{ControlFlow, Range},
     time::Duration,
 };
@@ -48,7 +49,7 @@ pub struct LspInlayHintData {
     allowed_hint_kinds: HashSet<Option<InlayHintKind>>,
     invalidate_debounce: Option<Duration>,
     append_debounce: Option<Duration>,
-    hint_refresh_tasks: HashMap<BufferId, Vec<Task<()>>>,
+    hint_refresh_tasks: HashMap<BufferId, HashMap<Vec<Range<BufferRow>>, Vec<Task<()>>>>,
     hint_chunk_fetched: HashMap<BufferId, (Global, HashSet<Range<BufferRow>>)>,
     pub added_hints: HashMap<InlayId, Option<InlayHintKind>>,
 }
@@ -258,9 +259,12 @@ impl Editor {
         reason: InlayHintRefreshReason,
         cx: &mut Context<Self>,
     ) {
-        if !self.mode.is_full() || self.inlay_hints.is_none() || self.semantics_provider.is_none() {
+        if !self.mode.is_full() || self.inlay_hints.is_none() {
             return;
         }
+        let Some(semantics_provider) = self.semantics_provider.clone() else {
+            return;
+        };
         let Some(invalidate_cache) = self.refresh_editor_data(&reason, cx) else {
             return;
         };
@@ -283,6 +287,10 @@ impl Editor {
         let Some(inlay_hints) = self.inlay_hints.as_mut() else {
             return;
         };
+
+        if invalidate_cache.should_invalidate() {
+            inlay_hints.clear();
+        }
 
         let ignore_previous_fetches = matches!(
             reason,
@@ -316,9 +324,6 @@ impl Editor {
             visible_excerpts.ranges.push(buffer_anchor_range);
         }
 
-        if invalidate_cache.should_invalidate() {
-            inlay_hints.clear();
-        }
         for (buffer_id, visible_excerpts) in buffers_to_query {
             let fetched_tasks = inlay_hints.hint_chunk_fetched.entry(buffer_id).or_default();
             if visible_excerpts
@@ -330,18 +335,38 @@ impl Editor {
                 inlay_hints.hint_refresh_tasks.remove(&buffer_id);
             }
 
-            inlay_hints
+            let applicable_chunks =
+                semantics_provider.applicable_inlay_chunks(buffer_id, &visible_excerpts.ranges, cx);
+
+            match inlay_hints
                 .hint_refresh_tasks
                 .entry(buffer_id)
                 .or_default()
-                .push(spawn_editor_hints_refresh(
-                    buffer_id,
-                    invalidate_cache,
-                    ignore_previous_fetches,
-                    debounce,
-                    visible_excerpts,
-                    cx,
-                ));
+                .entry(applicable_chunks)
+            {
+                hash_map::Entry::Occupied(mut o) => {
+                    if invalidate_cache.should_invalidate() || ignore_previous_fetches {
+                        o.get_mut().push(spawn_editor_hints_refresh(
+                            buffer_id,
+                            invalidate_cache,
+                            ignore_previous_fetches,
+                            debounce,
+                            visible_excerpts,
+                            cx,
+                        ));
+                    }
+                }
+                hash_map::Entry::Vacant(v) => {
+                    v.insert(Vec::new()).push(spawn_editor_hints_refresh(
+                        buffer_id,
+                        invalidate_cache,
+                        ignore_previous_fetches,
+                        debounce,
+                        visible_excerpts,
+                        cx,
+                    ));
+                }
+            }
         }
     }
 
@@ -434,9 +459,6 @@ impl Editor {
                     && !matches!(reason, InlayHintRefreshReason::ModifiersChanged(_))
                 {
                     return None;
-                }
-                if invalidate_cache.should_invalidate() {
-                    inlay_hints.clear();
                 }
             }
             None => return None,
@@ -655,10 +677,7 @@ impl Editor {
                     .hint_chunk_fetched
                     .get(&buffer_id)
                     .filter(|_| !ignore_previous_fetches && !invalidate_cache.should_invalidate())
-                    .cloned()
-                    .map(|(buffer_version, excerpt_ranges)| {
-                        (buffer_version, excerpt_ranges.clone())
-                    }),
+                    .cloned(),
                 cx,
             )
             .unwrap_or_default();
@@ -673,7 +692,7 @@ impl Editor {
         let mut hint_tasks = Vec::new();
         for (row_range, new_hints_task) in new_hint_tasks {
             let inserted = known_chunks.insert(row_range.clone());
-            if inserted || ignore_previous_fetches {
+            if inserted || ignore_previous_fetches || invalidate_cache.should_invalidate() {
                 hint_tasks.push(cx.spawn(async move |_, _| (row_range, new_hints_task.await)));
             }
         }
@@ -947,6 +966,87 @@ pub mod tests {
                     allowed_hint_kinds,
                     "Cache should use editor settings to get the allowed hint kinds"
                 );
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    async fn test_racy_cache_updates(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |settings| {
+            settings.defaults.inlay_hints = Some(InlayHintSettingsContent {
+                enabled: Some(true),
+                ..InlayHintSettingsContent::default()
+            })
+        });
+        let (_, editor, fake_server) = prepare_test_objects(cx, |fake_server, file_with_hints| {
+            let lsp_request_count = Arc::new(AtomicU32::new(0));
+            fake_server.set_request_handler::<lsp::request::InlayHintRequest, _, _>(
+                move |params, _| {
+                    let task_lsp_request_count = Arc::clone(&lsp_request_count);
+                    async move {
+                        let i = task_lsp_request_count.fetch_add(1, Ordering::Release) + 1;
+                        assert_eq!(
+                            params.text_document.uri,
+                            lsp::Uri::from_file_path(file_with_hints).unwrap(),
+                        );
+                        Ok(Some(vec![lsp::InlayHint {
+                            position: lsp::Position::new(0, i),
+                            label: lsp::InlayHintLabel::String(i.to_string()),
+                            kind: Some(lsp::InlayHintKind::TYPE),
+                            text_edits: None,
+                            tooltip: None,
+                            padding_left: None,
+                            padding_right: None,
+                            data: None,
+                        }]))
+                    }
+                },
+            );
+        })
+        .await;
+        cx.executor().advance_clock(Duration::from_secs(1));
+        cx.executor().run_until_parked();
+
+        editor
+            .update(cx, |editor, _window, cx| {
+                let expected_hints = vec!["1".to_string()];
+                assert_eq!(
+                    expected_hints,
+                    cached_hint_labels(editor, cx),
+                    "Should get its first hints when opening the editor"
+                );
+                assert_eq!(expected_hints, visible_hint_labels(editor, cx));
+            })
+            .unwrap();
+
+        // Emulate simultaneous events: both editing, refresh and, slightly after, scroll updates are triggered.
+        editor
+            .update(cx, |editor, window, cx| {
+                editor.handle_input("foo", window, cx);
+            })
+            .unwrap();
+        cx.executor().advance_clock(Duration::from_millis(5));
+        editor
+            .update(cx, |editor, _window, cx| {
+                editor.refresh_inlay_hints(
+                    InlayHintRefreshReason::RefreshRequested(fake_server.server.server_id()),
+                    cx,
+                );
+            })
+            .unwrap();
+        cx.executor().advance_clock(Duration::from_millis(5));
+        editor
+            .update(cx, |editor, _window, cx| {
+                editor.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
+            })
+            .unwrap();
+        cx.executor().advance_clock(Duration::from_secs(1));
+        cx.executor().run_until_parked();
+        editor
+            .update(cx, |editor, _window, cx| {
+                let expected_hints = vec!["2".to_string()];
+                assert_eq!(expected_hints, cached_hint_labels(editor, cx), "Despite multiple simultaneous refreshes, only one inlay hint query should be issued");
+                assert_eq!(expected_hints, visible_hint_labels(editor, cx));
             })
             .unwrap();
     }
@@ -2431,21 +2531,18 @@ let c = 3;"#
                                 {
                                     closure_ranges_fetched
                                         .lock()
-                                        .push(("main.rs", params.range.clone()));
+                                        .push(("main.rs", params.range));
                                     "main.rs"
                                 } else if params.text_document.uri
                                     == lsp::Uri::from_file_path(path!("/a/lib.rs")).unwrap()
                                 {
-                                    closure_ranges_fetched
-                                        .lock()
-                                        .push(("lib.rs", params.range.clone()));
+                                    closure_ranges_fetched.lock().push(("lib.rs", params.range));
                                     "lib.rs"
                                 } else {
                                     panic!("Unexpected file path {:?}", params.text_document.uri);
                                 };
                                 Ok(Some(
                                     (params.range.start.line..params.range.end.line)
-                                        .into_iter()
                                         .map(|row| lsp::InlayHint {
                                             position: lsp::Position::new(row, 0),
                                             label: lsp::InlayHintLabel::String(format!(
@@ -2517,7 +2614,7 @@ let c = 3;"#
             vec![
                 (
                     "lib.rs",
-                    lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(2, 0))
+                    lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(2, 10))
                 ),
                 (
                     "main.rs",
@@ -2525,7 +2622,7 @@ let c = 3;"#
                 ),
                 (
                     "main.rs",
-                    lsp::Range::new(lsp::Position::new(50, 0), lsp::Position::new(100, 0))
+                    lsp::Range::new(lsp::Position::new(50, 0), lsp::Position::new(100, 11))
                 ),
             ],
             lsp_request_ranges
@@ -2539,13 +2636,8 @@ let c = 3;"#
             .update(cx, |editor, _window, cx| {
                 assert_eq!(
                     (0..2)
-                        .into_iter()
                         .map(|i| format!("lib.rs Inlay hint #{i}"))
-                        .chain(
-                            (0..100)
-                                .into_iter()
-                                .map(|i| format!("main.rs Inlay hint #{i}"))
-                        )
+                        .chain((0..100).map(|i| format!("main.rs Inlay hint #{i}")))
                         .collect::<Vec<_>>(),
                     sorted_cached_hint_labels(editor, cx),
                     "Both chunks should provide their inlay hints"
@@ -2581,7 +2673,7 @@ let c = 3;"#
             vec![
                 (
                     "lib.rs",
-                    lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(2, 0))
+                    lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(2, 10))
                 ),
                 (
                     "main.rs",
@@ -2589,7 +2681,7 @@ let c = 3;"#
                 ),
                 (
                     "main.rs",
-                    lsp::Range::new(lsp::Position::new(50, 0), lsp::Position::new(100, 0))
+                    lsp::Range::new(lsp::Position::new(50, 0), lsp::Position::new(100, 11))
                 ),
             ],
             lsp_request_ranges
@@ -2603,13 +2695,8 @@ let c = 3;"#
             .update(cx, |editor, _window, cx| {
                 assert_eq!(
                     (0..2)
-                        .into_iter()
                         .map(|i| format!("lib.rs Inlay hint #{i}"))
-                        .chain(
-                            (0..100)
-                                .into_iter()
-                                .map(|i| format!("main.rs Inlay hint #{i}"))
-                        )
+                        .chain((0..100).map(|i| format!("main.rs Inlay hint #{i}")))
                         .collect::<Vec<_>>(),
                     sorted_cached_hint_labels(editor, cx),
                     "Same hints should be re-inserted after the edit"

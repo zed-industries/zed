@@ -22574,6 +22574,13 @@ pub trait SemanticsProvider {
         cx: &mut App,
     ) -> Option<Task<anyhow::Result<Vec<InlayHint>>>>;
 
+    fn applicable_inlay_chunks(
+        &self,
+        buffer_id: BufferId,
+        ranges: &[Range<text::Anchor>],
+        cx: &App,
+    ) -> Vec<Range<BufferRow>>;
+
     fn inlay_hints(
         &self,
         invalidate: InvalidationStrategy,
@@ -23072,6 +23079,18 @@ impl SemanticsProvider for Entity<Project> {
 
             Some(project.inline_values(session, active_stack_frame, buffer_handle, range, cx))
         })
+    }
+
+    fn applicable_inlay_chunks(
+        &self,
+        buffer_id: BufferId,
+        ranges: &[Range<text::Anchor>],
+        cx: &App,
+    ) -> Vec<Range<BufferRow>> {
+        self.read(cx)
+            .lsp_store()
+            .read(cx)
+            .applicable_inlay_chunks(buffer_id, ranges)
     }
 
     fn inlay_hints(
