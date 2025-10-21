@@ -224,18 +224,22 @@ impl Global for SettingFieldRenderer {}
 
 #[derive(Default, Clone)]
 struct SettingsJsonKeyFinder {
-    key_finders: Rc<RefCell<HashMap<TypeId, Box<dyn Fn(SettingsContent) -> Option<String>>>>>,
+    key_finders: Rc<RefCell<HashMap<TypeId, Box<dyn Fn(&dyn AnySettingField) -> String>>>>,
 }
 
 impl Global for SettingsJsonKeyFinder {}
 
 impl SettingsJsonKeyFinder {
-    fn add_basic_json_key_finder<T: 'static + Default + serde::Serialize>(
-        &mut self,
-        field: SettingField<T>,
-    ) -> &mut Self {
+    fn add_basic_json_key_finder<T: 'static + Default + serde::Serialize>(&mut self) -> &mut Self {
         let key = TypeId::of::<T>();
-        let key_finder = Box::new(move |mut content: SettingsContent| {
+        let key_finder = Box::new(move |any_field: &dyn AnySettingField| {
+            let field = *any_field
+                .as_any()
+                .downcast_ref::<SettingField<T>>()
+                .unwrap();
+
+            let mut content = SettingsContent::default();
+
             // Write the field with a default value
             (field.write)(&mut content, Some(T::default()));
 
@@ -244,18 +248,18 @@ impl SettingsJsonKeyFinder {
                 .expect("Failed to serialize SettingsContent");
 
             // Extract the JSON path from the string (should only have one entry)
-            extract_json_path_from_string(&json_string)
+            extract_json_path_from_string(&json_string).unwrap()
         });
         self.key_finders.borrow_mut().insert(key, key_finder);
         self
     }
 
-    fn find_json_path<T: 'static>(&self) -> Option<String> {
-        let key = TypeId::of::<T>();
+    #[allow(dead_code)]
+    fn find_json_path(&self, field: &dyn AnySettingField) -> String {
+        let key = field.type_id();
         let key_finders = self.key_finders.borrow();
-        let key_finder = key_finders.get(&key)?;
-        let content = SettingsContent::default();
-        key_finder(content)
+        let key_finder = key_finders.get(&key).unwrap();
+        key_finder(field)
     }
 }
 
@@ -434,10 +438,7 @@ pub fn init(cx: &mut App) {
 
 fn init_json_key_finders(cx: &mut App) {
     cx.default_global::<SettingsJsonKeyFinder>()
-        .add_basic_json_key_finder(SettingField::<bool> {
-            pick: |content| content.vim_mode.as_ref(),
-            write: |content, value| content.vim_mode = value,
-        });
+        .add_basic_json_key_finder::<bool>();
 }
 
 fn init_renderers(cx: &mut App) {
@@ -3209,11 +3210,15 @@ mod test {
             register_settings(cx);
             init_json_key_finders(cx);
 
-            let json_key_finder = cx.global::<SettingsJsonKeyFinder>();
-            let path = json_key_finder.find_json_path::<bool>();
-            dbg!(&path);
+            let bool_field = SettingField::<bool> {
+                pick: |content| content.vim_mode.as_ref(),
+                write: |content, value| content.vim_mode = value,
+            };
 
-            assert_eq!(path, Some("vim_mode".to_string()));
+            let json_key_finder = cx.global::<SettingsJsonKeyFinder>();
+            let path = json_key_finder.find_json_path(&bool_field);
+
+            assert_eq!(path, "vim_mode".to_string());
         });
     }
 
