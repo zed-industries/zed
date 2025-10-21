@@ -17,7 +17,6 @@ editor.workspace = true
 fuzzy.workspace = true
 gpui.workspace = true
 menu.workspace = true
-picker.workspace = true
 settings.workspace = true
 theme.workspace = true
 ui.workspace = true
