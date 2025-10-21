@@ -161,18 +161,15 @@ pub enum AgentServerLauncher {
         entrypoint: String,
         #[serde(default)]
         min_version: Option<String>,
-        // pass_experimental_acp removed; extensions should supply flags in args
     },
     GithubRelease {
         repo: String,
         asset_pattern: String,
         #[serde(default)]
         binary_name: Option<String>,
-        // pass_experimental_acp removed; extensions should supply flags in args
     },
     Binary {
         bin_name: String,
-        // pass_experimental_acp removed; extensions should supply flags in args
     },
 }
 
