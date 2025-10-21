@@ -63,7 +63,7 @@ $env:RELEASE_CHANNEL = $channel
 Pop-Location
 
 function CheckEnvironmentVariables {
-    if(-not $CI) {
+    if(-not $env:CI) {
         return
     }
 
@@ -171,7 +171,7 @@ function MakeAppx {
 }
 
 function SignZedAndItsFriends {
-    if (-not $CI) {
+    if (-not $env:CI) {
         return
     }
 
@@ -301,7 +301,7 @@ function BuildInstaller {
     }
 
     $innoArgs = @($issFilePath) + $defs
-    if($CI) {
+    if($env:CI) {
         $signTool = "powershell.exe -ExecutionPolicy Bypass -File $innoDir\sign.ps1 `$f"
         $innoArgs += "/sDefaultsign=`"$signTool`""
     }
@@ -338,7 +338,7 @@ DownloadConpty
 CollectFiles
 BuildInstaller
 
-if($CI) {
+if($env:CI) {
     UploadToBlobStorePublic -BucketName "zed-debug-symbols" -FileToUpload $debugArchive -BlobStoreKey $debugStoreKey
     UploadToSentry
 }
