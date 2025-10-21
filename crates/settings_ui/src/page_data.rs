@@ -2451,6 +2451,28 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
+                    title: "Center on Match",
+                    description: "Whether to center the current match in the editor",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(search) = &settings_content.editor.search {
+                                &search.center_on_match
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .editor
+                                .search
+                                .get_or_insert_default()
+                                .center_on_match
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
                     title: "Seed Search Query From Cursor",
                     description: "When to populate a new search's query based on the text under the cursor.",
                     field: Box::new(SettingField {
