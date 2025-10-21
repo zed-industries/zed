@@ -985,10 +985,17 @@ impl EditorElement {
 
         let hovered_link_modifier = Editor::multi_cursor_modifier(false, &event.modifiers(), cx);
 
+        let was_drag = if let ClickEvent::Mouse(mouse_event) = event {
+            (mouse_event.down.position - mouse_event.up.position).magnitude() > 1.0
+        } else {
+            false
+        };
+
         if let Some(mouse_position) = event.mouse_position()
             && !pending_nonempty_selections
             && hovered_link_modifier
             && text_hitbox.is_hovered(window)
+            && !was_drag
         {
             let point = position_map.point_for_position(mouse_position);
             editor.handle_click_hovered_link(point, event.modifiers(), window, cx);
