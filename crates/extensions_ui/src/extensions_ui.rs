@@ -725,7 +725,10 @@ impl ExtensionsPage {
                     .child(
                         h_flex()
                             .gap_2()
-                            .child(Headline::new(extension.manifest.name.clone()))
+                            .child(
+                                Headline::new(extension.manifest.name.clone())
+                                    .size(HeadlineSize::Small),
+                            )
                             .child(Headline::new(format!("v{version}")).size(HeadlineSize::XSmall))
                             .children(
                                 installed_version
