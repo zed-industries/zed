@@ -24,7 +24,6 @@ use serde_json::{Value, json};
 use smol::lock::OnceCell;
 use std::cmp::Ordering;
 use std::env::consts;
-use std::ops::Deref;
 use util::command::new_smol_command;
 use util::fs::{make_file_executable, remove_matching};
 use util::rel_path::RelPath;
@@ -47,14 +46,6 @@ pub(crate) struct PythonToolchainData {
     environment: PythonEnvironment,
     #[serde(skip_serializing_if = "Option::is_none")]
     activation_scripts: Option<HashMap<ShellKind, PathBuf>>,
-}
-
-impl Deref for PythonToolchainData {
-    type Target = PythonEnvironment;
-
-    fn deref(&self) -> &Self::Target {
-        &self.environment
-    }
 }
 
 pub(crate) struct PyprojectTomlManifestProvider;
@@ -186,8 +177,9 @@ impl LspAdapter for TyLspAdapter {
             serde_json::from_value::<PythonToolchainData>(toolchain.as_json).ok()
         }) {
             _ = maybe!({
-                let uri = url::Url::from_file_path(toolchain.executable.as_ref()?).ok()?;
-                let sys_prefix = toolchain.prefix.clone()?;
+                let uri =
+                    url::Url::from_file_path(toolchain.environment.executable.as_ref()?).ok()?;
+                let sys_prefix = toolchain.environment.prefix.clone()?;
                 let environment = json!({
                     "executable": {
                         "uri": uri,
@@ -501,7 +493,7 @@ impl LspAdapter for PyrightLspAdapter {
                 let object = user_settings.as_object_mut().unwrap();
 
                 let interpreter_path = toolchain.path.to_string();
-                if let Some(venv_dir) = &env.prefix {
+                if let Some(venv_dir) = &env.environment.prefix {
                     // Set venvPath and venv at the root level
                     // This matches the format of a pyrightconfig.json file
                     if let Some(parent) = venv_dir.parent() {
@@ -1184,13 +1176,13 @@ impl ToolchainLister for PythonToolchainProvider {
             return vec![];
         };
 
-        log::debug!("Composing activation script for toolchain {toolchain:?}");
+        log::debug!("(Python) Composing activation script for toolchain {toolchain:?}");
 
         let mut activation_script = vec![];
 
-        match toolchain.kind {
+        match toolchain.environment.kind {
             Some(PythonEnvironmentKind::Conda) => {
-                if let Some(name) = &toolchain.name {
+                if let Some(name) = &toolchain.environment.name {
                     activation_script.push(format!("conda activate {name}"));
                 } else {
                     activation_script.push("conda activate".to_string());
@@ -1209,10 +1201,10 @@ impl ToolchainLister for PythonToolchainProvider {
                 }
             }
             Some(PythonEnvironmentKind::Pyenv) => {
-                let Some(manager) = &toolchain.manager else {
+                let Some(manager) = &toolchain.environment.manager else {
                     return vec![];
                 };
-                let version = toolchain.version.as_deref().unwrap_or("system");
+                let version = toolchain.environment.version.as_deref().unwrap_or("system");
                 let pyenv = &manager.executable;
                 let pyenv = pyenv.display();
                 activation_script.extend(match shell {
@@ -1264,7 +1256,13 @@ async fn venv_to_toolchain(venv: PythonEnvironment, fs: &dyn Fs) -> Option<Toolc
 
     Some(Toolchain {
         name: name.into(),
-        path: data.executable.as_ref()?.to_str()?.to_owned().into(),
+        path: data
+            .environment
+            .executable
+            .as_ref()?
+            .to_str()?
+            .to_owned()
+            .into(),
         language_name: LanguageName::new("Python"),
         as_json: serde_json::to_value(data).ok()?,
     })
@@ -1275,7 +1273,7 @@ async fn resolve_venv_activation_scripts(
     fs: &dyn Fs,
     activation_scripts: &mut HashMap<ShellKind, PathBuf>,
 ) {
-    log::debug!("Resolving activation scripts for venv toolchain {venv:?}");
+    log::debug!("(Python) Resolving activation scripts for venv toolchain {venv:?}");
     if let Some(prefix) = &venv.prefix {
         for (shell_kind, script_name) in &[
             (ShellKind::Posix, "activate"),
