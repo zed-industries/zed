@@ -2030,10 +2030,6 @@ async fn test_mutual_editor_inlay_hint_cache_update(
     });
 }
 
-// This test started hanging on seed 2 after the theme settings
-// PR. The hypothesis is that it's been buggy for a while, but got lucky
-// on seeds.
-#[ignore]
 #[gpui::test(iterations = 10)]
 async fn test_inlay_hint_refresh_is_forwarded(
     cx_a: &mut TestAppContext,
