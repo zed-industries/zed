@@ -5191,6 +5191,7 @@ impl Project {
             })
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     pub fn has_language_servers_for(&self, buffer: &Buffer, cx: &mut App) -> bool {
         self.lsp_store.update(cx, |this, cx| {
             this.language_servers_for_local_buffer(buffer, cx)

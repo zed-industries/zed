@@ -20686,30 +20686,14 @@ impl Editor {
                         cx.emit(EditorEvent::TitleChanged);
                     }
 
-                    let buffer_id = buffer.read(cx).remote_id();
-                    if let Some(project) = self.project.clone() {
+                    if self.project.is_some() {
+                        let buffer_id = buffer.read(cx).remote_id();
                         self.register_buffer(buffer_id, cx);
                         self.update_lsp_data(Some(buffer_id), window, cx);
-                        #[allow(clippy::mutable_key_type)]
-                        let languages_affected = multibuffer.update(cx, |multibuffer, cx| {
-                            multibuffer
-                                .all_buffers()
-                                .into_iter()
-                                .filter_map(|buffer| {
-                                    buffer.update(cx, |buffer, cx| {
-                                        let language = buffer.language()?;
-                                        let should_discard = project.update(cx, |project, cx| {
-                                            project.is_local()
-                                                && !project.has_language_servers_for(buffer, cx)
-                                        });
-                                        should_discard.not().then_some(language.clone())
-                                    })
-                                })
-                                .collect::<HashSet<_>>()
-                        });
-                        if !languages_affected.is_empty() {
-                            self.refresh_inlay_hints(InlayHintRefreshReason::BufferEdited, cx);
-                        }
+                        self.refresh_inlay_hints(
+                            InlayHintRefreshReason::BufferEdited(buffer_id),
+                            cx,
+                        );
                     }
                 }
 

@@ -204,7 +204,7 @@ pub enum InlayHintRefreshReason {
     Toggle(bool),
     SettingsChange(InlayHintSettings),
     NewLinesShown,
-    BufferEdited,
+    BufferEdited(BufferId),
     RefreshRequested(LanguageServerId),
     ExcerptsRemoved(Vec<ExcerptId>),
 }
@@ -283,7 +283,30 @@ impl Editor {
             }),
         };
 
-        let visible_excerpts = self.visible_excerpts(cx);
+        let mut visible_excerpts = self.visible_excerpts(cx);
+        let ignore_previous_fetches = match reason {
+            InlayHintRefreshReason::ModifiersChanged(_)
+            | InlayHintRefreshReason::Toggle(_)
+            | InlayHintRefreshReason::SettingsChange(_)
+            | InlayHintRefreshReason::NewLinesShown => true,
+            InlayHintRefreshReason::RefreshRequested(_)
+            | InlayHintRefreshReason::ExcerptsRemoved(_) => false,
+            InlayHintRefreshReason::BufferEdited(buffer_id) => {
+                let Some(affected_language) = self
+                    .buffer()
+                    .read(cx)
+                    .buffer(buffer_id)
+                    .and_then(|buffer| buffer.read(cx).language().cloned())
+                else {
+                    return;
+                };
+                visible_excerpts.retain(|_, (visible_buffer, _, _)| {
+                    visible_buffer.read(cx).language() == Some(&affected_language)
+                });
+                false
+            }
+        };
+
         let Some(inlay_hints) = self.inlay_hints.as_mut() else {
             return;
         };
@@ -291,13 +314,6 @@ impl Editor {
         if invalidate_cache.should_invalidate() {
             inlay_hints.clear();
         }
-
-        let ignore_previous_fetches = matches!(
-            reason,
-            InlayHintRefreshReason::ModifiersChanged(_)
-                | InlayHintRefreshReason::SettingsChange(_)
-                | InlayHintRefreshReason::Toggle(_)
-        );
 
         let mut buffers_to_query = HashMap::default();
         for (excerpt_id, (buffer, buffer_version, visible_range)) in visible_excerpts {
@@ -371,15 +387,18 @@ impl Editor {
     }
 
     pub fn clear_inlay_hints(&mut self, cx: &mut Context<Self>) {
-        self.splice_inlays(
-            &self
-                .visible_inlay_hints(cx)
-                .into_iter()
-                .map(|inlay| inlay.id)
-                .collect::<Vec<_>>(),
-            Vec::new(),
-            cx,
-        );
+        let to_remove = self
+            .visible_inlay_hints(cx)
+            .into_iter()
+            .map(|inlay| {
+                let inlay_id = inlay.id;
+                if let Some(inlay_hints) = &mut self.inlay_hints {
+                    inlay_hints.added_hints.remove(&inlay_id);
+                }
+                inlay_id
+            })
+            .collect::<Vec<_>>();
+        self.splice_inlays(&to_remove, Vec::new(), cx);
     }
 
     fn refresh_editor_data(
@@ -447,7 +466,7 @@ impl Editor {
                 return None;
             }
             InlayHintRefreshReason::NewLinesShown => InvalidationStrategy::None,
-            InlayHintRefreshReason::BufferEdited => InvalidationStrategy::BufferEdited,
+            InlayHintRefreshReason::BufferEdited(_) => InvalidationStrategy::BufferEdited,
             InlayHintRefreshReason::RefreshRequested(server_id) => {
                 InvalidationStrategy::RefreshRequested(*server_id)
             }
