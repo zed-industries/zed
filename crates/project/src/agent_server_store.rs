@@ -249,6 +249,7 @@ mod ext_agent_tests {
             bin_name: gpui::SharedString::from("mybin"),
             args: vec!["--foo".into()],
             env: super::HashMap::default(),
+            ignore_system_version: false,
         };
 
         // Ensure PATH contains our temp directory so which::which_in can find it
@@ -304,7 +305,7 @@ mod ext_agent_tests_additional {
                 env: Default::default(),
                 args: Vec::new(),
                 login: None,
-                windows: None,
+                ignore_system_version: None,
             },
         );
 
@@ -478,6 +479,8 @@ impl AgentServerStore {
                     for (agent_name, agent_entry) in &manifest.agent_servers {
                         let display =
                             SharedString::from(format!("{}: {}", parent_name, agent_name));
+                        let ignore_system_version =
+                            agent_entry.ignore_system_version.unwrap_or(false);
 
                         match &agent_entry.launcher {
                             extension::AgentServerLauncher::Binary { bin_name } => {
@@ -488,6 +491,7 @@ impl AgentServerStore {
                                         bin_name: SharedString::from(bin_name.clone()),
                                         args: agent_entry.args.clone(),
                                         env: agent_entry.env.clone(),
+                                        ignore_system_version,
                                     })
                                         as Box<dyn ExternalAgentServer>,
                                 );
@@ -510,6 +514,7 @@ impl AgentServerStore {
                                         min_version: min_version.clone(),
                                         args: agent_entry.args.clone(),
                                         env: agent_entry.env.clone(),
+                                        ignore_system_version,
                                     })
                                         as Box<dyn ExternalAgentServer>,
                                 );
@@ -532,6 +537,7 @@ impl AgentServerStore {
                                         binary_name: binary_name.clone(),
                                         args: agent_entry.args.clone(),
                                         env: agent_entry.env.clone(),
+                                        ignore_system_version,
                                     })
                                         as Box<dyn ExternalAgentServer>,
                                 );
@@ -616,7 +622,7 @@ impl AgentServerStore {
                     .gemini
                     .as_ref()
                     .and_then(|settings| settings.ignore_system_version)
-                    .unwrap_or(true),
+                    .unwrap_or(false),
             }),
         );
         self.external_agents.insert(
@@ -1592,6 +1598,8 @@ struct LocalExtensionBinaryAgent {
     bin_name: SharedString,
     args: Vec<String>,
     env: HashMap<String, String>,
+    #[allow(dead_code)]
+    ignore_system_version: bool,
 }
 
 struct LocalExtensionNpmAgent {
@@ -1605,6 +1613,7 @@ struct LocalExtensionNpmAgent {
     min_version: Option<String>,
     args: Vec<String>,
     env: HashMap<String, String>,
+    ignore_system_version: bool,
 }
 
 struct LocalExtensionGithubReleaseAgent {
@@ -1618,6 +1627,7 @@ struct LocalExtensionGithubReleaseAgent {
     binary_name: Option<String>,
     args: Vec<String>,
     env: HashMap<String, String>,
+    ignore_system_version: bool,
 }
 
 struct LocalCustomAgent {
@@ -1704,6 +1714,7 @@ impl ExternalAgentServer for LocalExtensionNpmAgent {
         let min_version = self.min_version.clone();
         let args = self.args.clone();
         let base_env = self.env.clone();
+        let ignore_system_version = self.ignore_system_version;
 
         let root_dir: Arc<Path> = root_dir
             .map(|root_dir| Path::new(root_dir))
@@ -1727,26 +1738,64 @@ impl ExternalAgentServer for LocalExtensionNpmAgent {
             env.extend(base_env);
             env.extend(extra_env);
 
-            // Install or verify npm package using the extension-specific cache
-            let cache_key = format!("{}/{}", extension_id, agent_id);
-            let min_semver = min_version
-                .as_ref()
-                .and_then(|v| semver::Version::parse(v).ok());
+            let mut command = if !ignore_system_version {
+                let bin_name = package_name
+                    .rsplit_once('/')
+                    .map(|(_, name)| name.to_string())
+                    .unwrap_or_else(|| package_name.to_string());
 
-            let mut command = get_or_npm_install_builtin_agent(
-                cache_key.into(),
-                package_name.clone(),
-                PathBuf::from(&entrypoint),
-                min_semver,
-                status_tx,
-                new_version_available_tx,
-                fs,
-                node_runtime,
-                cx,
-            )
-            .await?;
+                if let Some(bin) = find_bin_in_path(
+                    bin_name.into(),
+                    root_dir.as_ref().to_path_buf(),
+                    env.clone(),
+                    cx,
+                )
+                .await
+                {
+                    AgentServerCommand {
+                        path: bin,
+                        args: Vec::new(),
+                        env: Some(env.clone()),
+                    }
+                } else {
+                    let cache_key = format!("{}/{}", extension_id, agent_id);
+                    let min_semver = min_version
+                        .as_ref()
+                        .and_then(|v| semver::Version::parse(v).ok());
 
-            // Add manifest args
+                    get_or_npm_install_builtin_agent(
+                        cache_key.into(),
+                        package_name.clone(),
+                        PathBuf::from(&entrypoint),
+                        min_semver,
+                        status_tx,
+                        new_version_available_tx,
+                        fs,
+                        node_runtime,
+                        cx,
+                    )
+                    .await?
+                }
+            } else {
+                let cache_key = format!("{}/{}", extension_id, agent_id);
+                let min_semver = min_version
+                    .as_ref()
+                    .and_then(|v| semver::Version::parse(v).ok());
+
+                get_or_npm_install_builtin_agent(
+                    cache_key.into(),
+                    package_name.clone(),
+                    PathBuf::from(&entrypoint),
+                    min_semver,
+                    status_tx,
+                    new_version_available_tx,
+                    fs,
+                    node_runtime,
+                    cx,
+                )
+                .await?
+            };
+
             command.args.extend(args);
             command.env = Some(env);
 
@@ -1778,6 +1827,7 @@ impl ExternalAgentServer for LocalExtensionGithubReleaseAgent {
         let binary_name = self.binary_name.clone();
         let args = self.args.clone();
         let base_env = self.env.clone();
+        let ignore_system_version = self.ignore_system_version;
 
         let root_dir: Arc<Path> = root_dir
             .map(|root_dir| Path::new(root_dir))
@@ -1801,7 +1851,32 @@ impl ExternalAgentServer for LocalExtensionGithubReleaseAgent {
             env.extend(base_env);
             env.extend(extra_env);
 
-            // Download or verify GitHub release using the extension-specific cache
+            let bin_name = binary_name.clone().unwrap_or_else(|| {
+                if cfg!(windows) {
+                    format!("{}.exe", agent_id)
+                } else {
+                    agent_id.to_string()
+                }
+            });
+
+            if !ignore_system_version {
+                if let Some(bin) = find_bin_in_path(
+                    bin_name.clone().into(),
+                    root_dir.as_ref().to_path_buf(),
+                    env.clone(),
+                    cx,
+                )
+                .await
+                {
+                    let command = AgentServerCommand {
+                        path: bin,
+                        args,
+                        env: Some(env),
+                    };
+                    return Ok((command, root_dir.to_string_lossy().into_owned(), None));
+                }
+            }
+
             let cache_key = format!("{}/{}", extension_id, agent_id);
             let dir = paths::data_dir().join("external_agents").join(&cache_key);
             fs.create_dir(&dir).await?;
@@ -1854,15 +1929,6 @@ impl ExternalAgentServer for LocalExtensionGithubReleaseAgent {
                 )
                 .await?;
             }
-
-            // Find the binary in the extracted directory
-            let bin_name = binary_name.unwrap_or_else(|| {
-                if cfg!(windows) {
-                    format!("{}.exe", agent_id)
-                } else {
-                    agent_id.to_string()
-                }
-            });
 
             let bin_path = version_dir.join(&bin_name);
             anyhow::ensure!(
@@ -2076,10 +2142,11 @@ mod npm_launcher_tests {
             min_version: Some("1.0.0".into()),
             args: vec!["--flag".into()],
             env: {
-                let mut env = HashMap::default();
-                env.insert("FOO".into(), "bar".into());
-                env
+                let mut map = HashMap::default();
+                map.insert("FOO".into(), "bar".into());
+                map
             },
+            ignore_system_version: false,
         };
 
         // The cache key should be "my-extension/my-agent"
@@ -2116,9 +2183,9 @@ mod npm_launcher_tests {
                 min_version: Some("2.0.0".into()),
             },
             env,
-            args: vec!["--experimental".into()],
+            args: vec!["--flag".into()],
             login: None,
-            windows: None,
+            ignore_system_version: None,
         };
     }
 
@@ -2138,9 +2205,9 @@ mod npm_launcher_tests {
                 bin_name: "my-binary".into(),
             },
             env,
-            args: vec!["arg1".into(), "arg2".into()],
+            args: vec!["--custom-arg".into()],
             login: None,
-            windows: None,
+            ignore_system_version: None,
         };
     }
 
@@ -2241,9 +2308,9 @@ mod npm_launcher_tests {
                 binary_name: Some("my-server".into()),
             },
             env,
-            args: vec!["--experimental".into()],
+            args: vec!["serve".into()],
             login: None,
-            windows: None,
+            ignore_system_version: None,
         };
 
         // Verify display name construction
@@ -2274,6 +2341,7 @@ mod npm_launcher_tests {
                 env.insert("KEY".into(), "value".into());
                 env
             },
+            ignore_system_version: false,
         };
 
         // Verify the agent is properly constructed with extension/agent IDs
@@ -2307,7 +2375,7 @@ mod npm_launcher_tests {
             env,
             args: vec!["serve".into(), "--port".into(), "8080".into()],
             login: None,
-            windows: None,
+            ignore_system_version: None,
         };
     }
 }

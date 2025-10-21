@@ -150,7 +150,7 @@ pub struct AgentServerManifestEntry {
     #[serde(default)]
     pub login: Option<AgentServerLogin>,
     #[serde(default)]
-    pub windows: Option<AgentServerWindows>,
+    pub ignore_system_version: Option<bool>,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
@@ -182,12 +182,6 @@ pub struct AgentServerLogin {
     pub args: Vec<String>,
     #[serde(default)]
     pub env: HashMap<String, String>,
-}
-
-#[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
-pub struct AgentServerWindows {
-    #[serde(default)]
-    pub ignore_system_version: bool,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
