@@ -19,6 +19,10 @@ use serde::Serializer;
 ///
 /// This function can be used with Serde's `serialize_with` attribute:
 /// ```
+/// use serde::Serialize;
+/// use settings::serialize_f32_with_two_decimal_places;
+///
+/// #[derive(Serialize)]
 /// struct ExampleStruct(#[serde(serialize_with = "serialize_f32_with_two_decimal_places")] f32);
 /// ```
 pub fn serialize_f32_with_two_decimal_places<S>(
@@ -59,6 +63,9 @@ where
 ///
 /// This function can be used with Serde's `serialize_with` attribute:
 /// ```
+/// use serde::Serialize;
+/// use settings::serialize_optional_f32_with_two_decimal_places;
+///
 /// #[derive(Serialize)]
 /// struct ExampleStruct {
 ///     #[serde(serialize_with = "serialize_optional_f32_with_two_decimal_places")]
