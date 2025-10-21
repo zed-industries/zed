@@ -268,7 +268,6 @@ impl Output {
                                     let ename = err.ename.clone();
                                     let evalue = err.evalue.clone();
                                     let traceback = err.traceback.clone();
-                                    let workspace = workspace.clone();
                                     move |_, window, cx| {
                                         if let Some(workspace) = workspace.upgrade() {
                                             let traceback_text = traceback.read(cx).full_text();
