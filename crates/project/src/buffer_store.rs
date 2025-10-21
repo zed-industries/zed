@@ -633,6 +633,8 @@ impl LocalBufferStore {
         detect_utf16: bool,
         cx: &mut Context<BufferStore>,
     ) -> Task<Result<Entity<Buffer>>> {
+        println!("{:?}", encoding);
+
         let load_buffer = worktree.update(cx, |worktree, cx| {
             let reservation = cx.reserve_entity();
             let buffer_id = BufferId::from(reservation.entity_id().as_non_zero_u64());
@@ -681,8 +683,8 @@ impl LocalBufferStore {
                             entry_id: None,
                             is_local: true,
                             is_private: false,
-                            encoding: Some(Arc::new(if let Some(encoding) = encoding {
-                                encoding
+                            encoding: Some(Arc::new(if let Some(encoding) = &encoding {
+                                encoding.clone()
                             } else {
                                 Encoding::default()
                             })),
@@ -712,6 +714,12 @@ impl LocalBufferStore {
 
                 anyhow::Ok(())
             })??;
+
+            buffer.update(cx, |buffer, _| {
+                buffer
+                    .encoding
+                    .set(encoding.unwrap_or(Encoding::default()).get())
+            })?;
 
             Ok(buffer)
         })

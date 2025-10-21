@@ -136,23 +136,27 @@ pub async fn from_utf8(input: String, target: Encoding) -> anyhow::Result<Vec<u8
 }
 
 pub struct EncodingOptions {
-    pub encoding: Arc<Mutex<Encoding>>,
+    pub encoding: Arc<Encoding>,
     pub force: AtomicBool,
     pub detect_utf16: AtomicBool,
 }
 
 impl EncodingOptions {
-    pub fn reset(&mut self) {
-        self.encoding.lock().unwrap().reset();
-        *self.force.get_mut() = false;
-        *self.detect_utf16.get_mut() = true;
+    pub fn reset(&self) {
+        self.encoding.reset();
+
+        self.force
+            .store(false, std::sync::atomic::Ordering::Release);
+
+        self.detect_utf16
+            .store(true, std::sync::atomic::Ordering::Release);
     }
 }
 
 impl Default for EncodingOptions {
     fn default() -> Self {
         EncodingOptions {
-            encoding: Arc::new(Mutex::new(Encoding::default())),
+            encoding: Arc::new(Encoding::default()),
             force: AtomicBool::new(false),
             detect_utf16: AtomicBool::new(true),
         }

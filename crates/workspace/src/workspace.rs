@@ -651,7 +651,7 @@ impl ProjectItemRegistry {
                 let project_path = project_path.clone();
                 let encoding = encoding.unwrap_or_default();
 
-                project.update(cx, |project, _| {project.encoding_options.encoding.lock().unwrap().set(encoding.get())});
+                project.update(cx, |project, _| project.encoding_options.encoding.set(encoding.get()));
 
                 let is_file = project
                     .read(cx)
@@ -1945,6 +1945,8 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> Task<Result<()>> {
+        // This is done so that we would get an error when we try to open the file with wrong encoding,
+        // and not silently use the previously set encoding.
         self.encoding_options.reset();
 
         let to_load = if let Some(pane) = pane.upgrade() {
@@ -3582,8 +3584,8 @@ impl Workspace {
             project.encoding_options.force.store(
                 self.encoding_options
                     .force
-                    .load(std::sync::atomic::Ordering::Relaxed),
-                std::sync::atomic::Ordering::Relaxed,
+                    .load(std::sync::atomic::Ordering::Acquire),
+                std::sync::atomic::Ordering::Release,
             );
         });
 
@@ -3591,7 +3593,7 @@ impl Workspace {
         registry.open_path(
             project,
             &path,
-            Some(self.encoding_options.encoding.lock().unwrap().clone()),
+            Some((*self.encoding_options.encoding).clone()),
             window,
             cx,
         )

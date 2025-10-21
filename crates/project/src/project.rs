@@ -109,7 +109,6 @@ use settings::{InvalidSettingsError, Settings, SettingsLocation, SettingsStore};
 use smol::channel::Receiver;
 use snippet::Snippet;
 use snippet_provider::SnippetProvider;
-use std::ops::Deref;
 use std::{
     borrow::Cow,
     collections::BTreeMap,
@@ -2723,15 +2722,7 @@ impl Project {
         self.buffer_store.update(cx, |buffer_store, cx| {
             buffer_store.open_buffer(
                 path.into(),
-                Some(
-                    self.encoding_options
-                        .encoding
-                        .lock()
-                        .as_ref()
-                        .unwrap()
-                        .deref()
-                        .clone(),
-                ),
+                Some((*self.encoding_options.encoding).clone()),
                 *self.encoding_options.force.get_mut(),
                 *self.encoding_options.detect_utf16.get_mut(),
                 cx,

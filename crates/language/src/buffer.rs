@@ -1369,7 +1369,7 @@ impl Buffer {
     /// Reloads the contents of the buffer from disk.
     pub fn reload(&mut self, cx: &Context<Self>) -> oneshot::Receiver<Option<Transaction>> {
         let (tx, rx) = futures::channel::oneshot::channel();
-        let encoding = self.encoding.clone();
+        let encoding = (*self.encoding).clone();
 
         let buffer_encoding = self.encoding.clone();
 
@@ -1377,8 +1377,9 @@ impl Buffer {
         self.reload_task = Some(cx.spawn(async move |this, cx| {
             let Some((new_mtime, new_text)) = this.update(cx, |this, cx| {
                 let file = this.file.as_ref()?.as_local()?;
+
                 Some((file.disk_state().mtime(), {
-                    file.load(cx, (*encoding).clone(), false, true, Some(buffer_encoding))
+                    file.load(cx, encoding, false, true, Some(buffer_encoding))
                 }))
             })?
             else {
