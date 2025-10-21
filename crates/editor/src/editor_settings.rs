@@ -1,16 +1,14 @@
-use core::num;
 use std::num::NonZeroU32;
 
 use gpui::App;
 use language::CursorShape;
 use project::project_settings::DiagnosticSeverity;
+use settings::{Settings, SettingsContent, VsCodeSettings};
 pub use settings::{
     CurrentLineHighlight, DisplayIn, DocumentColorsRenderMode, DoubleClickInMultibuffer,
     GoToDefinitionFallback, HideMouseMode, MinimapThumb, MinimapThumbBorder, MultiCursorModifier,
     ScrollBeyondLastLine, ScrollbarDiagnostics, SeedQuerySetting, ShowMinimap, SnippetSortOrder,
-    VsCodeSettings,
 };
-use settings::{Settings, SettingsContent};
 use ui::scrollbars::{ScrollbarVisibility, ShowScrollbar};
 
 /// Imports from the VSCode settings at
@@ -95,7 +93,7 @@ pub struct Minimap {
     pub thumb: MinimapThumb,
     pub thumb_border: MinimapThumbBorder,
     pub current_line_highlight: Option<CurrentLineHighlight>,
-    pub max_width_columns: num::NonZeroU32,
+    pub max_width_columns: Option<NonZeroU32>,
 }
 
 impl Minimap {
@@ -288,7 +286,7 @@ impl Settings for EditorSettings {
                 thumb: minimap.thumb.unwrap(),
                 thumb_border: minimap.thumb_border.unwrap(),
                 current_line_highlight: minimap.current_line_highlight,
-                max_width_columns: minimap.max_width_columns.unwrap(),
+                max_width_columns: minimap.max_width_columns,
             },
             gutter: Gutter {
                 min_line_number_digits: gutter.min_line_number_digits.unwrap(),

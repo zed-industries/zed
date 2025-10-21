@@ -2010,7 +2010,7 @@ impl EditorElement {
         let minimap_em_width = em_width * (minimap_font_size.to_pixels(rem_size) / font_size);
 
         let minimap_width = (text_width * MinimapLayout::MINIMAP_WIDTH_PCT)
-            .min(minimap_em_width * minimap_settings.max_width_columns.get() as f32);
+            .min(minimap_em_width * minimap_settings.max_width_columns.map_or(120, |c| c.get()) as f32);
 
         (minimap_width >= minimap_em_width * MinimapLayout::MINIMAP_MIN_WIDTH_COLUMNS)
             .then_some(minimap_width)

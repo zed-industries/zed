@@ -132,17 +132,23 @@ fn create_highlight_endpoints(
     }
 
     // Pre-allocate for LSP covered ranges to minimize reallocations during iteration
+    // Track all LSP semantic token ranges to prevent overlapping syntax/rainbow highlights
     let mut lsp_covered_ranges: Vec<Range<usize>> = Vec::with_capacity(128);
 
     if let Some(tokens) = semantic_tokens {
         for mut excerpt in buffer.excerpts_for_range(range.clone()) {
-            let Some(tokens) = tokens.get(&excerpt.buffer_id()) else {
+            let buffer_id = excerpt.buffer_id();
+            let Some(tokens) = tokens.get(&buffer_id) else {
                 continue;
             };
+
+            log::debug!("Processing semantic tokens for buffer {:?}: {} tokens in view, version {:?}", 
+                buffer_id, tokens.tokens.len(), tokens.version);
 
             let buffer_range = excerpt
                 .buffer()
                 .range_to_version(excerpt.map_range_to_buffer(range.clone()), &tokens.version);
+
             for token in tokens.tokens_in_range(buffer_range.clone()) {
                 let token_range = excerpt
                     .buffer()
@@ -158,11 +164,8 @@ fn create_highlight_endpoints(
                     continue;
                 }
 
-                // Track ALL LSP tokens (including colorless ones) to suppress syntax highlighting
-                // Ranges will be sorted after collection for efficient overlap detection
                 lsp_covered_ranges.push(token_range.clone());
-
-                // Only add highlight endpoints for tokens with colors
+                
                 if token.style.color.is_some() {
                     highlight_endpoints.push(HighlightEndpoint {
                         offset: token_range.start,
@@ -178,10 +181,6 @@ fn create_highlight_endpoints(
             }
         }
     }
-
-    // Sort LSP ranges once for efficient merge-join overlap detection
-    // This is O(m log m) but only done once, vs O(n log m) for n binary searches
-    lsp_covered_ranges.sort_unstable_by_key(|range| range.start);
 
     if let Some(tokens) = syntax_tokens {
         // Use merge-join approach: track position in sorted LSP ranges as we process syntax tokens

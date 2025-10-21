@@ -70,7 +70,7 @@ use std::{
 use sum_tree::{Bias, TreeMap};
 use tab_map::TabSnapshot;
 use text::{BufferId, LineIndent};
-use ui::{SharedString, px};
+use ui::{ActiveTheme, SharedString, px};
 use unicode_segmentation::UnicodeSegmentation;
 use wrap_map::{WrapMap, WrapSnapshot};
 
@@ -267,25 +267,14 @@ impl SyntaxTokenView {
 
             // Check if this identifier has a variable-like capture (cached lookup)
             if Self::is_variable_context_cached(&node, start..end, snapshot, variable_captures) {
-                // Validate identifier and check against language-specific excluded list
                 if let Some(validated) =
                     crate::rainbow::validate_identifier_for_rainbow(&identifier)
                 {
-                    // Check if this identifier is excluded by the language configuration
-                    let is_excluded = snapshot
-                        .syntax_layers()
-                        .find_map(|layer| layer.language.grammar())
-                        .and_then(|grammar| grammar.highlights_config.as_ref())
-                        .map(|config| config.is_excluded_identifier(validated))
-                        .unwrap_or(false);
-
-                    if !is_excluded {
-                        let style = cache.get_or_insert(validated, theme);
-                        tokens.push(SyntaxToken {
-                            range: start..end,
-                            style,
-                        });
-                    }
+                    let style = cache.get_or_insert(validated, theme);
+                    tokens.push(SyntaxToken {
+                        range: start..end,
+                        style,
+                    });
                 }
             }
         }
@@ -1864,42 +1853,46 @@ impl ToDisplayPoint for Anchor {
     }
 }
 impl SemanticTokenView {
-    /// Creates a SemanticTokenView from LSP tokens.
-    ///
-    /// This function is designed to run on a background thread to avoid blocking the main thread
-    /// when processing large token sets. All required context (theme, settings, buffer snapshot)
-    /// must be extracted on the main thread before calling this.
     pub fn new(
-        buffer_snapshot: language::BufferSnapshot,
+        buffer_id: BufferId,
+        multibuffer: &MultiBuffer,
         lsp: &SemanticTokens,
         legend: &lsp::SemanticTokensLegend,
-        theme: &theme::SyntaxTheme,
-        rainbow_config: &crate::editor_settings::RainbowConfig,
         variable_color_cache: Option<&Arc<crate::rainbow::VariableColorCache>>,
+        cx: &App,
     ) -> Option<SemanticTokenView> {
-        let highlights_config = buffer_snapshot
+        use crate::editor_settings::EditorSettings;
+        use settings::Settings;
+
+        let Some(buffer) = multibuffer.buffer(buffer_id) else {
+            return None;
+        };
+        let buffer = buffer.read(cx);
+
+        let rainbow_config = EditorSettings::get_global(cx).rainbow_highlighting;
+        let highlights_config = buffer
             .language()
             .and_then(|lang| lang.grammar())
             .and_then(|grammar| grammar.highlights_config.as_ref());
-        let stylizer = SemanticTokenStylizer::new(legend, rainbow_config);
+        let stylizer = SemanticTokenStylizer::new(legend, &rainbow_config);
 
         let mut tokens = lsp
             .tokens()
             .filter_map(|token| {
                 let start = text::Unclipped(text::PointUtf16::new(token.line, token.start));
                 let (start_offset, end_offset) = point_offset_to_offsets(
-                    buffer_snapshot.clip_point_utf16(start, Bias::Left),
+                    buffer.clip_point_utf16(start, Bias::Left),
                     text::OffsetUtf16(token.length as usize),
-                    &buffer_snapshot,
+                    &buffer,
                 );
 
                 Some(MultibufferSemanticToken {
                     range: start_offset..end_offset,
                     style: stylizer.convert(
-                        theme,
+                        cx.theme().syntax(),
                         token.token_type,
                         token.token_modifiers,
-                        &buffer_snapshot,
+                        &buffer,
                         start_offset..end_offset,
                         variable_color_cache,
                         highlights_config,
@@ -1915,7 +1908,7 @@ impl SemanticTokenView {
 
         Some(SemanticTokenView {
             tokens,
-            version: buffer_snapshot.version().clone(),
+            version: buffer.version(),
         })
     }
 
@@ -1937,7 +1930,7 @@ impl SemanticTokenView {
 fn point_offset_to_offsets(
     point: text::PointUtf16,
     length: text::OffsetUtf16,
-    buffer: &language::BufferSnapshot,
+    buffer: &text::Buffer,
 ) -> (usize, usize) {
     let start = buffer.as_rope().point_utf16_to_offset(point);
     let start_offset = buffer.as_rope().offset_to_offset_utf16(start);
@@ -1993,7 +1986,7 @@ impl<'a> SemanticTokenStylizer<'a> {
         theme: &'a SyntaxTheme,
         token_type: u32,
         modifiers: u32,
-        buffer: &language::BufferSnapshot,
+        buffer: &text::Buffer,
         range: Range<usize>,
         variable_color_cache: Option<&Arc<crate::rainbow::VariableColorCache>>,
         highlights_config: Option<&language::HighlightsConfig>,
@@ -2106,28 +2099,13 @@ impl<'a> SemanticTokenStylizer<'a> {
 
         if is_variable && self.rainbow_config.enabled {
             if let Some(cache) = variable_color_cache {
-                // OPTIMIZATION: Validate+hash in single pass without allocating String first
-                // This eliminates format validation overhead and defers allocation
-                let text_chunks = buffer.text_for_range(range.clone());
-                let char_iter = text_chunks.clone().flat_map(|s| s.chars());
-
-                // Validate identifier format and compute hash in one pass (no allocation)
-                if let Some(style) = cache.get_or_insert_validated(char_iter, theme) {
-                    // Only allocate string if we need to check exclusions
-                    // Most identifiers won't be excluded, making this check cheap
-                    if let Some(config) = highlights_config {
-                        let variable_name: String = text_chunks.collect();
-                        if config.is_excluded_identifier(&variable_name) {
-                            // Excluded identifier - fall through to theme color
-                        } else {
-                            return Some(style);
-                        }
-                    } else {
-                        // No exclusion config - use rainbow color
-                        return Some(style);
-                    }
+                let variable_name: String = buffer.text_for_range(range).collect();
+                if let Some(validated) =
+                    crate::rainbow::validate_identifier_for_rainbow(&variable_name)
+                {
+                    return Some(cache.get_or_insert(validated, theme));
                 }
-                // Validation failed (invalid format) - fall through to theme color
+                // Validation failed (keyword, single char, etc.) - fall through to theme color
             }
         }
 
