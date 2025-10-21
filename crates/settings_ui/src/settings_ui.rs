@@ -3050,7 +3050,7 @@ fn render_font_picker(
         .menu(move |_window, _cx| Some(font_picker.clone()))
         .trigger(render_picker_trigger_button(
             "font_family_picker_trigger".into(),
-            current_value.into(),
+            current_value,
         ))
         .anchor(gpui::Corner::TopLeft)
         .offset(gpui::Point {
@@ -3092,7 +3092,7 @@ fn render_theme_picker(
         .menu(move |_window, _cx| Some(theme_picker.clone()))
         .trigger(render_picker_trigger_button(
             "theme_picker_trigger".into(),
-            current_value.into(),
+            current_value,
         ))
         .anchor(gpui::Corner::TopLeft)
         .offset(gpui::Point {
@@ -3134,7 +3134,7 @@ fn render_icon_theme_picker(
         .menu(move |_window, _cx| Some(icon_theme_picker.clone()))
         .trigger(render_picker_trigger_button(
             "icon_theme_picker_trigger".into(),
-            current_value.into(),
+            current_value,
         ))
         .anchor(gpui::Corner::TopLeft)
         .offset(gpui::Point {
