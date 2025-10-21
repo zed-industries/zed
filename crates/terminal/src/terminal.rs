@@ -402,6 +402,7 @@ impl TerminalBuilder {
                 window_id,
             },
             child_exited: None,
+            keyboard_input_sent: false,
         };
 
         Ok(TerminalBuilder {
@@ -621,6 +622,7 @@ impl TerminalBuilder {
                 window_id,
             },
             child_exited: None,
+            keyboard_input_sent: false,
         };
 
         if !activation_script.is_empty() && no_task {
@@ -836,6 +838,7 @@ pub struct Terminal {
     template: CopyTemplate,
     activation_script: Vec<String>,
     child_exited: Option<ExitStatus>,
+    keyboard_input_sent: bool,
 }
 
 struct CopyTemplate {
@@ -1398,6 +1401,7 @@ impl Terminal {
             .push_back(InternalEvent::Scroll(AlacScroll::Bottom));
         self.events.push_back(InternalEvent::SetSelection(None));
 
+        self.keyboard_input_sent = true;
         self.write_to_pty(input);
     }
 
@@ -2102,22 +2106,23 @@ impl Terminal {
                     self.child_exited = Some(e);
                 }
 
+                // Determine whether to close the terminal based on exit conditions.
+                //
+                // For interactive shells (no task), we need to differentiate between:
+                // 1. Shell spawn failures (e.g., misconfigured $SHELL) - should NOT close
+                // 2. User-initiated exits (Ctrl+D, typing "exit") - should close
+                //
+                // We use keyboard_input_sent as the differentiator: spawn failures never
+                // receive keyboard input, while user exits always require it.
+                //
+                // For tasks/commands, we close on successful exit (exit code 0).
                 let should_close = if error_code.is_none() {
-                    let is_interactive_shell =
-                        !matches!(self.template.shell, Shell::WithArguments { .. });
-
-                    if is_interactive_shell {
-                        // Always close regardless of prior exit codes
-                        true
+                    if self.task.is_none() {
+                        self.keyboard_input_sent
                     } else {
-                        // Respect exit codes to preserve error visibility
-                        match self.child_exited {
-                            None => true,
-                            Some(e) => e.code() == Some(0),
-                        }
+                        self.child_exited.map_or(true, |e| e.code() == Some(0))
                     }
                 } else {
-                    // ChildExit - only close on success
                     self.child_exited.is_some_and(|e| e.code() == Some(0))
                 };
 
