@@ -630,6 +630,7 @@ impl SettingsPageItem {
         cx: &mut Context<SettingsWindow>,
     ) -> AnyElement {
         let file = settings_window.current_file.clone();
+
         let border_variant = cx.theme().colors().border_variant;
         let apply_padding = |element: Stateful<Div>| -> Stateful<Div> {
             let element = element.pt_4();
@@ -639,12 +640,14 @@ impl SettingsPageItem {
                 element.pb_4().border_b_1().border_color(border_variant)
             }
         };
+
         let mut render_setting_item_inner =
-            |setting_item: &SettingItem, cx: &mut Context<SettingsWindow>| {
+            |setting_item: &SettingItem, padding: bool, cx: &mut Context<SettingsWindow>| {
                 let renderer = cx.default_global::<SettingFieldRenderer>().clone();
                 let (_, found) = setting_item.field.file_set_in(file.clone(), cx);
 
                 let renderers = renderer.renderers.borrow();
+
                 let field_renderer =
                     renderers.get(&AnySettingField::type_id(setting_item.field.as_ref()));
                 let field_renderer_or_warning =
@@ -683,8 +686,15 @@ impl SettingsPageItem {
                     ),
                 };
 
-                (field.map(apply_padding), field_renderer_or_warning.is_ok())
+                let field = if padding {
+                    field.map(apply_padding)
+                } else {
+                    field
+                };
+
+                (field, field_renderer_or_warning.is_ok())
             };
+
         match self {
             SettingsPageItem::SectionHeader(header) => v_flex()
                 .w_full()
@@ -698,15 +708,13 @@ impl SettingsPageItem {
                 .child(Divider::horizontal().color(DividerColor::BorderFaded))
                 .into_any_element(),
             SettingsPageItem::SettingItem(setting_item) => {
-                render_setting_item_inner(setting_item, cx)
-                    .0
-                    .into_any_element()
+                let (field_with_padding, _) = render_setting_item_inner(setting_item, true, cx);
+                field_with_padding.into_any_element()
             }
             SettingsPageItem::SubPageLink(sub_page_link) => h_flex()
                 .id(sub_page_link.title.clone())
                 .w_full()
                 .min_w_0()
-                .gap_2()
                 .justify_between()
                 .map(apply_padding)
                 .child(
@@ -725,7 +733,7 @@ impl SettingsPageItem {
                     .icon_position(IconPosition::End)
                     .icon_color(Color::Muted)
                     .icon_size(IconSize::Small)
-                    .style(ButtonStyle::Outlined)
+                    .style(ButtonStyle::OutlinedGhost)
                     .size(ButtonSize::Medium)
                     .on_click({
                         let sub_page_link = sub_page_link.clone();
@@ -760,18 +768,42 @@ impl SettingsPageItem {
                 let discriminant = SettingsStore::global(cx)
                     .get_value_from_file(file, *pick_discriminant)
                     .1;
+
                 let (discriminant_element, rendered_ok) =
-                    render_setting_item_inner(discriminant_setting_item, cx);
-                let mut content = v_flex()
-                    .gap_2()
-                    .id("dynamic-item")
-                    .child(discriminant_element);
+                    render_setting_item_inner(discriminant_setting_item, true, cx);
+
+                let has_sub_fields =
+                    rendered_ok && discriminant.map(|d| !fields[d].is_empty()).unwrap_or(false);
+
+                let discriminant_element = if has_sub_fields {
+                    discriminant_element.pb_4().border_b_0()
+                } else {
+                    discriminant_element
+                };
+
+                let mut content = v_flex().id("dynamic-item").child(discriminant_element);
+
                 if rendered_ok {
                     let discriminant =
                         discriminant.expect("This should be Some if rendered_ok is true");
                     let sub_fields = &fields[discriminant];
-                    for field in sub_fields {
-                        content = content.child(render_setting_item_inner(field, cx).0.pl_6());
+                    let sub_field_count = sub_fields.len();
+
+                    for (index, field) in sub_fields.iter().enumerate() {
+                        let is_last_sub_field = index == sub_field_count - 1;
+                        let (raw_field, _) = render_setting_item_inner(field, false, cx);
+
+                        content = content.child(
+                            raw_field
+                                .p_4()
+                                .border_x_1()
+                                .border_t_1()
+                                .when(is_last_sub_field, |this| this.border_b_1())
+                                .when(is_last_sub_field && is_last, |this| this.mb_8())
+                                .border_dashed()
+                                .border_color(cx.theme().colors().border_variant)
+                                .bg(cx.theme().colors().element_background.opacity(0.2)),
+                        );
                     }
                 }
 
@@ -795,7 +827,6 @@ fn render_settings_item(
     h_flex()
         .id(setting_item.title)
         .min_w_0()
-        .gap_2()
         .justify_between()
         .child(
             v_flex()
@@ -1831,12 +1862,6 @@ impl SettingsWindow {
         };
 
         v_flex()
-            .w_56()
-            .p_2p5()
-            .when(cfg!(target_os = "macos"), |c| c.pt_10())
-            .h_full()
-            .flex_none()
-            .border_r_1()
             .key_context("NavigationMenu")
             .on_action(cx.listener(|this, _: &CollapseNavEntry, window, cx| {
                 let Some(focused_entry) = this.focused_nav_entry(window, cx) else {
@@ -1954,6 +1979,12 @@ impl SettingsWindow {
                     cx,
                 );
             }))
+            .w_56()
+            .h_full()
+            .p_2p5()
+            .when(cfg!(target_os = "macos"), |this| this.pt_10())
+            .flex_none()
+            .border_r_1()
             .border_color(cx.theme().colors().border)
             .bg(cx.theme().colors().panel_background)
             .child(self.render_search(window, cx))
@@ -2194,6 +2225,20 @@ impl SettingsWindow {
             .child(Label::new(last))
     }
 
+    fn render_empty_state(&self, search_query: SharedString) -> impl IntoElement {
+        v_flex()
+            .size_full()
+            .items_center()
+            .justify_center()
+            .gap_1()
+            .child(Label::new("No Results"))
+            .child(
+                Label::new(search_query)
+                    .size(LabelSize::Small)
+                    .color(Color::Muted),
+            )
+    }
+
     fn render_page_items(
         &mut self,
         page_index: usize,
@@ -2208,18 +2253,7 @@ impl SettingsWindow {
         if has_no_results {
             let search_query = self.search_bar.read(cx).text(cx);
             page_content = page_content.child(
-                v_flex()
-                    .size_full()
-                    .items_center()
-                    .justify_center()
-                    .gap_1()
-                    .child(div().child("No Results"))
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(cx.theme().colors().text_muted)
-                            .child(format!("No settings match \"{}\"", search_query)),
-                    ),
+                self.render_empty_state(format!("No settings match \"{}\"", search_query).into()),
             )
         } else {
             let last_non_header_index = self
@@ -2249,6 +2283,7 @@ impl SettingsWindow {
                             })
                             .into_any_element();
                     }
+
                     let mut visible_items = this.visible_page_items();
                     let Some((actual_item_index, item)) = visible_items.nth(index - 1) else {
                         return gpui::Empty.into_any_element();
@@ -2258,6 +2293,7 @@ impl SettingsWindow {
                         .next()
                         .map(|(_, item)| matches!(item, SettingsPageItem::SectionHeader(_)))
                         .unwrap_or(false);
+
                     let is_last = Some(actual_item_index) == last_non_header_index;
 
                     let item_focus_handle =
@@ -2307,18 +2343,7 @@ impl SettingsWindow {
         if has_no_results {
             let search_query = self.search_bar.read(cx).text(cx);
             page_content = page_content.child(
-                v_flex()
-                    .size_full()
-                    .items_center()
-                    .justify_center()
-                    .gap_1()
-                    .child(div().child("No Results"))
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(cx.theme().colors().text_muted)
-                            .child(format!("No settings match \"{}\"", search_query)),
-                    ),
+                self.render_empty_state(format!("No settings match \"{}\"", search_query).into()),
             )
         } else {
             let last_non_header_index = items
@@ -2412,11 +2437,6 @@ impl SettingsWindow {
 
         return v_flex()
             .id("Settings-ui-page")
-            .flex_1()
-            .pt_6()
-            .pb_8()
-            .px_8()
-            .bg(cx.theme().colors().editor_background)
             .on_action(cx.listener(|this, _: &menu::SelectNext, window, cx| {
                 if !sub_page_stack().is_empty() {
                     window.focus_next();
@@ -2484,6 +2504,10 @@ impl SettingsWindow {
                 this.vertical_scrollbar_for(self.sub_page_scroll_handle.clone(), window, cx)
             })
             .track_focus(&self.content_focus_handle.focus_handle(cx))
+            .flex_1()
+            .pt_6()
+            .px_8()
+            .bg(cx.theme().colors().editor_background)
             .child(
                 div()
                     .size_full()
