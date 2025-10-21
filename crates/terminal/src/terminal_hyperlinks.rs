@@ -3,10 +3,13 @@ use alacritty_terminal::{
     event::EventListener,
     grid::Dimensions,
     index::{Boundary, Column, Direction as AlacDirection, Line, Point as AlacPoint},
-    term::search::{Match, RegexIter, RegexSearch},
+    term::{
+        cell::Flags,
+        search::{Match, RegexIter, RegexSearch},
+    },
 };
 use log::{info, warn};
-use regex::Regex;
+use regex::{Captures, Regex};
 use std::{
     ops::{Index, Range},
     time::{Duration, Instant},
@@ -68,13 +71,26 @@ impl RegexSearches {
             return None;
         }
 
+        // There does not appear to be an alacritty api that is "move to start of current wide
+        // char", so we have to do it ourselves.
+        let start_of_char = |point: AlacPoint| -> AlacPoint {
+            let flags = term.grid().index(point).flags;
+            if flags.contains(Flags::LEADING_WIDE_CHAR_SPACER) {
+                AlacPoint::new(point.line + 1, Column(0))
+            } else if flags.contains(Flags::WIDE_CHAR_SPACER) {
+                AlacPoint::new(point.line, point.column - 1)
+            } else {
+                point
+            }
+        };
+
         let advance_point_by_str = |mut point: AlacPoint, s: &str| -> AlacPoint {
             for _ in 0..s.chars().count() {
                 point = term
                     .expand_wide(point, AlacDirection::Right)
                     .add(term, Boundary::Grid, 1);
             }
-            point
+            start_of_char(point)
         };
 
         let (start, end) = (term.line_search_left(point), term.line_search_right(point));
@@ -86,7 +102,10 @@ impl RegexSearches {
          -> Option<(String, Match)> {
             let path_start = advance_point_by_str(start, &input[..path.start]);
             let path_end = advance_point_by_str(path_start, &input[path.clone()]);
-            let path_match = path_start..=path_end.sub(term, Boundary::Grid, 1);
+            let path_match = path_start
+                ..=term
+                    .expand_wide(path_end, AlacDirection::Left)
+                    .sub(term, Boundary::Grid, 1);
             if !path_match.contains(&point) {
                 return None;
             }
@@ -116,33 +135,41 @@ impl RegexSearches {
             ))
         };
 
+        let found_from_captures = |captures: Captures| -> Option<(String, Match)> {
+            let Some(path_capture) = captures.name("path") else {
+                return found_from_range(captures.get(0).unwrap().range(), None, None);
+            };
+
+            let Some(line) = captures
+                .name("line")
+                .and_then(|line_capture| line_capture.as_str().parse().ok())
+            else {
+                return found_from_range(path_capture.range(), None, None);
+            };
+
+            let Some(column) = captures
+                .name("column")
+                .and_then(|column_capture| column_capture.as_str().parse().ok())
+            else {
+                return found_from_range(path_capture.range(), Some(line), None);
+            };
+
+            return found_from_range(path_capture.range(), Some(line), Some(column));
+        };
+
         for regex in &self.path_hyperlink_regexes {
-            if let Some(captures) = regex.captures(&input) {
-                let Some(path_capture) = captures.name("path") else {
-                    return found_from_range(captures.get(0).unwrap().range(), None, None);
-                };
+            for captures in regex.captures_iter(&input) {
+                if let Some(found) = found_from_captures(captures) {
+                    return Some(found);
+                }
 
-                let Some(line) = captures
-                    .name("line")
-                    .and_then(|line_capture| line_capture.as_str().parse().ok())
-                else {
-                    return found_from_range(path_capture.range(), None, None);
-                };
-
-                let Some(column) = captures
-                    .name("column")
-                    .and_then(|column_capture| column_capture.as_str().parse().ok())
-                else {
-                    return found_from_range(path_capture.range(), Some(line), None);
-                };
-
-                return found_from_range(path_capture.range(), Some(line), Some(column));
-            }
-
-            if let Some((timed_out_ms, timeout_ms)) = timed_out() {
-                warn!("Timed out processing path hyperlink regexes after {timed_out_ms}ms");
-                info!("{timeout_ms}ms time out specified in `terminal.path_hyperlink_timeout_ms`");
-                break;
+                if let Some((timed_out_ms, timeout_ms)) = timed_out() {
+                    warn!("Timed out processing path hyperlink regexes after {timed_out_ms}ms");
+                    info!(
+                        "{timeout_ms}ms time out specified in `terminal.path_hyperlink_timeout_ms`"
+                    );
+                    return None;
+                }
             }
         }
         None
@@ -610,6 +637,15 @@ mod tests {
             test_path!("    File \"‹«/awe👉some.py»›\", line «42»");
             test_path!("    File \"/awesome.py👉\", line 42: Wat?");
             test_path!("    File \"/awesome.py\", line ‹«4👉2»›");
+        }
+
+        #[test]
+        fn multiple_same_line() {
+            test_path!("‹«/👉test/cool.rs»› /test/cool.rs");
+            test_path!("/test/cool.rs ‹«/👉test/cool.rs»›");
+
+            test_path!("‹«🦀 multiple_👉same_line 🦀»›: 🦀 multiple_same_line 🦀:");
+            test_path!("🦀 multiple_same_line 🦀: ‹«🦀 multiple_👉same_line 🦀»›:");
         }
 
         #[test]
@@ -1422,8 +1458,10 @@ mod tests {
         const PYTHON_FILE_LINE_REGEX: &str = r#"File "(?<path>[^"]+)", line (?P<line>\d+)"#;
         const CARGO_DIR_REGEX: &str =
             r#"\s+(Compiling|Checking|Documenting) [^(]+\((?<path>.+)\)$"#;
-        const RUSTC_DIAGNOSTIC_REGEX: &str = r#"\s+(-->|:::) (?<path>.+)$"#;
+        const RUSTC_DIAGNOSTIC_REGEX: &str = r#"\s+(-->|:::|panicked at) (?<path>.+)$"#;
         const ISSUE_12338_REGEX: &str = r#"[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2} (?<path>.+)$"#;
+        const MULTIPLE_SAME_LINE: &str = r#"(?<path>🦀 multiple_same_line 🦀):"#;
+
         const PATH_HYPERLINK_TIMEOUT_MS: u64 = 1000;
 
         thread_local! {
@@ -1433,6 +1471,7 @@ mod tests {
                     CARGO_DIR_REGEX.to_string(),
                     RUSTC_DIAGNOSTIC_REGEX.to_string(),
                     ISSUE_12338_REGEX.to_string(),
+                    MULTIPLE_SAME_LINE.to_string(),
                 ], PATH_HYPERLINK_TIMEOUT_MS));
         }
 
