@@ -6165,22 +6165,20 @@ impl MultiBufferSnapshot {
     ) -> SmallVec<[Locator; 1]> {
         let mut sorted_ids = ids.into_iter().collect::<SmallVec<[_; 1]>>();
         sorted_ids.sort_unstable();
+        sorted_ids.dedup();
         let mut locators = SmallVec::new();
 
         while sorted_ids.last() == Some(&ExcerptId::max()) {
             sorted_ids.pop();
-            if let Some(mapping) = self.excerpt_ids.last() {
-                locators.push(mapping.locator.clone());
-            }
+            locators.push(Locator::max());
         }
 
-        let mut sorted_ids = sorted_ids.into_iter().dedup().peekable();
-        if sorted_ids.peek() == Some(&ExcerptId::min()) {
-            sorted_ids.next();
-            if let Some(mapping) = self.excerpt_ids.first() {
-                locators.push(mapping.locator.clone());
-            }
-        }
+        let mut sorted_ids = sorted_ids.into_iter().peekable();
+        locators.extend(
+            sorted_ids
+                .peeking_take_while(|excerpt| *excerpt == ExcerptId::min())
+                .map(|_| Locator::min()),
+        );
 
         let mut cursor = self.excerpt_ids.cursor::<ExcerptId>(());
         for id in sorted_ids {
