@@ -6515,6 +6515,17 @@ impl LspStore {
             .unwrap_or_default()
     }
 
+    pub fn invalidate_inlay_hints<'a>(
+        &'a mut self,
+        for_buffers: impl IntoIterator<Item = &'a BufferId> + 'a,
+    ) {
+        for buffer_id in for_buffers {
+            if let Some(lsp_data) = self.lsp_data.get_mut(buffer_id) {
+                lsp_data.inlay_hints.clear();
+            }
+        }
+    }
+
     pub fn inlay_hints(
         &mut self,
         invalidate: InvalidationStrategy,

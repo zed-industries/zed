@@ -1,6 +1,7 @@
 use std::{
     collections::hash_map,
     ops::{ControlFlow, Range},
+    sync::Arc,
     time::Duration,
 };
 
@@ -14,6 +15,7 @@ use language::{
 };
 use lsp::LanguageServerId;
 use multi_buffer::{Anchor, ExcerptId, MultiBufferSnapshot};
+use parking_lot::Mutex;
 use project::{
     HoverBlock, HoverBlockKind, InlayHintLabel, InlayHintLabelPartTooltip, InlayHintTooltip,
     InvalidationStrategy, ResolveState,
@@ -190,7 +192,10 @@ impl LspInlayHintData {
         }
     }
 
-    pub(crate) fn removed_buffers(&mut self, removed_buffer_ids: &[BufferId]) {
+    pub(crate) fn remove_inlay_chunk_data<'a>(
+        &'a mut self,
+        removed_buffer_ids: impl IntoIterator<Item = &'a BufferId> + 'a,
+    ) {
         for buffer_id in removed_buffer_ids {
             self.hint_refresh_tasks.remove(buffer_id);
             self.hint_chunk_fetched.remove(buffer_id);
@@ -262,7 +267,7 @@ impl Editor {
         if !self.mode.is_full() || self.inlay_hints.is_none() {
             return;
         }
-        let Some(semantics_provider) = self.semantics_provider.clone() else {
+        let Some(semantics_provider) = self.semantics_provider() else {
             return;
         };
         let Some(invalidate_cache) = self.refresh_editor_data(&reason, cx) else {
@@ -284,12 +289,13 @@ impl Editor {
         };
 
         let mut visible_excerpts = self.visible_excerpts(cx);
+        let mut all_affected_buffers = HashSet::default();
         let ignore_previous_fetches = match reason {
             InlayHintRefreshReason::ModifiersChanged(_)
             | InlayHintRefreshReason::Toggle(_)
-            | InlayHintRefreshReason::SettingsChange(_)
-            | InlayHintRefreshReason::NewLinesShown => true,
-            InlayHintRefreshReason::RefreshRequested(_)
+            | InlayHintRefreshReason::SettingsChange(_) => true,
+            InlayHintRefreshReason::NewLinesShown
+            | InlayHintRefreshReason::RefreshRequested(_)
             | InlayHintRefreshReason::ExcerptsRemoved(_) => false,
             InlayHintRefreshReason::BufferEdited(buffer_id) => {
                 let Some(affected_language) = self
@@ -300,6 +306,23 @@ impl Editor {
                 else {
                     return;
                 };
+
+                all_affected_buffers.extend(
+                    self.buffer()
+                        .read(cx)
+                        .all_buffers()
+                        .into_iter()
+                        .filter_map(|buffer| {
+                            let buffer = buffer.read(cx);
+                            if buffer.language() == Some(&affected_language) {
+                                Some(buffer.remote_id())
+                            } else {
+                                None
+                            }
+                        }),
+                );
+
+                semantics_provider.invalidate_inlay_hints(&all_affected_buffers, cx);
                 visible_excerpts.retain(|_, (visible_buffer, _, _)| {
                     visible_buffer.read(cx).language() == Some(&affected_language)
                 });
@@ -340,6 +363,7 @@ impl Editor {
             visible_excerpts.ranges.push(buffer_anchor_range);
         }
 
+        let all_affected_buffers = Arc::new(Mutex::new(all_affected_buffers));
         for (buffer_id, visible_excerpts) in buffers_to_query {
             let fetched_tasks = inlay_hints.hint_chunk_fetched.entry(buffer_id).or_default();
             if visible_excerpts
@@ -368,6 +392,7 @@ impl Editor {
                             ignore_previous_fetches,
                             debounce,
                             visible_excerpts,
+                            all_affected_buffers.clone(),
                             cx,
                         ));
                     }
@@ -379,6 +404,7 @@ impl Editor {
                         ignore_previous_fetches,
                         debounce,
                         visible_excerpts,
+                        all_affected_buffers.clone(),
                         cx,
                     ));
                 }
@@ -460,9 +486,19 @@ impl Editor {
                 }
             }
             InlayHintRefreshReason::ExcerptsRemoved(excerpts_removed) => {
-                self.display_map.update(cx, |display_map, cx| {
-                    display_map.remove_inlays_for_excerpts(excerpts_removed, cx)
-                });
+                let to_remove = self
+                    .display_map
+                    .read(cx)
+                    .current_inlays()
+                    .filter_map(|inlay| {
+                        if excerpts_removed.contains(&inlay.position.excerpt_id) {
+                            Some(inlay.id)
+                        } else {
+                            None
+                        }
+                    })
+                    .collect::<Vec<_>>();
+                self.splice_inlays(&to_remove, Vec::new(), cx);
                 return None;
             }
             InlayHintRefreshReason::NewLinesShown => InvalidationStrategy::None,
@@ -683,7 +719,7 @@ impl Editor {
         buffer_excerpts: VisibleExcerpts,
         cx: &mut Context<Self>,
     ) -> Option<Vec<Task<(Range<BufferRow>, anyhow::Result<CacheInlayHints>)>>> {
-        let semantics_provider = self.semantics_provider.clone()?;
+        let semantics_provider = self.semantics_provider()?;
         let inlay_hints = self.inlay_hints.as_mut()?;
         let buffer_id = buffer_excerpts.buffer.read(cx).remote_id();
 
@@ -725,6 +761,7 @@ impl Editor {
         query_version: Global,
         invalidate_cache: InvalidationStrategy,
         new_hints: Vec<(Range<BufferRow>, anyhow::Result<CacheInlayHints>)>,
+        all_affected_buffers: Arc<Mutex<HashSet<BufferId>>>,
         cx: &mut Context<Self>,
     ) {
         let visible_inlay_hint_ids = self
@@ -787,6 +824,27 @@ impl Editor {
                 None
             })
             .collect::<Vec<_>>();
+
+        // We need to invalidate excerpts all buffers with the same language, do that once only, after first new data chunk is inserted.
+        let all_other_affected_buffers = all_affected_buffers
+            .lock()
+            .drain()
+            .filter(|id| buffer_id != *id)
+            .collect::<HashSet<_>>();
+        if !all_other_affected_buffers.is_empty() {
+            hints_to_remove.extend(
+                self.visible_inlay_hints(cx)
+                    .iter()
+                    .filter(|inlay| {
+                        inlay
+                            .position
+                            .buffer_id
+                            .is_none_or(|buffer_id| all_other_affected_buffers.contains(&buffer_id))
+                    })
+                    .map(|inlay| inlay.id),
+            );
+        }
+
         self.splice_inlays(&hints_to_remove, hints_to_insert, cx);
     }
 }
@@ -805,6 +863,7 @@ fn spawn_editor_hints_refresh(
     ignore_previous_fetches: bool,
     debounce: Option<Duration>,
     buffer_excerpts: VisibleExcerpts,
+    all_affected_buffers: Arc<Mutex<HashSet<BufferId>>>,
     cx: &mut Context<'_, Editor>,
 ) -> Task<()> {
     cx.spawn(async move |editor, cx| {
@@ -838,6 +897,7 @@ fn spawn_editor_hints_refresh(
                     query_version,
                     invalidate_cache,
                     new_hints,
+                    all_affected_buffers,
                     cx,
                 );
             })

@@ -49,8 +49,8 @@ use language::{
     OffsetUtf16, Point, Subscription as BufferSubscription, language_settings::language_settings,
 };
 use multi_buffer::{
-    Anchor, AnchorRangeExt, ExcerptId, MultiBuffer, MultiBufferPoint, MultiBufferRow,
-    MultiBufferSnapshot, RowInfo, ToOffset, ToPoint,
+    Anchor, AnchorRangeExt, MultiBuffer, MultiBufferPoint, MultiBufferRow, MultiBufferSnapshot,
+    RowInfo, ToOffset, ToPoint,
 };
 use project::InlayId;
 use project::project_settings::DiagnosticSeverity;
@@ -592,25 +592,6 @@ impl DisplayMap {
             .wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
         self.block_map.read(snapshot, edits);
-    }
-
-    pub fn remove_inlays_for_excerpts(
-        &mut self,
-        excerpts_removed: &[ExcerptId],
-        cx: &mut Context<Self>,
-    ) {
-        let to_remove = self
-            .inlay_map
-            .current_inlays()
-            .filter_map(|inlay| {
-                if excerpts_removed.contains(&inlay.position.excerpt_id) {
-                    Some(inlay.id)
-                } else {
-                    None
-                }
-            })
-            .collect::<Vec<_>>();
-        self.splice_inlays(&to_remove, Vec::new(), cx);
     }
 
     fn tab_size(buffer: &Entity<MultiBuffer>, cx: &App) -> NonZeroU32 {

@@ -20741,7 +20741,7 @@ impl Editor {
                 removed_buffer_ids,
             } => {
                 if let Some(inlay_hints) = &mut self.inlay_hints {
-                    inlay_hints.removed_buffers(&removed_buffer_ids);
+                    inlay_hints.remove_inlay_chunk_data(removed_buffer_ids);
                 }
                 self.refresh_inlay_hints(InlayHintRefreshReason::ExcerptsRemoved(ids.clone()), cx);
                 for buffer_id in removed_buffer_ids {
@@ -22565,6 +22565,8 @@ pub trait SemanticsProvider {
         cx: &App,
     ) -> Vec<Range<BufferRow>>;
 
+    fn invalidate_inlay_hints(&self, for_buffers: &HashSet<BufferId>, cx: &mut App);
+
     fn inlay_hints(
         &self,
         invalidate: InvalidationStrategy,
@@ -23075,6 +23077,12 @@ impl SemanticsProvider for Entity<Project> {
             .lsp_store()
             .read(cx)
             .applicable_inlay_chunks(buffer_id, ranges)
+    }
+
+    fn invalidate_inlay_hints(&self, for_buffers: &HashSet<BufferId>, cx: &mut App) {
+        self.read(cx).lsp_store().update(cx, |lsp_store, _| {
+            lsp_store.invalidate_inlay_hints(for_buffers)
+        });
     }
 
     fn inlay_hints(

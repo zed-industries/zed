@@ -445,6 +445,10 @@ impl SemanticsProvider for BranchBufferSemanticsProvider {
         self.0.applicable_inlay_chunks(buffer_id, ranges, cx)
     }
 
+    fn invalidate_inlay_hints(&self, for_buffers: &HashSet<BufferId>, cx: &mut App) {
+        self.0.invalidate_inlay_hints(for_buffers, cx);
+    }
+
     fn inlay_hints(
         &self,
         invalidate: InvalidationStrategy,
