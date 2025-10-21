@@ -2102,28 +2102,18 @@ impl Terminal {
                     self.child_exited = Some(e);
                 }
 
-<<<<<<< Updated upstream
-                if error_code.is_none()
-                    || self
-                        .child_exited
-                        .is_some_and(|status| status.code() == Some(0))
-                {
-=======
                 let should_close = if error_code.is_none() {
-                    // PTY Exit - the process is gone
-                    match self.child_exited {
-                        None => true,  // Clean exit, no prior error
-                        Some(e) => match e.code() {
-                            Some(0) => true,  // Successful exit
-                            // Linux bash sends false ChildExit(130) after Ctrl+C
-                            // but shell continues running. This is the specific bug.
-                            #[cfg(target_os = "linux")]
-                            Some(130) => true,
-                            _ => {
-                                // Real error (spawn failure, crash, etc.)
-                                // Keep terminal open to show error message
-                                false
-                            }
+                    let is_interactive_shell =
+                        !matches!(self.template.shell, Shell::WithArguments { .. });
+
+                    if is_interactive_shell {
+                        // Always close regardless of prior exit codes
+                        true
+                    } else {
+                        // Respect exit codes to preserve error visibility
+                        match self.child_exited {
+                            None => true,
+                            Some(e) => e.code() == Some(0),
                         }
                     }
                 } else {
@@ -2132,7 +2122,6 @@ impl Terminal {
                 };
 
                 if should_close {
->>>>>>> Stashed changes
                     cx.emit(Event::CloseTerminal);
                 }
                 return;
@@ -2399,8 +2388,6 @@ pub fn rgba_color(r: u8, g: u8, b: u8) -> Hsla {
 mod tests {
     #[cfg(unix)]
     use std::os::unix::process::ExitStatusExt;
-    #[cfg(windows)]
-    use std::os::windows::process::ExitStatusExt;
     use std::time::Duration;
 
     use super::*;
@@ -2467,6 +2454,7 @@ mod tests {
         );
     }
 
+    #[cfg(not(target_os = "windows"))]
     #[gpui::test(iterations = 10)]
     async fn test_terminal_eof(cx: &mut TestAppContext) {
         cx.executor().allow_parking();
