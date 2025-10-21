@@ -7303,7 +7303,6 @@ pub fn open_paths(
 > {
     let abs_paths = abs_paths.to_vec();
     let mut existing = None;
-    let mut best_match = None;
     let mut open_visible = OpenVisible::All;
 
     cx.spawn(async move |cx| {
@@ -7318,19 +7317,13 @@ pub fn open_paths(
             cx.update(|cx| {
                 for window in local_workspace_windows(cx) {
                     if let Ok(workspace) = window.read(cx) {
-                        let m = workspace.project.read(cx).visibility_for_paths(
-                            &abs_paths,
-                            &all_metadatas,
-                            open_options.open_new_workspace == None,
-                            cx,
-                        );
-                        if m > best_match {
+                        let is_exact_match = workspace
+                            .project
+                            .read(cx)
+                            .visibility_for_paths(&abs_paths, cx);
+                        if is_exact_match == Some(true) {
                             existing = Some(window);
-                            best_match = m;
-                        } else if best_match.is_none()
-                            && open_options.open_new_workspace == Some(false)
-                        {
-                            existing = Some(window)
+                            break;
                         }
                     }
                 }
