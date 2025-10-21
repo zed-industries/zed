@@ -249,7 +249,6 @@ mod ext_agent_tests {
             bin_name: gpui::SharedString::from("mybin"),
             args: vec!["--foo".into()],
             env: super::HashMap::default(),
-            ignore_system_version: false,
         };
 
         // Ensure PATH contains our temp directory so which::which_in can find it
@@ -491,7 +490,6 @@ impl AgentServerStore {
                                         bin_name: SharedString::from(bin_name.clone()),
                                         args: agent_entry.args.clone(),
                                         env: agent_entry.env.clone(),
-                                        ignore_system_version,
                                     })
                                         as Box<dyn ExternalAgentServer>,
                                 );
@@ -1598,8 +1596,6 @@ struct LocalExtensionBinaryAgent {
     bin_name: SharedString,
     args: Vec<String>,
     env: HashMap<String, String>,
-    #[allow(dead_code)]
-    ignore_system_version: bool,
 }
 
 struct LocalExtensionNpmAgent {
