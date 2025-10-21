@@ -263,7 +263,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     discriminant: SettingItem {
                         files: USER,
                         title: "Theme Mode",
-                        description: "How to select the theme",
+                        description: "Choose a static, fixed theme or dynamically select themes based on appearance and light/dark modes.",
                         field: Box::new(SettingField {
                             pick: |settings_content| {
                                 Some(&dynamic_variants::<settings::ThemeSelection>()[
@@ -320,7 +320,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 SettingItem {
                                     files: USER,
                                     title: "Theme Name",
-                                    description: "The Name Of The Theme To Use",
+                                    description: "The name of your selected theme.",
                                     field: Box::new(SettingField {
                                         pick: |settings_content| {
                                             match settings_content.theme.theme.as_ref() {
@@ -347,7 +347,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 SettingItem {
                                     files: USER,
                                     title: "Mode",
-                                    description: "How To Determine Whether to Use a Light or Dark Theme",
+                                    description: "Choose whether to use the selected light or dark theme or to follow your OS appearance configuration.",
                                     field: Box::new(SettingField {
                                         pick: |settings_content| {
                                             match settings_content.theme.theme.as_ref() {
@@ -372,7 +372,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 SettingItem {
                                     files: USER,
                                     title: "Light Theme",
-                                    description: "The Theme To Use When Mode Is Set To Light, Or When Mode Is Set To System And The System Is In Light Mode",
+                                    description: "The theme to use when mode is set to light, or when mode is set to system and it is in light mode.",
                                     field: Box::new(SettingField {
                                         pick: |settings_content| {
                                             match settings_content.theme.theme.as_ref() {
@@ -397,7 +397,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 SettingItem {
                                     files: USER,
                                     title: "Dark Theme",
-                                    description: "The Theme To Use When Mode Is Set To Dark, Or When Mode Is Set To System And The System Is In Dark Mode",
+                                    description: "The theme to use when mode is set to dark, or when mode is set to system and it is in dark mode.",
                                     field: Box::new(SettingField {
                                         pick: |settings_content| {
                                             match settings_content.theme.theme.as_ref() {
@@ -427,7 +427,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     discriminant: SettingItem {
                         files: USER,
                         title: "Icon Theme",
-                        description: "The Icon Theme Zed Will Associate With Files And Directories",
+                        description: "The custom set of icons Zed will associate with files and directories",
                         field: Box::new(SettingField {
                             pick: |settings_content| {
                                 Some(&dynamic_variants::<settings::IconThemeSelection>()[
@@ -484,7 +484,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 SettingItem {
                                     files: USER,
                                     title: "Icon Theme Name",
-                                    description: "The Name Of The Icon Theme To Use",
+                                    description: "The name of your selected icon theme.",
                                     field: Box::new(SettingField {
                                         pick: |settings_content| {
                                             match settings_content.theme.icon_theme.as_ref() {
@@ -511,7 +511,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 SettingItem {
                                     files: USER,
                                     title: "Mode",
-                                    description: "How To Determine Whether to Use a Light or Dark Icon Theme",
+                                    description: "Choose whether to use the selected light or dark icon theme or to follow your OS appearance configuration.",
                                     field: Box::new(SettingField {
                                         pick: |settings_content| {
                                             match settings_content.theme.icon_theme.as_ref() {
@@ -536,7 +536,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 SettingItem {
                                     files: USER,
                                     title: "Light Icon Theme",
-                                    description: "The Icon Theme To Use When Mode Is Set To Light, Or When Mode Is Set To System And The System Is In Light Mode",
+                                    description: "The icon theme to use when mode is set to light, or when mode is set to system and it is in light mode.",
                                     field: Box::new(SettingField {
                                         pick: |settings_content| {
                                             match settings_content.theme.icon_theme.as_ref() {
@@ -561,7 +561,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                 SettingItem {
                                     files: USER,
                                     title: "Dark Icon Theme",
-                                    description: "The Icon Theme To Use When Mode Is Set To Dark, Or When Mode Is Set To System And The System Is In Dark Mode",
+                                    description: "The icon theme to use when mode is set to dark, or when mode is set to system and it is in dark mode.",
                                     field: Box::new(SettingField {
                                         pick: |settings_content| {
                                             match settings_content.theme.icon_theme.as_ref() {
