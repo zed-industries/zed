@@ -26476,6 +26476,39 @@ async fn test_paste_url_from_other_app_creates_markdown_link_over_selected_text(
 }
 
 #[gpui::test]
+async fn test_markdown_indentation_on_multicursor(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+
+    let markdown_language = Arc::new(Language::new(
+        LanguageConfig {
+            name: "Markdown".into(),
+            ..LanguageConfig::default()
+        },
+        None,
+    ));
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(markdown_language), cx));
+
+    cx.set_state(&indoc! {"
+        - [ ] Item 1
+            - [ ] Item 1.a
+        - [ˇ] Item 2
+            - [ˇ] Item 2.a
+            - [ˇ] Item 2.b
+        "
+    });
+
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input("X", window, cx);
+    });
+
+    // Weird, this issue doesn't happen on the test, something that i'm doing wrong most likely.
+    println!("{}", cx.editor_state());
+}
+
+#[gpui::test]
 async fn test_paste_url_from_zed_copy_creates_markdown_link_over_selected_text(
     cx: &mut gpui::TestAppContext,
 ) {
