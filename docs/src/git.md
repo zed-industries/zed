@@ -187,6 +187,10 @@ When viewing files with changes, Zed displays diff hunks that can be expanded or
 | {#action git::Switch}                     | {#kb git::Switch}                     |
 | {#action git::CheckoutBranch}             | {#kb git::CheckoutBranch}             |
 | {#action git::Blame}                      | {#kb git::Blame}                      |
+| {#action git::StashAll}                   | {#kb git::StashAll}                   |
+| {#action git::StashPop}                   | {#kb git::StashPop}                   |
+| {#action git::StashApply}                 | {#kb git::StashApply}                 |
+| {#action git::ViewStash}                  | {#kb git::ViewStash}                  |
 | {#action editor::ToggleGitBlameInline}    | {#kb editor::ToggleGitBlameInline}    |
 | {#action editor::ExpandAllDiffHunks}      | {#kb editor::ExpandAllDiffHunks}      |
 | {#action editor::ToggleSelectedDiffHunks} | {#kb editor::ToggleSelectedDiffHunks} |
