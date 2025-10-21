@@ -19,10 +19,8 @@ use std::{
 };
 use theme::{ActiveTheme, SyntaxTheme, ThemeSettings};
 use ui::{
-    ButtonCommon, Clickable, Color, FluentBuilder, IconButton, IconName, IconSize,
-    InteractiveElement, Label, LabelCommon, LabelSize, LinkPreview, Pixels, Rems,
-    StatefulInteractiveElement, StyledExt, StyledImage, ToggleState, Tooltip, VisibleOnHover,
-    h_flex, relative, tooltip_container, v_flex,
+    Clickable, FluentBuilder, LinkPreview, StatefulInteractiveElement, StyledExt, StyledImage,
+    ToggleState, Tooltip, VisibleOnHover, prelude::*, tooltip_container,
 };
 use workspace::{OpenOptions, OpenVisible, Workspace};
 
@@ -51,7 +49,8 @@ pub struct RenderContext {
     buffer_text_style: TextStyle,
     text_style: TextStyle,
     border_color: Hsla,
-    element_background_color: Hsla,
+    title_bar_background_color: Hsla,
+    panel_background_color: Hsla,
     text_color: Hsla,
     link_color: Hsla,
     window_rem_size: Pixels,
@@ -87,7 +86,8 @@ impl RenderContext {
             text_style: window.text_style(),
             syntax_theme: theme.syntax().clone(),
             border_color: theme.colors().border,
-            element_background_color: theme.colors().element_background,
+            title_bar_background_color: theme.colors().title_bar_background,
+            panel_background_color: theme.colors().panel_background,
             text_color: theme.colors().text,
             link_color: theme.colors().text_accent,
             window_rem_size: window.rem_size(),
@@ -511,28 +511,27 @@ fn render_markdown_table(parsed: &ParsedMarkdownTable, cx: &mut RenderContext) -
         &parsed.column_alignments,
         &max_column_widths,
         true,
+        0,
         cx,
     );
 
     let body: Vec<AnyElement> = parsed
         .body
         .iter()
-        .map(|row| {
+        .enumerate()
+        .map(|(index, row)| {
             render_markdown_table_row(
                 row,
                 &parsed.column_alignments,
                 &max_column_widths,
                 false,
+                index,
                 cx,
             )
         })
         .collect();
 
-    cx.with_common_p(v_flex())
-        .w_full()
-        .child(header)
-        .children(body)
-        .into_any()
+    div().child(header).children(body).into_any()
 }
 
 fn render_markdown_table_row(
@@ -540,6 +539,7 @@ fn render_markdown_table_row(
     alignments: &Vec<ParsedMarkdownTableAlignment>,
     max_column_widths: &Vec<f32>,
     is_header: bool,
+    row_index: usize,
     cx: &mut RenderContext,
 ) -> AnyElement {
     let mut items = Vec::with_capacity(parsed.children.len());
@@ -574,7 +574,7 @@ fn render_markdown_table_row(
         }
 
         if is_header {
-            cell = cell.bg(cx.element_background_color)
+            cell = cell.bg(cx.title_bar_background_color).opacity(0.6)
         }
 
         items.push(cell);
@@ -586,6 +586,10 @@ fn render_markdown_table_row(
         row = row.border_y_1();
     } else {
         row = row.border_b_1();
+    }
+
+    if row_index % 2 == 1 {
+        row = row.bg(cx.panel_background_color)
     }
 
     row.children(items).into_any_element()
@@ -692,7 +696,7 @@ fn render_markdown_text(parsed_new: &MarkdownParagraph, cx: &mut RenderContext) 
                 let highlights = gpui::combine_highlights(
                     parsed.highlights.iter().filter_map(|(range, highlight)| {
                         highlight
-                            .to_highlight_style(&syntax_theme, link_color)
+                            .to_highlight_style(&syntax_theme)
                             .map(|style| (range.clone(), style))
                     }),
                     parsed.regions.iter().zip(&parsed.region_ranges).filter_map(
@@ -702,6 +706,14 @@ fn render_markdown_text(parsed_new: &MarkdownParagraph, cx: &mut RenderContext) 
                                     range.clone(),
                                     HighlightStyle {
                                         background_color: Some(code_span_bg_color),
+                                        ..Default::default()
+                                    },
+                                ))
+                            } else if region.link.is_some() {
+                                Some((
+                                    range.clone(),
+                                    HighlightStyle {
+                                        color: Some(link_color),
                                         ..Default::default()
                                     },
                                 ))

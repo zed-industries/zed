@@ -41,13 +41,33 @@ impl Rope {
         if self.chunks.is_empty() {
             return offset == 0;
         }
-        let mut cursor = self.chunks.cursor::<usize>(());
-        cursor.seek(&offset, Bias::Left);
-        let chunk_offset = offset - cursor.start();
-        cursor
-            .item()
-            .map(|chunk| chunk.text.is_char_boundary(chunk_offset))
+        let (start, _, item) = self.chunks.find::<usize, _>((), &offset, Bias::Left);
+        let chunk_offset = offset - start;
+        item.map(|chunk| chunk.text.is_char_boundary(chunk_offset))
             .unwrap_or(false)
+    }
+
+    #[track_caller]
+    #[inline(always)]
+    pub fn assert_char_boundary(&self, offset: usize) {
+        if self.is_char_boundary(offset) {
+            return;
+        }
+        panic_char_boundary(self, offset);
+
+        #[cold]
+        #[inline(never)]
+        fn panic_char_boundary(rope: &Rope, offset: usize) {
+            // find the character
+            let char_start = rope.floor_char_boundary(offset);
+            // `char_start` must be less than len and a char boundary
+            let ch = rope.chars_at(char_start).next().unwrap();
+            let char_range = char_start..char_start + ch.len_utf8();
+            panic!(
+                "byte index {} is not a char boundary; it is inside {:?} (bytes {:?})",
+                offset, ch, char_range,
+            );
+        }
     }
 
     pub fn floor_char_boundary(&self, index: usize) -> usize {
@@ -60,10 +80,9 @@ impl Rope {
                 (u8 as i8) >= -0x40
             }
 
-            let mut cursor = self.chunks.cursor::<usize>(());
-            cursor.seek(&index, Bias::Left);
-            let chunk_offset = index - cursor.start();
-            let lower_idx = cursor.item().map(|chunk| {
+            let (start, _, item) = self.chunks.find::<usize, _>((), &index, Bias::Left);
+            let chunk_offset = index - start;
+            let lower_idx = item.map(|chunk| {
                 let lower_bound = chunk_offset.saturating_sub(3);
                 chunk
                     .text
@@ -78,7 +97,7 @@ impl Rope {
                     })
                     .unwrap_or(chunk.text.len())
             });
-            lower_idx.map_or_else(|| self.len(), |idx| cursor.start() + idx)
+            lower_idx.map_or_else(|| self.len(), |idx| start + idx)
         }
     }
 
@@ -92,10 +111,9 @@ impl Rope {
                 (u8 as i8) >= -0x40
             }
 
-            let mut cursor = self.chunks.cursor::<usize>(());
-            cursor.seek(&index, Bias::Left);
-            let chunk_offset = index - cursor.start();
-            let upper_idx = cursor.item().map(|chunk| {
+            let (start, _, item) = self.chunks.find::<usize, _>((), &index, Bias::Left);
+            let chunk_offset = index - start;
+            let upper_idx = item.map(|chunk| {
                 let upper_bound = Ord::min(chunk_offset + 4, chunk.text.len());
                 chunk.text.as_bytes()[chunk_offset..upper_bound]
                     .iter()
@@ -103,7 +121,7 @@ impl Rope {
                     .map_or(upper_bound, |pos| pos + chunk_offset)
             });
 
-            upper_idx.map_or_else(|| self.len(), |idx| cursor.start() + idx)
+            upper_idx.map_or_else(|| self.len(), |idx| start + idx)
         }
     }
 
@@ -356,11 +374,12 @@ impl Rope {
         if offset >= self.summary().len {
             return self.summary().len_utf16;
         }
-        let mut cursor = self.chunks.cursor::<Dimensions<usize, OffsetUtf16>>(());
-        cursor.seek(&offset, Bias::Left);
-        let overshoot = offset - cursor.start().0;
-        cursor.start().1
-            + cursor.item().map_or(Default::default(), |chunk| {
+        let (start, _, item) =
+            self.chunks
+                .find::<Dimensions<usize, OffsetUtf16>, _>((), &offset, Bias::Left);
+        let overshoot = offset - start.0;
+        start.1
+            + item.map_or(Default::default(), |chunk| {
                 chunk.as_slice().offset_to_offset_utf16(overshoot)
             })
     }

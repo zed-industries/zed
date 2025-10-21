@@ -27,6 +27,7 @@ pub use proto::PanelId;
 
 pub trait Panel: Focusable + EventEmitter<PanelEvent> + Render + Sized {
     fn persistent_name() -> &'static str;
+    fn panel_key() -> &'static str;
     fn position(&self, window: &Window, cx: &App) -> DockPosition;
     fn position_is_valid(&self, position: DockPosition) -> bool;
     fn set_position(&mut self, position: DockPosition, window: &mut Window, cx: &mut Context<Self>);
@@ -61,6 +62,7 @@ pub trait Panel: Focusable + EventEmitter<PanelEvent> + Render + Sized {
 pub trait PanelHandle: Send + Sync {
     fn panel_id(&self) -> EntityId;
     fn persistent_name(&self) -> &'static str;
+    fn panel_key(&self) -> &'static str;
     fn position(&self, window: &Window, cx: &App) -> DockPosition;
     fn position_is_valid(&self, position: DockPosition, cx: &App) -> bool;
     fn set_position(&self, position: DockPosition, window: &mut Window, cx: &mut App);
@@ -106,6 +108,10 @@ where
 
     fn persistent_name(&self) -> &'static str {
         T::persistent_name()
+    }
+
+    fn panel_key(&self) -> &'static str {
+        T::panel_key()
     }
 
     fn position(&self, window: &Window, cx: &App) -> DockPosition {
@@ -1013,6 +1019,10 @@ pub mod test {
 
     impl Panel for TestPanel {
         fn persistent_name() -> &'static str {
+            "TestPanel"
+        }
+
+        fn panel_key() -> &'static str {
             "TestPanel"
         }
 

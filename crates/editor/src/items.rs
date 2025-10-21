@@ -762,11 +762,11 @@ impl Item for Editor {
         _workspace_id: Option<WorkspaceId>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Option<Entity<Editor>>
+    ) -> Task<Option<Entity<Editor>>>
     where
         Self: Sized,
     {
-        Some(cx.new(|cx| self.clone(window, cx)))
+        Task::ready(Some(cx.new(|cx| self.clone(window, cx))))
     }
 
     fn set_nav_history(
@@ -1079,12 +1079,17 @@ impl SerializableItem for Editor {
                 }
             }
             Ok(None) => {
-                return Task::ready(Err(anyhow!("No path or contents found for buffer")));
+                return Task::ready(Err(anyhow!(
+                    "Unable to deserialize editor: No entry in database for item_id: {item_id} and workspace_id {workspace_id:?}"
+                )));
             }
             Err(error) => {
                 return Task::ready(Err(error));
             }
         };
+        log::debug!(
+            "Deserialized editor {item_id:?} in workspace {workspace_id:?}, {serialized_editor:?}"
+        );
 
         match serialized_editor {
             SerializedEditor {
@@ -1112,7 +1117,8 @@ impl SerializableItem for Editor {
                     // First create the empty buffer
                     let buffer = project
                         .update(cx, |project, cx| project.create_buffer(true, cx))?
-                        .await?;
+                        .await
+                        .context("Failed to create buffer while deserializing editor")?;
 
                     // Then set the text so that the dirty bit is set correctly
                     buffer.update(cx, |buffer, cx| {
@@ -1154,7 +1160,9 @@ impl SerializableItem for Editor {
                 match opened_buffer {
                     Some(opened_buffer) => {
                         window.spawn(cx, async move |cx| {
-                            let (_, buffer) = opened_buffer.await?;
+                            let (_, buffer) = opened_buffer
+                                .await
+                                .context("Failed to open path in project")?;
 
                             // This is a bit wasteful: we're loading the whole buffer from
                             // disk and then overwrite the content.
@@ -1220,7 +1228,8 @@ impl SerializableItem for Editor {
             } => window.spawn(cx, async move |cx| {
                 let buffer = project
                     .update(cx, |project, cx| project.create_buffer(true, cx))?
-                    .await?;
+                    .await
+                    .context("Failed to create buffer")?;
 
                 cx.update(|window, cx| {
                     cx.new(|cx| {

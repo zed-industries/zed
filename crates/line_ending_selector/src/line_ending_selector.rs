@@ -1,6 +1,9 @@
+mod line_ending_indicator;
+
 use editor::Editor;
 use gpui::{DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Task, WeakEntity, actions};
 use language::{Buffer, LineEnding};
+pub use line_ending_indicator::LineEndingIndicator;
 use picker::{Picker, PickerDelegate};
 use project::Project;
 use std::sync::Arc;
@@ -9,7 +12,7 @@ use util::ResultExt;
 use workspace::ModalView;
 
 actions!(
-    line_ending,
+    line_ending_selector,
     [
         /// Toggles the line ending selector modal.
         Toggle
@@ -172,10 +175,7 @@ impl PickerDelegate for LineEndingSelectorDelegate {
         _: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let line_ending = self.matches.get(ix)?;
-        let label = match line_ending {
-            LineEnding::Unix => "LF",
-            LineEnding::Windows => "CRLF",
-        };
+        let label = line_ending.label();
 
         let mut list_item = ListItem::new(ix)
             .inset(true)

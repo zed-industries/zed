@@ -77,7 +77,7 @@ impl std::fmt::Debug for LanguageModelImage {
 }
 
 /// Anthropic wants uploaded images to be smaller than this in both dimensions.
-const ANTHROPIC_SIZE_LIMT: f32 = 1568.;
+const ANTHROPIC_SIZE_LIMIT: f32 = 1568.;
 
 impl LanguageModelImage {
     pub fn empty() -> Self {
@@ -112,13 +112,13 @@ impl LanguageModelImage {
             let image_size = size(DevicePixels(width as i32), DevicePixels(height as i32));
 
             let base64_image = {
-                if image_size.width.0 > ANTHROPIC_SIZE_LIMT as i32
-                    || image_size.height.0 > ANTHROPIC_SIZE_LIMT as i32
+                if image_size.width.0 > ANTHROPIC_SIZE_LIMIT as i32
+                    || image_size.height.0 > ANTHROPIC_SIZE_LIMIT as i32
                 {
                     let new_bounds = ObjectFit::ScaleDown.get_bounds(
                         gpui::Bounds {
                             origin: point(px(0.0), px(0.0)),
-                            size: size(px(ANTHROPIC_SIZE_LIMT), px(ANTHROPIC_SIZE_LIMT)),
+                            size: size(px(ANTHROPIC_SIZE_LIMIT), px(ANTHROPIC_SIZE_LIMIT)),
                         },
                         image_size,
                     );

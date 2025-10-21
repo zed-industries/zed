@@ -1,9 +1,8 @@
 use crate::{
     ContextServerRegistry, CopyPathTool, CreateDirectoryTool, DbLanguageModel, DbThread,
-    DeletePathTool, DiagnosticsTool, EditFileTool, FetchTool, FindPathTool, GitState, GrepTool,
+    DeletePathTool, DiagnosticsTool, EditFileTool, FetchTool, FindPathTool, GrepTool,
     ListDirectoryTool, MovePathTool, NowTool, OpenTool, ProjectSnapshot, ReadFileTool,
     SystemPromptTemplate, Template, Templates, TerminalTool, ThinkingTool, WebSearchTool,
-    WorktreeSnapshot,
 };
 use acp_thread::{MentionUri, UserMessageId};
 use action_log::ActionLog;
@@ -26,7 +25,6 @@ use futures::{
     future::Shared,
     stream::FuturesUnordered,
 };
-use git::repository::DiffType;
 use gpui::{
     App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task, WeakEntity,
 };
@@ -37,10 +35,7 @@ use language_model::{
     LanguageModelToolResultContent, LanguageModelToolSchemaFormat, LanguageModelToolUse,
     LanguageModelToolUseId, Role, SelectedModel, StopReason, TokenUsage, ZED_CLOUD_PROVIDER_ID,
 };
-use project::{
-    Project,
-    git_store::{GitStore, RepositoryState},
-};
+use project::Project;
 use prompt_store::ProjectContext;
 use schemars::{JsonSchema, Schema};
 use serde::{Deserialize, Serialize};
@@ -880,98 +875,14 @@ impl Thread {
         project: Entity<Project>,
         cx: &mut Context<Self>,
     ) -> Task<Arc<ProjectSnapshot>> {
-        let git_store = project.read(cx).git_store().clone();
-        let worktree_snapshots: Vec<_> = project
-            .read(cx)
-            .visible_worktrees(cx)
-            .map(|worktree| Self::worktree_snapshot(worktree, git_store.clone(), cx))
-            .collect();
-
+        let task = project::telemetry_snapshot::TelemetrySnapshot::new(&project, cx);
         cx.spawn(async move |_, _| {
-            let worktree_snapshots = futures::future::join_all(worktree_snapshots).await;
+            let snapshot = task.await;
 
             Arc::new(ProjectSnapshot {
-                worktree_snapshots,
+                worktree_snapshots: snapshot.worktree_snapshots,
                 timestamp: Utc::now(),
             })
-        })
-    }
-
-    fn worktree_snapshot(
-        worktree: Entity<project::Worktree>,
-        git_store: Entity<GitStore>,
-        cx: &App,
-    ) -> Task<WorktreeSnapshot> {
-        cx.spawn(async move |cx| {
-            // Get worktree path and snapshot
-            let worktree_info = cx.update(|app_cx| {
-                let worktree = worktree.read(app_cx);
-                let path = worktree.abs_path().to_string_lossy().into_owned();
-                let snapshot = worktree.snapshot();
-                (path, snapshot)
-            });
-
-            let Ok((worktree_path, _snapshot)) = worktree_info else {
-                return WorktreeSnapshot {
-                    worktree_path: String::new(),
-                    git_state: None,
-                };
-            };
-
-            let git_state = git_store
-                .update(cx, |git_store, cx| {
-                    git_store
-                        .repositories()
-                        .values()
-                        .find(|repo| {
-                            repo.read(cx)
-                                .abs_path_to_repo_path(&worktree.read(cx).abs_path())
-                                .is_some()
-                        })
-                        .cloned()
-                })
-                .ok()
-                .flatten()
-                .map(|repo| {
-                    repo.update(cx, |repo, _| {
-                        let current_branch =
-                            repo.branch.as_ref().map(|branch| branch.name().to_owned());
-                        repo.send_job(None, |state, _| async move {
-                            let RepositoryState::Local { backend, .. } = state else {
-                                return GitState {
-                                    remote_url: None,
-                                    head_sha: None,
-                                    current_branch,
-                                    diff: None,
-                                };
-                            };
-
-                            let remote_url = backend.remote_url("origin");
-                            let head_sha = backend.head_sha().await;
-                            let diff = backend.diff(DiffType::HeadToWorktree).await.ok();
-
-                            GitState {
-                                remote_url,
-                                head_sha,
-                                current_branch,
-                                diff,
-                            }
-                        })
-                    })
-                });
-
-            let git_state = match git_state {
-                Some(git_state) => match git_state.ok() {
-                    Some(git_state) => git_state.await.ok(),
-                    None => None,
-                },
-                None => None,
-            };
-
-            WorktreeSnapshot {
-                worktree_path,
-                git_state,
-            }
         })
     }
 

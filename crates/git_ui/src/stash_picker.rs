@@ -5,18 +5,21 @@ use git::stash::StashEntry;
 use gpui::{
     Action, AnyElement, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
     InteractiveElement, IntoElement, Modifiers, ModifiersChangedEvent, ParentElement, Render,
-    SharedString, Styled, Subscription, Task, Window, actions, rems,
+    SharedString, Styled, Subscription, Task, WeakEntity, Window, actions, rems, svg,
 };
 use picker::{Picker, PickerDelegate};
 use project::git_store::{Repository, RepositoryEvent};
 use std::sync::Arc;
 use time::{OffsetDateTime, UtcOffset};
 use time_format;
-use ui::{HighlightedLabel, KeyBinding, ListItem, ListItemSpacing, Tooltip, prelude::*};
+use ui::{
+    ButtonLike, HighlightedLabel, KeyBinding, ListItem, ListItemSpacing, Tooltip, prelude::*,
+};
 use util::ResultExt;
 use workspace::notifications::DetachAndPromptErr;
 use workspace::{ModalView, Workspace};
 
+use crate::commit_view::CommitView;
 use crate::stash_picker;
 
 actions!(
@@ -24,6 +27,8 @@ actions!(
     [
         /// Drop the selected stash entry.
         DropStashItem,
+        /// Show the diff view of the selected stash entry.
+        ShowStashItem,
     ]
 );
 
@@ -38,8 +43,9 @@ pub fn open(
     cx: &mut Context<Workspace>,
 ) {
     let repository = workspace.project().read(cx).active_repository(cx);
+    let weak_workspace = workspace.weak_handle();
     workspace.toggle_modal(window, cx, |window, cx| {
-        StashList::new(repository, rems(34.), window, cx)
+        StashList::new(repository, weak_workspace, rems(34.), window, cx)
     })
 }
 
@@ -53,6 +59,7 @@ pub struct StashList {
 impl StashList {
     fn new(
         repository: Option<Entity<Repository>>,
+        workspace: WeakEntity<Workspace>,
         width: Rems,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -98,7 +105,7 @@ impl StashList {
         })
         .detach_and_log_err(cx);
 
-        let delegate = StashListDelegate::new(repository, window, cx);
+        let delegate = StashListDelegate::new(repository, workspace, window, cx);
         let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx));
         let picker_focus_handle = picker.focus_handle(cx);
         picker.update(cx, |picker, _| {
@@ -131,6 +138,20 @@ impl StashList {
         cx.notify();
     }
 
+    fn handle_show_stash(
+        &mut self,
+        _: &ShowStashItem,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.picker.update(cx, |picker, cx| {
+            picker
+                .delegate
+                .show_stash_at(picker.delegate.selected_index(), window, cx);
+        });
+        cx.notify();
+    }
+
     fn handle_modifiers_changed(
         &mut self,
         ev: &ModifiersChangedEvent,
@@ -157,6 +178,7 @@ impl Render for StashList {
             .w(self.width)
             .on_modifiers_changed(cx.listener(Self::handle_modifiers_changed))
             .on_action(cx.listener(Self::handle_drop_stash))
+            .on_action(cx.listener(Self::handle_show_stash))
             .child(self.picker.clone())
     }
 }
@@ -172,6 +194,7 @@ pub struct StashListDelegate {
     matches: Vec<StashEntryMatch>,
     all_stash_entries: Option<Vec<StashEntry>>,
     repo: Option<Entity<Repository>>,
+    workspace: WeakEntity<Workspace>,
     selected_index: usize,
     last_query: String,
     modifiers: Modifiers,
@@ -182,6 +205,7 @@ pub struct StashListDelegate {
 impl StashListDelegate {
     fn new(
         repo: Option<Entity<Repository>>,
+        workspace: WeakEntity<Workspace>,
         _window: &mut Window,
         cx: &mut Context<StashList>,
     ) -> Self {
@@ -192,6 +216,7 @@ impl StashListDelegate {
         Self {
             matches: vec![],
             repo,
+            workspace,
             all_stash_entries: None,
             selected_index: 0,
             last_query: Default::default(),
@@ -233,6 +258,25 @@ impl StashListDelegate {
         .detach_and_prompt_err("Failed to drop stash", window, cx, |e, _, _| {
             Some(e.to_string())
         });
+    }
+
+    fn show_stash_at(&self, ix: usize, window: &mut Window, cx: &mut Context<Picker<Self>>) {
+        let Some(entry_match) = self.matches.get(ix) else {
+            return;
+        };
+        let stash_sha = entry_match.entry.oid.to_string();
+        let stash_index = entry_match.entry.index;
+        let Some(repo) = self.repo.clone() else {
+            return;
+        };
+        CommitView::open(
+            stash_sha,
+            repo.downgrade(),
+            self.workspace.clone(),
+            Some(stash_index),
+            window,
+            cx,
+        );
     }
 
     fn pop_stash(&self, stash_index: usize, window: &mut Window, cx: &mut Context<Picker<Self>>) {
@@ -390,7 +434,7 @@ impl PickerDelegate for StashListDelegate {
         ix: usize,
         selected: bool,
         _window: &mut Window,
-        _cx: &mut Context<Picker<Self>>,
+        cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let entry_match = &self.matches[ix];
 
@@ -432,11 +476,35 @@ impl PickerDelegate for StashListDelegate {
                     .size(LabelSize::Small),
             );
 
+        let show_button = div()
+            .group("show-button-hover")
+            .child(
+                ButtonLike::new("show-button")
+                    .child(
+                        svg()
+                            .size(IconSize::Medium.rems())
+                            .flex_none()
+                            .path(IconName::Eye.path())
+                            .text_color(Color::Default.color(cx))
+                            .group_hover("show-button-hover", |this| {
+                                this.text_color(Color::Accent.color(cx))
+                            })
+                            .hover(|this| this.text_color(Color::Accent.color(cx))),
+                    )
+                    .tooltip(Tooltip::for_action_title("Show Stash", &ShowStashItem))
+                    .on_click(cx.listener(move |picker, _, window, cx| {
+                        cx.stop_propagation();
+                        picker.delegate.show_stash_at(ix, window, cx);
+                    })),
+            )
+            .into_any_element();
+
         Some(
             ListItem::new(SharedString::from(format!("stash-{ix}")))
                 .inset(true)
                 .spacing(ListItemSpacing::Sparse)
                 .toggle_state(selected)
+                .end_slot(show_button)
                 .child(
                     v_flex()
                         .w_full()
