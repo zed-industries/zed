@@ -3067,6 +3067,9 @@ impl Project {
                     cx.emit(Event::SnippetEdit(*buffer_id, edits.clone()))
                 }
             }
+            LspStoreEvent::SemanticTokensReceived { .. } => {
+                // Handled by DisplayMap subscription, no action needed at Project level
+            }
         }
     }
 

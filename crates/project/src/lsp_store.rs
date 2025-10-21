@@ -3574,6 +3574,12 @@ pub enum LspStoreEvent {
         edits: Vec<(lsp::Range, Snippet)>,
         most_recent_edit: clock::Lamport,
     },
+    SemanticTokensReceived {
+        buffer_id: BufferId,
+        tokens: Arc<SemanticTokens>,
+        legend: Arc<lsp::SemanticTokensLegend>,
+        server_id: LanguageServerId,
+    },
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -6543,16 +6549,35 @@ impl LspStore {
                 .await
                 .context("semantic tokens proto response conversion")?;
 
-                store.upgrade().unwrap().update(cx, move |store, _| {
+                store.upgrade().unwrap().update(cx, move |store, cx| {
                     handle_response(response, store);
 
-                    store
+                    let tokens = store
                         .lsp_semantic_tokens
                         .get(&buffer_id)
-                        .map(|tokens| tokens.semantic_tokens.clone())
+                        .map(|data| data.semantic_tokens.clone())
                         .ok_or_else(|| {
                             anyhow::anyhow!("No semantic tokens after response handling")
-                        })
+                        })?;
+
+                    if let Some(server_id) = tokens.server_id {
+                        if let Some(caps) = store.lsp_server_capabilities.get(&server_id) {
+                            if let Some(provider) = &caps.semantic_tokens_provider {
+                                let legend = match provider {
+                                    lsp::SemanticTokensServerCapabilities::SemanticTokensOptions(opts) => &opts.legend,
+                                    lsp::SemanticTokensServerCapabilities::SemanticTokensRegistrationOptions(opts) => &opts.semantic_tokens_options.legend,
+                                };
+                                cx.emit(LspStoreEvent::SemanticTokensReceived {
+                                    buffer_id,
+                                    tokens: tokens.clone(),
+                                    legend: Arc::new(legend.clone()),
+                                    server_id,
+                                });
+                            }
+                        }
+                    }
+
+                    Ok(tokens)
                 })?
             })
         } else {
@@ -6563,16 +6588,35 @@ impl LspStore {
                     .await
                     .context("semantic tokens LSP request")?;
 
-                store.upgrade().unwrap().update(cx, move |store, _| {
+                store.upgrade().unwrap().update(cx, move |store, cx| {
                     handle_response(response, store);
 
-                    store
+                    let tokens = store
                         .lsp_semantic_tokens
                         .get(&buffer_id)
-                        .map(|tokens| tokens.semantic_tokens.clone())
+                        .map(|data| data.semantic_tokens.clone())
                         .ok_or_else(|| {
                             anyhow::anyhow!("No semantic tokens after response handling")
-                        })
+                        })?;
+
+                    if let Some(server_id) = tokens.server_id {
+                        if let Some(caps) = store.lsp_server_capabilities.get(&server_id) {
+                            if let Some(provider) = &caps.semantic_tokens_provider {
+                                let legend = match provider {
+                                    lsp::SemanticTokensServerCapabilities::SemanticTokensOptions(opts) => &opts.legend,
+                                    lsp::SemanticTokensServerCapabilities::SemanticTokensRegistrationOptions(opts) => &opts.semantic_tokens_options.legend,
+                                };
+                                cx.emit(LspStoreEvent::SemanticTokensReceived {
+                                    buffer_id,
+                                    tokens: tokens.clone(),
+                                    legend: Arc::new(legend.clone()),
+                                    server_id,
+                                });
+                            }
+                        }
+                    }
+
+                    Ok(tokens)
                 })?
             })
         }

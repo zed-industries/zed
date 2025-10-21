@@ -142,9 +142,6 @@ fn create_highlight_endpoints(
                 continue;
             };
 
-            log::debug!("Processing semantic tokens for buffer {:?}: {} tokens in view, version {:?}", 
-                buffer_id, tokens.tokens.len(), tokens.version);
-
             let buffer_range = excerpt
                 .buffer()
                 .range_to_version(excerpt.map_range_to_buffer(range.clone()), &tokens.version);
@@ -164,9 +161,10 @@ fn create_highlight_endpoints(
                     continue;
                 }
 
-                lsp_covered_ranges.push(token_range.clone());
-                
+                // Only exclude syntax/rainbow tokens if semantic token has an actual color
+                // This preserves rainbow highlighting when LSP provides semantic tokens without colors
                 if token.style.color.is_some() {
+                    lsp_covered_ranges.push(token_range.clone());
                     highlight_endpoints.push(HighlightEndpoint {
                         offset: token_range.start,
                         tag: HighlightKey::Type(std::any::TypeId::of::<()>()),

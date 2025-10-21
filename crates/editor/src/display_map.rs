@@ -42,7 +42,9 @@ use fold_map::FoldSnapshot;
 pub use fold_map::{
     ChunkRenderer, ChunkRendererContext, ChunkRendererId, Fold, FoldId, FoldPlaceholder, FoldPoint,
 };
-use gpui::{App, Context, Entity, Font, HighlightStyle, LineLayout, Pixels, UnderlineStyle};
+use gpui::{
+    App, Context, Entity, Font, HighlightStyle, LineLayout, Pixels, Subscription, UnderlineStyle,
+};
 pub use inlay_map::Inlay;
 use inlay_map::InlaySnapshot;
 pub use inlay_map::{InlayOffset, InlayPoint};
@@ -54,9 +56,12 @@ use multi_buffer::{
     Anchor, AnchorRangeExt, ExcerptId, MultiBuffer, MultiBufferPoint, MultiBufferRow,
     MultiBufferSnapshot, RowInfo, ToOffset, ToPoint,
 };
-use project::{lsp_store::semantic_tokens::SemanticTokens, project_settings::DiagnosticSeverity};
+use project::{
+    Project, lsp_store::semantic_tokens::SemanticTokens, project_settings::DiagnosticSeverity,
+};
 use serde::Deserialize;
 use theme::SyntaxTheme;
+use util::ResultExt;
 
 use std::{
     any::TypeId,
@@ -95,6 +100,21 @@ pub trait ToDisplayPoint {
 type TextHighlights = TreeMap<HighlightKey, Arc<(HighlightStyle, Vec<Range<Anchor>>)>>;
 type InlayHighlights = TreeMap<TypeId, TreeMap<InlayId, (HighlightStyle, InlayHighlight)>>;
 
+#[derive(Clone, Debug, PartialEq)]
+pub enum HighlightInvalidationType {
+    SyntaxTokens,
+    SemanticTokens,
+    Both,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum DisplayMapEvent {
+    HighlightsInvalidated {
+        buffer_ids: Vec<BufferId>,
+        invalidation_type: HighlightInvalidationType,
+    },
+}
+
 /// Decides how text in a [`MultiBuffer`] should be displayed in a buffer, handling inlay hints,
 /// folding, hard tabs, soft wrapping, custom blocks (like diagnostics), and highlighting.
 ///
@@ -130,6 +150,10 @@ pub struct DisplayMap {
     pub clip_at_line_ends: bool,
     pub(crate) masked: bool,
     pub(crate) diagnostics_max_severity: DiagnosticSeverity,
+    /// Subscription to buffer events for syntax token updates
+    _multibuffer_subscription: Subscription,
+    /// Subscription to project LSP events for semantic token updates
+    _project_subscription: Option<Subscription>,
 }
 
 #[derive(Debug, Default)]
@@ -338,6 +362,18 @@ impl SyntaxTokenView {
         false
     }
 
+    pub fn exclude_ranges(&mut self, ranges: &[Range<usize>]) {
+        if ranges.is_empty() {
+            return;
+        }
+
+        self.tokens.retain(|token| {
+            !ranges.iter().any(|exclude_range| {
+                token.range.start < exclude_range.end && token.range.end > exclude_range.start
+            })
+        });
+    }
+
     pub fn tokens_in_range(&self, range: Range<usize>) -> &[SyntaxToken] {
         let start = self
             .tokens
@@ -362,6 +398,7 @@ pub struct SyntaxToken {
 impl DisplayMap {
     pub fn new(
         buffer: Entity<MultiBuffer>,
+        project: Option<Entity<Project>>,
         font: Font,
         font_size: Pixels,
         wrap_width: Option<Pixels>,
@@ -384,6 +421,19 @@ impl DisplayMap {
 
         cx.observe(&wrap_map, |_, _, cx| cx.notify()).detach();
 
+        let buffer_clone = buffer.clone();
+        let multibuffer_subscription = cx.subscribe(&buffer, move |this, _buffer, event, cx| {
+            this.on_buffer_event(&buffer_clone, event, cx);
+        });
+
+        let project_subscription = project.as_ref().map(|project| {
+            let project = project.read(cx);
+            let lsp_store = project.lsp_store();
+            cx.subscribe(&lsp_store, |this, _lsp_store, event, cx| {
+                this.on_lsp_event(event, cx);
+            })
+        });
+
         DisplayMap {
             buffer,
             buffer_subscription,
@@ -402,6 +452,8 @@ impl DisplayMap {
             variable_color_cache: None,
             clip_at_line_ends: false,
             masked: false,
+            _multibuffer_subscription: multibuffer_subscription,
+            _project_subscription: project_subscription,
         }
     }
 
@@ -877,11 +929,149 @@ impl DisplayMap {
         self.variable_color_cache.clone()
     }
 
+    fn on_buffer_event(
+        &mut self,
+        buffer: &Entity<MultiBuffer>,
+        event: &multi_buffer::Event,
+        cx: &mut Context<Self>,
+    ) {
+        match event {
+            multi_buffer::Event::Reparsed(buffer_id) => {
+                if let Some(buffer_entity) = buffer.read(cx).buffer(*buffer_id) {
+                    self.regenerate_syntax_tokens_for_buffer(buffer_entity, *buffer_id, cx);
+                }
+            }
+            multi_buffer::Event::LanguageChanged(buffer_id) => {
+                if let Some(buffer_entity) = buffer.read(cx).buffer(*buffer_id) {
+                    self.regenerate_syntax_tokens_for_buffer(buffer_entity, *buffer_id, cx);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn on_lsp_event(&mut self, event: &project::lsp_store::LspStoreEvent, cx: &mut Context<Self>) {
+        match event {
+            project::lsp_store::LspStoreEvent::SemanticTokensReceived {
+                buffer_id,
+                tokens,
+                legend,
+                ..
+            } => {
+                self.regenerate_semantic_tokens(*buffer_id, tokens.clone(), legend.clone(), cx);
+            }
+            _ => {}
+        }
+    }
+
+    pub(crate) fn regenerate_syntax_tokens_for_buffer(
+        &mut self,
+        buffer: Entity<language::Buffer>,
+        buffer_id: BufferId,
+        cx: &mut Context<Self>,
+    ) {
+        let cache = match &self.variable_color_cache {
+            Some(cache) => cache.clone(),
+            None => return,
+        };
+
+        let theme = cx.theme().syntax().clone();
+        let snapshot = buffer.read(cx).snapshot();
+
+        cx.spawn(async move |this, cx| {
+            let tokens = cx
+                .background_executor()
+                .spawn(async move { SyntaxTokenView::new(snapshot, &cache, &theme) })
+                .await;
+
+            this.update(cx, |this, cx| {
+                if let Some(mut tokens) = tokens {
+                    if let Some(semantic) = this.semantic_tokens.get(&buffer_id) {
+                        let covered_ranges: Vec<_> =
+                            semantic.tokens.iter().map(|t| t.range.clone()).collect();
+                        tokens.exclude_ranges(&covered_ranges);
+                    }
+
+                    this.syntax_tokens.insert(buffer_id, Arc::new(tokens));
+
+                    cx.emit(DisplayMapEvent::HighlightsInvalidated {
+                        buffer_ids: vec![buffer_id],
+                        invalidation_type: HighlightInvalidationType::SyntaxTokens,
+                    });
+                }
+            })
+            .ok()
+        })
+        .detach();
+    }
+
+    fn regenerate_semantic_tokens(
+        &mut self,
+        buffer_id: BufferId,
+        tokens: Arc<SemanticTokens>,
+        legend: Arc<lsp::SemanticTokensLegend>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(buffer) = self.buffer.read(cx).buffer(buffer_id) else {
+            return;
+        };
+        let buffer_snapshot = buffer.read(cx).snapshot();
+        let syntax_theme = cx.theme().syntax().clone();
+        let variable_color_cache = self.variable_color_cache.clone();
+        
+        cx.spawn(async move |this, cx| {
+            let view = cx.background_executor().spawn(async move {
+                SemanticTokenView::new(
+                    &buffer_snapshot,
+                    &tokens,
+                    &legend,
+                    variable_color_cache.as_ref(),
+                    Some(&syntax_theme),
+                )
+            }).await;
+
+            if let Some(view) = view {
+                this.update(cx, |this, cx| {
+                    this.semantic_tokens.insert(buffer_id, Arc::new(view));
+                    this.invalidate_overlapping_syntax_tokens(buffer_id, cx);
+
+                    cx.emit(DisplayMapEvent::HighlightsInvalidated {
+                        buffer_ids: vec![buffer_id],
+                        invalidation_type: HighlightInvalidationType::SemanticTokens,
+                    });
+                }).log_err();
+            }
+        }).detach();
+    }
+
+    fn invalidate_overlapping_syntax_tokens(
+        &mut self,
+        buffer_id: BufferId,
+        _cx: &mut Context<Self>,
+    ) {
+        if let Some(semantic) = self.semantic_tokens.get(&buffer_id) {
+            if let Some(syntax) = self.syntax_tokens.get_mut(&buffer_id) {
+                // Only exclude syntax tokens where semantic tokens have actual colors
+                // This preserves rainbow highlighting when LSP has no color for a token
+                let covered_ranges: Vec<_> = semantic
+                    .tokens
+                    .iter()
+                    .filter(|t| t.style.color.is_some())
+                    .map(|t| t.range.clone())
+                    .collect();
+
+                Arc::make_mut(syntax).exclude_ranges(&covered_ranges);
+            }
+        }
+    }
+
     #[cfg(test)]
     pub fn is_rewrapping(&self, cx: &gpui::App) -> bool {
         self.wrap_map.read(cx).is_rewrapping()
     }
 }
+
+impl gpui::EventEmitter<DisplayMapEvent> for DisplayMap {}
 
 #[derive(Debug, Default)]
 pub(crate) struct Highlights<'a> {
@@ -1854,23 +2044,17 @@ impl ToDisplayPoint for Anchor {
 }
 impl SemanticTokenView {
     pub fn new(
-        buffer_id: BufferId,
-        multibuffer: &MultiBuffer,
+        buffer_snapshot: &language::BufferSnapshot,
         lsp: &SemanticTokens,
         legend: &lsp::SemanticTokensLegend,
         variable_color_cache: Option<&Arc<crate::rainbow::VariableColorCache>>,
-        cx: &App,
+        syntax_theme: Option<&theme::SyntaxTheme>,
     ) -> Option<SemanticTokenView> {
-        use crate::editor_settings::EditorSettings;
-        use settings::Settings;
 
-        let Some(buffer) = multibuffer.buffer(buffer_id) else {
-            return None;
-        };
-        let buffer = buffer.read(cx);
-
-        let rainbow_config = EditorSettings::get_global(cx).rainbow_highlighting;
-        let highlights_config = buffer
+        // Use default rainbow config since we're on background thread
+        // The actual rainbow highlighting is applied during rendering anyway
+        let rainbow_config = crate::editor_settings::RainbowConfig::default();
+        let highlights_config = buffer_snapshot
             .language()
             .and_then(|lang| lang.grammar())
             .and_then(|grammar| grammar.highlights_config.as_ref());
@@ -1881,22 +2065,34 @@ impl SemanticTokenView {
             .filter_map(|token| {
                 let start = text::Unclipped(text::PointUtf16::new(token.line, token.start));
                 let (start_offset, end_offset) = point_offset_to_offsets(
-                    buffer.clip_point_utf16(start, Bias::Left),
+                    buffer_snapshot.clip_point_utf16(start, Bias::Left),
                     text::OffsetUtf16(token.length as usize),
-                    &buffer,
+                    &buffer_snapshot.text,
                 );
+
+                // Skip variable/parameter tokens - these are handled by tree-sitter + rainbow
+                let token_type_name = stylizer.token_type(token.token_type)?;
+                let is_variable = highlights_config
+                    .map(|config| config.is_variable_lsp_token_type(token_type_name))
+                    .unwrap_or(false);
+                
+                if is_variable {
+                    return None; // Skip entirely - let tree-sitter + rainbow handle it
+                }
 
                 Some(MultibufferSemanticToken {
                     range: start_offset..end_offset,
+                    // Keep all tokens, even those without colors, so we can preserve rainbow highlighting
+                    // Tokens without colors get default (empty) style, which won't override syntax highlighting
                     style: stylizer.convert(
-                        cx.theme().syntax(),
+                        syntax_theme,
                         token.token_type,
                         token.token_modifiers,
-                        &buffer,
+                        &buffer_snapshot.text,
                         start_offset..end_offset,
                         variable_color_cache,
                         highlights_config,
-                    )?,
+                    ).unwrap_or_default(),
                     lsp_type: token.token_type,
                     lsp_modifiers: token.token_modifiers,
                 })
@@ -1908,7 +2104,7 @@ impl SemanticTokenView {
 
         Some(SemanticTokenView {
             tokens,
-            version: buffer.version(),
+            version: buffer_snapshot.version().clone(),
         })
     }
 
@@ -1930,7 +2126,7 @@ impl SemanticTokenView {
 fn point_offset_to_offsets(
     point: text::PointUtf16,
     length: text::OffsetUtf16,
-    buffer: &text::Buffer,
+    buffer: &text::BufferSnapshot,
 ) -> (usize, usize) {
     let start = buffer.as_rope().point_utf16_to_offset(point);
     let start_offset = buffer.as_rope().offset_to_offset_utf16(start);
@@ -1948,13 +2144,12 @@ fn point_offset_to_offsets(
 struct SemanticTokenStylizer<'a> {
     token_types: Vec<&'a str>,
     modifier_mask: HashMap<&'a str, u32>,
-    rainbow_config: &'a crate::editor_settings::RainbowConfig,
 }
 
 impl<'a> SemanticTokenStylizer<'a> {
     pub fn new(
         legend: &'a lsp::SemanticTokensLegend,
-        rainbow_config: &'a crate::editor_settings::RainbowConfig,
+        _rainbow_config: &'a crate::editor_settings::RainbowConfig,
     ) -> Self {
         let token_types = legend.token_types.iter().map(|s| s.as_str()).collect();
         let modifier_mask = legend
@@ -1966,7 +2161,6 @@ impl<'a> SemanticTokenStylizer<'a> {
         SemanticTokenStylizer {
             token_types,
             modifier_mask,
-            rainbow_config,
         }
     }
 
@@ -1983,15 +2177,24 @@ impl<'a> SemanticTokenStylizer<'a> {
 
     pub fn convert(
         &self,
-        theme: &'a SyntaxTheme,
+        theme: Option<&'a SyntaxTheme>,
         token_type: u32,
         modifiers: u32,
-        buffer: &text::Buffer,
-        range: Range<usize>,
-        variable_color_cache: Option<&Arc<crate::rainbow::VariableColorCache>>,
+        _buffer: &text::BufferSnapshot,
+        _range: Range<usize>,
+        _variable_color_cache: Option<&Arc<crate::rainbow::VariableColorCache>>,
         highlights_config: Option<&language::HighlightsConfig>,
     ) -> Option<HighlightStyle> {
         let token_type_name = self.token_type(token_type)?;
+        
+        // Return None for variables - let tree-sitter + rainbow handle them
+        let is_variable = highlights_config
+            .map(|config| config.is_variable_lsp_token_type(token_type_name))
+            .unwrap_or(false);
+        
+        if is_variable {
+            return None;
+        }
         let has_modifier = |modifier| self.has_modifier(modifiers, modifier);
 
         let choices: &[&str] = match token_type_name {
@@ -2091,33 +2294,21 @@ impl<'a> SemanticTokenStylizer<'a> {
             }
         };
 
-        // Rainbow coloring for variables (when enabled)
-        // Use language configuration to determine if this is a variable token
-        let is_variable = highlights_config
-            .map(|config| config.is_variable_lsp_token_type(token_type_name))
-            .unwrap_or(false);
-
-        if is_variable && self.rainbow_config.enabled {
-            if let Some(cache) = variable_color_cache {
-                let variable_name: String = buffer.text_for_range(range).collect();
-                if let Some(validated) =
-                    crate::rainbow::validate_identifier_for_rainbow(&variable_name)
-                {
-                    return Some(cache.get_or_insert(validated, theme));
-                }
-                // Validation failed (keyword, single char, etc.) - fall through to theme color
-            }
-        }
+        
 
         // Theme color lookup: try each choice in order until we find one with a color
-        for choice in choices {
-            if let Some(style) = theme.get_opt(choice) {
-                if style.color.is_some() {
-                    return Some(style);
+        if let Some(theme) = theme {
+            for choice in choices {
+                if let Some(style) = theme.get_opt(choice) {
+                    if style.color.is_some() {
+                        return Some(style);
+                    }
                 }
             }
         }
 
+        // No color found in theme: return None to preserve tree-sitter syntax + rainbow colors
+        // This allows fallback highlighting (including rainbow) to show through
         None
     }
 }
@@ -2192,6 +2383,7 @@ pub mod tests {
         let map = cx.new(|cx| {
             DisplayMap::new(
                 buffer.clone(),
+                None,
                 font,
                 font_size,
                 wrap_width,
@@ -2441,6 +2633,7 @@ pub mod tests {
             let map = cx.new(|cx| {
                 DisplayMap::new(
                     buffer.clone(),
+                    None,
                     font("Helvetica"),
                     font_size,
                     wrap_width,
@@ -2551,6 +2744,7 @@ pub mod tests {
         let map = cx.new(|cx| {
             DisplayMap::new(
                 buffer.clone(),
+                None,
                 font("Helvetica"),
                 font_size,
                 None,
@@ -2613,6 +2807,7 @@ pub mod tests {
         let map = cx.new(|cx| {
             DisplayMap::new(
                 buffer.clone(),
+                None,
                 font("Helvetica"),
                 font_size,
                 None,
@@ -2710,6 +2905,7 @@ pub mod tests {
         let map = cx.new(|cx| {
             DisplayMap::new(
                 buffer,
+                None,
                 font("Helvetica"),
                 font_size,
                 None,
@@ -2811,6 +3007,7 @@ pub mod tests {
         let map = cx.new(|cx| {
             DisplayMap::new(
                 buffer,
+                None,
                 font("Courier"),
                 px(16.0),
                 None,
@@ -2915,6 +3112,7 @@ pub mod tests {
         let map = cx.new(|cx| {
             DisplayMap::new(
                 buffer,
+                None,
                 font("Courier"),
                 px(16.0),
                 None,
@@ -3004,6 +3202,7 @@ pub mod tests {
         let map = cx.new(|cx| {
             DisplayMap::new(
                 buffer.clone(),
+                None,
                 font("Courier"),
                 px(16.0),
                 None,
@@ -3145,6 +3344,7 @@ pub mod tests {
         let map = cx.new(|cx| {
             DisplayMap::new(
                 buffer,
+                None,
                 font("Courier"),
                 font_size,
                 Some(px(40.0)),
@@ -3233,6 +3433,7 @@ pub mod tests {
         let map = cx.new(|cx| {
             DisplayMap::new(
                 buffer,
+                None,
                 font("Courier"),
                 font_size,
                 None,
@@ -3358,6 +3559,7 @@ pub mod tests {
         cx.new(|cx| {
             let mut map = DisplayMap::new(
                 buffer.clone(),
+                None,
                 font("Helvetica"),
                 font_size,
                 None,
@@ -3396,6 +3598,7 @@ pub mod tests {
         let map = cx.new(|cx| {
             DisplayMap::new(
                 buffer.clone(),
+                None,
                 font("Helvetica"),
                 font_size,
                 None,
@@ -3472,6 +3675,7 @@ pub mod tests {
         let map = cx.new(|cx| {
             DisplayMap::new(
                 buffer.clone(),
+                None,
                 font("Helvetica"),
                 font_size,
                 None,
