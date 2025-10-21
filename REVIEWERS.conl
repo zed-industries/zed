@@ -43,6 +43,7 @@ windows
 pickers
   = @p1n3appl3
   = @dvdsk
+  = @SomeoneToIgnore
 
 audio
   = @dvdsk
@@ -89,6 +90,10 @@ languages
   = @osiewicz
   = @Veykril
   = @smitbarmase
+  = @SomeoneToIgnore
 
 project_panel
   = @smitbarmase
+
+tasks
+  = @SomeoneToIgnore
