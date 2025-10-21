@@ -3050,7 +3050,7 @@ fn render_font_picker(
         .menu(move |_window, _cx| Some(font_picker.clone()))
         .trigger(render_picker_trigger_button(
             "font_family_picker_trigger".into(),
-            current_value,
+            current_value.into(),
         ))
         .anchor(gpui::Corner::TopLeft)
         .offset(gpui::Point {
@@ -3076,7 +3076,7 @@ fn render_theme_picker(
 
     let theme_picker = cx.new(|cx| {
         theme_picker(
-            current_value.clone().into(),
+            current_value.clone(),
             move |theme_name, cx| {
                 update_settings_file(file.clone(), cx, move |settings, _cx| {
                     (field.write)(settings, Some(settings::ThemeName(theme_name.into())));
@@ -3118,7 +3118,7 @@ fn render_icon_theme_picker(
 
     let icon_theme_picker = cx.new(|cx| {
         icon_theme_picker(
-            current_value.clone().into(),
+            current_value.clone(),
             move |theme_name, cx| {
                 update_settings_file(file.clone(), cx, move |settings, _cx| {
                     (field.write)(settings, Some(settings::IconThemeName(theme_name.into())));
