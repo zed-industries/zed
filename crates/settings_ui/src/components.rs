@@ -62,10 +62,6 @@ impl RenderOnce for SettingsEditor {
             }
         });
 
-        if let Some(tab_index) = self.tab_index {
-            editor.focus_handle(cx).tab_index(tab_index);
-        }
-
         let weak_editor = editor.downgrade();
 
         let theme_colors = cx.theme().colors();
@@ -78,6 +74,11 @@ impl RenderOnce for SettingsEditor {
             .border_1()
             .border_color(theme_colors.border)
             .bg(theme_colors.editor_background)
+            .when_some(self.tab_index, |this, tab_index| {
+                let focus_handle = editor.focus_handle(cx).tab_index(tab_index).tab_stop(true);
+                this.track_focus(&focus_handle)
+                    .focus(|s| s.border_color(theme_colors.border_focused))
+            })
             .child(editor)
             .when_some(self.confirm, |this, confirm| {
                 this.on_action::<menu::Confirm>({
