@@ -461,27 +461,19 @@ pub enum PaneSplitDirectionVertical {
     Right,
 }
 
-impl CenteredLayoutSettings {
-    pub const MIN_PADDING: f32 = 0.0;
-    pub const DEFAULT_PADDING: f32 = 0.2;
-    pub const MAX_PADDING: f32 = 0.4;
-}
-
-#[skip_serializing_none]
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Default)]
 #[serde(rename_all = "snake_case")]
+#[skip_serializing_none]
 pub struct CenteredLayoutSettings {
     /// The relative width of the left padding of the central pane from the
     /// workspace when the centered layout is used.
     ///
     /// Default: 0.2
-    #[schemars(range(min = CenteredLayoutSettings::MIN_PADDING, max = CenteredLayoutSettings::MAX_PADDING))]
     pub left_padding: Option<CenteredPaddingSettings>,
     // The relative width of the right padding of the central pane from the
     // workspace when the centered layout is used.
     ///
     /// Default: 0.2
-    #[schemars(range(min = CenteredLayoutSettings::MIN_PADDING, max = CenteredLayoutSettings::MAX_PADDING))]
     pub right_padding: Option<CenteredPaddingSettings>,
 }
 

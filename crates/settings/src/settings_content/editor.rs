@@ -851,7 +851,6 @@ impl From<f32> for InactiveOpacity {
     Debug,
     Serialize,
     Deserialize,
-    JsonSchema,
     MergeFrom,
     PartialEq,
     PartialOrd,
@@ -859,6 +858,13 @@ impl From<f32> for InactiveOpacity {
 )]
 #[serde(transparent)]
 pub struct CenteredPaddingSettings(pub f32);
+
+impl CenteredPaddingSettings {
+    pub const MIN_PADDING: f32 = 0.0;
+    // This is an f64 so serde_json can give a type hint without random numbers in the back
+    pub const DEFAULT_PADDING: f64 = 0.2;
+    pub const MAX_PADDING: f32 = 0.4;
+}
 
 impl Display for CenteredPaddingSettings {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -869,5 +875,28 @@ impl Display for CenteredPaddingSettings {
 impl From<f32> for CenteredPaddingSettings {
     fn from(x: f32) -> Self {
         Self(x)
+    }
+}
+
+impl Default for CenteredPaddingSettings {
+    fn default() -> Self {
+        Self(Self::DEFAULT_PADDING as f32)
+    }
+}
+
+impl schemars::JsonSchema for CenteredPaddingSettings {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "CenteredPaddingSettings".into()
+    }
+
+    fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        use schemars::json_schema;
+        json_schema!({
+            "type": "number",
+            "minimum": Self::MIN_PADDING,
+            "maximum": Self::MAX_PADDING,
+            "default": Self::DEFAULT_PADDING,
+            "description": "Centered layout related setting (left/right)."
+        })
     }
 }

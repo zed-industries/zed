@@ -83,7 +83,7 @@ use remote::{
 use schemars::JsonSchema;
 use serde::Deserialize;
 use session::AppSession;
-use settings::{CenteredLayoutSettings, Settings, SettingsLocation, update_settings_file};
+use settings::{CenteredPaddingSettings, Settings, SettingsLocation, update_settings_file};
 use shared_screen::SharedScreen;
 use sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
@@ -5922,10 +5922,10 @@ impl Workspace {
 
     fn adjust_padding(padding: Option<f32>) -> f32 {
         padding
-            .unwrap_or(CenteredLayoutSettings::DEFAULT_PADDING)
+            .unwrap_or(CenteredPaddingSettings::default().0)
             .clamp(
-                CenteredLayoutSettings::MIN_PADDING,
-                CenteredLayoutSettings::MAX_PADDING,
+                CenteredPaddingSettings::MIN_PADDING,
+                CenteredPaddingSettings::MAX_PADDING,
             )
     }
 
