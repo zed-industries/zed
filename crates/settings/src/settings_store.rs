@@ -586,6 +586,13 @@ impl SettingsStore {
 
         (SettingsFile::Default, None)
     }
+
+    pub fn error_for_file(&self, file: SettingsFile) -> Option<String> {
+        if file == SettingsFile::User {
+            return Some("User settings file not found".to_string());
+        }
+        return None;
+    }
 }
 
 impl SettingsStore {
