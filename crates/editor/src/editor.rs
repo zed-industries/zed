@@ -4097,7 +4097,7 @@ impl Editor {
         let snapshot = self.buffer.read(cx).read(cx);
         let mut clear_linked_edit_ranges = false;
 
-        let selections_len = selections.len().clone();
+        let selections_len = selections.len();
 
         for (selection, autoclose_region) in
             self.selections_with_autoclose_regions(selections, &snapshot)
