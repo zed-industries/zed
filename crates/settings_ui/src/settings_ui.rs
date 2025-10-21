@@ -86,25 +86,24 @@ struct FocusFile(pub u32);
 struct SettingField<T: 'static> {
     pick: fn(&SettingsContent) -> Option<&T>,
     write: fn(&mut SettingsContent, Option<T>),
-    
+
     /// A json-path-like string that gives a unique-ish string that identifies
     /// where in the JSON the setting is defined.
-    /// 
+    ///
     /// The syntax is `jq`-like, but modified slightly to be URL-safe (and
     /// without the leading dot), e.g. `foo.bar`.
-    /// 
+    ///
     /// They are URL-safe (this is important since links are the main use-case
-    /// for these paths). 
-    /// 
+    /// for these paths).
+    ///
     /// There are a couple of special cases:
     /// - discrimminants are represented with a trailing `$`, for example
     /// `terminal.working_directory$`. This is to distinguish the discrimminant
     /// setting (i.e. the setting that changes whether the value is a string or
     /// an object) from the setting in the case that it is a string.
-    /// - language-specific settings have a `$(language)` component in the
-    /// middle. While each setting item in `page_data.rs` is unique, both
-    /// `languages.Rust.tab_size` and `languages.C.tab_size` are mapped by
-    /// `languages.$(language).tab_size`. 
+    /// - language-specific settings begin `languages.$(language)`. Links
+    /// targeting these settings should take the form `languages/Rust/...`, for
+    /// example, but are not currently supported.
     json_path: Option<&'static str>,
 }
 
@@ -387,7 +386,7 @@ pub fn init(cx: &mut App) {
                     .window_handle()
                     .downcast::<Workspace>()
                     .expect("Workspaces are root Windows");
-                open_settings_editor(workspace, window_handle, cx, Some(&path));
+                open_settings_editor(workspace, Some(&path), window_handle, cx);
             },
         );
     })
@@ -399,7 +398,7 @@ pub fn init(cx: &mut App) {
                 .window_handle()
                 .downcast::<Workspace>()
                 .expect("Workspaces are root Windows");
-            open_settings_editor(workspace, window_handle, cx, None);
+            open_settings_editor(workspace, None, window_handle, cx);
         });
     })
     .detach();
@@ -501,31 +500,68 @@ fn init_renderers(cx: &mut App) {
 
 pub fn open_settings_editor(
     _workspace: &mut Workspace,
+    path: Option<&str>,
     workspace_handle: WindowHandle<Workspace>,
     cx: &mut App,
-    path: Option<&str>,
 ) {
+    /// Assumes a settings GUI window is already open
     fn open_path(
         path: &str,
-        window: &mut Window,
         settings_window: &mut SettingsWindow,
-        cx: &mut App,
+        window: &mut Window,
+        cx: &mut Context<SettingsWindow>,
     ) {
-        let item = settings_window
-            .pages
-            .iter()
-            .flat_map(|page| &page.items)
-            .find_map(|item| match item {
-                SettingsPageItem::SettingItem(item) if item.field.json_path() == Some(path) => Some(item),
-                _ => None,
-            });
+        if path.starts_with("languages.$(language)") {
+            log::error!("language-specific settings links are not currently supported");
+            return;
+        }
+        
+        settings_window.current_file = SettingsUiFile::User;
+        settings_window.build_ui(window, cx);
 
-        let Some(item) = item else {
-            todo!("cameron"); // show an error popup maybe
+        let mut item_info = None;
+        'search: for (nav_entry_index, entry) in settings_window.navbar_entries.iter().enumerate() {
+            if entry.is_root {
+                continue;
+            }
+            let page_index = entry.page_index;
+            let header_index = entry
+                .item_index
+                .expect("non-root entries should have an item index");
+            for item_index in header_index + 1..settings_window.pages[page_index].items.len() {
+                let item = &settings_window.pages[page_index].items[item_index];
+                if let SettingsPageItem::SectionHeader(_) = item {
+                    break;
+                }
+                if let SettingsPageItem::SettingItem(item) = item {
+                    if item.field.json_path() == Some(path) {
+                        if !item.files.contains(USER) {
+                            log::error!("Found item {}, but it is not a user setting", path);
+                            return;
+                        }
+                        item_info = Some((item_index, nav_entry_index));
+                        break 'search;
+                    }
+                }
+            }
+        }
+        let Some((item_index, navbar_entry_index)) = item_info else {
+            log::error!("Failed to find item for {}", path);
+            // todo! error?
+            return;
         };
 
-        // settings_window.open_and_scroll_to_setting(item, window, cx, focus_content);
-        todo!("cameron");
+        // todo! add expand behavior to open_navbar_entry_page
+        settings_window.open_navbar_entry_page(navbar_entry_index);
+        settings_window.focus_content_element(item_index, window, cx);
+        settings_window.scroll_to_content_item(item_index, window, cx);
+
+        // x set current file to user
+        // x reset search
+        // x set current page to page containing item with path
+        // x bail if item not included in user file
+        // x set current nav entry to page + section containing item
+        // x scroll to item and focus it
     }
 
     let existing_window = cx
@@ -540,7 +576,7 @@ pub fn open_settings_editor(
                 settings_window.observe_last_window_close(cx);
                 window.activate_window();
                 if let Some(path) = path {
-                    open_path(path, window, settings_window, cx);
+                    open_path(path, settings_window, window, cx);
                 }
             })
             .ok();
@@ -584,10 +620,9 @@ pub fn open_settings_editor(
             |window, cx| {
                 let settings_window =
                     cx.new(|cx| SettingsWindow::new(Some(workspace_handle), window, cx));
-
                 settings_window.update(cx, |settings_window, cx| {
                     if let Some(path) = path {
-                        open_path(&path, window, settings_window, cx);
+                        open_path(&path, settings_window, window, cx);
                     }
                 });
 
@@ -2128,17 +2163,7 @@ impl SettingsWindow {
             let entry_item_index = self.navbar_entries[navbar_entry_index]
                 .item_index
                 .expect("Non-root items should have an item index");
-            let Some(selected_item_index) = self
-                .visible_page_items()
-                .position(|(index, _)| index == entry_item_index)
-            else {
-                return;
-            };
-
-            self.list_state.scroll_to(gpui::ListOffset {
-                item_ix: selected_item_index + 1,
-                offset_in_item: px(0.),
-            });
+            self.scroll_to_content_item(entry_item_index, window, cx);
             if focus_content {
                 self.focus_content_element(entry_item_index, window, cx);
             } else {
@@ -2156,6 +2181,32 @@ impl SettingsWindow {
                 cx.notify();
             });
             cx.notify();
+        });
+        cx.notify();
+    }
+
+    fn scroll_to_content_item(
+        &self,
+        content_item_index: usize,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let index = self
+            .visible_page_items()
+            .position(|(index, _)| index == content_item_index)
+            .unwrap_or(0);
+        if index == 0 {
+            self.sub_page_scroll_handle
+                .set_offset(point(px(0.), px(0.)));
+            self.list_state.scroll_to(gpui::ListOffset {
+                item_ix: 0,
+                offset_in_item: px(0.),
+            });
+            return;
+        }
+        self.list_state.scroll_to(gpui::ListOffset {
+            item_ix: index + 1,
+            offset_in_item: px(0.),
         });
         cx.notify();
     }

@@ -5616,7 +5616,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             title: "Tab Size",
             description: "How many columns a tab should occupy",
             field: Box::new(SettingField {
-                json_path: Some("languages.*.tab_size"), // TODO(cameron): not JQ syntax because not URL-safe
+                json_path: Some("languages.$(language).tab_size"), // TODO(cameron): not JQ syntax because not URL-safe
                 pick: |settings_content| {
                     language_settings_field(settings_content, |language| language.tab_size.as_ref())
                 },
