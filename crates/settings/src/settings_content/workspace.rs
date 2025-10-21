@@ -8,7 +8,7 @@ use settings_macros::MergeFrom;
 
 use crate::{
     CenteredPaddingSettings, DelayMs, DockPosition, DockSide, InactiveOpacity,
-    ScrollbarSettingsContent, ShowIndentGuides,
+    ScrollbarSettingsContent, ShowIndentGuides, serialize_optional_f32_with_two_decimal_places,
 };
 
 #[skip_serializing_none]
@@ -59,6 +59,7 @@ pub struct WorkspaceSettingsContent {
     /// Given as a fraction that will be multiplied by the smaller dimension of the workspace.
     ///
     /// Default: `0.2` (20% of the smaller dimension of the workspace)
+    #[serde(serialize_with = "serialize_optional_f32_with_two_decimal_places")]
     pub drop_target_size: Option<f32>,
     /// Whether to close the window when using 'close active item' on a workspace with no tabs
     ///
@@ -252,6 +253,7 @@ pub struct ActivePaneModifiers {
     /// The border is drawn inset.
     ///
     /// Default: `0.0`
+    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
     pub border_size: Option<f32>,
     /// Opacity of inactive panels.
     /// When set to 1.0, the inactive panes have the same opacity as the active one.
@@ -522,6 +524,7 @@ pub struct ProjectPanelSettingsContent {
     /// Customize default width (in pixels) taken by project panel
     ///
     /// Default: 240
+    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
     pub default_width: Option<f32>,
     /// The position of project panel
     ///
@@ -546,6 +549,7 @@ pub struct ProjectPanelSettingsContent {
     /// Amount of indentation (in pixels) for nested items.
     ///
     /// Default: 20
+    #[serde(serialize_with = "serialize_optional_f32_with_two_decimal_places")]
     pub indent_size: Option<f32>,
     /// Whether to reveal it in the project panel automatically,
     /// when a corresponding project entry becomes active.
