@@ -505,7 +505,7 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
                     label: "third_method(…)".into(),
                     detail: Some("fn(&mut self, B, C, D) -> E".into()),
                     text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
-                        // no snippet placehodlers
+                        // no snippet placeholders
                         new_text: "third_method".to_string(),
                         range: lsp::Range::new(
                             lsp::Position::new(1, 32),
