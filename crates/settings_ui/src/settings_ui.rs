@@ -715,7 +715,6 @@ impl SettingsPageItem {
                 .id(sub_page_link.title.clone())
                 .w_full()
                 .min_w_0()
-                .debug_bg_blue()
                 .justify_between()
                 .map(apply_padding)
                 .child(
