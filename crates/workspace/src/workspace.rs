@@ -83,7 +83,7 @@ use remote::{
 use schemars::JsonSchema;
 use serde::Deserialize;
 use session::AppSession;
-use settings::{Settings, SettingsLocation, update_settings_file};
+use settings::{CenteredPaddingSettings, Settings, SettingsLocation, update_settings_file};
 use shared_screen::SharedScreen;
 use sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
@@ -1199,9 +1199,6 @@ struct FollowerView {
 }
 
 impl Workspace {
-    const DEFAULT_PADDING: f32 = 0.2;
-    const MAX_PADDING: f32 = 0.4;
-
     pub fn new(
         workspace_id: Option<WorkspaceId>,
         project: Entity<Project>,
@@ -5938,8 +5935,11 @@ impl Workspace {
 
     fn adjust_padding(padding: Option<f32>) -> f32 {
         padding
-            .unwrap_or(Self::DEFAULT_PADDING)
-            .clamp(0.0, Self::MAX_PADDING)
+            .unwrap_or(CenteredPaddingSettings::default().0)
+            .clamp(
+                CenteredPaddingSettings::MIN_PADDING,
+                CenteredPaddingSettings::MAX_PADDING,
+            )
     }
 
     fn render_dock(
@@ -6423,8 +6423,12 @@ impl Render for Workspace {
         let paddings = if centered_layout {
             let settings = WorkspaceSettings::get_global(cx).centered_layout;
             (
-                render_padding(Self::adjust_padding(settings.left_padding)),
-                render_padding(Self::adjust_padding(settings.right_padding)),
+                render_padding(Self::adjust_padding(
+                    settings.left_padding.map(|padding| padding.0),
+                )),
+                render_padding(Self::adjust_padding(
+                    settings.right_padding.map(|padding| padding.0),
+                )),
             )
         } else {
             (None, None)
@@ -7015,7 +7019,9 @@ actions!(
     zed,
     [
         /// Opens the Zed log file.
-        OpenLog
+        OpenLog,
+        /// Reveals the Zed log file in the system file manager.
+        RevealLogInFileManager
     ]
 );
 

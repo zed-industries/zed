@@ -321,7 +321,33 @@ impl FileHandle for std::fs::File {
 
     #[cfg(target_os = "windows")]
     fn current_path(&self, _: &Arc<dyn Fs>) -> Result<PathBuf> {
-        anyhow::bail!("unimplemented")
+        use std::ffi::OsString;
+        use std::os::windows::ffi::OsStringExt;
+        use std::os::windows::io::AsRawHandle;
+
+        use windows::Win32::Foundation::HANDLE;
+        use windows::Win32::Storage::FileSystem::{
+            FILE_NAME_NORMALIZED, GetFinalPathNameByHandleW,
+        };
+
+        let handle = HANDLE(self.as_raw_handle() as _);
+
+        // Query required buffer size (in wide chars)
+        let required_len =
+            unsafe { GetFinalPathNameByHandleW(handle, &mut [], FILE_NAME_NORMALIZED) };
+        if required_len == 0 {
+            anyhow::bail!("GetFinalPathNameByHandleW returned 0 length");
+        }
+
+        // Allocate buffer and retrieve the path
+        let mut buf: Vec<u16> = vec![0u16; required_len as usize + 1];
+        let written = unsafe { GetFinalPathNameByHandleW(handle, &mut buf, FILE_NAME_NORMALIZED) };
+        if written == 0 {
+            anyhow::bail!("GetFinalPathNameByHandleW failed to write path");
+        }
+
+        let os_str: OsString = OsString::from_wide(&buf[..written as usize]);
+        Ok(PathBuf::from(os_str))
     }
 }
 

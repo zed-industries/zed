@@ -102,6 +102,7 @@ impl HeadlessProject {
                 worktree_store.clone(),
                 environment.clone(),
                 manifest_tree.clone(),
+                fs.clone(),
                 cx,
             )
         });
@@ -639,15 +640,9 @@ impl HeadlessProject {
             PathStyle::local(),
         )?;
         let results = this.update(&mut cx, |this, cx| {
-            project::Search::local(
-                this.fs.clone(),
-                this.buffer_store.clone(),
-                this.worktree_store.clone(),
-                message.limit as _,
-                cx,
-            )
-            .into_handle(query, cx)
-            .matching_buffers(cx)
+            this.buffer_store.update(cx, |buffer_store, cx| {
+                buffer_store.find_search_candidates(&query, message.limit as _, this.fs.clone(), cx)
+            })
         })?;
 
         let mut response = proto::FindSearchCandidatesResponse {

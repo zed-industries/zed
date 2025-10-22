@@ -246,7 +246,7 @@ jobs:
 
   bundle-windows-x64:
     timeout-minutes: 60
-    name: Create a Windows installer
+    name: Create a Windows installer for x86_64
     if: github.repository_owner == 'zed-industries'
     runs-on: [self-32vcpu-windows-2022]
     needs: windows-tests
@@ -281,11 +281,54 @@ jobs:
 
       - name: Build Zed installer
         working-directory: ${{ env.ZED_WORKSPACE }}
-        run: script/bundle-windows.ps1
+        run: script/bundle-windows.ps1 -Architecture x86_64
 
       - name: Upload Zed Nightly
         working-directory: ${{ env.ZED_WORKSPACE }}
-        run: script/upload-nightly.ps1 windows
+        run: script/upload-nightly.ps1 -Architecture x86_64
+
+  bundle-windows-arm64:
+    timeout-minutes: 60
+    name: Create a Windows installer for aarch64
+    if: github.repository_owner == 'zed-industries'
+    runs-on: [self-32vcpu-windows-2022]
+    needs: windows-tests
+    env:
+      AZURE_TENANT_ID: ${{ secrets.AZURE_SIGNING_TENANT_ID }}
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_SIGNING_CLIENT_ID }}
+      AZURE_CLIENT_SECRET: ${{ secrets.AZURE_SIGNING_CLIENT_SECRET }}
+      ACCOUNT_NAME: ${{ vars.AZURE_SIGNING_ACCOUNT_NAME }}
+      CERT_PROFILE_NAME: ${{ vars.AZURE_SIGNING_CERT_PROFILE_NAME }}
+      ENDPOINT: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+      FILE_DIGEST: SHA256
+      TIMESTAMP_DIGEST: SHA256
+      TIMESTAMP_SERVER: "http://timestamp.acs.microsoft.com"
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+        with:
+          clean: false
+
+      - name: Set release channel to nightly
+        working-directory: ${{ env.ZED_WORKSPACE }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $version = git rev-parse --short HEAD
+          Write-Host "Publishing version: $version on release channel nightly"
+          "nightly" | Set-Content -Path "crates/zed/RELEASE_CHANNEL"
+
+      - name: Setup Sentry CLI
+        uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b #v2
+        with:
+          token: ${{ SECRETS.SENTRY_AUTH_TOKEN }}
+
+      - name: Build Zed installer
+        working-directory: ${{ env.ZED_WORKSPACE }}
+        run: script/bundle-windows.ps1 -Architecture aarch64
+
+      - name: Upload Zed Nightly
+        working-directory: ${{ env.ZED_WORKSPACE }}
+        run: script/upload-nightly.ps1 -Architecture aarch64
 
   update-nightly-tag:
     name: Update nightly tag
@@ -296,6 +339,7 @@ jobs:
       - bundle-linux-x86
       - bundle-linux-arm
       - bundle-windows-x64
+      - bundle-windows-arm64
     steps:
       - name: Checkout repo
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
