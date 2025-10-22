@@ -25,6 +25,10 @@ impl AgentServer for Gemini {
         ui::IconName::AiGemini
     }
 
+    fn login_commands(&self) -> Vec<&'static str> {
+        vec!["login"]
+    }
+
     fn connect(
         &self,
         root_dir: Option<&Path>,

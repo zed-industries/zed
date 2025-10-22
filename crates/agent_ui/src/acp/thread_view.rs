@@ -1052,20 +1052,36 @@ impl AcpThreadView {
 
         let text = self.message_editor.read(cx).text(cx);
         let text = text.trim();
-        if text == "/login" || text == "/logout" {
+
+        // Check if this is a login or logout command
+        let command_name = text.strip_prefix('/');
+        let is_login_command = if let Some(cmd) = command_name {
+            self.agent.login_commands().contains(&cmd)
+        } else {
+            false
+        };
+        let is_logout_command = if let Some(cmd) = command_name {
+            self.agent.logout_commands().contains(&cmd)
+        } else {
+            false
+        };
+
+        if is_login_command || is_logout_command {
             let ThreadState::Ready { thread, .. } = &self.thread_state else {
                 return;
             };
 
             let connection = thread.read(cx).connection().clone();
             let can_login = !connection.auth_methods().is_empty() || !self.auth_commands.is_empty();
+
             // Does the agent have a specific logout command? Prefer that in case they need to reset internal state.
-            let logout_supported = text == "/logout"
+            let logout_supported = is_logout_command
                 && self
                     .available_commands
                     .borrow()
                     .iter()
-                    .any(|command| command.name == "logout");
+                    .any(|command| command_name == Some(command.name.as_str()));
+
             if can_login && !logout_supported {
                 self.message_editor
                     .update(cx, |editor, cx| editor.clear(window, cx));
@@ -1422,21 +1438,20 @@ impl AcpThreadView {
             AcpThreadEvent::AvailableCommandsUpdated(available_commands) => {
                 let mut available_commands = available_commands.clone();
 
-                if thread
-                    .read(cx)
-                    .connection()
-                    .auth_methods()
-                    .iter()
-                    .any(|method| method.id.0.as_ref() == "claude-login")
-                {
+                // Add login commands from the agent
+                for command_name in self.agent.login_commands() {
                     available_commands.push(acp::AvailableCommand {
-                        name: "login".to_owned(),
+                        name: command_name.to_owned(),
                         description: "Authenticate".to_owned(),
                         input: None,
                         meta: None,
                     });
+                }
+
+                // Add logout commands from the agent
+                for command_name in self.agent.logout_commands() {
                     available_commands.push(acp::AvailableCommand {
-                        name: "logout".to_owned(),
+                        name: command_name.to_owned(),
                         description: "Authenticate".to_owned(),
                         input: None,
                         meta: None,
