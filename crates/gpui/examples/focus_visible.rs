@@ -47,7 +47,8 @@ impl Example {
 
     fn on_tab_prev(&mut self, _: &TabPrev, window: &mut Window, _: &mut Context<Self>) {
         window.focus_prev();
-        self.message = SharedString::from("Pressed Shift-Tab - focus-visible border should appear!");
+        self.message =
+            SharedString::from("Pressed Shift-Tab - focus-visible border should appear!");
     }
 
     fn on_quit(&mut self, _: &Quit, _window: &mut Window, cx: &mut Context<Self>) {
@@ -121,9 +122,7 @@ impl Render for Example {
                                 button_base("button1", self.items[0].1)
                                     .track_focus(&self.items[0].0)
                                     .focus(|style| {
-                                        style
-                                            .border_4()
-                                            .border_color(gpui::rgb(0xfbbf24))
+                                        style.border_4().border_color(gpui::rgb(0xfbbf24))
                                     })
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         this.message =
@@ -148,9 +147,7 @@ impl Render for Example {
                                 button_base("button2", self.items[1].1)
                                     .track_focus(&self.items[1].0)
                                     .focus_visible(|style| {
-                                        style
-                                            .border_4()
-                                            .border_color(gpui::rgb(0x10b981))
+                                        style.border_4().border_color(gpui::rgb(0x10b981))
                                     })
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         this.message =
@@ -169,24 +166,23 @@ impl Render for Example {
                                     .text_sm()
                                     .font_weight(gpui::FontWeight::BOLD)
                                     .text_color(gpui::rgb(0x374151))
-                                    .child("3. Both .focus() (yellow) and .focus_visible() (green):"),
+                                    .child(
+                                        "3. Both .focus() (yellow) and .focus_visible() (green):",
+                                    ),
                             )
                             .child(
                                 button_base("button3", self.items[2].1)
                                     .track_focus(&self.items[2].0)
                                     .focus(|style| {
-                                        style
-                                            .border_4()
-                                            .border_color(gpui::rgb(0xfbbf24))
+                                        style.border_4().border_color(gpui::rgb(0xfbbf24))
                                     })
                                     .focus_visible(|style| {
-                                        style
-                                            .border_4()
-                                            .border_color(gpui::rgb(0x10b981))
+                                        style.border_4().border_color(gpui::rgb(0x10b981))
                                     })
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         this.message =
-                                            "Clicked button 3 - yellow border. Tab shows green!".into();
+                                            "Clicked button 3 - yellow border. Tab shows green!"
+                                                .into();
                                         cx.notify();
                                     })),
                             ),

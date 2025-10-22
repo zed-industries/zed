@@ -3592,7 +3592,9 @@ impl Window {
         // Track whether this input was keyboard-based for focus-visible styling
         self.last_input_was_keyboard = matches!(
             event,
-            PlatformInput::KeyDown(_) | PlatformInput::KeyUp(_) | PlatformInput::ModifiersChanged(_)
+            PlatformInput::KeyDown(_)
+                | PlatformInput::KeyUp(_)
+                | PlatformInput::ModifiersChanged(_)
         );
 
         // Handlers may set this to false by calling `stop_propagation`.
