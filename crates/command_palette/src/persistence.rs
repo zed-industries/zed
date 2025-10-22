@@ -71,7 +71,8 @@ impl Domain for CommandPaletteDB {
         sql!(
             CREATE TABLE IF NOT EXISTS command_palette_settings(
                 id INTEGER PRIMARY KEY CHECK (id = 1),
-                width REAL
+                width REAL,
+                height REAL
             ) STRICT;
         ),
     ];
@@ -142,6 +143,19 @@ impl CommandPaletteDB {
         pub async fn set_command_palette_width(width: f32) -> Result<()> {
             INSERT OR REPLACE INTO command_palette_settings (id, width) VALUES (1, ?)
             ON CONFLICT(id) DO UPDATE SET width = excluded.width
+        }
+    }
+
+    query! {
+        pub fn get_command_palette_height() -> Result<Option<f32>> {
+            SELECT height FROM command_palette_settings WHERE id = 1
+        }
+    }
+
+    query! {
+        pub async fn set_command_palette_height(height: f32) -> Result<()> {
+            INSERT OR REPLACE INTO command_palette_settings (id, height) VALUES (1, ?)
+            ON CONFLICT(id) DO UPDATE SET height = excluded.height
         }
     }
 }
@@ -263,5 +277,25 @@ mod tests {
         let retrieved_width = db.get_command_palette_width().unwrap();
         assert!(retrieved_width.is_some());
         assert_eq!(retrieved_width.unwrap(), 800.0);
+    }
+
+    #[gpui::test]
+    async fn test_saves_and_retrieves_height() {
+        let db = CommandPaletteDB::open_test_db("test_saves_and_retrieves_height").await;
+
+        let retrieved_height = db.get_command_palette_height().unwrap();
+        assert!(retrieved_height.is_none());
+
+        db.set_command_palette_height(300.0).await.unwrap();
+
+        let retrieved_height = db.get_command_palette_height().unwrap();
+        assert!(retrieved_height.is_some());
+        assert_eq!(retrieved_height.unwrap(), 300.0);
+
+        db.set_command_palette_height(400.0).await.unwrap();
+
+        let retrieved_height = db.get_command_palette_height().unwrap();
+        assert!(retrieved_height.is_some());
+        assert_eq!(retrieved_height.unwrap(), 400.0);
     }
 }
