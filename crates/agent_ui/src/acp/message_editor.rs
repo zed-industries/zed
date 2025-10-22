@@ -2062,6 +2062,156 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_mention_menu_after_slash_command_with_space(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let app_state = cx.update(AppState::test);
+
+        cx.update(|cx| {
+            language::init(cx);
+            editor::init(cx);
+            workspace::init(app_state.clone(), cx);
+            Project::init_settings(cx);
+        });
+
+        // Create test files in the fake filesystem
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                path!("/dir"),
+                json!({
+                    "test_file.txt": "test content",
+                    "another.txt": "more content",
+                }),
+            )
+            .await;
+
+        let project = Project::test(app_state.fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let window = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let workspace = window.root(cx).unwrap();
+
+        let worktree = project.update(cx, |project, cx| {
+            let mut worktrees = project.worktrees(cx).collect::<Vec<_>>();
+            assert_eq!(worktrees.len(), 1);
+            worktrees.pop().unwrap()
+        });
+        let worktree_id = worktree.read_with(cx, |worktree, _| worktree.id());
+
+        let mut cx = VisualTestContext::from_window(*window, cx);
+
+        // Open the files so they appear in recent file mentions
+        let paths = vec![rel_path("test_file.txt"), rel_path("another.txt")];
+        for path in paths {
+            workspace
+                .update_in(&mut cx, |workspace, window, cx| {
+                    workspace.open_path(
+                        ProjectPath {
+                            worktree_id,
+                            path: path.into(),
+                        },
+                        None,
+                        false,
+                        window,
+                        cx,
+                    )
+                })
+                .await
+                .unwrap();
+        }
+
+        let context_store = cx.new(|cx| ContextStore::fake(project.clone(), cx));
+        let history_store = cx.new(|cx| HistoryStore::new(context_store, cx));
+        let prompt_capabilities = Rc::new(RefCell::new(acp::PromptCapabilities::default()));
+        let available_commands = Rc::new(RefCell::new(vec![acp::AvailableCommand {
+            name: "init".to_string(),
+            description: "Initialize a project".to_string(),
+            input: Some(acp::AvailableCommandInput::Unstructured {
+                hint: "<description>".to_string(),
+            }),
+            meta: None,
+        }]));
+
+        let editor = workspace.update_in(&mut cx, |workspace, window, cx| {
+            let workspace_handle = cx.weak_entity();
+            let message_editor = cx.new(|cx| {
+                MessageEditor::new(
+                    workspace_handle,
+                    project.clone(),
+                    history_store.clone(),
+                    None,
+                    prompt_capabilities.clone(),
+                    available_commands.clone(),
+                    "Claude Code".into(),
+                    "Test",
+                    EditorMode::AutoHeight {
+                        max_lines: None,
+                        min_lines: 1,
+                    },
+                    window,
+                    cx,
+                )
+            });
+            workspace.active_pane().update(cx, |pane, cx| {
+                pane.add_item(
+                    Box::new(cx.new(|_| MessageEditorItem(message_editor.clone()))),
+                    true,
+                    true,
+                    None,
+                    window,
+                    cx,
+                );
+            });
+            message_editor.read(cx).focus_handle(cx).focus(window);
+            message_editor.read(cx).editor().clone()
+        });
+
+        // Type "/init " (slash command with space)
+        cx.simulate_input("/init ");
+
+        editor.update(&mut cx, |editor, cx| {
+            assert_eq!(editor.text(cx), "/init ");
+        });
+
+        // Now type "@" - this should open the @ mention menu
+        cx.simulate_input("@");
+
+        editor.update(&mut cx, |editor, cx| {
+            assert_eq!(editor.text(cx), "/init @");
+
+            // The @ mention menu should be visible after typing @ following a slash command with space.
+            assert!(
+                editor.has_visible_completions_menu(),
+                "Completion menu should be visible after typing @"
+            );
+
+            // Check that we have @ mention completions (file mentions from recently opened files)
+            // not slash command completions (which would be "init")
+            let labels = current_completion_labels(editor);
+
+            // We should see our recently opened files in the completions
+            let has_file_mention = labels
+                .iter()
+                .any(|label| label.contains("test_file.txt") || label.contains("another.txt"));
+
+            // We should NOT see the slash command "init"
+            let has_slash_command = labels.iter().any(|label| label == "init");
+
+            assert!(
+                has_file_mention,
+                "Expected @ mention completions with file names (test_file.txt, another.txt) but got: {:?}",
+                labels
+            );
+
+            assert!(
+                !has_slash_command,
+                "Expected @ mention completions but got slash command completion 'init': {:?}",
+                labels
+            );
+        });
+    }
+
+    #[gpui::test]
     async fn test_context_completion_provider_mentions(cx: &mut TestAppContext) {
         init_test(cx);
 
