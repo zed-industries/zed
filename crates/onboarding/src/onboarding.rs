@@ -17,7 +17,6 @@ use ui::{
     Divider, KeyBinding, ParentElement as _, StatefulInteractiveElement, Vector, VectorName,
     WithScrollbar as _, prelude::*, rems_from_px,
 };
-pub use ui_input::font_picker;
 use workspace::{
     AppState, Workspace, WorkspaceId,
     dock::DockPosition,
