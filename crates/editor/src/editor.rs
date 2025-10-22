@@ -1949,9 +1949,7 @@ impl Editor {
                         }
 
                         project::Event::LanguageServerIndexingComplete { language_server_id } => {
-                            log::info!("LSP server {language_server_id:?} indexing complete, requesting semantic tokens for affected buffers");
-                            // LSP indexing is complete - now safe to request semantic tokens.
-                            // Requesting before indexing returns empty responses (server_id.is_none()).
+                            log::trace!("LSP server {language_server_id:?} indexing complete, requesting full tokens");
                             editor.refresh_semantic_tokens(None, cx);
                         }
 
@@ -21057,6 +21055,9 @@ impl Editor {
                 for buffer_id in removed_buffer_ids {
                     self.registered_buffers.remove(buffer_id);
                 }
+                self.display_map.update(cx, |map, _| {
+                    map.remove_semantic_tokens_for_buffers(removed_buffer_ids);
+                });
                 jsx_tag_auto_close::refresh_enabled_in_any_buffer(self, multibuffer, cx);
                 cx.emit(EditorEvent::ExcerptsRemoved {
                     ids: ids.clone(),
@@ -21080,8 +21081,6 @@ impl Editor {
             }
             multi_buffer::Event::Reparsed(buffer_id) => {
                 self.tasks_update_task = Some(self.refresh_runnables(window, cx));
-                jsx_tag_auto_close::refresh_enabled_in_any_buffer(self, multibuffer, cx);
-
                 cx.emit(EditorEvent::Reparsed(*buffer_id));
             }
             multi_buffer::Event::DiffHunksToggled => {

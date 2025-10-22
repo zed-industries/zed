@@ -674,6 +674,13 @@ impl DisplayMap {
             .collect::<Vec<_>>();
         self.inlay_map.splice(&to_remove, Vec::new());
     }
+    
+    pub fn remove_semantic_tokens_for_buffers(&mut self, buffer_ids: &[BufferId]) {
+        for buffer_id in buffer_ids {
+            self.semantic_tokens.remove(buffer_id);
+            self.pending_semantic_token_tasks.remove(buffer_id);
+        }
+    }
 
     fn tab_size(buffer: &Entity<MultiBuffer>, cx: &App) -> NonZeroU32 {
         let buffer = buffer.read(cx).as_singleton().map(|buffer| buffer.read(cx));
@@ -722,6 +729,17 @@ impl DisplayMap {
             return;
         };
         let buffer_snapshot = buffer.read(cx).snapshot();
+        
+        // Check cache: skip regeneration if buffer version AND token count unchanged
+        // (token count check handles partial → full token transitions during LSP indexing)
+        let incoming_token_count = tokens.tokens().count();
+        if let Some(cached_view) = self.semantic_tokens.get(&buffer_id) {
+            if cached_view.version == *buffer_snapshot.version() 
+                && cached_view.tokens.len() == incoming_token_count {
+                return;
+            }
+        }
+        
         let syntax_theme = cx.theme().syntax().clone();
         let variable_color_cache = self.variable_color_cache.clone();
 
@@ -741,9 +759,22 @@ impl DisplayMap {
 
             if let Some(view) = view {
                 this.update(cx, |this, cx| {
-                    this.semantic_tokens.insert(buffer_id, Arc::new(view));
-                    cx.emit(DisplayMapEvent::SemanticTokensReady { buffer_id });
-                    cx.notify();
+                    let view_arc = Arc::new(view);
+                    
+                    // Only notify if tokens actually changed
+                    let should_notify = this.semantic_tokens
+                        .get(&buffer_id)
+                        .map_or(true, |cached| {
+                            cached.version != view_arc.version || 
+                            cached.tokens.len() != view_arc.tokens.len()
+                        });
+                    
+                    this.semantic_tokens.insert(buffer_id, view_arc);
+                    
+                    if should_notify {
+                        cx.emit(DisplayMapEvent::SemanticTokensReady { buffer_id });
+                        cx.notify();
+                    }
                 })
                 .log_err();
             } else {
