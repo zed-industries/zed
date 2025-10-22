@@ -1706,7 +1706,6 @@ impl AcpThread {
                 match response {
                     Ok(Err(e)) => {
                         this.send_task.take();
-
                         cx.emit(AcpThreadEvent::Error);
                         Err(e)
                     }
