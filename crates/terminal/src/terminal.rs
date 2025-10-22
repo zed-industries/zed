@@ -508,7 +508,6 @@ impl TerminalBuilder {
                         params.args.clone().unwrap_or_default(),
                     )
                 });
-                dbg!(&alac_shell);
 
                 alacritty_terminal::tty::Options {
                     shell: alac_shell,

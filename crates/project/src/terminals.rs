@@ -179,8 +179,6 @@ impl Project {
                                     let arg = format!("{activation_script}{separator} {to_run}");
                                     let args = shell_kind.args_for_shell(false, arg);
 
-                                    dbg!(&args);
-
                                     create_remote_shell(
                                         Some((&shell, &args)),
                                         env,
