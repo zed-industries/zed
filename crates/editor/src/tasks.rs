@@ -14,7 +14,7 @@ impl Editor {
             return Task::ready(None);
         };
         let (selection, buffer, editor_snapshot) = {
-            let selection = self.selections.newest_adjusted(cx);
+            let selection = self.selections.newest_adjusted(&self.display_snapshot(cx));
             let Some((buffer, _)) = self
                 .buffer()
                 .read(cx)

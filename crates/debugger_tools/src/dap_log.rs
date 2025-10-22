@@ -963,26 +963,21 @@ pub fn init(cx: &mut App) {
         };
 
         let project = workspace.project();
-        if project.read(cx).is_local() {
-            log_store.update(cx, |store, cx| {
-                store.add_project(project, cx);
-            });
-        }
+        log_store.update(cx, |store, cx| {
+            store.add_project(project, cx);
+        });
 
         let log_store = log_store.clone();
         workspace.register_action(move |workspace, _: &OpenDebugAdapterLogs, window, cx| {
-            let project = workspace.project().read(cx);
-            if project.is_local() {
-                workspace.add_item_to_active_pane(
-                    Box::new(cx.new(|cx| {
-                        DapLogView::new(workspace.project().clone(), log_store.clone(), window, cx)
-                    })),
-                    None,
-                    true,
-                    window,
-                    cx,
-                );
-            }
+            workspace.add_item_to_active_pane(
+                Box::new(cx.new(|cx| {
+                    DapLogView::new(workspace.project().clone(), log_store.clone(), window, cx)
+                })),
+                None,
+                true,
+                window,
+                cx,
+            );
         });
     })
     .detach();

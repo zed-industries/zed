@@ -23,14 +23,16 @@ use gpui::{
 use language::{Language, LanguageConfig, ToOffset as _};
 use notifications::status_toast::{StatusToast, ToastIcon};
 use project::{CompletionDisplayOptions, Project};
-use settings::{BaseKeymap, KeybindSource, KeymapFile, Settings as _, SettingsAssets};
+use settings::{
+    BaseKeymap, KeybindSource, KeymapFile, Settings as _, SettingsAssets, infer_json_indent_size,
+};
 use ui::{
     ActiveTheme as _, App, Banner, BorrowAppContext, ContextMenu, IconButtonShape, Indicator,
     Modal, ModalFooter, ModalHeader, ParentElement as _, PopoverMenu, Render, Section,
     SharedString, Styled as _, Table, TableColumnWidths, TableInteractionState,
     TableResizeBehavior, Tooltip, Window, prelude::*,
 };
-use ui_input::SingleLineInput;
+use ui_input::InputField;
 use util::ResultExt;
 use workspace::{
     Item, ModalView, SerializableItem, Workspace, notifications::NotifyTaskExt as _,
@@ -38,7 +40,7 @@ use workspace::{
 };
 
 pub use ui_components::*;
-use zed_actions::OpenKeymapEditor;
+use zed_actions::OpenKeymap;
 
 use crate::{
     persistence::KEYBINDING_EDITORS,
@@ -77,7 +79,7 @@ pub fn init(cx: &mut App) {
     let keymap_event_channel = KeymapEventChannel::new();
     cx.set_global(keymap_event_channel);
 
-    cx.on_action(|_: &OpenKeymapEditor, cx| {
+    cx.on_action(|_: &OpenKeymap, cx| {
         workspace::with_active_or_new_workspace(cx, move |workspace, window, cx| {
             workspace
                 .with_local_workspace(window, cx, |workspace, window, cx| {
@@ -1198,13 +1200,12 @@ impl KeymapEditor {
         else {
             return;
         };
-        let tab_size = cx.global::<settings::SettingsStore>().json_tab_size();
         self.previous_edit = Some(PreviousEdit::ScrollBarOffset(
             self.table_interaction_state.read(cx).scroll_offset(),
         ));
         let keyboard_mapper = cx.keyboard_mapper().clone();
         cx.spawn(async move |_, _| {
-            remove_keybinding(to_remove, &fs, tab_size, keyboard_mapper.as_ref()).await
+            remove_keybinding(to_remove, &fs, keyboard_mapper.as_ref()).await
         })
         .detach_and_notify_err(window, cx);
     }
@@ -1700,7 +1701,7 @@ impl Render for KeymapEditor {
                                                             move |window, cx| {
                                                                 Tooltip::for_action_in(
                                                                     "View Default...",
-                                                                    &zed_actions::OpenKeymap,
+                                                                    &zed_actions::OpenKeymapFile,
                                                                     &focus_handle,
                                                                     window,
                                                                     cx,
@@ -1714,7 +1715,7 @@ impl Render for KeymapEditor {
                                                     .style(ButtonStyle::Outlined)
                                                     .on_click(|_, window, cx| {
                                                         window.dispatch_action(
-                                                            zed_actions::OpenKeymap.boxed_clone(),
+                                                            zed_actions::OpenKeymapFile.boxed_clone(),
                                                             cx,
                                                         );
                                                     })
@@ -2113,7 +2114,7 @@ struct KeybindingEditorModal {
     editing_keybind: ProcessedBinding,
     editing_keybind_idx: usize,
     keybind_editor: Entity<KeystrokeInput>,
-    context_editor: Entity<SingleLineInput>,
+    context_editor: Entity<InputField>,
     action_arguments_editor: Option<Entity<ActionArgumentsEditor>>,
     fs: Arc<dyn Fs>,
     error: Option<InputError>,
@@ -2147,8 +2148,8 @@ impl KeybindingEditorModal {
         let keybind_editor = cx
             .new(|cx| KeystrokeInput::new(editing_keybind.keystrokes().map(Vec::from), window, cx));
 
-        let context_editor: Entity<SingleLineInput> = cx.new(|cx| {
-            let input = SingleLineInput::new(window, cx, "Keybinding Context")
+        let context_editor: Entity<InputField> = cx.new(|cx| {
+            let input = InputField::new(window, cx, "Keybinding Context")
                 .label("Edit Context")
                 .label_size(LabelSize::Default);
 
@@ -2288,7 +2289,6 @@ impl KeybindingEditorModal {
     fn save(&mut self, cx: &mut Context<Self>) -> Result<(), InputError> {
         let existing_keybind = self.editing_keybind.clone();
         let fs = self.fs.clone();
-        let tab_size = cx.global::<settings::SettingsStore>().json_tab_size();
 
         let mut new_keystrokes = self.validate_keystrokes(cx).map_err(InputError::error)?;
         new_keystrokes
@@ -2367,7 +2367,6 @@ impl KeybindingEditorModal {
                 &action_mapping,
                 new_action_args.as_deref(),
                 &fs,
-                tab_size,
                 keyboard_mapper.as_ref(),
             )
             .await
@@ -3019,12 +3018,13 @@ async fn save_keybinding_update(
     action_mapping: &ActionMapping,
     new_args: Option<&str>,
     fs: &Arc<dyn Fs>,
-    tab_size: usize,
     keyboard_mapper: &dyn PlatformKeyboardMapper,
 ) -> anyhow::Result<()> {
     let keymap_contents = settings::KeymapFile::load_keymap_file(fs)
         .await
         .context("Failed to load keymap file")?;
+
+    let tab_size = infer_json_indent_size(&keymap_contents);
 
     let existing_keystrokes = existing.keystrokes().unwrap_or_default();
     let existing_context = existing.context().and_then(KeybindContextString::local_str);
@@ -3089,7 +3089,6 @@ async fn save_keybinding_update(
 async fn remove_keybinding(
     existing: ProcessedBinding,
     fs: &Arc<dyn Fs>,
-    tab_size: usize,
     keyboard_mapper: &dyn PlatformKeyboardMapper,
 ) -> anyhow::Result<()> {
     let Some(keystrokes) = existing.keystrokes() else {
@@ -3098,6 +3097,7 @@ async fn remove_keybinding(
     let keymap_contents = settings::KeymapFile::load_keymap_file(fs)
         .await
         .context("Failed to load keymap file")?;
+    let tab_size = infer_json_indent_size(&keymap_contents);
 
     let operation = settings::KeybindUpdateOperation::Remove {
         target: settings::KeybindUpdateTarget {

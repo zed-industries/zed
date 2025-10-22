@@ -15,10 +15,7 @@ use workspace::searchable::Direction;
 
 use crate::{
     Vim,
-    motion::{
-        Motion, MotionKind, first_non_whitespace, next_line_end, start_of_line,
-        start_of_relative_buffer_row,
-    },
+    motion::{Motion, MotionKind, first_non_whitespace, next_line_end, start_of_line},
     object::Object,
     state::{Mark, Mode, Operator},
 };
@@ -369,6 +366,8 @@ impl Vim {
 
             let mut selections = Vec::new();
             let mut row = tail.row();
+            let going_up = tail.row() > head.row();
+            let direction = if going_up { -1 } else { 1 };
 
             loop {
                 let laid_out_line = map.layout_row(row, &text_layout_details);
@@ -399,14 +398,21 @@ impl Vim {
 
                     selections.push(selection);
                 }
-                if row == head.row() {
+
+                // When dealing with soft wrapped lines, it's possible that
+                // `row` ends up being set to a value other than `head.row()` as
+                // `head.row()` might be a `DisplayPoint` mapped to a soft
+                // wrapped line, hence the need for `<=` and `>=` instead of
+                // `==`.
+                if going_up && row <= head.row() || !going_up && row >= head.row() {
                     break;
                 }
 
-                // Move to the next or previous buffer row, ensuring that
-                // wrapped lines are handled correctly.
-                let direction = if tail.row() > head.row() { -1 } else { 1 };
-                row = start_of_relative_buffer_row(map, DisplayPoint::new(row, 0), direction).row();
+                // Find the next or previous buffer row where the `row` should
+                // be moved to, so that wrapped lines are skipped.
+                row = map
+                    .start_of_relative_buffer_row(DisplayPoint::new(row, 0), direction)
+                    .row();
             }
 
             s.select(selections);
@@ -748,7 +754,8 @@ impl Vim {
         self.stop_recording(cx);
         self.update_editor(cx, |_, editor, cx| {
             editor.transact(window, cx, |editor, window, cx| {
-                let (display_map, selections) = editor.selections.all_adjusted_display(cx);
+                let display_map = editor.display_snapshot(cx);
+                let selections = editor.selections.all_adjusted_display(&display_map);
 
                 // Selections are biased right at the start. So we need to store
                 // anchors that are biased left so that we can restore the selections
@@ -859,7 +866,9 @@ impl Vim {
             });
         }
         self.update_editor(cx, |_, editor, cx| {
-            let latest = editor.selections.newest::<usize>(cx);
+            let latest = editor
+                .selections
+                .newest::<usize>(&editor.display_snapshot(cx));
             start_selection = latest.start;
             end_selection = latest.end;
         });
@@ -880,7 +889,9 @@ impl Vim {
             return;
         }
         self.update_editor(cx, |_, editor, cx| {
-            let latest = editor.selections.newest::<usize>(cx);
+            let latest = editor
+                .selections
+                .newest::<usize>(&editor.display_snapshot(cx));
             if vim_is_normal {
                 start_selection = latest.start;
                 end_selection = latest.end;

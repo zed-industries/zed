@@ -17,4 +17,3 @@ gpui.workspace = true
 serde.workspace = true
 theme.workspace = true
 util.workspace = true
-workspace-hack.workspace = true

@@ -5,12 +5,12 @@ use anyhow::Result;
 use collections::IndexMap;
 use futures::FutureExt;
 use fuzzy::{StringMatchCandidate, match_strings};
-use gpui::{Action, AsyncWindowContext, BackgroundExecutor, DismissEvent, Task, WeakEntity};
+use gpui::{AsyncWindowContext, BackgroundExecutor, DismissEvent, Task, WeakEntity};
 use ordered_float::OrderedFloat;
 use picker::{Picker, PickerDelegate};
 use ui::{
-    AnyElement, App, Context, DocumentationAside, DocumentationEdge, DocumentationSide,
-    IntoElement, ListItem, ListItemSpacing, SharedString, Window, prelude::*, rems,
+    DocumentationAside, DocumentationEdge, DocumentationSide, IntoElement, ListItem,
+    ListItemSpacing, prelude::*,
 };
 use util::ResultExt;
 
@@ -278,36 +278,6 @@ impl PickerDelegate for AcpModelPickerDelegate {
         }
     }
 
-    fn render_footer(
-        &self,
-        _: &mut Window,
-        cx: &mut Context<Picker<Self>>,
-    ) -> Option<gpui::AnyElement> {
-        Some(
-            h_flex()
-                .w_full()
-                .border_t_1()
-                .border_color(cx.theme().colors().border_variant)
-                .p_1()
-                .gap_4()
-                .justify_between()
-                .child(
-                    Button::new("configure", "Configure")
-                        .icon(IconName::Settings)
-                        .icon_size(IconSize::Small)
-                        .icon_color(Color::Muted)
-                        .icon_position(IconPosition::Start)
-                        .on_click(|_, window, cx| {
-                            window.dispatch_action(
-                                zed_actions::agent::OpenSettings.boxed_clone(),
-                                cx,
-                            );
-                        }),
-                )
-                .into_any(),
-        )
-    }
-
     fn documentation_aside(
         &self,
         _window: &mut Window,
@@ -317,7 +287,7 @@ impl PickerDelegate for AcpModelPickerDelegate {
             let description = description.clone();
             DocumentationAside::new(
                 DocumentationSide::Left,
-                DocumentationEdge::Bottom,
+                DocumentationEdge::Top,
                 Rc::new(move |_| Label::new(description.clone()).into_any_element()),
             )
         })

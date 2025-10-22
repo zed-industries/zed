@@ -390,7 +390,7 @@ float4 gradient_color(Background background,
             float pattern_period = pattern_height * sin(stripe_angle);
             float2x2 rotation = rotate2d(stripe_angle);
             float2 relative_position = position - bounds.origin;
-            float2 rotated_point = mul(rotation, relative_position);
+            float2 rotated_point = mul(relative_position, rotation);
             float pattern = fmod(rotated_point.x, pattern_period);
             float distance = min(pattern, pattern_period - pattern) - pattern_period * (pattern_width / pattern_height) /  2.0f;
             color = solid_color;
@@ -660,7 +660,14 @@ float4 quad_fragment(QuadFragmentInput input): SV_Target {
                 // out on each straight line, rather than around the whole
                 // perimeter. This way each line starts and ends with a dash.
                 bool is_horizontal = corner_center_to_point.x < corner_center_to_point.y;
-                float border_width = is_horizontal ? border.x : border.y;
+                // Choosing the right border width for dashed borders.
+                // TODO: A better solution exists taking a look at the whole file.
+                // this does not fix single dashed borders at the corners
+                float2 dashed_border = float2(
+                    max(quad.border_widths.bottom, quad.border_widths.top),
+                    max(quad.border_widths.right, quad.border_widths.left)
+                );
+                float border_width = is_horizontal ? dashed_border.x : dashed_border.y;
                 dash_velocity = dv_numerator / border_width;
                 t = is_horizontal ? the_point.x : the_point.y;
                 t *= dash_velocity;

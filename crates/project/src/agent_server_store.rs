@@ -9,7 +9,6 @@ use std::{
 
 use anyhow::{Context as _, Result, bail};
 use collections::HashMap;
-use feature_flags::FeatureFlagAppExt as _;
 use fs::{Fs, RemoveOptions, RenameOptions};
 use futures::StreamExt as _;
 use gpui::{
@@ -22,6 +21,7 @@ use rpc::{AnyProtoClient, TypedEnvelope, proto};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::SettingsStore;
+use task::Shell;
 use util::{ResultExt as _, debug_panic};
 
 use crate::ProjectEnvironment;
@@ -126,7 +126,6 @@ enum AgentServerStoreState {
 pub struct AgentServerStore {
     state: AgentServerStoreState,
     external_agents: HashMap<ExternalAgentServerName, Box<dyn ExternalAgentServer>>,
-    _feature_flag_subscription: Option<gpui::Subscription>,
 }
 
 pub struct AgentServersUpdated;
@@ -206,34 +205,19 @@ impl AgentServerStore {
                     .unwrap_or(true),
             }),
         );
-        self.external_agents
-            .extend(new_settings.custom.iter().map(|(name, settings)| {
-                (
-                    ExternalAgentServerName(name.clone()),
-                    Box::new(LocalCustomAgent {
-                        command: settings.command.clone(),
-                        project_environment: project_environment.clone(),
-                    }) as Box<dyn ExternalAgentServer>,
-                )
-            }));
-
-        use feature_flags::FeatureFlagAppExt as _;
-        if cx.has_flag::<feature_flags::CodexAcpFeatureFlag>() || new_settings.codex.is_some() {
-            self.external_agents.insert(
-                CODEX_NAME.into(),
-                Box::new(LocalCodex {
-                    fs: fs.clone(),
-                    project_environment: project_environment.clone(),
-                    custom_command: new_settings
-                        .codex
-                        .clone()
-                        .and_then(|settings| settings.custom_command()),
-                    http_client: http_client.clone(),
-                    is_remote: downstream_client.is_some(),
-                }),
-            );
-        }
-
+        self.external_agents.insert(
+            CODEX_NAME.into(),
+            Box::new(LocalCodex {
+                fs: fs.clone(),
+                project_environment: project_environment.clone(),
+                custom_command: new_settings
+                    .codex
+                    .clone()
+                    .and_then(|settings| settings.custom_command()),
+                http_client: http_client.clone(),
+                is_remote: downstream_client.is_some(),
+            }),
+        );
         self.external_agents.insert(
             CLAUDE_CODE_NAME.into(),
             Box::new(LocalClaudeCode {
@@ -246,6 +230,16 @@ impl AgentServerStore {
                     .and_then(|settings| settings.custom_command()),
             }),
         );
+        self.external_agents
+            .extend(new_settings.custom.iter().map(|(name, settings)| {
+                (
+                    ExternalAgentServerName(name.clone()),
+                    Box::new(LocalCustomAgent {
+                        command: settings.command.clone(),
+                        project_environment: project_environment.clone(),
+                    }) as Box<dyn ExternalAgentServer>,
+                )
+            }));
 
         *old_settings = Some(new_settings.clone());
 
@@ -274,13 +268,6 @@ impl AgentServerStore {
         let subscription = cx.observe_global::<SettingsStore>(|this, cx| {
             this.agent_servers_settings_changed(cx);
         });
-        let this_handle = cx.weak_entity();
-        let feature_flags_subscription =
-            cx.observe_flag::<feature_flags::CodexAcpFeatureFlag, _>(move |_enabled, cx| {
-                let _ = this_handle.update(cx, |this, cx| {
-                    this.reregister_agents(cx);
-                });
-            });
         let mut this = Self {
             state: AgentServerStoreState::Local {
                 node_runtime,
@@ -292,31 +279,16 @@ impl AgentServerStore {
                 _subscriptions: [subscription],
             },
             external_agents: Default::default(),
-            _feature_flag_subscription: Some(feature_flags_subscription),
         };
         this.agent_servers_settings_changed(cx);
         this
     }
 
-    pub(crate) fn remote(
-        project_id: u64,
-        upstream_client: Entity<RemoteClient>,
-        cx: &mut Context<Self>,
-    ) -> Self {
+    pub(crate) fn remote(project_id: u64, upstream_client: Entity<RemoteClient>) -> Self {
         // Set up the builtin agents here so they're immediately available in
         // remote projects--we know that the HeadlessProject on the other end
         // will have them.
-        let mut external_agents = [
-            (
-                GEMINI_NAME.into(),
-                Box::new(RemoteExternalAgentServer {
-                    project_id,
-                    upstream_client: upstream_client.clone(),
-                    name: GEMINI_NAME.into(),
-                    status_tx: None,
-                    new_version_available_tx: None,
-                }) as Box<dyn ExternalAgentServer>,
-            ),
+        let external_agents = [
             (
                 CLAUDE_CODE_NAME.into(),
                 Box::new(RemoteExternalAgentServer {
@@ -327,13 +299,7 @@ impl AgentServerStore {
                     new_version_available_tx: None,
                 }) as Box<dyn ExternalAgentServer>,
             ),
-        ]
-        .into_iter()
-        .collect::<HashMap<ExternalAgentServerName, Box<dyn ExternalAgentServer>>>();
-
-        use feature_flags::FeatureFlagAppExt as _;
-        if cx.has_flag::<feature_flags::CodexAcpFeatureFlag>() {
-            external_agents.insert(
+            (
                 CODEX_NAME.into(),
                 Box::new(RemoteExternalAgentServer {
                     project_id,
@@ -342,8 +308,20 @@ impl AgentServerStore {
                     status_tx: None,
                     new_version_available_tx: None,
                 }) as Box<dyn ExternalAgentServer>,
-            );
-        }
+            ),
+            (
+                GEMINI_NAME.into(),
+                Box::new(RemoteExternalAgentServer {
+                    project_id,
+                    upstream_client: upstream_client.clone(),
+                    name: GEMINI_NAME.into(),
+                    status_tx: None,
+                    new_version_available_tx: None,
+                }) as Box<dyn ExternalAgentServer>,
+            ),
+        ]
+        .into_iter()
+        .collect();
 
         Self {
             state: AgentServerStoreState::Remote {
@@ -351,7 +329,6 @@ impl AgentServerStore {
                 upstream_client,
             },
             external_agents,
-            _feature_flag_subscription: None,
         }
     }
 
@@ -359,7 +336,6 @@ impl AgentServerStore {
         Self {
             state: AgentServerStoreState::Collab,
             external_agents: Default::default(),
-            _feature_flag_subscription: None,
         }
     }
 
@@ -672,9 +648,11 @@ fn get_or_npm_install_builtin_agent(
                 let dir = dir.clone();
                 let fs = fs.clone();
                 async move {
-                    let latest_version =
-                        node_runtime.npm_package_latest_version(&package_name).await;
-                    if let Ok(latest_version) = latest_version
+                    let latest_version = node_runtime
+                        .npm_package_latest_version(&package_name)
+                        .await
+                        .ok();
+                    if let Some(latest_version) = latest_version
                         && &latest_version != &file_name.to_string_lossy()
                     {
                         let download_result = download_latest_version(
@@ -875,7 +853,11 @@ impl ExternalAgentServer for LocalGemini {
         cx.spawn(async move |cx| {
             let mut env = project_environment
                 .update(cx, |project_environment, cx| {
-                    project_environment.get_directory_environment(root_dir.clone(), cx)
+                    project_environment.get_local_directory_environment(
+                        &Shell::System,
+                        root_dir.clone(),
+                        cx,
+                    )
                 })?
                 .await
                 .unwrap_or_default();
@@ -898,7 +880,12 @@ impl ExternalAgentServer for LocalGemini {
                     GEMINI_NAME.into(),
                     "@google/gemini-cli".into(),
                     "node_modules/@google/gemini-cli/dist/index.js".into(),
-                    Some("0.2.1".parse().unwrap()),
+                    if cfg!(windows) {
+                        // v0.8.x on Windows has a bug that causes the initialize request to hang forever
+                        Some("0.9.0".parse().unwrap())
+                    } else {
+                        Some("0.2.1".parse().unwrap())
+                    },
                     status_tx,
                     new_version_available_tx,
                     fs,
@@ -962,7 +949,11 @@ impl ExternalAgentServer for LocalClaudeCode {
         cx.spawn(async move |cx| {
             let mut env = project_environment
                 .update(cx, |project_environment, cx| {
-                    project_environment.get_directory_environment(root_dir.clone(), cx)
+                    project_environment.get_local_directory_environment(
+                        &Shell::System,
+                        root_dir.clone(),
+                        cx,
+                    )
                 })?
                 .await
                 .unwrap_or_default();
@@ -1048,7 +1039,11 @@ impl ExternalAgentServer for LocalCodex {
         cx.spawn(async move |cx| {
             let mut env = project_environment
                 .update(cx, |project_environment, cx| {
-                    project_environment.get_directory_environment(root_dir.clone(), cx)
+                    project_environment.get_local_directory_environment(
+                        &Shell::System,
+                        root_dir.clone(),
+                        cx,
+                    )
                 })?
                 .await
                 .unwrap_or_default();
@@ -1188,7 +1183,11 @@ impl ExternalAgentServer for LocalCustomAgent {
         cx.spawn(async move |cx| {
             let mut env = project_environment
                 .update(cx, |project_environment, cx| {
-                    project_environment.get_directory_environment(root_dir.clone(), cx)
+                    project_environment.get_local_directory_environment(
+                        &Shell::System,
+                        root_dir.clone(),
+                        cx,
+                    )
                 })?
                 .await
                 .unwrap_or_default();

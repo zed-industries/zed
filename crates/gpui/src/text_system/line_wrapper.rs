@@ -163,6 +163,8 @@ impl LineWrapper {
         line
     }
 
+    /// Any character in this list should be treated as a word character,
+    /// meaning it can be part of a word that should not be wrapped.
     pub(crate) fn is_word_char(c: char) -> bool {
         // ASCII alphanumeric characters, for English, numbers: `Hello123`, etc.
         c.is_ascii_alphanumeric() ||
@@ -180,10 +182,9 @@ impl LineWrapper {
         // https://en.wikipedia.org/wiki/Cyrillic_script_in_Unicode
         matches!(c, '\u{0400}'..='\u{04FF}') ||
         // Some other known special characters that should be treated as word characters,
-        // e.g. `a-b`, `var_name`, `I'm`, '@mention`, `#hashtag`, `100%`, `3.1415`, `2^3`, `a~b`, etc.
-        matches!(c, '-' | '_' | '.' | '\'' | '$' | '%' | '@' | '#' | '^' | '~' | ',' | '!' | ';' | '*') ||
-        // Characters that used in URL, e.g. `https://github.com/zed-industries/zed?a=1&b=2` for better wrapping a long URL.
-        matches!(c,  '/' | ':' | '?' | '&' | '=') ||
+        // e.g. `a-b`, `var_name`, `I'm`, '@mention`, `#hashtag`, `100%`, `3.1415`,
+        // `2^3`, `a~b`, `a=1`, `Self::new`, etc.
+        matches!(c, '-' | '_' | '.' | '\'' | '$' | '%' | '@' | '#' | '^' | '~' | ',' | '=' | ':') ||
         // `⋯` character is special used in Zed, to keep this at the end of the line.
         matches!(c, '⋯')
     }
@@ -225,18 +226,14 @@ impl LineWrapper {
 
 fn update_runs_after_truncation(result: &str, ellipsis: &str, runs: &mut Vec<TextRun>) {
     let mut truncate_at = result.len() - ellipsis.len();
-    let mut run_end = None;
     for (run_index, run) in runs.iter_mut().enumerate() {
         if run.len <= truncate_at {
             truncate_at -= run.len;
         } else {
             run.len = truncate_at + ellipsis.len();
-            run_end = Some(run_index + 1);
+            runs.truncate(run_index + 1);
             break;
         }
-    }
-    if let Some(run_end) = run_end {
-        runs.truncate(run_end);
     }
 }
 
@@ -648,15 +645,19 @@ mod tests {
         assert_word("@mention");
         assert_word("#hashtag");
         assert_word("$variable");
+        assert_word("a=1");
+        assert_word("Self::is_word_char");
         assert_word("more⋯");
 
         // Space
         assert_not_word("foo bar");
 
         // URL case
-        assert_word("https://github.com/zed-industries/zed/");
         assert_word("github.com");
-        assert_word("a=1&b=2");
+        assert_not_word("zed-industries/zed");
+        assert_not_word("zed-industries\\zed");
+        assert_not_word("a=1&b=2");
+        assert_not_word("foo?b=2");
 
         // Latin-1 Supplement
         assert_word("ÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏ");

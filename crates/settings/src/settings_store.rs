@@ -33,6 +33,7 @@ pub type EditorconfigProperties = ec4rs::Properties;
 use crate::{
     ActiveSettingsProfileName, FontFamilyName, IconThemeName, LanguageSettingsContent,
     LanguageToSettingsMap, SettingsJsonSchemaParams, ThemeName, VsCodeSettings, WorktreeId,
+    infer_json_indent_size,
     merge_from::MergeFrom,
     parse_json_with_comments,
     settings_content::{
@@ -68,10 +69,6 @@ pub trait Settings: 'static + Send + Sync + Sized {
     /// This function *should* panic if default values are missing,
     /// and you should add a default to default.json for documentation.
     fn from_settings(content: &SettingsContent) -> Self;
-
-    /// Use [the helpers in the vscode_import module](crate::vscode_import) to apply known
-    /// equivalent settings from a vscode config to our config
-    fn import_from_vscode(_vscode: &VsCodeSettings, _current: &mut SettingsContent) {}
 
     #[track_caller]
     fn register(cx: &mut App)
@@ -151,15 +148,44 @@ pub struct SettingsStore {
     _setting_file_updates: Task<()>,
     setting_file_updates_tx:
         mpsc::UnboundedSender<Box<dyn FnOnce(AsyncApp) -> LocalBoxFuture<'static, Result<()>>>>,
+    file_errors: BTreeMap<SettingsFile, String>,
 }
 
-#[derive(Clone, PartialEq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub enum SettingsFile {
     User,
     Server,
     Default,
     /// Represents project settings in ssh projects as well as local projects
     Project((WorktreeId, Arc<RelPath>)),
+}
+
+impl PartialOrd for SettingsFile {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+/// Sorted in order of precedence
+impl Ord for SettingsFile {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        use SettingsFile::*;
+        use std::cmp::Ordering;
+        match (self, other) {
+            (User, User) => Ordering::Equal,
+            (Server, Server) => Ordering::Equal,
+            (Default, Default) => Ordering::Equal,
+            (Project((id1, rel_path1)), Project((id2, rel_path2))) => id1
+                .cmp(id2)
+                .then_with(|| rel_path1.cmp(rel_path2).reverse()),
+            (Project(_), _) => Ordering::Less,
+            (_, Project(_)) => Ordering::Greater,
+            (Server, _) => Ordering::Less,
+            (_, Server) => Ordering::Greater,
+            (User, _) => Ordering::Less,
+            (_, User) => Ordering::Greater,
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -207,11 +233,6 @@ trait AnySettingValue: 'static + Send + Sync {
     fn all_local_values(&self) -> Vec<(WorktreeId, Arc<RelPath>, &dyn Any)>;
     fn set_global_value(&mut self, value: Box<dyn Any>);
     fn set_local_value(&mut self, root_id: WorktreeId, path: Arc<RelPath>, value: Box<dyn Any>);
-    fn import_from_vscode(
-        &self,
-        vscode_settings: &VsCodeSettings,
-        settings_content: &mut SettingsContent,
-    );
 }
 
 impl SettingsStore {
@@ -236,6 +257,7 @@ impl SettingsStore {
                     (setting_file_update)(cx.clone()).await.log_err();
                 }
             }),
+            file_errors: BTreeMap::default(),
         }
     }
 
@@ -484,7 +506,7 @@ impl SettingsStore {
         files
     }
 
-    fn get_content_for_file(&self, file: SettingsFile) -> Option<&SettingsContent> {
+    pub fn get_content_for_file(&self, file: SettingsFile) -> Option<&SettingsContent> {
         match file {
             SettingsFile::User => self
                 .user_settings
@@ -534,11 +556,30 @@ impl SettingsStore {
     /// Returns the first file found that contains the value.
     /// The value will only be None if no file contains the value.
     /// I.e. if no file contains the value, returns `(File::Default, None)`
-    pub fn get_value_from_file<T>(
-        &self,
+    pub fn get_value_from_file<'a, T: 'a>(
+        &'a self,
         target_file: SettingsFile,
-        pick: fn(&SettingsContent) -> &Option<T>,
-    ) -> (SettingsFile, Option<&T>) {
+        pick: fn(&'a SettingsContent) -> Option<T>,
+    ) -> (SettingsFile, Option<T>) {
+        self.get_value_from_file_inner(target_file, pick, true)
+    }
+
+    /// Same as `Self::get_value_from_file` except that it does not include the current file.
+    /// Therefore it returns the value that was potentially overloaded by the target file.
+    pub fn get_value_up_to_file<'a, T: 'a>(
+        &'a self,
+        target_file: SettingsFile,
+        pick: fn(&'a SettingsContent) -> Option<T>,
+    ) -> (SettingsFile, Option<T>) {
+        self.get_value_from_file_inner(target_file, pick, false)
+    }
+
+    fn get_value_from_file_inner<'a, T: 'a>(
+        &'a self,
+        target_file: SettingsFile,
+        pick: fn(&'a SettingsContent) -> Option<T>,
+        include_target_file: bool,
+    ) -> (SettingsFile, Option<T>) {
         // todo(settings_ui): Add a metadata field for overriding the "overrides" tag, for contextually different settings
         //  e.g. disable AI isn't overridden, or a vec that gets extended instead or some such
 
@@ -547,10 +588,15 @@ impl SettingsStore {
         let mut found_file = false;
 
         for file in all_files.into_iter() {
-            if !found_file && file != target_file && file != SettingsFile::Default {
-                continue;
+            if !found_file && file != SettingsFile::Default {
+                if file != target_file {
+                    continue;
+                }
+                found_file = true;
+                if !include_target_file {
+                    continue;
+                }
             }
-            found_file = true;
 
             if let SettingsFile::Project((worktree_id, ref path)) = file
                 && let SettingsFile::Project((target_worktree_id, ref target_path)) = target_file
@@ -563,12 +609,30 @@ impl SettingsStore {
             let Some(content) = self.get_content_for_file(file.clone()) else {
                 continue;
             };
-            if let Some(value) = pick(content).as_ref() {
+            if let Some(value) = pick(content) {
                 return (file, Some(value));
             }
         }
 
         (SettingsFile::Default, None)
+    }
+
+    fn handle_potential_file_error<R>(
+        &mut self,
+        file: SettingsFile,
+        result: Result<R>,
+    ) -> Result<R> {
+        if let Err(err) = result.as_ref() {
+            let message = err.to_string();
+            self.file_errors.insert(file, message);
+        } else {
+            self.file_errors.remove(&file);
+        }
+        return result;
+    }
+
+    pub fn error_for_file(&self, file: SettingsFile) -> Option<String> {
+        self.file_errors.get(&file).cloned()
     }
 }
 
@@ -589,10 +653,8 @@ impl SettingsStore {
     }
 
     pub fn get_vscode_edits(&self, old_text: String, vscode: &VsCodeSettings) -> String {
-        self.new_text_for_update(old_text, |settings_content| {
-            for v in self.setting_values.values() {
-                v.import_from_vscode(vscode, settings_content)
-            }
+        self.new_text_for_update(old_text, |content| {
+            content.merge_from(&vscode.settings_content())
         })
     }
 
@@ -613,7 +675,7 @@ impl SettingsStore {
 
         let mut key_path = Vec::new();
         let mut edits = Vec::new();
-        let tab_size = self.json_tab_size();
+        let tab_size = infer_json_indent_size(&text);
         let mut text = text.to_string();
         update_value_in_json_text(
             &mut text,
@@ -624,10 +686,6 @@ impl SettingsStore {
             &mut edits,
         );
         edits
-    }
-
-    pub fn json_tab_size(&self) -> usize {
-        2
     }
 
     /// Sets the default settings via a JSON string.
@@ -648,7 +706,10 @@ impl SettingsStore {
         let settings: UserSettingsContent = if user_settings_content.is_empty() {
             parse_json_with_comments("{}")?
         } else {
-            parse_json_with_comments(user_settings_content)?
+            self.handle_potential_file_error(
+                SettingsFile::User,
+                parse_json_with_comments(user_settings_content),
+            )?
         };
 
         self.user_settings = Some(settings);
@@ -681,7 +742,10 @@ impl SettingsStore {
         let settings: Option<SettingsContent> = if server_settings_content.is_empty() {
             None
         } else {
-            parse_json_with_comments(server_settings_content)?
+            self.handle_potential_file_error(
+                SettingsFile::Server,
+                parse_json_with_comments(server_settings_content),
+            )?
         };
 
         // Rewrite the server settings into a content type
@@ -730,20 +794,24 @@ impl SettingsStore {
                 zed_settings_changed = self
                     .local_settings
                     .remove(&(root_id, directory_path.clone()))
-                    .is_some()
+                    .is_some();
+                self.file_errors
+                    .remove(&SettingsFile::Project((root_id, directory_path.clone())));
             }
             (LocalSettingsKind::Editorconfig, None) => {
                 self.raw_editorconfig_settings
                     .remove(&(root_id, directory_path.clone()));
             }
             (LocalSettingsKind::Settings, Some(settings_contents)) => {
-                let new_settings = parse_json_with_comments::<ProjectSettingsContent>(
-                    settings_contents,
-                )
-                .map_err(|e| InvalidSettingsError::LocalSettings {
-                    path: directory_path.join(local_settings_file_relative_path()),
-                    message: e.to_string(),
-                })?;
+                let new_settings = self
+                    .handle_potential_file_error(
+                        SettingsFile::Project((root_id, directory_path.clone())),
+                        parse_json_with_comments::<ProjectSettingsContent>(settings_contents),
+                    )
+                    .map_err(|e| InvalidSettingsError::LocalSettings {
+                        path: directory_path.join(local_settings_file_relative_path()),
+                        message: e.to_string(),
+                    })?;
                 match self.local_settings.entry((root_id, directory_path.clone())) {
                     btree_map::Entry::Vacant(v) => {
                         v.insert(SettingsContent {
@@ -921,6 +989,7 @@ impl SettingsStore {
             .to_value()
     }
 
+    // todo -> this function never fails, and should not return a result
     fn recompute_values(
         &mut self,
         changed_local_path: Option<(WorktreeId, &RelPath)>,
@@ -1108,14 +1177,6 @@ impl<T: Settings> AnySettingValue for SettingValue<T> {
             Err(ix) => self.local_values.insert(ix, (root_id, path, value)),
         }
     }
-
-    fn import_from_vscode(
-        &self,
-        vscode_settings: &VsCodeSettings,
-        settings_content: &mut SettingsContent,
-    ) {
-        T::import_from_vscode(vscode_settings, settings_content);
-    }
 }
 
 #[cfg(test)]
@@ -1158,19 +1219,6 @@ mod tests {
                 git_status: content.git_status.unwrap(),
             }
         }
-
-        fn import_from_vscode(vscode: &VsCodeSettings, content: &mut SettingsContent) {
-            let mut show = None;
-
-            vscode.bool_setting("workbench.editor.decorations.colors", &mut show);
-            if let Some(show) = show {
-                content
-                    .tabs
-                    .get_or_insert_default()
-                    .git_status
-                    .replace(show);
-            }
-        }
     }
 
     #[derive(Debug, PartialEq)]
@@ -1185,18 +1233,6 @@ mod tests {
             DefaultLanguageSettings {
                 tab_size: content.tab_size.unwrap(),
                 preferred_line_length: content.preferred_line_length.unwrap(),
-            }
-        }
-
-        fn import_from_vscode(vscode: &VsCodeSettings, content: &mut SettingsContent) {
-            let content = &mut content.project.all_languages.defaults;
-
-            if let Some(size) = vscode
-                .read_value("editor.tabSize")
-                .and_then(|v| v.as_u64())
-                .and_then(|n| NonZeroU32::new(n as u32))
-            {
-                content.tab_size = Some(size);
             }
         }
     }
@@ -1214,16 +1250,6 @@ mod tests {
                 buffer_font_family: content.buffer_font_family.unwrap(),
                 buffer_font_fallbacks: content.buffer_font_fallbacks.unwrap(),
             }
-        }
-
-        fn import_from_vscode(vscode: &VsCodeSettings, content: &mut SettingsContent) {
-            let content = &mut content.theme;
-
-            vscode.font_family_setting(
-                "editor.fontFamily",
-                &mut content.buffer_font_family,
-                &mut content.buffer_font_fallbacks,
-            );
         }
     }
 
@@ -1516,9 +1542,9 @@ mod tests {
                 })
             },
             r#"{
-                "tabs": {
-                    "git_status": true
-                }
+              "tabs": {
+                "git_status": true
+              }
             }
             "#
             .unindent(),
@@ -1533,9 +1559,9 @@ mod tests {
             .unindent(),
             |settings| settings.title_bar.get_or_insert_default().show_branch_name = Some(true),
             r#"{
-                "title_bar": {
-                    "show_branch_name": true
-                }
+              "title_bar": {
+                "show_branch_name": true
+              }
             }
             "#
             .unindent(),
@@ -1560,7 +1586,8 @@ mod tests {
             .unindent(),
             r#" { "editor.tabSize": 37 } "#.to_owned(),
             r#"{
-                "tab_size": 37
+              "base_keymap": "VSCode",
+              "tab_size": 37
             }
             "#
             .unindent(),
@@ -1577,6 +1604,7 @@ mod tests {
             .unindent(),
             r#"{ "editor.tabSize": 42 }"#.to_owned(),
             r#"{
+                "base_keymap": "VSCode",
                 "tab_size": 42,
                 "preferred_line_length": 99,
             }
@@ -1596,6 +1624,7 @@ mod tests {
             .unindent(),
             r#"{}"#.to_owned(),
             r#"{
+                "base_keymap": "VSCode",
                 "preferred_line_length": 99,
                 "tab_size": 42
             }
@@ -1611,11 +1640,18 @@ mod tests {
             }
             "#
             .unindent(),
-            r#"{ "workbench.editor.decorations.colors": true }"#.to_owned(),
+            r#"{ "git.decorations.enabled": true }"#.to_owned(),
             r#"{
-                "tabs": {
-                    "git_status": true
-                }
+              "project_panel": {
+                "git_status": true
+              },
+              "outline_panel": {
+                "git_status": true
+              },
+              "base_keymap": "VSCode",
+              "tabs": {
+                "git_status": true
+              }
             }
             "#
             .unindent(),
@@ -1631,11 +1667,12 @@ mod tests {
             .unindent(),
             r#"{ "editor.fontFamily": "Cascadia Code, 'Consolas', Courier New" }"#.to_owned(),
             r#"{
-                "buffer_font_fallbacks": [
-                    "Consolas",
-                    "Courier New"
-                ],
-                "buffer_font_family": "Cascadia Code"
+              "base_keymap": "VSCode",
+              "buffer_font_fallbacks": [
+                "Consolas",
+                "Courier New"
+              ],
+              "buffer_font_family": "Cascadia Code"
             }
             "#
             .unindent(),
@@ -1671,16 +1708,16 @@ mod tests {
                 .get_or_insert_default()
                 .enabled = Some(true);
         });
-        assert_eq!(
+        pretty_assertions::assert_str_eq!(
             actual,
             r#"{
-            "git": {
+              "git": {
                 "inline_blame": {
-                    "enabled": true
+                  "enabled": true
                 }
+              }
             }
-        }
-        "#
+            "#
             .unindent()
         );
     }
@@ -1753,11 +1790,16 @@ mod tests {
             )
             .unwrap();
 
-        fn get(content: &SettingsContent) -> &Option<u32> {
-            &content.project.all_languages.defaults.preferred_line_length
+        fn get(content: &SettingsContent) -> Option<&u32> {
+            content
+                .project
+                .all_languages
+                .defaults
+                .preferred_line_length
+                .as_ref()
         }
 
-        let default_value = get(&store.default_settings).unwrap();
+        let default_value = *get(&store.default_settings).unwrap();
 
         assert_eq!(
             store.get_value_from_file(SettingsFile::Project(local.clone()), get),
@@ -1820,8 +1862,13 @@ mod tests {
             .into_arc(),
         );
 
-        fn get(content: &SettingsContent) -> &Option<u32> {
-            &content.project.all_languages.defaults.preferred_line_length
+        fn get(content: &SettingsContent) -> Option<&u32> {
+            content
+                .project
+                .all_languages
+                .defaults
+                .preferred_line_length
+                .as_ref()
         }
 
         store
@@ -2043,5 +2090,46 @@ mod tests {
 
         let overrides = store.get_overrides_for_field(SettingsFile::Project(wt0_child1), get);
         assert_eq!(overrides, vec![]);
+    }
+
+    #[test]
+    fn test_file_ord() {
+        let wt0_root =
+            SettingsFile::Project((WorktreeId::from_usize(0), RelPath::empty().into_arc()));
+        let wt0_child1 =
+            SettingsFile::Project((WorktreeId::from_usize(0), rel_path("child1").into_arc()));
+        let wt0_child2 =
+            SettingsFile::Project((WorktreeId::from_usize(0), rel_path("child2").into_arc()));
+
+        let wt1_root =
+            SettingsFile::Project((WorktreeId::from_usize(1), RelPath::empty().into_arc()));
+        let wt1_subdir =
+            SettingsFile::Project((WorktreeId::from_usize(1), rel_path("subdir").into_arc()));
+
+        let mut files = vec![
+            &wt1_root,
+            &SettingsFile::Default,
+            &wt0_root,
+            &wt1_subdir,
+            &wt0_child2,
+            &SettingsFile::Server,
+            &wt0_child1,
+            &SettingsFile::User,
+        ];
+
+        files.sort();
+        pretty_assertions::assert_eq!(
+            files,
+            vec![
+                &wt0_child2,
+                &wt0_child1,
+                &wt0_root,
+                &wt1_subdir,
+                &wt1_root,
+                &SettingsFile::Server,
+                &SettingsFile::User,
+                &SettingsFile::Default,
+            ]
+        )
     }
 }

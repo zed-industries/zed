@@ -6,7 +6,7 @@ use crate::{ToggleMarksView, ToggleRegistersView, UseSystemClipboard, Vim, VimAd
 use crate::{motion::Motion, object::Object};
 use anyhow::Result;
 use collections::HashMap;
-use command_palette_hooks::{CommandPaletteFilter, CommandPaletteInterceptor};
+use command_palette_hooks::{CommandPaletteFilter, GlobalCommandPaletteInterceptor};
 use db::{
     sqlez::{domain::Domain, thread_safe_connection::ThreadSafeConnection},
     sqlez_macros::sql,
@@ -718,9 +718,7 @@ impl VimGlobals {
                 CommandPaletteFilter::update_global(cx, |filter, _| {
                     filter.show_namespace(Vim::NAMESPACE);
                 });
-                CommandPaletteInterceptor::update_global(cx, |interceptor, _| {
-                    interceptor.set(Box::new(command_interceptor));
-                });
+                GlobalCommandPaletteInterceptor::set(cx, command_interceptor);
                 for window in cx.windows() {
                     if let Some(workspace) = window.downcast::<Workspace>() {
                         workspace
@@ -735,9 +733,7 @@ impl VimGlobals {
             } else {
                 KeyBinding::set_vim_mode(cx, false);
                 *Vim::globals(cx) = VimGlobals::default();
-                CommandPaletteInterceptor::update_global(cx, |interceptor, _| {
-                    interceptor.clear();
-                });
+                GlobalCommandPaletteInterceptor::clear(cx);
                 CommandPaletteFilter::update_global(cx, |filter, _| {
                     filter.hide_namespace(Vim::NAMESPACE);
                 });
@@ -867,7 +863,9 @@ impl VimGlobals {
                 }
             }
             '%' => editor.and_then(|editor| {
-                let selection = editor.selections.newest::<Point>(cx);
+                let selection = editor
+                    .selections
+                    .newest::<Point>(&editor.display_snapshot(cx));
                 if let Some((_, buffer, _)) = editor
                     .buffer()
                     .read(cx)

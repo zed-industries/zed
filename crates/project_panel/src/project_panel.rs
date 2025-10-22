@@ -64,7 +64,7 @@ use workspace::{
     DraggedSelection, OpenInTerminal, OpenOptions, OpenVisible, PreviewTabsSettings, SelectedEntry,
     SplitDirection, Workspace,
     dock::{DockPosition, Panel, PanelEvent},
-    notifications::{DetachAndPromptErr, NotifyTaskExt},
+    notifications::{DetachAndPromptErr, NotifyResultExt, NotifyTaskExt},
 };
 use worktree::CreatedEntry;
 use zed_actions::workspace::OpenWithSystem;
@@ -615,8 +615,11 @@ impl ProjectPanel {
             .detach();
 
             let trash_action = [TypeId::of::<Trash>()];
-            let is_remote = project.read(cx).is_via_collab();
+            let is_remote = project.read(cx).is_remote();
 
+            // Make sure the trash option is never displayed anywhere on remote
+            // hosts since they may not support trashing. May want to dynamically
+            // detect this in the future.
             if is_remote {
                 CommandPaletteFilter::update_global(cx, |filter, _cx| {
                     filter.hide_action_types(&trash_action);
@@ -674,6 +677,9 @@ impl ProjectPanel {
                         this.update_visible_entries(None, false, false, window, cx);
                     }
                     if project_panel_settings.hide_root != new_settings.hide_root {
+                        this.update_visible_entries(None, false, false, window, cx);
+                    }
+                    if project_panel_settings.hide_hidden != new_settings.hide_hidden {
                         this.update_visible_entries(None, false, false, window, cx);
                     }
                     if project_panel_settings.sticky_scroll && !new_settings.sticky_scroll {
@@ -978,7 +984,7 @@ impl ProjectPanel {
             let is_foldable = auto_fold_dirs && self.is_foldable(entry, worktree);
             let is_unfoldable = auto_fold_dirs && self.is_unfoldable(entry, worktree);
             let is_read_only = project.is_read_only(cx);
-            let is_remote = project.is_via_collab();
+            let is_remote = project.is_remote();
             let is_local = project.is_local();
 
             let settings = ProjectPanelSettings::get_global(cx);
@@ -1042,13 +1048,13 @@ impl ProjectPanel {
                             .when(!should_hide_rename, |menu| {
                                 menu.action("Rename", Box::new(Rename))
                             })
-                            .when(!is_root & !is_remote, |menu| {
+                            .when(!is_root && !is_remote, |menu| {
                                 menu.action("Trash", Box::new(Trash { skip_prompt: false }))
                             })
                             .when(!is_root, |menu| {
                                 menu.action("Delete", Box::new(Delete { skip_prompt: false }))
                             })
-                            .when(!is_remote & is_root, |menu| {
+                            .when(!is_remote && is_root, |menu| {
                                 menu.separator()
                                     .action(
                                         "Add Folder to Project…",
@@ -2674,12 +2680,14 @@ impl ProjectPanel {
                 for task in paste_tasks {
                     match task {
                         PasteTask::Rename(task) => {
-                            if let Some(CreatedEntry::Included(entry)) = task.await.log_err() {
+                            if let Some(CreatedEntry::Included(entry)) =
+                                task.await.notify_async_err(cx)
+                            {
                                 last_succeed = Some(entry);
                             }
                         }
                         PasteTask::Copy(task) => {
-                            if let Some(Some(entry)) = task.await.log_err() {
+                            if let Some(Some(entry)) = task.await.notify_async_err(cx) {
                                 last_succeed = Some(entry);
                             }
                         }
@@ -2695,8 +2703,10 @@ impl ProjectPanel {
                             });
 
                             if item_count == 1 {
-                                // open entry if not dir, and only focus if rename is not pending
-                                if !entry.is_dir() {
+                                // open entry if not dir, setting is enabled, and only focus if rename is not pending
+                                if !entry.is_dir()
+                                    && ProjectPanelSettings::get_global(cx).open_file_on_paste
+                                {
                                     project_panel.open_entry(
                                         entry.id,
                                         disambiguation_range.is_none(),
@@ -3172,6 +3182,7 @@ impl ProjectPanel {
                 mtime: parent_entry.mtime,
                 size: parent_entry.size,
                 is_ignored: parent_entry.is_ignored,
+                is_hidden: parent_entry.is_hidden,
                 is_external: false,
                 is_private: false,
                 is_always_included: parent_entry.is_always_included,
@@ -3212,6 +3223,7 @@ impl ProjectPanel {
             .map(|worktree| worktree.read(cx).snapshot())
             .collect();
         let hide_root = settings.hide_root && visible_worktrees.len() == 1;
+        let hide_hidden = settings.hide_hidden;
         self.update_visible_entries_task = cx.spawn_in(window, async move |this, cx| {
             let new_state = cx
                 .background_spawn(async move {
@@ -3303,7 +3315,9 @@ impl ProjectPanel {
                                 }
                             }
                             auto_folded_ancestors.clear();
-                            if !hide_gitignore || !entry.is_ignored {
+                            if (!hide_gitignore || !entry.is_ignored)
+                                && (!hide_hidden || !entry.is_hidden)
+                            {
                                 visible_worktree_entries.push(entry.to_owned());
                             }
                             let precedes_new_entry = if let Some(new_entry_id) = new_entry_parent_id
@@ -3316,7 +3330,10 @@ impl ProjectPanel {
                             } else {
                                 false
                             };
-                            if precedes_new_entry && (!hide_gitignore || !entry.is_ignored) {
+                            if precedes_new_entry
+                                && (!hide_gitignore || !entry.is_ignored)
+                                && (!hide_hidden || !entry.is_hidden)
+                            {
                                 visible_worktree_entries.push(Self::create_new_git_entry(
                                     entry.entry,
                                     entry.git_summary,
@@ -4624,7 +4641,7 @@ impl ProjectPanel {
                         project_panel.marked_entries.clear();
                         if is_sticky
                             && let Some((_, _, index)) = project_panel.index_for_entry(entry_id, worktree_id) {
-                                project_panel.scroll_handle.scroll_to_item_with_offset(index, ScrollStrategy::Top, sticky_index.unwrap_or(0));
+                                project_panel.scroll_handle.scroll_to_item_strict_with_offset(index, ScrollStrategy::Top, sticky_index.unwrap_or(0));
                                 cx.notify();
                                 // move down by 1px so that clicked item
                                 // don't count as sticky anymore
@@ -5444,33 +5461,13 @@ impl Render for ProjectPanel {
                         .on_action(cx.listener(Self::new_directory))
                         .on_action(cx.listener(Self::rename))
                         .on_action(cx.listener(Self::delete))
-                        .on_action(cx.listener(Self::trash))
                         .on_action(cx.listener(Self::cut))
                         .on_action(cx.listener(Self::copy))
                         .on_action(cx.listener(Self::paste))
                         .on_action(cx.listener(Self::duplicate))
-                        .on_click(cx.listener(|this, event: &gpui::ClickEvent, window, cx| {
-                            if event.click_count() > 1
-                                && let Some(entry_id) = this.state.last_worktree_root_id
-                            {
-                                let project = this.project.read(cx);
-
-                                let worktree_id = if let Some(worktree) =
-                                    project.worktree_for_entry(entry_id, cx)
-                                {
-                                    worktree.read(cx).id()
-                                } else {
-                                    return;
-                                };
-
-                                this.state.selection = Some(SelectedEntry {
-                                    worktree_id,
-                                    entry_id,
-                                });
-
-                                this.new_file(&NewFile, window, cx);
-                            }
-                        }))
+                        .when(!project.is_remote(), |el| {
+                            el.on_action(cx.listener(Self::trash))
+                        })
                 })
                 .when(project.is_local(), |el| {
                     el.on_action(cx.listener(Self::reveal_in_finder))
@@ -5805,7 +5802,34 @@ impl Render for ProjectPanel {
                                             );
                                         }
                                     }),
-                                ),
+                                )
+                                .when(!project.is_read_only(cx), |el| {
+                                    el.on_click(cx.listener(
+                                        |this, event: &gpui::ClickEvent, window, cx| {
+                                            if event.click_count() > 1
+                                                && let Some(entry_id) =
+                                                    this.state.last_worktree_root_id
+                                            {
+                                                let project = this.project.read(cx);
+
+                                                let worktree_id = if let Some(worktree) =
+                                                    project.worktree_for_entry(entry_id, cx)
+                                                {
+                                                    worktree.read(cx).id()
+                                                } else {
+                                                    return;
+                                                };
+
+                                                this.state.selection = Some(SelectedEntry {
+                                                    worktree_id,
+                                                    entry_id,
+                                                });
+
+                                                this.new_file(&NewFile, window, cx);
+                                            }
+                                        },
+                                    ))
+                                }),
                         )
                         .size_full(),
                 )
@@ -5995,6 +6019,10 @@ impl Panel for ProjectPanel {
 
     fn persistent_name() -> &'static str {
         "Project Panel"
+    }
+
+    fn panel_key() -> &'static str {
+        PROJECT_PANEL_KEY
     }
 
     fn starts_open(&self, _: &Window, cx: &App) -> bool {
