@@ -20,7 +20,7 @@ use crate::{
     git_store::{GitStoreEvent, Repository},
 };
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DiffBase {
     Head,
     Merge { base_ref: SharedString },
@@ -61,7 +61,7 @@ impl BranchDiff {
         let git_store_subscription = cx.subscribe_in(
             &git_store,
             window,
-            move |this, _git_store, event, _window, cx| match event {
+            move |this, _git_store, event, _window, cx| match dbg!(event) {
                 GitStoreEvent::ActiveRepositoryChanged(_)
                 | GitStoreEvent::RepositoryUpdated(_, _, true)
                 | GitStoreEvent::ConflictsUpdated => {
@@ -132,7 +132,7 @@ impl BranchDiff {
                         }
                     })
                 }
-                needs_update
+                dbg!(needs_update)
             }) else {
                 return;
             };
@@ -163,23 +163,6 @@ impl BranchDiff {
         None
     }
 
-    // MERGE   |  HEAD |  INDEX  |  WORKTREE | RESULT            BRANCH_STATUS     INDEX_STATUS
-    //   --    |       |  --     |     --    |  (not shown)
-    //   --    |       |  --     |     v1    |  (created)         None | Added         Untracked
-    //   --    |       |  v1     |     v1    |  (created)         None | Added         Tracked(worktree_status: Unmodified)
-    //   --    |       |  v1     |     --    |  (not shown)       None | Added         Tracked(worktree_status: Deleted)
-    //   --    |       |  v1     |     v2    |  (created)         None | Added         Tracked(worktree_status: Modified)
-    //
-    //   --    |  v1   |  --     |     --    |  (not shown)       Added          Tracked(index_status: Deleted, worktree_status: Deleted | Unmodified)
-    //   v1    |  --   |  v2     |     --    |  (deleted)         None | Modified | Deleted         Tracked(index_status: Added, worktree_status: Deleted)
-    //   v1    |  v2   |  v3     |     --    |  (deleted)         None | Modified | Deleted
-    //   v1    |       |  --     |     v1    |  (not shown)
-    //   v1    |       |  --     |     v2    |  (modified)
-    //   v1    |       |  v1     |     v1    |  (not shown)
-    //   v1    |       |  v1     |     v2    |  (modified)
-    //   v1    |       |  v2     |     v3    |  (modified)
-    //   v1    |       |  v2     |     v1    |  (not shown)
-
     pub fn merge_statuses(
         &self,
         diff_from_head: Option<FileStatus>,
@@ -188,23 +171,47 @@ impl BranchDiff {
         match (diff_from_head, diff_from_merge_base) {
             (None, None) => None,
             (Some(diff_from_head), None) => Some(diff_from_head),
+            (Some(diff_from_head @ FileStatus::Unmerged(_)), _) => Some(diff_from_head),
+
+            // file does not exist in HEAD
+            // but *does* exist in work-tree
+            // and *does* exist in merge-base
             (
-                Some(FileStatus::Tracked(TrackedStatus {
-                    worktree_status, ..
+                Some(FileStatus::Untracked)
+                | Some(FileStatus::Tracked(TrackedStatus {
+                    index_status: StatusCode::Added,
+                    worktree_status: _,
                 })),
-                Some(tree_status),
+                Some(_),
             ) => Some(FileStatus::Tracked(TrackedStatus {
-                index_status: match tree_status {
-                    TreeDiffStatus::Added { .. } => StatusCode::Added,
-                    TreeDiffStatus::Modified { .. } => StatusCode::Modified,
-                    TreeDiffStatus::Deleted { .. } => StatusCode::Modified,
-                },
-                worktree_status,
-            })),
-            (Some(FileStatus::Untracked), Some(_)) => Some(FileStatus::Tracked(TrackedStatus {
                 index_status: StatusCode::Modified,
                 worktree_status: StatusCode::Modified,
             })),
+
+            // file exists in HEAD
+            // but *does not* exist in work-tree
+            (Some(diff_from_head), Some(diff_from_merge_base)) if diff_from_head.is_deleted() => {
+                match diff_from_merge_base {
+                    TreeDiffStatus::Added => None, // unchanged, didn't exist in merge base or worktree
+                    _ => Some(diff_from_head),
+                }
+            }
+
+            // file exists in HEAD
+            // and *does* exist in work-tree
+            (Some(FileStatus::Tracked(_)), Some(tree_status)) => {
+                Some(FileStatus::Tracked(TrackedStatus {
+                    index_status: match tree_status {
+                        TreeDiffStatus::Added { .. } => StatusCode::Added,
+                        _ => StatusCode::Modified,
+                    },
+                    worktree_status: match tree_status {
+                        TreeDiffStatus::Added => StatusCode::Added,
+                        _ => StatusCode::Modified,
+                    },
+                }))
+            }
+
             (_, Some(diff_from_merge_base)) => {
                 Some(diff_status_to_file_status(diff_from_merge_base))
             }

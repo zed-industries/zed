@@ -1,6 +1,7 @@
 use crate::{Oid, repository::RepoPath};
 use anyhow::{Result, anyhow};
 use collections::HashMap;
+use git2::Status;
 use gpui::SharedString;
 use serde::{Deserialize, Serialize};
 use std::{str::FromStr, sync::Arc};
@@ -192,7 +193,11 @@ impl FileStatus {
     }
 
     pub fn is_deleted(self) -> bool {
-        matches!(self, FileStatus::Tracked(tracked) if matches!((tracked.index_status, tracked.worktree_status), (StatusCode::Deleted, _) | (_, StatusCode::Deleted)))
+        let FileStatus::Tracked(tracked) = self else {
+            return false;
+        };
+        tracked.index_status == StatusCode::Deleted && tracked.worktree_status != StatusCode::Added
+            || tracked.worktree_status == StatusCode::Deleted
     }
 
     pub fn is_untracked(self) -> bool {

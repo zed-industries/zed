@@ -1884,13 +1884,23 @@ impl GitRepository for RealGitRepository {
                     return Ok(output);
                 }
 
-                let output = git
-                    .run(&["symbolic-ref", "refs/remotes/origin/HEAD"])
-                    .await?;
+                if let Ok(output) = git.run(&["symbolic-ref", "refs/remotes/origin/HEAD"]).await {
+                    return Ok(output
+                        .strip_prefix("refs/remotes/origin/")
+                        .map(|s| SharedString::from(s.to_owned())));
+                }
 
-                Ok(output
-                    .strip_prefix("refs/remotes/origin/")
-                    .map(|s| SharedString::from(s.to_owned())))
+                if let Ok(default_branch) = git.run(&["config", "init.defaultBranch"]).await {
+                    if git.run(&["rev-parse", &default_branch]).await.is_ok() {
+                        return Ok(Some(default_branch.into()));
+                    }
+                }
+
+                if git.run(&["rev-parse", "master"]).await.is_ok() {
+                    return Ok(Some("master".into()));
+                }
+
+                Ok(None)
             })
             .boxed()
     }

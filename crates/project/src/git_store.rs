@@ -47,7 +47,7 @@ use parking_lot::Mutex;
 use postage::stream::Stream as _;
 use rpc::{
     AnyProtoClient, TypedEnvelope,
-    proto::{self, git_reset, language_server_prompt_request, split_repository_update},
+    proto::{self, git_reset, split_repository_update},
 };
 use serde::Deserialize;
 use std::{

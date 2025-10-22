@@ -25,7 +25,7 @@ use gpui::{
 use language::{Anchor, Buffer, Capability, OffsetRangeExt};
 use multi_buffer::{MultiBuffer, PathKey};
 use project::{
-    Project, ProjectItem, ProjectPath,
+    Project, ProjectPath,
     git_store::{
         Repository,
         branch_diff::{self, BranchDiffEvent, DiffBase},
@@ -173,11 +173,15 @@ impl ProjectDiff {
         let Some(repo) = project.read(cx).git_store().read(cx).active_repository() else {
             return Task::ready(Err(anyhow!("No active repository")));
         };
-        let main_branch = repo.update(cx, |repo, _| repo.default_branch());
+        let main_branch = repo.update(cx, |repo, _| {
+            dbg!(&repo.work_directory_abs_path);
+            repo.default_branch()
+        });
         window.spawn(cx, async move |cx| {
             let main_branch = main_branch
                 .await??
                 .context("Could not determine default branch")?;
+            dbg!(&main_branch);
 
             let branch_diff = cx.new_window_entity(|window, cx| {
                 branch_diff::BranchDiff::new(
@@ -311,7 +315,7 @@ impl ProjectDiff {
         }
     }
 
-    pub fn diff_base(&self, cx: &App) -> &DiffBase {
+    pub fn diff_base<'a>(&'a self, cx: &'a App) -> &'a DiffBase {
         self.branch_diff.read(cx).diff_base()
     }
 
@@ -956,7 +960,7 @@ impl ToolbarItemView for ProjectDiffToolbar {
     ) -> ToolbarItemLocation {
         self.project_diff = active_pane_item
             .and_then(|item| item.act_as::<ProjectDiff>(cx))
-            .filter(|item| item.read(cx).diff_base(cx) == DiffBase::Head)
+            .filter(|item| item.read(cx).diff_base(cx) == &DiffBase::Head)
             .map(|entity| entity.downgrade());
         if self.project_diff.is_some() {
             ToolbarItemLocation::PrimaryRight
@@ -1448,16 +1452,20 @@ impl Addon for BranchDiffAddon {
 
 #[cfg(test)]
 mod tests {
+    use collections::HashMap;
     use db::indoc;
     use editor::test::editor_test_context::{EditorTestContext, assert_state_with_diff};
-    use git::status::{UnmergedStatus, UnmergedStatusCode};
+    use git::status::{TrackedStatus, UnmergedStatus, UnmergedStatusCode};
     use gpui::TestAppContext;
     use project::FakeFs;
     use serde_json::json;
     use settings::SettingsStore;
     use std::path::Path;
     use unindent::Unindent as _;
-    use util::{path, rel_path::rel_path};
+    use util::{
+        path,
+        rel_path::{RelPath, rel_path},
+    };
 
     use super::*;
 
@@ -2103,52 +2111,34 @@ mod tests {
             path!("/project"),
             json!({
                 ".git": {},
-                "foo.txt": "
-                    one
-                    two
-                    three
-                    four
-                    five
-                    six
-                    seven
-                    eight
-                    nine
-                    ten
-                    ELEVEN
-                    twelve
-                ".unindent()
+                "a.txt": "C",
+                "b.txt": "new"
             }),
         )
         .await;
         let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
-        let diff = cx.new_window_entity(|window, cx| {
-            ProjectDiff::new(project.clone(), workspace, window, cx)
-        });
+        let diff = cx
+            .update(|window, cx| {
+                ProjectDiff::new_with_default_branch(project.clone(), workspace, window, cx)
+            })
+            .await
+            .unwrap();
         cx.run_until_parked();
 
-        fs.set_head_and_index_for_repo(
+        dbg!("a");
+        fs.set_head_for_repo(
             Path::new(path!("/project/.git")),
-            &[(
-                "foo.txt",
-                "
-                    one
-                    two
-                    three
-                    four
-                    five
-                    six
-                    seven
-                    eight
-                    nine
-                    ten
-                    eleven
-                    twelve
-                "
-                .unindent(),
-            )],
+            &[("a.txt", "B".into())],
+            "sha",
         );
+        // fs.set_index_for_repo(dot_git, index_state);
+        fs.set_merge_base_content_for_repo(
+            Path::new(path!("/project/.git")),
+            &[("a.txt", "A".into())],
+        );
+        dbg!("b");
         cx.run_until_parked();
 
         let editor = diff.read_with(cx, |diff, _| diff.editor.clone());
@@ -2157,65 +2147,40 @@ mod tests {
             &editor,
             cx,
             &"
-                  ˇnine
-                  ten
-                - eleven
-                + ELEVEN
-                  twelve
-            "
-            .unindent(),
+                - A
+                + ˇC
+                + new"
+                .unindent(),
         );
 
-        let buffer = project
-            .update(cx, |project, cx| {
-                project.open_local_buffer(path!("/project/foo.txt"), cx)
-            })
-            .await
-            .unwrap();
-        buffer.update(cx, |buffer, cx| {
-            buffer.edit_via_marked_text(
-                &"
-                    one
-                    «TWO»
-                    three
-                    four
-                    five
-                    six
-                    seven
-                    eight
-                    nine
-                    ten
-                    ELEVEN
-                    twelve
-                "
-                .unindent(),
-                None,
-                cx,
-            );
-        });
-        project
-            .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))
-            .await
-            .unwrap();
-        cx.run_until_parked();
+        let statuses: HashMap<Arc<RelPath>, Option<FileStatus>> =
+            editor.update(cx, |editor, cx| {
+                editor
+                    .buffer()
+                    .read(cx)
+                    .all_buffers()
+                    .iter()
+                    .map(|buffer| {
+                        (
+                            buffer.read(cx).file().unwrap().path().clone(),
+                            editor.status_for_buffer_id(buffer.read(cx).remote_id(), cx),
+                        )
+                    })
+                    .collect()
+            });
 
-        assert_state_with_diff(
-            &editor,
-            cx,
-            &"
-                  one
-                - two
-                + TWO
-                  three
-                  four
-                  five
-                  ˇnine
-                  ten
-                - eleven
-                + ELEVEN
-                  twelve
-            "
-            .unindent(),
+        assert_eq!(
+            statuses,
+            HashMap::from_iter([
+                (
+                    rel_path("a.txt").into_arc(),
+                    Some(FileStatus::Tracked(TrackedStatus {
+                        index_status: git::status::StatusCode::Modified,
+                        worktree_status: git::status::StatusCode::Modified
+                    }))
+                ),
+                (rel_path("b.txt").into_arc(), Some(FileStatus::Untracked))
+            ])
         );
     }
 }

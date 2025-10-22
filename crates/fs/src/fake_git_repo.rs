@@ -153,9 +153,11 @@ impl GitRepository for FakeGitRepository {
         None
     }
 
-    fn diff_tree(&self, _request: DiffTreeType) -> BoxFuture<Result<TreeDiff>> {
+    fn diff_tree(&self, _request: DiffTreeType) -> BoxFuture<'_, Result<TreeDiff>> {
+        dbg!(&self.dot_git_path);
         let mut entries = HashMap::default();
         self.with_state_async(false, |state| {
+            dbg!(&state.head_contents, &state.merge_base_contents);
             for (path, content) in &state.head_contents {
                 let status = if let Some((oid, original)) = state
                     .merge_base_contents
@@ -620,7 +622,7 @@ impl GitRepository for FakeGitRepository {
     }
 
     fn default_branch(&self) -> BoxFuture<'_, Result<Option<SharedString>>> {
-        unimplemented!()
+        async { Ok(Some("main".into())) }.boxed()
     }
 }
 
