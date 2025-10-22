@@ -1220,6 +1220,14 @@ mod tests {
         assert_eq!(SlashCommandCompletion::try_parse("Lorem/", 0), None);
 
         assert_eq!(SlashCommandCompletion::try_parse("/ ", 0), None);
+
+        // Slash commands should not consume @ symbols that could be mention triggers
+        assert_eq!(SlashCommandCompletion::try_parse("/init @", 0), None);
+
+        assert_eq!(SlashCommandCompletion::try_parse("/help @file", 0), None);
+
+        // @ with whitespace before it should also not be consumed
+        assert_eq!(SlashCommandCompletion::try_parse("/command  @", 0), None);
     }
 
     #[test]
