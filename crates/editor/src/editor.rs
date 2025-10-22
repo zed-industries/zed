@@ -21003,7 +21003,7 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         match event {
-            display_map::DisplayMapEvent::SemanticTokensReady { buffer_id } => {
+            display_map::DisplayMapEvent::SemanticTokensReady { buffer_id: _ } => {
                 cx.notify(); // Force editor to redraw with new semantic tokens
             }
         }
@@ -21031,24 +21031,24 @@ impl Editor {
 
         let rainbow_config = EditorSettings::get_global(cx).rainbow_highlighting;
         self.display_map.update(cx, |display_map, _| {
+            let old_enabled = display_map.get_variable_color_cache().is_some();
+            let old_mode = display_map.get_variable_color_cache().map(|c| c.mode());
+
             let cache = if rainbow_config.enabled {
-                // Only create a new cache if we don't have one, or if the mode changed
                 match display_map.get_variable_color_cache() {
-                    Some(existing) if existing.mode() == rainbow_config.mode => {
-                        // Keep existing cache - don't lose color assignments
-                        Some(existing)
-                    }
-                    _ => {
-                        // Create new cache: either we don't have one, or mode changed
-                        Some(Arc::new(rainbow::VariableColorCache::new(
-                            rainbow_config.mode,
-                        )))
-                    }
+                    Some(existing) if existing.mode() == rainbow_config.mode => Some(existing),
+                    _ => Some(Arc::new(rainbow::VariableColorCache::new(
+                        rainbow_config.mode,
+                    ))),
                 }
             } else {
                 None
             };
+
             display_map.set_variable_color_cache(cache);
+
+            old_enabled != rainbow_config.enabled
+                || old_mode.map_or(true, |m| m != rainbow_config.mode)
         });
 
         let old_cursor_shape = self.cursor_shape;
@@ -22127,7 +22127,6 @@ impl Editor {
                 } else {
                     CHUNK_SIZE_NORMAL
                 };
-                
                 for chunk in buffers_to_process.chunks(chunk_size) {
                     let chunk_tasks: Vec<_> = editor
                         .update(cx, |editor, cx| {

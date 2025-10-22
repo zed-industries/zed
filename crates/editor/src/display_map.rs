@@ -1790,9 +1790,9 @@ impl SemanticTokenView {
                 Some(MultibufferSemanticToken {
                     range: start_offset..end_offset,
                     style: stylizer.convert(
-                        syntax_theme,
                         token.token_type,
                         token.token_modifiers,
+                        syntax_theme,
                         &buffer_snapshot.text,
                         start_offset..end_offset,
                         variable_color_cache,
@@ -1880,16 +1880,59 @@ impl<'a> SemanticTokenStylizer<'a> {
         (token_modifiers & mask) != 0
     }
 
-    pub fn convert(
+    fn apply_rainbow_if_variable(
         &self,
-        theme: Option<&'a SyntaxTheme>,
         token_type: u32,
         modifiers: u32,
+        theme: Option<&SyntaxTheme>,
+        buffer: &text::BufferSnapshot,
+        range: Range<usize>,
+        variable_color_cache: Option<&Arc<crate::rainbow::VariableColorCache>>,
+    ) -> Option<HighlightStyle> {
+        let token_type_name = self.token_type(token_type)?;
+        let has_modifier = |modifier| self.has_modifier(modifiers, modifier);
+
+        let is_variable =
+            matches!(token_type_name, "variable" | "parameter") && !has_modifier("defaultLibrary");
+
+        if !is_variable {
+            return None;
+        }
+
+        let cache = variable_color_cache?;
+        let theme = theme?;
+
+        let identifier: String = buffer.text_for_range(range).collect();
+        let validated = crate::rainbow::validate_identifier_for_rainbow(&identifier)?;
+
+        let style = cache.get_or_insert(validated, theme);
+        if style.color.is_some() {
+            Some(style)
+        } else {
+            None
+        }
+    }
+
+    pub fn convert(
+        &self,
+        token_type: u32,
+        modifiers: u32,
+        theme: Option<&SyntaxTheme>,
         buffer: &text::BufferSnapshot,
         range: Range<usize>,
         variable_color_cache: Option<&Arc<crate::rainbow::VariableColorCache>>,
         _highlights_config: Option<&language::HighlightsConfig>,
     ) -> Option<HighlightStyle> {
+        if let Some(rainbow_style) = self.apply_rainbow_if_variable(
+            token_type,
+            modifiers,
+            theme,
+            buffer,
+            range.clone(),
+            variable_color_cache,
+        ) {
+            return Some(rainbow_style);
+        }
         let token_type_name = self.token_type(token_type)?;
         let has_modifier = |modifier| self.has_modifier(modifiers, modifier);
 
@@ -1940,46 +1983,14 @@ impl<'a> SemanticTokenStylizer<'a> {
             }
             "type" => &["type"],
 
-            // References - apply rainbow coloring to variables and parameters
-            "parameter" => {
-                // Rainbow color parameters
-                if let Some(cache) = variable_color_cache {
-                    if let Some(theme) = theme {
-                        let identifier: String = buffer.text_for_range(range).collect();
-                        if let Some(validated) =
-                            crate::rainbow::validate_identifier_for_rainbow(&identifier)
-                        {
-                            let style = cache.get_or_insert(validated, theme);
-                            if style.color.is_some() {
-                                return Some(style);
-                            }
-                        }
-                    }
-                }
-                &["parameter"]
-            }
+            // References - rainbow coloring handled above
+            "parameter" => &["parameter"],
             "variable" if has_modifier("defaultLibrary") && has_modifier("constant") => {
                 &["constant.builtin", "constant"]
             }
             "variable" if has_modifier("defaultLibrary") => &["variable.builtin", "variable"],
             "variable" if has_modifier("constant") => &["constant"],
-            "variable" => {
-                // Rainbow color regular variables
-                if let Some(cache) = variable_color_cache {
-                    if let Some(theme) = theme {
-                        let identifier: String = buffer.text_for_range(range).collect();
-                        if let Some(validated) =
-                            crate::rainbow::validate_identifier_for_rainbow(&identifier)
-                        {
-                            let style = cache.get_or_insert(validated, theme);
-                            if style.color.is_some() {
-                                return Some(style);
-                            }
-                        }
-                    }
-                }
-                &["variable"]
-            }
+            "variable" => &["variable"],
             "const" => &["const", "constant", "variable"],
             "property" => &["property"],
             "enumMember" => &["type.enum.member", "type.enum", "variant"],

@@ -28,7 +28,6 @@ use util::{merge_json_value_into, rel_path::RelPath};
 
 use crate::{PackageJson, PackageJsonData};
 
-
 pub(crate) struct TypeScriptContextProvider {
     fs: Arc<dyn Fs>,
     last_package_json: PackageJsonContents,
@@ -1568,9 +1567,7 @@ mod tests {
     }
 
     #[test]
-
     #[test]
-
     // The order of test runner tasks is based on inferred user preference:
     // 1. Dedicated test runners (e.g., Jest, Vitest, Mocha, Jasmine) are prioritized.
     // 2. Bun's built-in test runner (`bun test`) comes next.

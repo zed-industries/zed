@@ -26,7 +26,6 @@ use std::{
 use task::{TaskTemplate, TaskTemplates, TaskVariables, VariableName};
 use util::{ResultExt, fs::remove_matching, maybe};
 
-
 fn server_binary_arguments() -> Vec<OsString> {
     vec!["-mode=stdio".into()]
 }
