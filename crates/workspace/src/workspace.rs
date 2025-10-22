@@ -1,6 +1,6 @@
 pub mod dock;
 pub mod history_manager;
-pub mod invalid_buffer_view;
+pub mod invalid_item_view;
 pub mod item;
 mod modal_layer;
 pub mod notifications;

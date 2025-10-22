@@ -426,7 +426,6 @@ impl WindowTextSystem {
             font_runs.clear();
             let line_end = line_start + line_text.len();
 
-            let mut last_font: Option<FontId> = None;
             let mut decoration_runs = SmallVec::<[DecorationRun; 32]>::new();
             let mut run_start = line_start;
             while run_start < line_end {
@@ -455,14 +454,13 @@ impl WindowTextSystem {
                     true
                 };
 
+                let font_id = self.resolve_font(&run.font);
                 if let Some(font_run) = font_runs.last_mut()
-                    && Some(font_run.font_id) == last_font
+                    && font_id == font_run.font_id
                     && !decoration_changed
                 {
                     font_run.len += run_len_within_line;
                 } else {
-                    let font_id = self.resolve_font(&run.font);
-                    last_font = Some(font_id);
                     font_runs.push(FontRun {
                         len: run_len_within_line,
                         font_id,

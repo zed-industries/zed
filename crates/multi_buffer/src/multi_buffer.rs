@@ -51,7 +51,7 @@ use text::{
 use theme::SyntaxTheme;
 use util::{post_inc, rel_path::RelPath};
 
-const NEWLINES: &[u8] = &[b'\n'; u8::MAX as usize];
+const NEWLINES: &[u8] = &[b'\n'; rope::Chunk::MASK_BITS];
 
 #[derive(Debug, Default, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ExcerptId(u32);
@@ -2554,6 +2554,10 @@ impl MultiBuffer {
 
     pub fn for_each_buffer(&self, mut f: impl FnMut(&Entity<Buffer>)) {
         self.buffers.values().for_each(|state| f(&state.buffer))
+    }
+
+    pub fn explicit_title(&self) -> Option<&str> {
+        self.title.as_deref()
     }
 
     pub fn title<'a>(&'a self, cx: &'a App) -> Cow<'a, str> {
@@ -7730,7 +7734,7 @@ impl<'a> Iterator for MultiBufferChunks<'a> {
                     let split_idx = diff_transform_end - self.range.start;
                     let (before, after) = chunk.text.split_at(split_idx);
                     self.range.start = diff_transform_end;
-                    let mask = (1 << split_idx) - 1;
+                    let mask = 1u128.unbounded_shl(split_idx as u32).wrapping_sub(1);
                     let chars = chunk.chars & mask;
                     let tabs = chunk.tabs & mask;
 
@@ -7882,7 +7886,9 @@ impl<'a> Iterator for ExcerptChunks<'a> {
 
         if self.footer_height > 0 {
             let text = unsafe { str::from_utf8_unchecked(&NEWLINES[..self.footer_height]) };
-            let chars = (1 << self.footer_height) - 1;
+            let chars = 1u128
+                .unbounded_shl(self.footer_height as u32)
+                .wrapping_sub(1);
             self.footer_height = 0;
             return Some(Chunk {
                 text,
