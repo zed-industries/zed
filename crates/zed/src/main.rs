@@ -847,6 +847,18 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                     .detach();
                 });
             }
+            OpenRequestKind::Setting { setting_path } => {
+                // zed://settings/languages/$(language)/tab_size  - DONT SUPPORT
+                // zed://settings/languages/Rust/tab_size  - SUPPORT
+                // languages.$(language).tab_size
+                // [ languages $(language) tab_size]
+                workspace::with_active_or_new_workspace(cx, |_workspace, window, cx| {
+                    window.dispatch_action(
+                        Box::new(zed_actions::OpenSettingsAt { path: setting_path }),
+                        cx,
+                    );
+                });
+            }
         }
 
         return;

@@ -34,7 +34,7 @@ use ui::{
 use ui_input::{NumberField, NumberFieldType};
 use util::{ResultExt as _, paths::PathStyle, rel_path::RelPath};
 use workspace::{OpenOptions, OpenVisible, Workspace, client_side_decorations};
-use zed_actions::OpenSettings;
+use zed_actions::{OpenSettings, OpenSettingsAt};
 
 use crate::components::{SettingsInputField, font_picker, icon_theme_picker, theme_picker};
 
@@ -86,6 +86,25 @@ struct FocusFile(pub u32);
 struct SettingField<T: 'static> {
     pick: fn(&SettingsContent) -> Option<&T>,
     write: fn(&mut SettingsContent, Option<T>),
+
+    /// A json-path-like string that gives a unique-ish string that identifies
+    /// where in the JSON the setting is defined.
+    ///
+    /// The syntax is `jq`-like, but modified slightly to be URL-safe (and
+    /// without the leading dot), e.g. `foo.bar`.
+    ///
+    /// They are URL-safe (this is important since links are the main use-case
+    /// for these paths).
+    ///
+    /// There are a couple of special cases:
+    /// - discrimminants are represented with a trailing `$`, for example
+    /// `terminal.working_directory$`. This is to distinguish the discrimminant
+    /// setting (i.e. the setting that changes whether the value is a string or
+    /// an object) from the setting in the case that it is a string.
+    /// - language-specific settings begin `languages.$(language)`. Links
+    /// targeting these settings should take the form `languages/Rust/...`, for
+    /// example, but are not currently supported.
+    json_path: Option<&'static str>,
 }
 
 impl<T: 'static> Clone for SettingField<T> {
@@ -116,6 +135,7 @@ impl<T: 'static> SettingField<T> {
         SettingField {
             pick: |_| Some(&UnimplementedSettingField),
             write: |_, _| unreachable!(),
+            json_path: None,
         }
     }
 }
@@ -132,6 +152,8 @@ trait AnySettingField {
         file_set_in: &settings::SettingsFile,
         cx: &App,
     ) -> Option<Box<dyn Fn(&mut App)>>;
+
+    fn json_path(&self) -> Option<&'static str>;
 }
 
 impl<T: PartialEq + Clone + Send + Sync + 'static> AnySettingField for SettingField<T> {
@@ -196,6 +218,10 @@ impl<T: PartialEq + Clone + Send + Sync + 'static> AnySettingField for SettingFi
             // todo(settings_ui): Don't log err
             .log_err();
         }));
+    }
+
+    fn json_path(&self) -> Option<&'static str> {
+        self.json_path
     }
 }
 
@@ -345,12 +371,25 @@ pub fn init(cx: &mut App) {
     init_renderers(cx);
 
     cx.observe_new(|workspace: &mut workspace::Workspace, _, _| {
+        workspace.register_action(
+            |workspace, OpenSettingsAt { path }: &OpenSettingsAt, window, cx| {
+                let window_handle = window
+                    .window_handle()
+                    .downcast::<Workspace>()
+                    .expect("Workspaces are root Windows");
+                open_settings_editor(workspace, Some(&path), window_handle, cx);
+            },
+        );
+    })
+    .detach();
+
+    cx.observe_new(|workspace: &mut workspace::Workspace, _, _| {
         workspace.register_action(|workspace, _: &OpenSettings, window, cx| {
             let window_handle = window
                 .window_handle()
                 .downcast::<Workspace>()
                 .expect("Workspaces are root Windows");
-            open_settings_editor(workspace, window_handle, cx);
+            open_settings_editor(workspace, None, window_handle, cx);
         });
     })
     .detach();
@@ -456,9 +495,61 @@ fn init_renderers(cx: &mut App) {
 
 pub fn open_settings_editor(
     _workspace: &mut Workspace,
+    path: Option<&str>,
     workspace_handle: WindowHandle<Workspace>,
     cx: &mut App,
 ) {
+    /// Assumes a settings GUI window is already open
+    fn open_path(
+        path: &str,
+        settings_window: &mut SettingsWindow,
+        window: &mut Window,
+        cx: &mut Context<SettingsWindow>,
+    ) {
+        if path.starts_with("languages.$(language)") {
+            log::error!("language-specific settings links are not currently supported");
+            return;
+        }
+
+        settings_window.current_file = SettingsUiFile::User;
+        settings_window.build_ui(window, cx);
+
+        let mut item_info = None;
+        'search: for (nav_entry_index, entry) in settings_window.navbar_entries.iter().enumerate() {
+            if entry.is_root {
+                continue;
+            }
+            let page_index = entry.page_index;
+            let header_index = entry
+                .item_index
+                .expect("non-root entries should have an item index");
+            for item_index in header_index + 1..settings_window.pages[page_index].items.len() {
+                let item = &settings_window.pages[page_index].items[item_index];
+                if let SettingsPageItem::SectionHeader(_) = item {
+                    break;
+                }
+                if let SettingsPageItem::SettingItem(item) = item {
+                    if item.field.json_path() == Some(path) {
+                        if !item.files.contains(USER) {
+                            log::error!("Found item {}, but it is not a user setting", path);
+                            return;
+                        }
+                        item_info = Some((item_index, nav_entry_index));
+                        break 'search;
+                    }
+                }
+            }
+        }
+        let Some((item_index, navbar_entry_index)) = item_info else {
+            log::error!("Failed to find item for {}", path);
+            return;
+        };
+
+        settings_window.open_navbar_entry_page(navbar_entry_index);
+        window.focus(&settings_window.focus_handle_for_content_element(item_index, cx));
+        settings_window.scroll_to_content_item(item_index, window, cx);
+    }
+
     let existing_window = cx
         .windows()
         .into_iter()
@@ -470,6 +561,9 @@ pub fn open_settings_editor(
                 settings_window.original_window = Some(workspace_handle);
                 settings_window.observe_last_window_close(cx);
                 window.activate_window();
+                if let Some(path) = path {
+                    open_path(path, settings_window, window, cx);
+                }
             })
             .ok();
         return;
@@ -477,6 +571,7 @@ pub fn open_settings_editor(
 
     // We have to defer this to get the workspace off the stack.
 
+    let path = path.map(ToOwned::to_owned);
     cx.defer(move |cx| {
         let current_rem_size: f32 = theme::ThemeSettings::get_global(cx).ui_font_size(cx).into();
 
@@ -508,7 +603,17 @@ pub fn open_settings_editor(
                 window_bounds: Some(WindowBounds::centered(scaled_bounds, cx)),
                 ..Default::default()
             },
-            |window, cx| cx.new(|cx| SettingsWindow::new(Some(workspace_handle), window, cx)),
+            |window, cx| {
+                let settings_window =
+                    cx.new(|cx| SettingsWindow::new(Some(workspace_handle), window, cx));
+                settings_window.update(cx, |settings_window, cx| {
+                    if let Some(path) = path {
+                        open_path(&path, settings_window, window, cx);
+                    }
+                });
+
+                settings_window
+            },
         )
         .log_err();
     });
@@ -2112,17 +2217,7 @@ impl SettingsWindow {
             let entry_item_index = self.navbar_entries[navbar_entry_index]
                 .item_index
                 .expect("Non-root items should have an item index");
-            let Some(selected_item_index) = self
-                .visible_page_items()
-                .position(|(index, _)| index == entry_item_index)
-            else {
-                return;
-            };
-
-            self.list_state.scroll_to(gpui::ListOffset {
-                item_ix: selected_item_index + 1,
-                offset_in_item: px(0.),
-            });
+            self.scroll_to_content_item(entry_item_index, window, cx);
             if focus_content {
                 handle_to_focus = Some(self.focus_handle_for_content_element(entry_item_index, cx));
             } else {
@@ -2155,6 +2250,32 @@ impl SettingsWindow {
                 cx.notify();
             });
             cx.notify();
+        });
+        cx.notify();
+    }
+
+    fn scroll_to_content_item(
+        &self,
+        content_item_index: usize,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let index = self
+            .visible_page_items()
+            .position(|(index, _)| index == content_item_index)
+            .unwrap_or(0);
+        if index == 0 {
+            self.sub_page_scroll_handle
+                .set_offset(point(px(0.), px(0.)));
+            self.list_state.scroll_to(gpui::ListOffset {
+                item_ix: 0,
+                offset_in_item: px(0.),
+            });
+            return;
+        }
+        self.list_state.scroll_to(gpui::ListOffset {
+            item_ix: index + 1,
+            offset_in_item: px(0.),
         });
         cx.notify();
     }
@@ -3173,7 +3294,7 @@ fn render_icon_theme_picker(
 }
 
 #[cfg(test)]
-mod test {
+pub mod test {
 
     use super::*;
 
@@ -3194,7 +3315,7 @@ mod test {
         }
     }
 
-    fn register_settings(cx: &mut App) {
+    pub fn register_settings(cx: &mut App) {
         settings::init(cx);
         theme::init(theme::LoadThemes::JustBase, cx);
         workspace::init_settings(cx);
