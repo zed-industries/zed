@@ -4517,7 +4517,6 @@ dependencies = [
  "paths",
  "serde",
  "serde_json",
- "shlex",
  "smol",
  "task",
  "util",
