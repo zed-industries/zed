@@ -1265,7 +1265,7 @@ fn build_command(
     for (k, v) in input_env.iter() {
         write!(
             exec,
-            "{}={}",
+            "{}={} ",
             k,
             shell_kind.try_quote(v).context("shell quoting")?
         )?;
