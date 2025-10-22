@@ -47,7 +47,7 @@ pub enum OpenRequestKind {
     AgentPanel,
     DockMenuAction { index: usize },
     BuiltinJsonSchema { schema_path: String },
-    Setting { setting_path: String }
+    Setting { setting_path: String },
 }
 
 impl OpenRequest {
