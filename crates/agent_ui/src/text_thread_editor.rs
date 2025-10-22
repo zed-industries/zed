@@ -1085,12 +1085,11 @@ impl TextThreadEditor {
                                             .child(label)
                                             .children(spinner),
                                     )
-                                    .tooltip(|window, cx| {
+                                    .tooltip(|_window, cx| {
                                         Tooltip::with_meta(
                                             "Toggle message role",
                                             None,
                                             "Available roles: You (User), Agent, System",
-                                            window,
                                             cx,
                                         )
                                     })
@@ -1126,12 +1125,11 @@ impl TextThreadEditor {
                                                     .size(IconSize::XSmall)
                                                     .color(Color::Hint),
                                             )
-                                            .tooltip(|window, cx| {
+                                            .tooltip(|_window, cx| {
                                                 Tooltip::with_meta(
                                                     "Context Cached",
                                                     None,
                                                     "Large messages cached to optimize performance",
-                                                    window,
                                                     cx,
                                                 )
                                             })
@@ -1947,7 +1945,7 @@ impl TextThreadEditor {
             })
             .layer(ElevationIndex::ModalSurface)
             .key_binding(
-                KeyBinding::for_action_in(&Assist, &focus_handle, window, cx)
+                KeyBinding::for_action_in(&Assist, &focus_handle, cx)
                     .map(|kb| kb.size(rems_from_px(12.))),
             )
             .on_click(move |_event, window, cx| {
@@ -1982,14 +1980,8 @@ impl TextThreadEditor {
                 .icon_color(Color::Muted)
                 .selected_icon_color(Color::Accent)
                 .selected_style(ButtonStyle::Filled),
-            move |window, cx| {
-                Tooltip::with_meta(
-                    "Add Context",
-                    None,
-                    "Type / to insert via keyboard",
-                    window,
-                    cx,
-                )
+            move |_window, cx| {
+                Tooltip::with_meta("Add Context", None, "Type / to insert via keyboard", cx)
             },
         )
     }
@@ -2078,14 +2070,8 @@ impl TextThreadEditor {
                         )
                         .child(Icon::new(icon).color(color).size(IconSize::XSmall)),
                 ),
-            move |window, cx| {
-                Tooltip::for_action_in(
-                    "Change Model",
-                    &ToggleModelSelector,
-                    &focus_handle,
-                    window,
-                    cx,
-                )
+            move |_window, cx| {
+                Tooltip::for_action_in("Change Model", &ToggleModelSelector, &focus_handle, cx)
             },
             gpui::Corner::BottomRight,
             cx,

@@ -6625,7 +6625,7 @@ impl Editor {
             .when(show_tooltip, |this| {
                 this.tooltip({
                     let focus_handle = self.focus_handle.clone();
-                    move |window, cx| {
+                    move |_window, cx| {
                         Tooltip::for_action_in(
                             "Toggle Code Actions",
                             &ToggleCodeActions {
@@ -6633,7 +6633,6 @@ impl Editor {
                                 quick_launch: false,
                             },
                             &focus_handle,
-                            window,
                             cx,
                         )
                     }
@@ -8498,13 +8497,12 @@ impl Editor {
                     cx,
                 );
             }))
-            .tooltip(move |window, cx| {
+            .tooltip(move |_window, cx| {
                 Tooltip::with_meta_in(
                     primary_action_text,
                     Some(&ToggleBreakpoint),
                     meta.clone(),
                     &focus_handle,
-                    window,
                     cx,
                 )
             })
@@ -24873,12 +24871,11 @@ fn render_diff_hunk_controls(
                 .alpha(if status.is_pending() { 0.66 } else { 1.0 })
                 .tooltip({
                     let focus_handle = editor.focus_handle(cx);
-                    move |window, cx| {
+                    move |_window, cx| {
                         Tooltip::for_action_in(
                             "Stage Hunk",
                             &::git::ToggleStaged,
                             &focus_handle,
-                            window,
                             cx,
                         )
                     }
@@ -24900,12 +24897,11 @@ fn render_diff_hunk_controls(
                 .alpha(if status.is_pending() { 0.66 } else { 1.0 })
                 .tooltip({
                     let focus_handle = editor.focus_handle(cx);
-                    move |window, cx| {
+                    move |_window, cx| {
                         Tooltip::for_action_in(
                             "Unstage Hunk",
                             &::git::ToggleStaged,
                             &focus_handle,
-                            window,
                             cx,
                         )
                     }
@@ -24927,14 +24923,8 @@ fn render_diff_hunk_controls(
             Button::new(("restore", row as u64), "Restore")
                 .tooltip({
                     let focus_handle = editor.focus_handle(cx);
-                    move |window, cx| {
-                        Tooltip::for_action_in(
-                            "Restore Hunk",
-                            &::git::Restore,
-                            &focus_handle,
-                            window,
-                            cx,
-                        )
+                    move |_window, cx| {
+                        Tooltip::for_action_in("Restore Hunk", &::git::Restore, &focus_handle, cx)
                     }
                 })
                 .on_click({
@@ -24959,14 +24949,8 @@ fn render_diff_hunk_controls(
                         // .disabled(!has_multiple_hunks)
                         .tooltip({
                             let focus_handle = editor.focus_handle(cx);
-                            move |window, cx| {
-                                Tooltip::for_action_in(
-                                    "Next Hunk",
-                                    &GoToHunk,
-                                    &focus_handle,
-                                    window,
-                                    cx,
-                                )
+                            move |_window, cx| {
+                                Tooltip::for_action_in("Next Hunk", &GoToHunk, &focus_handle, cx)
                             }
                         })
                         .on_click({
@@ -24995,12 +24979,11 @@ fn render_diff_hunk_controls(
                         // .disabled(!has_multiple_hunks)
                         .tooltip({
                             let focus_handle = editor.focus_handle(cx);
-                            move |window, cx| {
+                            move |_window, cx| {
                                 Tooltip::for_action_in(
                                     "Previous Hunk",
                                     &GoToPreviousHunk,
                                     &focus_handle,
-                                    window,
                                     cx,
                                 )
                             }

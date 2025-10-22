@@ -391,7 +391,7 @@ pub enum ViewEvent {
 impl EventEmitter<ViewEvent> for ProjectSearchView {}
 
 impl Render for ProjectSearchView {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if self.has_matches() {
             div()
                 .flex_1()
@@ -426,7 +426,7 @@ impl Render for ProjectSearchView {
                     None
                 }
             } else {
-                Some(self.landing_text_minor(window, cx).into_any_element())
+                Some(self.landing_text_minor(cx).into_any_element())
             };
 
             let page_content = page_content.map(|text| div().child(text));
@@ -1446,7 +1446,7 @@ impl ProjectSearchView {
         self.active_match_index.is_some()
     }
 
-    fn landing_text_minor(&self, window: &mut Window, cx: &App) -> impl IntoElement {
+    fn landing_text_minor(&self, cx: &App) -> impl IntoElement {
         let focus_handle = self.focus_handle.clone();
         v_flex()
             .gap_1()
@@ -1460,12 +1460,7 @@ impl ProjectSearchView {
                     .icon(IconName::Filter)
                     .icon_position(IconPosition::Start)
                     .icon_size(IconSize::Small)
-                    .key_binding(KeyBinding::for_action_in(
-                        &ToggleFilters,
-                        &focus_handle,
-                        window,
-                        cx,
-                    ))
+                    .key_binding(KeyBinding::for_action_in(&ToggleFilters, &focus_handle, cx))
                     .on_click(|_event, window, cx| {
                         window.dispatch_action(ToggleFilters.boxed_clone(), cx)
                     }),
@@ -1475,12 +1470,7 @@ impl ProjectSearchView {
                     .icon(IconName::Replace)
                     .icon_position(IconPosition::Start)
                     .icon_size(IconSize::Small)
-                    .key_binding(KeyBinding::for_action_in(
-                        &ToggleReplace,
-                        &focus_handle,
-                        window,
-                        cx,
-                    ))
+                    .key_binding(KeyBinding::for_action_in(&ToggleReplace, &focus_handle, cx))
                     .on_click(|_event, window, cx| {
                         window.dispatch_action(ToggleReplace.boxed_clone(), cx)
                     }),
@@ -1490,12 +1480,7 @@ impl ProjectSearchView {
                     .icon(IconName::Regex)
                     .icon_position(IconPosition::Start)
                     .icon_size(IconSize::Small)
-                    .key_binding(KeyBinding::for_action_in(
-                        &ToggleRegex,
-                        &focus_handle,
-                        window,
-                        cx,
-                    ))
+                    .key_binding(KeyBinding::for_action_in(&ToggleRegex, &focus_handle, cx))
                     .on_click(|_event, window, cx| {
                         window.dispatch_action(ToggleRegex.boxed_clone(), cx)
                     }),
@@ -1508,7 +1493,6 @@ impl ProjectSearchView {
                     .key_binding(KeyBinding::for_action_in(
                         &ToggleCaseSensitive,
                         &focus_handle,
-                        window,
                         cx,
                     ))
                     .on_click(|_event, window, cx| {
@@ -1523,7 +1507,6 @@ impl ProjectSearchView {
                     .key_binding(KeyBinding::for_action_in(
                         &ToggleWholeWord,
                         &focus_handle,
-                        window,
                         cx,
                     ))
                     .on_click(|_event, window, cx| {
@@ -2049,8 +2032,8 @@ impl Render for ProjectSearchBar {
             .child(
                 IconButton::new("project-search-filter-button", IconName::Filter)
                     .shape(IconButtonShape::Square)
-                    .tooltip(|window, cx| {
-                        Tooltip::for_action("Toggle Filters", &ToggleFilters, window, cx)
+                    .tooltip(|_window, cx| {
+                        Tooltip::for_action("Toggle Filters", &ToggleFilters, cx)
                     })
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.toggle_filters(window, cx);
@@ -2063,12 +2046,11 @@ impl Render for ProjectSearchBar {
                     )
                     .tooltip({
                         let focus_handle = focus_handle.clone();
-                        move |window, cx| {
+                        move |_window, cx| {
                             Tooltip::for_action_in(
                                 "Toggle Filters",
                                 &ToggleFilters,
                                 &focus_handle,
-                                window,
                                 cx,
                             )
                         }

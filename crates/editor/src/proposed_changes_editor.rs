@@ -370,17 +370,15 @@ impl ProposedChangesEditorToolbar {
 }
 
 impl Render for ProposedChangesEditorToolbar {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let button_like = ButtonLike::new("apply-changes").child(Label::new("Apply All"));
 
         match &self.current_editor {
             Some(editor) => {
                 let focus_handle = editor.focus_handle(cx);
-                let keybinding =
-                    KeyBinding::for_action_in(&ApplyAllDiffHunks, &focus_handle, window, cx)
-                        .map(|binding| binding.into_any_element());
+                let keybinding = KeyBinding::for_action_in(&ApplyAllDiffHunks, &focus_handle, cx);
 
-                button_like.children(keybinding).on_click({
+                button_like.child(keybinding).on_click({
                     move |_event, window, cx| {
                         focus_handle.dispatch_action(&ApplyAllDiffHunks, window, cx)
                     }
