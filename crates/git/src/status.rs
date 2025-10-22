@@ -1,7 +1,6 @@
 use crate::{Oid, repository::RepoPath};
 use anyhow::{Result, anyhow};
 use collections::HashMap;
-use git2::Status;
 use gpui::SharedString;
 use serde::{Deserialize, Serialize};
 use std::{str::FromStr, sync::Arc};

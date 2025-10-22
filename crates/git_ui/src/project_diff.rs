@@ -173,15 +173,11 @@ impl ProjectDiff {
         let Some(repo) = project.read(cx).git_store().read(cx).active_repository() else {
             return Task::ready(Err(anyhow!("No active repository")));
         };
-        let main_branch = repo.update(cx, |repo, _| {
-            dbg!(&repo.work_directory_abs_path);
-            repo.default_branch()
-        });
+        let main_branch = repo.update(cx, |repo, _| repo.default_branch());
         window.spawn(cx, async move |cx| {
             let main_branch = main_branch
                 .await??
                 .context("Could not determine default branch")?;
-            dbg!(&main_branch);
 
             let branch_diff = cx.new_window_entity(|window, cx| {
                 branch_diff::BranchDiff::new(
@@ -865,34 +861,125 @@ impl SerializableItem for ProjectDiff {
     }
 
     fn deserialize(
-        _project: Entity<Project>,
+        project: Entity<Project>,
         workspace: WeakEntity<Workspace>,
-        _workspace_id: workspace::WorkspaceId,
-        _item_id: workspace::ItemId,
+        workspace_id: workspace::WorkspaceId,
+        item_id: workspace::ItemId,
         window: &mut Window,
         cx: &mut App,
     ) -> Task<Result<Entity<Self>>> {
         window.spawn(cx, async move |cx| {
-            workspace.update_in(cx, |workspace, window, cx| {
-                let workspace_handle = cx.entity();
-                cx.new(|cx| Self::new(workspace.project().clone(), workspace_handle, window, cx))
-            })
+            let diff_base = persistence::PROJECT_DIFF_DB.get_diff_base(item_id, workspace_id)?;
+
+            let diff = cx.update(|window, cx| {
+                let branch_diff = cx
+                    .new(|cx| branch_diff::BranchDiff::new(diff_base, project.clone(), window, cx));
+                let workspace = workspace.upgrade().context("workspace gone")?;
+                anyhow::Ok(
+                    cx.new(|cx| ProjectDiff::new_impl(branch_diff, project, workspace, window, cx)),
+                )
+            })??;
+
+            Ok(diff)
         })
     }
 
     fn serialize(
         &mut self,
-        _workspace: &mut Workspace,
-        _item_id: workspace::ItemId,
+        workspace: &mut Workspace,
+        item_id: workspace::ItemId,
         _closing: bool,
         _window: &mut Window,
-        _cx: &mut Context<Self>,
+        cx: &mut Context<Self>,
     ) -> Option<Task<Result<()>>> {
-        None
+        let workspace_id = workspace.database_id()?;
+        let diff_base = self.diff_base(cx).clone();
+
+        Some(cx.background_spawn({
+            async move {
+                persistence::PROJECT_DIFF_DB
+                    .save_diff_base(item_id, workspace_id, diff_base.clone())
+                    .await
+            }
+        }))
     }
 
     fn should_serialize(&self, _: &Self::Event) -> bool {
         false
+    }
+}
+
+mod persistence {
+
+    use anyhow::Context as _;
+    use db::{
+        sqlez::{domain::Domain, thread_safe_connection::ThreadSafeConnection},
+        sqlez_macros::sql,
+    };
+    use project::git_store::branch_diff::DiffBase;
+    use workspace::{ItemId, WorkspaceDb, WorkspaceId};
+
+    pub struct ProjectDiffDb(ThreadSafeConnection);
+
+    impl Domain for ProjectDiffDb {
+        const NAME: &str = stringify!(ProjectDiffDb);
+
+        const MIGRATIONS: &[&str] = &[sql!(
+                CREATE TABLE project_diffs(
+                    workspace_id INTEGER,
+                    item_id INTEGER UNIQUE,
+
+                    diff_base TEXT,
+
+                    PRIMARY KEY(workspace_id, item_id),
+                    FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
+                    ON DELETE CASCADE
+                ) STRICT;
+        )];
+    }
+
+    db::static_connection!(PROJECT_DIFF_DB, ProjectDiffDb, [WorkspaceDb]);
+
+    impl ProjectDiffDb {
+        pub async fn save_diff_base(
+            &self,
+            item_id: ItemId,
+            workspace_id: WorkspaceId,
+            diff_base: DiffBase,
+        ) -> anyhow::Result<()> {
+            self.write(move |connection| {
+                let sql_stmt = sql!(
+                    INSERT OR REPLACE INTO project_diffs(item_id, workspace_id, diff_base) VALUES (?, ?, ?)
+                );
+                let diff_base_str = serde_json::to_string(&diff_base)?;
+                let mut query = connection.exec_bound::<(ItemId, WorkspaceId, String)>(sql_stmt)?;
+                query((item_id, workspace_id, diff_base_str)).context(format!(
+                    "exec_bound failed to execute or parse for: {}",
+                    sql_stmt
+                ))
+            })
+            .await
+        }
+
+        pub fn get_diff_base(
+            &self,
+            item_id: ItemId,
+            workspace_id: WorkspaceId,
+        ) -> anyhow::Result<DiffBase> {
+            let sql_stmt =
+                sql!(SELECT diff_base FROM project_diffs WHERE item_id =  ?AND workspace_id =  ?);
+            let diff_base_str = self.select_row_bound::<(ItemId, WorkspaceId), String>(sql_stmt)?(
+                (item_id, workspace_id),
+            )
+            .context(::std::format!(
+                "Error in get_diff_base, select_row_bound failed to execute or parse for: {}",
+                sql_stmt
+            ))?;
+            let Some(diff_base_str) = diff_base_str else {
+                return Ok(DiffBase::Head);
+            };
+            serde_json::from_str(&diff_base_str).context("deserializing diff base")
+        }
     }
 }
 
@@ -2112,7 +2199,9 @@ mod tests {
             json!({
                 ".git": {},
                 "a.txt": "C",
-                "b.txt": "new"
+                "b.txt": "new",
+                "c.txt": "in-merge-base-and-work-tree",
+                "d.txt": "created-in-head",
             }),
         )
         .await;
@@ -2127,18 +2216,19 @@ mod tests {
             .unwrap();
         cx.run_until_parked();
 
-        dbg!("a");
         fs.set_head_for_repo(
             Path::new(path!("/project/.git")),
-            &[("a.txt", "B".into())],
+            &[("a.txt", "B".into()), ("d.txt", "created-in-head".into())],
             "sha",
         );
         // fs.set_index_for_repo(dot_git, index_state);
         fs.set_merge_base_content_for_repo(
             Path::new(path!("/project/.git")),
-            &[("a.txt", "A".into())],
+            &[
+                ("a.txt", "A".into()),
+                ("c.txt", "in-merge-base-and-work-tree".into()),
+            ],
         );
-        dbg!("b");
         cx.run_until_parked();
 
         let editor = diff.read_with(cx, |diff, _| diff.editor.clone());
@@ -2149,7 +2239,8 @@ mod tests {
             &"
                 - A
                 + ˇC
-                + new"
+                + new
+                + created-in-head"
                 .unindent(),
         );
 
@@ -2179,7 +2270,14 @@ mod tests {
                         worktree_status: git::status::StatusCode::Modified
                     }))
                 ),
-                (rel_path("b.txt").into_arc(), Some(FileStatus::Untracked))
+                (rel_path("b.txt").into_arc(), Some(FileStatus::Untracked)),
+                (
+                    rel_path("d.txt").into_arc(),
+                    Some(FileStatus::Tracked(TrackedStatus {
+                        index_status: git::status::StatusCode::Added,
+                        worktree_status: git::status::StatusCode::Added
+                    }))
+                )
             ])
         );
     }

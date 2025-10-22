@@ -20,7 +20,7 @@ use crate::{
     git_store::{GitStoreEvent, Repository},
 };
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum DiffBase {
     Head,
     Merge { base_ref: SharedString },
@@ -61,7 +61,7 @@ impl BranchDiff {
         let git_store_subscription = cx.subscribe_in(
             &git_store,
             window,
-            move |this, _git_store, event, _window, cx| match dbg!(event) {
+            move |this, _git_store, event, _window, cx| match event {
                 GitStoreEvent::ActiveRepositoryChanged(_)
                 | GitStoreEvent::RepositoryUpdated(_, _, true)
                 | GitStoreEvent::ConflictsUpdated => {
@@ -132,7 +132,7 @@ impl BranchDiff {
                         }
                     })
                 }
-                dbg!(needs_update)
+                needs_update
             }) else {
                 return;
             };
@@ -243,7 +243,6 @@ impl BranchDiff {
         let Some(task) = task else { return Ok(()) };
 
         let diff = task.await??;
-        dbg!(&diff);
         this.update(cx, |this, cx| {
             this.tree_diff = Some(diff);
             cx.emit(BranchDiffEvent::FileListChanged);

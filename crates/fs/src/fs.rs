@@ -1585,7 +1585,6 @@ impl FakeFs {
     where
         F: FnOnce(&mut FakeGitRepositoryState, &Path, &Path) -> T,
     {
-        dbg!(&dot_git);
         let mut state = self.state.lock();
         let git_event_tx = state.git_event_tx.clone();
         let entry = state.entry(dot_git).context("open .git")?;

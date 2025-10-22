@@ -154,10 +154,8 @@ impl GitRepository for FakeGitRepository {
     }
 
     fn diff_tree(&self, _request: DiffTreeType) -> BoxFuture<'_, Result<TreeDiff>> {
-        dbg!(&self.dot_git_path);
         let mut entries = HashMap::default();
         self.with_state_async(false, |state| {
-            dbg!(&state.head_contents, &state.merge_base_contents);
             for (path, content) in &state.head_contents {
                 let status = if let Some((oid, original)) = state
                     .merge_base_contents
