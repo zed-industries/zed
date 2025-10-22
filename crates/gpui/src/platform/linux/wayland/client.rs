@@ -1316,9 +1316,11 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                                         compose.utf8().or(Keystroke::underlying_dead_key(keysym));
                                     let pre_edit =
                                         state.pre_edit_text.clone().unwrap_or(String::default());
+                                    state.compose_state = Some(compose);
                                     drop(state);
                                     focused_window.handle_ime(ImeInput::SetMarkedText(pre_edit));
-                                    state = client.borrow_mut();
+                                    // Don't dispatch KeyDown event when composing IME text
+                                    return;
                                 }
 
                                 xkb::Status::Composed => {
