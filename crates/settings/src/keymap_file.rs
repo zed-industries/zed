@@ -150,6 +150,9 @@ pub enum KeymapFileLoadResult {
 
 impl KeymapFile {
     pub fn parse(content: &str) -> anyhow::Result<Self> {
+        if content.is_empty() {
+            return Ok(Self(Vec::new()));
+        }
         parse_json_with_comments::<Self>(content)
     }
 
