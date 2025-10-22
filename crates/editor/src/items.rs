@@ -226,7 +226,7 @@ impl FollowableItem for Editor {
 
         Some(proto::view::Variant::Editor(proto::view::Editor {
             singleton: buffer.is_singleton(),
-            title: (!buffer.is_singleton()).then(|| buffer.title(cx).into()),
+            title: buffer.explicit_title().map(ToOwned::to_owned),
             excerpts,
             scroll_top_anchor: Some(serialize_anchor(&scroll_anchor.anchor, &snapshot)),
             scroll_x: scroll_anchor.offset.x,
