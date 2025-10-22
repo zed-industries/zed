@@ -47,14 +47,16 @@ Xcode Instruments (which comes bundled with your [Xcode](https://apps.apple.com/
 
 Zed creates local SQLite databases to persist data relating to its workspace and your projects. These databases store, for instance, the tabs and panes you have open in a project, the scroll position of each open file, the list of all projects you've opened (for the recent projects modal picker), etc. You can find and explore these databases in the following locations:
 
-- macOS: `~/Library/Application Support/Zed`
-- Linux and FreeBSD: `~/.local/share/zed` (or within `XDG_DATA_HOME` or `FLATPAK_XDG_DATA_HOME`)
-- Windows: `%LOCALAPPDATA%\Zed`
+- macOS: `~/Library/Application Support/Zed/db`
+- Linux and FreeBSD: `~/.local/share/zed/db` (or within `XDG_DATA_HOME` or `FLATPAK_XDG_DATA_HOME`)
+- Windows: `%LOCALAPPDATA%\Zed\db`
 
 The naming convention of these databases takes on the form of `0-<zed_channel>`:
 
 - Stable: `0-stable`
 - Preview: `0-preview`
+- Nightly: `0-nightly`
+- Dev: `0-dev`
 
 While rare, we've seen a few cases where workspace databases became corrupted, which prevented Zed from starting.
 If you're experiencing startup issues, you can test whether it's workspace-related by temporarily moving the database from its location, then trying to start Zed again.
