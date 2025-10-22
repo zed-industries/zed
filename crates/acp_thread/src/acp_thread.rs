@@ -1708,7 +1708,7 @@ impl AcpThread {
                 match response {
                     Ok(Err(e)) => {
                         this.send_task.take();
-                        this.detached_send_task = None;
+                        this.detached_send_task.take();
                         cx.emit(AcpThreadEvent::Error);
                         Err(e)
                     }
@@ -1780,9 +1780,12 @@ impl AcpThread {
     }
 
     pub fn cancel(&mut self, cx: &mut Context<Self>) -> Task<()> {
-        // Cancel both active and detached send tasks
         let send_task = self.send_task.take();
-        let detached_task = self.detached_send_task.take();
+        let detached_send_task = self.detached_send_task.take();
+
+        if send_task.is_none() && detached_send_task.is_none() {
+            return Task::ready(());
+        }
 
         for entry in self.entries.iter_mut() {
             if let AgentThreadEntry::ToolCall(call) = entry {
@@ -1801,12 +1804,12 @@ impl AcpThread {
 
         self.connection.cancel(&self.session_id, cx);
 
-        // Wait for both tasks to complete
+        // Wait for send tasks to complete
         cx.foreground_executor().spawn(async move {
             if let Some(task) = send_task {
                 task.await;
             }
-            if let Some(task) = detached_task {
+            if let Some(task) = detached_send_task {
                 task.await;
             }
         })
