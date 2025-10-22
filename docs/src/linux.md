@@ -51,9 +51,20 @@ There are several third-party Zed packages for various Linux distributions and p
 
 See [Repology](https://repology.org/project/zed-editor/versions) for a list of Zed packages in various repositories.
 
+### Community
+
 When installing a third-party package please be aware that it may not be completely up to date and may be slightly different from the Zed we package (a common change is to rename the binary to `zedit` or `zeditor` to avoid conflicting with other packages).
 
 We'd love your help making Zed available for everyone. If Zed is not yet available for your package manager, and you would like to fix that, we have some notes on [how to do it](./development/linux.md#notes-for-packaging-zed).
+
+The packages in this section provide binary installs for Zed but are not official packages within the associated distributions. These packages are maintained by community members and as such a higher level of caution should be taken when installing them.
+
+#### Debian
+
+Zed is available in [this community-maintained repository](https://debian.griffo.io/).
+
+Instructions for each version are available in the README of the repository where packages are built.
+Build, packaging and instructions for each version are available in the README of the [repository](https://github.com/dariogriffo/zed-debian)
 
 ### Downloading manually
 

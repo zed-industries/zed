@@ -3611,9 +3611,10 @@ impl GitPanel {
                             let repo = active_repository.downgrade();
                             move |_, window, cx| {
                                 CommitView::open(
-                                    commit.clone(),
+                                    commit.sha.to_string(),
                                     repo.clone(),
                                     workspace.clone(),
+                                    None,
                                     window,
                                     cx,
                                 );
@@ -4417,6 +4418,10 @@ impl editor::Addon for GitPanelAddon {
 impl Panel for GitPanel {
     fn persistent_name() -> &'static str {
         "GitPanel"
+    }
+
+    fn panel_key() -> &'static str {
+        GIT_PANEL_KEY
     }
 
     fn position(&self, _: &Window, cx: &App) -> DockPosition {

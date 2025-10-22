@@ -23,11 +23,7 @@ From the extensions page, click the `Install Dev Extension` button (or the {#act
 
 If you need to troubleshoot, you can check the Zed.log ({#action zed::OpenLog}) for additional output. For debug output, close and relaunch zed with the `zed --foreground` from the command line which show more verbose INFO level logging.
 
-If you already have a published extension with the same name installed, your dev extension will override it.
-
-After installing, the `Extensions` page will indicate that the upstream extension is "Overridden by dev extension".
-
-Pre-installed extensions with the same name have to be uninstalled before installing the dev extension. See [#31106](https://github.com/zed-industries/zed/issues/31106) for more.
+If you already have the published version of the extension installed, the published version will be uninstalled prior to the installation of the dev extension. After successful installation, the `Extensions` page will indicate that the upstream extension is "Overridden by dev extension".
 
 ## Directory Structure of a Zed Extension
 

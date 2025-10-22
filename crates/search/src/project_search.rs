@@ -8,7 +8,8 @@ use crate::{
 use anyhow::Context as _;
 use collections::HashMap;
 use editor::{
-    Anchor, Editor, EditorEvent, EditorSettings, MAX_TAB_TITLE_LEN, MultiBuffer, SelectionEffects,
+    Anchor, Editor, EditorEvent, EditorSettings, MAX_TAB_TITLE_LEN, MultiBuffer, PathKey,
+    SelectionEffects,
     actions::{Backtab, SelectAll, Tab},
     items::active_match_index,
     multibuffer_context_lines,
@@ -340,6 +341,7 @@ impl ProjectSearch {
                                 .into_iter()
                                 .map(|(buffer, ranges)| {
                                     excerpts.set_anchored_excerpts_for_path(
+                                        PathKey::for_buffer(&buffer, cx),
                                         buffer,
                                         ranges,
                                         multibuffer_context_lines(cx),
@@ -570,12 +572,14 @@ impl Item for ProjectSearchView {
         _workspace_id: Option<WorkspaceId>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Option<Entity<Self>>
+    ) -> Task<Option<Entity<Self>>>
     where
         Self: Sized,
     {
         let model = self.entity.update(cx, |model, cx| model.clone(cx));
-        Some(cx.new(|cx| Self::new(self.workspace.clone(), model, window, cx, None)))
+        Task::ready(Some(cx.new(|cx| {
+            Self::new(self.workspace.clone(), model, window, cx, None)
+        })))
     }
 
     fn added_to_workspace(
@@ -2357,8 +2361,10 @@ pub mod tests {
     use serde_json::json;
     use settings::SettingsStore;
     use util::{path, paths::PathStyle, rel_path::rel_path};
+    use util_macros::perf;
     use workspace::DeploySearch;
 
+    #[perf]
     #[gpui::test]
     async fn test_project_search(cx: &mut TestAppContext) {
         init_test(cx);
@@ -2496,6 +2502,7 @@ pub mod tests {
             .unwrap();
     }
 
+    #[perf]
     #[gpui::test]
     async fn test_deploy_project_search_focus(cx: &mut TestAppContext) {
         init_test(cx);
@@ -2736,6 +2743,7 @@ pub mod tests {
         }).unwrap();
     }
 
+    #[perf]
     #[gpui::test]
     async fn test_filters_consider_toggle_state(cx: &mut TestAppContext) {
         init_test(cx);
@@ -2856,6 +2864,7 @@ pub mod tests {
             .unwrap();
     }
 
+    #[perf]
     #[gpui::test]
     async fn test_new_project_search_focus(cx: &mut TestAppContext) {
         init_test(cx);
@@ -3151,6 +3160,7 @@ pub mod tests {
                 });}).unwrap();
     }
 
+    #[perf]
     #[gpui::test]
     async fn test_new_project_search_in_directory(cx: &mut TestAppContext) {
         init_test(cx);
@@ -3277,6 +3287,7 @@ pub mod tests {
             .unwrap();
     }
 
+    #[perf]
     #[gpui::test]
     async fn test_search_query_history(cx: &mut TestAppContext) {
         init_test(cx);
@@ -3607,6 +3618,7 @@ pub mod tests {
             .unwrap();
     }
 
+    #[perf]
     #[gpui::test]
     async fn test_search_query_history_with_multiple_views(cx: &mut TestAppContext) {
         init_test(cx);
@@ -3684,6 +3696,7 @@ pub mod tests {
                 )
             })
             .unwrap()
+            .await
             .unwrap();
         assert_eq!(cx.update(|cx| second_pane.read(cx).items_len()), 1);
 
@@ -3830,6 +3843,7 @@ pub mod tests {
         assert_eq!(active_query(&search_view_1, cx), "");
     }
 
+    #[perf]
     #[gpui::test]
     async fn test_deploy_search_with_multiple_panes(cx: &mut TestAppContext) {
         init_test(cx);
@@ -3878,6 +3892,7 @@ pub mod tests {
                 )
             })
             .unwrap()
+            .await
             .unwrap();
         assert_eq!(cx.update(|cx| second_pane.read(cx).items_len()), 1);
         assert!(
@@ -3989,6 +4004,7 @@ pub mod tests {
             .unwrap();
     }
 
+    #[perf]
     #[gpui::test]
     async fn test_scroll_search_results_to_top(cx: &mut TestAppContext) {
         init_test(cx);
@@ -4069,6 +4085,7 @@ pub mod tests {
             .expect("unable to update search view");
     }
 
+    #[perf]
     #[gpui::test]
     async fn test_buffer_search_query_reused(cx: &mut TestAppContext) {
         init_test(cx);

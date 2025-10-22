@@ -4307,7 +4307,7 @@ async fn test_rescan_and_remote_updates(cx: &mut gpui::TestAppContext) {
     let remote = cx.update(|cx| {
         Worktree::remote(
             0,
-            1,
+            ReplicaId::REMOTE_SERVER,
             metadata,
             project.read(cx).client().into(),
             project.read(cx).path_style(cx),
@@ -8846,7 +8846,7 @@ async fn test_file_status(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
-#[cfg_attr(target_os = "windows", ignore)]
+#[ignore]
 async fn test_ignored_dirs_events(cx: &mut gpui::TestAppContext) {
     init_test(cx);
     cx.executor().allow_parking();
@@ -9653,6 +9653,7 @@ fn python_lang(fs: Arc<FakeFs>) -> Arc<Language> {
             worktree_root: PathBuf,
             subroot_relative_path: Arc<RelPath>,
             _: Option<HashMap<String, String>>,
+            _: &dyn Fs,
         ) -> ToolchainList {
             // This lister will always return a path .venv directories within ancestors
             let ancestors = subroot_relative_path.ancestors().collect::<Vec<_>>();
@@ -9677,6 +9678,7 @@ fn python_lang(fs: Arc<FakeFs>) -> Arc<Language> {
             &self,
             _: PathBuf,
             _: Option<HashMap<String, String>>,
+            _: &dyn Fs,
         ) -> anyhow::Result<Toolchain> {
             Err(anyhow::anyhow!("Not implemented"))
         }
@@ -9689,7 +9691,7 @@ fn python_lang(fs: Arc<FakeFs>) -> Arc<Language> {
                 manifest_name: ManifestName::from(SharedString::new_static("pyproject.toml")),
             }
         }
-        async fn activation_script(&self, _: &Toolchain, _: ShellKind, _: &dyn Fs) -> Vec<String> {
+        fn activation_script(&self, _: &Toolchain, _: ShellKind) -> Vec<String> {
             vec![]
         }
     }

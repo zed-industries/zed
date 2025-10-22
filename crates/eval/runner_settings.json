@@ -1,7 +1,6 @@
 {
   "assistant": {
     "always_allow_tool_actions": true,
-    "stream_edits": true,
     "version": "2"
   }
 }

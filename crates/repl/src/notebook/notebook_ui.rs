@@ -709,11 +709,13 @@ impl Item for NotebookEditor {
         _workspace_id: Option<workspace::WorkspaceId>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Option<Entity<Self>>
+    ) -> Task<Option<Entity<Self>>>
     where
         Self: Sized,
     {
-        Some(cx.new(|cx| Self::new(self.project.clone(), self.notebook_item.clone(), window, cx)))
+        Task::ready(Some(cx.new(|cx| {
+            Self::new(self.project.clone(), self.notebook_item.clone(), window, cx)
+        })))
     }
 
     fn buffer_kind(&self, _: &App) -> workspace::item::ItemBufferKind {

@@ -15,6 +15,7 @@ pub mod log_store;
 pub mod lsp_ext_command;
 pub mod rust_analyzer_ext;
 pub mod semantic_tokens;
+pub mod vue_language_server_ext;
 
 use crate::{
     CodeAction, ColorPresentation, Completion, CompletionDisplayOptions, CompletionResponse,
@@ -989,6 +990,7 @@ impl LocalLspStore {
             })
             .detach();
 
+        vue_language_server_ext::register_requests(this.clone(), language_server);
         json_language_server_ext::register_requests(this.clone(), language_server);
         rust_analyzer_ext::register_notifications(this.clone(), language_server);
         clangd_ext::register_notifications(this, language_server, adapter);
@@ -3025,9 +3027,8 @@ impl LocalLspStore {
                                     Some(buffer_to_edit.read(cx).saved_version().clone())
                                 };
 
-                                let most_recent_edit = version.and_then(|version| {
-                                    version.iter().max_by_key(|timestamp| timestamp.value)
-                                });
+                                let most_recent_edit =
+                                    version.and_then(|version| version.most_recent());
                                 // Check if the edit that triggered that edit has been made by this participant.
 
                                 if let Some(most_recent_edit) = most_recent_edit {
@@ -12978,7 +12979,16 @@ impl LspAdapterDelegate for LocalLspAdapterDelegate {
         if self.fs.is_file(&worktree_abs_path).await {
             worktree_abs_path.pop();
         }
-        let shell_path = self.shell_env().await.get("PATH").cloned();
+
+        let env = self.shell_env().await;
+
+        // On Windows, PATH might be "Path" instead of "PATH"
+        let shell_path = env
+            .get("PATH")
+            .or_else(|| env.get("Path"))
+            .or_else(|| env.get("path"))
+            .cloned();
+
         which::which_in(command, shell_path.as_ref(), worktree_abs_path).ok()
     }
 

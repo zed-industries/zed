@@ -94,8 +94,8 @@ struct Zeta2Args {
     file_indexing_parallelism: usize,
     #[arg(long, default_value_t = false)]
     disable_imports_gathering: bool,
-    #[arg(long, default_value_t = false)]
-    disable_reference_retrieval: bool,
+    #[arg(long, default_value_t = u8::MAX)]
+    max_retrieved_definitions: u8,
 }
 
 #[derive(clap::ValueEnum, Default, Debug, Clone)]
@@ -302,7 +302,7 @@ impl Zeta2Args {
     fn to_options(&self, omit_excerpt_overlaps: bool) -> zeta2::ZetaOptions {
         zeta2::ZetaOptions {
             context: EditPredictionContextOptions {
-                use_references: !self.disable_reference_retrieval,
+                max_retrieved_declarations: self.max_retrieved_definitions,
                 use_imports: !self.disable_imports_gathering,
                 excerpt: EditPredictionExcerptOptions {
                     max_bytes: self.max_excerpt_bytes,

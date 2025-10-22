@@ -727,15 +727,4 @@ impl settings::Settings for ThemeSettings {
             unnecessary_code_fade: content.unnecessary_code_fade.unwrap().0.clamp(0.0, 0.9),
         }
     }
-
-    fn import_from_vscode(vscode: &settings::VsCodeSettings, current: &mut SettingsContent) {
-        vscode.from_f32_setting("editor.fontWeight", &mut current.theme.buffer_font_weight);
-        vscode.from_f32_setting("editor.fontSize", &mut current.theme.buffer_font_size);
-        vscode.font_family_setting(
-            "editor.fontFamily",
-            &mut current.theme.buffer_font_family,
-            &mut current.theme.buffer_font_fallbacks,
-        )
-        // TODO: possibly map editor.fontLigatures to buffer_font_features?
-    }
 }

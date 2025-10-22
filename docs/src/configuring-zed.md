@@ -1498,7 +1498,8 @@ Positive `integer` value between 1 and 32. Values outside of this range will be 
 ```json [settings]
 "status_bar": {
   "active_language_button": true,
-  "cursor_position_button": true
+  "cursor_position_button": true,
+  "line_endings_button": false
 },
 ```
 
@@ -3326,7 +3327,7 @@ Positive integer values
 
 ## Use Auto Surround
 
-- Description: Whether to automatically surround selected text when typing opening parenthesis, bracket, brace, single or double quote characters. For example, when you select text and type (, Zed will surround the text with ().
+- Description: Whether to automatically surround selected text when typing opening parenthesis, bracket, brace, single or double quote characters. For example, when you select text and type '(', Zed will surround the text with ().
 - Setting: `use_auto_surround`
 - Default: `true`
 

@@ -26,10 +26,12 @@ pub struct AgentSettingsContent {
     /// Default width in pixels when the agent panel is docked to the left or right.
     ///
     /// Default: 640
+    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
     pub default_width: Option<f32>,
     /// Default height in pixels when the agent panel is docked to the bottom.
     ///
     /// Default: 320
+    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
     pub default_height: Option<f32>,
     /// The default model to use when creating new chats and for other features when a specific model is not specified.
     pub default_model: Option<LanguageModelSelection>,
@@ -68,10 +70,6 @@ pub struct AgentSettingsContent {
     ///
     /// Default: false
     pub play_sound_when_agent_done: Option<bool>,
-    /// Whether to stream edits from the agent as they are received.
-    ///
-    /// Default: false
-    pub stream_edits: Option<bool>,
     /// Whether to display agent edits in single-file editors in addition to the review multibuffer pane.
     ///
     /// Default: true
@@ -236,6 +234,7 @@ pub enum CompletionMode {
 pub struct LanguageModelParameters {
     pub provider: Option<LanguageModelProviderSetting>,
     pub model: Option<SharedString>,
+    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
     pub temperature: Option<f32>,
 }
 

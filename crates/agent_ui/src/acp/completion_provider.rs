@@ -6,8 +6,8 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
 use acp_thread::MentionUri;
+use agent::{HistoryEntry, HistoryStore};
 use agent_client_protocol as acp;
-use agent2::{HistoryEntry, HistoryStore};
 use anyhow::Result;
 use editor::{CompletionProvider, Editor, ExcerptId};
 use fuzzy::{StringMatch, StringMatchCandidate};
@@ -32,6 +32,7 @@ use crate::context_picker::file_context_picker::{FileMatch, search_files};
 use crate::context_picker::rules_context_picker::{RulesContextEntry, search_rules};
 use crate::context_picker::symbol_context_picker::SymbolMatch;
 use crate::context_picker::symbol_context_picker::search_symbols;
+use crate::context_picker::thread_context_picker::search_threads;
 use crate::context_picker::{
     ContextPickerAction, ContextPickerEntry, ContextPickerMode, selection_ranges,
 };
@@ -651,7 +652,9 @@ impl ContextPickerCompletionProvider {
             .active_item(cx)
             .and_then(|item| item.downcast::<Editor>())
             .is_some_and(|editor| {
-                editor.update(cx, |editor, cx| editor.has_non_empty_selection(cx))
+                editor.update(cx, |editor, cx| {
+                    editor.has_non_empty_selection(&editor.display_snapshot(cx))
+                })
             });
         if has_selection {
             entries.push(ContextPickerEntry::Action(
@@ -936,42 +939,6 @@ impl CompletionProvider for ContextPickerCompletionProvider {
     fn filter_completions(&self) -> bool {
         false
     }
-}
-
-pub(crate) fn search_threads(
-    query: String,
-    cancellation_flag: Arc<AtomicBool>,
-    history_store: &Entity<HistoryStore>,
-    cx: &mut App,
-) -> Task<Vec<HistoryEntry>> {
-    let threads = history_store.read(cx).entries().collect();
-    if query.is_empty() {
-        return Task::ready(threads);
-    }
-
-    let executor = cx.background_executor().clone();
-    cx.background_spawn(async move {
-        let candidates = threads
-            .iter()
-            .enumerate()
-            .map(|(id, thread)| StringMatchCandidate::new(id, thread.title()))
-            .collect::<Vec<_>>();
-        let matches = fuzzy::match_strings(
-            &candidates,
-            &query,
-            false,
-            true,
-            100,
-            &cancellation_flag,
-            executor,
-        )
-        .await;
-
-        matches
-            .into_iter()
-            .map(|mat| threads[mat.candidate_id].clone())
-            .collect()
-    })
 }
 
 fn confirm_completion_callback(

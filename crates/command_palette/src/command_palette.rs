@@ -698,7 +698,11 @@ mod tests {
         editor.update_in(cx, |editor, window, cx| {
             assert!(editor.focus_handle(cx).is_focused(window));
             assert_eq!(
-                editor.selections.last::<Point>(cx).range().start,
+                editor
+                    .selections
+                    .last::<Point>(&editor.display_snapshot(cx))
+                    .range()
+                    .start,
                 Point::new(2, 0)
             );
         });

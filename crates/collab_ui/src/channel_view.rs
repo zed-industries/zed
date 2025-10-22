@@ -287,9 +287,12 @@ impl ChannelView {
     }
 
     fn copy_link(&mut self, _: &CopyLink, window: &mut Window, cx: &mut Context<Self>) {
-        let position = self
-            .editor
-            .update(cx, |editor, cx| editor.selections.newest_display(cx).start);
+        let position = self.editor.update(cx, |editor, cx| {
+            editor
+                .selections
+                .newest_display(&editor.display_snapshot(cx))
+                .start
+        });
         self.copy_link_for_position(position, window, cx)
     }
 
@@ -495,8 +498,8 @@ impl Item for ChannelView {
         _: Option<WorkspaceId>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Option<Entity<Self>> {
-        Some(cx.new(|cx| {
+    ) -> Task<Option<Entity<Self>>> {
+        Task::ready(Some(cx.new(|cx| {
             Self::new(
                 self.project.clone(),
                 self.workspace.clone(),
@@ -505,7 +508,7 @@ impl Item for ChannelView {
                 window,
                 cx,
             )
-        }))
+        })))
     }
 
     fn navigate(

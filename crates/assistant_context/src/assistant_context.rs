@@ -486,7 +486,7 @@ pub enum ContextSummary {
     Error,
 }
 
-#[derive(Default, Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ContextSummaryContent {
     pub text: String,
     pub done: bool,
@@ -523,7 +523,11 @@ impl ContextSummary {
         match self {
             ContextSummary::Content(content) => content,
             ContextSummary::Pending | ContextSummary::Error => {
-                let content = ContextSummaryContent::default();
+                let content = ContextSummaryContent {
+                    text: "".to_string(),
+                    done: false,
+                    timestamp: clock::Lamport::MIN,
+                };
                 *self = ContextSummary::Content(content);
                 self.content_as_mut().unwrap()
             }
@@ -796,7 +800,7 @@ impl AssistantContext {
         };
 
         let first_message_id = MessageId(clock::Lamport {
-            replica_id: 0,
+            replica_id: ReplicaId::LOCAL,
             value: 0,
         });
         let message = MessageAnchor {
@@ -2692,7 +2696,7 @@ impl AssistantContext {
                     self.summary = ContextSummary::Content(ContextSummaryContent {
                         text: "".to_string(),
                         done: false,
-                        timestamp: clock::Lamport::default(),
+                        timestamp: clock::Lamport::MIN,
                     });
                     replace_old = true;
                 }
@@ -3117,7 +3121,7 @@ impl SavedContext {
 
         let mut first_message_metadata = None;
         for message in self.messages {
-            if message.id == MessageId(clock::Lamport::default()) {
+            if message.id == MessageId(clock::Lamport::MIN) {
                 first_message_metadata = Some(message.metadata);
             } else {
                 operations.push(ContextOperation::InsertMessage {
@@ -3141,7 +3145,7 @@ impl SavedContext {
         if let Some(metadata) = first_message_metadata {
             let timestamp = next_timestamp.tick();
             operations.push(ContextOperation::UpdateMessage {
-                message_id: MessageId(clock::Lamport::default()),
+                message_id: MessageId(clock::Lamport::MIN),
                 metadata: MessageMetadata {
                     role: metadata.role,
                     status: metadata.status,

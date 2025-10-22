@@ -582,7 +582,6 @@ pub fn main() {
             false,
             cx,
         );
-        assistant_tools::init(app_state.client.http_client(), cx);
         repl::init(app_state.fs.clone(), cx);
         recent_projects::init(cx);
 
@@ -846,6 +845,18 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                         res.context("Failed to open builtin JSON Schema").log_err();
                     })
                     .detach();
+                });
+            }
+            OpenRequestKind::Setting { setting_path } => {
+                // zed://settings/languages/$(language)/tab_size  - DONT SUPPORT
+                // zed://settings/languages/Rust/tab_size  - SUPPORT
+                // languages.$(language).tab_size
+                // [ languages $(language) tab_size]
+                workspace::with_active_or_new_workspace(cx, |_workspace, window, cx| {
+                    window.dispatch_action(
+                        Box::new(zed_actions::OpenSettingsAt { path: setting_path }),
+                        cx,
+                    );
                 });
             }
         }
