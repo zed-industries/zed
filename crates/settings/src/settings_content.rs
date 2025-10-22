@@ -260,32 +260,6 @@ impl strum::VariantNames for BaseKeymapContent {
     ];
 }
 
-/// Position of window control buttons on Linux.
-///
-/// Valid values: "left" (macOS style) or "right" (Windows/Linux style)
-#[derive(
-    Copy,
-    Clone,
-    Debug,
-    Serialize,
-    Deserialize,
-    JsonSchema,
-    MergeFrom,
-    PartialEq,
-    Eq,
-    Default,
-    strum::VariantArray,
-    strum::VariantNames,
-)]
-#[serde(rename_all = "snake_case")]
-pub enum WindowControlsPosition {
-    /// Window controls on the left side (macOS style)
-    Left,
-    /// Window controls on the right side (Windows style)
-    #[default]
-    Right,
-}
-
 #[skip_serializing_none]
 #[derive(Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug)]
 pub struct TitleBarSettingsContent {
@@ -317,10 +291,6 @@ pub struct TitleBarSettingsContent {
     ///
     /// Default: false
     pub show_menus: Option<bool>,
-    /// Position of window control buttons (minimize, maximize, close) on Linux.
-    ///
-    /// Default: right
-    pub window_controls_position: Option<WindowControlsPosition>,
 }
 
 /// Configuration of audio in Zed.
@@ -515,6 +485,7 @@ pub struct GitPanelSettingsContent {
     /// Default width of the panel in pixels.
     ///
     /// Default: 360
+    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
     pub default_width: Option<f32>,
     /// How entry statuses are displayed.
     ///
@@ -586,6 +557,7 @@ pub struct NotificationPanelSettingsContent {
     /// Default width of the panel in pixels.
     ///
     /// Default: 300
+    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
     pub default_width: Option<f32>,
 }
 
@@ -603,6 +575,7 @@ pub struct PanelSettingsContent {
     /// Default width of the panel in pixels.
     ///
     /// Default: 240
+    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
     pub default_width: Option<f32>,
 }
 
@@ -777,6 +750,7 @@ pub struct OutlinePanelSettingsContent {
     /// Customize default width (in pixels) taken by outline panel
     ///
     /// Default: 240
+    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
     pub default_width: Option<f32>,
     /// The position of outline panel
     ///
@@ -797,6 +771,7 @@ pub struct OutlinePanelSettingsContent {
     /// Amount of indentation (in pixels) for nested items.
     ///
     /// Default: 20
+    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
     pub indent_size: Option<f32>,
     /// Whether to reveal it in the outline panel automatically,
     /// when a corresponding project entry becomes active.

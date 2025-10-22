@@ -63,7 +63,7 @@ use util::{
 use workspace::{
     CloseActiveItem, CloseAllItems, CloseOtherItems, MoveItemToPaneInDirection, NavigationEntry,
     OpenOptions, ViewId,
-    invalid_buffer_view::InvalidBufferView,
+    invalid_item_view::InvalidItemView,
     item::{FollowEvent, FollowableItem, Item, ItemHandle, SaveOptions},
     register_project_item,
 };
@@ -26253,7 +26253,7 @@ async fn test_non_utf_8_opens(cx: &mut TestAppContext) {
 
     assert_eq!(
         handle.to_any().entity_type(),
-        TypeId::of::<InvalidBufferView>()
+        TypeId::of::<InvalidItemView>()
     );
 }
 

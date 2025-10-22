@@ -1820,6 +1820,7 @@
     },
     "SystemVerilog": {
       "format_on_save": "off",
+      "language_servers": ["!slang", "..."],
       "use_on_type_format": false
     },
     "Vue.js": {
