@@ -66,4 +66,4 @@ If your issue persists after regenerating the database, please [file an issue](h
 
 ## Language Server Issues
 
-If you're experiencing stale diagnostics or issues jumping to definitions, restarting the language server via {#action editor::RestartLanguageServer} can be a quick fix.
+If you're experiencing language-server related issues, such as stale diagnostics or issues jumping to definitions, restarting the language server via {#action editor::RestartLanguageServer} can be a quick fix.
