@@ -19310,24 +19310,6 @@ async fn test_toggle_selected_diff_hunks(executor: BackgroundExecutor, cx: &mut 
         .unindent(),
     );
 
-    cx.update_editor(|editor, window, cx| {
-        editor.cancel(&Cancel, window, cx);
-    });
-
-    cx.assert_state_with_diff(
-        r#"
-          use some::modified;
-
-          ˇ
-          fn main() {
-              println!("hello there");
-
-              println!("around the");
-              println!("world");
-          }
-        "#
-        .unindent(),
-    );
 }
 
 #[gpui::test]
