@@ -26,8 +26,8 @@ use sum_tree::{Bias, ContextLessSummary, Dimensions, SumTree, TreeMap};
 use text::{BufferId, Edit};
 use ui::ElementId;
 
-const NEWLINES: &[u8; u128::BITS as usize] = &[b'\n'; _];
-const BULLETS: &[u8; u128::BITS as usize] = &[b'*'; _];
+const NEWLINES: &[u8; rope::Chunk::MASK_BITS] = &[b'\n'; _];
+const BULLETS: &[u8; rope::Chunk::MASK_BITS] = &[b'*'; _];
 
 /// Tracks custom blocks such as diagnostics that should be displayed within buffer.
 ///
@@ -1783,11 +1783,11 @@ impl<'a> Iterator for BlockChunks<'a> {
 
         if self.masked {
             // Not great for multibyte text because to keep cursor math correct we
-            // need to have the same number of bytes in the input as output.
+            // need to have the same number of chars in the input as output.
             let chars_count = prefix.chars().count();
             let bullet_len = chars_count;
             prefix = unsafe { std::str::from_utf8_unchecked(&BULLETS[..bullet_len]) };
-            chars = 1u128.unbounded_shl(bullet_len as u32) - 1;
+            chars = 1u128.unbounded_shl(bullet_len as u32).wrapping_sub(1);
             tabs = 0;
         }
 

@@ -1644,6 +1644,8 @@ pub enum ImageFormat {
     Bmp,
     /// .tif or .tiff
     Tiff,
+    /// .ico
+    Ico,
 }
 
 impl ImageFormat {
@@ -1657,6 +1659,7 @@ impl ImageFormat {
             ImageFormat::Svg => "image/svg+xml",
             ImageFormat::Bmp => "image/bmp",
             ImageFormat::Tiff => "image/tiff",
+            ImageFormat::Ico => "image/ico",
         }
     }
 
@@ -1670,6 +1673,7 @@ impl ImageFormat {
             "image/svg+xml" => Some(Self::Svg),
             "image/bmp" => Some(Self::Bmp),
             "image/tiff" | "image/tif" => Some(Self::Tiff),
+            "image/ico" => Some(Self::Ico),
             _ => None,
         }
     }
@@ -1776,6 +1780,7 @@ impl Image {
             ImageFormat::Webp => frames_for_image(&self.bytes, image::ImageFormat::WebP)?,
             ImageFormat::Bmp => frames_for_image(&self.bytes, image::ImageFormat::Bmp)?,
             ImageFormat::Tiff => frames_for_image(&self.bytes, image::ImageFormat::Tiff)?,
+            ImageFormat::Ico => frames_for_image(&self.bytes, image::ImageFormat::Ico)?,
             ImageFormat::Svg => {
                 let pixmap = svg_renderer.render_pixmap(&self.bytes, SvgSize::ScaleFactor(1.0))?;
 

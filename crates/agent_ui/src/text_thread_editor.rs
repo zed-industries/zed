@@ -1,5 +1,4 @@
 use crate::{
-    QuoteSelection,
     language_model_selector::{LanguageModelSelector, language_model_selector},
     ui::BurnModeTooltip,
 };
@@ -72,7 +71,7 @@ use workspace::{
     pane,
     searchable::{SearchEvent, SearchableItem},
 };
-use zed_actions::agent::ToggleModelSelector;
+use zed_actions::agent::{AddSelectionToThread, ToggleModelSelector};
 
 use crate::{slash_command::SlashCommandCompletionProvider, slash_command_picker};
 use assistant_context::{
@@ -1450,7 +1449,7 @@ impl TextThreadEditor {
 
     pub fn quote_selection(
         workspace: &mut Workspace,
-        _: &QuoteSelection,
+        _: &AddSelectionToThread,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {

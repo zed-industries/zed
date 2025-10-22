@@ -325,21 +325,16 @@ impl<'a> Iterator for InlayChunks<'a> {
                 };
 
                 let (prefix, suffix) = chunk.text.split_at(split_index);
-
-                let (chars, tabs) = if split_index == 128 {
-                    let output = (chunk.chars, chunk.tabs);
-                    chunk.chars = 0;
-                    chunk.tabs = 0;
-                    output
-                } else {
-                    let mask = (1 << split_index) - 1;
-                    let output = (chunk.chars & mask, chunk.tabs & mask);
-                    chunk.chars = chunk.chars >> split_index;
-                    chunk.tabs = chunk.tabs >> split_index;
-                    output
-                };
-                chunk.text = suffix;
                 self.output_offset.0 += prefix.len();
+
+                let mask = 1u128.unbounded_shl(split_index as u32).wrapping_sub(1);
+                let chars = chunk.chars & mask;
+                let tabs = chunk.tabs & mask;
+
+                chunk.chars = chunk.chars.unbounded_shr(split_index as u32);
+                chunk.tabs = chunk.tabs.unbounded_shr(split_index as u32);
+                chunk.text = suffix;
+
                 InlayChunk {
                     chunk: Chunk {
                         text: prefix,
@@ -457,18 +452,12 @@ impl<'a> Iterator for InlayChunks<'a> {
                 let (chunk, remainder) = inlay_chunk.split_at(split_index);
                 *inlay_chunk = remainder;
 
-                let (chars, tabs) = if split_index == 128 {
-                    let output = (*chars, *tabs);
-                    *chars = 0;
-                    *tabs = 0;
-                    output
-                } else {
-                    let mask = (1 << split_index as u32) - 1;
-                    let output = (*chars & mask, *tabs & mask);
-                    *chars = *chars >> split_index;
-                    *tabs = *tabs >> split_index;
-                    output
-                };
+                let mask = 1u128.unbounded_shl(split_index as u32).wrapping_sub(1);
+                let new_chars = *chars & mask;
+                let new_tabs = *tabs & mask;
+
+                *chars = chars.unbounded_shr(split_index as u32);
+                *tabs = tabs.unbounded_shr(split_index as u32);
 
                 if inlay_chunk.is_empty() {
                     self.inlay_chunk = None;
@@ -479,8 +468,8 @@ impl<'a> Iterator for InlayChunks<'a> {
                 InlayChunk {
                     chunk: Chunk {
                         text: chunk,
-                        chars,
-                        tabs,
+                        chars: new_chars,
+                        tabs: new_tabs,
                         highlight_style,
                         is_inlay: true,
                         ..Chunk::default()

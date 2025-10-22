@@ -42,7 +42,7 @@ use settings::{BedrockAvailableModel as AvailableModel, Settings, SettingsStore}
 use smol::lock::OnceCell;
 use strum::{EnumIter, IntoEnumIterator, IntoStaticStr};
 use ui::{Icon, IconName, List, Tooltip, prelude::*};
-use ui_input::SingleLineInput;
+use ui_input::InputField;
 use util::ResultExt;
 
 use crate::AllLanguageModelSettings;
@@ -1006,10 +1006,10 @@ pub fn map_to_language_model_completion_events(
 }
 
 struct ConfigurationView {
-    access_key_id_editor: Entity<SingleLineInput>,
-    secret_access_key_editor: Entity<SingleLineInput>,
-    session_token_editor: Entity<SingleLineInput>,
-    region_editor: Entity<SingleLineInput>,
+    access_key_id_editor: Entity<InputField>,
+    secret_access_key_editor: Entity<InputField>,
+    session_token_editor: Entity<InputField>,
+    region_editor: Entity<InputField>,
     state: Entity<State>,
     load_credentials_task: Option<Task<()>>,
 }
@@ -1047,20 +1047,19 @@ impl ConfigurationView {
 
         Self {
             access_key_id_editor: cx.new(|cx| {
-                SingleLineInput::new(window, cx, Self::PLACEHOLDER_ACCESS_KEY_ID_TEXT)
+                InputField::new(window, cx, Self::PLACEHOLDER_ACCESS_KEY_ID_TEXT)
                     .label("Access Key ID")
             }),
             secret_access_key_editor: cx.new(|cx| {
-                SingleLineInput::new(window, cx, Self::PLACEHOLDER_SECRET_ACCESS_KEY_TEXT)
+                InputField::new(window, cx, Self::PLACEHOLDER_SECRET_ACCESS_KEY_TEXT)
                     .label("Secret Access Key")
             }),
             session_token_editor: cx.new(|cx| {
-                SingleLineInput::new(window, cx, Self::PLACEHOLDER_SESSION_TOKEN_TEXT)
+                InputField::new(window, cx, Self::PLACEHOLDER_SESSION_TOKEN_TEXT)
                     .label("Session Token (Optional)")
             }),
-            region_editor: cx.new(|cx| {
-                SingleLineInput::new(window, cx, Self::PLACEHOLDER_REGION).label("Region")
-            }),
+            region_editor: cx
+                .new(|cx| InputField::new(window, cx, Self::PLACEHOLDER_REGION).label("Region")),
             state,
             load_credentials_task,
         }

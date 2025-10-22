@@ -42,7 +42,7 @@ use ui::{IconDecorationKind, prelude::*};
 use util::{ResultExt, TryFutureExt, paths::PathExt};
 use workspace::{
     CollaboratorId, ItemId, ItemNavHistory, ToolbarItemLocation, ViewId, Workspace, WorkspaceId,
-    invalid_buffer_view::InvalidBufferView,
+    invalid_item_view::InvalidItemView,
     item::{FollowableItem, Item, ItemBufferKind, ItemEvent, ProjectItem, SaveOptions},
     searchable::{
         Direction, FilteredSearchRange, SearchEvent, SearchableItem, SearchableItemHandle,
@@ -226,7 +226,7 @@ impl FollowableItem for Editor {
 
         Some(proto::view::Variant::Editor(proto::view::Editor {
             singleton: buffer.is_singleton(),
-            title: (!buffer.is_singleton()).then(|| buffer.title(cx).into()),
+            title: buffer.explicit_title().map(ToOwned::to_owned),
             excerpts,
             scroll_top_anchor: Some(serialize_anchor(&scroll_anchor.anchor, &snapshot)),
             scroll_x: scroll_anchor.offset.x,
@@ -1392,8 +1392,8 @@ impl ProjectItem for Editor {
         e: &anyhow::Error,
         window: &mut Window,
         cx: &mut App,
-    ) -> Option<InvalidBufferView> {
-        Some(InvalidBufferView::new(abs_path, is_local, e, window, cx))
+    ) -> Option<InvalidItemView> {
+        Some(InvalidItemView::new(abs_path, is_local, e, window, cx))
     }
 }
 

@@ -21,7 +21,7 @@ use std::str::FromStr;
 use std::sync::{Arc, LazyLock};
 use strum::IntoEnumIterator;
 use ui::{Icon, IconName, List, Tooltip, prelude::*};
-use ui_input::SingleLineInput;
+use ui_input::InputField;
 use util::{ResultExt, truncate_and_trailoff};
 use zed_env_vars::{EnvVar, env_var};
 
@@ -823,7 +823,7 @@ fn convert_usage(usage: &Usage) -> language_model::TokenUsage {
 }
 
 struct ConfigurationView {
-    api_key_editor: Entity<SingleLineInput>,
+    api_key_editor: Entity<InputField>,
     state: Entity<State>,
     load_credentials_task: Option<Task<()>>,
     target_agent: ConfigurationViewTargetAgent,
@@ -862,7 +862,7 @@ impl ConfigurationView {
         }));
 
         Self {
-            api_key_editor: cx.new(|cx| SingleLineInput::new(window, cx, Self::PLACEHOLDER_TEXT)),
+            api_key_editor: cx.new(|cx| InputField::new(window, cx, Self::PLACEHOLDER_TEXT)),
             state,
             load_credentials_task,
             target_agent,

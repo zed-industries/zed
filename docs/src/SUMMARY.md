@@ -8,7 +8,7 @@
 - [Linux](./linux.md)
 - [Windows](./windows.md)
 - [Telemetry](./telemetry.md)
-- [Workspace Persistence](./workspace-persistence.md)
+- [Troubleshooting](./troubleshooting.md)
 - [Additional Learning Materials](./additional-learning-materials.md)
 
 # Configuration

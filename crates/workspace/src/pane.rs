@@ -2,7 +2,7 @@ use crate::{
     CloseWindow, NewFile, NewTerminal, OpenInTerminal, OpenOptions, OpenTerminal, OpenVisible,
     SplitDirection, ToggleFileFinder, ToggleProjectSymbols, ToggleZoom, Workspace,
     WorkspaceItemBuilder,
-    invalid_buffer_view::InvalidBufferView,
+    invalid_item_view::InvalidItemView,
     item::{
         ActivateOnClose, ClosePosition, Item, ItemBufferKind, ItemHandle, ItemSettings,
         PreviewTabsSettings, ProjectItemKind, SaveOptions, ShowCloseButton, ShowDiagnostics,
@@ -992,11 +992,11 @@ impl Pane {
 
             let new_item = build_item(self, window, cx);
             // A special case that won't ever get a `project_entry_id` but has to be deduplicated nonetheless.
-            if let Some(invalid_buffer_view) = new_item.downcast::<InvalidBufferView>() {
+            if let Some(invalid_buffer_view) = new_item.downcast::<InvalidItemView>() {
                 let mut already_open_view = None;
                 let mut views_to_close = HashSet::default();
                 for existing_error_view in self
-                    .items_of_type::<InvalidBufferView>()
+                    .items_of_type::<InvalidItemView>()
                     .filter(|item| item.read(cx).abs_path == invalid_buffer_view.read(cx).abs_path)
                 {
                     if already_open_view.is_none()

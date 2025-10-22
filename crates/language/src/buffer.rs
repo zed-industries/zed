@@ -506,15 +506,15 @@ pub struct Chunk<'a> {
     pub highlight_style: Option<HighlightStyle>,
     /// The severity of diagnostic associated with this chunk, if any.
     pub diagnostic_severity: Option<DiagnosticSeverity>,
-    /// Whether this chunk of text is marked as unnecessary.
-    pub is_unnecessary: bool,
-    /// Whether this chunk of text was originally a tab character.
-    pub is_tab: bool,
     /// A bitset of which characters are tabs in this string.
     pub tabs: u128,
     /// Bitmap of character indices in this chunk
     pub chars: u128,
+    /// Whether this chunk of text is marked as unnecessary.
+    pub is_unnecessary: bool,
     /// Whether this chunk of text was originally a tab character.
+    pub is_tab: bool,
+    /// Whether this chunk of text was originally an inlay.
     pub is_inlay: bool,
     /// Whether to underline the corresponding text range in the editor.
     pub underline: bool,
@@ -4982,7 +4982,7 @@ impl<'a> Iterator for BufferChunks<'a> {
             text: chunk,
             chars: chars_map,
             tabs,
-        }) = self.chunks.peek_tabs()
+        }) = self.chunks.peek_with_bitmaps()
         {
             let chunk_start = self.range.start;
             let mut chunk_end = (self.chunks.offset() + chunk.len())
@@ -4995,18 +4995,14 @@ impl<'a> Iterator for BufferChunks<'a> {
                 chunk_end = chunk_end.min(*parent_capture_end);
                 highlight_id = Some(*parent_highlight_id);
             }
-
-            let slice =
-                &chunk[chunk_start - self.chunks.offset()..chunk_end - self.chunks.offset()];
+            let bit_start = chunk_start - self.chunks.offset();
             let bit_end = chunk_end - self.chunks.offset();
 
-            let mask = if bit_end >= 128 {
-                u128::MAX
-            } else {
-                (1u128 << bit_end) - 1
-            };
-            let tabs = (tabs >> (chunk_start - self.chunks.offset())) & mask;
-            let chars_map = (chars_map >> (chunk_start - self.chunks.offset())) & mask;
+            let slice = &chunk[bit_start..bit_end];
+
+            let mask = 1u128.unbounded_shl(bit_end as u32).wrapping_sub(1);
+            let tabs = (tabs >> bit_start) & mask;
+            let chars = (chars_map >> bit_start) & mask;
 
             self.range.start = chunk_end;
             if self.range.start == self.chunks.offset() + chunk.len() {
@@ -5020,7 +5016,7 @@ impl<'a> Iterator for BufferChunks<'a> {
                 diagnostic_severity: self.current_diagnostic_severity(),
                 is_unnecessary: self.current_code_is_unnecessary(),
                 tabs,
-                chars: chars_map,
+                chars,
                 ..Chunk::default()
             })
         } else {

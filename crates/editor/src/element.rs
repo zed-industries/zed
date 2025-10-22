@@ -8931,10 +8931,20 @@ impl Element for EditorElement {
                         cx,
                     );
 
+                    let merged_highlighted_ranges =
+                        if let Some((_, colors)) = document_colors.as_ref() {
+                            &highlighted_ranges
+                                .clone()
+                                .into_iter()
+                                .chain(colors.clone())
+                                .collect()
+                        } else {
+                            &highlighted_ranges
+                        };
                     let bg_segments_per_row = Self::bg_segments_per_row(
                         start_row..end_row,
                         &selections,
-                        &highlighted_ranges,
+                        &merged_highlighted_ranges,
                         self.style.background,
                     );
 
