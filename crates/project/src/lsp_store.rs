@@ -3580,6 +3580,9 @@ pub enum LspStoreEvent {
         legend: Arc<lsp::SemanticTokensLegend>,
         server_id: LanguageServerId,
     },
+    LanguageServerIndexingComplete {
+        language_server_id: LanguageServerId,
+    },
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -3589,6 +3592,8 @@ pub struct LanguageServerStatus {
     pub has_pending_diagnostic_updates: bool,
     progress_tokens: HashSet<String>,
     pub worktree: Option<WorktreeId>,
+    #[serde(skip)]
+    had_pending_work: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -7683,6 +7688,7 @@ impl LspStore {
                         has_pending_diagnostic_updates: false,
                         progress_tokens: Default::default(),
                         worktree,
+                        had_pending_work: false,
                     },
                 )
             })
@@ -8602,6 +8608,7 @@ impl LspStore {
                     has_pending_diagnostic_updates: false,
                     progress_tokens: Default::default(),
                     worktree: server.worktree_id.map(WorktreeId::from_proto),
+                    had_pending_work: false,
                 },
             );
             cx.emit(LspStoreEvent::LanguageServerAdded(
@@ -9160,6 +9167,7 @@ impl LspStore {
     ) {
         if let Some(status) = self.language_server_statuses.get_mut(&language_server_id) {
             status.pending_work.insert(token.clone(), progress.clone());
+            status.had_pending_work = true;
             cx.notify();
         }
         cx.emit(LspStoreEvent::LanguageServerUpdate {
@@ -9236,13 +9244,25 @@ impl LspStore {
         token: String,
         cx: &mut Context<Self>,
     ) {
+        let mut indexing_complete = false;
         if let Some(status) = self.language_server_statuses.get_mut(&language_server_id) {
             if let Some(work) = status.pending_work.remove(&token)
                 && !work.is_disk_based_diagnostics_progress
             {
                 cx.emit(LspStoreEvent::RefreshInlayHints);
             }
+            
+            // Only emit indexing complete if server had work and now has none
+            if status.had_pending_work && status.pending_work.is_empty() {
+                indexing_complete = true;
+                status.had_pending_work = false; // Reset for future indexing cycles
+            }
             cx.notify();
+        }
+
+        if indexing_complete {
+            log::info!("LSP server {language_server_id:?} completed all indexing work");
+            cx.emit(LspStoreEvent::LanguageServerIndexingComplete { language_server_id });
         }
 
         cx.emit(LspStoreEvent::LanguageServerUpdate {
@@ -10618,6 +10638,7 @@ impl LspStore {
                 has_pending_diagnostic_updates: false,
                 progress_tokens: Default::default(),
                 worktree: Some(key.worktree_id),
+                had_pending_work: false,
             },
         );
 

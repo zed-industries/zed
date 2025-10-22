@@ -1164,7 +1164,6 @@ impl InlaySnapshot {
             language_aware,
             highlights.text_highlights,
             highlights.semantic_tokens,
-            highlights.syntax_tokens,
             &self.buffer,
         );
 

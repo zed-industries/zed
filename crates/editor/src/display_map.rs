@@ -101,18 +101,8 @@ type TextHighlights = TreeMap<HighlightKey, Arc<(HighlightStyle, Vec<Range<Ancho
 type InlayHighlights = TreeMap<TypeId, TreeMap<InlayId, (HighlightStyle, InlayHighlight)>>;
 
 #[derive(Clone, Debug, PartialEq)]
-pub enum HighlightInvalidationType {
-    SyntaxTokens,
-    SemanticTokens,
-    Both,
-}
-
-#[derive(Clone, Debug, PartialEq)]
 pub enum DisplayMapEvent {
-    HighlightsInvalidated {
-        buffer_ids: Vec<BufferId>,
-        invalidation_type: HighlightInvalidationType,
-    },
+    SemanticTokensReady { buffer_id: BufferId },
 }
 
 /// Decides how text in a [`MultiBuffer`] should be displayed in a buffer, handling inlay hints,
@@ -139,8 +129,6 @@ pub struct DisplayMap {
     inlay_highlights: InlayHighlights,
     /// The semantic tokens from the language server.
     pub semantic_tokens: HashMap<BufferId, Arc<SemanticTokenView>>,
-    /// Tree-sitter based syntax tokens for rainbow highlighting (fallback when LSP unavailable).
-    pub syntax_tokens: HashMap<BufferId, Arc<SyntaxTokenView>>,
     /// Cache for rainbow variable coloring (owned by DisplayMap, snapshot via Arc).
     /// Uses DashMap internally for lock-free concurrent access.
     variable_color_cache: Option<Arc<crate::rainbow::VariableColorCache>>,
@@ -150,10 +138,11 @@ pub struct DisplayMap {
     pub clip_at_line_ends: bool,
     pub(crate) masked: bool,
     pub(crate) diagnostics_max_severity: DiagnosticSeverity,
-    /// Subscription to buffer events for syntax token updates
     _multibuffer_subscription: Subscription,
     /// Subscription to project LSP events for semantic token updates
     _project_subscription: Option<Subscription>,
+    /// Pending semantic token tasks - storing cancels previous task when new response arrives
+    pending_semantic_token_tasks: HashMap<BufferId, gpui::Task<()>>,
 }
 
 #[derive(Debug, Default)]
@@ -173,227 +162,6 @@ pub struct MultibufferSemanticToken {
     pub lsp_modifiers: u32,
 }
 
-#[derive(Debug, Default, Clone)]
-pub struct SyntaxTokenView {
-    pub tokens: Vec<SyntaxToken>,
-    pub version: Global,
-}
-
-impl SyntaxTokenView {
-    pub fn new(
-        snapshot: language::BufferSnapshot,
-        cache: &Arc<crate::rainbow::VariableColorCache>,
-        theme: &theme::SyntaxTheme,
-    ) -> Option<Self> {
-        Self::extract_tokens(snapshot, cache, theme)
-    }
-
-    fn extract_tokens(
-        snapshot: language::BufferSnapshot,
-        cache: &crate::rainbow::VariableColorCache,
-        theme: &theme::SyntaxTheme,
-    ) -> Option<Self> {
-        let mut tokens = Vec::new();
-
-        // Pre-collect all variable captures once to avoid O(n*m) complexity
-        let variable_captures = Self::collect_variable_captures(&snapshot);
-
-        // Walk the syntax tree to find ALL identifiers
-        for layer in snapshot.syntax_layers() {
-            let root = layer.node();
-            Self::extract_identifiers_recursive(
-                root,
-                &snapshot,
-                cache,
-                theme,
-                &mut tokens,
-                &variable_captures,
-            );
-        }
-
-        if tokens.is_empty() {
-            return None;
-        }
-
-        tokens.sort_by_key(|token| token.range.start);
-        tokens.dedup_by(|a, b| {
-            let overlaps = a.range.start < b.range.end && b.range.start < a.range.end;
-            if overlaps {
-                if b.range.end - b.range.start > a.range.end - a.range.start {
-                    *a = b.clone();
-                }
-                true
-            } else {
-                false
-            }
-        });
-
-        Some(SyntaxTokenView {
-            tokens,
-            version: snapshot.version().clone(),
-        })
-    }
-
-    /// Collect all variable captures once to avoid repeated queries.
-    /// Returns a HashSet of byte ranges that represent variable identifiers.
-    fn collect_variable_captures(
-        snapshot: &language::BufferSnapshot,
-    ) -> std::collections::HashSet<Range<usize>> {
-        use std::collections::HashSet;
-        let mut captures = HashSet::new();
-
-        for layer in snapshot.syntax_layers() {
-            let Some(grammar) = layer.language.grammar() else {
-                continue;
-            };
-            let Some(highlights_config) = &grammar.highlights_config else {
-                continue;
-            };
-
-            let mut query_captures =
-                snapshot
-                    .syntax
-                    .captures(0..snapshot.len(), &snapshot.text, |g| {
-                        g.highlights_config.as_ref().map(|c| &c.query)
-                    });
-
-            while let Some(capture) = query_captures.next() {
-                if highlights_config.is_variable_capture(capture.index) {
-                    let range = capture.node.start_byte()..capture.node.end_byte();
-                    captures.insert(range);
-                }
-            }
-        }
-
-        captures
-    }
-
-    fn extract_identifiers_recursive(
-        node: language::Node,
-        snapshot: &language::BufferSnapshot,
-        cache: &crate::rainbow::VariableColorCache,
-        theme: &theme::SyntaxTheme,
-        tokens: &mut Vec<SyntaxToken>,
-        variable_captures: &std::collections::HashSet<Range<usize>>,
-    ) {
-        // Process identifier nodes and metavariables (Rust macro parameters like $name)
-        if node.kind() == "identifier" || node.kind() == "metavariable" {
-            let mut start = node.start_byte();
-            let end = node.end_byte();
-            let mut identifier: String = snapshot.text_for_range(start..end).collect();
-
-            // Strip leading $ from metavariables (Rust macro parameters)
-            // Also adjust start position to exclude the $ from the token range
-            if node.kind() == "metavariable" && identifier.starts_with('$') {
-                identifier = identifier[1..].to_string();
-                start += 1; // Skip the $ character in the token range
-            }
-
-            // Check if this identifier has a variable-like capture (cached lookup)
-            if Self::is_variable_context_cached(&node, start..end, snapshot, variable_captures) {
-                if let Some(validated) =
-                    crate::rainbow::validate_identifier_for_rainbow(&identifier)
-                {
-                    let style = cache.get_or_insert(validated, theme);
-                    tokens.push(SyntaxToken {
-                        range: start..end,
-                        style,
-                    });
-                }
-            }
-        }
-
-        // Recursively process children
-        let mut cursor = node.walk();
-        for child in node.children(&mut cursor) {
-            Self::extract_identifiers_recursive(
-                child,
-                snapshot,
-                cache,
-                theme,
-                tokens,
-                variable_captures,
-            );
-        }
-    }
-
-    /// Optimized variable detection using pre-collected captures cache.
-    ///
-    /// This uses a two-tier approach:
-    /// 1. O(1) lookup in the cached captures HashSet (primary, fast path)
-    /// 2. Parent node kind checking (fallback for uncaptured contexts)
-    ///
-    /// This eliminates the O(n*m) complexity of querying captures for each identifier.
-    fn is_variable_context_cached(
-        node: &language::Node,
-        range: Range<usize>,
-        snapshot: &language::BufferSnapshot,
-        variable_captures: &std::collections::HashSet<Range<usize>>,
-    ) -> bool {
-        // Fast path: O(1) lookup in the pre-collected captures
-        if variable_captures.contains(&range) {
-            return true;
-        }
-
-        // Fallback: Check parent node kind (for contexts not captured by tree-sitter queries)
-        let start = range.start;
-        let end = range.end;
-
-        let Some(layer) = snapshot
-            .syntax
-            .layers_for_range(start..end, &snapshot.text, false)
-            .find(|layer| layer.language.grammar().is_some())
-        else {
-            return false;
-        };
-
-        let Some(grammar) = layer.language.grammar() else {
-            return false;
-        };
-
-        let Some(highlights_config) = &grammar.highlights_config else {
-            return false;
-        };
-
-        if let Some(parent) = node.parent() {
-            return highlights_config.is_variable_parent_kind(parent.kind());
-        }
-
-        false
-    }
-
-    pub fn exclude_ranges(&mut self, ranges: &[Range<usize>]) {
-        if ranges.is_empty() {
-            return;
-        }
-
-        self.tokens.retain(|token| {
-            !ranges.iter().any(|exclude_range| {
-                token.range.start < exclude_range.end && token.range.end > exclude_range.start
-            })
-        });
-    }
-
-    pub fn tokens_in_range(&self, range: Range<usize>) -> &[SyntaxToken] {
-        let start = self
-            .tokens
-            .binary_search_by_key(&range.start, |token| token.range.start)
-            .unwrap_or_else(|next_ix| next_ix);
-
-        let end = self
-            .tokens
-            .binary_search_by_key(&range.end, |token| token.range.start)
-            .unwrap_or_else(|next_ix| next_ix);
-
-        &self.tokens[start..end]
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct SyntaxToken {
-    pub range: Range<usize>,
-    pub style: HighlightStyle,
-}
 
 impl DisplayMap {
     pub fn new(
@@ -421,9 +189,8 @@ impl DisplayMap {
 
         cx.observe(&wrap_map, |_, _, cx| cx.notify()).detach();
 
-        let buffer_clone = buffer.clone();
-        let multibuffer_subscription = cx.subscribe(&buffer, move |this, _buffer, event, cx| {
-            this.on_buffer_event(&buffer_clone, event, cx);
+        let multibuffer_subscription = cx.subscribe(&buffer, |_, _, _, cx| {
+            cx.notify();
         });
 
         let project_subscription = project.as_ref().map(|project| {
@@ -448,12 +215,12 @@ impl DisplayMap {
             text_highlights: Default::default(),
             inlay_highlights: Default::default(),
             semantic_tokens: Default::default(),
-            syntax_tokens: Default::default(),
             variable_color_cache: None,
             clip_at_line_ends: false,
             masked: false,
             _multibuffer_subscription: multibuffer_subscription,
             _project_subscription: project_subscription,
+            pending_semantic_token_tasks: Default::default(),
         }
     }
 
@@ -476,7 +243,6 @@ impl DisplayMap {
             text_highlights: self.text_highlights.clone(),
             inlay_highlights: self.inlay_highlights.clone(),
             semantic_tokens: self.semantic_tokens.clone(),
-            syntax_tokens: self.syntax_tokens.clone(),
             variable_color_cache: self.variable_color_cache.clone(),
             clip_at_line_ends: self.clip_at_line_ends,
             masked: self.masked,
@@ -929,26 +695,6 @@ impl DisplayMap {
         self.variable_color_cache.clone()
     }
 
-    fn on_buffer_event(
-        &mut self,
-        buffer: &Entity<MultiBuffer>,
-        event: &multi_buffer::Event,
-        cx: &mut Context<Self>,
-    ) {
-        match event {
-            multi_buffer::Event::Reparsed(buffer_id) => {
-                if let Some(buffer_entity) = buffer.read(cx).buffer(*buffer_id) {
-                    self.regenerate_syntax_tokens_for_buffer(buffer_entity, *buffer_id, cx);
-                }
-            }
-            multi_buffer::Event::LanguageChanged(buffer_id) => {
-                if let Some(buffer_entity) = buffer.read(cx).buffer(*buffer_id) {
-                    self.regenerate_syntax_tokens_for_buffer(buffer_entity, *buffer_id, cx);
-                }
-            }
-            _ => {}
-        }
-    }
 
     fn on_lsp_event(&mut self, event: &project::lsp_store::LspStoreEvent, cx: &mut Context<Self>) {
         match event {
@@ -964,46 +710,6 @@ impl DisplayMap {
         }
     }
 
-    pub(crate) fn regenerate_syntax_tokens_for_buffer(
-        &mut self,
-        buffer: Entity<language::Buffer>,
-        buffer_id: BufferId,
-        cx: &mut Context<Self>,
-    ) {
-        let cache = match &self.variable_color_cache {
-            Some(cache) => cache.clone(),
-            None => return,
-        };
-
-        let theme = cx.theme().syntax().clone();
-        let snapshot = buffer.read(cx).snapshot();
-
-        cx.spawn(async move |this, cx| {
-            let tokens = cx
-                .background_executor()
-                .spawn(async move { SyntaxTokenView::new(snapshot, &cache, &theme) })
-                .await;
-
-            this.update(cx, |this, cx| {
-                if let Some(mut tokens) = tokens {
-                    if let Some(semantic) = this.semantic_tokens.get(&buffer_id) {
-                        let covered_ranges: Vec<_> =
-                            semantic.tokens.iter().map(|t| t.range.clone()).collect();
-                        tokens.exclude_ranges(&covered_ranges);
-                    }
-
-                    this.syntax_tokens.insert(buffer_id, Arc::new(tokens));
-
-                    cx.emit(DisplayMapEvent::HighlightsInvalidated {
-                        buffer_ids: vec![buffer_id],
-                        invalidation_type: HighlightInvalidationType::SyntaxTokens,
-                    });
-                }
-            })
-            .ok()
-        })
-        .detach();
-    }
 
     fn regenerate_semantic_tokens(
         &mut self,
@@ -1018,52 +724,36 @@ impl DisplayMap {
         let buffer_snapshot = buffer.read(cx).snapshot();
         let syntax_theme = cx.theme().syntax().clone();
         let variable_color_cache = self.variable_color_cache.clone();
-        
-        cx.spawn(async move |this, cx| {
-            let view = cx.background_executor().spawn(async move {
-                SemanticTokenView::new(
-                    &buffer_snapshot,
-                    &tokens,
-                    &legend,
-                    variable_color_cache.as_ref(),
-                    Some(&syntax_theme),
-                )
-            }).await;
+
+        let task = cx.spawn(async move |this, cx| {
+            let view = cx
+                .background_executor()
+                .spawn(async move {
+                    SemanticTokenView::new(
+                        &buffer_snapshot,
+                        &tokens,
+                        &legend,
+                        variable_color_cache.as_ref(),
+                        Some(&syntax_theme),
+                    )
+                })
+                .await;
 
             if let Some(view) = view {
                 this.update(cx, |this, cx| {
                     this.semantic_tokens.insert(buffer_id, Arc::new(view));
-                    this.invalidate_overlapping_syntax_tokens(buffer_id, cx);
-
-                    cx.emit(DisplayMapEvent::HighlightsInvalidated {
-                        buffer_ids: vec![buffer_id],
-                        invalidation_type: HighlightInvalidationType::SemanticTokens,
-                    });
-                }).log_err();
+                    cx.emit(DisplayMapEvent::SemanticTokensReady { buffer_id });
+                    cx.notify();
+                })
+                .log_err();
+            } else {
+                log::warn!("SemanticTokenView::new returned None for buffer {buffer_id}");
             }
-        }).detach();
+        });
+
+        self.pending_semantic_token_tasks.insert(buffer_id, task);
     }
 
-    fn invalidate_overlapping_syntax_tokens(
-        &mut self,
-        buffer_id: BufferId,
-        _cx: &mut Context<Self>,
-    ) {
-        if let Some(semantic) = self.semantic_tokens.get(&buffer_id) {
-            if let Some(syntax) = self.syntax_tokens.get_mut(&buffer_id) {
-                // Only exclude syntax tokens where semantic tokens have actual colors
-                // This preserves rainbow highlighting when LSP has no color for a token
-                let covered_ranges: Vec<_> = semantic
-                    .tokens
-                    .iter()
-                    .filter(|t| t.style.color.is_some())
-                    .map(|t| t.range.clone())
-                    .collect();
-
-                Arc::make_mut(syntax).exclude_ranges(&covered_ranges);
-            }
-        }
-    }
 
     #[cfg(test)]
     pub fn is_rewrapping(&self, cx: &gpui::App) -> bool {
@@ -1078,7 +768,6 @@ pub(crate) struct Highlights<'a> {
     pub text_highlights: Option<&'a TextHighlights>,
     pub inlay_highlights: Option<&'a InlayHighlights>,
     pub semantic_tokens: Option<&'a HashMap<BufferId, Arc<SemanticTokenView>>>,
-    pub syntax_tokens: Option<&'a HashMap<BufferId, Arc<SyntaxTokenView>>>,
     pub styles: HighlightStyles,
 }
 
@@ -1213,7 +902,6 @@ pub struct DisplaySnapshot {
     text_highlights: TextHighlights,
     inlay_highlights: InlayHighlights,
     semantic_tokens: HashMap<BufferId, Arc<SemanticTokenView>>,
-    syntax_tokens: HashMap<BufferId, Arc<SyntaxTokenView>>,
     variable_color_cache: Option<Arc<crate::rainbow::VariableColorCache>>,
     clip_at_line_ends: bool,
     masked: bool,
@@ -1417,7 +1105,6 @@ impl DisplaySnapshot {
                 text_highlights: Some(&self.text_highlights),
                 inlay_highlights: Some(&self.inlay_highlights),
                 semantic_tokens: Some(&self.semantic_tokens),
-                syntax_tokens: Some(&self.syntax_tokens),
                 styles: highlight_styles,
             },
         )
@@ -2050,7 +1737,6 @@ impl SemanticTokenView {
         variable_color_cache: Option<&Arc<crate::rainbow::VariableColorCache>>,
         syntax_theme: Option<&theme::SyntaxTheme>,
     ) -> Option<SemanticTokenView> {
-
         // Use default rainbow config since we're on background thread
         // The actual rainbow highlighting is applied during rendering anyway
         let rainbow_config = crate::editor_settings::RainbowConfig::default();
@@ -2070,20 +1756,8 @@ impl SemanticTokenView {
                     &buffer_snapshot.text,
                 );
 
-                // Skip variable/parameter tokens - these are handled by tree-sitter + rainbow
-                let token_type_name = stylizer.token_type(token.token_type)?;
-                let is_variable = highlights_config
-                    .map(|config| config.is_variable_lsp_token_type(token_type_name))
-                    .unwrap_or(false);
-                
-                if is_variable {
-                    return None; // Skip entirely - let tree-sitter + rainbow handle it
-                }
-
                 Some(MultibufferSemanticToken {
                     range: start_offset..end_offset,
-                    // Keep all tokens, even those without colors, so we can preserve rainbow highlighting
-                    // Tokens without colors get default (empty) style, which won't override syntax highlighting
                     style: stylizer.convert(
                         syntax_theme,
                         token.token_type,
@@ -2092,7 +1766,7 @@ impl SemanticTokenView {
                         start_offset..end_offset,
                         variable_color_cache,
                         highlights_config,
-                    ).unwrap_or_default(),
+                    )?,
                     lsp_type: token.token_type,
                     lsp_modifiers: token.token_modifiers,
                 })
@@ -2180,21 +1854,12 @@ impl<'a> SemanticTokenStylizer<'a> {
         theme: Option<&'a SyntaxTheme>,
         token_type: u32,
         modifiers: u32,
-        _buffer: &text::BufferSnapshot,
-        _range: Range<usize>,
-        _variable_color_cache: Option<&Arc<crate::rainbow::VariableColorCache>>,
-        highlights_config: Option<&language::HighlightsConfig>,
+        buffer: &text::BufferSnapshot,
+        range: Range<usize>,
+        variable_color_cache: Option<&Arc<crate::rainbow::VariableColorCache>>,
+        _highlights_config: Option<&language::HighlightsConfig>,
     ) -> Option<HighlightStyle> {
         let token_type_name = self.token_type(token_type)?;
-        
-        // Return None for variables - let tree-sitter + rainbow handle them
-        let is_variable = highlights_config
-            .map(|config| config.is_variable_lsp_token_type(token_type_name))
-            .unwrap_or(false);
-        
-        if is_variable {
-            return None;
-        }
         let has_modifier = |modifier| self.has_modifier(modifiers, modifier);
 
         let choices: &[&str] = match token_type_name {
@@ -2244,14 +1909,42 @@ impl<'a> SemanticTokenStylizer<'a> {
             }
             "type" => &["type"],
 
-            // References
-            "parameter" => &["parameter"],
+            // References - apply rainbow coloring to variables and parameters
+            "parameter" => {
+                // Rainbow color parameters
+                if let Some(cache) = variable_color_cache {
+                    if let Some(theme) = theme {
+                        let identifier: String = buffer.text_for_range(range.clone()).collect();
+                        if let Some(validated) = crate::rainbow::validate_identifier_for_rainbow(&identifier) {
+                            let style = cache.get_or_insert(validated, theme);
+                            if style.color.is_some() {
+                                return Some(style);
+                            }
+                        }
+                    }
+                }
+                &["parameter"]
+            }
             "variable" if has_modifier("defaultLibrary") && has_modifier("constant") => {
                 &["constant.builtin", "constant"]
             }
             "variable" if has_modifier("defaultLibrary") => &["variable.builtin", "variable"],
             "variable" if has_modifier("constant") => &["constant"],
-            "variable" => &["variable"],
+            "variable" => {
+                // Rainbow color regular variables
+                if let Some(cache) = variable_color_cache {
+                    if let Some(theme) = theme {
+                        let identifier: String = buffer.text_for_range(range.clone()).collect();
+                        if let Some(validated) = crate::rainbow::validate_identifier_for_rainbow(&identifier) {
+                            let style = cache.get_or_insert(validated, theme);
+                            if style.color.is_some() {
+                                return Some(style);
+                            }
+                        }
+                    }
+                }
+                &["variable"]
+            }
             "const" => &["const", "constant", "variable"],
             "property" => &["property"],
             "enumMember" => &["type.enum.member", "type.enum", "variant"],
@@ -2293,8 +1986,6 @@ impl<'a> SemanticTokenStylizer<'a> {
                 return None;
             }
         };
-
-        
 
         // Theme color lookup: try each choice in order until we find one with a color
         if let Some(theme) = theme {

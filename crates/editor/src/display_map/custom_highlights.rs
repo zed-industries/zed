@@ -11,7 +11,7 @@ use std::{
 };
 use text::BufferId;
 
-use crate::display_map::{HighlightKey, SemanticTokenView, SyntaxTokenView, TextHighlights};
+use crate::display_map::{HighlightKey, SemanticTokenView, TextHighlights};
 
 pub struct CustomHighlightsChunks<'a> {
     buffer_chunks: MultiBufferChunks<'a>,
@@ -23,7 +23,6 @@ pub struct CustomHighlightsChunks<'a> {
     active_highlights: BTreeMap<HighlightKey, HighlightStyle>,
     text_highlights: Option<&'a TextHighlights>,
     semantic_tokens: Option<&'a HashMap<BufferId, Arc<SemanticTokenView>>>,
-    syntax_tokens: Option<&'a HashMap<BufferId, Arc<SyntaxTokenView>>>,
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -39,7 +38,6 @@ impl<'a> CustomHighlightsChunks<'a> {
         language_aware: bool,
         text_highlights: Option<&'a TextHighlights>,
         semantic_tokens: Option<&'a HashMap<BufferId, Arc<SemanticTokenView>>>,
-        syntax_tokens: Option<&'a HashMap<BufferId, Arc<SyntaxTokenView>>>,
         multibuffer_snapshot: &'a MultiBufferSnapshot,
     ) -> Self {
         Self {
@@ -52,13 +50,11 @@ impl<'a> CustomHighlightsChunks<'a> {
                 &range,
                 text_highlights,
                 semantic_tokens,
-                syntax_tokens,
                 multibuffer_snapshot,
             ),
             active_highlights: Default::default(),
             multibuffer_snapshot,
             semantic_tokens,
-            syntax_tokens,
         }
     }
 
@@ -67,7 +63,6 @@ impl<'a> CustomHighlightsChunks<'a> {
             &new_range,
             self.text_highlights,
             self.semantic_tokens,
-            self.syntax_tokens,
             self.multibuffer_snapshot,
         );
         self.offset = new_range.start;
@@ -82,7 +77,6 @@ fn create_highlight_endpoints(
     range: &Range<usize>,
     text_highlights: Option<&TextHighlights>,
     semantic_tokens: Option<&HashMap<BufferId, Arc<SemanticTokenView>>>,
-    syntax_tokens: Option<&HashMap<BufferId, Arc<SyntaxTokenView>>>,
     buffer: &MultiBufferSnapshot,
 ) -> iter::Peekable<vec::IntoIter<HighlightEndpoint>> {
     // Pre-allocate with reasonable capacity to minimize reallocations
@@ -131,10 +125,6 @@ fn create_highlight_endpoints(
         }
     }
 
-    // Pre-allocate for LSP covered ranges to minimize reallocations during iteration
-    // Track all LSP semantic token ranges to prevent overlapping syntax/rainbow highlights
-    let mut lsp_covered_ranges: Vec<Range<usize>> = Vec::with_capacity(128);
-
     if let Some(tokens) = semantic_tokens {
         for mut excerpt in buffer.excerpts_for_range(range.clone()) {
             let buffer_id = excerpt.buffer_id();
@@ -161,10 +151,7 @@ fn create_highlight_endpoints(
                     continue;
                 }
 
-                // Only exclude syntax/rainbow tokens if semantic token has an actual color
-                // This preserves rainbow highlighting when LSP provides semantic tokens without colors
                 if token.style.color.is_some() {
-                    lsp_covered_ranges.push(token_range.clone());
                     highlight_endpoints.push(HighlightEndpoint {
                         offset: token_range.start,
                         tag: HighlightKey::Type(std::any::TypeId::of::<()>()),
@@ -175,68 +162,6 @@ fn create_highlight_endpoints(
                         tag: HighlightKey::Type(std::any::TypeId::of::<()>()),
                         style: None,
                     });
-                }
-            }
-        }
-    }
-
-    if let Some(tokens) = syntax_tokens {
-        // Use merge-join approach: track position in sorted LSP ranges as we process syntax tokens
-        // This reduces complexity from O(n * log m) to O(n + m)
-        // lsp_idx persists across excerpts since both LSP ranges and syntax tokens are in document order
-        let mut lsp_idx = 0;
-
-        for mut excerpt in buffer.excerpts_for_range(range.clone()) {
-            let Some(tokens) = tokens.get(&excerpt.buffer_id()) else {
-                continue;
-            };
-
-            let buffer_range = excerpt
-                .buffer()
-                .range_to_version(excerpt.map_range_to_buffer(range.clone()), &tokens.version);
-
-            for token in tokens.tokens_in_range(buffer_range.clone()) {
-                let token_range = excerpt
-                    .buffer()
-                    .range_from_version(token.range.clone(), &tokens.version);
-
-                // Verify token is within excerpt bounds
-                if !excerpt.contains_partial_buffer_range(token_range.clone()) {
-                    continue;
-                }
-
-                let token_range = excerpt.map_range_from_buffer(token_range);
-
-                // Verify token is within requested range
-                if token_range.end <= range.start || token_range.start >= range.end {
-                    continue;
-                }
-
-                if token.style.color.is_some() {
-                    // Merge-join: advance lsp_idx to skip ranges that end before this token
-                    while lsp_idx < lsp_covered_ranges.len()
-                        && lsp_covered_ranges[lsp_idx].end <= token_range.start
-                    {
-                        lsp_idx += 1;
-                    }
-
-                    // Check if current LSP range overlaps with token
-                    // Since both lists are sorted, we only need to check the current position
-                    let overlaps_with_lsp = lsp_idx < lsp_covered_ranges.len()
-                        && lsp_covered_ranges[lsp_idx].start < token_range.end;
-
-                    if !overlaps_with_lsp {
-                        highlight_endpoints.push(HighlightEndpoint {
-                            offset: token_range.start,
-                            tag: HighlightKey::Type(std::any::TypeId::of::<()>()),
-                            style: Some(token.style),
-                        });
-                        highlight_endpoints.push(HighlightEndpoint {
-                            offset: token_range.end,
-                            tag: HighlightKey::Type(std::any::TypeId::of::<()>()),
-                            style: None,
-                        });
-                    }
                 }
             }
         }

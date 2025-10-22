@@ -339,6 +339,9 @@ pub enum Event {
     Rejoined,
     RefreshInlayHints,
     RefreshCodeLens,
+    LanguageServerIndexingComplete {
+        language_server_id: LanguageServerId,
+    },
     RevealInProjectPanel(ProjectEntryId),
     SnippetEdit(BufferId, Vec<(lsp::Range, Snippet)>),
     ExpandedAllForEntry(WorktreeId, ProjectEntryId),
@@ -2998,6 +3001,11 @@ impl Project {
             }
             LspStoreEvent::RefreshInlayHints => cx.emit(Event::RefreshInlayHints),
             LspStoreEvent::RefreshCodeLens => cx.emit(Event::RefreshCodeLens),
+            LspStoreEvent::LanguageServerIndexingComplete { language_server_id } => {
+                cx.emit(Event::LanguageServerIndexingComplete {
+                    language_server_id: *language_server_id,
+                })
+            }
             LspStoreEvent::LanguageServerPrompt(prompt) => {
                 cx.emit(Event::LanguageServerPrompt(prompt.clone()))
             }

@@ -3,12 +3,12 @@ use std::num::NonZeroU32;
 use gpui::App;
 use language::CursorShape;
 use project::project_settings::DiagnosticSeverity;
-use settings::{Settings, SettingsContent, VsCodeSettings};
 pub use settings::{
     CurrentLineHighlight, DisplayIn, DocumentColorsRenderMode, DoubleClickInMultibuffer,
     GoToDefinitionFallback, HideMouseMode, MinimapThumb, MinimapThumbBorder, MultiCursorModifier,
     ScrollBeyondLastLine, ScrollbarDiagnostics, SeedQuerySetting, ShowMinimap, SnippetSortOrder,
 };
+use settings::{Settings, SettingsContent, VsCodeSettings};
 use ui::scrollbars::{ScrollbarVisibility, ShowScrollbar};
 
 /// Imports from the VSCode settings at
