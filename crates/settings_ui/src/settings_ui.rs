@@ -542,21 +542,12 @@ pub fn open_settings_editor(
         }
         let Some((item_index, navbar_entry_index)) = item_info else {
             log::error!("Failed to find item for {}", path);
-            // todo! error?
             return;
         };
 
-        // todo! add expand behavior to open_navbar_entry_page
         settings_window.open_navbar_entry_page(navbar_entry_index);
         window.focus(&settings_window.focus_handle_for_content_element(item_index, cx));
         settings_window.scroll_to_content_item(item_index, window, cx);
-
-        // x set current file to user
-        // x reset search
-        // x set current page to page containing item with path
-        // x bail if item not included in user file
-        // x set current nav entry to page + section containing item
-        // x scroll to item and focus it
     }
 
     let existing_window = cx
