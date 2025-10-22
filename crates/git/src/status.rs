@@ -520,48 +520,38 @@ impl FromStr for TreeDiff {
         let mut parsed = HashMap::default();
         while let Some((status, path)) = fields.next().zip(fields.next()) {
             let path = RepoPath(RelPath::unix(path)?.into());
-            parsed.insert(path, status.parse()?);
+
+            let mut fields = status.split(" ").skip(2);
+            let old_sha = fields
+                .next()
+                .ok_or_else(|| anyhow!("expected to find old_sha"))?
+                .to_owned()
+                .parse()?;
+            let _new_sha = fields
+                .next()
+                .ok_or_else(|| anyhow!("expected to find new_sha"))?;
+            let status = fields
+                .next()
+                .and_then(|s| {
+                    if s.len() == 1 {
+                        s.as_bytes().first()
+                    } else {
+                        None
+                    }
+                })
+                .ok_or_else(|| anyhow!("expected to find status"))?;
+
+            let result = match StatusCode::from_byte(*status)? {
+                StatusCode::Modified => TreeDiffStatus::Modified { old: old_sha },
+                StatusCode::Added => TreeDiffStatus::Added,
+                StatusCode::Deleted => TreeDiffStatus::Deleted { old: old_sha },
+                _status => continue,
+            };
+
+            parsed.insert(path, result);
         }
 
         Ok(Self { entries: parsed })
-    }
-}
-
-impl FromStr for TreeDiffStatus {
-    type Err = anyhow::Error;
-
-    fn from_str(s: &str) -> Result<Self> {
-        let mut fields = s.split(" ").skip(2);
-        let old_sha = fields
-            .next()
-            .ok_or_else(|| anyhow!("expected to find old_sha"))?
-            .to_owned()
-            .parse()?;
-        let _new_sha = fields
-            .next()
-            .ok_or_else(|| anyhow!("expected to find new_sha"))?;
-        let status = fields
-            .next()
-            .and_then(|s| {
-                if s.len() == 1 {
-                    s.as_bytes().first()
-                } else {
-                    None
-                }
-            })
-            .ok_or_else(|| anyhow!("expected to find status"))?;
-
-        let result = match StatusCode::from_byte(*status)? {
-            StatusCode::Modified => TreeDiffStatus::Modified { old: old_sha },
-            StatusCode::Added => TreeDiffStatus::Added,
-            StatusCode::Deleted => TreeDiffStatus::Deleted { old: old_sha },
-            // todo! what if something is modified and the type changed?
-            status => {
-                anyhow::bail!("unexpected status: {:?}", status)
-            }
-        };
-
-        Ok(result)
     }
 }
 

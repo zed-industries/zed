@@ -48,6 +48,7 @@ use collections::{BTreeMap, btree_map};
 use fake_git_repo::FakeGitRepositoryState;
 #[cfg(any(test, feature = "test-support"))]
 use git::{
+    Oid,
     repository::{RepoPath, repo_path},
     status::{FileStatus, StatusCode, TrackedStatus, UnmergedStatus},
 };
@@ -1745,6 +1746,26 @@ impl FakeFs {
                     .map(|(path, contents)| (repo_path(path), contents.clone())),
             );
             state.index_contents = state.head_contents.clone();
+        })
+        .unwrap();
+    }
+
+    pub fn set_merge_base_content_for_repo(
+        &self,
+        dot_git: &Path,
+        contents_by_path: &[(&str, String)],
+    ) {
+        self.with_git_state(dot_git, true, |state| {
+            use git::Oid;
+
+            state.merge_base_contents.clear();
+            let oids = (1..)
+                .map(|n| n.to_string())
+                .map(|n| Oid::from_bytes(n.repeat(40).as_bytes()).unwrap());
+            for ((path, content), oid) in contents_by_path.iter().zip(oids) {
+                state.merge_base_contents.insert(repo_path(path), oid);
+                state.oids.insert(oid, content.clone());
+            }
         })
         .unwrap();
     }

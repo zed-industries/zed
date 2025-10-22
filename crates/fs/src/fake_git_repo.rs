@@ -116,13 +116,11 @@ impl GitRepository for FakeGitRepository {
         .boxed()
     }
 
-    fn load_blob_content(&self, _: git::Oid) -> BoxFuture<'_, Result<String>> {
+    fn load_blob_content(&self, oid: git::Oid) -> BoxFuture<'_, Result<String>> {
         self.with_state_async(false, move |state| {
-            Ok(state
-                .merge_base_contents
-                .get(oid)
-                .expect("can only load blob content from merge base right now"))
+            state.oids.get(&oid).cloned().context("oid does not exist")
         })
+        .boxed()
     }
 
     fn load_commit(
@@ -159,25 +157,26 @@ impl GitRepository for FakeGitRepository {
         let mut entries = HashMap::default();
         self.with_state_async(false, |state| {
             for (path, content) in &state.head_contents {
-                let status = if let Some((oid, content)) = state
+                let status = if let Some((oid, original)) = state
                     .merge_base_contents
                     .get(path)
-                    .map(|oid| (oid, state.oids[oid]))
+                    .map(|oid| (oid, &state.oids[oid]))
                 {
                     if original == content {
                         continue;
                     }
-                    TreeDiffStatus::Modified { old: oid }
+                    TreeDiffStatus::Modified { old: *oid }
                 } else {
                     TreeDiffStatus::Added
                 };
-                seen.insert(path.clone())
+                entries.insert(path.clone(), status);
             }
-            for (path, content) in &state.merge_base_contents {
-                if !entries.contains(path) {
-                    entries.insert(path.clone(), TreeDiffStatus::Deleted { old: content })
+            for (path, oid) in &state.merge_base_contents {
+                if !entries.contains_key(path) {
+                    entries.insert(path.clone(), TreeDiffStatus::Deleted { old: *oid });
                 }
             }
+            Ok(TreeDiff { entries })
         })
         .boxed()
     }

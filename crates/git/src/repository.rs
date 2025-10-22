@@ -380,7 +380,7 @@ pub trait GitRepository: Send + Sync {
     fn merge_message(&self) -> BoxFuture<'_, Option<String>>;
 
     fn status(&self, path_prefixes: &[RepoPath]) -> Task<Result<GitStatus>>;
-    fn diff_tree(&self, request: DiffTreeType) -> BoxFuture<Result<TreeDiff>>;
+    fn diff_tree(&self, request: DiffTreeType) -> BoxFuture<'_, Result<TreeDiff>>;
 
     fn stash_entries(&self) -> BoxFuture<'_, Result<GitStash>>;
 
@@ -1073,7 +1073,7 @@ impl GitRepository for RealGitRepository {
         })
     }
 
-    fn diff_tree(&self, request: DiffTreeType) -> BoxFuture<Result<TreeDiff>> {
+    fn diff_tree(&self, request: DiffTreeType) -> BoxFuture<'_, Result<TreeDiff>> {
         let git_binary_path = self.any_git_binary_path.clone();
         let working_directory = match self.working_directory() {
             Ok(working_directory) => working_directory,
