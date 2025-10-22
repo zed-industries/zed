@@ -14955,6 +14955,7 @@ dependencies = [
  "futures 0.3.31",
  "gpui",
  "language",
+ "lsp",
  "menu",
  "project",
  "schemars 1.0.4",
