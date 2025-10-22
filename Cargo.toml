@@ -452,7 +452,8 @@ async-fs = "2.1"
 async-lock = "2.1"
 async-pipe = { git = "https://github.com/zed-industries/async-pipe-rs", rev = "82d00a04211cf4e1236029aa03e6b6ce2a74c553" }
 async-recursion = "1.0.0"
-async-tar = { git = "https://github.com/zed-industries/async-tar", rev = "8af312477196311c9ea4097f2a22022f6d609bf6" }
+# WARNING: If you change this, you must also publish a new version of zed-async-tar to crates.io
+async-tar = { git = "https://github.com/zed-industries/async-tar", rev = "a307f6bf3e4219c3a457bea0cab198b6d7c36e25", package = "zed-async-tar", version = "0.5.0-zed" }
 async-task = "4.7"
 async-trait = "0.1"
 async-tungstenite = "0.31.0"
