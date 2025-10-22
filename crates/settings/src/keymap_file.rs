@@ -150,7 +150,7 @@ pub enum KeymapFileLoadResult {
 
 impl KeymapFile {
     pub fn parse(content: &str) -> anyhow::Result<Self> {
-        if content.is_empty() {
+        if content.trim().is_empty() {
             return Ok(Self(Vec::new()));
         }
         parse_json_with_comments::<Self>(content)
@@ -214,11 +214,6 @@ impl KeymapFile {
     }
 
     pub fn load(content: &str, cx: &App) -> KeymapFileLoadResult {
-        if content.is_empty() {
-            return KeymapFileLoadResult::Success {
-                key_bindings: Vec::new(),
-            };
-        }
         let keymap_file = match Self::parse(content) {
             Ok(keymap_file) => keymap_file,
             Err(error) => {
