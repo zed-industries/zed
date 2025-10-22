@@ -33,7 +33,7 @@ This is mostly a formality on Wednesday's minor update releases, but can be bene
 
 ### Stable Release
 
-1. Aggregate preview release notes.
+1. Aggregate stable release notes.
 
    - Follow the instructions at the end of the script and aggregate the release notes into one structure.
 
