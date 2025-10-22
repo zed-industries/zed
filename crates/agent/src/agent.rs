@@ -1,3 +1,6 @@
+#[macro_use]
+mod macros;
+
 mod db;
 mod edit_agent;
 mod history_store;

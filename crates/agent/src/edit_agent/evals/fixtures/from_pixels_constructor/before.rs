@@ -293,10 +293,21 @@ struct BlitRgb24ToA8;
 impl Blit for BlitRgb24ToA8 {
     #[inline]
     fn blit(dest: &mut [u8], src: &[u8]) {
-        // TODO(pcwalton): SIMD.
-        for (dest, src) in dest.iter_mut().zip(src.chunks(3)) {
-            *dest = src[1]
+        fn copy(dest: &mut [u8], src: &[u8]) {
+            for (for_dest, for_src) in dest.iter_mut().zip(src.chunks(3)) {
+                *for_dest = for_src[1]
+            }
         }
+        _simd_slice!(
+            ((src, 3),),
+            ((dest, 1),),
+            ((local_src,), (local_dest,)) => {
+                for (dest_chunk, src_chunk) in local_dest.iter_mut().zip(local_src) {
+                    copy(dest_chunk, src_chunk)
+                }
+            },
+            ((local_src,), (local_dest,)) => copy(local_dest, local_src),
+        );
     }
 }
 
@@ -318,10 +329,22 @@ struct BlitRgba32ToRgb24;
 impl Blit for BlitRgba32ToRgb24 {
     #[inline]
     fn blit(dest: &mut [u8], src: &[u8]) {
-        // TODO(pcwalton): SIMD.
-        for (dest, src) in dest.chunks_mut(3).zip(src.chunks(4)) {
-            dest.copy_from_slice(&src[0..3])
+        fn copy(dest: &mut [u8], src: &[u8]) {
+            for (for_dest, for_src) in dest.chunks_mut(3).zip(src.chunks(4)) {
+                for_dest.copy_from_slice(&for_src[0..3])
+            }
         }
+
+        _simd_slice!(
+            ((src, 4),), 
+            ((dest, 3),),
+            ((local_src,), (local_dest,)) => {
+                for (dest_chunk, src_chunk) in local_dest.iter_mut().zip(local_src) {
+                    copy(dest_chunk, src_chunk)
+                }
+            },
+            ((local_src,), (local_dest,)) => copy(local_dest, local_src),
+        );
     }
 }
 
