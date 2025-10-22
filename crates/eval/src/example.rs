@@ -3,22 +3,24 @@ use std::{
     fmt::{self, Debug},
     sync::{Arc, Mutex},
     time::Duration,
+    u32,
 };
 
 use crate::{
     ToolMetrics,
     assertions::{AssertionsReport, RanAssertion, RanAssertionResult},
 };
-use agent::{ContextLoadResult, Thread, ThreadEvent};
+use acp_thread::UserMessageId;
+use agent::{Thread, ThreadEvent, UserMessageContent};
+use agent_client_protocol as acp;
 use agent_settings::AgentProfileId;
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use buffer_diff::DiffHunkStatus;
-use cloud_llm_client::CompletionIntent;
 use collections::HashMap;
-use futures::{FutureExt as _, StreamExt, channel::mpsc, select_biased};
+use futures::{FutureExt as _, StreamExt, select_biased};
 use gpui::{App, AppContext, AsyncApp, Entity};
-use language_model::{LanguageModel, Role, StopReason};
+use language_model::Role;
 use util::rel_path::RelPath;
 
 pub const THREAD_EVENT_TIMEOUT: Duration = Duration::from_secs(60 * 2);
@@ -91,7 +93,6 @@ pub struct ExampleContext {
     log_prefix: String,
     agent_thread: Entity<agent::Thread>,
     app: AsyncApp,
-    model: Arc<dyn LanguageModel>,
     pub assertions: AssertionsReport,
     pub tool_metrics: Arc<Mutex<ToolMetrics>>,
 }
@@ -101,7 +102,6 @@ impl ExampleContext {
         meta: ExampleMetadata,
         log_prefix: String,
         agent_thread: Entity<Thread>,
-        model: Arc<dyn LanguageModel>,
         app: AsyncApp,
     ) -> Self {
         let assertions = AssertionsReport::new(meta.max_assertions);
@@ -111,24 +111,9 @@ impl ExampleContext {
             log_prefix,
             agent_thread,
             assertions,
-            model,
             app,
             tool_metrics: Arc::new(Mutex::new(ToolMetrics::default())),
         }
-    }
-
-    pub fn push_user_message(&mut self, text: impl ToString) {
-        self.app
-            .update_entity(&self.agent_thread, |thread, cx| {
-                thread.insert_user_message(
-                    text.to_string(),
-                    ContextLoadResult::default(),
-                    None,
-                    Vec::new(),
-                    cx,
-                );
-            })
-            .unwrap();
     }
 
     pub fn assert(&mut self, expected: bool, message: impl ToString) -> Result<()> {
@@ -202,156 +187,174 @@ impl ExampleContext {
         result
     }
 
-    pub async fn run_to_end(&mut self) -> Result<Response> {
-        self.run_turns(u32::MAX).await
+    pub async fn prompt(&mut self, prompt: impl Into<String>) -> Result<Response> {
+        self.prompt_with_max_turns(prompt, u32::MAX).await
     }
 
-    pub async fn run_turn(&mut self) -> Result<Response> {
-        self.run_turns(1).await
+    pub async fn prompt_with_max_turns(
+        &mut self,
+        prompt: impl Into<String>,
+        max_turns: u32,
+    ) -> Result<Response> {
+        let content = vec![UserMessageContent::Text(prompt.into())];
+        self.run_turns(Some(content), max_turns).await
     }
 
-    pub async fn run_turns(&mut self, iterations: u32) -> Result<Response> {
-        let (mut tx, mut rx) = mpsc::channel(1);
+    pub async fn proceed_with_max_turns(&mut self, max_turns: u32) -> Result<Response> {
+        self.run_turns(None, max_turns).await
+    }
 
+    async fn run_turns(
+        &mut self,
+        prompt: Option<Vec<UserMessageContent>>,
+        max_turns: u32,
+    ) -> Result<Response> {
         let tool_metrics = self.tool_metrics.clone();
         let log_prefix = self.log_prefix.clone();
-        let _subscription = self.app.subscribe(
-            &self.agent_thread,
-            move |thread, event: &ThreadEvent, cx| match event {
-                ThreadEvent::ShowError(thread_error) => {
-                    tx.try_send(Err(anyhow!(thread_error.clone()))).ok();
-                }
-                ThreadEvent::Stopped(reason) => match reason {
-                    Ok(StopReason::EndTurn) => {
-                        tx.close_channel();
+
+        let mut remaining_turns = max_turns;
+
+        let mut event_stream = self.agent_thread.update(&mut self.app, |thread, cx| {
+            if let Some(prompt) = prompt {
+                let id = UserMessageId::new();
+                thread.send(id, prompt, cx)
+            } else {
+                thread.proceed(cx)
+            }
+        })??;
+
+        let task = self.app.background_spawn(async move {
+            let mut messages = Vec::new();
+            let mut tool_uses_by_id = HashMap::default();
+            while let Some(event) = event_stream.next().await {
+                match event? {
+                    ThreadEvent::UserMessage(user_message) => {
+                        messages.push(Message {
+                            role: Role::User,
+                            text: user_message.to_markdown(),
+                            tool_use: Vec::new(),
+                        });
                     }
-                    Ok(StopReason::ToolUse) => {
-                        if thread.read(cx).remaining_turns() == 0 {
-                            tx.close_channel();
+                    ThreadEvent::AgentThinking(text) | ThreadEvent::AgentText(text) => {
+                        if matches!(
+                            messages.last(),
+                            Some(Message {
+                                role: Role::Assistant,
+                                ..
+                            })
+                        ) {
+                            messages.last_mut().unwrap().text.push_str(&text);
+                        } else {
+                            messages.push(Message {
+                                role: Role::Assistant,
+                                text,
+                                tool_use: Vec::new(),
+                            });
                         }
                     }
-                    Ok(StopReason::MaxTokens) => {
-                        tx.try_send(Err(anyhow!("Exceeded maximum tokens"))).ok();
+                    ThreadEvent::ToolCall(tool_call) => {
+                        let meta = tool_call.meta.expect("Missing meta field in tool_call");
+                        let tool_name = meta
+                            .get("tool_name")
+                            .expect("Missing tool_name field in meta")
+                            .as_str()
+                            .expect("Unknown tool_name content in meta");
+
+                        tool_uses_by_id.insert(
+                            tool_call.id,
+                            ToolUse {
+                                name: tool_name.to_string(),
+                                value: tool_call.raw_input.unwrap_or_default(),
+                            },
+                        );
+                        if matches!(
+                            tool_call.status,
+                            acp::ToolCallStatus::Completed | acp::ToolCallStatus::Failed
+                        ) {
+                            panic!("Tool call completed without update");
+                        }
                     }
-                    Ok(StopReason::Refusal) => {
-                        tx.try_send(Err(anyhow!("Model refused to generate content")))
-                            .ok();
-                    }
-                    Err(err) => {
-                        tx.try_send(Err(anyhow!(err.clone()))).ok();
-                    }
-                },
-                ThreadEvent::NewRequest
-                | ThreadEvent::StreamedAssistantText(_, _)
-                | ThreadEvent::StreamedAssistantThinking(_, _)
-                | ThreadEvent::UsePendingTools { .. }
-                | ThreadEvent::CompletionCanceled => {}
-                ThreadEvent::ToolUseLimitReached => {}
-                ThreadEvent::ToolFinished {
-                    tool_use_id,
-                    pending_tool_use,
-                    ..
-                } => {
-                    thread.update(cx, |thread, _cx| {
-                        if let Some(tool_use) = pending_tool_use {
-                            let mut tool_metrics = tool_metrics.lock().unwrap();
-                            if let Some(tool_result) = thread.tool_result(tool_use_id) {
-                                let message = if tool_result.is_error {
-                                    format!("✖︎ {}", tool_use.name)
-                                } else {
+                    ThreadEvent::ToolCallUpdate(tool_call_update) => {
+                        if let acp_thread::ToolCallUpdate::UpdateFields(update) = tool_call_update {
+                            if let Some(raw_input) = update.fields.raw_input {
+                                if let Some(tool_use) = tool_uses_by_id.get_mut(&update.id) {
+                                    tool_use.value = raw_input;
+                                }
+                            }
+
+                            if matches!(
+                                update.fields.status,
+                                Some(acp::ToolCallStatus::Completed | acp::ToolCallStatus::Failed)
+                            ) {
+                                let succeeded =
+                                    update.fields.status == Some(acp::ToolCallStatus::Completed);
+
+                                let tool_use = tool_uses_by_id
+                                    .remove(&update.id)
+                                    .expect("Unrecognized tool call completed");
+
+                                let log_message = if succeeded {
                                     format!("✔︎ {}", tool_use.name)
+                                } else {
+                                    format!("✖︎ {}", tool_use.name)
                                 };
-                                println!("{log_prefix}{message}");
+                                println!("{log_prefix}{log_message}");
+
                                 tool_metrics
-                                    .insert(tool_result.tool_name.clone(), !tool_result.is_error);
-                            } else {
-                                let message =
-                                    format!("TOOL FINISHED WITHOUT RESULT: {}", tool_use.name);
-                                println!("{log_prefix}{message}");
-                                tool_metrics.insert(tool_use.name.clone(), true);
+                                    .lock()
+                                    .unwrap()
+                                    .insert(tool_use.name.clone().into(), succeeded);
+
+                                if let Some(message) = messages.last_mut() {
+                                    message.tool_use.push(tool_use);
+                                } else {
+                                    messages.push(Message {
+                                        role: Role::Assistant,
+                                        text: "".to_string(),
+                                        tool_use: vec![tool_use],
+                                    });
+                                }
+
+                                remaining_turns -= 1;
+                                if remaining_turns == 0 {
+                                    return Ok(messages);
+                                }
                             }
                         }
-                    });
-                }
-                ThreadEvent::InvalidToolInput { .. } => {
-                    println!("{log_prefix} invalid tool input");
-                }
-                ThreadEvent::MissingToolUse {
-                    tool_use_id: _,
-                    ui_text,
-                } => {
-                    println!("{log_prefix} {ui_text}");
-                }
-                ThreadEvent::ToolConfirmationNeeded => {
-                    panic!(
+                    }
+                    ThreadEvent::ToolCallAuthorization(_) => panic!(
                         "{}Bug: Tool confirmation should not be required in eval",
                         log_prefix
-                    );
-                }
-                ThreadEvent::StreamedCompletion
-                | ThreadEvent::MessageAdded(_)
-                | ThreadEvent::MessageEdited(_)
-                | ThreadEvent::MessageDeleted(_)
-                | ThreadEvent::SummaryChanged
-                | ThreadEvent::SummaryGenerated
-                | ThreadEvent::ProfileChanged
-                | ThreadEvent::ReceivedTextChunk
-                | ThreadEvent::StreamedToolUse { .. }
-                | ThreadEvent::CheckpointChanged
-                | ThreadEvent::CancelEditing => {
-                    tx.try_send(Ok(())).ok();
-                    if std::env::var("ZED_EVAL_DEBUG").is_ok() {
-                        println!("{}Event: {:#?}", log_prefix, event);
+                    ),
+                    ThreadEvent::Retry(status) => {
+                        println!("{log_prefix} Got retry: {status:?}");
                     }
+                    ThreadEvent::Stop(stop_reason) => match stop_reason {
+                        acp::StopReason::EndTurn => {}
+                        acp::StopReason::MaxTokens => {
+                            return Err(anyhow!("Exceeded maximum tokens"));
+                        }
+                        acp::StopReason::MaxTurnRequests => {
+                            return Err(anyhow!("Exceeded maximum turn requests"));
+                        }
+                        acp::StopReason::Refusal => {
+                            return Err(anyhow!("Refusal"));
+                        }
+                        acp::StopReason::Cancelled => return Err(anyhow!("Cancelled")),
+                    },
                 }
-            },
-        );
+            }
+            Ok(messages)
+        });
 
-        let model = self.model.clone();
-
-        let message_count_before = self.app.update_entity(&self.agent_thread, |thread, cx| {
-            thread.set_remaining_turns(iterations);
-            thread.send_to_model(model, CompletionIntent::UserPrompt, None, cx);
-            thread.messages().len()
-        })?;
-
-        loop {
-            select_biased! {
-                result = rx.next() => {
-                    if let Some(result) = result {
-                        result?;
-                    } else {
-                        break;
-                    }
-                }
-                _ = self.app.background_executor().timer(THREAD_EVENT_TIMEOUT).fuse() => {
-                    anyhow::bail!("Agentic loop stalled - waited {THREAD_EVENT_TIMEOUT:?} without any events");
-                }
+        select_biased! {
+            result = task.fuse() => {
+                Ok(Response::new(result?))
+            }
+            _ = self.app.background_executor().timer(THREAD_EVENT_TIMEOUT).fuse() => {
+                anyhow::bail!("Agentic loop stalled - waited {THREAD_EVENT_TIMEOUT:?} without any events");
             }
         }
-
-        let messages = self.app.read_entity(&self.agent_thread, |thread, cx| {
-            let mut messages = Vec::new();
-            for message in thread.messages().skip(message_count_before) {
-                messages.push(Message {
-                    _role: message.role,
-                    text: message.to_message_content(),
-                    tool_use: thread
-                        .tool_uses_for_message(message.id, cx)
-                        .into_iter()
-                        .map(|tool_use| ToolUse {
-                            name: tool_use.name.to_string(),
-                            value: tool_use.input,
-                        })
-                        .collect(),
-                });
-            }
-            messages
-        })?;
-
-        let response = Response::new(messages);
-
-        Ok(response)
     }
 
     pub fn edits(&self) -> HashMap<Arc<RelPath>, FileEdits> {
@@ -486,7 +489,7 @@ impl Response {
         Self { messages }
     }
 
-    pub fn expect_tool(
+    pub fn expect_tool_call(
         &self,
         tool_name: &'static str,
         cx: &mut ExampleContext,
@@ -503,8 +506,7 @@ impl Response {
         })
     }
 
-    #[allow(dead_code)]
-    pub fn tool_uses(&self) -> impl Iterator<Item = &ToolUse> {
+    pub fn tool_calls(&self) -> impl Iterator<Item = &ToolUse> {
         self.messages.iter().flat_map(|msg| &msg.tool_use)
     }
 
@@ -515,7 +517,7 @@ impl Response {
 
 #[derive(Debug)]
 pub struct Message {
-    _role: Role,
+    role: Role,
     text: String,
     tool_use: Vec<ToolUse>,
 }

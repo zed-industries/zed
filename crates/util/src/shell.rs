@@ -1,6 +1,7 @@
-use std::{fmt, path::Path, sync::LazyLock};
+use serde::{Deserialize, Serialize};
+use std::{borrow::Cow, fmt, path::Path, sync::LazyLock};
 
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ShellKind {
     #[default]
     Posix,
@@ -11,6 +12,7 @@ pub enum ShellKind {
     PowerShell,
     Nushell,
     Cmd,
+    Xonsh,
 }
 
 pub fn get_system_shell() -> String {
@@ -44,6 +46,7 @@ pub fn get_windows_git_bash() -> Option<String> {
         let git = which::which("git").ok()?;
         let git_bash = git.parent()?.parent()?.join("bin").join("bash.exe");
         if git_bash.is_file() {
+            log::info!("Found git-bash at {}", git_bash.display());
             Some(git_bash.to_string_lossy().to_string())
         } else {
             None
@@ -165,24 +168,23 @@ impl fmt::Display for ShellKind {
             ShellKind::Nushell => write!(f, "nu"),
             ShellKind::Cmd => write!(f, "cmd"),
             ShellKind::Rc => write!(f, "rc"),
+            ShellKind::Xonsh => write!(f, "xonsh"),
         }
     }
 }
 
 impl ShellKind {
     pub fn system() -> Self {
-        Self::new(&get_system_shell())
+        Self::new(&get_system_shell(), cfg!(windows))
     }
 
-    pub fn new(program: impl AsRef<Path>) -> Self {
+    pub fn new(program: impl AsRef<Path>, is_windows: bool) -> Self {
         let program = program.as_ref();
-        let Some(program) = program.file_stem().and_then(|s| s.to_str()) else {
-            return if cfg!(windows) {
-                ShellKind::PowerShell
-            } else {
-                ShellKind::Posix
-            };
-        };
+        let program = program
+            .file_stem()
+            .unwrap_or_else(|| program.as_os_str())
+            .to_string_lossy();
+
         if program == "powershell" || program == "pwsh" {
             ShellKind::PowerShell
         } else if program == "cmd" {
@@ -197,10 +199,12 @@ impl ShellKind {
             ShellKind::Tcsh
         } else if program == "rc" {
             ShellKind::Rc
+        } else if program == "xonsh" {
+            ShellKind::Xonsh
         } else if program == "sh" || program == "bash" {
             ShellKind::Posix
         } else {
-            if cfg!(windows) {
+            if is_windows {
                 ShellKind::PowerShell
             } else {
                 // Some other shell detected, the user might install and use a
@@ -220,6 +224,7 @@ impl ShellKind {
             Self::Tcsh => input.to_owned(),
             Self::Rc => input.to_owned(),
             Self::Nushell => Self::to_nushell_variable(input),
+            Self::Xonsh => input.to_owned(),
         }
     }
 
@@ -241,6 +246,7 @@ impl ShellKind {
             input.into()
         }
     }
+
     fn to_powershell_variable(input: &str) -> String {
         if let Some(var_str) = input.strip_prefix("${") {
             if var_str.find(':').is_none() {
@@ -344,7 +350,8 @@ impl ShellKind {
             | ShellKind::Fish
             | ShellKind::Csh
             | ShellKind::Tcsh
-            | ShellKind::Rc => interactive
+            | ShellKind::Rc
+            | ShellKind::Xonsh => interactive
                 .then(|| "-i".to_owned())
                 .into_iter()
                 .chain(["-c".to_owned(), combined_command])
@@ -352,11 +359,48 @@ impl ShellKind {
         }
     }
 
-    pub fn command_prefix(&self) -> Option<char> {
+    pub const fn command_prefix(&self) -> Option<char> {
         match self {
             ShellKind::PowerShell => Some('&'),
             ShellKind::Nushell => Some('^'),
             _ => None,
+        }
+    }
+
+    pub const fn sequential_commands_separator(&self) -> char {
+        match self {
+            ShellKind::Cmd => '&',
+            _ => ';',
+        }
+    }
+
+    pub fn try_quote<'a>(&self, arg: &'a str) -> Option<Cow<'a, str>> {
+        shlex::try_quote(arg).ok().map(|arg| match self {
+            // If we are running in PowerShell, we want to take extra care when escaping strings.
+            // In particular, we want to escape strings with a backtick (`) rather than a backslash (\).
+            // TODO double escaping backslashes is not necessary in PowerShell and probably CMD
+            ShellKind::PowerShell => Cow::Owned(arg.replace("\\\"", "`\"")),
+            _ => arg,
+        })
+    }
+
+    pub const fn activate_keyword(&self) -> &'static str {
+        match self {
+            ShellKind::Cmd => "",
+            ShellKind::Nushell => "overlay use",
+            ShellKind::PowerShell => ".",
+            ShellKind::Fish => "source",
+            ShellKind::Csh => "source",
+            ShellKind::Tcsh => "source",
+            ShellKind::Posix | ShellKind::Rc => "source",
+            ShellKind::Xonsh => "source",
+        }
+    }
+
+    pub const fn clear_screen_command(&self) -> &'static str {
+        match self {
+            ShellKind::Cmd => "cls",
+            _ => "clear",
         }
     }
 }

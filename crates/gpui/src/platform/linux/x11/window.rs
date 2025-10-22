@@ -57,6 +57,7 @@ x11rb::atom_manager! {
         WM_PROTOCOLS,
         WM_DELETE_WINDOW,
         WM_CHANGE_STATE,
+        WM_TRANSIENT_FOR,
         _NET_WM_PID,
         _NET_WM_NAME,
         _NET_WM_STATE,
@@ -72,6 +73,7 @@ x11rb::atom_manager! {
         _NET_WM_MOVERESIZE,
         _NET_WM_WINDOW_TYPE,
         _NET_WM_WINDOW_TYPE_NOTIFICATION,
+        _NET_WM_WINDOW_TYPE_DIALOG,
         _NET_WM_SYNC,
         _NET_SUPPORTED,
         _MOTIF_WM_HINTS,
@@ -284,7 +286,7 @@ pub(crate) struct X11WindowStatePtr {
     pub state: Rc<RefCell<X11WindowState>>,
     pub(crate) callbacks: Rc<RefCell<Callbacks>>,
     xcb: Rc<XCBConnection>,
-    x_window: xproto::Window,
+    pub(crate) x_window: xproto::Window,
 }
 
 impl rwh::HasWindowHandle for RawWindow {
@@ -392,6 +394,7 @@ impl X11WindowState {
         atoms: &XcbAtoms,
         scale_factor: f32,
         appearance: WindowAppearance,
+        parent_window: Option<xproto::Window>,
     ) -> anyhow::Result<Self> {
         let x_screen_index = params
             .display_id
@@ -529,6 +532,7 @@ impl X11WindowState {
                     ),
                 )?;
             }
+
             if params.kind == WindowKind::PopUp {
                 check_reply(
                     || "X11 ChangeProperty32 setting window type for pop-up failed.",
@@ -538,6 +542,38 @@ impl X11WindowState {
                         atoms._NET_WM_WINDOW_TYPE,
                         xproto::AtomEnum::ATOM,
                         &[atoms._NET_WM_WINDOW_TYPE_NOTIFICATION],
+                    ),
+                )?;
+            }
+
+            if params.kind == WindowKind::Floating {
+                if let Some(parent_window) = parent_window {
+                    // WM_TRANSIENT_FOR hint indicating the main application window. For floating windows, we set
+                    // a parent window (WM_TRANSIENT_FOR) such that the window manager knows where to
+                    // place the floating window in relation to the main window.
+                    // https://specifications.freedesktop.org/wm-spec/1.4/ar01s05.html
+                    check_reply(
+                        || "X11 ChangeProperty32 setting WM_TRANSIENT_FOR for floating window failed.",
+                        xcb.change_property32(
+                            xproto::PropMode::REPLACE,
+                            x_window,
+                            atoms.WM_TRANSIENT_FOR,
+                            xproto::AtomEnum::WINDOW,
+                            &[parent_window],
+                        ),
+                    )?;
+                }
+
+                // _NET_WM_WINDOW_TYPE_DIALOG indicates that this is a dialog (floating) window
+                // https://specifications.freedesktop.org/wm-spec/1.4/ar01s05.html
+                check_reply(
+                    || "X11 ChangeProperty32 setting window type for floating window failed.",
+                    xcb.change_property32(
+                        xproto::PropMode::REPLACE,
+                        x_window,
+                        atoms._NET_WM_WINDOW_TYPE,
+                        xproto::AtomEnum::ATOM,
+                        &[atoms._NET_WM_WINDOW_TYPE_DIALOG],
                     ),
                 )?;
             }
@@ -737,6 +773,7 @@ impl X11Window {
         atoms: &XcbAtoms,
         scale_factor: f32,
         appearance: WindowAppearance,
+        parent_window: Option<xproto::Window>,
     ) -> anyhow::Result<Self> {
         let ptr = X11WindowStatePtr {
             state: Rc::new(RefCell::new(X11WindowState::new(
@@ -752,6 +789,7 @@ impl X11Window {
                 atoms,
                 scale_factor,
                 appearance,
+                parent_window,
             )?)),
             callbacks: Rc::new(RefCell::new(Callbacks::default())),
             xcb: xcb.clone(),

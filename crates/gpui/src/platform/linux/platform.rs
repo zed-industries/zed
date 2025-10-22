@@ -73,6 +73,13 @@ pub trait LinuxClient {
     fn active_window(&self) -> Option<AnyWindowHandle>;
     fn window_stack(&self) -> Option<Vec<AnyWindowHandle>>;
     fn run(&self);
+
+    #[cfg(any(feature = "wayland", feature = "x11"))]
+    fn window_identifier(
+        &self,
+    ) -> impl Future<Output = Option<ashpd::WindowIdentifier>> + Send + 'static {
+        std::future::ready::<Option<ashpd::WindowIdentifier>>(None)
+    }
 }
 
 #[derive(Default)]
@@ -291,6 +298,9 @@ impl<P: LinuxClient + 'static> Platform for P {
         let _ = (done_tx.send(Ok(None)), options);
 
         #[cfg(any(feature = "wayland", feature = "x11"))]
+        let identifier = self.window_identifier();
+
+        #[cfg(any(feature = "wayland", feature = "x11"))]
         self.foreground_executor()
             .spawn(async move {
                 let title = if options.directories {
@@ -300,6 +310,7 @@ impl<P: LinuxClient + 'static> Platform for P {
                 };
 
                 let request = match ashpd::desktop::file_chooser::OpenFileRequest::default()
+                    .identifier(identifier.await)
                     .modal(true)
                     .title(title)
                     .accept_label(options.prompt.as_ref().map(crate::SharedString::as_str))
@@ -347,6 +358,9 @@ impl<P: LinuxClient + 'static> Platform for P {
         let _ = (done_tx.send(Ok(None)), directory, suggested_name);
 
         #[cfg(any(feature = "wayland", feature = "x11"))]
+        let identifier = self.window_identifier();
+
+        #[cfg(any(feature = "wayland", feature = "x11"))]
         self.foreground_executor()
             .spawn({
                 let directory = directory.to_owned();
@@ -355,6 +369,7 @@ impl<P: LinuxClient + 'static> Platform for P {
                 async move {
                     let mut request_builder =
                         ashpd::desktop::file_chooser::SaveFileRequest::default()
+                            .identifier(identifier.await)
                             .modal(true)
                             .title("Save File")
                             .current_folder(directory)

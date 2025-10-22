@@ -9,7 +9,6 @@ use futures::io::BufReader;
 use project::Project;
 use project::agent_server_store::AgentServerCommand;
 use serde::Deserialize;
-use task::Shell;
 use util::ResultExt as _;
 
 use std::path::PathBuf;
@@ -39,7 +38,7 @@ pub struct AcpConnection {
     // NB: Don't move this into the wait_task, since we need to ensure the process is
     // killed on drop (setting kill_on_drop on the command seems to not always work).
     child: smol::process::Child,
-    _io_task: Task<Result<()>>,
+    _io_task: Task<Result<(), acp::Error>>,
     _wait_task: Task<Result<()>>,
     _stderr_task: Task<Result<()>>,
 }
@@ -97,7 +96,7 @@ impl AcpConnection {
         let stdout = child.stdout.take().context("Failed to take stdout")?;
         let stdin = child.stdin.take().context("Failed to take stdin")?;
         let stderr = child.stderr.take().context("Failed to take stderr")?;
-        log::info!(
+        log::debug!(
             "Spawning external agent server: {:?}, {:?}",
             command.path,
             command.args
@@ -168,7 +167,10 @@ impl AcpConnection {
                         meta: None,
                     },
                     terminal: true,
-                    meta: None,
+                    meta: Some(serde_json::json!({
+                        // Experimental: Allow for rendering terminal output from the agents
+                        "terminal_output": true,
+                    })),
                 },
                 meta: None,
             })
@@ -812,47 +814,18 @@ impl acp::Client for ClientDelegate {
         let thread = self.session_thread(&args.session_id)?;
         let project = thread.read_with(&self.cx, |thread, _cx| thread.project().clone())?;
 
-        let mut env = if let Some(dir) = &args.cwd {
-            project
-                .update(&mut self.cx.clone(), |project, cx| {
-                    project.directory_environment(&task::Shell::System, dir.clone().into(), cx)
-                })?
-                .await
-                .unwrap_or_default()
-        } else {
-            Default::default()
-        };
-        for var in args.env {
-            env.insert(var.name, var.value);
-        }
-
-        // Use remote shell or default system shell, as appropriate
-        let shell = project
-            .update(&mut self.cx.clone(), |project, cx| {
-                project
-                    .remote_client()
-                    .and_then(|r| r.read(cx).default_system_shell())
-                    .map(Shell::Program)
-            })?
-            .unwrap_or(task::Shell::System);
-        let (task_command, task_args) = task::ShellBuilder::new(&shell)
-            .redirect_stdin_to_dev_null()
-            .build(Some(args.command.clone()), &args.args);
-
-        let terminal_entity = project
-            .update(&mut self.cx.clone(), |project, cx| {
-                project.create_terminal_task(
-                    task::SpawnInTerminal {
-                        command: Some(task_command),
-                        args: task_args,
-                        cwd: args.cwd.clone(),
-                        env,
-                        ..Default::default()
-                    },
-                    cx,
-                )
-            })?
-            .await?;
+        let terminal_entity = acp_thread::create_terminal_entity(
+            args.command.clone(),
+            &args.args,
+            args.env
+                .into_iter()
+                .map(|env| (env.name, env.value))
+                .collect(),
+            args.cwd.clone(),
+            &project,
+            &mut self.cx.clone(),
+        )
+        .await?;
 
         // Register with renderer
         let terminal_entity = thread.update(&mut self.cx.clone(), |thread, cx| {

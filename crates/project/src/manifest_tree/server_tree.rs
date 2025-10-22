@@ -47,7 +47,7 @@ pub struct LanguageServerTree {
 /// A node in language server tree represents either:
 /// - A language server that has already been initialized/updated for a given project
 /// - A soon-to-be-initialized language server.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct LanguageServerTreeNode(Weak<InnerTreeNode>);
 
 /// Describes a request to launch a language server.

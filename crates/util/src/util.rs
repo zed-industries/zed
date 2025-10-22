@@ -279,7 +279,11 @@ fn load_shell_from_passwd() -> Result<()> {
     );
 
     let shell = unsafe { std::ffi::CStr::from_ptr(entry.pw_shell).to_str().unwrap() };
-    if env::var("SHELL").map_or(true, |shell_env| shell_env != shell) {
+    let should_set_shell = env::var("SHELL").map_or(true, |shell_env| {
+        shell_env != shell && !std::path::Path::new(&shell_env).exists()
+    });
+
+    if should_set_shell {
         log::info!(
             "updating SHELL environment variable to value from passwd entry: {:?}",
             shell,
@@ -605,13 +609,15 @@ where
     // so discard the prefix up to that segment to find the crate name
     let target = file
         .split_once("crates/")
-        .and_then(|(_, s)| s.split_once('/'))
-        .map(|(p, _)| p);
+        .and_then(|(_, s)| s.split_once("/src/"));
 
+    let module_path = target.map(|(krate, module)| {
+        krate.to_owned() + "::" + &module.trim_end_matches(".rs").replace('/', "::")
+    });
     log::logger().log(
         &log::Record::builder()
-            .target(target.unwrap_or(""))
-            .module_path(target)
+            .target(target.map_or("", |(krate, _)| krate))
+            .module_path(module_path.as_deref())
             .args(format_args!("{:?}", error))
             .file(Some(caller.file()))
             .line(Some(caller.line()))
@@ -921,7 +927,7 @@ impl PartialOrd for NumericPrefixWithSuffix<'_> {
 /// # Examples
 ///
 /// ```
-/// use zed_util::capitalize;
+/// use util::capitalize;
 ///
 /// assert_eq!(capitalize("hello"), "Hello");
 /// assert_eq!(capitalize("WORLD"), "WORLD");

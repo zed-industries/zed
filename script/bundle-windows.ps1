@@ -172,7 +172,7 @@ function BuildInstaller {
             $appIconName = "app-icon"
             $appName = "Zed"
             $appDisplayName = "Zed"
-            $appSetupName = "ZedEditorUserSetup-x64-$env:RELEASE_VERSION"
+            $appSetupName = "Zed-x86_64"
             # The mutex name here should match the mutex name in crates\zed\src\zed\windows_only_instance.rs
             $appMutex = "Zed-Stable-Instance-Mutex"
             $appExeName = "Zed"
@@ -186,7 +186,7 @@ function BuildInstaller {
             $appIconName = "app-icon-preview"
             $appName = "Zed Preview"
             $appDisplayName = "Zed Preview"
-            $appSetupName = "ZedEditorUserSetup-x64-$env:RELEASE_VERSION-preview"
+            $appSetupName = "Zed-x86_64"
             # The mutex name here should match the mutex name in crates\zed\src\zed\windows_only_instance.rs
             $appMutex = "Zed-Preview-Instance-Mutex"
             $appExeName = "Zed"
@@ -200,7 +200,7 @@ function BuildInstaller {
             $appIconName = "app-icon-nightly"
             $appName = "Zed Nightly"
             $appDisplayName = "Zed Nightly"
-            $appSetupName = "ZedEditorUserSetup-x64-$env:RELEASE_VERSION-nightly"
+            $appSetupName = "Zed-x86_64"
             # The mutex name here should match the mutex name in crates\zed\src\zed\windows_only_instance.rs
             $appMutex = "Zed-Nightly-Instance-Mutex"
             $appExeName = "Zed"
@@ -214,7 +214,7 @@ function BuildInstaller {
             $appIconName = "app-icon-dev"
             $appName = "Zed Dev"
             $appDisplayName = "Zed Dev"
-            $appSetupName = "ZedEditorUserSetup-x64-$env:RELEASE_VERSION-dev"
+            $appSetupName = "Zed-x86_64"
             # The mutex name here should match the mutex name in crates\zed\src\zed\windows_only_instance.rs
             $appMutex = "Zed-Dev-Instance-Mutex"
             $appExeName = "Zed"
