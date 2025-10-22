@@ -823,6 +823,7 @@ pub enum AcpThreadEvent {
     Refusal,
     AvailableCommandsUpdated(Vec<acp::AvailableCommand>),
     ModeUpdated(acp::SessionModeId),
+    CleanupDetachedSendTask,
 }
 
 impl EventEmitter<AcpThreadEvent> for AcpThread {}
@@ -1727,7 +1728,7 @@ impl AcpThread {
                         // would cause the next generation to be canceled.
                         if !canceled {
                             this.send_task.take();
-                            this.is_detached = false;
+                            this.cleanup_detached_send_task(cx);
                         }
 
                         // Handle refusal - distinguish between user prompt and tool call refusals
@@ -1805,10 +1806,20 @@ impl AcpThread {
         cx.foreground_executor().spawn(send_task)
     }
 
-    pub fn detach_send_task(&mut self) {
+    pub fn detach_send_task(&mut self) -> bool {
         if let Some(send_task) = self.send_task.take() {
             self.is_detached = true;
             send_task.detach();
+            true
+        } else {
+            false
+        }
+    }
+
+    fn cleanup_detached_send_task(&mut self, cx: &mut Context<Self>) {
+        if self.is_detached {
+            self.is_detached = false;
+            cx.emit(AcpThreadEvent::CleanupDetachedSendTask);
         }
     }
 

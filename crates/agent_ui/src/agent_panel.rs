@@ -1,11 +1,13 @@
+use std::collections::HashMap;
 use std::ops::Range;
 use std::path::Path;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use acp_thread::AcpThread;
+use acp_thread::{AcpThread, AcpThreadEvent};
 use agent::{ContextServerRegistry, DbThreadMetadata, HistoryEntry, HistoryStore};
 use db::kvp::{Dismissable, KEY_VALUE_STORE};
+use gpui::EntityId;
 use project::agent_server_store::{
     AgentServerCommand, AllAgentServersSettings, CLAUDE_CODE_NAME, CODEX_NAME, GEMINI_NAME,
 };
@@ -429,6 +431,7 @@ pub struct AgentPanel {
     onboarding: Entity<AgentPanelOnboarding>,
     selected_agent: AgentType,
     detached_threads: Vec<Entity<AcpThread>>,
+    detached_thread_subscriptions: HashMap<EntityId, Subscription>,
 }
 
 impl AgentPanel {
@@ -660,6 +663,7 @@ impl AgentPanel {
             history_store,
             selected_agent: AgentType::default(),
             detached_threads: Vec::new(),
+            detached_thread_subscriptions: HashMap::new(),
             loading: false,
         }
     }
@@ -861,17 +865,34 @@ impl AgentPanel {
                 });
 
                 // Detach any running generation from the current thread so it continues in background
-                if let Some(current_thread_view) = this.active_thread_view() {
-                    let current_thread = current_thread_view.read(cx).thread().cloned();
-                    if let Some(current_thread) = current_thread {
-                        if current_thread.read(cx).status() == acp_thread::ThreadStatus::Generating
-                        {
-                            current_thread.update(cx, |thread, _| {
-                                thread.detach_send_task();
-                            });
-                            this.detached_threads.push(current_thread.clone());
-                        }
-                    }
+                if let Some(current_thread_view) = this.active_thread_view()
+                    && let Some(current_thread) = current_thread_view.read(cx).thread().cloned()
+                    && current_thread.read(cx).status() == acp_thread::ThreadStatus::Generating
+                {
+                    current_thread.update(cx, |thread, _| {
+                        thread.detach_send_task();
+                    });
+
+                    // Subscribe to CleanupDetachedSendTask event to clean up when done
+                    let thread_for_cleanup = current_thread.clone();
+                    let thread_id = current_thread.entity_id();
+                    let subscription = cx.subscribe(
+                        &current_thread,
+                        move |this: &mut AgentPanel,
+                              _thread: Entity<AcpThread>,
+                              event: &AcpThreadEvent,
+                              _cx: &mut Context<Self>| {
+                            if matches!(event, AcpThreadEvent::CleanupDetachedSendTask) {
+                                this.detached_threads
+                                    .retain(|t| t.entity_id() != thread_for_cleanup.entity_id());
+                                this.detached_thread_subscriptions.remove(&thread_id);
+                            }
+                        },
+                    );
+
+                    this.detached_thread_subscriptions
+                        .insert(thread_id, subscription);
+                    this.detached_threads.push(current_thread.clone());
                 }
 
                 this.set_active_view(ActiveView::ExternalAgentThread { thread_view }, window, cx);

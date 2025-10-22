@@ -1448,6 +1448,9 @@ impl AcpThreadView {
                 // The connection keeps track of the mode
                 cx.notify();
             }
+            AcpThreadEvent::CleanupDetachedSendTask => {
+                // No action needed in thread view for cleanup event
+            }
         }
         cx.notify();
     }
