@@ -167,14 +167,12 @@ pub enum AgentServerLauncher {
     Npm {
         package: String,
         entrypoint: String,
-        #[serde(default)]
-        min_version: Option<String>,
+        min_version: String,
     },
     GithubRelease {
         repo: String,
         asset_pattern: String,
-        #[serde(default)]
-        binary_name: Option<String>,
+        binary_name: String,
     },
     Binary {
         bin_name: String,
@@ -507,7 +505,7 @@ min_version = "1.0.0"
                     entrypoint,
                     "node_modules/@example/agent-server/dist/index.js"
                 );
-                assert_eq!(min_version.as_deref(), Some("1.0.0"));
+                assert_eq!(min_version, "1.0.0");
                 assert!(entry.args.is_empty());
             }
             _ => panic!("expected Npm launcher"),
@@ -542,6 +540,7 @@ args = ["--experimental-acp"]
 [agent_servers.gemini-style.launcher]
 package = "@example/gemini-fork"
 entrypoint = "node_modules/@example/gemini-fork/dist/index.js"
+min_version = "0.9.0"
 
 [agent_servers.gemini-style.login]
 label = "gemini /auth"

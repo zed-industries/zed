@@ -509,7 +509,7 @@ impl AgentServerStore {
                                         agent_id: Arc::from(&**agent_name),
                                         package_name: SharedString::from(package.clone()),
                                         entrypoint: entrypoint.clone(),
-                                        min_version: min_version.clone(),
+                                        min_version: Some(min_version.clone()),
                                         args: agent_entry.args.clone(),
                                         env: agent_entry.env.clone(),
                                         login: agent_entry.login.clone(),
@@ -535,7 +535,7 @@ impl AgentServerStore {
                                         agent_id: Arc::from(&**agent_name),
                                         repo: repo.clone(),
                                         asset_pattern: asset_pattern.clone(),
-                                        binary_name: binary_name.clone(),
+                                        binary_name: Some(binary_name.clone()),
                                         args: agent_entry.args.clone(),
                                         env: agent_entry.env.clone(),
                                         login: agent_entry.login.clone(),
@@ -2211,7 +2211,7 @@ mod npm_launcher_tests {
             agent_id: Arc::from("my-agent"),
             package_name: SharedString::from("@test/package"),
             entrypoint: "dist/index.js".into(),
-            min_version: Some("1.0.0".into()),
+            min_version: Some("1.0.0".to_string()),
             args: vec!["--flag".into()],
             env: {
                 let mut map = HashMap::default();
@@ -2253,7 +2253,7 @@ mod npm_launcher_tests {
             launcher: AgentServerLauncher::Npm {
                 package: "@example/test-pkg".into(),
                 entrypoint: "lib/server.js".into(),
-                min_version: Some("2.0.0".into()),
+                min_version: "2.0.0".into(),
             },
             env,
             args: vec!["--flag".into()],
@@ -2377,8 +2377,8 @@ mod npm_launcher_tests {
         let _entry = AgentServerManifestEntry {
             launcher: AgentServerLauncher::GithubRelease {
                 repo: "owner/repo".into(),
-                asset_pattern: "*-linux-*.tar.gz".into(),
-                binary_name: Some("my-server".into()),
+                asset_pattern: "*.tar.gz".into(),
+                binary_name: "server".into(),
             },
             env,
             args: vec!["serve".into()],
@@ -2419,13 +2419,13 @@ mod npm_launcher_tests {
         };
 
         // Verify the agent is properly constructed with extension/agent IDs
-        assert_eq!(agent.extension_id.as_ref(), "gh-extension");
-        assert_eq!(agent.agent_id.as_ref(), "gh-agent");
+        assert_eq!(agent.extension_id.as_ref(), "my-extension");
+        assert_eq!(agent.agent_id.as_ref(), "my-agent");
         assert_eq!(agent.repo, "owner/repo");
-        assert_eq!(agent.asset_pattern, "*.tar.gz");
-        assert_eq!(agent.binary_name, Some("server".into()));
-        assert_eq!(agent.args, vec!["--flag"]);
-        assert_eq!(agent.env.get("KEY"), Some(&"value".to_string()));
+        assert_eq!(agent.asset_pattern, "*-linux-*.tar.gz");
+        assert_eq!(agent.binary_name, Some("my-server".into()));
+        assert_eq!(agent.args, vec!["--verbose"]);
+        assert_eq!(agent.env.get("API_KEY"), Some(&"secret".to_string()));
     }
 
     #[test]
@@ -2444,7 +2444,7 @@ mod npm_launcher_tests {
             launcher: AgentServerLauncher::GithubRelease {
                 repo: "org/project".into(),
                 asset_pattern: "*-macos-aarch64.zip".into(),
-                binary_name: Some("agent-server".into()),
+                binary_name: "agent-server".into(),
             },
             env,
             args: vec!["serve".into(), "--port".into(), "8080".into()],
@@ -2498,7 +2498,7 @@ mod npm_launcher_tests {
             launcher: AgentServerLauncher::Npm {
                 package: "@google/gemini-cli".into(),
                 entrypoint: "dist/index.js".into(),
-                min_version: None,
+                min_version: "0.2.0".into(),
             },
             env: HashMap::default(),
             args: vec!["--experimental-acp".into()],
