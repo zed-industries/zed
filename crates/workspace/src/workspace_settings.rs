@@ -4,11 +4,11 @@ use crate::DockPosition;
 use collections::HashMap;
 use serde::Deserialize;
 pub use settings::AutosaveSetting;
-use settings::Settings;
 pub use settings::{
     BottomDockLayout, PaneSplitDirectionHorizontal, PaneSplitDirectionVertical,
     RestoreOnStartupBehavior,
 };
+use settings::{InactiveOpacity, Settings};
 
 pub struct WorkspaceSettings {
     pub active_pane_modifiers: ActivePanelModifiers,
@@ -50,7 +50,7 @@ pub struct ActivePanelModifiers {
     ///
     /// Default: `1.0`
     // TODO: make this not an option, it is never None
-    pub inactive_opacity: Option<f32>,
+    pub inactive_opacity: Option<InactiveOpacity>,
 }
 
 #[derive(Deserialize)]
@@ -108,91 +108,6 @@ impl Settings for WorkspaceSettings {
             zoomed_padding: workspace.zoomed_padding.unwrap(),
         }
     }
-
-    fn import_from_vscode(
-        vscode: &settings::VsCodeSettings,
-        current: &mut settings::SettingsContent,
-    ) {
-        if vscode
-            .read_bool("accessibility.dimUnfocused.enabled")
-            .unwrap_or_default()
-            && let Some(opacity) = vscode
-                .read_value("accessibility.dimUnfocused.opacity")
-                .and_then(|v| v.as_f64())
-        {
-            current
-                .workspace
-                .active_pane_modifiers
-                .get_or_insert_default()
-                .inactive_opacity = Some(opacity as f32);
-        }
-
-        vscode.enum_setting(
-            "window.confirmBeforeClose",
-            &mut current.workspace.confirm_quit,
-            |s| match s {
-                "always" | "keyboardOnly" => Some(true),
-                "never" => Some(false),
-                _ => None,
-            },
-        );
-
-        vscode.bool_setting(
-            "workbench.editor.restoreViewState",
-            &mut current.workspace.restore_on_file_reopen,
-        );
-
-        if let Some(b) = vscode.read_bool("window.closeWhenEmpty") {
-            current.workspace.when_closing_with_no_tabs = Some(if b {
-                settings::CloseWindowWhenNoItems::CloseWindow
-            } else {
-                settings::CloseWindowWhenNoItems::KeepWindowOpen
-            });
-        }
-
-        if let Some(b) = vscode.read_bool("files.simpleDialog.enable") {
-            current.workspace.use_system_path_prompts = Some(!b);
-        }
-
-        if let Some(v) = vscode.read_enum("files.autoSave", |s| match s {
-            "off" => Some(AutosaveSetting::Off),
-            "afterDelay" => Some(AutosaveSetting::AfterDelay {
-                milliseconds: vscode
-                    .read_value("files.autoSaveDelay")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(1000),
-            }),
-            "onFocusChange" => Some(AutosaveSetting::OnFocusChange),
-            "onWindowChange" => Some(AutosaveSetting::OnWindowChange),
-            _ => None,
-        }) {
-            current.workspace.autosave = Some(v);
-        }
-
-        // workbench.editor.limit contains "enabled", "value", and "perEditorGroup"
-        // our semantics match if those are set to true, some N, and true respectively.
-        // we'll ignore "perEditorGroup" for now since we only support a global max
-        if let Some(n) = vscode
-            .read_value("workbench.editor.limit.value")
-            .and_then(|v| v.as_u64())
-            .and_then(|n| NonZeroUsize::new(n as usize))
-            && vscode
-                .read_bool("workbench.editor.limit.enabled")
-                .unwrap_or_default()
-        {
-            current.workspace.max_tabs = Some(n)
-        }
-
-        if let Some(b) = vscode.read_bool("window.nativeTabs") {
-            current.workspace.use_system_window_tabs = Some(b);
-        }
-
-        // some combination of "window.restoreWindows" and "workbench.startupEditor" might
-        // map to our "restore_on_startup"
-
-        // there doesn't seem to be a way to read whether the bottom dock's "justified"
-        // setting is enabled in vscode. that'd be our equivalent to "bottom_dock_layout"
-    }
 }
 
 impl Settings for TabBarSettings {
@@ -204,22 +119,6 @@ impl Settings for TabBarSettings {
             show_tab_bar_buttons: tab_bar.show_tab_bar_buttons.unwrap(),
         }
     }
-
-    fn import_from_vscode(
-        vscode: &settings::VsCodeSettings,
-        current: &mut settings::SettingsContent,
-    ) {
-        if let Some(b) = vscode.read_enum("workbench.editor.showTabs", |s| match s {
-            "multiple" => Some(true),
-            "single" | "none" => Some(false),
-            _ => None,
-        }) {
-            current.tab_bar.get_or_insert_default().show = Some(b);
-        }
-        if Some("hidden") == vscode.read_string("workbench.editor.editorActionsLocation") {
-            current.tab_bar.get_or_insert_default().show_tab_bar_buttons = Some(false)
-        }
-    }
 }
 
 #[derive(Deserialize)]
@@ -227,6 +126,7 @@ pub struct StatusBarSettings {
     pub show: bool,
     pub active_language_button: bool,
     pub cursor_position_button: bool,
+    pub line_endings_button: bool,
 }
 
 impl Settings for StatusBarSettings {
@@ -236,15 +136,7 @@ impl Settings for StatusBarSettings {
             show: status_bar.show.unwrap(),
             active_language_button: status_bar.active_language_button.unwrap(),
             cursor_position_button: status_bar.cursor_position_button.unwrap(),
-        }
-    }
-
-    fn import_from_vscode(
-        vscode: &settings::VsCodeSettings,
-        current: &mut settings::SettingsContent,
-    ) {
-        if let Some(show) = vscode.read_bool("workbench.statusBar.visible") {
-            current.status_bar.get_or_insert_default().show = Some(show);
+            line_endings_button: status_bar.line_endings_button.unwrap(),
         }
     }
 }

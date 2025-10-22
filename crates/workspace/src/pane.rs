@@ -2,7 +2,7 @@ use crate::{
     CloseWindow, NewFile, NewTerminal, OpenInTerminal, OpenOptions, OpenTerminal, OpenVisible,
     SplitDirection, ToggleFileFinder, ToggleProjectSymbols, ToggleZoom, Workspace,
     WorkspaceItemBuilder,
-    invalid_buffer_view::InvalidBufferView,
+    invalid_item_view::InvalidItemView,
     item::{
         ActivateOnClose, ClosePosition, Item, ItemBufferKind, ItemHandle, ItemSettings,
         PreviewTabsSettings, ProjectItemKind, SaveOptions, ShowCloseButton, ShowDiagnostics,
@@ -376,6 +376,7 @@ pub struct Pane {
     render_tab_bar: Rc<dyn Fn(&mut Pane, &mut Window, &mut Context<Pane>) -> AnyElement>,
     show_tab_bar_buttons: bool,
     max_tabs: Option<NonZeroUsize>,
+    use_max_tabs: bool,
     _subscriptions: Vec<Subscription>,
     tab_bar_scroll_handle: ScrollHandle,
     /// This is set to true if a user scroll has occurred more recently than a system scroll
@@ -473,10 +474,16 @@ impl Pane {
         next_timestamp: Arc<AtomicUsize>,
         can_drop_predicate: Option<Arc<dyn Fn(&dyn Any, &mut Window, &mut App) -> bool + 'static>>,
         double_click_dispatch_action: Box<dyn Action>,
+        use_max_tabs: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let focus_handle = cx.focus_handle();
+        let max_tabs = if use_max_tabs {
+            WorkspaceSettings::get_global(cx).max_tabs
+        } else {
+            None
+        };
 
         let subscriptions = vec![
             cx.on_focus(&focus_handle, window, Pane::focus_in),
@@ -498,7 +505,8 @@ impl Pane {
             zoomed: false,
             active_item_index: 0,
             preview_item_id: None,
-            max_tabs: WorkspaceSettings::get_global(cx).max_tabs,
+            max_tabs,
+            use_max_tabs,
             last_focus_handle_by_item: Default::default(),
             nav_history: NavHistory(Arc::new(Mutex::new(NavHistoryState {
                 mode: NavigationMode::Normal,
@@ -706,7 +714,7 @@ impl Pane {
             self.preview_item_id = None;
         }
 
-        if new_max_tabs != self.max_tabs {
+        if self.use_max_tabs && new_max_tabs != self.max_tabs {
             self.max_tabs = new_max_tabs;
             self.close_items_on_settings_change(window, cx);
         }
@@ -954,6 +962,11 @@ impl Pane {
             if allow_preview {
                 pane.set_preview_item_id(Some(new_item.item_id()), cx);
             }
+
+            if let Some(text) = new_item.telemetry_event_text(cx) {
+                telemetry::event!(text);
+            }
+
             pane.add_item_inner(
                 new_item,
                 true,
@@ -979,11 +992,11 @@ impl Pane {
 
             let new_item = build_item(self, window, cx);
             // A special case that won't ever get a `project_entry_id` but has to be deduplicated nonetheless.
-            if let Some(invalid_buffer_view) = new_item.downcast::<InvalidBufferView>() {
+            if let Some(invalid_buffer_view) = new_item.downcast::<InvalidItemView>() {
                 let mut already_open_view = None;
                 let mut views_to_close = HashSet::default();
                 for existing_error_view in self
-                    .items_of_type::<InvalidBufferView>()
+                    .items_of_type::<InvalidItemView>()
                     .filter(|item| item.read(cx).abs_path == invalid_buffer_view.read(cx).abs_path)
                 {
                     if already_open_view.is_none()
@@ -1170,6 +1183,10 @@ impl Pane {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if let Some(text) = item.telemetry_event_text(cx) {
+            telemetry::event!(text);
+        }
+
         self.add_item_inner(
             item,
             activate_pane,
@@ -3278,11 +3295,18 @@ impl Pane {
                         else {
                             return;
                         };
-                        if let Some(item) = item.clone_on_split(database_id, window, cx) {
-                            to_pane.update(cx, |pane, cx| {
-                                pane.add_item(item, true, true, None, window, cx);
-                            })
-                        }
+                        let task = item.clone_on_split(database_id, window, cx);
+                        let to_pane = to_pane.downgrade();
+                        cx.spawn_in(window, async move |_, cx| {
+                            if let Some(item) = task.await {
+                                to_pane
+                                    .update_in(cx, |pane, window, cx| {
+                                        pane.add_item(item, true, true, None, window, cx)
+                                    })
+                                    .ok();
+                            }
+                        })
+                        .detach();
                     } else {
                         move_item(&from_pane, &to_pane, item_id, ix, true, window, cx);
                     }
@@ -6565,8 +6589,8 @@ mod tests {
         let scroll_bounds = tab_bar_scroll_handle.bounds();
         let scroll_offset = tab_bar_scroll_handle.offset();
         assert!(tab_bounds.right() <= scroll_bounds.right() + scroll_offset.x);
-        // -39.75 is the magic number for this setup
-        assert_eq!(scroll_offset.x, px(-39.75));
+        // -39.5 is the magic number for this setup
+        assert_eq!(scroll_offset.x, px(-39.5));
         assert!(
             !tab_bounds.intersects(&new_tab_button_bounds),
             "Tab should not overlap with the new tab button, if this is failing check if there's been a redesign!"

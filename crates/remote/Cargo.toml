@@ -41,7 +41,6 @@ thiserror.workspace = true
 urlencoding.workspace = true
 util.workspace = true
 which.workspace = true
-workspace-hack.workspace = true
 
 
 [dev-dependencies]

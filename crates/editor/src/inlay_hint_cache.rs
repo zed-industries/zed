@@ -1013,7 +1013,7 @@ fn fetch_and_update_hints(
                 .cloned()
         })?;
 
-        let visible_hints = editor.update(cx, |editor, cx| editor.visible_inlay_hints(cx))?;
+        let visible_hints = editor.update(cx, |editor, cx| editor.visible_inlay_hints(cx).cloned().collect::<Vec<_>>())?;
         let new_hints = match inlay_hints_fetch_task {
             Some(fetch_task) => {
                 log::debug!(
@@ -2394,6 +2394,8 @@ pub mod tests {
                 editor.scroll_screen(&ScrollAmount::Page(1.0), window, cx);
             })
             .unwrap();
+        // Wait for the first hints request to fire off
+        cx.executor().advance_clock(Duration::from_millis(100));
         cx.executor().run_until_parked();
         editor
             .update(cx, |editor, window, cx| {
@@ -2761,12 +2763,29 @@ pub mod tests {
                     "main hint #3".to_string(),
                     "main hint #4".to_string(),
                     "main hint #5".to_string(),
+                ];
+                assert_eq!(expected_hints, sorted_cached_hint_labels(editor),
+                    "New hints are not shown right after scrolling, we need to wait for the buffer to be registered");
+                assert_eq!(expected_hints, visible_hint_labels(editor, cx));
+            })
+            .unwrap();
+        cx.executor().advance_clock(Duration::from_millis(100));
+        cx.executor().run_until_parked();
+        editor
+            .update(cx, |editor, _window, cx| {
+                let expected_hints = vec![
+                    "main hint #0".to_string(),
+                    "main hint #1".to_string(),
+                    "main hint #2".to_string(),
+                    "main hint #3".to_string(),
+                    "main hint #4".to_string(),
+                    "main hint #5".to_string(),
                     "other hint #0".to_string(),
                     "other hint #1".to_string(),
                     "other hint #2".to_string(),
                 ];
                 assert_eq!(expected_hints, sorted_cached_hint_labels(editor),
-                    "With more scrolls of the multibuffer, more hints should be added into the cache and nothing invalidated without edits");
+                    "After scrolling to the new buffer and waiting for it to be registered, new hints should appear");
                 assert_eq!(expected_hints, visible_hint_labels(editor, cx));
             })
             .unwrap();
@@ -2853,15 +2872,18 @@ pub mod tests {
             })
             .unwrap();
         cx.executor().run_until_parked();
+        // Wait again to trigger the inlay hints fetch on scroll
+        cx.executor().advance_clock(Duration::from_millis(100));
+        cx.executor().run_until_parked();
         editor
             .update(cx, |editor, _window, cx| {
                 let expected_hints = vec![
-                    "main hint #0".to_string(),
-                    "main hint #1".to_string(),
-                    "main hint #2".to_string(),
-                    "main hint #3".to_string(),
-                    "main hint #4".to_string(),
-                    "main hint #5".to_string(),
+                    "main hint(edited) #0".to_string(),
+                    "main hint(edited) #1".to_string(),
+                    "main hint(edited) #2".to_string(),
+                    "main hint(edited) #3".to_string(),
+                    "main hint(edited) #4".to_string(),
+                    "main hint(edited) #5".to_string(),
                     "other hint(edited) #0".to_string(),
                     "other hint(edited) #1".to_string(),
                 ];
@@ -3570,7 +3592,6 @@ pub mod tests {
     pub fn visible_hint_labels(editor: &Editor, cx: &Context<Editor>) -> Vec<String> {
         editor
             .visible_inlay_hints(cx)
-            .into_iter()
             .map(|hint| hint.text().to_string())
             .collect()
     }

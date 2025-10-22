@@ -691,12 +691,16 @@ impl Item for ProjectDiff {
         _workspace_id: Option<workspace::WorkspaceId>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Option<Entity<Self>>
+    ) -> Task<Option<Entity<Self>>>
     where
         Self: Sized,
     {
-        let workspace = self.workspace.upgrade()?;
-        Some(cx.new(|cx| ProjectDiff::new(self.project.clone(), workspace, window, cx)))
+        let Some(workspace) = self.workspace.upgrade() else {
+            return Task::ready(None);
+        };
+        Task::ready(Some(cx.new(|cx| {
+            ProjectDiff::new(self.project.clone(), workspace, window, cx)
+        })))
     }
 
     fn is_dirty(&self, cx: &App) -> bool {
@@ -1013,6 +1017,11 @@ impl Render for ProjectDiffToolbar {
                                     &StageAndNext,
                                     &focus_handle,
                                 ))
+                                .disabled(
+                                    !button_states.prev_next
+                                        && !button_states.stage_all
+                                        && !button_states.unstage_all,
+                                )
                                 .on_click(cx.listener(|this, _, window, cx| {
                                     this.dispatch_action(&StageAndNext, window, cx)
                                 })),
@@ -1024,6 +1033,11 @@ impl Render for ProjectDiffToolbar {
                                     &UnstageAndNext,
                                     &focus_handle,
                                 ))
+                                .disabled(
+                                    !button_states.prev_next
+                                        && !button_states.stage_all
+                                        && !button_states.unstage_all,
+                                )
                                 .on_click(cx.listener(|this, _, window, cx| {
                                     this.dispatch_action(&UnstageAndNext, window, cx)
                                 })),
@@ -1705,14 +1719,13 @@ mod tests {
         project_diff::{self, ProjectDiff},
     };
 
-    #[cfg_attr(windows, ignore = "currently fails on windows")]
     #[gpui::test]
     async fn test_go_to_prev_hunk_multibuffer(cx: &mut TestAppContext) {
         init_test(cx);
 
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
-            "/a",
+            path!("/a"),
             json!({
                 ".git": {},
                 "a.txt": "created\n",
@@ -1723,7 +1736,7 @@ mod tests {
         .await;
 
         fs.set_head_and_index_for_repo(
-            Path::new("/a/.git"),
+            Path::new(path!("/a/.git")),
             &[
                 ("b.txt", "before\n".to_string()),
                 ("c.txt", "unchanged\n".to_string()),
@@ -1731,7 +1744,7 @@ mod tests {
             ],
         );
 
-        let project = Project::test(fs, [Path::new("/a")], cx).await;
+        let project = Project::test(fs, [Path::new(path!("/a"))], cx).await;
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
 
@@ -1793,7 +1806,6 @@ mod tests {
         ));
     }
 
-    #[cfg_attr(windows, ignore = "currently fails on windows")]
     #[gpui::test]
     async fn test_excerpts_splitting_after_restoring_the_middle_excerpt(cx: &mut TestAppContext) {
         init_test(cx);
@@ -1833,7 +1845,7 @@ mod tests {
 
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
-            "/a",
+            path!("/a"),
             json!({
                 ".git": {},
                 "main.rs": buffer_contents,
@@ -1842,11 +1854,11 @@ mod tests {
         .await;
 
         fs.set_head_and_index_for_repo(
-            Path::new("/a/.git"),
+            Path::new(path!("/a/.git")),
             &[("main.rs", git_contents.to_owned())],
         );
 
-        let project = Project::test(fs, [Path::new("/a")], cx).await;
+        let project = Project::test(fs, [Path::new(path!("/a"))], cx).await;
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
 
@@ -2011,6 +2023,7 @@ mod tests {
         cx.run_until_parked();
 
         let editor = diff.read_with(cx, |diff, _| diff.editor.clone());
+
         assert_state_with_diff(
             &editor,
             cx,

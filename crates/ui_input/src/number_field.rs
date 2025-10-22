@@ -8,7 +8,7 @@ use std::{
 use editor::{Editor, EditorStyle};
 use gpui::{ClickEvent, Entity, FocusHandle, Focusable, FontWeight, Modifiers};
 
-use settings::{CodeFade, MinimumContrast};
+use settings::{CenteredPaddingSettings, CodeFade, DelayMs, InactiveOpacity, MinimumContrast};
 use ui::prelude::*;
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
@@ -31,77 +31,54 @@ pub trait NumberFieldType: Display + Copy + Clone + Sized + PartialOrd + FromStr
     fn saturating_sub(self, rhs: Self) -> Self;
 }
 
-impl NumberFieldType for gpui::FontWeight {
-    fn default_step() -> Self {
-        FontWeight(10.0)
-    }
-    fn large_step() -> Self {
-        FontWeight(50.0)
-    }
-    fn small_step() -> Self {
-        FontWeight(5.0)
-    }
-    fn min_value() -> Self {
-        gpui::FontWeight::THIN
-    }
-    fn max_value() -> Self {
-        gpui::FontWeight::BLACK
-    }
-    fn saturating_add(self, rhs: Self) -> Self {
-        FontWeight((self.0 + rhs.0).min(Self::max_value().0))
-    }
-    fn saturating_sub(self, rhs: Self) -> Self {
-        FontWeight((self.0 - rhs.0).max(Self::min_value().0))
-    }
+macro_rules! impl_newtype_numeric_stepper {
+    ($type:ident, $default:expr, $large:expr, $small:expr, $min:expr, $max:expr) => {
+        impl NumberFieldType for $type {
+            fn default_step() -> Self {
+                $default.into()
+            }
+
+            fn large_step() -> Self {
+                $large.into()
+            }
+
+            fn small_step() -> Self {
+                $small.into()
+            }
+
+            fn min_value() -> Self {
+                $min.into()
+            }
+
+            fn max_value() -> Self {
+                $max.into()
+            }
+
+            fn saturating_add(self, rhs: Self) -> Self {
+                $type((self.0 + rhs.0).min(Self::max_value().0))
+            }
+
+            fn saturating_sub(self, rhs: Self) -> Self {
+                $type((self.0 - rhs.0).max(Self::min_value().0))
+            }
+        }
+    };
 }
 
-impl NumberFieldType for settings::CodeFade {
-    fn default_step() -> Self {
-        CodeFade(0.10)
-    }
-    fn large_step() -> Self {
-        CodeFade(0.20)
-    }
-    fn small_step() -> Self {
-        CodeFade(0.05)
-    }
-    fn min_value() -> Self {
-        CodeFade(0.0)
-    }
-    fn max_value() -> Self {
-        CodeFade(0.9)
-    }
-    fn saturating_add(self, rhs: Self) -> Self {
-        CodeFade((self.0 + rhs.0).min(Self::max_value().0))
-    }
-    fn saturating_sub(self, rhs: Self) -> Self {
-        CodeFade((self.0 - rhs.0).max(Self::min_value().0))
-    }
-}
-
-impl NumberFieldType for settings::MinimumContrast {
-    fn default_step() -> Self {
-        MinimumContrast(1.0)
-    }
-    fn large_step() -> Self {
-        MinimumContrast(10.0)
-    }
-    fn small_step() -> Self {
-        MinimumContrast(0.5)
-    }
-    fn min_value() -> Self {
-        MinimumContrast(0.0)
-    }
-    fn max_value() -> Self {
-        MinimumContrast(106.0)
-    }
-    fn saturating_add(self, rhs: Self) -> Self {
-        MinimumContrast((self.0 + rhs.0).min(Self::max_value().0))
-    }
-    fn saturating_sub(self, rhs: Self) -> Self {
-        MinimumContrast((self.0 - rhs.0).max(Self::min_value().0))
-    }
-}
+#[rustfmt::skip]
+impl_newtype_numeric_stepper!(FontWeight, 50., 100., 10., FontWeight::THIN, FontWeight::BLACK);
+impl_newtype_numeric_stepper!(CodeFade, 0.1, 0.2, 0.05, 0.0, 0.9);
+impl_newtype_numeric_stepper!(InactiveOpacity, 0.1, 0.2, 0.05, 0.0, 1.0);
+impl_newtype_numeric_stepper!(MinimumContrast, 1., 10., 0.5, 0.0, 106.0);
+impl_newtype_numeric_stepper!(DelayMs, 100, 500, 10, 0, 2000);
+impl_newtype_numeric_stepper!(
+    CenteredPaddingSettings,
+    0.05,
+    0.2,
+    0.1,
+    CenteredPaddingSettings::MIN_PADDING,
+    CenteredPaddingSettings::MAX_PADDING
+);
 
 macro_rules! impl_numeric_stepper_int {
     ($type:ident) => {

@@ -18,7 +18,7 @@ A useful pattern here is to create a thread in the Agent Panel, and then mention
 
 To create a custom keybinding that prefills a prompt, you can add the following format in your keymap:
 
-```json
+```json [keymap]
 [
   {
     "context": "Editor && mode == full",
