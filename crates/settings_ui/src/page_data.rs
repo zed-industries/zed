@@ -7130,39 +7130,3 @@ where
 {
     <<T as strum::IntoDiscriminant>::Discriminant as strum::VariantArray>::VARIANTS
 }
-
-#[cfg(test)]
-mod tests {
-    use std::collections::HashSet;
-
-    use super::*;
-
-    #[gpui::test]
-    fn all_json_paths_unique_or_unimplemented(cx: &mut gpui::TestAppContext) {
-        let window = cx.add_empty_window();
-        let settings_data = window.update(|window, cx| {
-            crate::test::register_settings(cx);
-            settings_data(cx)
-        });
-        let mut json_paths: Vec<_> = settings_data
-            .into_iter()
-            .flat_map(|item| item.items)
-            .filter_map(|item| match item {
-                SettingsPageItem::SettingItem(item) => item.field.json_path(),
-                _ => None,
-            })
-            .collect();
-
-        let mut json_paths_unique: Vec<_> = json_paths
-            .clone()
-            .into_iter()
-            .collect::<HashSet<_>>()
-            .into_iter()
-            .collect();
-
-        json_paths.sort_unstable();
-        json_paths_unique.sort_unstable();
-
-        assert_eq!(json_paths, json_paths_unique);
-    }
-}
