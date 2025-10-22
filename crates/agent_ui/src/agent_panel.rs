@@ -1660,11 +1660,11 @@ impl AgentPanel {
                                     id: None,
                                 }),
                             )
-                            .action("Add Custom Server…", Box::new(AddContextServer))
+                            .action("Add Custom Server", Box::new(AddContextServer))
                             .separator();
 
                         menu = menu
-                            .action("Rules…", Box::new(OpenRulesLibrary::default()))
+                            .action("Rules", Box::new(OpenRulesLibrary::default()))
                             .action("Settings", Box::new(OpenSettings))
                             .separator()
                             .action(full_screen_label, Box::new(ToggleZoom));
