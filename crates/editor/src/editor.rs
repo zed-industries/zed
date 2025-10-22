@@ -159,11 +159,8 @@ use project::{
     },
     git_store::{GitStoreEvent, RepositoryEvent},
     lsp_store::{
-        CacheInlayHints, 
-        CompletionDocumentation, FormatTrigger, LspFormatTarget,
-        OpenLspBufferHandle,
-    ,
-        semantic_tokens::SemanticTokens,
+        CacheInlayHints, CompletionDocumentation, FormatTrigger, LspFormatTarget,
+        OpenLspBufferHandle, semantic_tokens::SemanticTokens,
     },
     project_settings::{DiagnosticSeverity, GoToDiagnosticSeverityFilter, ProjectSettings},
 };
@@ -5235,7 +5232,6 @@ impl Editor {
             None
         }
     }
-
 
     pub fn toggle_rainbow_highlighting(
         &mut self,
