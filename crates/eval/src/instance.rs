@@ -3,6 +3,7 @@ use agent_client_protocol as acp;
 use anyhow::{Context as _, Result, anyhow, bail};
 use client::proto::LspWorkProgress;
 use futures::channel::mpsc;
+use futures::future::Shared;
 use futures::{FutureExt as _, StreamExt as _, future};
 use gpui::{App, AppContext as _, AsyncApp, Entity, Task};
 use handlebars::Handlebars;
@@ -318,7 +319,9 @@ impl ExampleInstance {
                 };
 
                 thread.update(cx, |thread, cx| {
-                    thread.add_default_tools(Rc::new(FakeThreadEnvironment), cx);
+                    thread.add_default_tools(Rc::new(EvalThreadEnvironment {
+                        project: project.clone(),
+                    }), cx);
                     thread.set_profile(meta.profile_id.clone());
                     thread.set_model(
                         LanguageModelInterceptor::new(
@@ -600,19 +603,59 @@ impl ExampleInstance {
     }
 }
 
-struct FakeThreadEnvironment;
+struct EvalThreadEnvironment {
+    project: Entity<Project>,
+}
 
-impl agent::ThreadEnvironment for FakeThreadEnvironment {
+struct EvalTerminalHandle {
+    terminal: Entity<acp_thread::Terminal>,
+}
+
+impl agent::TerminalHandle for EvalTerminalHandle {
+    fn id(&self, cx: &AsyncApp) -> Result<acp::TerminalId> {
+        self.terminal.read_with(cx, |term, _cx| term.id().clone())
+    }
+
+    fn wait_for_exit(&self, cx: &AsyncApp) -> Result<Shared<Task<acp::TerminalExitStatus>>> {
+        self.terminal
+            .read_with(cx, |term, _cx| term.wait_for_exit())
+    }
+
+    fn current_output(&self, cx: &AsyncApp) -> Result<acp::TerminalOutputResponse> {
+        self.terminal
+            .read_with(cx, |term, cx| term.current_output(cx))
+    }
+}
+
+impl agent::ThreadEnvironment for EvalThreadEnvironment {
     fn create_terminal(
         &self,
-        _command: String,
-        _cwd: Option<PathBuf>,
-        _output_byte_limit: Option<u64>,
-        _cx: &mut AsyncApp,
+        command: String,
+        cwd: Option<PathBuf>,
+        output_byte_limit: Option<u64>,
+        cx: &mut AsyncApp,
     ) -> Task<Result<Rc<dyn agent::TerminalHandle>>> {
-        Task::ready(Err(anyhow!(
-            "Creating a terminal is not implemented in the eval"
-        )))
+        let project = self.project.clone();
+        cx.spawn(async move |cx| {
+            let language_registry =
+                project.read_with(cx, |project, _cx| project.languages().clone())?;
+            let id = acp::TerminalId(uuid::Uuid::new_v4().to_string().into());
+            let terminal =
+                acp_thread::create_terminal_entity(command, &[], vec![], cwd.clone(), &project, cx)
+                    .await?;
+            let terminal = cx.new(|cx| {
+                acp_thread::Terminal::new(
+                    id,
+                    "",
+                    cwd,
+                    output_byte_limit.map(|limit| limit as usize),
+                    terminal,
+                    language_registry,
+                    cx,
+                )
+            })?;
+            Ok(Rc::new(EvalTerminalHandle { terminal }) as Rc<dyn agent::TerminalHandle>)
+        })
     }
 }
 
