@@ -1422,7 +1422,11 @@ impl EditorElement {
                     layouts.push(layout);
                 }
 
-                let player = editor.current_user_player_color(cx);
+                let mut player = editor.current_user_player_color(cx);
+                if !editor.is_focused(window) {
+                    const UNFOCUS_EDITOR_SELECTION_OPACITY: f32 = 0.5;
+                    player.selection = player.selection.opacity(UNFOCUS_EDITOR_SELECTION_OPACITY);
+                }
                 selections.push((player, layouts));
 
                 if let SelectionDragState::Dragging {
