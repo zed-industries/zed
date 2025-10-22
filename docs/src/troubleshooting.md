@@ -2,7 +2,7 @@
 
 This guide covers common troubleshooting techniques for Zed.
 Sometimes you'll be able to identify and resolve issues on your own using this information.
-Other times, troubleshooting means gathering the right information—logs, profiles, or reproduction steps—to help the Zed team diagnose and fix the problem.
+Other times, troubleshooting means gathering the right information—logs, profiles, or reproduction steps—to help us diagnose and fix the problem.
 
 ## Zed Log
 
