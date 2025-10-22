@@ -43,6 +43,7 @@ tree-sitter-json.workspace = true
 tree-sitter.workspace = true
 util.workspace = true
 zlog.workspace = true
+migrator.workspace = true
 
 [dev-dependencies]
 fs = { workspace = true, features = ["test-support"] }

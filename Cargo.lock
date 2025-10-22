@@ -15260,6 +15260,7 @@ dependencies = [
  "indoc",
  "inventory",
  "log",
+ "migrator",
  "paths",
  "pretty_assertions",
  "release_channel",

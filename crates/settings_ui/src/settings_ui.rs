@@ -1139,6 +1139,7 @@ impl SettingsUiFile {
             settings::SettingsFile::Project(location) => SettingsUiFile::Project(location),
             settings::SettingsFile::Server => SettingsUiFile::Server("todo: server name"),
             settings::SettingsFile::Default => return None,
+            settings::SettingsFile::Global => return None,
         })
     }
 

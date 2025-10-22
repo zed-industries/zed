@@ -152,9 +152,10 @@ pub struct SettingsStore {
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum SettingsFile {
+    Default,
+    Global,
     User,
     Server,
-    Default,
     /// Represents project settings in ssh projects as well as local projects
     Project((WorktreeId, Arc<RelPath>)),
 }
@@ -183,6 +184,8 @@ impl Ord for SettingsFile {
             (_, Server) => Ordering::Greater,
             (User, _) => Ordering::Less,
             (_, User) => Ordering::Greater,
+            (Global, _) => Ordering::Less,
+            (_, Global) => Ordering::Greater,
         }
     }
 }
@@ -393,7 +396,7 @@ impl SettingsStore {
             ..Default::default()
         })
         .unwrap();
-        self.set_user_settings(&new_text, cx).unwrap();
+        _ = self.set_user_settings(&new_text, cx);
     }
 
     pub async fn load_settings(fs: &Arc<dyn Fs>) -> Result<String> {
@@ -522,6 +525,7 @@ impl SettingsStore {
             SettingsFile::Default => Some(self.default_settings.as_ref()),
             SettingsFile::Server => self.server_settings.as_deref(),
             SettingsFile::Project(ref key) => self.local_settings.get(key),
+            SettingsFile::Global => self.global_settings.as_deref(),
         }
     }
 
@@ -709,36 +713,83 @@ impl SettingsStore {
     }
 
     /// Sets the user settings via a JSON string.
-    pub fn set_user_settings(&mut self, user_settings_content: &str, cx: &mut App) -> Result<()> {
+    #[must_use]
+    pub fn set_user_settings(
+        &mut self,
+        user_settings_content: &str,
+        cx: &mut App,
+    ) -> SettingsParseResult {
+        let mut migration_result = Ok(false);
         let settings: UserSettingsContent = if user_settings_content.is_empty() {
-            parse_json_with_comments("{}")?
+            parse_json_with_comments("{}").expect("Empty settings should always be valid")
         } else {
-            self.handle_potential_file_error(
-                SettingsFile::User,
-                parse_json_with_comments(user_settings_content),
-            )?
+            let migration_res = migrator::migrate_settings(user_settings_content);
+            let content = match &migration_res {
+                Ok(Some(content)) => content,
+                Ok(None) => user_settings_content,
+                Err(_) => user_settings_content,
+            };
+            let parse_result = self
+                .handle_potential_file_error(SettingsFile::User, parse_json_with_comments(content));
+            migration_result = migration_res.map(|migrated| migrated.is_some());
+            match parse_result {
+                Ok(settings) => settings,
+                Err(err) => {
+                    return SettingsParseResult {
+                        migration_result,
+                        parse_result: Err(err),
+                    };
+                }
+            }
         };
 
         self.user_settings = Some(settings);
         self.recompute_values(None, cx);
-        Ok(())
+        SettingsParseResult {
+            migration_result,
+            parse_result: Ok(()),
+        }
     }
 
     /// Sets the global settings via a JSON string.
+    #[must_use]
     pub fn set_global_settings(
         &mut self,
         global_settings_content: &str,
         cx: &mut App,
-    ) -> Result<()> {
+    ) -> SettingsParseResult {
+        let mut migration_result = Ok(false);
         let settings: SettingsContent = if global_settings_content.is_empty() {
-            parse_json_with_comments("{}")?
+            parse_json_with_comments("{}").expect("Empty settings should always be valid")
         } else {
-            parse_json_with_comments(global_settings_content)?
+            let migration_res = migrator::migrate_settings(global_settings_content);
+            let content = match &migration_res {
+                Ok(Some(content)) => content,
+                Ok(None) => global_settings_content,
+                Err(_) => global_settings_content,
+            };
+            let parse_result = self.handle_potential_file_error(
+                SettingsFile::Global,
+                parse_json_with_comments(content),
+            );
+            migration_result = migration_res.map(|migrated| migrated.is_some());
+            match parse_result {
+                Ok(settings) => settings,
+                Err(err) => {
+                    return SettingsParseResult {
+                        migration_result,
+                        parse_result: Err(err),
+                    };
+                }
+            }
         };
 
         self.global_settings = Some(Box::new(settings));
         self.recompute_values(None, cx);
-        Ok(())
+        SettingsParseResult {
+            migration_result,
+            parse_result: Ok(()),
+        }
     }
 
     pub fn set_server_settings(
@@ -1089,6 +1140,48 @@ impl SettingsStore {
 
         properties.use_fallbacks();
         Some(properties)
+    }
+}
+
+// did we migrate?
+// was the migration successful?
+// was settings parsing successful?
+// todo! can this type be improved?
+pub struct SettingsParseResult {
+    /// Ok(false) -> no migration was performed
+    ///
+    /// Ok(true) -> migration was performed
+    ///
+    /// Err(_) -> migration was attempted but failed
+    pub migration_result: Result<bool>,
+    pub parse_result: Result<()>,
+}
+
+impl SettingsParseResult {
+    pub fn unwrap(self) -> bool {
+        self._result().unwrap()
+    }
+
+    pub fn expect(self, message: &str) -> bool {
+        self._result().expect(message)
+    }
+
+    pub fn _result(self) -> Result<bool> {
+        match (
+            self.migration_result.context("Failed to migrate settings"),
+            self.parse_result.context("Failed to parse settings"),
+        ) {
+            (migration_result @ Ok(_), Ok(_)) => migration_result,
+            (Err(migration_err), Err(parse_err)) => {
+                Err(anyhow::anyhow!("{} and {}", migration_err, parse_err))
+            }
+            (Err(migration_err), Ok(_)) => Err(migration_err),
+            (Ok(_), Err(parse_err)) => Err(parse_err),
+        }
+    }
+
+    pub fn ok(self) -> Option<bool> {
+        self._result().ok()
     }
 }
 
