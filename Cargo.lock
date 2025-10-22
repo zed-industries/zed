@@ -1183,6 +1183,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "async-tar"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d1937db2d56578aa3919b9bdb0e5100693fd7d1c0f145c53eb81fbb03e217550"
+dependencies = [
+ "async-std",
+ "filetime",
+ "libc",
+ "pin-project",
+ "redox_syscall 0.2.16",
+ "xattr",
+]
+
+[[package]]
 name = "async-task"
 version = "4.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1279,6 +1293,7 @@ name = "audio"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-tar",
  "collections",
  "crossbeam",
  "denoise",
@@ -1292,7 +1307,6 @@ dependencies = [
  "smol",
  "thiserror 2.0.17",
  "util",
- "zed-async-tar",
 ]
 
 [[package]]
@@ -4459,6 +4473,7 @@ dependencies = [
  "anyhow",
  "async-compression",
  "async-pipe",
+ "async-tar",
  "async-trait",
  "client",
  "collections",
@@ -4485,7 +4500,6 @@ dependencies = [
  "tree-sitter",
  "tree-sitter-go",
  "util",
- "zed-async-tar",
  "zlog",
 ]
 
@@ -5751,6 +5765,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-compression",
+ "async-tar",
  "async-trait",
  "collections",
  "dap",
@@ -5773,7 +5788,6 @@ dependencies = [
  "util",
  "wasm-encoder 0.221.3",
  "wasmparser 0.221.3",
- "zed-async-tar",
 ]
 
 [[package]]
@@ -5805,6 +5819,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-compression",
+ "async-tar",
  "async-trait",
  "client",
  "collections",
@@ -5845,7 +5860,6 @@ dependencies = [
  "wasmparser 0.221.3",
  "wasmtime",
  "wasmtime-wasi",
- "zed-async-tar",
  "zlog",
 ]
 
@@ -6306,6 +6320,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "ashpd 0.11.0",
+ "async-tar",
  "async-trait",
  "cocoa 0.26.0",
  "collections",
@@ -6330,7 +6345,6 @@ dependencies = [
  "time",
  "util",
  "windows 0.61.3",
- "zed-async-tar",
 ]
 
 [[package]]
@@ -7669,6 +7683,7 @@ dependencies = [
  "anyhow",
  "async-compression",
  "async-fs",
+ "async-tar",
  "bytes 1.10.1",
  "derive_more 0.99.20",
  "futures 0.3.31",
@@ -7682,7 +7697,6 @@ dependencies = [
  "tempfile",
  "url",
  "util",
- "zed-async-tar",
  "zed-reqwest",
 ]
 
@@ -8878,6 +8892,7 @@ dependencies = [
  "anyhow",
  "async-compression",
  "async-fs",
+ "async-tar",
  "async-trait",
  "chrono",
  "collections",
@@ -8934,7 +8949,6 @@ dependencies = [
  "url",
  "util",
  "workspace",
- "zed-async-tar",
 ]
 
 [[package]]
@@ -10178,6 +10192,7 @@ dependencies = [
  "anyhow",
  "async-compression",
  "async-std",
+ "async-tar",
  "async-trait",
  "futures 0.3.31",
  "http_client",
@@ -10190,7 +10205,6 @@ dependencies = [
  "util",
  "watch",
  "which 6.0.3",
- "zed-async-tar",
 ]
 
 [[package]]
@@ -21068,19 +21082,6 @@ dependencies = [
  "zeta2_tools",
  "zlog",
  "zlog_settings",
-]
-
-[[package]]
-name = "zed-async-tar"
-version = "0.5.0-zed"
-source = "git+https://github.com/zed-industries/async-tar?rev=a307f6bf3e4219c3a457bea0cab198b6d7c36e25#a307f6bf3e4219c3a457bea0cab198b6d7c36e25"
-dependencies = [
- "async-std",
- "filetime",
- "libc",
- "pin-project",
- "redox_syscall 0.2.16",
- "xattr",
 ]
 
 [[package]]
