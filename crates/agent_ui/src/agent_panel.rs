@@ -1663,7 +1663,7 @@ impl AgentPanel {
                             .separator();
 
                         menu = menu
-                            .action("Rules…", Box::new(OpenRulesLibrary::default()))
+                            .action("Rules", Box::new(OpenRulesLibrary::default()))
                             .action("Settings", Box::new(OpenSettings))
                             .separator()
                             .action(full_screen_label, Box::new(ToggleZoom));
