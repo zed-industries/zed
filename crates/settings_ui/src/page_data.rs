@@ -1432,7 +1432,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     }),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Relative Line Numbers",
-                        description: "Whether to use relative line numbers, or relative wrapped lines, in the editor's gutter",
+                        description: "Controls line number display in the editor's gutter. "disabled" shows absolute line numbers, "enabled" shows relative line numbers for each absolute line, and "wrapped" shows relative line numbers for every line, absolute or wrapped.",
                         field: Box::new(SettingField {
                             pick: |settings_content| {
                                 settings_content.editor.relative_line_numbers.as_ref()
