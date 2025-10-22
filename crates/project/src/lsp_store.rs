@@ -38,6 +38,7 @@ use crate::{
     worktree_store::{WorktreeStore, WorktreeStoreEvent},
     yarn::YarnPathStore,
 };
+use std::ffi::OsString;
 use anyhow::{Context as _, Result, anyhow};
 use async_trait::async_trait;
 use client::{TypedEnvelope, proto};
@@ -88,7 +89,6 @@ use rpc::{
     AnyProtoClient,
     proto::{LspRequestId, LspRequestMessage as _},
 };
-use serde::Serialize;
 use settings::{Settings, SettingsLocation, SettingsStore};
 use sha2::{Digest, Sha256};
 use smol::channel::Sender;
@@ -3446,13 +3446,20 @@ impl LocalLspStore {
 }
 
 fn notify_server_capabilities_updated(server: &LanguageServer, cx: &mut Context<LspStore>) {
-    if let Some(capabilities) = serde_json::to_string(&server.capabilities()).ok() {
+    let capabilities = serde_json::to_string(&server.capabilities()).ok();
+    let configuration = serde_json::to_string(server.configuration()).ok();
+    let workspace_folders = workspace_folders_for_language_server(server);
+    let binary = proto_binary_from_language_server(server.binary());
+    if capabilities.is_some() || configuration.is_some() || !workspace_folders.is_empty() {
         cx.emit(LspStoreEvent::LanguageServerUpdate {
             language_server_id: server.server_id(),
             name: Some(server.name()),
             message: proto::update_language_server::Variant::MetadataUpdated(
                 proto::ServerMetadataUpdated {
-                    capabilities: Some(capabilities),
+                    capabilities,
+                    binary: Some(binary),
+                    workspace_folders,
+                    configuration,
                 },
             ),
         });
@@ -3562,13 +3569,84 @@ pub enum LspStoreEvent {
     },
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug)]
 pub struct LanguageServerStatus {
     pub name: LanguageServerName,
     pub pending_work: BTreeMap<String, LanguageServerProgress>,
     pub has_pending_diagnostic_updates: bool,
     progress_tokens: HashSet<String>,
     pub worktree: Option<WorktreeId>,
+    pub binary: Option<LanguageServerBinary>,
+    pub workspace_folders: Vec<String>,
+    pub configuration: Option<serde_json::Value>,
+}
+
+fn language_server_binary_from_proto(
+    binary: &proto::LanguageServerBinary,
+) -> LanguageServerBinary {
+    let env = if binary.env.is_empty() {
+        None
+    } else {
+        Some(binary.env.clone())
+    };
+    LanguageServerBinary {
+        path: binary.path.clone().into(),
+        arguments: binary
+            .arguments
+            .iter()
+            .map(|arg| OsString::from(arg.as_str()))
+            .collect(),
+        env,
+    }
+}
+
+fn language_server_metadata_from_proto(
+    server: &proto::LanguageServer,
+) -> (
+    Option<LanguageServerBinary>,
+    Vec<String>,
+    Option<serde_json::Value>,
+) {
+    let binary = server
+        .binary
+        .as_ref()
+        .map(language_server_binary_from_proto);
+    let workspace_folders = server.workspace_folders.clone();
+    let configuration = server
+        .configuration
+        .as_ref()
+        .and_then(|configuration| match serde_json::from_str(configuration) {
+            Ok(value) => Some(value),
+            Err(error) => {
+                log::warn!("Failed to parse language server configuration: {error}");
+                None
+            }
+        });
+    (binary, workspace_folders, configuration)
+}
+
+fn proto_binary_from_language_server(binary: &LanguageServerBinary) -> proto::LanguageServerBinary {
+    proto::LanguageServerBinary {
+        path: binary.path.to_string_lossy().into_owned(),
+        arguments: binary
+            .arguments
+            .iter()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect(),
+        env: binary.env.clone().unwrap_or_default(),
+    }
+}
+
+fn workspace_folders_for_language_server(server: &LanguageServer) -> Vec<String> {
+    server
+        .workspace_folders()
+        .into_iter()
+        .map(|uri| {
+            uri.to_file_path()
+                .map(|path| path.to_string_lossy().into_owned())
+                .unwrap_or_else(|_| uri.to_string())
+        })
+        .collect()
 }
 
 #[derive(Clone, Debug)]
@@ -7409,6 +7487,10 @@ impl LspStore {
 
         for (server_id, status) in &self.language_server_statuses {
             if let Some(server) = self.language_server_for_id(*server_id) {
+                let binary_proto = proto_binary_from_language_server(server.binary());
+                let workspace_folders = workspace_folders_for_language_server(&server);
+                let configuration =
+                    serde_json::to_string(server.configuration()).ok();
                 downstream_client
                     .send(proto::StartLanguageServer {
                         project_id,
@@ -7416,6 +7498,9 @@ impl LspStore {
                             id: server_id.to_proto(),
                             name: status.name.to_string(),
                             worktree_id: status.worktree.map(|id| id.to_proto()),
+                            binary: Some(binary_proto),
+                            workspace_folders,
+                            configuration,
                         }),
                         capabilities: serde_json::to_string(&server.capabilities())
                             .expect("serializing server LSP capabilities"),
@@ -7478,6 +7563,8 @@ impl LspStore {
                     });
                 }
 
+                let (binary, workspace_folders, configuration) =
+                    language_server_metadata_from_proto(&server);
                 (
                     server_id,
                     LanguageServerStatus {
@@ -7486,6 +7573,9 @@ impl LspStore {
                         has_pending_diagnostic_updates: false,
                         progress_tokens: Default::default(),
                         worktree,
+                        binary,
+                        workspace_folders,
+                        configuration,
                     },
                 )
             })
@@ -8397,6 +8487,8 @@ impl LspStore {
             lsp_store
                 .lsp_server_capabilities
                 .insert(server_id, server_capabilities);
+            let (binary, workspace_folders, configuration) =
+                language_server_metadata_from_proto(&server);
             lsp_store.language_server_statuses.insert(
                 server_id,
                 LanguageServerStatus {
@@ -8405,6 +8497,9 @@ impl LspStore {
                     has_pending_diagnostic_updates: false,
                     progress_tokens: Default::default(),
                     worktree: server.worktree_id.map(WorktreeId::from_proto),
+                    binary,
+                    workspace_folders,
+                    configuration,
                 },
             );
             cx.emit(LspStoreEvent::LanguageServerAdded(
@@ -8470,8 +8565,7 @@ impl LspStore {
                 }
 
                 non_lsp @ proto::update_language_server::Variant::StatusUpdate(_)
-                | non_lsp @ proto::update_language_server::Variant::RegisteredForBuffer(_)
-                | non_lsp @ proto::update_language_server::Variant::MetadataUpdated(_) => {
+                | non_lsp @ proto::update_language_server::Variant::RegisteredForBuffer(_) => {
                     cx.emit(LspStoreEvent::LanguageServerUpdate {
                         language_server_id,
                         name: envelope
@@ -8480,6 +8574,49 @@ impl LspStore {
                             .map(SharedString::new)
                             .map(LanguageServerName),
                         message: non_lsp,
+                    });
+                }
+                proto::update_language_server::Variant::MetadataUpdated(metadata) => {
+                    if let Some(capabilities) = metadata.capabilities.as_ref() {
+                        match serde_json::from_str(capabilities) {
+                            Ok(capabilities) => {
+                                lsp_store
+                                    .lsp_server_capabilities
+                                    .insert(language_server_id, capabilities);
+                            }
+                            Err(error) => {
+                                log::warn!(
+                                    "Failed to parse language server capabilities: {error}"
+                                );
+                            }
+                        }
+                    }
+                    if let Some(status) =
+                        lsp_store.language_server_statuses.get_mut(&language_server_id)
+                    {
+                        if let Some(binary) = metadata.binary.as_ref() {
+                            status.binary = Some(language_server_binary_from_proto(binary));
+                        }
+                        if !metadata.workspace_folders.is_empty() {
+                            status.workspace_folders = metadata.workspace_folders.clone();
+                        }
+                        if let Some(configuration) = metadata.configuration.as_ref() {
+                            match serde_json::from_str(configuration) {
+                                Ok(value) => status.configuration = Some(value),
+                                Err(error) => log::warn!(
+                                    "Failed to parse language server configuration: {error}"
+                                ),
+                            }
+                        }
+                    }
+                    cx.emit(LspStoreEvent::LanguageServerUpdate {
+                        language_server_id,
+                        name: envelope
+                            .payload
+                            .server_name
+                            .map(SharedString::new)
+                            .map(LanguageServerName),
+                        message: proto::update_language_server::Variant::MetadataUpdated(metadata),
                     });
                 }
             }
@@ -10421,6 +10558,9 @@ impl LspStore {
                 has_pending_diagnostic_updates: false,
                 progress_tokens: Default::default(),
                 worktree: Some(key.worktree_id),
+                binary: Some(language_server.binary().clone()),
+                workspace_folders: workspace_folders_for_language_server(&language_server),
+                configuration: Some(language_server.configuration().clone()),
             },
         );
 
@@ -10433,6 +10573,10 @@ impl LspStore {
 
         let server_capabilities = language_server.capabilities();
         if let Some((downstream_client, project_id)) = self.downstream_client.as_ref() {
+            let binary_proto = proto_binary_from_language_server(language_server.binary());
+            let workspace_folders = workspace_folders_for_language_server(&language_server);
+            let configuration =
+                serde_json::to_string(language_server.configuration()).ok();
             downstream_client
                 .send(proto::StartLanguageServer {
                     project_id: *project_id,
@@ -10440,6 +10584,9 @@ impl LspStore {
                         id: server_id.to_proto(),
                         name: language_server.name().to_string(),
                         worktree_id: Some(key.worktree_id.to_proto()),
+                        binary: Some(binary_proto),
+                        workspace_folders,
+                        configuration,
                     }),
                     capabilities: serde_json::to_string(&server_capabilities)
                         .expect("serializing server LSP capabilities"),
