@@ -263,7 +263,7 @@ pub struct AcpThreadView {
     workspace: WeakEntity<Workspace>,
     project: Entity<Project>,
     thread_state: ThreadState,
-    login: Option<task::SpawnInTerminal>,
+    auth_commands: HashMap<String, task::SpawnInTerminal>,
     history_store: Entity<HistoryStore>,
     hovered_recent_history_item: Option<usize>,
     entry_view_state: Entity<EntryViewState>,
@@ -416,7 +416,7 @@ impl AcpThreadView {
                 window,
                 cx,
             ),
-            login: None,
+            auth_commands: HashMap::default(),
             message_editor,
             model_selector: None,
             profile_selector: None,
@@ -509,8 +509,9 @@ impl AcpThreadView {
         let connect_task = agent.connect(root_dir.as_deref(), delegate, cx);
         let load_task = cx.spawn_in(window, async move |this, cx| {
             let connection = match connect_task.await {
-                Ok((connection, login)) => {
-                    this.update(cx, |this, _| this.login = login).ok();
+                Ok((connection, auth_commands)) => {
+                    this.update(cx, |this, _| this.auth_commands = auth_commands)
+                        .ok();
                     connection
                 }
                 Err(err) => {
@@ -1057,7 +1058,7 @@ impl AcpThreadView {
             };
 
             let connection = thread.read(cx).connection().clone();
-            let can_login = !connection.auth_methods().is_empty() || self.login.is_some();
+            let can_login = !connection.auth_methods().is_empty() || !self.auth_commands.is_empty();
             // Does the agent have a specific logout command? Prefer that in case they need to reset internal state.
             let logout_supported = text == "/logout"
                 && self
@@ -1561,10 +1562,7 @@ impl AcpThreadView {
         self.thread_error.take();
         configuration_view.take();
         pending_auth_method.replace(method.clone());
-        let authenticate = if (method.0.as_ref() == "claude-login"
-            || method.0.as_ref() == "spawn-gemini-cli")
-            && let Some(login) = self.login.clone()
-        {
+        let authenticate = if let Some(login) = self.auth_commands.get(method.0.as_ref()).cloned() {
             if let Some(workspace) = self.workspace.upgrade() {
                 Self::spawn_external_agent_login(login, workspace, false, window, cx)
             } else {
@@ -6033,8 +6031,13 @@ pub(crate) mod tests {
             _root_dir: Option<&Path>,
             _delegate: AgentServerDelegate,
             _cx: &mut App,
-        ) -> Task<gpui::Result<(Rc<dyn AgentConnection>, Option<task::SpawnInTerminal>)>> {
-            Task::ready(Ok((Rc::new(self.connection.clone()), None)))
+        ) -> Task<
+            gpui::Result<(
+                Rc<dyn AgentConnection>,
+                HashMap<String, task::SpawnInTerminal>,
+            )>,
+        > {
+            Task::ready(Ok((Rc::new(self.connection.clone()), HashMap::default())))
         }
 
         fn into_any(self: Rc<Self>) -> Rc<dyn Any> {

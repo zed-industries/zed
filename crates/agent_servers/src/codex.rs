@@ -5,6 +5,7 @@ use std::{any::Any, path::Path};
 use acp_thread::AgentConnection;
 use agent_client_protocol as acp;
 use anyhow::{Context as _, Result};
+use collections::HashMap;
 use fs::Fs;
 use gpui::{App, AppContext as _, SharedString, Task};
 use project::agent_server_store::{AllAgentServersSettings, CODEX_NAME};
@@ -61,7 +62,12 @@ impl AgentServer for Codex {
         root_dir: Option<&Path>,
         delegate: AgentServerDelegate,
         cx: &mut App,
-    ) -> Task<Result<(Rc<dyn AgentConnection>, Option<task::SpawnInTerminal>)>> {
+    ) -> Task<
+        Result<(
+            Rc<dyn AgentConnection>,
+            HashMap<String, task::SpawnInTerminal>,
+        )>,
+    > {
         let name = self.name();
         let root_dir = root_dir.map(|root_dir| root_dir.to_string_lossy().into_owned());
         let is_remote = delegate.project.read(cx).is_via_remote_server();
@@ -70,7 +76,7 @@ impl AgentServer for Codex {
         let default_mode = self.default_mode(cx);
 
         cx.spawn(async move |cx| {
-            let (command, root_dir, login) = store
+            let (command, root_dir, auth_commands) = store
                 .update(cx, |store, cx| {
                     let agent = store
                         .get_external_agent(&CODEX_NAME.into())
@@ -96,7 +102,7 @@ impl AgentServer for Codex {
                 cx,
             )
             .await?;
-            Ok((connection, login))
+            Ok((connection, auth_commands))
         })
     }
 

@@ -904,14 +904,14 @@ impl AgentServerStore {
                         (status_tx, new_version_available_tx)
                     })
                     .unzip();
-                agent.get_command(
+                anyhow::Ok(agent.get_command(
                     envelope.payload.root_dir.as_deref(),
                     HashMap::default(),
                     status_tx,
                     new_version_available_tx,
                     &mut cx.to_async(),
-                )
-            })?
+                ))
+            })??
             .await?;
         Ok(proto::AgentServerCommand {
             path: command.path.to_string_lossy().into_owned(),
@@ -2028,7 +2028,11 @@ impl ExternalAgentServer for LocalExtensionGithubReleaseAgent {
                         args,
                         env: Some(env),
                     };
-                    return Ok((command, root_dir.to_string_lossy().into_owned(), None));
+                    return Ok((
+                        command,
+                        root_dir.to_string_lossy().into_owned(),
+                        HashMap::default(),
+                    ));
                 }
             }
 
@@ -2639,5 +2643,247 @@ mod npm_launcher_tests {
         assert_eq!(npm_auth_cmd.label, "gemini /auth");
         assert_eq!(npm_auth_cmd.command, None); // Uses main command
         assert!(npm_auth_cmd.args.is_empty());
+    }
+
+    #[gpui::test]
+    async fn test_auth_commands_lookup_by_method_id(cx: &mut gpui::TestAppContext) {
+        use extension::{AgentServerAuthCommand, AgentServerLauncher, AgentServerManifestEntry};
+
+        // Create a manifest entry with multiple auth commands
+        let auth_cmd1 = AgentServerAuthCommand {
+            auth_method_id: "oauth-personal".into(),
+            label: "OAuth Login".into(),
+            command: None,
+            args: vec![],
+            env: HashMap::default(),
+        };
+
+        let auth_cmd2 = AgentServerAuthCommand {
+            auth_method_id: "api-key".into(),
+            label: "API Key".into(),
+            command: Some("my-agent-auth".into()),
+            args: vec!["--api-key".into()],
+            env: {
+                let mut map = HashMap::default();
+                map.insert("AUTH_TYPE".into(), "api_key".into());
+                map
+            },
+        };
+
+        let manifest_entry = AgentServerManifestEntry {
+            launcher: AgentServerLauncher::Binary {
+                bin_name: "my-agent".into(),
+            },
+            env: HashMap::default(),
+            args: vec!["--acp".into()],
+            auth_commands: vec![auth_cmd1, auth_cmd2],
+            ignore_system_version: None,
+        };
+
+        // Create a test agent
+        let project_environment = cx.new(|_| crate::ProjectEnvironment::new(None));
+        let agent = LocalExtensionBinaryAgent {
+            project_environment,
+            bin_name: gpui::SharedString::from("my-agent"),
+            args: manifest_entry.args.clone(),
+            env: manifest_entry.env.clone(),
+            auth_commands: manifest_entry.auth_commands.clone(),
+        };
+
+        // The agent should have constructed a proper auth_commands vec
+        assert_eq!(agent.auth_commands.len(), 2);
+
+        // Verify we can look up by auth_method_id
+        let oauth_cmd = agent
+            .auth_commands
+            .iter()
+            .find(|cmd| cmd.auth_method_id == "oauth-personal")
+            .expect("oauth-personal should exist");
+        assert_eq!(oauth_cmd.label, "OAuth Login");
+        assert_eq!(oauth_cmd.command, None);
+
+        let api_key_cmd = agent
+            .auth_commands
+            .iter()
+            .find(|cmd| cmd.auth_method_id == "api-key")
+            .expect("api-key should exist");
+        assert_eq!(api_key_cmd.label, "API Key");
+        assert_eq!(api_key_cmd.command, Some("my-agent-auth".into()));
+        assert_eq!(api_key_cmd.args, vec!["--api-key"]);
+    }
+
+    #[gpui::test]
+    async fn test_binary_agent_builds_auth_command_map(cx: &mut gpui::TestAppContext) {
+        use std::fs;
+        use std::os::unix::fs::PermissionsExt;
+
+        // Create a temporary directory with a dummy executable
+        let tmp_dir = tempfile::tempdir().expect("tempdir");
+        let bin_path = tmp_dir.path().join("mybin");
+
+        fs::write(&bin_path, b"#!/bin/sh\nexit 0\n").expect("write bin");
+        let mut perms = fs::metadata(&bin_path).expect("metadata").permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&bin_path, perms).expect("chmod");
+
+        let project_environment = cx.new(|_| crate::ProjectEnvironment::new(None));
+
+        let auth_cmd = extension::AgentServerAuthCommand {
+            auth_method_id: "oauth".into(),
+            label: "OAuth Login".into(),
+            command: Some("mybin-auth".into()),
+            args: vec!["--login".into()],
+            env: {
+                let mut map = HashMap::default();
+                map.insert("MODE".into(), "oauth".into());
+                map
+            },
+        };
+
+        let mut agent = LocalExtensionBinaryAgent {
+            project_environment,
+            bin_name: gpui::SharedString::from("mybin"),
+            args: vec![],
+            env: HashMap::default(),
+            auth_commands: vec![auth_cmd],
+        };
+
+        let mut extra_env = HashMap::default();
+        extra_env.insert("PATH".into(), tmp_dir.path().to_string_lossy().into_owned());
+
+        let task = agent.get_command(None, extra_env, None, None, &mut cx.to_async());
+        let (_cmd, _root, auth_cmds) = task.await.expect("command resolved");
+
+        // Should have one auth command in the map
+        assert_eq!(auth_cmds.len(), 1);
+        assert!(auth_cmds.contains_key("oauth"));
+
+        let spawn_terminal = auth_cmds.get("oauth").expect("oauth command should exist");
+        assert_eq!(spawn_terminal.label, "OAuth Login");
+        assert_eq!(spawn_terminal.command, Some("mybin-auth".to_string()));
+        assert_eq!(spawn_terminal.args, vec!["--login"]);
+        assert!(spawn_terminal.env.contains_key("MODE"));
+        assert_eq!(spawn_terminal.env.get("MODE"), Some(&"oauth".to_string()));
+    }
+
+    #[test]
+    fn test_multiple_auth_commands_for_different_methods() {
+        use extension::{AgentServerAuthCommand, AgentServerLauncher, AgentServerManifestEntry};
+
+        // Create a manifest with multiple auth methods
+        let manifest_entry = AgentServerManifestEntry {
+            launcher: AgentServerLauncher::Npm {
+                package: "@example/agent".into(),
+                entrypoint: "dist/index.js".into(),
+                min_version: "1.0.0".into(),
+            },
+            env: HashMap::default(),
+            args: vec!["--experimental-acp".into()],
+            auth_commands: vec![
+                AgentServerAuthCommand {
+                    auth_method_id: "oauth-personal".into(),
+                    label: "Google OAuth".into(),
+                    command: None,
+                    args: vec!["auth".to_string(), "oauth".into()],
+                    env: HashMap::default(),
+                },
+                AgentServerAuthCommand {
+                    auth_method_id: "api-key".into(),
+                    label: "API Key".into(),
+                    command: None,
+                    args: vec!["auth".to_string(), "api-key".into()],
+                    env: HashMap::default(),
+                },
+                AgentServerAuthCommand {
+                    auth_method_id: "vertex-ai".into(),
+                    label: "Vertex AI".into(),
+                    command: None,
+                    args: vec!["auth".to_string(), "vertex".into()],
+                    env: {
+                        let mut map = HashMap::default();
+                        map.insert("GOOGLE_CLOUD_PROJECT".into(), "my-project".into());
+                        map
+                    },
+                },
+            ],
+            ignore_system_version: None,
+        };
+
+        // Verify all auth commands are present
+        assert_eq!(manifest_entry.auth_commands.len(), 3);
+
+        // Verify each has unique auth_method_id
+        let method_ids: std::collections::HashSet<_> = manifest_entry
+            .auth_commands
+            .iter()
+            .map(|cmd| &cmd.auth_method_id)
+            .collect();
+        assert_eq!(method_ids.len(), 3);
+
+        // Verify specific methods exist
+        assert!(
+            manifest_entry
+                .auth_commands
+                .iter()
+                .any(|cmd| cmd.auth_method_id == "oauth-personal")
+        );
+        assert!(
+            manifest_entry
+                .auth_commands
+                .iter()
+                .any(|cmd| cmd.auth_method_id == "api-key")
+        );
+        assert!(
+            manifest_entry
+                .auth_commands
+                .iter()
+                .any(|cmd| cmd.auth_method_id == "vertex-ai")
+        );
+    }
+
+    #[test]
+    fn test_empty_auth_commands_is_valid() {
+        use extension::{AgentServerLauncher, AgentServerManifestEntry};
+
+        // An agent with no auth commands is valid
+        let manifest_entry = AgentServerManifestEntry {
+            launcher: AgentServerLauncher::Binary {
+                bin_name: "simple-agent".into(),
+            },
+            env: HashMap::default(),
+            args: vec![],
+            auth_commands: vec![], // No auth commands
+            ignore_system_version: None,
+        };
+
+        assert!(manifest_entry.auth_commands.is_empty());
+    }
+
+    #[test]
+    fn test_auth_command_with_complex_env() {
+        use extension::AgentServerAuthCommand;
+
+        let mut env = HashMap::default();
+        env.insert("API_ENDPOINT".into(), "https://api.example.com".into());
+        env.insert(
+            "REDIRECT_URI".into(),
+            "http://localhost:8080/callback".into(),
+        );
+        env.insert("CLIENT_ID".into(), "my-client-id".into());
+
+        let auth_cmd = AgentServerAuthCommand {
+            auth_method_id: "oauth-flow".into(),
+            label: "Complex OAuth".into(),
+            command: Some("oauth-helper".into()),
+            args: vec!["--browser".into(), "--port".into(), "8080".into()],
+            env: env.clone(),
+        };
+
+        assert_eq!(auth_cmd.env.len(), 3);
+        assert_eq!(
+            auth_cmd.env.get("API_ENDPOINT"),
+            Some(&"https://api.example.com".to_string())
+        );
+        assert_eq!(auth_cmd.args.len(), 3);
     }
 }

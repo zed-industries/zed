@@ -2,6 +2,7 @@ use std::{any::Any, path::Path, rc::Rc, sync::Arc};
 
 use agent_servers::{AgentServer, AgentServerDelegate};
 use anyhow::Result;
+use collections::HashMap;
 use fs::Fs;
 use gpui::{App, Entity, SharedString, Task};
 use prompt_store::PromptStore;
@@ -41,7 +42,7 @@ impl AgentServer for NativeAgentServer {
     ) -> Task<
         Result<(
             Rc<dyn acp_thread::AgentConnection>,
-            Option<task::SpawnInTerminal>,
+            HashMap<String, task::SpawnInTerminal>,
         )>,
     > {
         log::debug!(
@@ -67,7 +68,7 @@ impl AgentServer for NativeAgentServer {
 
             Ok((
                 Rc::new(connection) as Rc<dyn acp_thread::AgentConnection>,
-                None,
+                HashMap::default(),
             ))
         })
     }
