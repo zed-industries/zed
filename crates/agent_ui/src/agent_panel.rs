@@ -864,11 +864,13 @@ impl AgentPanel {
                 if let Some(current_thread_view) = this.active_thread_view() {
                     let current_thread = current_thread_view.read(cx).thread().cloned();
                     if let Some(current_thread) = current_thread {
-                        current_thread.update(cx, |thread, _| {
-                            thread.detach_current_generation();
-                        });
-                        // Keep the thread alive
-                        this.detached_threads.push(current_thread.clone());
+                        if current_thread.read(cx).status() == acp_thread::ThreadStatus::Generating
+                        {
+                            current_thread.update(cx, |thread, _| {
+                                thread.detach_send_task();
+                            });
+                            this.detached_threads.push(current_thread.clone());
+                        }
                     }
                 }
 

@@ -796,7 +796,7 @@ pub struct AcpThread {
     action_log: Entity<ActionLog>,
     shared_buffers: HashMap<Entity<Buffer>, BufferSnapshot>,
     send_task: Option<Task<()>>,
-    is_generating: bool,
+    is_detached: bool,
     connection: Rc<dyn AgentConnection>,
     session_id: acp::SessionId,
     token_usage: Option<TokenUsage>,
@@ -1018,7 +1018,7 @@ impl AcpThread {
             title: title.into(),
             project,
             send_task: None,
-            is_generating: false,
+            is_detached: false,
             connection,
             session_id,
             token_usage: None,
@@ -1059,7 +1059,7 @@ impl AcpThread {
     }
 
     pub fn status(&self) -> ThreadStatus {
-        if self.send_task.is_some() || self.is_generating {
+        if self.send_task.is_some() || self.is_detached {
             ThreadStatus::Generating
         } else {
             ThreadStatus::Idle
@@ -1707,7 +1707,7 @@ impl AcpThread {
                 match response {
                     Ok(Err(e)) => {
                         this.send_task.take();
-                        this.is_generating = false;
+                        this.is_detached = false;
                         cx.emit(AcpThreadEvent::Error);
                         Err(e)
                     }
@@ -1727,7 +1727,7 @@ impl AcpThread {
                         // would cause the next generation to be canceled.
                         if !canceled {
                             this.send_task.take();
-                            this.is_generating = false;
+                            this.is_detached = false;
                         }
 
                         // Handle refusal - distinguish between user prompt and tool call refusals
@@ -1799,15 +1799,15 @@ impl AcpThread {
         }
 
         self.connection.cancel(&self.session_id, cx);
-        self.is_generating = false;
+        self.is_detached = false;
 
         // Wait for the send task to complete
         cx.foreground_executor().spawn(send_task)
     }
 
-    pub fn detach_current_generation(&mut self) {
+    pub fn detach_send_task(&mut self) {
         if let Some(send_task) = self.send_task.take() {
-            self.is_generating = true;
+            self.is_detached = true;
             send_task.detach();
         }
     }
