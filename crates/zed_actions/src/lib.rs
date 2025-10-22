@@ -504,6 +504,13 @@ actions!(
     ]
 );
 
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct WslConnectionOptions {
+    pub distro_name: String,
+    pub user: Option<String>,
+}
+
 #[cfg(target_os = "windows")]
 pub mod wsl_actions {
     use gpui::Action;
@@ -526,5 +533,15 @@ pub mod wsl_actions {
     pub struct OpenWsl {
         #[serde(default)]
         pub create_new_window: bool,
+    }
+
+    /// Add a wsl distro.
+    #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
+    #[action(namespace = projects)]
+    #[serde(deny_unknown_fields)]
+    pub struct AddDistro {
+        #[serde(default)]
+        pub distro: String,
+        pub projects: Vec<PathBuf>,
     }
 }

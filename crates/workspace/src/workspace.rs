@@ -5829,6 +5829,7 @@ impl Workspace {
             ))
             .on_action(cx.listener(Workspace::toggle_centered_layout))
             .on_action(cx.listener(Workspace::cancel))
+            .on_action(cx.listener(Workspace::add_wsl_distro))
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -6110,6 +6111,14 @@ impl Workspace {
         update_settings_file(fs, cx, move |file, _| {
             file.project.all_languages.defaults.show_edit_predictions = Some(!show_edit_predictions)
         });
+    }
+
+    fn add_wsl_project(
+        &mut self,
+        wsl_actions::AddDistro { distro, paths }: &wsl_actions::AddDistro,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
     }
 }
 
