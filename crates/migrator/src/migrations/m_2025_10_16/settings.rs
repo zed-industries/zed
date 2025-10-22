@@ -58,7 +58,6 @@ fn restore_code_actions_on_format_inner(value: &mut Value, path: &[&str]) -> Res
             .map(|code_action| (code_action, Value::Bool(true))),
     );
 
-    // Does this actually work?
     obj.insert("formatter".to_string(), Value::Array(vec![]));
     obj.insert(
         "code_actions_on_format".into(),
