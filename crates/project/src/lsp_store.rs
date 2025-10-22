@@ -9252,7 +9252,7 @@ impl LspStore {
             {
                 cx.emit(LspStoreEvent::RefreshInlayHints);
             }
-            
+
             // Only emit indexing complete if server had work and now has none
             if status.had_pending_work && status.pending_work.is_empty() {
                 indexing_complete = true;

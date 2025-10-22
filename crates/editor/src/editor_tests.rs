@@ -16506,7 +16506,7 @@ async fn test_semantic_tokens_on_language_server_start(cx: &mut TestAppContext) 
     assert!(full_request.next().await.is_some());
 
     let task = cx.update_editor(|e, _, _| {
-        std::mem::replace(&mut e.update_semantic_tokens_task, Task::ready(()))
+        std::mem::replace(&mut e.semantic_tokens_refresh_task, Task::ready(()))
     });
     task.await;
 
@@ -16575,7 +16575,7 @@ async fn test_semantic_tokens_deferred_on_excerpts_added(cx: &mut TestAppContext
     assert!(full_request.next().await.is_some());
 
     let task = cx.update_editor(|e, _, _| {
-        std::mem::replace(&mut e.update_semantic_tokens_task, Task::ready(()))
+        std::mem::replace(&mut e.semantic_tokens_refresh_task, Task::ready(()))
     });
     task.await;
 
@@ -16639,7 +16639,7 @@ async fn lsp_semantic_tokens_full_capability(cx: &mut TestAppContext) {
     assert!(full_request.next().await.is_some());
 
     let task = cx.update_editor(|e, _, _| {
-        std::mem::replace(&mut e.update_semantic_tokens_task, Task::ready(()))
+        std::mem::replace(&mut e.semantic_tokens_refresh_task, Task::ready(()))
     });
     task.await;
 
@@ -16647,7 +16647,7 @@ async fn lsp_semantic_tokens_full_capability(cx: &mut TestAppContext) {
     assert!(full_request.next().await.is_some());
 
     let task = cx.update_editor(|e, _, _| {
-        std::mem::replace(&mut e.update_semantic_tokens_task, Task::ready(()))
+        std::mem::replace(&mut e.semantic_tokens_refresh_task, Task::ready(()))
     });
     task.await;
     let buffer_id = cx.buffer(|b, _| b.remote_id());
@@ -16707,7 +16707,7 @@ async fn lsp_semantic_tokens_full_none_result_id(cx: &mut TestAppContext) {
     assert!(full_request.next().await.is_some());
 
     let task = cx.update_editor(|e, _, _| {
-        std::mem::replace(&mut e.update_semantic_tokens_task, Task::ready(()))
+        std::mem::replace(&mut e.semantic_tokens_refresh_task, Task::ready(()))
     });
     task.await;
 
@@ -16715,7 +16715,7 @@ async fn lsp_semantic_tokens_full_none_result_id(cx: &mut TestAppContext) {
     assert!(full_request.next().await.is_some());
 
     let task = cx.update_editor(|e, _, _| {
-        std::mem::replace(&mut e.update_semantic_tokens_task, Task::ready(()))
+        std::mem::replace(&mut e.semantic_tokens_refresh_task, Task::ready(()))
     });
     task.await;
     let buffer_id = cx.buffer(|b, _| b.remote_id());
@@ -16793,14 +16793,14 @@ async fn lsp_semantic_tokens_delta(cx: &mut TestAppContext) {
     cx.set_state("ˇfn main() {}");
     assert!(full_request.next().await.is_some());
     let task = cx.update_editor(|e, _, _| {
-        std::mem::replace(&mut e.update_semantic_tokens_task, Task::ready(()))
+        std::mem::replace(&mut e.semantic_tokens_refresh_task, Task::ready(()))
     });
     task.await;
 
     cx.set_state("ˇfn main() { a }");
     assert!(delta_request.next().await.is_some());
     let task = cx.update_editor(|e, _, _| {
-        std::mem::replace(&mut e.update_semantic_tokens_task, Task::ready(()))
+        std::mem::replace(&mut e.semantic_tokens_refresh_task, Task::ready(()))
     });
     task.await;
 
@@ -27268,7 +27268,7 @@ async fn test_rainbow_highlighting_toggle_in_settings(cx: &mut TestAppContext) {
     assert!(semantic_request.next().await.is_some());
 
     let task = cx.update_editor(|e, _, _| {
-        std::mem::replace(&mut e.update_semantic_tokens_task, Task::ready(()))
+        std::mem::replace(&mut e.semantic_tokens_refresh_task, Task::ready(()))
     });
     task.await;
 
@@ -27388,16 +27388,12 @@ async fn test_rainbow_highlighting_theme_switch(cx: &mut TestAppContext) {
     assert!(semantic_request.next().await.is_some());
 
     let task = cx.update_editor(|e, _, _| {
-        std::mem::replace(&mut e.update_semantic_tokens_task, Task::ready(()))
+        std::mem::replace(&mut e.semantic_tokens_refresh_task, Task::ready(()))
     });
     task.await;
 
     // Get the initial palette size from default theme
-    let initial_palette_size = cx.cx.read(|cx| {
-        let theme_settings = theme::ThemeSettings::get_global(cx);
-        let theme = &theme_settings.active_theme.syntax();
-        theme.rainbow_palette_size()
-    });
+    let initial_palette_size = cx.cx.read(|cx| cx.theme().syntax().rainbow_palette_size());
 
     // Verify we have a palette (default should be 12)
     assert_eq!(
@@ -27409,16 +27405,15 @@ async fn test_rainbow_highlighting_theme_switch(cx: &mut TestAppContext) {
     // The palette size is determined by the theme's defined colors
     // Verify the system can detect different palette sizes
     cx.cx.read(|cx| {
-        let theme_settings = theme::ThemeSettings::get_global(cx);
-        let theme = &theme_settings.active_theme.syntax();
-        let palette_size = theme.rainbow_palette_size();
+        let syntax_theme = cx.theme().syntax();
+        let palette_size = syntax_theme.rainbow_palette_size();
 
         // Rainbow colors should be accessible
         for i in 0..palette_size {
-            let color = theme.rainbow_color(i);
+            let color = syntax_theme.rainbow_color(i);
             assert!(
                 color.is_some(),
-                "Theme should provide rainbow color at index {}",
+                "Rainbow color at index {} should be available",
                 i
             );
         }
@@ -27497,7 +27492,7 @@ async fn test_rainbow_highlighting_immediate_application(cx: &mut TestAppContext
     assert!(semantic_request.next().await.is_some());
 
     let task = cx.update_editor(|e, _, _| {
-        std::mem::replace(&mut e.update_semantic_tokens_task, Task::ready(()))
+        std::mem::replace(&mut e.semantic_tokens_refresh_task, Task::ready(()))
     });
     task.await;
 
@@ -27527,10 +27522,7 @@ async fn test_rainbow_highlighting_immediate_application(cx: &mut TestAppContext
     );
 
     // Verify palette size is accessible
-    let palette_size = cx.cx.read(|cx| {
-        let theme_settings = theme::ThemeSettings::get_global(cx);
-        theme_settings.active_theme.syntax().rainbow_palette_size()
-    });
+    let palette_size = cx.cx.read(|cx| cx.theme().syntax().rainbow_palette_size());
     assert_eq!(palette_size, 32, "Palette should have 32 colors");
 
     // Verify different variable names hash to different indices
@@ -28094,7 +28086,7 @@ async fn test_semantic_type_differentiation_in_regular_buffer(cx: &mut TestAppCo
     // Wait for semantic tokens
     assert!(semantic_request.next().await.is_some());
     let task = cx.update_editor(|e, _, _| {
-        std::mem::replace(&mut e.update_semantic_tokens_task, Task::ready(()))
+        std::mem::replace(&mut e.semantic_tokens_refresh_task, Task::ready(()))
     });
     task.await;
 
@@ -28399,7 +28391,7 @@ async fn test_rainbow_real_world_file_context(cx: &mut TestAppContext) {
     // Wait for semantic tokens
     assert!(semantic_request.next().await.is_some());
     let task = cx.update_editor(|e, _, _| {
-        std::mem::replace(&mut e.update_semantic_tokens_task, Task::ready(()))
+        std::mem::replace(&mut e.semantic_tokens_refresh_task, Task::ready(()))
     });
     task.await;
 
@@ -28497,6 +28489,7 @@ async fn test_rainbow_real_world_file_context(cx: &mut TestAppContext) {
             buffer_chunks_found.len(),
             colored_buffers
         );
+    });
 }
 
 #[gpui::test]
@@ -28518,4 +28511,240 @@ async fn test_end_of_editor_context(cx: &mut TestAppContext) {
     cx.update_editor(|e, window, cx| {
         assert!(!e.key_context(window, cx).contains("end_of_input"));
     });
+}
+
+#[gpui::test]
+async fn test_semantic_tokens_task_not_cancelled_by_rapid_calls(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let request_count = Arc::new(AtomicUsize::new(0));
+    let request_count_clone = request_count.clone();
+
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            semantic_tokens_provider: Some(
+                lsp::SemanticTokensServerCapabilities::SemanticTokensOptions(
+                    lsp::SemanticTokensOptions {
+                        legend: lsp::SemanticTokensLegend {
+                            token_types: vec!["function".into()],
+                            token_modifiers: vec![],
+                        },
+                        full: Some(lsp::SemanticTokensFullOptions::Bool(true)),
+                        ..Default::default()
+                    },
+                ),
+            ),
+            ..Default::default()
+        },
+        cx,
+    )
+    .await;
+
+    cx.set_request_handler::<lsp::request::SemanticTokensFullRequest, _, _>(move |_, _, _| {
+        let count = request_count_clone.clone();
+        async move {
+            count.fetch_add(1, atomic::Ordering::SeqCst);
+            Ok(Some(lsp::SemanticTokensResult::Tokens(
+                lsp::SemanticTokens {
+                    data: vec![lsp::SemanticToken {
+                        delta_line: 0,
+                        delta_start: 3,
+                        length: 3,
+                        token_type: 0,
+                        token_modifiers_bitset: 0,
+                    }],
+                    result_id: None,
+                },
+            )))
+        }
+    });
+
+    cx.set_state("fn ˇfoo() {}");
+
+    for _ in 0..10 {
+        cx.update_editor(|e, _, cx| {
+            e.refresh_semantic_tokens(None, cx);
+        });
+        cx.executor().advance_clock(Duration::from_millis(5));
+    }
+
+    cx.executor().advance_clock(Duration::from_millis(100));
+
+    let final_count = request_count.load(atomic::Ordering::SeqCst);
+    assert!(
+        final_count <= 3,
+        "Rapid calls should not spawn multiple concurrent tasks, got {} requests",
+        final_count
+    );
+}
+
+#[gpui::test]
+async fn test_semantic_tokens_chunked_processing_limits_concurrent_requests(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx, |_| {});
+
+    let max_concurrent = Arc::new(AtomicUsize::new(0));
+    let current_concurrent = Arc::new(AtomicUsize::new(0));
+    let max_clone = max_concurrent.clone();
+    let current_clone = current_concurrent.clone();
+
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            semantic_tokens_provider: Some(
+                lsp::SemanticTokensServerCapabilities::SemanticTokensOptions(
+                    lsp::SemanticTokensOptions {
+                        legend: lsp::SemanticTokensLegend {
+                            token_types: vec!["function".into()],
+                            token_modifiers: vec![],
+                        },
+                        full: Some(lsp::SemanticTokensFullOptions::Bool(true)),
+                        ..Default::default()
+                    },
+                ),
+            ),
+            ..Default::default()
+        },
+        cx,
+    )
+    .await;
+
+    cx.set_request_handler::<lsp::request::SemanticTokensFullRequest, _, _>(move |_, _, _| {
+        let max = max_clone.clone();
+        let current = current_clone.clone();
+        async move {
+            let concurrent = current.fetch_add(1, atomic::Ordering::SeqCst) + 1;
+            max.fetch_max(concurrent, atomic::Ordering::SeqCst);
+            current.fetch_sub(1, atomic::Ordering::SeqCst);
+            Ok(Some(lsp::SemanticTokensResult::Tokens(
+                lsp::SemanticTokens {
+                    data: vec![],
+                    result_id: None,
+                },
+            )))
+        }
+    });
+
+    cx.set_state("fn ˇfoo() {}");
+
+    for _ in 0..20 {
+        cx.update_editor(|e, _, cx| {
+            e.refresh_semantic_tokens(None, cx);
+        });
+    }
+
+    cx.executor().advance_clock(Duration::from_millis(500));
+
+    let max_concurrent_requests = max_concurrent.load(atomic::Ordering::SeqCst);
+    assert!(
+        max_concurrent_requests <= 5,
+        "Should process max 5 concurrent requests (chunking), got {}",
+        max_concurrent_requests
+    );
+}
+
+#[gpui::test]
+async fn test_semantic_tokens_error_cleans_up_pending_state(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            semantic_tokens_provider: Some(
+                lsp::SemanticTokensServerCapabilities::SemanticTokensOptions(
+                    lsp::SemanticTokensOptions {
+                        legend: lsp::SemanticTokensLegend {
+                            token_types: vec!["function".into()],
+                            token_modifiers: vec![],
+                        },
+                        full: Some(lsp::SemanticTokensFullOptions::Bool(true)),
+                        ..Default::default()
+                    },
+                ),
+            ),
+            ..Default::default()
+        },
+        cx,
+    )
+    .await;
+
+    cx.set_request_handler::<lsp::request::SemanticTokensFullRequest, _, _>(
+        move |_, _, _| async move { Err(anyhow::anyhow!("LSP server error")) },
+    );
+
+    cx.set_state("fn ˇfoo() {}");
+
+    cx.update_editor(|e, _, cx| {
+        e.refresh_semantic_tokens(None, cx);
+    });
+
+    cx.executor().advance_clock(Duration::from_millis(100));
+
+    let buffer_id = cx.buffer(|b, _| b.remote_id());
+    let has_pending = cx.editor(|e, _, _| e.pending_semantic_token_requests.contains(&buffer_id));
+
+    assert!(
+        !has_pending,
+        "Failed requests should clean up pending state"
+    );
+}
+
+#[gpui::test]
+async fn test_semantic_tokens_accumulated_during_processing(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let requests_received = Arc::new(Mutex::new(Vec::new()));
+    let requests_clone = requests_received.clone();
+
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            semantic_tokens_provider: Some(
+                lsp::SemanticTokensServerCapabilities::SemanticTokensOptions(
+                    lsp::SemanticTokensOptions {
+                        legend: lsp::SemanticTokensLegend {
+                            token_types: vec!["function".into()],
+                            token_modifiers: vec![],
+                        },
+                        full: Some(lsp::SemanticTokensFullOptions::Bool(true)),
+                        ..Default::default()
+                    },
+                ),
+            ),
+            ..Default::default()
+        },
+        cx,
+    )
+    .await;
+
+    cx.set_request_handler::<lsp::request::SemanticTokensFullRequest, _, _>(move |_, _, _| {
+        let requests = requests_clone.clone();
+        async move {
+            requests.lock().push(std::time::Instant::now());
+            Ok(Some(lsp::SemanticTokensResult::Tokens(
+                lsp::SemanticTokens {
+                    data: vec![],
+                    result_id: None,
+                },
+            )))
+        }
+    });
+
+    cx.set_state("fn ˇfoo() {}");
+
+    cx.update_editor(|e, _, cx| {
+        e.refresh_semantic_tokens(None, cx);
+    });
+
+    cx.executor().advance_clock(Duration::from_millis(30));
+
+    for _ in 0..5 {
+        cx.update_editor(|e, _, cx| {
+            e.refresh_semantic_tokens(None, cx);
+        });
+        cx.executor().advance_clock(Duration::from_millis(5));
+    }
+
+    cx.executor().advance_clock(Duration::from_millis(100));
+
+    let requests = requests_received.lock();
+    assert!(requests.len() >= 1, "Should process accumulated requests");
 }

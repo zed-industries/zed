@@ -1955,60 +1955,59 @@ impl Editor {
                         editor.refresh_semantic_tokens(None, cx);
                     }
 
-                        project::Event::EntryRenamed(transaction) => {
-                            let Some(workspace) = editor.workspace() else {
-                                return;
-                            };
-                            let Some(active_editor) = workspace.read(cx).active_item_as::<Self>(cx)
-                            else {
-                                return;
-                            };
-                            if active_editor.entity_id() == cx.entity_id() {
-                                let edited_buffers_already_open = {
-                                    let other_editors: Vec<Entity<Editor>> = workspace
-                                        .read(cx)
-                                        .panes()
-                                        .iter()
-                                        .flat_map(|pane| pane.read(cx).items_of_type::<Editor>())
-                                        .filter(|editor| editor.entity_id() != cx.entity_id())
-                                        .collect();
+                    project::Event::EntryRenamed(transaction) => {
+                        let Some(workspace) = editor.workspace() else {
+                            return;
+                        };
+                        let Some(active_editor) = workspace.read(cx).active_item_as::<Self>(cx)
+                        else {
+                            return;
+                        };
+                        if active_editor.entity_id() == cx.entity_id() {
+                            let edited_buffers_already_open = {
+                                let other_editors: Vec<Entity<Editor>> = workspace
+                                    .read(cx)
+                                    .panes()
+                                    .iter()
+                                    .flat_map(|pane| pane.read(cx).items_of_type::<Editor>())
+                                    .filter(|editor| editor.entity_id() != cx.entity_id())
+                                    .collect();
 
-                                    transaction.0.keys().all(|buffer| {
-                                        other_editors.iter().any(|editor| {
-                                            let multi_buffer = editor.read(cx).buffer();
-                                            multi_buffer.read(cx).is_singleton()
-                                                && multi_buffer.read(cx).as_singleton().map_or(
-                                                    false,
-                                                    |singleton| {
-                                                        singleton.entity_id() == buffer.entity_id()
-                                                    },
-                                                )
-                                        })
-                                    })
-                                };
-
-                                if !edited_buffers_already_open {
-                                    let workspace = workspace.downgrade();
-                                    let transaction = transaction.clone();
-                                    cx.defer_in(window, move |_, window, cx| {
-                                        cx.spawn_in(window, async move |editor, cx| {
-                                            Self::open_project_transaction(
-                                                &editor,
-                                                workspace,
-                                                transaction,
-                                                "Rename".to_string(),
-                                                cx,
+                                transaction.0.keys().all(|buffer| {
+                                    other_editors.iter().any(|editor| {
+                                        let multi_buffer = editor.read(cx).buffer();
+                                        multi_buffer.read(cx).is_singleton()
+                                            && multi_buffer.read(cx).as_singleton().map_or(
+                                                false,
+                                                |singleton| {
+                                                    singleton.entity_id() == buffer.entity_id()
+                                                },
                                             )
-                                            .await
-                                            .ok()
-                                        })
-                                        .detach();
-                                    });
-                                }
+                                    })
+                                })
+                            };
+
+                            if !edited_buffers_already_open {
+                                let workspace = workspace.downgrade();
+                                let transaction = transaction.clone();
+                                cx.defer_in(window, move |_, window, cx| {
+                                    cx.spawn_in(window, async move |editor, cx| {
+                                        Self::open_project_transaction(
+                                            &editor,
+                                            workspace,
+                                            transaction,
+                                            "Rename".to_string(),
+                                            cx,
+                                        )
+                                        .await
+                                        .ok()
+                                    })
+                                    .detach();
+                                });
                             }
                         }
-                        _ => {}
                     }
+                    _ => {}
                 },
             ));
             if let Some(task_inventory) = project
@@ -22381,7 +22380,7 @@ impl Editor {
         let pending_buffers = self.pending_semantic_token_buffers.clone();
         let refresh_active = self.semantic_tokens_refresh_active.clone();
         let multibuffer = self.buffer.clone();
-        
+
         self.semantic_tokens_refresh_task = cx.spawn(async move |editor, cx| {
             loop {
                 cx.background_executor()
@@ -22400,12 +22399,10 @@ impl Editor {
                 }
 
                 const CHUNK_SIZE: usize = 5;
-                
                 for chunk in buffers_to_process.chunks(CHUNK_SIZE) {
                     let chunk_tasks: Vec<_> = editor
                         .update(cx, |editor, cx| {
                             let mut tasks = Vec::new();
-                            
                             for &buffer_id in chunk {
                                 let Some(buffer) = multibuffer.read(cx).buffer(buffer_id) else {
                                     continue;
@@ -22465,7 +22462,6 @@ impl Editor {
 
                                 tasks.push(task);
                             }
-                            
                             tasks
                         })
                         .log_err()

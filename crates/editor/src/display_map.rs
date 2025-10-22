@@ -162,7 +162,6 @@ pub struct MultibufferSemanticToken {
     pub lsp_modifiers: u32,
 }
 
-
 impl DisplayMap {
     pub fn new(
         buffer: Entity<MultiBuffer>,
@@ -678,7 +677,7 @@ impl DisplayMap {
             .collect::<Vec<_>>();
         self.splice_inlays(&to_remove, Vec::new(), cx);
     }
-    
+
     pub fn remove_semantic_tokens_for_buffers(&mut self, buffer_ids: &[BufferId]) {
         for buffer_id in buffer_ids {
             self.semantic_tokens.remove(buffer_id);
@@ -706,7 +705,6 @@ impl DisplayMap {
         self.variable_color_cache.clone()
     }
 
-
     fn on_lsp_event(&mut self, event: &project::lsp_store::LspStoreEvent, cx: &mut Context<Self>) {
         match event {
             project::lsp_store::LspStoreEvent::SemanticTokensReceived {
@@ -721,7 +719,6 @@ impl DisplayMap {
         }
     }
 
-
     fn regenerate_semantic_tokens(
         &mut self,
         buffer_id: BufferId,
@@ -733,17 +730,18 @@ impl DisplayMap {
             return;
         };
         let buffer_snapshot = buffer.read(cx).snapshot();
-        
+
         // Check cache: skip regeneration if buffer version AND token count unchanged
         // (token count check handles partial → full token transitions during LSP indexing)
         let incoming_token_count = tokens.tokens().count();
         if let Some(cached_view) = self.semantic_tokens.get(&buffer_id) {
-            if cached_view.version == *buffer_snapshot.version() 
-                && cached_view.tokens.len() == incoming_token_count {
+            if cached_view.version == *buffer_snapshot.version()
+                && cached_view.tokens.len() == incoming_token_count
+            {
                 return;
             }
         }
-        
+
         let syntax_theme = cx.theme().syntax().clone();
         let variable_color_cache = self.variable_color_cache.clone();
 
@@ -764,17 +762,16 @@ impl DisplayMap {
             if let Some(view) = view {
                 this.update(cx, |this, cx| {
                     let view_arc = Arc::new(view);
-                    
+
                     // Only notify if tokens actually changed
-                    let should_notify = this.semantic_tokens
-                        .get(&buffer_id)
-                        .map_or(true, |cached| {
-                            cached.version != view_arc.version || 
-                            cached.tokens.len() != view_arc.tokens.len()
+                    let should_notify =
+                        this.semantic_tokens.get(&buffer_id).map_or(true, |cached| {
+                            cached.version != view_arc.version
+                                || cached.tokens.len() != view_arc.tokens.len()
                         });
-                    
+
                     this.semantic_tokens.insert(buffer_id, view_arc);
-                    
+
                     if should_notify {
                         cx.emit(DisplayMapEvent::SemanticTokensReady { buffer_id });
                         cx.notify();
@@ -788,7 +785,6 @@ impl DisplayMap {
 
         self.pending_semantic_token_tasks.insert(buffer_id, task);
     }
-
 
     #[cfg(test)]
     pub fn is_rewrapping(&self, cx: &gpui::App) -> bool {
@@ -1950,7 +1946,9 @@ impl<'a> SemanticTokenStylizer<'a> {
                 if let Some(cache) = variable_color_cache {
                     if let Some(theme) = theme {
                         let identifier: String = buffer.text_for_range(range.clone()).collect();
-                        if let Some(validated) = crate::rainbow::validate_identifier_for_rainbow(&identifier) {
+                        if let Some(validated) =
+                            crate::rainbow::validate_identifier_for_rainbow(&identifier)
+                        {
                             let style = cache.get_or_insert(validated, theme);
                             if style.color.is_some() {
                                 return Some(style);
@@ -1970,7 +1968,9 @@ impl<'a> SemanticTokenStylizer<'a> {
                 if let Some(cache) = variable_color_cache {
                     if let Some(theme) = theme {
                         let identifier: String = buffer.text_for_range(range.clone()).collect();
-                        if let Some(validated) = crate::rainbow::validate_identifier_for_rainbow(&identifier) {
+                        if let Some(validated) =
+                            crate::rainbow::validate_identifier_for_rainbow(&identifier)
+                        {
                             let style = cache.get_or_insert(validated, theme);
                             if style.color.is_some() {
                                 return Some(style);

@@ -1,4 +1,4 @@
-use core::num;
+use core::num::NonZeroU32;
 
 use gpui::App;
 use language::CursorShape;
