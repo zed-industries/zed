@@ -1,4 +1,4 @@
-use crate::{AgentServerDelegate, load_proxy_env};
+use crate::{AcpAgentServer, AgentServerDelegate, load_proxy_env};
 use acp_thread::AgentConnection;
 use agent_client_protocol as acp;
 use anyhow::{Context as _, Result};
@@ -7,7 +7,7 @@ use fs::Fs;
 use gpui::{App, AppContext as _, SharedString, Task};
 use project::agent_server_store::{AllAgentServersSettings, ExternalAgentServerName};
 use settings::{SettingsStore, update_settings_file};
-use std::{path::Path, rc::Rc, sync::Arc};
+use std::{any::Any, path::Path, rc::Rc, sync::Arc};
 use ui::IconName;
 
 /// A generic agent server implementation for custom user-defined agents
@@ -32,22 +32,6 @@ impl crate::AgentServer for CustomAgentServer {
 
     fn logo(&self) -> IconName {
         IconName::Terminal
-    }
-
-    fn local_login_commands(&self) -> Vec<String> {
-        vec![]
-    }
-
-    fn remote_login_commands(&self) -> Vec<String> {
-        vec![]
-    }
-
-    fn local_logout_commands(&self) -> Vec<String> {
-        vec![]
-    }
-
-    fn remote_logout_commands(&self) -> Vec<String> {
-        vec![]
     }
 
     fn default_mode(&self, cx: &mut App) -> Option<acp::SessionModeId> {
@@ -125,7 +109,25 @@ impl crate::AgentServer for CustomAgentServer {
         })
     }
 
-    fn into_any(self: Rc<Self>) -> Rc<dyn std::any::Any> {
+    fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
         self
+    }
+}
+
+impl AcpAgentServer for CustomAgentServer {
+    fn local_login_commands(&self) -> Vec<String> {
+        vec![]
+    }
+
+    fn remote_login_commands(&self) -> Vec<String> {
+        vec![]
+    }
+
+    fn local_logout_commands(&self) -> Vec<String> {
+        vec![]
+    }
+
+    fn remote_logout_commands(&self) -> Vec<String> {
+        vec![]
     }
 }

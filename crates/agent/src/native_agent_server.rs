@@ -34,22 +34,6 @@ impl AgentServer for NativeAgentServer {
         ui::IconName::ZedAgent
     }
 
-    fn local_login_commands(&self) -> Vec<String> {
-        vec![]
-    }
-
-    fn remote_login_commands(&self) -> Vec<String> {
-        vec![]
-    }
-
-    fn local_logout_commands(&self) -> Vec<String> {
-        vec![]
-    }
-
-    fn remote_logout_commands(&self) -> Vec<String> {
-        vec![]
-    }
-
     fn connect(
         &self,
         _root_dir: Option<&Path>,

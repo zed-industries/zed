@@ -11,7 +11,7 @@ use gpui::{App, AppContext as _, SharedString, Task};
 use project::agent_server_store::{AllAgentServersSettings, CODEX_NAME};
 use settings::{SettingsStore, update_settings_file};
 
-use crate::{AgentServer, AgentServerDelegate, load_proxy_env};
+use crate::{AcpAgentServer, AgentServer, AgentServerDelegate, load_proxy_env};
 
 #[derive(Clone)]
 pub struct Codex;
@@ -34,22 +34,6 @@ impl AgentServer for Codex {
 
     fn logo(&self) -> ui::IconName {
         ui::IconName::AiOpenAi
-    }
-
-    fn local_login_commands(&self) -> Vec<String> {
-        vec![]
-    }
-
-    fn remote_login_commands(&self) -> Vec<String> {
-        vec![]
-    }
-
-    fn local_logout_commands(&self) -> Vec<String> {
-        vec![]
-    }
-
-    fn remote_logout_commands(&self) -> Vec<String> {
-        vec![]
     }
 
     fn default_mode(&self, cx: &mut App) -> Option<acp::SessionModeId> {
@@ -124,5 +108,23 @@ impl AgentServer for Codex {
 
     fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
         self
+    }
+}
+
+impl AcpAgentServer for Codex {
+    fn local_login_commands(&self) -> Vec<String> {
+        vec![]
+    }
+
+    fn remote_login_commands(&self) -> Vec<String> {
+        vec![]
+    }
+
+    fn local_logout_commands(&self) -> Vec<String> {
+        vec![]
+    }
+
+    fn remote_logout_commands(&self) -> Vec<String> {
+        vec![]
     }
 }

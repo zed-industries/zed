@@ -1,7 +1,7 @@
 use std::rc::Rc;
 use std::{any::Any, path::Path};
 
-use crate::{AgentServer, AgentServerDelegate, load_proxy_env};
+use crate::{AcpAgentServer, AgentServer, AgentServerDelegate, load_proxy_env};
 use acp_thread::AgentConnection;
 use anyhow::{Context as _, Result};
 use collections::HashMap;
@@ -23,24 +23,6 @@ impl AgentServer for Gemini {
 
     fn logo(&self) -> ui::IconName {
         ui::IconName::AiGemini
-    }
-
-    fn local_login_commands(&self) -> Vec<String> {
-        vec!["login".to_string()]
-    }
-
-    fn remote_login_commands(&self) -> Vec<String> {
-        // When remote, OAuth doesn't work, so login is handled via the
-        // auth_commands mapping (oauth-personal -> spawn-gemini-cli)
-        vec![]
-    }
-
-    fn local_logout_commands(&self) -> Vec<String> {
-        vec![]
-    }
-
-    fn remote_logout_commands(&self) -> Vec<String> {
-        vec![]
     }
 
     fn connect(
@@ -101,6 +83,26 @@ impl AgentServer for Gemini {
 
     fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
         self
+    }
+}
+
+impl AcpAgentServer for Gemini {
+    fn local_login_commands(&self) -> Vec<String> {
+        vec!["login".to_string()]
+    }
+
+    fn remote_login_commands(&self) -> Vec<String> {
+        // When remote, OAuth doesn't work, so login is handled via the
+        // auth_commands mapping (oauth-personal -> spawn-gemini-cli)
+        vec![]
+    }
+
+    fn local_logout_commands(&self) -> Vec<String> {
+        vec![]
+    }
+
+    fn remote_logout_commands(&self) -> Vec<String> {
+        vec![]
     }
 }
 

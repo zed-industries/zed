@@ -11,7 +11,7 @@ use collections::HashMap;
 use gpui::{App, AppContext as _, SharedString, Task};
 use project::agent_server_store::{AllAgentServersSettings, CLAUDE_CODE_NAME};
 
-use crate::{AgentServer, AgentServerDelegate, load_proxy_env};
+use crate::{AcpAgentServer, AgentServer, AgentServerDelegate, load_proxy_env};
 use acp_thread::AgentConnection;
 
 #[derive(Clone)]
@@ -54,22 +54,6 @@ impl AgentServer for ClaudeCode {
                 .get_or_insert_default()
                 .default_mode = mode_id.map(|m| m.to_string())
         });
-    }
-
-    fn local_login_commands(&self) -> Vec<String> {
-        vec!["login".to_string()]
-    }
-
-    fn remote_login_commands(&self) -> Vec<String> {
-        vec!["login".to_string()]
-    }
-
-    fn local_logout_commands(&self) -> Vec<String> {
-        vec!["logout".to_string()]
-    }
-
-    fn remote_logout_commands(&self) -> Vec<String> {
-        vec!["logout".to_string()]
     }
 
     fn connect(
@@ -120,5 +104,23 @@ impl AgentServer for ClaudeCode {
 
     fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
         self
+    }
+}
+
+impl AcpAgentServer for ClaudeCode {
+    fn local_login_commands(&self) -> Vec<String> {
+        vec!["login".to_string()]
+    }
+
+    fn remote_login_commands(&self) -> Vec<String> {
+        vec!["login".to_string()]
+    }
+
+    fn local_logout_commands(&self) -> Vec<String> {
+        vec!["logout".to_string()]
+    }
+
+    fn remote_logout_commands(&self) -> Vec<String> {
+        vec!["logout".to_string()]
     }
 }

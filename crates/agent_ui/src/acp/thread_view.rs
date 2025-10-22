@@ -260,6 +260,7 @@ impl ThreadFeedbackState {
 
 pub struct AcpThreadView {
     agent: Rc<dyn AgentServer>,
+    acp_agent: Option<Rc<dyn agent_servers::AcpAgentServer>>,
     workspace: WeakEntity<Workspace>,
     project: Entity<Project>,
     thread_state: ThreadState,
@@ -403,8 +404,38 @@ impl AcpThreadView {
         let show_codex_windows_warning = crate::ExternalAgent::parse_built_in(agent.as_ref())
             == Some(crate::ExternalAgent::Codex);
 
+        // Try to downcast to AcpAgentServer for ACP-specific functionality
+        let acp_agent = agent
+            .clone()
+            .into_any()
+            .downcast::<agent_servers::Gemini>()
+            .map(|a| a as Rc<dyn agent_servers::AcpAgentServer>)
+            .or_else(|_| {
+                agent
+                    .clone()
+                    .into_any()
+                    .downcast::<agent_servers::ClaudeCode>()
+                    .map(|a| a as Rc<dyn agent_servers::AcpAgentServer>)
+            })
+            .or_else(|_| {
+                agent
+                    .clone()
+                    .into_any()
+                    .downcast::<agent_servers::Codex>()
+                    .map(|a| a as Rc<dyn agent_servers::AcpAgentServer>)
+            })
+            .or_else(|_| {
+                agent
+                    .clone()
+                    .into_any()
+                    .downcast::<agent_servers::CustomAgentServer>()
+                    .map(|a| a as Rc<dyn agent_servers::AcpAgentServer>)
+            })
+            .ok();
+
         Self {
             agent: agent.clone(),
+            acp_agent,
             workspace: workspace.clone(),
             project: project.clone(),
             entry_view_state,
@@ -1053,18 +1084,23 @@ impl AcpThreadView {
         let text = self.message_editor.read(cx).text(cx);
         let text = text.trim();
 
-        // Check if this is a login or logout command
+        // Check if this is a login or logout command (only for ACP agents)
         let command_name = text.strip_prefix('/');
         let is_remote = self.project.read(cx).is_via_remote_server();
-        let login_commands = if is_remote {
-            self.agent.remote_login_commands()
+        let (login_commands, logout_commands) = if let Some(acp_agent) = &self.acp_agent {
+            let login = if is_remote {
+                acp_agent.remote_login_commands()
+            } else {
+                acp_agent.local_login_commands()
+            };
+            let logout = if is_remote {
+                acp_agent.remote_logout_commands()
+            } else {
+                acp_agent.local_logout_commands()
+            };
+            (login, logout)
         } else {
-            self.agent.local_login_commands()
-        };
-        let logout_commands = if is_remote {
-            self.agent.remote_logout_commands()
-        } else {
-            self.agent.local_logout_commands()
+            (vec![], vec![])
         };
         let is_login_command = if let Some(cmd) = command_name {
             login_commands.iter().any(|c| c == cmd)
@@ -1449,36 +1485,39 @@ impl AcpThreadView {
             AcpThreadEvent::AvailableCommandsUpdated(available_commands) => {
                 let mut available_commands = available_commands.clone();
 
-                let is_remote = self.project.read(cx).is_via_remote_server();
-                let login_commands = if is_remote {
-                    self.agent.remote_login_commands()
-                } else {
-                    self.agent.local_login_commands()
-                };
-                let logout_commands = if is_remote {
-                    self.agent.remote_logout_commands()
-                } else {
-                    self.agent.local_logout_commands()
-                };
+                // Add auth commands only for ACP agents
+                if let Some(acp_agent) = &self.acp_agent {
+                    let is_remote = self.project.read(cx).is_via_remote_server();
+                    let login_commands = if is_remote {
+                        acp_agent.remote_login_commands()
+                    } else {
+                        acp_agent.local_login_commands()
+                    };
+                    let logout_commands = if is_remote {
+                        acp_agent.remote_logout_commands()
+                    } else {
+                        acp_agent.local_logout_commands()
+                    };
 
-                // Add login commands from the agent
-                for command_name in login_commands {
-                    available_commands.push(acp::AvailableCommand {
-                        name: command_name,
-                        description: "Authenticate".to_owned(),
-                        input: None,
-                        meta: None,
-                    });
-                }
+                    // Add login commands from the agent
+                    for command_name in login_commands {
+                        available_commands.push(acp::AvailableCommand {
+                            name: command_name,
+                            description: "Authenticate".to_owned(),
+                            input: None,
+                            meta: None,
+                        });
+                    }
 
-                // Add logout commands from the agent
-                for command_name in logout_commands {
-                    available_commands.push(acp::AvailableCommand {
-                        name: command_name,
-                        description: "Authenticate".to_owned(),
-                        input: None,
-                        meta: None,
-                    });
+                    // Add logout commands from the agent
+                    for command_name in logout_commands {
+                        available_commands.push(acp::AvailableCommand {
+                            name: command_name,
+                            description: "Authenticate".to_owned(),
+                            input: None,
+                            meta: None,
+                        });
+                    }
                 }
 
                 self.available_commands.replace(available_commands);
@@ -6048,22 +6087,6 @@ pub(crate) mod tests {
 
         fn name(&self) -> SharedString {
             "Test".into()
-        }
-
-        fn local_login_commands(&self) -> Vec<String> {
-            vec![]
-        }
-
-        fn remote_login_commands(&self) -> Vec<String> {
-            vec![]
-        }
-
-        fn local_logout_commands(&self) -> Vec<String> {
-            vec![]
-        }
-
-        fn remote_logout_commands(&self) -> Vec<String> {
-            vec![]
         }
 
         fn connect(

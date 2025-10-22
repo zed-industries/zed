@@ -68,26 +68,6 @@ pub trait AgentServer: Send {
     ) {
     }
 
-    /// Returns the list of slash commands that should trigger Zed's authentication UI
-    /// when running locally (e.g., "/login").
-    /// These commands will be intercepted by Zed to show the auth method selection UI.
-    fn local_login_commands(&self) -> Vec<String>;
-
-    /// Returns the list of slash commands that should trigger Zed's authentication UI
-    /// when running remotely (e.g., "/login").
-    /// These commands will be intercepted by Zed to show the auth method selection UI.
-    fn remote_login_commands(&self) -> Vec<String>;
-
-    /// Returns the list of logout-related slash commands that should be sent to the agent
-    /// when running locally to let it reset internal state (e.g., "/logout").
-    /// These commands will be added to available_commands and passed through to the agent.
-    fn local_logout_commands(&self) -> Vec<String>;
-
-    /// Returns the list of logout-related slash commands that should be sent to the agent
-    /// when running remotely to let it reset internal state (e.g., "/logout").
-    /// These commands will be added to available_commands and passed through to the agent.
-    fn remote_logout_commands(&self) -> Vec<String>;
-
     fn connect(
         &self,
         root_dir: Option<&Path>,
@@ -107,6 +87,30 @@ impl dyn AgentServer {
     pub fn downcast<T: 'static + AgentServer + Sized>(self: Rc<Self>) -> Option<Rc<T>> {
         self.into_any().downcast().ok()
     }
+}
+
+/// Extension trait for ACP-specific agent capabilities.
+/// This trait is only implemented by agents that use the Agent Client Protocol (ACP).
+pub trait AcpAgentServer: AgentServer {
+    /// Returns the list of slash commands that should trigger Zed's authentication UI
+    /// when running locally (e.g., "/login").
+    /// These commands will be intercepted by Zed to show the auth method selection UI.
+    fn local_login_commands(&self) -> Vec<String>;
+
+    /// Returns the list of slash commands that should trigger Zed's authentication UI
+    /// when running remotely (e.g., "/login").
+    /// These commands will be intercepted by Zed to show the auth method selection UI.
+    fn remote_login_commands(&self) -> Vec<String>;
+
+    /// Returns the list of logout-related slash commands that should be sent to the agent
+    /// when running locally to let it reset internal state (e.g., "/logout").
+    /// These commands will be added to available_commands and passed through to the agent.
+    fn local_logout_commands(&self) -> Vec<String>;
+
+    /// Returns the list of logout-related slash commands that should be sent to the agent
+    /// when running remotely to let it reset internal state (e.g., "/logout").
+    /// These commands will be added to available_commands and passed through to the agent.
+    fn remote_logout_commands(&self) -> Vec<String>;
 }
 
 /// Load the default proxy environment variables to pass through to the agent
