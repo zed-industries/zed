@@ -93,6 +93,11 @@ impl Chunk {
     pub fn tabs(&self) -> Bitmap {
         self.tabs
     }
+
+    #[inline(always)]
+    pub fn is_char_boundary(&self, offset: usize) -> bool {
+        (1 as Bitmap).unbounded_shl(offset as u32) & self.chars != 0 || offset == self.text.len()
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -123,8 +128,8 @@ impl<'a> ChunkSlice<'a> {
     }
 
     #[inline(always)]
-    pub fn is_char_boundary(self, offset: usize) -> bool {
-        self.text.is_char_boundary(offset)
+    pub fn is_char_boundary(&self, offset: usize) -> bool {
+        (1 as Bitmap).unbounded_shl(offset as u32) & self.chars != 0 || offset == self.text.len()
     }
 
     #[inline(always)]
