@@ -2016,9 +2016,9 @@ mod tests {
                 &r#"{
                     "code_actions_on_format": {
                         "foo": true
-                    }
-                }
-                "#
+                    },
+                    "formatter": []
+                }"#
                 .unindent(),
             ),
         );
@@ -2053,6 +2053,7 @@ mod tests {
             .unindent(),
             Some(
                 &r#"{
+                    "formatter": [],
                     "code_actions_on_format": {
                         "foo": true,
                         "bar": true,
@@ -2080,6 +2081,7 @@ mod tests {
             .unindent(),
             Some(
                 &r#"{
+                    "formatter": [],
                     "code_actions_on_format": {
                         "foo": true,
                         "qux": true,
