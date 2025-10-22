@@ -150,11 +150,22 @@ pub struct AgentServerManifestEntry {
     /// Command-line arguments to pass to the agent server.
     #[serde(default)]
     pub args: Vec<String>,
-    /// Optional login command configuration for interactive authentication.
-    /// This is used for agents that require OAuth or other terminal-based login flows.
-    /// When specified, users can run `/login` to authenticate with the agent.
+    /// Terminal-based authentication commands for specific auth methods.
+    ///
+    /// Each entry maps an ACP auth method ID (returned by the agent in its `InitializeResponse`)
+    /// to the terminal command that should be run when that auth method requires interactive
+    /// authentication. This is typically used for OAuth flows or credential entry that can't
+    /// happen over the ACP protocol itself.
+    ///
+    /// When an auth method from this list is triggered (either by the user clicking it in the UI
+    /// or when the agent requires authentication), Zed will spawn the specified terminal command
+    /// instead of calling the ACP `authenticate` method.
+    ///
+    /// Multiple auth methods can be configured, each with their own terminal command.
+    /// If an auth method doesn't appear in this list, Zed will use the standard ACP
+    /// `authenticate` call for it.
     #[serde(default)]
-    pub login: Option<AgentServerLogin>,
+    pub auth_commands: Vec<AgentServerAuthCommand>,
     /// Whether to skip checking for system-installed versions of this agent.
     /// When true, always uses the extension-installed version.
     #[serde(default)]
@@ -179,17 +190,56 @@ pub enum AgentServerLauncher {
     },
 }
 
-/// Configuration for an agent's login command.
+/// Configuration for a terminal-based authentication command.
 ///
-/// This defines a separate terminal command that runs for authentication purposes.
-/// The login command is executed outside of the ACP protocol, typically in a terminal
-/// panel where the user can interact with an OAuth flow or enter credentials.
+/// This defines a separate terminal command that runs for authentication purposes,
+/// mapped to a specific ACP auth method ID. The command is executed outside of the
+/// ACP protocol, typically in a terminal panel where the user can interact with an
+/// OAuth flow or enter credentials.
 ///
-/// Examples:
-/// - For agents that use the same binary: leave `command` as `None` and specify different `args`
-/// - For agents with separate auth tools: set `command` to point to the auth binary
+/// # Relationship to ACP Auth Methods
+///
+/// The agent declares its available auth methods in the ACP `InitializeResponse`.
+/// Each auth method has an ID (e.g., "oauth-personal", "claude-login") that the user
+/// can select. Most auth methods use the standard ACP `authenticate` call. However,
+/// some auth methods (particularly OAuth flows) need to run in a terminal for user
+/// interaction. This struct maps those specific auth method IDs to their terminal commands.
+///
+/// # Examples
+///
+/// **Gemini-style (same binary, different args):**
+/// ```toml
+/// [[agent_servers.my-gemini.auth_commands]]
+/// auth_method_id = "oauth-personal"
+/// label = "gemini /auth"
+/// # No command override - runs the same binary but without --experimental-acp
+/// ```
+///
+/// **Claude-style (different script from same package):**
+/// ```toml
+/// [[agent_servers.my-claude.auth_commands]]
+/// auth_method_id = "claude-login"
+/// label = "claude /login"
+/// args = ["node_modules/@anthropic-ai/claude-agent-sdk/cli.js", "/login"]
+/// ```
+///
+/// **Separate auth binary:**
+/// ```toml
+/// [[agent_servers.my-agent.auth_commands]]
+/// auth_method_id = "oauth"
+/// label = "my-agent login"
+/// command = "my-agent-auth"
+/// args = ["--interactive"]
+/// ```
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
-pub struct AgentServerLogin {
+pub struct AgentServerAuthCommand {
+    /// The ACP auth method ID this command is for (e.g., "oauth-personal", "claude-login").
+    ///
+    /// This must exactly match an auth method ID that the agent returns in its
+    /// `InitializeResponse.auth_methods` array. When the user selects this auth method
+    /// and it requires terminal interaction, Zed will execute this command instead of
+    /// calling the ACP `authenticate` method.
+    pub auth_method_id: String,
     /// Label displayed to the user (e.g., "gemini /auth" or "claude /login").
     pub label: String,
     /// Optional override for the command to run.
@@ -197,11 +247,11 @@ pub struct AgentServerLogin {
     /// If `Some`, uses the specified command instead (e.g., a separate auth tool).
     #[serde(default)]
     pub command: Option<String>,
-    /// Arguments to pass to the login command.
+    /// Arguments to pass to the auth command.
     /// For npm agents without a custom command, this can specify a different JS file to run.
     #[serde(default)]
     pub args: Vec<String>,
-    /// Additional environment variables for the login command.
+    /// Additional environment variables for the auth command.
     #[serde(default)]
     pub env: HashMap<String, String>,
 }
@@ -526,12 +576,13 @@ args = ["--acp"]
 [agent_servers.my-agent.launcher]
 bin_name = "my-agent"
 
-[agent_servers.my-agent.login]
+[[agent_servers.my-agent.auth_commands]]
+auth_method_id = "oauth"
 label = "my-agent login"
 command = "my-agent-auth"
 args = ["--interactive"]
 
-[agent_servers.my-agent.login.env]
+[agent_servers.my-agent.auth_commands.env]
 AUTH_MODE = "oauth"
 
 [agent_servers.gemini-style]
@@ -542,7 +593,8 @@ package = "@example/gemini-fork"
 entrypoint = "node_modules/@example/gemini-fork/dist/index.js"
 min_version = "0.9.0"
 
-[agent_servers.gemini-style.login]
+[[agent_servers.gemini-style.auth_commands]]
+auth_method_id = "oauth-personal"
 label = "gemini /auth"
 # No command - uses same node + entrypoint but without --experimental-acp
 "#;
@@ -550,21 +602,23 @@ label = "gemini /auth"
         let manifest: ExtensionManifest = toml::from_str(toml_src).expect("manifest should parse");
         assert_eq!(manifest.id.as_ref(), "example.agent-with-login");
 
-        // Test binary agent with custom login command
+        // Test binary agent with custom auth command
         let binary_agent = manifest.agent_servers.get("my-agent").unwrap();
-        assert!(binary_agent.login.is_some());
-        let login = binary_agent.login.as_ref().unwrap();
-        assert_eq!(login.label, "my-agent login");
-        assert_eq!(login.command, Some("my-agent-auth".to_string()));
-        assert_eq!(login.args, vec!["--interactive"]);
-        assert_eq!(login.env.get("AUTH_MODE"), Some(&"oauth".to_string()));
+        assert_eq!(binary_agent.auth_commands.len(), 1);
+        let auth_cmd = &binary_agent.auth_commands[0];
+        assert_eq!(auth_cmd.auth_method_id, "oauth");
+        assert_eq!(auth_cmd.label, "my-agent login");
+        assert_eq!(auth_cmd.command, Some("my-agent-auth".to_string()));
+        assert_eq!(auth_cmd.args, vec!["--interactive"]);
+        assert_eq!(auth_cmd.env.get("AUTH_MODE"), Some(&"oauth".to_string()));
 
-        // Test NPM agent with default login command
+        // Test NPM agent with default auth command
         let npm_agent = manifest.agent_servers.get("gemini-style").unwrap();
-        assert!(npm_agent.login.is_some());
-        let npm_login = npm_agent.login.as_ref().unwrap();
-        assert_eq!(npm_login.label, "gemini /auth");
-        assert_eq!(npm_login.command, None); // Uses main command
-        assert!(npm_login.args.is_empty());
+        assert_eq!(npm_agent.auth_commands.len(), 1);
+        let npm_auth_cmd = &npm_agent.auth_commands[0];
+        assert_eq!(npm_auth_cmd.auth_method_id, "oauth-personal");
+        assert_eq!(npm_auth_cmd.label, "gemini /auth");
+        assert_eq!(npm_auth_cmd.command, None); // Uses main command
+        assert!(npm_auth_cmd.args.is_empty());
     }
 }

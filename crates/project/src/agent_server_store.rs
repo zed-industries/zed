@@ -249,7 +249,7 @@ mod ext_agent_tests {
             bin_name: gpui::SharedString::from("mybin"),
             args: vec!["--foo".into()],
             env: super::HashMap::default(),
-            login: None,
+            auth_commands: Vec::new(),
         };
 
         // Ensure PATH contains our temp directory so which::which_in can find it
@@ -304,7 +304,7 @@ mod ext_agent_tests_additional {
                 },
                 env: Default::default(),
                 args: Vec::new(),
-                login: None,
+                auth_commands: Vec::new(),
                 ignore_system_version: None,
             },
         );
@@ -489,7 +489,7 @@ impl AgentServerStore {
                                         bin_name: SharedString::from(bin_name.clone()),
                                         args: agent_entry.args.clone(),
                                         env: agent_entry.env.clone(),
-                                        login: agent_entry.login.clone(),
+                                        auth_commands: agent_entry.auth_commands.clone(),
                                     })
                                         as Box<dyn ExternalAgentServer>,
                                 );
@@ -512,7 +512,7 @@ impl AgentServerStore {
                                         min_version: Some(min_version.clone()),
                                         args: agent_entry.args.clone(),
                                         env: agent_entry.env.clone(),
-                                        login: agent_entry.login.clone(),
+                                        auth_commands: agent_entry.auth_commands.clone(),
                                         ignore_system_version: agent_entry
                                             .ignore_system_version
                                             .unwrap_or(false),
@@ -538,7 +538,7 @@ impl AgentServerStore {
                                         binary_name: Some(binary_name.clone()),
                                         args: agent_entry.args.clone(),
                                         env: agent_entry.env.clone(),
-                                        login: agent_entry.login.clone(),
+                                        auth_commands: agent_entry.auth_commands.clone(),
                                         ignore_system_version: agent_entry
                                             .ignore_system_version
                                             .unwrap_or(false),
@@ -1602,7 +1602,7 @@ struct LocalExtensionBinaryAgent {
     bin_name: SharedString,
     args: Vec<String>,
     env: HashMap<String, String>,
-    login: Option<extension::AgentServerLogin>,
+    auth_commands: Vec<extension::AgentServerAuthCommand>,
 }
 
 struct LocalExtensionNpmAgent {
@@ -1616,7 +1616,7 @@ struct LocalExtensionNpmAgent {
     min_version: Option<String>,
     args: Vec<String>,
     env: HashMap<String, String>,
-    login: Option<extension::AgentServerLogin>,
+    auth_commands: Vec<extension::AgentServerAuthCommand>,
     ignore_system_version: bool,
 }
 
@@ -1631,7 +1631,7 @@ struct LocalExtensionGithubReleaseAgent {
     binary_name: Option<String>,
     args: Vec<String>,
     env: HashMap<String, String>,
-    login: Option<extension::AgentServerLogin>,
+    auth_commands: Vec<extension::AgentServerAuthCommand>,
     ignore_system_version: bool,
 }
 
@@ -1654,7 +1654,7 @@ impl ExternalAgentServer for LocalExtensionBinaryAgent {
         let mut base_env = self.env.clone();
         base_env.extend(extra_env);
         let project_environment = self.project_environment.downgrade();
-        let login_config = self.login.clone();
+        let auth_commands = self.auth_commands.clone();
 
         let root_dir: Arc<Path> = root_dir
             .map(|root_dir| Path::new(root_dir))
@@ -1692,21 +1692,22 @@ impl ExternalAgentServer for LocalExtensionBinaryAgent {
                 env: Some(merged_env),
             };
 
-            let login = login_config.as_ref().map(|login_config| {
-                let login_command = if let Some(ref custom_cmd) = login_config.command {
+            // TODO: Select appropriate auth command based on ACP auth method
+            let login = auth_commands.first().map(|auth_cmd| {
+                let login_command = if let Some(ref custom_cmd) = auth_cmd.command {
                     custom_cmd.clone()
                 } else {
                     command.path.to_string_lossy().into_owned()
                 };
 
                 let mut login_env = command.env.clone().unwrap_or_default();
-                login_env.extend(login_config.env.clone());
+                login_env.extend(auth_cmd.env.clone());
 
                 task::SpawnInTerminal {
                     command: Some(login_command),
-                    args: login_config.args.clone(),
+                    args: auth_cmd.args.clone(),
                     env: login_env,
-                    label: login_config.label.clone(),
+                    label: auth_cmd.label.clone(),
                     ..Default::default()
                 }
             });
@@ -1740,7 +1741,7 @@ impl ExternalAgentServer for LocalExtensionNpmAgent {
         let args = self.args.clone();
         let base_env = self.env.clone();
         let ignore_system_version = self.ignore_system_version;
-        let login_config = self.login.clone();
+        let auth_commands = self.auth_commands.clone();
 
         let root_dir: Arc<Path> = root_dir
             .map(|root_dir| Path::new(root_dir))
@@ -1823,26 +1824,26 @@ impl ExternalAgentServer for LocalExtensionNpmAgent {
             };
 
             // Build login command before modifying command
-            let login = login_config.as_ref().map(|login_config| {
-                let (login_command, login_args) = if let Some(ref custom_cmd) = login_config.command
-                {
-                    (custom_cmd.clone(), login_config.args.clone())
+            // TODO: Select appropriate auth command based on ACP auth method
+            let login = auth_commands.first().map(|auth_cmd| {
+                let (login_command, login_args) = if let Some(ref custom_cmd) = auth_cmd.command {
+                    (custom_cmd.clone(), auth_cmd.args.clone())
                 } else {
                     // Default: use node runtime with args as the entrypoint override
                     (
                         command.path.to_string_lossy().into_owned(),
-                        login_config.args.clone(),
+                        auth_cmd.args.clone(),
                     )
                 };
 
                 let mut login_env = env.clone();
-                login_env.extend(login_config.env.clone());
+                login_env.extend(auth_cmd.env.clone());
 
                 task::SpawnInTerminal {
                     command: Some(login_command),
                     args: login_args,
                     env: login_env,
-                    label: login_config.label.clone(),
+                    label: auth_cmd.label.clone(),
                     ..Default::default()
                 }
             });
@@ -1879,7 +1880,7 @@ impl ExternalAgentServer for LocalExtensionGithubReleaseAgent {
         let args = self.args.clone();
         let base_env = self.env.clone();
         let ignore_system_version = self.ignore_system_version;
-        let login_config = self.login.clone();
+        let auth_commands = self.auth_commands.clone();
 
         let root_dir: Arc<Path> = root_dir
             .map(|root_dir| Path::new(root_dir))
@@ -1990,21 +1991,22 @@ impl ExternalAgentServer for LocalExtensionGithubReleaseAgent {
             );
 
             // Build login command before constructing main command
-            let login = login_config.as_ref().map(|login_config| {
-                let login_command = if let Some(ref custom_cmd) = login_config.command {
+            // TODO: Select appropriate auth command based on ACP auth method
+            let login = auth_commands.first().map(|auth_cmd| {
+                let login_command = if let Some(ref custom_cmd) = auth_cmd.command {
                     custom_cmd.clone()
                 } else {
                     bin_path.to_string_lossy().into_owned()
                 };
 
                 let mut login_env = env.clone();
-                login_env.extend(login_config.env.clone());
+                login_env.extend(auth_cmd.env.clone());
 
                 task::SpawnInTerminal {
                     command: Some(login_command),
-                    args: login_config.args.clone(),
+                    args: auth_cmd.args.clone(),
                     env: login_env,
-                    label: login_config.label.clone(),
+                    label: auth_cmd.label.clone(),
                     ..Default::default()
                 }
             });
@@ -2218,7 +2220,7 @@ mod npm_launcher_tests {
                 map.insert("FOO".into(), "bar".into());
                 map
             },
-            login: None,
+            auth_commands: Vec::new(),
             ignore_system_version: false,
         };
 
@@ -2257,7 +2259,7 @@ mod npm_launcher_tests {
             },
             env,
             args: vec!["--flag".into()],
-            login: None,
+            auth_commands: Vec::new(),
             ignore_system_version: None,
         };
     }
@@ -2279,7 +2281,7 @@ mod npm_launcher_tests {
             },
             env,
             args: vec!["--custom-arg".into()],
-            login: None,
+            auth_commands: Vec::new(),
             ignore_system_version: None,
         };
     }
@@ -2382,7 +2384,7 @@ mod npm_launcher_tests {
             },
             env,
             args: vec!["serve".into()],
-            login: None,
+            auth_commands: Vec::new(),
             ignore_system_version: None,
         };
 
@@ -2414,7 +2416,7 @@ mod npm_launcher_tests {
                 map.insert("API_KEY".into(), "secret".into());
                 map
             },
-            login: None,
+            auth_commands: Vec::new(),
             ignore_system_version: false,
         };
 
@@ -2448,17 +2450,18 @@ mod npm_launcher_tests {
             },
             env,
             args: vec!["serve".into(), "--port".into(), "8080".into()],
-            login: None,
+            auth_commands: Vec::new(),
             ignore_system_version: None,
         };
     }
 
     #[test]
-    fn extension_agent_login_configuration() {
-        use extension::{AgentServerLauncher, AgentServerLogin, AgentServerManifestEntry};
+    fn extension_agent_auth_commands_configuration() {
+        use extension::{AgentServerAuthCommand, AgentServerLauncher, AgentServerManifestEntry};
 
-        // Test login configuration with custom command
-        let login_with_custom_cmd = AgentServerLogin {
+        // Test auth command configuration with custom command
+        let auth_cmd_with_custom = AgentServerAuthCommand {
+            auth_method_id: "oauth".into(),
             label: "my-agent login".into(),
             command: Some("my-agent-auth".into()),
             args: vec!["--interactive".into()],
@@ -2469,32 +2472,34 @@ mod npm_launcher_tests {
             },
         };
 
-        let entry_with_login = AgentServerManifestEntry {
+        let entry_with_auth = AgentServerManifestEntry {
             launcher: AgentServerLauncher::Binary {
                 bin_name: "my-agent".into(),
             },
             env: HashMap::default(),
             args: vec!["--acp".into()],
-            login: Some(login_with_custom_cmd.clone()),
+            auth_commands: vec![auth_cmd_with_custom.clone()],
             ignore_system_version: None,
         };
 
-        assert!(entry_with_login.login.is_some());
-        let login = entry_with_login.login.unwrap();
-        assert_eq!(login.label, "my-agent login");
-        assert_eq!(login.command, Some("my-agent-auth".into()));
-        assert_eq!(login.args, vec!["--interactive"]);
-        assert_eq!(login.env.get("AUTH_MODE"), Some(&"oauth".to_string()));
+        assert_eq!(entry_with_auth.auth_commands.len(), 1);
+        let auth_cmd = &entry_with_auth.auth_commands[0];
+        assert_eq!(auth_cmd.auth_method_id, "oauth");
+        assert_eq!(auth_cmd.label, "my-agent login");
+        assert_eq!(auth_cmd.command, Some("my-agent-auth".into()));
+        assert_eq!(auth_cmd.args, vec!["--interactive"]);
+        assert_eq!(auth_cmd.env.get("AUTH_MODE"), Some(&"oauth".to_string()));
 
-        // Test login configuration without custom command (uses main binary)
-        let login_no_custom_cmd = AgentServerLogin {
+        // Test auth command without custom command (uses main binary)
+        let auth_cmd_no_custom = AgentServerAuthCommand {
+            auth_method_id: "oauth-personal".into(),
             label: "gemini /auth".into(),
             command: None,
             args: vec![],
             env: HashMap::default(),
         };
 
-        let npm_entry_with_login = AgentServerManifestEntry {
+        let npm_entry_with_auth = AgentServerManifestEntry {
             launcher: AgentServerLauncher::Npm {
                 package: "@google/gemini-cli".into(),
                 entrypoint: "dist/index.js".into(),
@@ -2502,14 +2507,15 @@ mod npm_launcher_tests {
             },
             env: HashMap::default(),
             args: vec!["--experimental-acp".into()],
-            login: Some(login_no_custom_cmd),
+            auth_commands: vec![auth_cmd_no_custom],
             ignore_system_version: None,
         };
 
-        assert!(npm_entry_with_login.login.is_some());
-        let npm_login = npm_entry_with_login.login.unwrap();
-        assert_eq!(npm_login.label, "gemini /auth");
-        assert_eq!(npm_login.command, None); // Uses main command
-        assert!(npm_login.args.is_empty());
+        assert_eq!(npm_entry_with_auth.auth_commands.len(), 1);
+        let npm_auth_cmd = &npm_entry_with_auth.auth_commands[0];
+        assert_eq!(npm_auth_cmd.auth_method_id, "oauth-personal");
+        assert_eq!(npm_auth_cmd.label, "gemini /auth");
+        assert_eq!(npm_auth_cmd.command, None); // Uses main command
+        assert!(npm_auth_cmd.args.is_empty());
     }
 }
