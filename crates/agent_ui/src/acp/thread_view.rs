@@ -3268,48 +3268,34 @@ impl AcpThreadView {
                             })
                             .children(connection.auth_methods().iter().enumerate().rev().map(
                                 |(ix, method)| {
-                                    let (method_id, name) = if self
-                                        .project
-                                        .read(cx)
-                                        .is_via_remote_server()
-                                        && method.id.0.as_ref() == "oauth-personal"
-                                        && method.name == "Log in with Google"
-                                    {
-                                        ("spawn-gemini-cli".into(), "Log in with Gemini CLI".into())
-                                    } else {
-                                        (method.id.0.clone(), method.name.clone())
-                                    };
+                                    let method_id = method.id.clone();
+                                    let method_id_str = method.id.0.to_string();
+                                    Button::new(
+                                        SharedString::from(method.id.0.clone()),
+                                        method.name.clone(),
+                                    )
+                                    .label_size(LabelSize::Small)
+                                    .map(|this| {
+                                        if ix == 0 {
+                                            this.style(ButtonStyle::Tinted(TintColor::Warning))
+                                        } else {
+                                            this.style(ButtonStyle::Outlined)
+                                        }
+                                    })
+                                    .when_some(method.description.clone(), |this, description| {
+                                        this.tooltip(Tooltip::text(description))
+                                    })
+                                    .on_click({
+                                        cx.listener(move |this, _, window, cx| {
+                                            telemetry::event!(
+                                                "Authenticate Agent Started",
+                                                agent = this.agent.telemetry_id(),
+                                                method = method_id_str
+                                            );
 
-                                    Button::new(SharedString::from(method_id.clone()), name)
-                                        .label_size(LabelSize::Small)
-                                        .map(|this| {
-                                            if ix == 0 {
-                                                this.style(ButtonStyle::Tinted(TintColor::Warning))
-                                            } else {
-                                                this.style(ButtonStyle::Outlined)
-                                            }
+                                            this.authenticate(method_id.clone(), window, cx)
                                         })
-                                        .when_some(
-                                            method.description.clone(),
-                                            |this, description| {
-                                                this.tooltip(Tooltip::text(description))
-                                            },
-                                        )
-                                        .on_click({
-                                            cx.listener(move |this, _, window, cx| {
-                                                telemetry::event!(
-                                                    "Authenticate Agent Started",
-                                                    agent = this.agent.telemetry_id(),
-                                                    method = method_id
-                                                );
-
-                                                this.authenticate(
-                                                    acp::AuthMethodId(method_id.clone()),
-                                                    window,
-                                                    cx,
-                                                )
-                                            })
-                                        })
+                                    })
                                 },
                             )),
                     )

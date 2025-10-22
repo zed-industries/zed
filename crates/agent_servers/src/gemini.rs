@@ -53,7 +53,7 @@ impl AgentServer for Gemini {
             {
                 extra_env.insert("GEMINI_API_KEY".into(), api_key);
             }
-            let (command, root_dir, auth_commands) = store
+            let (command, root_dir, mut auth_commands) = store
                 .update(cx, |store, cx| {
                     let agent = store
                         .get_external_agent(&GEMINI_NAME.into())
@@ -67,6 +67,14 @@ impl AgentServer for Gemini {
                     ))
                 })??
                 .await?;
+
+            // When remote, OAuth doesn't work, so we need to use the terminal-based login
+            // for oauth-personal. Map it to the same terminal command as spawn-gemini-cli.
+            if is_remote {
+                if let Some(spawn_gemini_cli) = auth_commands.get("spawn-gemini-cli").cloned() {
+                    auth_commands.insert("oauth-personal".to_string(), spawn_gemini_cli);
+                }
+            }
 
             let connection = crate::acp::connect(
                 name,
