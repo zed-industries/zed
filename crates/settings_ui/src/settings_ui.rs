@@ -12,7 +12,7 @@ use gpui::{
     uniform_list,
 };
 use heck::ToTitleCase as _;
-use project::WorktreeId;
+use project::{Project, WorktreeId};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use settings::{Settings, SettingsContent, SettingsStore};
@@ -33,7 +33,7 @@ use ui::{
 };
 use ui_input::{NumberField, NumberFieldType};
 use util::{ResultExt as _, paths::PathStyle, rel_path::RelPath};
-use workspace::{OpenOptions, OpenVisible, Workspace, client_side_decorations};
+use workspace::{AppState, OpenOptions, OpenVisible, Workspace, client_side_decorations};
 use zed_actions::{OpenSettings, OpenSettingsAt};
 
 use crate::components::{SettingsInputField, font_picker, icon_theme_picker, theme_picker};
@@ -559,7 +559,6 @@ pub fn open_settings_editor(
         existing_window
             .update(cx, |settings_window, window, cx| {
                 settings_window.original_window = Some(workspace_handle);
-                settings_window.observe_last_window_close(cx);
                 window.activate_window();
                 if let Some(path) = path {
                     open_path(path, settings_window, window, cx);
@@ -1016,7 +1015,7 @@ impl std::fmt::Debug for FileMask {
         if self.contains(USER) {
             items.push("USER");
         }
-        if self.contains(LOCAL) {
+        if self.contains(PROJECT) {
             items.push("LOCAL");
         }
         if self.contains(SERVER) {
@@ -1028,7 +1027,7 @@ impl std::fmt::Debug for FileMask {
 }
 
 const USER: FileMask = FileMask(1 << 0);
-const LOCAL: FileMask = FileMask(1 << 2);
+const PROJECT: FileMask = FileMask(1 << 2);
 const SERVER: FileMask = FileMask(1 << 3);
 
 impl std::ops::BitAnd for FileMask {
@@ -1138,14 +1137,14 @@ impl SettingsUiFile {
     fn mask(&self) -> FileMask {
         match self {
             SettingsUiFile::User => USER,
-            SettingsUiFile::Project(_) => LOCAL,
+            SettingsUiFile::Project(_) => PROJECT,
             SettingsUiFile::Server(_) => SERVER,
         }
     }
 }
 
 impl SettingsWindow {
-    pub fn new(
+    fn new(
         original_window: Option<WindowHandle<Workspace>>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -1181,6 +1180,44 @@ impl SettingsWindow {
             cx.notify();
         })
         .detach();
+
+        cx.on_window_closed(|cx| {
+            if let Some(existing_window) = cx
+                .windows()
+                .into_iter()
+                .find_map(|window| window.downcast::<SettingsWindow>())
+                && cx.windows().len() == 1
+            {
+                cx.update_window(*existing_window, |_, window, _| {
+                    window.remove_window();
+                })
+                .ok();
+            }
+        })
+        .detach();
+
+        if let Some(app_state) = AppState::global(cx).upgrade() {
+            for project in app_state
+                .workspace_store
+                .read(cx)
+                .workspaces()
+                .iter()
+                .filter_map(|space| {
+                    space
+                        .read(cx)
+                        .ok()
+                        .map(|workspace| workspace.project().clone())
+                })
+                .collect::<Vec<_>>()
+            {
+                cx.subscribe_in(&project, window, Self::handle_project_event)
+                    .detach();
+            }
+        } else {
+            log::error!("App state doesn't exist when creating a new settings window");
+        }
+
+        cx.subscribe_in_new(Self::handle_project_event).detach();
 
         let title_bar = if !cfg!(target_os = "macos") {
             Some(cx.new(|cx| PlatformTitleBar::new("settings-title-bar", cx)))
@@ -1232,8 +1269,6 @@ impl SettingsWindow {
             list_state,
         };
 
-        this.observe_last_window_close(cx);
-
         this.fetch_files(window, cx);
         this.build_ui(window, cx);
         this.build_search_index();
@@ -1245,21 +1280,27 @@ impl SettingsWindow {
         this
     }
 
-    fn observe_last_window_close(&mut self, cx: &mut App) {
-        cx.on_window_closed(|cx| {
-            if let Some(existing_window) = cx
-                .windows()
-                .into_iter()
-                .find_map(|window| window.downcast::<SettingsWindow>())
-                && cx.windows().len() == 1
-            {
-                cx.update_window(*existing_window, |_, window, _| {
-                    window.remove_window();
-                })
-                .ok();
+    fn handle_project_event(
+        &mut self,
+        _: &Entity<Project>,
+        event: &project::Event,
+        window: &mut Window,
+        cx: &mut Context<SettingsWindow>,
+    ) {
+        match event {
+            project::Event::WorktreeRemoved(_) | project::Event::WorktreeAdded(_) => {
+                cx.defer_in(window, |this, window, cx| {
+                    this.fetch_files(window, cx);
+                    dbg!(
+                        this.files
+                            .iter()
+                            .map(|file| this.display_name(&file.0))
+                            .collect::<Vec<_>>()
+                    );
+                });
             }
-        })
-        .detach();
+            _ => {}
+        }
     }
 
     fn toggle_navbar_entry(&mut self, nav_entry_index: usize) {
@@ -1702,7 +1743,7 @@ impl SettingsWindow {
             .iter()
             .any(|(file, _)| file == &self.current_file);
         if !current_file_still_exists {
-            self.change_file(0, window, false, cx);
+            self.change_file(0, false, window, cx);
         }
     }
 
@@ -1735,8 +1776,8 @@ impl SettingsWindow {
     fn change_file(
         &mut self,
         ix: usize,
-        window: &mut Window,
         drop_down_file: bool,
+        window: &mut Window,
         cx: &mut Context<SettingsWindow>,
     ) {
         if ix >= self.files.len() {
@@ -1785,7 +1826,7 @@ impl SettingsWindow {
                 .on_click(cx.listener({
                     let focus_handle = focus_handle.clone();
                     move |this, _: &gpui::ClickEvent, window, cx| {
-                        this.change_file(ix, window, false, cx);
+                        this.change_file(ix, false, window, cx);
                         focus_handle.focus(window);
                     }
                 }))
@@ -1850,7 +1891,7 @@ impl SettingsWindow {
                                                         move |window, cx| {
                                                             this.update(cx, |this, cx| {
                                                                 this.change_file(
-                                                                    ix, window, true, cx,
+                                                                    ix, true, window, cx,
                                                                 );
                                                             });
                                                             focus_handle.focus(window);

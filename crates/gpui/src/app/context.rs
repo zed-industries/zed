@@ -10,6 +10,7 @@ use std::{
     borrow::{Borrow, BorrowMut},
     future::Future,
     ops,
+    rc::Rc,
     sync::Arc,
 };
 use util::Deferred;
@@ -91,6 +92,80 @@ impl<'a, T: 'static> Context<'a, T> {
         let this = self.entity();
         self.app.observe(&this, move |this, cx| {
             this.update(cx, |this, cx| on_event(this, cx))
+        })
+    }
+
+    /// Subscribe to an event type of another entity whenever a new entity of that type is created
+    pub fn subscribe_in_new<T2, Evt>(
+        &mut self,
+        mut on_event: impl Fn(&mut T, &Entity<T2>, &Evt, &mut Window, &mut Context<T>) + 'static,
+    ) -> Subscription
+    where
+        T: 'static,
+        T2: 'static + EventEmitter<Evt>,
+        Evt: 'static,
+    {
+        let this = self.weak_entity();
+        let on_event = Rc::new(on_event);
+
+        self.app.observe_new::<T2>(move |_, window, cx| {
+            let handle = window.map(|window| window.handle);
+
+            cx.app
+                .subscribe_internal(&cx.entity(), {
+                    let this = this.clone();
+                    let on_event = on_event.clone();
+                    let handle = handle.clone();
+
+                    move |e, event, cx| {
+                        if let Some(this) = this.upgrade()
+                            && let Some(window) = handle
+                        {
+                            window
+                                .update(cx, |_, window, cx| {
+                                    this.update(cx, |this, cx| {
+                                        on_event(this, &e, event, window, cx)
+                                    });
+                                })
+                                .is_ok()
+                        } else {
+                            false
+                        }
+                    }
+                })
+                .detach();
+        })
+    }
+
+    /// Subscribe to an event type of another entity whenever a new entity of that type is created
+    pub fn subscribe_new<T2, Evt>(
+        &mut self,
+        mut on_event: impl Fn(&mut T, Entity<T2>, &Evt, &mut Context<T>) + 'static,
+    ) -> Subscription
+    where
+        T: 'static,
+        T2: 'static + EventEmitter<Evt>,
+        Evt: 'static,
+    {
+        let this = self.weak_entity();
+        let on_event = Rc::new(on_event);
+
+        self.app.observe_new::<T2>(move |_, _, cx| {
+            cx.app
+                .subscribe_internal(&cx.entity(), {
+                    let this = this.clone();
+                    let on_event = on_event.clone();
+
+                    move |e, event, cx| {
+                        if let Some(this) = this.upgrade() {
+                            this.update(cx, |this, cx| on_event(this, e, event, cx));
+                            true
+                        } else {
+                            false
+                        }
+                    }
+                })
+                .detach();
         })
     }
 
