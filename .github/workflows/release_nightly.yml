@@ -281,11 +281,11 @@ jobs:
 
       - name: Build Zed installer
         working-directory: ${{ env.ZED_WORKSPACE }}
-        run: script/bundle-windows.ps1 -Architecture x86_64
+        run: script/bundle-windows.ps1
 
       - name: Upload Zed Nightly
         working-directory: ${{ env.ZED_WORKSPACE }}
-        run: script/upload-nightly.ps1 -Architecture x86_64
+        run: script/upload-nightly.ps1 windows
 
   bundle-windows-arm64:
     timeout-minutes: 60
@@ -328,7 +328,7 @@ jobs:
 
       - name: Upload Zed Nightly
         working-directory: ${{ env.ZED_WORKSPACE }}
-        run: script/upload-nightly.ps1 -Architecture aarch64
+        run: script/upload-nightly.ps1 windows
 
   update-nightly-tag:
     name: Update nightly tag
