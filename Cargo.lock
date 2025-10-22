@@ -3379,6 +3379,7 @@ dependencies = [
  "rpc",
  "scrypt",
  "sea-orm",
+ "sea-orm-macros",
  "semantic_version",
  "semver",
  "serde",

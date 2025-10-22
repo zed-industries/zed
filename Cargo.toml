@@ -901,4 +901,5 @@ ignored = [
     "serde",
     "component",
     "documented",
+    "sea-orm-macros",
 ]
