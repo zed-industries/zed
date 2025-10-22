@@ -491,10 +491,6 @@ impl ProjectPanel {
         let project_panel = cx.new(|cx| {
             let focus_handle = cx.focus_handle();
             cx.on_focus(&focus_handle, window, Self::focus_in).detach();
-            cx.on_focus_out(&focus_handle, window, |this, _, window, cx| {
-                this.focus_out(window, cx);
-            })
-            .detach();
 
             cx.subscribe_in(
                 &git_store,
@@ -944,15 +940,6 @@ impl ProjectPanel {
     fn focus_in(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !self.focus_handle.contains_focused(window, cx) {
             cx.emit(Event::Focus);
-        }
-    }
-
-    fn focus_out(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        println!("meep");
-        if !self.focus_handle.is_focused(window) {
-            if let Some(task) = self.confirm_edit(false, window, cx) {
-                task.detach_and_notify_err(window, cx);
-            }
         }
     }
 
