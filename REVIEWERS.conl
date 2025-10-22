@@ -39,6 +39,7 @@ linux
 
 windows
   = @reflectronic
+  = @localcc
 
 pickers
   = @p1n3appl3
