@@ -422,6 +422,9 @@ impl ShellKind {
     }
 
     pub fn try_quote<'a>(&self, arg: &'a str) -> Option<Cow<'a, str>> {
+        // As of writing, this can only be fail if the path contains a null byte, which shouldn't be possible
+        // but shlex has annotated the error as #[non_exhaustive] so we can't make it a compile error if other
+        // errors are introduced in the future :(
         shlex::try_quote(arg).ok().map(|arg| match self {
             ShellKind::PowerShell => Cow::Owned(arg.replace("\\\"", "`\"").replace("\\\\", "\\")),
             ShellKind::Cmd => Cow::Owned(arg.replace("\\\\", "\\")),
