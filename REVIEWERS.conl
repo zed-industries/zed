@@ -99,3 +99,4 @@ project_panel
 
 tasks
   = @SomeoneToIgnore
+  = @Veykril
