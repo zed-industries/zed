@@ -20838,6 +20838,7 @@ impl Editor {
                             InlayHintRefreshReason::BufferEdited(buffer_id),
                             cx,
                         );
+                        self.refresh_semantic_tokens(Some(buffer_id), cx);
                     }
                 }
 
@@ -20930,11 +20931,9 @@ impl Editor {
             }
             multi_buffer::Event::LanguageChanged(buffer_id) => {
                 self.registered_buffers.remove(&buffer_id);
-                let registered = self.register_buffer(*buffer_id, cx);
-                if registered {
-                    self.update_lsp_data(Some(*buffer_id), window, cx);
-                    self.refresh_semantic_tokens(Some(*buffer_id), cx);
-                }
+                self.register_buffer(*buffer_id, cx);
+                self.update_lsp_data(Some(*buffer_id), window, cx);
+                self.refresh_semantic_tokens(Some(*buffer_id), cx);
                 jsx_tag_auto_close::refresh_enabled_in_any_buffer(self, multibuffer, cx);
                 cx.emit(EditorEvent::Reparsed(*buffer_id));
                 cx.notify();
@@ -22081,128 +22080,7 @@ impl Editor {
 
         self.semantic_tokens_refresh_task = cx.spawn(async move |editor, cx| {
             loop {
-                cx.background_executor()
-                    .timer(Duration::from_millis(50))
-                    .await;
-
-                let buffers_to_process: Vec<BufferId> = {
-                    let mut pending = pending_buffers.lock();
-                    let buffers: Vec<_> = pending.drain().collect();
-                    buffers
-                };
-
-                if buffers_to_process.is_empty() {
-                    *refresh_active.lock() = false;
-                    return;
-                }
-
-                const CHUNK_SIZE: usize = 5;
-                for chunk in buffers_to_process.chunks(CHUNK_SIZE) {
-                    let chunk_tasks: Vec<_> = editor
-                        .update(cx, |editor, cx| {
-                            let mut tasks = Vec::new();
-                            for &buffer_id in chunk {
-                                let Some(buffer) = multibuffer.read(cx).buffer(buffer_id) else {
-                                    continue;
-                                };
-
-                                if editor.pending_semantic_token_requests.contains(&buffer_id) {
-                                    log::trace!("Skipping duplicate semantic token request for buffer {buffer_id}");
-                                    continue;
-                                }
-
-                                log::debug!("Requesting semantic tokens for buffer {buffer_id}");
-                                editor.pending_semantic_token_requests.insert(buffer_id);
-
-                                let project = project.clone();
-                                let task = cx.spawn(async move |editor, cx| {
-                                    let Some(lsp_task) = project
-                                        .update(cx, |project, cx| {
-                                            project
-                                                .lsp_store()
-                                                .update(cx, |store, cx| store.semantic_tokens(buffer, cx))
-                                        })
-                                        .log_err()
-                                    else {
-                                        editor
-                                            .update(cx, |editor, _cx| {
-                                                editor.pending_semantic_token_requests.remove(&buffer_id);
-                                            })
-                                            .log_err();
-                                        return;
-                                    };
-
-                                    match lsp_task.await {
-                                        Ok(tokens) if tokens.server_id.is_some() => {
-                                            log::info!(
-                                                "✓ Semantic tokens received for buffer {buffer_id}, server_id: {:?}",
-                                                tokens.server_id
-                                            );
-                                        }
-                                        Ok(_) => {
-                                            log::debug!(
-                                                "✗ LSP returned empty tokens for buffer {buffer_id} (server not capable yet)"
-                                            );
-                                        }
-                                        Err(e) => {
-                                            log::warn!(
-                                                "✗ Failed to fetch semantic tokens for buffer {buffer_id}: {e:#}"
-                                            );
-                                        }
-                                    }
-
-                                    editor
-                                        .update(cx, |editor, _cx| {
-                                            editor.pending_semantic_token_requests.remove(&buffer_id);
-                                        })
-                                        .log_err();
-                                });
-
-                                tasks.push(task);
-                            }
-                            tasks
-                        })
-                        .log_err()
-                        .unwrap_or_default();
-
-                    for task in chunk_tasks {
-                        task.await;
-                    }
-                }
-            }
-        });
-    }
-
-    fn refresh_semantic_tokens(&mut self, for_buffer: Option<BufferId>, cx: &mut Context<Self>) {
-        let Some(project) = self.project.clone() else {
-            return;
-        };
-
-        let buffer_ids: Vec<BufferId> = if let Some(buffer_id) = for_buffer {
-            vec![buffer_id]
-        } else {
-            self.buffer.read(cx).all_buffer_ids()
-        };
-
-        {
-            let mut pending = self.pending_semantic_token_buffers.lock();
-            pending.extend(buffer_ids);
-        }
-
-        {
-            let mut active = self.semantic_tokens_refresh_active.lock();
-            if *active {
-                return;
-            }
-            *active = true;
-        }
-
-        let pending_buffers = self.pending_semantic_token_buffers.clone();
-        let refresh_active = self.semantic_tokens_refresh_active.clone();
-        let multibuffer = self.buffer.clone();
-
-        self.semantic_tokens_refresh_task = cx.spawn(async move |editor, cx| {
-            loop {
+                // Wait 50ms to allow rapid calls to accumulate
                 cx.background_executor()
                     .timer(Duration::from_millis(50))
                     .await;

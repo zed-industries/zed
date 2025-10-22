@@ -52,8 +52,8 @@ use language::{
     OffsetUtf16, Point, Subscription as BufferSubscription, language_settings::language_settings,
 };
 use multi_buffer::{
-    Anchor, AnchorRangeExt, MultiBuffer, MultiBufferPoint, MultiBufferRow, MultiBufferSnapshot,
-    RowInfo, ToOffset, ToPoint,
+    Anchor, AnchorRangeExt, ExcerptId, MultiBuffer, MultiBufferPoint, MultiBufferRow,
+    MultiBufferSnapshot, RowInfo, ToOffset, ToPoint,
 };
 use project::InlayId;
 use project::{

@@ -4021,18 +4021,6 @@ impl Project {
         })
     }
 
-    pub fn resolve_inlay_hint(
-        &self,
-        hint: InlayHint,
-        buffer_handle: Entity<Buffer>,
-        server_id: LanguageServerId,
-        cx: &mut Context<Self>,
-    ) -> Task<anyhow::Result<InlayHint>> {
-        self.lsp_store.update(cx, |lsp_store, cx| {
-            lsp_store.resolve_inlay_hint(hint, buffer_handle, server_id, cx)
-        })
-    }
-
     pub fn search(&mut self, query: SearchQuery, cx: &mut Context<Self>) -> Receiver<SearchResult> {
         let (result_tx, result_rx) = smol::channel::unbounded();
 

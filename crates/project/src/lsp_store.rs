@@ -3848,6 +3848,7 @@ impl LspStore {
             lsp_data: HashMap::default(),
             next_hint_id: Arc::default(),
             lsp_semantic_tokens: HashMap::default(),
+            running_lsp_requests: HashMap::default(),
             active_entry: None,
             _maintain_workspace_config,
             _maintain_buffer_languages: Self::maintain_buffer_languages(languages, cx),
@@ -3909,6 +3910,7 @@ impl LspStore {
             next_hint_id: Arc::default(),
             lsp_data: HashMap::default(),
             lsp_semantic_tokens: HashMap::default(),
+            running_lsp_requests: HashMap::default(),
             active_entry: None,
 
             _maintain_workspace_config,
