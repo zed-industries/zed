@@ -745,7 +745,13 @@ impl Thread {
 
         let title = tool.initial_title(tool_use.input.clone(), cx);
         let kind = tool.kind();
-        stream.send_tool_call(&tool_use.id, title, kind, tool_use.input.clone());
+        stream.send_tool_call(
+            &tool_use.id,
+            &tool_use.name,
+            title,
+            kind,
+            tool_use.input.clone(),
+        );
 
         let output = tool_result
             .as_ref()
@@ -1044,14 +1050,18 @@ impl Thread {
         Ok(())
     }
 
-    pub fn latest_token_usage(&self) -> Option<acp_thread::TokenUsage> {
+    pub fn latest_request_token_usage(&self) -> Option<language_model::TokenUsage> {
         let last_user_message = self.last_user_message()?;
         let tokens = self.request_token_usage.get(&last_user_message.id)?;
-        let model = self.model.clone()?;
+        Some(*tokens)
+    }
 
+    pub fn latest_token_usage(&self) -> Option<acp_thread::TokenUsage> {
+        let usage = self.latest_request_token_usage()?;
+        let model = self.model.clone()?;
         Some(acp_thread::TokenUsage {
             max_tokens: model.max_token_count_for_mode(self.completion_mode.into()),
-            used_tokens: tokens.total_tokens(),
+            used_tokens: usage.total_tokens(),
         })
     }
 
@@ -1091,6 +1101,14 @@ impl Thread {
         cx.notify();
 
         log::debug!("Total messages in thread: {}", self.messages.len());
+        self.run_turn(cx)
+    }
+
+    #[cfg(feature = "eval")]
+    pub fn proceed(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> Result<mpsc::UnboundedReceiver<Result<ThreadEvent>>> {
         self.run_turn(cx)
     }
 
@@ -1461,7 +1479,13 @@ impl Thread {
         });
 
         if push_new_tool_use {
-            event_stream.send_tool_call(&tool_use.id, title, kind, tool_use.input.clone());
+            event_stream.send_tool_call(
+                &tool_use.id,
+                &tool_use.name,
+                title,
+                kind,
+                tool_use.input.clone(),
+            );
             last_message
                 .content
                 .push(AgentMessageContent::ToolUse(tool_use.clone()));
@@ -2256,6 +2280,7 @@ impl ThreadEventStream {
     fn send_tool_call(
         &self,
         id: &LanguageModelToolUseId,
+        tool_name: &str,
         title: SharedString,
         kind: acp::ToolKind,
         input: serde_json::Value,
@@ -2263,6 +2288,7 @@ impl ThreadEventStream {
         self.0
             .unbounded_send(Ok(ThreadEvent::ToolCall(Self::initial_tool_call(
                 id,
+                tool_name,
                 title.to_string(),
                 kind,
                 input,
@@ -2272,12 +2298,15 @@ impl ThreadEventStream {
 
     fn initial_tool_call(
         id: &LanguageModelToolUseId,
+        tool_name: &str,
         title: String,
         kind: acp::ToolKind,
         input: serde_json::Value,
     ) -> acp::ToolCall {
         acp::ToolCall {
-            meta: None,
+            meta: Some(serde_json::json!({
+                "tool_name": tool_name
+            })),
             id: acp::ToolCallId(id.to_string().into()),
             title,
             kind,
