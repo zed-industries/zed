@@ -1828,7 +1828,7 @@ impl AcpThread {
 
     fn cleanup_detached_send_task(&mut self, cx: &mut Context<Self>) {
         if self.detached_send_task.is_some() {
-            self.detached_send_task = None;
+            self.detached_send_task.take();
             cx.emit(AcpThreadEvent::CleanupDetachedSendTask);
         }
     }
