@@ -1449,7 +1449,7 @@ impl AcpThreadView {
                 cx.notify();
             }
             AcpThreadEvent::CleanupDetachedSendTask => {
-                // No action needed in thread view for cleanup event
+                cx.notify();
             }
         }
         cx.notify();
