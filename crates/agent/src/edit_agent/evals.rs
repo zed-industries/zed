@@ -1547,7 +1547,7 @@ impl EditAgentTest {
                     model.provider_id() == selected_model.provider
                         && model.id() == selected_model.model
                 })
-                .expect(format!("Model {} not found", selected_model.model.0).as_str());
+                .unwrap_or_else(|| panic!("Model {} not found", selected_model.model.0)
             model
         })
     }
