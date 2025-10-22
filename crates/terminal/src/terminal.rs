@@ -402,7 +402,7 @@ impl TerminalBuilder {
                 window_id,
             },
             child_exited: None,
-            shell_started: false,
+            keyboard_input_sent: false,
         };
 
         Ok(TerminalBuilder {
@@ -624,7 +624,7 @@ impl TerminalBuilder {
                     window_id,
                 },
                 child_exited: None,
-                shell_started: false,
+                keyboard_input_sent: false,
             };
 
             if !activation_script.is_empty() && no_task {
@@ -841,7 +841,7 @@ pub struct Terminal {
     template: CopyTemplate,
     activation_script: Vec<String>,
     child_exited: Option<ExitStatus>,
-    shell_started: bool,
+    keyboard_input_sent: bool,
 }
 
 struct CopyTemplate {
@@ -941,7 +941,6 @@ impl Terminal {
                 //NOOP, Handled in render
             }
             AlacTermEvent::Wakeup => {
-                self.shell_started = true;
                 cx.emit(Event::Wakeup);
 
                 if let TerminalType::Pty { info, .. } = &mut self.terminal_type {
@@ -1405,6 +1404,7 @@ impl Terminal {
             .push_back(InternalEvent::Scroll(AlacScroll::Bottom));
         self.events.push_back(InternalEvent::SetSelection(None));
 
+        self.keyboard_input_sent = true;
         self.write_to_pty(input);
     }
 
@@ -2110,16 +2110,12 @@ impl Terminal {
                 }
 
                 let should_close = if error_code.is_none() {
-                    let is_interactive_shell =
-                        !matches!(self.template.shell, Shell::WithArguments { .. });
-                    let exited_ok = self.child_exited.map_or(true, |e| e.code() == Some(0));
-
-                    match (is_interactive_shell, self.shell_started) {
-                        (true, true) => true, // user exited manually after shell startup
-                        _ => exited_ok,
+                    if self.task.is_none() {
+                        self.keyboard_input_sent
+                    } else {
+                        self.child_exited.map_or(true, |e| e.code() == Some(0))
                     }
                 } else {
-                    // ChildExit - only close on success
                     self.child_exited.is_some_and(|e| e.code() == Some(0))
                 };
 
