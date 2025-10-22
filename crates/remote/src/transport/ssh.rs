@@ -114,7 +114,19 @@ impl MasterProcess {
 
         master_process.arg(format!("ControlPath={}", socket_path.display()));
 
-        todo!();
+        let process = master_process.arg(&url).spawn()?;
+
+        Ok(MasterProcess { process })
+    }
+
+    pub async fn wait_connected(&mut self) -> Result<()> {
+        let Some(mut stdout) = self.process.stdout.take() else {
+            anyhow::bail!("ssh process stdout capture failed");
+        };
+
+        let mut output = Vec::new();
+        stdout.read_to_end(&mut output).await?;
+        Ok(())
     }
 }
 
@@ -413,9 +425,17 @@ impl SshRemoteConnection {
         #[cfg(not(target_os = "windows"))]
         let socket_path = temp_dir.path().join("ssh.sock");
 
+        #[cfg(target_os = "windows")]
         let mut master_process = MasterProcess::new(
             askpass.script_path().as_ref(),
             connection_options.additional_args(),
+            &url,
+        )?;
+        #[cfg(not(target_os = "windows"))]
+        let mut master_process = MasterProcess::new(
+            askpass.script_path().as_ref(),
+            connection_options.additional_args(),
+            &socket_path,
             &url,
         )?;
 
