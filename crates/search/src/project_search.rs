@@ -12,7 +12,9 @@ use editor::{
     SelectionEffects, VimFlavor,
     actions::{Backtab, SelectAll, Tab},
     items::active_match_index,
-    multibuffer_context_lines, vim_flavor,
+    multibuffer_context_lines,
+    scroll::Autoscroll,
+    vim_flavor,
 };
 use futures::{StreamExt, stream::FuturesOrdered};
 use gpui::{
@@ -1346,8 +1348,13 @@ impl ProjectSearchView {
             self.results_editor.update(cx, |editor, cx| {
                 let collapse = vim_flavor(cx) == Some(VimFlavor::Vim);
                 let range_to_select = editor.range_for_match(&range_to_select, collapse);
+                let autoscroll = if EditorSettings::get_global(cx).search.center_on_match {
+                    Autoscroll::center()
+                } else {
+                    Autoscroll::fit()
+                };
                 editor.unfold_ranges(std::slice::from_ref(&range_to_select), false, true, cx);
-                editor.change_selections(Default::default(), window, cx, |s| {
+                editor.change_selections(SelectionEffects::scroll(autoscroll), window, cx, |s| {
                     s.select_ranges([range_to_select])
                 });
             });
