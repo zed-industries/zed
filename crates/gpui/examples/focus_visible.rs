@@ -3,7 +3,7 @@ use gpui::{
     Stateful, Window, WindowBounds, WindowOptions, actions, div, prelude::*, px, size,
 };
 
-actions!(example, [Tab, TabPrev]);
+actions!(example, [Tab, TabPrev, Quit]);
 
 struct Example {
     focus_handle: FocusHandle,
@@ -49,6 +49,10 @@ impl Example {
         window.focus_prev();
         self.message = SharedString::from("Pressed Shift-Tab - focus-visible border should appear!");
     }
+
+    fn on_quit(&mut self, _: &Quit, _window: &mut Window, cx: &mut Context<Self>) {
+        cx.quit();
+    }
 }
 
 impl Render for Example {
@@ -74,6 +78,7 @@ impl Render for Example {
             .track_focus(&self.focus_handle)
             .on_action(cx.listener(Self::on_tab))
             .on_action(cx.listener(Self::on_tab_prev))
+            .on_action(cx.listener(Self::on_quit))
             .size_full()
             .flex()
             .flex_col()
@@ -195,6 +200,7 @@ fn main() {
         cx.bind_keys([
             KeyBinding::new("tab", Tab, None),
             KeyBinding::new("shift-tab", TabPrev, None),
+            KeyBinding::new("cmd-q", Quit, None),
         ]);
 
         let bounds = Bounds::centered(None, size(px(800.), px(600.0)), cx);
