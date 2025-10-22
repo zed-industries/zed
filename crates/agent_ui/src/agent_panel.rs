@@ -853,7 +853,7 @@ impl AgentPanel {
                     this.serialize(cx);
                 }
 
-                // Check cache first for resumed threads to maintain real-time updates
+                // Check thread view cache first to continue chat completion
                 let session_id = resume_thread.as_ref().map(|t| &t.id);
                 let thread_view = if let Some(session_id) = session_id {
                     if let Some(cached_view) = this.thread_view_cache.get(session_id).cloned() {
@@ -877,7 +877,7 @@ impl AgentPanel {
                         new_view
                     }
                 } else {
-                    // New thread - create fresh view and cache it after we get session_id
+                    // New thread, create fresh view and cache it after we get session_id
                     let new_view = cx.new(|cx| {
                         crate::acp::AcpThreadView::new(
                             server.clone(),
@@ -892,7 +892,6 @@ impl AgentPanel {
                         )
                     });
 
-                    // Cache the new thread view once we have its session_id
                     if let Some(thread) = new_view.read(cx).thread() {
                         let new_session_id = thread.read(cx).session_id().clone();
                         this.thread_view_cache
@@ -915,15 +914,11 @@ impl AgentPanel {
                     new_view
                 };
 
-                // Detach any running generation from the current thread so it continues in background
+                // Detach ongoing completion so it continues in background
                 if let Some(current_thread_view) = this.active_thread_view()
                     && let Some(current_thread) = current_thread_view.read(cx).thread().cloned()
                     && current_thread.read(cx).status() == acp_thread::ThreadStatus::Generating
                 {
-                    current_thread.update(cx, |thread, cx| {
-                        thread.detach_send_task(cx);
-                    });
-
                     // Subscribe to CleanupDetachedSendTask event to clean up when done
                     let thread_for_cleanup = current_thread.clone();
                     let thread_id = current_thread.entity_id();
@@ -943,9 +938,9 @@ impl AgentPanel {
                         },
                     );
 
+                    this.detached_threads.push(current_thread.clone());
                     this.detached_thread_subscriptions
                         .insert(thread_id, subscription);
-                    this.detached_threads.push(current_thread.clone());
                 }
 
                 this.set_active_view(ActiveView::ExternalAgentThread { thread_view }, window, cx);

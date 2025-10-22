@@ -796,7 +796,6 @@ pub struct AcpThread {
     action_log: Entity<ActionLog>,
     shared_buffers: HashMap<Entity<Buffer>, BufferSnapshot>,
     send_task: Option<Task<()>>,
-    detached_send_task: Option<Task<()>>,
     connection: Rc<dyn AgentConnection>,
     session_id: acp::SessionId,
     token_usage: Option<TokenUsage>,
@@ -1019,7 +1018,6 @@ impl AcpThread {
             title: title.into(),
             project,
             send_task: None,
-            detached_send_task: None,
             connection,
             session_id,
             token_usage: None,
@@ -1060,7 +1058,7 @@ impl AcpThread {
     }
 
     pub fn status(&self) -> ThreadStatus {
-        if self.send_task.is_some() || self.detached_send_task.is_some() {
+        if self.send_task.is_some() {
             ThreadStatus::Generating
         } else {
             ThreadStatus::Idle
@@ -1708,7 +1706,7 @@ impl AcpThread {
                 match response {
                     Ok(Err(e)) => {
                         this.send_task.take();
-                        this.detached_send_task.take();
+
                         cx.emit(AcpThreadEvent::Error);
                         Err(e)
                     }
@@ -1728,7 +1726,6 @@ impl AcpThread {
                         // would cause the next generation to be canceled.
                         if !canceled {
                             this.send_task.take();
-                            this.cleanup_detached_send_task(cx);
                         }
 
                         // Handle refusal - distinguish between user prompt and tool call refusals
@@ -1780,12 +1777,9 @@ impl AcpThread {
     }
 
     pub fn cancel(&mut self, cx: &mut Context<Self>) -> Task<()> {
-        let send_task = self.send_task.take();
-        let detached_send_task = self.detached_send_task.take();
-
-        if send_task.is_none() && detached_send_task.is_none() {
+        let Some(send_task) = self.send_task.take() else {
             return Task::ready(());
-        }
+        };
 
         for entry in self.entries.iter_mut() {
             if let AgentThreadEntry::ToolCall(call) = entry {
@@ -1804,33 +1798,8 @@ impl AcpThread {
 
         self.connection.cancel(&self.session_id, cx);
 
-        // Wait for send tasks to complete
-        cx.foreground_executor().spawn(async move {
-            if let Some(task) = send_task {
-                task.await;
-            }
-            if let Some(task) = detached_send_task {
-                task.await;
-            }
-        })
-    }
-
-    pub fn detach_send_task(&mut self, cx: &mut Context<Self>) -> bool {
-        if let Some(send_task) = self.send_task.take() {
-            // Store the task so it can be cancelled later
-            self.detached_send_task = Some(send_task);
-            cx.notify();
-            true
-        } else {
-            false
-        }
-    }
-
-    fn cleanup_detached_send_task(&mut self, cx: &mut Context<Self>) {
-        if self.detached_send_task.is_some() {
-            self.detached_send_task.take();
-            cx.emit(AcpThreadEvent::CleanupDetachedSendTask);
-        }
+        // Wait for the send task to complete
+        cx.foreground_executor().spawn(send_task)
     }
 
     /// Restores the git working tree to the state at the given checkpoint (if one exists)
