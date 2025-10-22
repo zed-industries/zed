@@ -31,10 +31,7 @@ WizardStyle=modern
 
 CloseApplications=force
 
-#ifdef Defaultsign
 SignTool=Defaultsign
-#endif
-
 DefaultDirName={autopf}\{#AppName}
 PrivilegesRequired=lowest
 
