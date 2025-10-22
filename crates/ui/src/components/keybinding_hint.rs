@@ -17,7 +17,7 @@ use theme::Appearance;
 ///
 /// # fn example(cx: &App) {
 /// let hint = KeybindingHint::new(
-///     KeyBinding::new(vec![KeybindingKeystroke::from_keystroke(Keystroke::parse("ctrl-s").unwrap())], cx),
+///     KeyBinding::from_keystrokes(vec![KeybindingKeystroke::from_keystroke(Keystroke::parse("ctrl-s").unwrap())], Source::Base),
 ///     Hsla::black()
 /// )
 ///     .prefix("Save:")
@@ -43,12 +43,13 @@ impl KeybindingHint {
     ///
     /// ```no_run
     /// use gpui::{App, Hsla, KeybindingKeystroke, Keystroke};
+    /// use settings::KeybindSource;
     /// use ui::prelude::*;
     /// use ui::{KeyBinding, KeybindingHint};
     ///
     /// # fn example(cx: &App) {
     /// let hint = KeybindingHint::new(
-    ///     KeyBinding::new(vec![KeybindingKeystroke::from_keystroke(Keystroke::parse("ctrl-c").unwrap())], cx),
+    ///     KeyBinding::from_keystrokes(vec![KeybindingKeystroke::from_keystroke(Keystroke::parse("ctrl-c").unwrap())], Source::Base),
     ///     Hsla::black()
     /// );
     /// # }
@@ -74,11 +75,12 @@ impl KeybindingHint {
     /// use gpui::{App, Hsla, KeybindingKeystroke, Keystroke};
     /// use ui::prelude::*;
     /// use ui::{KeyBinding, KeybindingHint};
+    /// use settings::KeybindSource;
     ///
     /// # fn example(cx: &App) {
     /// let hint = KeybindingHint::with_prefix(
     ///     "Copy:",
-    ///     KeyBinding::new(vec![KeybindingKeystroke::from_keystroke(Keystroke::parse("ctrl-c").unwrap())], cx),
+    ///     KeyBinding::from_keystrokes(vec![KeybindingKeystroke::from_keystroke(Keystroke::parse("ctrl-c").unwrap())], Source::Base),
     ///     Hsla::black()
     /// );
     /// # }
@@ -108,10 +110,11 @@ impl KeybindingHint {
     /// use gpui::{App, Hsla, KeybindingKeystroke, Keystroke};
     /// use ui::prelude::*;
     /// use ui::{KeyBinding, KeybindingHint};
+    /// use settings::KeybindSource;
     ///
     /// # fn example(cx: &App) {
     /// let hint = KeybindingHint::with_suffix(
-    ///     KeyBinding::new(vec![KeybindingKeystroke::from_keystroke(Keystroke::parse("ctrl-v").unwrap())], cx),
+    ///     KeyBinding::from_keystrokes(vec![KeybindingKeystroke::from_keystroke(Keystroke::parse("ctrl-v").unwrap())], Source::Base),
     ///     "Paste",
     ///     Hsla::black()
     /// );
@@ -141,10 +144,11 @@ impl KeybindingHint {
     /// use gpui::{App, Hsla, KeybindingKeystroke, Keystroke};
     /// use ui::prelude::*;
     /// use ui::{KeyBinding, KeybindingHint};
+    /// use settings::KeybindSource;
     ///
     /// # fn example(cx: &App) {
     /// let hint = KeybindingHint::new(
-    ///     KeyBinding::new(vec![KeybindingKeystroke::from_keystroke(Keystroke::parse("ctrl-x").unwrap())], cx),
+    ///     KeyBinding::from_keystrokes(vec![KeybindingKeystroke::from_keystroke(Keystroke::parse("ctrl-x").unwrap())], Source::Base),
     ///     Hsla::black()
     /// )
     ///     .prefix("Cut:");
@@ -165,10 +169,11 @@ impl KeybindingHint {
     /// use gpui::{App, Hsla, KeybindingKeystroke, Keystroke};
     /// use ui::prelude::*;
     /// use ui::{KeyBinding, KeybindingHint};
+    /// use settings::KeybindSource;
     ///
     /// # fn example(cx: &App) {
     /// let hint = KeybindingHint::new(
-    ///     KeyBinding::new(vec![KeybindingKeystroke::from_keystroke(Keystroke::parse("ctrl-f").unwrap())], cx),
+    ///     KeyBinding::from_keystrokes(vec![KeybindingKeystroke::from_keystroke(Keystroke::parse("ctrl-f").unwrap())], Source::Base),
     ///     Hsla::black()
     /// )
     ///     .suffix("Find");
@@ -189,10 +194,11 @@ impl KeybindingHint {
     /// use gpui::{App, Hsla, KeybindingKeystroke, Keystroke};
     /// use ui::prelude::*;
     /// use ui::{KeyBinding, KeybindingHint};
+    /// use settings::KeybindSource;
     ///
     /// # fn example(cx: &App) {
     /// let hint = KeybindingHint::new(
-    ///     KeyBinding::new(vec![KeybindingKeystroke::from_keystroke(Keystroke::parse("ctrl-z").unwrap())], cx),
+    ///     KeyBinding::from_keystrokes(vec![KeybindingKeystroke::from_keystroke(Keystroke::parse("ctrl-z").unwrap())], Source::Base),
     ///     Hsla::black()
     /// )
     ///     .size(Pixels::from(16.0));
