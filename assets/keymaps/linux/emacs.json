@@ -146,18 +146,28 @@
       "ctrl-n": "editor::SignatureHelpNext"
     }
   },
+  // Example setting for using emacs-style tab
+  // (i.e. indent the current line / selection or perform symbol completion depending on context)
+  // {
+  //   "context": "Editor && !showing_code_actions && !showing_completions",
+  //   "bindings": {
+  //     "tab": "editor::AutoIndent" // indent-for-tab-command
+  //   }
+  // },
   {
     "context": "Workspace",
     "bindings": {
-      "alt-x": "command_palette::Toggle",
+      "alt-x": "command_palette::Toggle", // execute-extended-command
       "ctrl-x b": "tab_switcher::Toggle", // switch-to-buffer
       "ctrl-x ctrl-b": "tab_switcher::Toggle", // list-buffers
+      // "ctrl-x ctrl-c": "workspace::CloseWindow" // in case you only want to exit the current Zed instance
       "ctrl-x ctrl-c": "zed::Quit", // save-buffers-kill-terminal
       "ctrl-x 5 0": "workspace::CloseWindow", // delete-frame
       "ctrl-x 5 2": "workspace::NewWindow", // make-frame-command
       "ctrl-x o": "workspace::ActivateNextPane", // other-window
       "ctrl-x k": "pane::CloseActiveItem", // kill-buffer
       "ctrl-x 0": "pane::CloseActiveItem", // delete-window
+      // "ctrl-x 1": "pane::JoinAll", // in case you prefer to delete the splits but keep the buffers open
       "ctrl-x 1": "pane::CloseOtherItems", // delete-other-windows
       "ctrl-x 2": "pane::SplitDown", // split-window-below
       "ctrl-x 3": "pane::SplitRight", // split-window-right
