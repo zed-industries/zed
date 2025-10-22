@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use acp_thread::{AcpThread, AcpThreadEvent};
 use agent::{ContextServerRegistry, DbThreadMetadata, HistoryEntry, HistoryStore};
+use agent_client_protocol as acp;
 use db::kvp::{Dismissable, KEY_VALUE_STORE};
 use gpui::EntityId;
 use project::agent_server_store::{
@@ -432,6 +433,7 @@ pub struct AgentPanel {
     selected_agent: AgentType,
     detached_threads: Vec<Entity<AcpThread>>,
     detached_thread_subscriptions: HashMap<EntityId, Subscription>,
+    thread_view_cache: HashMap<acp::SessionId, Entity<AcpThreadView>>,
 }
 
 impl AgentPanel {
@@ -664,6 +666,7 @@ impl AgentPanel {
             selected_agent: AgentType::default(),
             detached_threads: Vec::new(),
             detached_thread_subscriptions: HashMap::new(),
+            thread_view_cache: HashMap::new(),
             loading: false,
         }
     }
@@ -850,19 +853,54 @@ impl AgentPanel {
                     this.serialize(cx);
                 }
 
-                let thread_view = cx.new(|cx| {
-                    crate::acp::AcpThreadView::new(
-                        server,
-                        resume_thread,
-                        summarize_thread,
-                        workspace.clone(),
-                        project,
-                        this.history_store.clone(),
-                        this.prompt_store.clone(),
-                        window,
-                        cx,
-                    )
-                });
+                // Check cache first for resumed threads to maintain real-time updates
+                let session_id = resume_thread.as_ref().map(|t| &t.id);
+                let thread_view = if let Some(session_id) = session_id {
+                    if let Some(cached_view) = this.thread_view_cache.get(session_id).cloned() {
+                        cached_view
+                    } else {
+                        let new_view = cx.new(|cx| {
+                            crate::acp::AcpThreadView::new(
+                                server.clone(),
+                                resume_thread.clone(),
+                                summarize_thread,
+                                workspace.clone(),
+                                project.clone(),
+                                this.history_store.clone(),
+                                this.prompt_store.clone(),
+                                window,
+                                cx,
+                            )
+                        });
+                        this.thread_view_cache
+                            .insert(session_id.clone(), new_view.clone());
+                        new_view
+                    }
+                } else {
+                    // New thread - create fresh view and cache it after we get session_id
+                    let new_view = cx.new(|cx| {
+                        crate::acp::AcpThreadView::new(
+                            server.clone(),
+                            resume_thread,
+                            summarize_thread,
+                            workspace.clone(),
+                            project.clone(),
+                            this.history_store.clone(),
+                            this.prompt_store.clone(),
+                            window,
+                            cx,
+                        )
+                    });
+
+                    // Cache the new thread view once we have its session_id
+                    if let Some(thread) = new_view.read(cx).thread() {
+                        let new_session_id = thread.read(cx).session_id().clone();
+                        this.thread_view_cache
+                            .insert(new_session_id, new_view.clone());
+                    }
+
+                    new_view
+                };
 
                 // Detach any running generation from the current thread so it continues in background
                 if let Some(current_thread_view) = this.active_thread_view()
@@ -876,6 +914,7 @@ impl AgentPanel {
                     // Subscribe to CleanupDetachedSendTask event to clean up when done
                     let thread_for_cleanup = current_thread.clone();
                     let thread_id = current_thread.entity_id();
+                    let session_id = current_thread.read(cx).session_id().clone();
                     let subscription = cx.subscribe(
                         &current_thread,
                         move |this: &mut AgentPanel,
@@ -886,6 +925,7 @@ impl AgentPanel {
                                 this.detached_threads
                                     .retain(|t| t.entity_id() != thread_for_cleanup.entity_id());
                                 this.detached_thread_subscriptions.remove(&thread_id);
+                                this.thread_view_cache.remove(&session_id);
                             }
                         },
                     );

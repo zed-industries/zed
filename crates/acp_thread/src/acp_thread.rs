@@ -796,7 +796,7 @@ pub struct AcpThread {
     action_log: Entity<ActionLog>,
     shared_buffers: HashMap<Entity<Buffer>, BufferSnapshot>,
     send_task: Option<Task<()>>,
-    is_detached: bool,
+    detached_send_task: Option<Task<()>>,
     connection: Rc<dyn AgentConnection>,
     session_id: acp::SessionId,
     token_usage: Option<TokenUsage>,
@@ -1019,7 +1019,7 @@ impl AcpThread {
             title: title.into(),
             project,
             send_task: None,
-            is_detached: false,
+            detached_send_task: None,
             connection,
             session_id,
             token_usage: None,
@@ -1060,7 +1060,7 @@ impl AcpThread {
     }
 
     pub fn status(&self) -> ThreadStatus {
-        if self.send_task.is_some() || self.is_detached {
+        if self.send_task.is_some() || self.detached_send_task.is_some() {
             ThreadStatus::Generating
         } else {
             ThreadStatus::Idle
@@ -1708,7 +1708,7 @@ impl AcpThread {
                 match response {
                     Ok(Err(e)) => {
                         this.send_task.take();
-                        this.is_detached = false;
+                        this.detached_send_task = None;
                         cx.emit(AcpThreadEvent::Error);
                         Err(e)
                     }
@@ -1780,9 +1780,9 @@ impl AcpThread {
     }
 
     pub fn cancel(&mut self, cx: &mut Context<Self>) -> Task<()> {
-        let Some(send_task) = self.send_task.take() else {
-            return Task::ready(());
-        };
+        // Cancel both active and detached send tasks
+        let send_task = self.send_task.take();
+        let detached_task = self.detached_send_task.take();
 
         for entry in self.entries.iter_mut() {
             if let AgentThreadEntry::ToolCall(call) = entry {
@@ -1800,16 +1800,22 @@ impl AcpThread {
         }
 
         self.connection.cancel(&self.session_id, cx);
-        self.is_detached = false;
 
-        // Wait for the send task to complete
-        cx.foreground_executor().spawn(send_task)
+        // Wait for both tasks to complete
+        cx.foreground_executor().spawn(async move {
+            if let Some(task) = send_task {
+                task.await;
+            }
+            if let Some(task) = detached_task {
+                task.await;
+            }
+        })
     }
 
     pub fn detach_send_task(&mut self, cx: &mut Context<Self>) -> bool {
         if let Some(send_task) = self.send_task.take() {
-            self.is_detached = true;
-            send_task.detach();
+            // Store the task so it can be cancelled later
+            self.detached_send_task = Some(send_task);
             cx.notify();
             true
         } else {
@@ -1818,8 +1824,8 @@ impl AcpThread {
     }
 
     fn cleanup_detached_send_task(&mut self, cx: &mut Context<Self>) {
-        if self.is_detached {
-            self.is_detached = false;
+        if self.detached_send_task.is_some() {
+            self.detached_send_task = None;
             cx.emit(AcpThreadEvent::CleanupDetachedSendTask);
         }
     }
