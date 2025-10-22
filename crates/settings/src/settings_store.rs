@@ -7,7 +7,7 @@ use futures::{
     channel::{mpsc, oneshot},
     future::LocalBoxFuture,
 };
-use gpui::{App, AsyncApp, BorrowAppContext, Global, Task, UpdateGlobal};
+use gpui::{App, AsyncApp, BorrowAppContext, Global, SharedString, Task, UpdateGlobal};
 
 use paths::{EDITORCONFIG_NAME, local_settings_file_relative_path, task_file_name};
 use schemars::{JsonSchema, json_schema};
@@ -32,15 +32,14 @@ pub type EditorconfigProperties = ec4rs::Properties;
 
 use crate::{
     ActiveSettingsProfileName, FontFamilyName, IconThemeName, LanguageSettingsContent,
-    LanguageToSettingsMap, SettingsJsonSchemaParams, ThemeName, VsCodeSettings, WorktreeId,
-    infer_json_indent_size,
+    LanguageToSettingsMap, ThemeName, VsCodeSettings, WorktreeId,
     merge_from::MergeFrom,
-    parse_json_with_comments,
     settings_content::{
         ExtensionsSettingsContent, ProjectSettingsContent, SettingsContent, UserSettingsContent,
     },
-    update_value_in_json_text,
 };
+
+use settings_json::{infer_json_indent_size, parse_json_with_comments, update_value_in_json_text};
 
 pub trait SettingsKey: 'static + Send + Sync {
     /// The name of a key within the JSON file from which this setting should
@@ -233,6 +232,14 @@ trait AnySettingValue: 'static + Send + Sync {
     fn all_local_values(&self) -> Vec<(WorktreeId, Arc<RelPath>, &dyn Any)>;
     fn set_global_value(&mut self, value: Box<dyn Any>);
     fn set_local_value(&mut self, root_id: WorktreeId, path: Arc<RelPath>, value: Box<dyn Any>);
+}
+
+/// Parameters that are used when generating some JSON schemas at runtime.
+pub struct SettingsJsonSchemaParams<'a> {
+    pub language_names: &'a [String],
+    pub font_names: &'a [String],
+    pub theme_names: &'a [SharedString],
+    pub icon_theme_names: &'a [SharedString],
 }
 
 impl SettingsStore {

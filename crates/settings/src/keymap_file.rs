@@ -17,8 +17,9 @@ use util::{
     markdown::{MarkdownEscaped, MarkdownInlineCode, MarkdownString},
 };
 
-use crate::{
-    SettingsAssets, append_top_level_array_value_in_json_text, parse_json_with_comments,
+use crate::SettingsAssets;
+use settings_json::{
+    append_top_level_array_value_in_json_text, parse_json_with_comments,
     replace_top_level_array_value_in_json_text,
 };
 
