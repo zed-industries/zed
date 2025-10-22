@@ -21004,9 +21004,6 @@ impl Editor {
     ) {
         match event {
             display_map::DisplayMapEvent::SemanticTokensReady { buffer_id } => {
-                log::info!(
-                    "✓ Semantic tokens ready for buffer {buffer_id}, triggering editor redraw"
-                );
                 cx.notify(); // Force editor to redraw with new semantic tokens
             }
         }
@@ -22051,43 +22048,72 @@ impl Editor {
     }
 
     fn refresh_semantic_tokens(&mut self, for_buffer: Option<BufferId>, cx: &mut Context<Self>) {
-        let Some(project) = self.project.clone() else {
+        let Some(project) = self.project.as_ref() else {
             return;
         };
 
         let buffer_ids: Vec<BufferId> = if let Some(buffer_id) = for_buffer {
             vec![buffer_id]
         } else {
-            self.buffer.read(cx).all_buffer_ids()
+            self.visible_excerpts(cx)
+                .into_values()
+                .map(|(buffer, _, _)| buffer.read(cx).remote_id())
+                .collect()
         };
 
-        {
-            let mut pending = self.pending_semantic_token_buffers.lock();
-            pending.extend(buffer_ids);
-        }
+        let mut pending = self.pending_semantic_token_buffers.lock();
+        pending.extend(buffer_ids);
+        drop(pending);
 
-        {
-            let mut active = self.semantic_tokens_refresh_active.lock();
-            if *active {
-                return;
-            }
-            *active = true;
+        let mut active = self.semantic_tokens_refresh_active.lock();
+        if *active {
+            return;
         }
+        *active = true;
+        drop(active);
 
         let pending_buffers = self.pending_semantic_token_buffers.clone();
         let refresh_active = self.semantic_tokens_refresh_active.clone();
         let multibuffer = self.buffer.clone();
+        let project = project.clone();
 
         self.semantic_tokens_refresh_task = cx.spawn(async move |editor, cx| {
+            const DEBOUNCE_SMALL: u64 = 50;
+            const DEBOUNCE_MEDIUM: u64 = 100;
+            const DEBOUNCE_LARGE: u64 = 200;
+            const MEDIUM_BATCH_THRESHOLD: usize = 3;
+            const LARGE_BATCH_THRESHOLD: usize = 10;
+
             loop {
-                // Wait 50ms to allow rapid calls to accumulate
+                let pending_count = pending_buffers.lock().len();
+                let debounce_ms = if pending_count > LARGE_BATCH_THRESHOLD {
+                    DEBOUNCE_LARGE
+                } else if pending_count > MEDIUM_BATCH_THRESHOLD {
+                    DEBOUNCE_MEDIUM
+                } else {
+                    DEBOUNCE_SMALL
+                };
                 cx.background_executor()
-                    .timer(Duration::from_millis(50))
+                    .timer(Duration::from_millis(debounce_ms))
                     .await;
+
+                const MAX_BUFFERS_PER_SESSION: usize = 50;
+                const LARGE_BATCH_SIZE: usize = 20;
+                const CHUNK_SIZE_NORMAL: usize = 5;
+                const CHUNK_SIZE_LARGE: usize = 3;
 
                 let buffers_to_process: Vec<BufferId> = {
                     let mut pending = pending_buffers.lock();
-                    let buffers: Vec<_> = pending.drain().collect();
+                    let mut buffers: Vec<_> = pending.drain().collect();
+
+                    if buffers.len() > MAX_BUFFERS_PER_SESSION {
+                        log::warn!(
+                            "Semantic tokens requested for {} buffers, capping at {}",
+                            buffers.len(),
+                            MAX_BUFFERS_PER_SESSION
+                        );
+                        buffers.truncate(MAX_BUFFERS_PER_SESSION);
+                    }
                     buffers
                 };
 
@@ -22096,8 +22122,13 @@ impl Editor {
                     return;
                 }
 
-                const CHUNK_SIZE: usize = 5;
-                for chunk in buffers_to_process.chunks(CHUNK_SIZE) {
+                let chunk_size = if buffers_to_process.len() > LARGE_BATCH_SIZE {
+                    CHUNK_SIZE_LARGE
+                } else {
+                    CHUNK_SIZE_NORMAL
+                };
+                
+                for chunk in buffers_to_process.chunks(chunk_size) {
                     let chunk_tasks: Vec<_> = editor
                         .update(cx, |editor, cx| {
                             let mut tasks = Vec::new();
@@ -22108,6 +22139,12 @@ impl Editor {
 
                                 if editor.pending_semantic_token_requests.contains(&buffer_id) {
                                     log::trace!("Skipping duplicate semantic token request for buffer {buffer_id}");
+                                    continue;
+                                }
+
+                                const MAX_LINES_FOR_SEMANTIC_TOKENS: u32 = 5000;
+                                let line_count = buffer.read(cx).max_point().row + 1;
+                                if line_count > MAX_LINES_FOR_SEMANTIC_TOKENS {
                                     continue;
                                 }
 
@@ -22134,20 +22171,16 @@ impl Editor {
 
                                     match lsp_task.await {
                                         Ok(tokens) if tokens.server_id.is_some() => {
-                                            log::info!(
-                                                "✓ Semantic tokens received for buffer {buffer_id}, server_id: {:?}",
+                                            log::debug!(
+                                                "Semantic tokens received for buffer {buffer_id}, server {:?}",
                                                 tokens.server_id
                                             );
                                         }
                                         Ok(_) => {
-                                            log::debug!(
-                                                "✗ LSP returned empty tokens for buffer {buffer_id} (server not capable yet)"
-                                            );
+                                            log::debug!("LSP not ready for buffer {buffer_id}");
                                         }
                                         Err(e) => {
-                                            log::warn!(
-                                                "✗ Failed to fetch semantic tokens for buffer {buffer_id}: {e:#}"
-                                            );
+                                            log::warn!("Failed to fetch semantic tokens for buffer {buffer_id}: {e:#}");
                                         }
                                     }
 

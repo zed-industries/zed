@@ -161,10 +161,6 @@ impl HeadlessExtensionStore {
                             context_provider: None,
                             toolchain_provider: None,
                             manifest_name: None,
-                            variable_capture_names: None,
-                            variable_parent_kinds: None,
-                            variable_lsp_token_types: None,
-                            excluded_identifiers: None,
                         })
                     }),
                 );

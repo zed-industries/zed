@@ -3513,6 +3513,7 @@ pub struct LspStore {
     lsp_data: HashMap<BufferId, BufferLspData>,
     next_hint_id: Arc<AtomicUsize>,
     lsp_semantic_tokens: HashMap<BufferId, SemanticTokensData>,
+    #[allow(dead_code)]
     running_lsp_requests: HashMap<TypeId, (Global, HashMap<LspRequestId, Task<()>>)>,
 }
 
@@ -9711,7 +9712,6 @@ impl LspStore {
         }
 
         if indexing_complete {
-            log::info!("LSP server {language_server_id:?} completed all indexing work");
             cx.emit(LspStoreEvent::LanguageServerIndexingComplete { language_server_id });
         }
 

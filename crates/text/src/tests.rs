@@ -529,7 +529,7 @@ fn test_anchors_at_start_and_end() {
 
 #[test]
 fn test_offset_from_version_add() {
-    let mut buffer = Buffer::new(0, BufferId::new(1).unwrap(), "bc");
+    let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "bc");
 
     let before = buffer.version();
     buffer.edit([(0..0, "a")]);
@@ -546,7 +546,7 @@ fn test_offset_from_version_add() {
 
 #[test]
 fn test_offset_from_version_remove() {
-    let mut buffer = Buffer::new(0, BufferId::new(1).unwrap(), "abc");
+    let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "abc");
 
     let before = buffer.version();
     buffer.edit([(0..1, "")]);
