@@ -8,7 +8,6 @@ use acp_thread::{AcpThread, AcpThreadEvent};
 use agent::{ContextServerRegistry, DbThreadMetadata, HistoryEntry, HistoryStore};
 use agent_client_protocol as acp;
 use db::kvp::{Dismissable, KEY_VALUE_STORE};
-use gpui::EntityId;
 use project::agent_server_store::{
     AgentServerCommand, AllAgentServersSettings, CLAUDE_CODE_NAME, CODEX_NAME, GEMINI_NAME,
 };
@@ -73,6 +72,12 @@ use zed_actions::{
     agent::{OpenAcpOnboardingModal, OpenOnboardingModal, OpenSettings, ResetOnboarding},
     assistant::{OpenRulesLibrary, ToggleFocus},
 };
+
+struct DetachedThread {
+    thread_view: Entity<AcpThreadView>,
+    _thread: Entity<AcpThread>,
+    _subscription: Subscription,
+}
 
 const AGENT_PANEL_KEY: &str = "agent_panel";
 
@@ -431,9 +436,7 @@ pub struct AgentPanel {
     pending_serialization: Option<Task<Result<()>>>,
     onboarding: Entity<AgentPanelOnboarding>,
     selected_agent: AgentType,
-    detached_threads: Vec<Entity<AcpThread>>,
-    detached_thread_subscriptions: HashMap<EntityId, Subscription>,
-    thread_view_cache: HashMap<acp::SessionId, Entity<AcpThreadView>>,
+    detached_threads: HashMap<acp::SessionId, DetachedThread>,
 }
 
 impl AgentPanel {
@@ -664,9 +667,7 @@ impl AgentPanel {
             acp_history,
             history_store,
             selected_agent: AgentType::default(),
-            detached_threads: Vec::new(),
-            detached_thread_subscriptions: HashMap::new(),
-            thread_view_cache: HashMap::new(),
+            detached_threads: HashMap::new(),
             loading: false,
         }
     }
@@ -856,10 +857,10 @@ impl AgentPanel {
                 // Check thread view cache first to continue chat completion
                 let session_id = resume_thread.as_ref().map(|t| &t.id);
                 let thread_view = if let Some(session_id) = session_id {
-                    if let Some(cached_view) = this.thread_view_cache.get(session_id).cloned() {
-                        cached_view
+                    if let Some(detached) = this.detached_threads.get(session_id) {
+                        detached.thread_view.clone()
                     } else {
-                        let new_view = cx.new(|cx| {
+                        cx.new(|cx| {
                             crate::acp::AcpThreadView::new(
                                 server.clone(),
                                 resume_thread.clone(),
@@ -871,14 +872,10 @@ impl AgentPanel {
                                 window,
                                 cx,
                             )
-                        });
-                        this.thread_view_cache
-                            .insert(session_id.clone(), new_view.clone());
-                        new_view
+                        })
                     }
                 } else {
-                    // New thread, create fresh view and cache it after we get session_id
-                    let new_view = cx.new(|cx| {
+                    cx.new(|cx| {
                         crate::acp::AcpThreadView::new(
                             server.clone(),
                             resume_thread,
@@ -890,39 +887,15 @@ impl AgentPanel {
                             window,
                             cx,
                         )
-                    });
-
-                    if let Some(thread) = new_view.read(cx).thread() {
-                        let new_session_id = thread.read(cx).session_id().clone();
-                        this.thread_view_cache
-                            .insert(new_session_id, new_view.clone());
-                    } else {
-                        // Thread not ready yet, observe and cache when it becomes ready
-                        let view_for_cache = new_view.clone();
-                        cx.observe(&new_view, move |this: &mut AgentPanel, view, cx| {
-                            if let Some(thread) = view.read(cx).thread() {
-                                let session_id = thread.read(cx).session_id().clone();
-                                if !this.thread_view_cache.contains_key(&session_id) {
-                                    this.thread_view_cache
-                                        .insert(session_id, view_for_cache.clone());
-                                }
-                            }
-                        })
-                        .detach();
-                    }
-
-                    new_view
+                    })
                 };
-
                 // Detach ongoing completion so it continues in background
                 if let Some(current_thread_view) = this.active_thread_view()
                     && let Some(current_thread) = current_thread_view.read(cx).thread().cloned()
                     && current_thread.read(cx).status() == acp_thread::ThreadStatus::Generating
                 {
-                    // Set up subscription to clean up detached threads
-                    let thread_for_cleanup = current_thread.clone();
-                    let thread_id = current_thread.entity_id();
                     let session_id = current_thread.read(cx).session_id().clone();
+                    let session_id_for_cleanup = session_id.clone();
                     let subscription = cx.subscribe(
                         &current_thread,
                         move |this: &mut AgentPanel,
@@ -930,17 +903,19 @@ impl AgentPanel {
                               event: &AcpThreadEvent,
                               _cx: &mut Context<Self>| {
                             if matches!(event, AcpThreadEvent::CleanupDetachedSendTask) {
-                                this.detached_threads
-                                    .retain(|t| t.entity_id() != thread_for_cleanup.entity_id());
-                                this.detached_thread_subscriptions.remove(&thread_id);
-                                this.thread_view_cache.remove(&session_id);
+                                this.detached_threads.remove(&session_id_for_cleanup);
                             }
                         },
                     );
 
-                    this.detached_threads.push(current_thread.clone());
-                    this.detached_thread_subscriptions
-                        .insert(thread_id, subscription);
+                    this.detached_threads.insert(
+                        session_id,
+                        DetachedThread {
+                            thread_view: current_thread_view.clone(),
+                            _thread: current_thread,
+                            _subscription: subscription,
+                        },
+                    );
                 }
 
                 this.set_active_view(ActiveView::ExternalAgentThread { thread_view }, window, cx);
