@@ -142,13 +142,21 @@ pub struct LibManifestEntry {
 
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
 pub struct AgentServerManifestEntry {
+    /// How to install and launch the agent server.
     pub launcher: AgentServerLauncher,
+    /// Environment variables to set when launching the agent server.
     #[serde(default)]
     pub env: HashMap<String, String>,
+    /// Command-line arguments to pass to the agent server.
     #[serde(default)]
     pub args: Vec<String>,
+    /// Optional login command configuration for interactive authentication.
+    /// This is used for agents that require OAuth or other terminal-based login flows.
+    /// When specified, users can run `/login` to authenticate with the agent.
     #[serde(default)]
     pub login: Option<AgentServerLogin>,
+    /// Whether to skip checking for system-installed versions of this agent.
+    /// When true, always uses the extension-installed version.
     #[serde(default)]
     pub ignore_system_version: Option<bool>,
 }
@@ -173,13 +181,29 @@ pub enum AgentServerLauncher {
     },
 }
 
+/// Configuration for an agent's login command.
+///
+/// This defines a separate terminal command that runs for authentication purposes.
+/// The login command is executed outside of the ACP protocol, typically in a terminal
+/// panel where the user can interact with an OAuth flow or enter credentials.
+///
+/// Examples:
+/// - For agents that use the same binary: leave `command` as `None` and specify different `args`
+/// - For agents with separate auth tools: set `command` to point to the auth binary
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
 pub struct AgentServerLogin {
+    /// Label displayed to the user (e.g., "gemini /auth" or "claude /login").
     pub label: String,
+    /// Optional override for the command to run.
+    /// If `None`, uses the same command as the main agent launcher.
+    /// If `Some`, uses the specified command instead (e.g., a separate auth tool).
     #[serde(default)]
     pub command: Option<String>,
+    /// Arguments to pass to the login command.
+    /// For npm agents without a custom command, this can specify a different JS file to run.
     #[serde(default)]
     pub args: Vec<String>,
+    /// Additional environment variables for the login command.
     #[serde(default)]
     pub env: HashMap<String, String>,
 }
@@ -465,6 +489,7 @@ schema_version = 0
 package = "@example/agent-server"
 entrypoint = "node_modules/@example/agent-server/dist/index.js"
 min_version = "1.0.0"
+# removed: experimental flag should be provided by extension args if needed
 "#;
 
         let manifest: ExtensionManifest = toml::from_str(toml_src).expect("manifest should parse");
@@ -487,5 +512,60 @@ min_version = "1.0.0"
             }
             _ => panic!("expected Npm launcher"),
         }
+    }
+
+    #[test]
+    fn parse_manifest_with_agent_server_login() {
+        let toml_src = r#"
+id = "example.agent-with-login"
+name = "Agent With Login"
+version = "1.0.0"
+schema_version = 0
+
+[agent_servers.my-agent]
+args = ["--acp"]
+
+[agent_servers.my-agent.launcher]
+bin_name = "my-agent"
+
+[agent_servers.my-agent.login]
+label = "my-agent login"
+command = "my-agent-auth"
+args = ["--interactive"]
+
+[agent_servers.my-agent.login.env]
+AUTH_MODE = "oauth"
+
+[agent_servers.gemini-style]
+args = ["--experimental-acp"]
+
+[agent_servers.gemini-style.launcher]
+package = "@example/gemini-fork"
+entrypoint = "node_modules/@example/gemini-fork/dist/index.js"
+
+[agent_servers.gemini-style.login]
+label = "gemini /auth"
+# No command - uses same node + entrypoint but without --experimental-acp
+"#;
+
+        let manifest: ExtensionManifest = toml::from_str(toml_src).expect("manifest should parse");
+        assert_eq!(manifest.id.as_ref(), "example.agent-with-login");
+
+        // Test binary agent with custom login command
+        let binary_agent = manifest.agent_servers.get("my-agent").unwrap();
+        assert!(binary_agent.login.is_some());
+        let login = binary_agent.login.as_ref().unwrap();
+        assert_eq!(login.label, "my-agent login");
+        assert_eq!(login.command, Some("my-agent-auth".to_string()));
+        assert_eq!(login.args, vec!["--interactive"]);
+        assert_eq!(login.env.get("AUTH_MODE"), Some(&"oauth".to_string()));
+
+        // Test NPM agent with default login command
+        let npm_agent = manifest.agent_servers.get("gemini-style").unwrap();
+        assert!(npm_agent.login.is_some());
+        let npm_login = npm_agent.login.as_ref().unwrap();
+        assert_eq!(npm_login.label, "gemini /auth");
+        assert_eq!(npm_login.command, None); // Uses main command
+        assert!(npm_login.args.is_empty());
     }
 }
