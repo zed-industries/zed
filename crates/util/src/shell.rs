@@ -435,6 +435,10 @@ impl ShellKind {
         })
     }
 
+    pub fn split(&self, input: &str) -> Option<Vec<String>> {
+        shlex::split(input)
+    }
+
     pub const fn activate_keyword(&self) -> &'static str {
         match self {
             ShellKind::Cmd => "",
