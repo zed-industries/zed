@@ -31,7 +31,10 @@ WizardStyle=modern
 
 CloseApplications=force
 
+#if GetEnv("CI") != ""
 SignTool=Defaultsign
+#endif
+
 DefaultDirName={autopf}\{#AppName}
 PrivilegesRequired=lowest
 
