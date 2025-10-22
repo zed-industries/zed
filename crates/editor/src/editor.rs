@@ -1183,6 +1183,9 @@ pub struct Editor {
     addons: HashMap<TypeId, Box<dyn Addon>>,
     registered_buffers: HashMap<BufferId, OpenLspBufferHandle>,
     pending_semantic_token_requests: HashSet<BufferId>,
+    pending_semantic_token_buffers: Arc<Mutex<HashSet<BufferId>>>,
+    semantic_tokens_refresh_active: Arc<Mutex<bool>>,
+    semantic_tokens_refresh_task: Task<()>,
     load_diff_task: Option<Shared<Task<()>>>,
     /// Whether we are temporarily displaying a diff other than git's
     temporary_diff_override: bool,
@@ -2298,6 +2301,9 @@ impl Editor {
             addons: HashMap::default(),
             registered_buffers: HashMap::default(),
             pending_semantic_token_requests: HashSet::default(),
+            pending_semantic_token_buffers: Arc::new(Mutex::new(HashSet::default())),
+            semantic_tokens_refresh_active: Arc::new(Mutex::new(false)),
+            semantic_tokens_refresh_task: Task::ready(()),
             _scroll_cursor_center_top_bottom_task: Task::ready(()),
             selection_mark_mode: false,
             toggle_fold_multiple_buffers: Task::ready(()),
@@ -22247,60 +22253,118 @@ impl Editor {
             self.buffer.read(cx).all_buffer_ids()
         };
 
-        for buffer_id in buffer_ids {
-            let Some(buffer) = self.buffer.read(cx).buffer(buffer_id) else {
-                continue;
-            };
+        {
+            let mut pending = self.pending_semantic_token_buffers.lock();
+            pending.extend(buffer_ids);
+        }
 
-            // Skip if we already have a request in flight for this buffer
-            if self.pending_semantic_token_requests.contains(&buffer_id) {
-                log::debug!("Skipping duplicate semantic token request for buffer {buffer_id}");
-                continue;
+        {
+            let mut active = self.semantic_tokens_refresh_active.lock();
+            if *active {
+                return;
             }
+            *active = true;
+        }
 
-            log::debug!("Requesting semantic tokens for buffer {buffer_id}");
-            self.pending_semantic_token_requests.insert(buffer_id);
+        let pending_buffers = self.pending_semantic_token_buffers.clone();
+        let refresh_active = self.semantic_tokens_refresh_active.clone();
+        let multibuffer = self.buffer.clone();
+        
+        self.semantic_tokens_refresh_task = cx.spawn(async move |editor, cx| {
+            loop {
+                cx.background_executor()
+                    .timer(Duration::from_millis(50))
+                    .await;
 
-            let project = project.clone();
-            cx.spawn(async move |editor, cx| {
-                let Some(task) = project
-                    .update(cx, |project, cx| {
-                        project
-                            .lsp_store()
-                            .update(cx, |store, cx| store.semantic_tokens(buffer, cx))
-                    })
-                    .log_err()
-                else {
-                    editor.update(cx, |editor, _cx| {
-                        editor.pending_semantic_token_requests.remove(&buffer_id);
-                    }).log_err();
-                    return anyhow::Ok(());
+                let buffers_to_process: Vec<BufferId> = {
+                    let mut pending = pending_buffers.lock();
+                    let buffers: Vec<_> = pending.drain().collect();
+                    buffers
                 };
 
-                match task.await {
-                    Ok(tokens) if tokens.server_id.is_some() => {
-                        log::info!("✓ Semantic tokens received for buffer {buffer_id}, server_id: {:?}", tokens.server_id);
-                        editor.update(cx, |editor, _cx| {
-                            editor.pending_semantic_token_requests.remove(&buffer_id);
-                        }).log_err();
-                    }
-                    Ok(_) => {
-                        log::debug!("✗ LSP returned empty tokens for buffer {buffer_id} (server not capable yet)");
-                        editor.update(cx, |editor, _cx| {
-                            editor.pending_semantic_token_requests.remove(&buffer_id);
-                        }).log_err();
-                    }
-                    Err(e) => {
-                        log::warn!("✗ Failed to fetch semantic tokens for buffer {buffer_id}: {e:#}");
-                        editor.update(cx, |editor, _cx| {
-                            editor.pending_semantic_token_requests.remove(&buffer_id);
-                        }).log_err();
+                if buffers_to_process.is_empty() {
+                    *refresh_active.lock() = false;
+                    return;
+                }
+
+                const CHUNK_SIZE: usize = 5;
+                
+                for chunk in buffers_to_process.chunks(CHUNK_SIZE) {
+                    let chunk_tasks: Vec<_> = editor
+                        .update(cx, |editor, cx| {
+                            let mut tasks = Vec::new();
+                            
+                            for &buffer_id in chunk {
+                                let Some(buffer) = multibuffer.read(cx).buffer(buffer_id) else {
+                                    continue;
+                                };
+
+                                if editor.pending_semantic_token_requests.contains(&buffer_id) {
+                                    log::trace!("Skipping duplicate semantic token request for buffer {buffer_id}");
+                                    continue;
+                                }
+
+                                log::debug!("Requesting semantic tokens for buffer {buffer_id}");
+                                editor.pending_semantic_token_requests.insert(buffer_id);
+
+                                let project = project.clone();
+                                let task = cx.spawn(async move |editor, cx| {
+                                    let Some(lsp_task) = project
+                                        .update(cx, |project, cx| {
+                                            project
+                                                .lsp_store()
+                                                .update(cx, |store, cx| store.semantic_tokens(buffer, cx))
+                                        })
+                                        .log_err()
+                                    else {
+                                        editor
+                                            .update(cx, |editor, _cx| {
+                                                editor.pending_semantic_token_requests.remove(&buffer_id);
+                                            })
+                                            .log_err();
+                                        return;
+                                    };
+
+                                    match lsp_task.await {
+                                        Ok(tokens) if tokens.server_id.is_some() => {
+                                            log::info!(
+                                                "✓ Semantic tokens received for buffer {buffer_id}, server_id: {:?}",
+                                                tokens.server_id
+                                            );
+                                        }
+                                        Ok(_) => {
+                                            log::debug!(
+                                                "✗ LSP returned empty tokens for buffer {buffer_id} (server not capable yet)"
+                                            );
+                                        }
+                                        Err(e) => {
+                                            log::warn!(
+                                                "✗ Failed to fetch semantic tokens for buffer {buffer_id}: {e:#}"
+                                            );
+                                        }
+                                    }
+
+                                    editor
+                                        .update(cx, |editor, _cx| {
+                                            editor.pending_semantic_token_requests.remove(&buffer_id);
+                                        })
+                                        .log_err();
+                                });
+
+                                tasks.push(task);
+                            }
+                            
+                            tasks
+                        })
+                        .log_err()
+                        .unwrap_or_default();
+
+                    for task in chunk_tasks {
+                        task.await;
                     }
                 }
-                anyhow::Ok(())
-            })
-            .detach();
-        }
+            }
+        });
     }
 
     fn ignore_lsp_data(&self) -> bool {
