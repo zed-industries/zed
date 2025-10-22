@@ -874,7 +874,7 @@ pub trait Addon: 'static {
         None
     }
 
-    fn override_status_for_buffer_id(&self, buffer_id: BufferId, _: &App) -> Option<FileStatus> {
+    fn override_status_for_buffer_id(&self, _: BufferId, _: &App) -> Option<FileStatus> {
         None
     }
 

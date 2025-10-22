@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use anyhow::Result;
 use buffer_diff::BufferDiff;
 use collections::HashSet;
@@ -9,8 +7,8 @@ use git::{
     status::{DiffTreeType, FileStatus, StatusCode, TrackedStatus, TreeDiff, TreeDiffStatus},
 };
 use gpui::{
-    App, AppContext, AsyncWindowContext, Context, Entity, EventEmitter, SharedString, Subscription,
-    Task, WeakEntity, Window,
+    App, AsyncWindowContext, Context, Entity, EventEmitter, SharedString, Subscription, Task,
+    WeakEntity, Window,
 };
 
 use language::Buffer;
@@ -192,24 +190,21 @@ impl BranchDiff {
             (Some(diff_from_head), None) => Some(diff_from_head),
             (
                 Some(FileStatus::Tracked(TrackedStatus {
-                    index_status,
-                    worktree_status,
+                    worktree_status, ..
                 })),
                 Some(tree_status),
             ) => Some(FileStatus::Tracked(TrackedStatus {
                 index_status: match tree_status {
-                    TreeDiffStatus::Added { new } => StatusCode::Added,
-                    TreeDiffStatus::Modified { old, new } => StatusCode::Modified,
-                    TreeDiffStatus::Deleted { old } => StatusCode::Modified,
+                    TreeDiffStatus::Added { .. } => StatusCode::Added,
+                    TreeDiffStatus::Modified { .. } => StatusCode::Modified,
+                    TreeDiffStatus::Deleted { .. } => StatusCode::Modified,
                 },
                 worktree_status,
             })),
-            (Some(FileStatus::Untracked), Some(diff_from_merge_base)) => {
-                Some(FileStatus::Tracked(TrackedStatus {
-                    index_status: StatusCode::Modified,
-                    worktree_status: StatusCode::Modified,
-                }))
-            }
+            (Some(FileStatus::Untracked), Some(_)) => Some(FileStatus::Tracked(TrackedStatus {
+                index_status: StatusCode::Modified,
+                worktree_status: StatusCode::Modified,
+            })),
             (_, Some(diff_from_merge_base)) => {
                 Some(diff_status_to_file_status(diff_from_merge_base))
             }
@@ -220,7 +215,6 @@ impl BranchDiff {
         this: WeakEntity<Self>,
         cx: &mut AsyncWindowContext,
     ) -> Result<()> {
-        dbg!("reload_tree_diff");
         let task = this.update(cx, |this, cx| {
             let DiffBase::Merge { base_ref } = this.diff_base.clone() else {
                 return None;
@@ -328,41 +322,28 @@ impl BranchDiff {
                 .update(cx, |project, cx| project.open_buffer(project_path, cx))?
                 .await?;
 
-            let language_registry =
-                project.update(cx, |project, _cx| project.languages().clone())?;
+            let languages = project.update(cx, |project, _cx| project.languages().clone())?;
 
-            let changes;
-            if let Some(entry) = branch_diff {
-                let buffer_snapshot = buffer.update(cx, |buffer, cx| buffer.snapshot())?;
-                let content = match entry {
+            let changes = if let Some(entry) = branch_diff {
+                let oid = match entry {
                     git::status::TreeDiffStatus::Added { .. } => None,
                     git::status::TreeDiffStatus::Modified { old, .. }
-                    | git::status::TreeDiffStatus::Deleted { old } => Some(
-                        repo.update(cx, |repo, cx| repo.load_blob_content(old, cx))?
-                            .await?,
-                    ),
+                    | git::status::TreeDiffStatus::Deleted { old } => Some(old),
                 };
-
-                let buffer_diff = cx.new(|cx| BufferDiff::new(&buffer_snapshot, cx))?;
-                buffer_diff
-                    .update(cx, |buffer_diff, cx| {
-                        buffer_diff.set_base_text(
-                            content.map(Arc::new),
-                            buffer_snapshot.language().cloned(),
-                            Some(language_registry.clone()),
-                            buffer_snapshot.text,
-                            cx,
-                        )
+                project
+                    .update(cx, |project, cx| {
+                        project.git_store().update(cx, |git_store, cx| {
+                            git_store.open_diff_since(oid, buffer.clone(), repo, languages, cx)
+                        })
                     })?
-                    .await?;
-                changes = buffer_diff;
+                    .await?
             } else {
-                changes = project
+                project
                     .update(cx, |project, cx| {
                         project.open_uncommitted_diff(buffer.clone(), cx)
                     })?
-                    .await?;
-            }
+                    .await?
+            };
             Ok((buffer, changes))
         });
         task

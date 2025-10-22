@@ -10,7 +10,8 @@ use git::{
         GitRepositoryCheckpoint, PushOptions, Remote, RepoPath, ResetMode,
     },
     status::{
-        DiffTreeType, FileStatus, GitStatus, StatusCode, TrackedStatus, TreeDiff, UnmergedStatus,
+        DiffTreeType, FileStatus, GitStatus, StatusCode, TrackedStatus, TreeDiff, TreeDiffStatus,
+        UnmergedStatus,
     },
 };
 use gpui::{AsyncApp, BackgroundExecutor, SharedString, Task};
@@ -37,6 +38,9 @@ pub struct FakeGitRepositoryState {
     pub unmerged_paths: HashMap<RepoPath, UnmergedStatus>,
     pub head_contents: HashMap<RepoPath, String>,
     pub index_contents: HashMap<RepoPath, String>,
+    // everything in commit contents is in oids
+    pub merge_base_contents: HashMap<RepoPath, Oid>,
+    pub oids: HashMap<Oid, String>,
     pub blames: HashMap<RepoPath, Blame>,
     pub current_branch_name: Option<String>,
     pub branches: HashSet<String>,
@@ -56,6 +60,8 @@ impl FakeGitRepositoryState {
             branches: Default::default(),
             simulated_index_write_error_message: Default::default(),
             refs: HashMap::from_iter([("HEAD".into(), "abc".into())]),
+            merge_base_contents: Default::default(),
+            oids: Default::default(),
         }
     }
 }
@@ -111,7 +117,12 @@ impl GitRepository for FakeGitRepository {
     }
 
     fn load_blob_content(&self, _: git::Oid) -> BoxFuture<'_, Result<String>> {
-        unimplemented!()
+        self.with_state_async(false, move |state| {
+            Ok(state
+                .merge_base_contents
+                .get(oid)
+                .expect("can only load blob content from merge base right now"))
+        })
     }
 
     fn load_commit(
@@ -144,10 +155,31 @@ impl GitRepository for FakeGitRepository {
         None
     }
 
-    fn diff_tree(&self, _: DiffTreeType) -> Task<Result<TreeDiff>> {
-        Task::ready(Ok(TreeDiff {
-            entries: Default::default(),
-        }))
+    fn diff_tree(&self, _request: DiffTreeType) -> BoxFuture<Result<TreeDiff>> {
+        let mut entries = HashMap::default();
+        self.with_state_async(false, |state| {
+            for (path, content) in &state.head_contents {
+                let status = if let Some((oid, content)) = state
+                    .merge_base_contents
+                    .get(path)
+                    .map(|oid| (oid, state.oids[oid]))
+                {
+                    if original == content {
+                        continue;
+                    }
+                    TreeDiffStatus::Modified { old: oid }
+                } else {
+                    TreeDiffStatus::Added
+                };
+                seen.insert(path.clone())
+            }
+            for (path, content) in &state.merge_base_contents {
+                if !entries.contains(path) {
+                    entries.insert(path.clone(), TreeDiffStatus::Deleted { old: content })
+                }
+            }
+        })
+        .boxed()
     }
 
     fn revparse_batch(&self, revs: Vec<String>) -> BoxFuture<'_, Result<Vec<Option<String>>>> {

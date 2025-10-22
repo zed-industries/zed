@@ -47,7 +47,7 @@ use parking_lot::Mutex;
 use postage::stream::Stream as _;
 use rpc::{
     AnyProtoClient, TypedEnvelope,
-    proto::{self, git_reset, split_repository_update},
+    proto::{self, git_reset, language_server_prompt_request, split_repository_update},
 };
 use serde::Deserialize;
 use std::{
@@ -615,6 +615,52 @@ impl GitStore {
             .clone();
 
         cx.background_spawn(async move { task.await.map_err(|e| anyhow!("{e}")) })
+    }
+
+    pub fn open_diff_since(
+        &mut self,
+        oid: Option<git::Oid>,
+        buffer: Entity<Buffer>,
+        repo: Entity<Repository>,
+        languages: Arc<LanguageRegistry>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Entity<BufferDiff>>> {
+        cx.spawn(async move |this, cx| {
+            let buffer_snapshot = buffer.update(cx, |buffer, _| buffer.snapshot())?;
+            let content = match oid {
+                None => None,
+                Some(oid) => Some(
+                    repo.update(cx, |repo, cx| repo.load_blob_content(oid, cx))?
+                        .await?,
+                ),
+            };
+            let buffer_diff = cx.new(|cx| BufferDiff::new(&buffer_snapshot, cx))?;
+
+            buffer_diff
+                .update(cx, |buffer_diff, cx| {
+                    buffer_diff.set_base_text(
+                        content.map(Arc::new),
+                        buffer_snapshot.language().cloned(),
+                        Some(languages.clone()),
+                        buffer_snapshot.text,
+                        cx,
+                    )
+                })?
+                .await?;
+            let unstaged_diff = this
+                .update(cx, |this, cx| this.open_unstaged_diff(buffer.clone(), cx))?
+                .await?;
+            buffer_diff.update(cx, |buffer_diff, _| {
+                buffer_diff.set_secondary_diff(unstaged_diff);
+            })?;
+
+            this.update(cx, |_, cx| {
+                cx.subscribe(&buffer_diff, Self::on_buffer_diff_event)
+                    .detach();
+            })?;
+
+            Ok(buffer_diff)
+        })
     }
 
     pub fn open_uncommitted_diff(

@@ -311,6 +311,10 @@ impl ProjectDiff {
         }
     }
 
+    pub fn diff_base(&self, cx: &App) -> &DiffBase {
+        self.branch_diff.read(cx).diff_base()
+    }
+
     pub fn move_to_entry(
         &mut self,
         entry: GitStatusEntry,
@@ -481,7 +485,6 @@ impl ProjectDiff {
         let excerpt_ranges = merge_anchor_ranges(diff_hunk_ranges, conflicts, &snapshot)
             .map(|range| range.to_point(&snapshot))
             .collect::<Vec<_>>();
-        dbg!(&excerpt_ranges.len(), &path_key);
 
         let (was_empty, is_excerpt_newly_added) = self.multibuffer.update(cx, |multibuffer, cx| {
             let was_empty = multibuffer.is_empty();
@@ -953,6 +956,7 @@ impl ToolbarItemView for ProjectDiffToolbar {
     ) -> ToolbarItemLocation {
         self.project_diff = active_pane_item
             .and_then(|item| item.act_as::<ProjectDiff>(cx))
+            .filter(|item| item.read(cx).diff_base(cx) == DiffBase::Head)
             .map(|entity| entity.downgrade());
         if self.project_diff.is_some() {
             ToolbarItemLocation::PrimaryRight
@@ -1967,6 +1971,131 @@ mod tests {
 
     #[gpui::test]
     async fn test_new_hunk_in_modified_file(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "foo.txt": "
+                    one
+                    two
+                    three
+                    four
+                    five
+                    six
+                    seven
+                    eight
+                    nine
+                    ten
+                    ELEVEN
+                    twelve
+                ".unindent()
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let diff = cx.new_window_entity(|window, cx| {
+            ProjectDiff::new(project.clone(), workspace, window, cx)
+        });
+        cx.run_until_parked();
+
+        fs.set_head_and_index_for_repo(
+            Path::new(path!("/project/.git")),
+            &[(
+                "foo.txt",
+                "
+                    one
+                    two
+                    three
+                    four
+                    five
+                    six
+                    seven
+                    eight
+                    nine
+                    ten
+                    eleven
+                    twelve
+                "
+                .unindent(),
+            )],
+        );
+        cx.run_until_parked();
+
+        let editor = diff.read_with(cx, |diff, _| diff.editor.clone());
+
+        assert_state_with_diff(
+            &editor,
+            cx,
+            &"
+                  ˇnine
+                  ten
+                - eleven
+                + ELEVEN
+                  twelve
+            "
+            .unindent(),
+        );
+
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/project/foo.txt"), cx)
+            })
+            .await
+            .unwrap();
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit_via_marked_text(
+                &"
+                    one
+                    «TWO»
+                    three
+                    four
+                    five
+                    six
+                    seven
+                    eight
+                    nine
+                    ten
+                    ELEVEN
+                    twelve
+                "
+                .unindent(),
+                None,
+                cx,
+            );
+        });
+        project
+            .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        assert_state_with_diff(
+            &editor,
+            cx,
+            &"
+                  one
+                - two
+                + TWO
+                  three
+                  four
+                  five
+                  ˇnine
+                  ten
+                - eleven
+                + ELEVEN
+                  twelve
+            "
+            .unindent(),
+        );
+    }
+
+    #[gpui::test]
+    async fn test_branch_diff(cx: &mut TestAppContext) {
         init_test(cx);
 
         let fs = FakeFs::new(cx.executor());

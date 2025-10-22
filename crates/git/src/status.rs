@@ -507,8 +507,8 @@ pub struct TreeDiff {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum TreeDiffStatus {
-    Added { new: Oid },
-    Modified { old: Oid, new: Oid },
+    Added,
+    Modified { old: Oid },
     Deleted { old: Oid },
 }
 
@@ -534,14 +534,12 @@ impl FromStr for TreeDiffStatus {
         let mut fields = s.split(" ").skip(2);
         let old_sha = fields
             .next()
-            .ok_or_else(|| anyhow!("expected to find before hash"))?
+            .ok_or_else(|| anyhow!("expected to find old_sha"))?
             .to_owned()
             .parse()?;
-        let new_sha = fields
+        let _new_sha = fields
             .next()
-            .ok_or_else(|| anyhow!("expected to find after hash"))?
-            .to_owned()
-            .parse()?;
+            .ok_or_else(|| anyhow!("expected to find new_sha"))?;
         let status = fields
             .next()
             .and_then(|s| {
@@ -554,11 +552,8 @@ impl FromStr for TreeDiffStatus {
             .ok_or_else(|| anyhow!("expected to find status"))?;
 
         let result = match StatusCode::from_byte(*status)? {
-            StatusCode::Modified => TreeDiffStatus::Modified {
-                old: old_sha,
-                new: new_sha,
-            },
-            StatusCode::Added => TreeDiffStatus::Added { new: new_sha },
+            StatusCode::Modified => TreeDiffStatus::Modified { old: old_sha },
+            StatusCode::Added => TreeDiffStatus::Added,
             StatusCode::Deleted => TreeDiffStatus::Deleted { old: old_sha },
             // todo! what if something is modified and the type changed?
             status => {
@@ -591,9 +586,7 @@ mod tests {
                 entries: [
                     (
                         RepoPath::new(".zed/settings.json").unwrap(),
-                        TreeDiffStatus::Added {
-                            new: "0062c311b8727c3a2e3cd7a41bc9904feacf8f98".parse().unwrap()
-                        }
+                        TreeDiffStatus::Added,
                     ),
                     (
                         RepoPath::new("README.md").unwrap(),
@@ -605,7 +598,6 @@ mod tests {
                         RepoPath::new("parallel.go").unwrap(),
                         TreeDiffStatus::Modified {
                             old: "42f097005a1f21eb2260fad02ec8c991282beee8".parse().unwrap(),
-                            new: "a437d85f63bb8c62bd78f83f40c506631fabf005".parse().unwrap()
                         }
                     ),
                 ]
