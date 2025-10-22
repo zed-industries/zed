@@ -1833,7 +1833,7 @@ impl Thread {
             .tools
             .iter()
             .filter_map(|(tool_name, tool)| {
-                if tool.supported_provider(&model.provider_id())
+                if tool.supports_provider(&model.provider_id())
                     && profile.is_tool_enabled(tool_name)
                 {
                     Some((truncate(tool_name), tool.clone()))
@@ -2109,7 +2109,7 @@ where
 
     /// Some tools rely on a provider for the underlying billing or other reasons.
     /// Allow the tool to check if they are compatible, or should be filtered out.
-    fn supported_provider(&self, _provider: &LanguageModelProviderId) -> bool {
+    fn supports_provider(_provider: &LanguageModelProviderId) -> bool {
         true
     }
 
@@ -2150,7 +2150,7 @@ pub trait AnyAgentTool {
     fn kind(&self) -> acp::ToolKind;
     fn initial_title(&self, input: serde_json::Value, _cx: &mut App) -> SharedString;
     fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value>;
-    fn supported_provider(&self, _provider: &LanguageModelProviderId) -> bool {
+    fn supports_provider(&self, _provider: &LanguageModelProviderId) -> bool {
         true
     }
     fn run(
@@ -2195,8 +2195,8 @@ where
         Ok(json)
     }
 
-    fn supported_provider(&self, provider: &LanguageModelProviderId) -> bool {
-        self.0.supported_provider(provider)
+    fn supports_provider(&self, provider: &LanguageModelProviderId) -> bool {
+        T::supports_provider(provider)
     }
 
     fn run(
