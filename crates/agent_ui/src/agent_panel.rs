@@ -919,7 +919,7 @@ impl AgentPanel {
                     && let Some(current_thread) = current_thread_view.read(cx).thread().cloned()
                     && current_thread.read(cx).status() == acp_thread::ThreadStatus::Generating
                 {
-                    // Subscribe to CleanupDetachedSendTask event to clean up when done
+                    // Set up subscription to clean up detached threads
                     let thread_for_cleanup = current_thread.clone();
                     let thread_id = current_thread.entity_id();
                     let session_id = current_thread.read(cx).session_id().clone();
