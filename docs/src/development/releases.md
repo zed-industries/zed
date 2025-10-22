@@ -47,11 +47,10 @@ This is mostly a formality on Wednesday's minor update releases, but can be bene
    - Ensure the draft has the proper number of assets—releases currently have 11 assets each.
    - Download the artifacts for the stable release draft and test that you can run them locally.
 
-1. Publish the stable draft.
+1. Publish the stable draft on [GitHub Releases](https://github.com/zed-industries/zed/releases).
 
-   - Publish the stable draft on [GitHub Releases](https://github.com/zed-industries/zed/releases).
-     - Use [Vercel](https://vercel.com/zed-industries/zed-dev) to check the progress of the website rebuild.
-       The release will be public once the rebuild has completed.
+   - Use [Vercel](https://vercel.com/zed-industries/zed-dev) to check the progress of the website rebuild.
+     The release will be public once the rebuild has completed.
 
 1. Post the stable release notes to social media.
 
@@ -83,11 +82,9 @@ This is mostly a formality on Wednesday's minor update releases, but can be bene
    - Ensure the draft has the proper number of assets—releases currently have 11 assets each.
    - Download the artifacts for the preview release draft and test that you can run them locally.
 
-1. Publish the preview draft.
-
-   - Publish the preview draft on [GitHub Releases](https://github.com/zed-industries/zed/releases).
-     - Use [Vercel](https://vercel.com/zed-industries/zed-dev) to check the progress of the website rebuild.
-       The release will be public once the rebuild has completed.
+1. Publish the preview draft on [GitHub Releases](https://github.com/zed-industries/zed/releases).
+   - Use [Vercel](https://vercel.com/zed-industries/zed-dev) to check the progress of the website rebuild.
+     The release will be public once the rebuild has completed.
 
 ### Prep Content for Next Week's Stable Release
 
