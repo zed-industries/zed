@@ -271,7 +271,7 @@ impl SettingsStore {
     pub fn observe_active_settings_profile_name(cx: &mut App) -> gpui::Subscription {
         cx.observe_global::<ActiveSettingsProfileName>(|cx| {
             Self::update_global(cx, |store, cx| {
-                store.recompute_values(None, cx).log_err();
+                store.recompute_values(None, cx);
             });
         })
     }
@@ -704,7 +704,7 @@ impl SettingsStore {
         cx: &mut App,
     ) -> Result<()> {
         self.default_settings = parse_json_with_comments(default_settings_content)?;
-        self.recompute_values(None, cx)?;
+        self.recompute_values(None, cx);
         Ok(())
     }
 
@@ -720,7 +720,7 @@ impl SettingsStore {
         };
 
         self.user_settings = Some(settings);
-        self.recompute_values(None, cx)?;
+        self.recompute_values(None, cx);
         Ok(())
     }
 
@@ -737,7 +737,7 @@ impl SettingsStore {
         };
 
         self.global_settings = Some(Box::new(settings));
-        self.recompute_values(None, cx)?;
+        self.recompute_values(None, cx);
         Ok(())
     }
 
@@ -758,7 +758,7 @@ impl SettingsStore {
         // Rewrite the server settings into a content type
         self.server_settings = settings.map(|settings| Box::new(settings));
 
-        self.recompute_values(None, cx)?;
+        self.recompute_values(None, cx);
         Ok(())
     }
 
@@ -881,7 +881,7 @@ impl SettingsStore {
         };
 
         if zed_settings_changed {
-            self.recompute_values(Some((root_id, &directory_path)), cx)?;
+            self.recompute_values(Some((root_id, &directory_path)), cx);
         }
         Ok(())
     }
@@ -898,7 +898,7 @@ impl SettingsStore {
             },
             ..Default::default()
         }));
-        self.recompute_values(None, cx)?;
+        self.recompute_values(None, cx);
         Ok(())
     }
 
@@ -906,7 +906,7 @@ impl SettingsStore {
     pub fn clear_local_settings(&mut self, root_id: WorktreeId, cx: &mut App) -> Result<()> {
         self.local_settings
             .retain(|(worktree_id, _), _| worktree_id != &root_id);
-        self.recompute_values(Some((root_id, RelPath::empty())), cx)?;
+        self.recompute_values(Some((root_id, RelPath::empty())), cx);
         Ok(())
     }
 
@@ -996,12 +996,11 @@ impl SettingsStore {
             .to_value()
     }
 
-    // todo -> this function never fails, and should not return a result
     fn recompute_values(
         &mut self,
         changed_local_path: Option<(WorktreeId, &RelPath)>,
         cx: &mut App,
-    ) -> std::result::Result<(), InvalidSettingsError> {
+    ) {
         // Reload the global and local values for every setting.
         let mut project_settings_stack = Vec::<SettingsContent>::new();
         let mut paths_stack = Vec::<Option<(WorktreeId, &RelPath)>>::new();
@@ -1061,7 +1060,6 @@ impl SettingsStore {
                 setting_value.set_local_value(*root_id, directory_path.clone(), value);
             }
         }
-        Ok(())
     }
 
     pub fn editorconfig_properties(
