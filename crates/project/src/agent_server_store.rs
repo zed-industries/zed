@@ -95,7 +95,13 @@ pub trait ExternalAgentServer {
         status_tx: Option<watch::Sender<SharedString>>,
         new_version_available_tx: Option<watch::Sender<Option<String>>>,
         cx: &mut AsyncApp,
-    ) -> Task<Result<(AgentServerCommand, String, Option<task::SpawnInTerminal>)>>;
+    ) -> Task<
+        Result<(
+            AgentServerCommand,
+            String,
+            HashMap<String, task::SpawnInTerminal>,
+        )>,
+    >;
 
     fn as_any_mut(&mut self) -> &mut dyn Any;
 }
@@ -392,7 +398,7 @@ impl AgentServerStore {
         envelope: TypedEnvelope<proto::GetAgentServerCommand>,
         mut cx: AsyncApp,
     ) -> Result<proto::AgentServerCommand> {
-        let (command, root_dir, login) = this
+        let (command, root_dir, _login) = this
             .update(&mut cx, |this, cx| {
                 let AgentServerStoreState::Local {
                     downstream_client, ..
@@ -466,7 +472,7 @@ impl AgentServerStore {
                 .map(|env| env.into_iter().collect())
                 .unwrap_or_default(),
             root_dir: root_dir,
-            login: login.map(|login| login.to_proto()),
+            login: None,
         })
     }
 
@@ -774,7 +780,13 @@ impl ExternalAgentServer for RemoteExternalAgentServer {
         status_tx: Option<watch::Sender<SharedString>>,
         new_version_available_tx: Option<watch::Sender<Option<String>>>,
         cx: &mut AsyncApp,
-    ) -> Task<Result<(AgentServerCommand, String, Option<task::SpawnInTerminal>)>> {
+    ) -> Task<
+        Result<(
+            AgentServerCommand,
+            String,
+            HashMap<String, task::SpawnInTerminal>,
+        )>,
+    > {
         let project_id = self.project_id;
         let name = self.name.to_string();
         let upstream_client = self.upstream_client.downgrade();
@@ -811,9 +823,7 @@ impl ExternalAgentServer for RemoteExternalAgentServer {
                     env: Some(command.env),
                 },
                 root_dir,
-                response
-                    .login
-                    .map(|login| task::SpawnInTerminal::from_proto(login)),
+                HashMap::default(),
             ))
         })
     }
@@ -839,7 +849,13 @@ impl ExternalAgentServer for LocalGemini {
         status_tx: Option<watch::Sender<SharedString>>,
         new_version_available_tx: Option<watch::Sender<Option<String>>>,
         cx: &mut AsyncApp,
-    ) -> Task<Result<(AgentServerCommand, String, Option<task::SpawnInTerminal>)>> {
+    ) -> Task<
+        Result<(
+            AgentServerCommand,
+            String,
+            HashMap<String, task::SpawnInTerminal>,
+        )>,
+    > {
         let fs = self.fs.clone();
         let node_runtime = self.node_runtime.clone();
         let project_environment = self.project_environment.downgrade();
@@ -906,12 +922,15 @@ impl ExternalAgentServer for LocalGemini {
                 ..Default::default()
             };
 
+            let mut auth_commands = HashMap::default();
+            auth_commands.insert("spawn-gemini-cli".to_string(), login);
+
             command.env.get_or_insert_default().extend(extra_env);
             command.args.push("--experimental-acp".into());
             Ok((
                 command,
                 root_dir.to_string_lossy().into_owned(),
-                Some(login),
+                auth_commands,
             ))
         })
     }
@@ -936,7 +955,13 @@ impl ExternalAgentServer for LocalClaudeCode {
         status_tx: Option<watch::Sender<SharedString>>,
         new_version_available_tx: Option<watch::Sender<Option<String>>>,
         cx: &mut AsyncApp,
-    ) -> Task<Result<(AgentServerCommand, String, Option<task::SpawnInTerminal>)>> {
+    ) -> Task<
+        Result<(
+            AgentServerCommand,
+            String,
+            HashMap<String, task::SpawnInTerminal>,
+        )>,
+    > {
         let fs = self.fs.clone();
         let node_runtime = self.node_runtime.clone();
         let project_environment = self.project_environment.downgrade();
@@ -999,8 +1024,17 @@ impl ExternalAgentServer for LocalClaudeCode {
                 (command, login)
             };
 
+            let mut auth_commands = HashMap::default();
+            if let Some(login) = login {
+                auth_commands.insert("claude-login".to_string(), login);
+            }
+
             command.env.get_or_insert_default().extend(extra_env);
-            Ok((command, root_dir.to_string_lossy().into_owned(), login))
+            Ok((
+                command,
+                root_dir.to_string_lossy().into_owned(),
+                auth_commands,
+            ))
         })
     }
 
@@ -1025,7 +1059,13 @@ impl ExternalAgentServer for LocalCodex {
         _status_tx: Option<watch::Sender<SharedString>>,
         _new_version_available_tx: Option<watch::Sender<Option<String>>>,
         cx: &mut AsyncApp,
-    ) -> Task<Result<(AgentServerCommand, String, Option<task::SpawnInTerminal>)>> {
+    ) -> Task<
+        Result<(
+            AgentServerCommand,
+            String,
+            HashMap<String, task::SpawnInTerminal>,
+        )>,
+    > {
         let fs = self.fs.clone();
         let project_environment = self.project_environment.downgrade();
         let http = self.http_client.clone();
@@ -1116,7 +1156,11 @@ impl ExternalAgentServer for LocalCodex {
             };
 
             command.env.get_or_insert_default().extend(extra_env);
-            Ok((command, root_dir.to_string_lossy().into_owned(), None))
+            Ok((
+                command,
+                root_dir.to_string_lossy().into_owned(),
+                HashMap::default(),
+            ))
         })
     }
 
@@ -1173,7 +1217,13 @@ impl ExternalAgentServer for LocalCustomAgent {
         _status_tx: Option<watch::Sender<SharedString>>,
         _new_version_available_tx: Option<watch::Sender<Option<String>>>,
         cx: &mut AsyncApp,
-    ) -> Task<Result<(AgentServerCommand, String, Option<task::SpawnInTerminal>)>> {
+    ) -> Task<
+        Result<(
+            AgentServerCommand,
+            String,
+            HashMap<String, task::SpawnInTerminal>,
+        )>,
+    > {
         let mut command = self.command.clone();
         let root_dir: Arc<Path> = root_dir
             .map(|root_dir| Path::new(root_dir))
@@ -1194,7 +1244,11 @@ impl ExternalAgentServer for LocalCustomAgent {
             env.extend(command.env.unwrap_or_default());
             env.extend(extra_env);
             command.env = Some(env);
-            Ok((command, root_dir.to_string_lossy().into_owned(), None))
+            Ok((
+                command,
+                root_dir.to_string_lossy().into_owned(),
+                HashMap::default(),
+            ))
         })
     }
 
