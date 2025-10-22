@@ -1702,7 +1702,7 @@ impl SettingsWindow {
             .iter()
             .any(|(file, _)| file == &self.current_file);
         if !current_file_still_exists {
-            self.change_file(0, window, false, cx);
+            self.change_file(0, false, window, cx);
         }
     }
 
@@ -1735,8 +1735,8 @@ impl SettingsWindow {
     fn change_file(
         &mut self,
         ix: usize,
-        window: &mut Window,
         drop_down_file: bool,
+        window: &mut Window,
         cx: &mut Context<SettingsWindow>,
     ) {
         if ix >= self.files.len() {
@@ -1785,7 +1785,7 @@ impl SettingsWindow {
                 .on_click(cx.listener({
                     let focus_handle = focus_handle.clone();
                     move |this, _: &gpui::ClickEvent, window, cx| {
-                        this.change_file(ix, window, false, cx);
+                        this.change_file(ix, false, window, cx);
                         focus_handle.focus(window);
                     }
                 }))
@@ -1834,23 +1834,35 @@ impl SettingsWindow {
                                         "more-files",
                                         format!("+{}", self.files.len() - (OVERFLOW_LIMIT + 1)),
                                         ContextMenu::build(window, cx, move |mut menu, _, _| {
-                                            for (ix, (file, focus_handle)) in self
+                                            for (mut ix, (file, focus_handle)) in self
                                                 .files
                                                 .iter()
                                                 .enumerate()
                                                 .skip(OVERFLOW_LIMIT + 1)
                                             {
+                                                let (display_name, focus_handle) = if self
+                                                    .drop_down_file
+                                                    .is_some_and(|drop_down_ix| drop_down_ix == ix)
+                                                {
+                                                    ix = OVERFLOW_LIMIT;
+                                                    (
+                                                        self.display_name(&self.files[ix].0),
+                                                        self.files[ix].1.clone(),
+                                                    )
+                                                } else {
+                                                    (self.display_name(&file), focus_handle.clone())
+                                                };
+
                                                 menu = menu.entry(
-                                                    self.display_name(file)
+                                                    display_name
                                                         .expect("Files should always have a name"),
                                                     None,
                                                     {
                                                         let this = this.clone();
-                                                        let focus_handle = focus_handle.clone();
                                                         move |window, cx| {
                                                             this.update(cx, |this, cx| {
                                                                 this.change_file(
-                                                                    ix, window, true, cx,
+                                                                    ix, true, window, cx,
                                                                 );
                                                             });
                                                             focus_handle.focus(window);
