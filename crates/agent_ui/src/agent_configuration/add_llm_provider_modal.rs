@@ -431,7 +431,7 @@ impl Focusable for AddLlmProviderModal {
 impl ModalView for AddLlmProviderModal {}
 
 impl Render for AddLlmProviderModal {
-    fn render(&mut self, window: &mut ui::Window, cx: &mut ui::Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut ui::Window, cx: &mut ui::Context<Self>) -> impl IntoElement {
         let focus_handle = self.focus_handle(cx);
 
         div()
@@ -484,7 +484,6 @@ impl Render for AddLlmProviderModal {
                                             KeyBinding::for_action_in(
                                                 &menu::Cancel,
                                                 &focus_handle,
-                                                window,
                                                 cx,
                                             )
                                             .map(|kb| kb.size(rems_from_px(12.))),
@@ -499,7 +498,6 @@ impl Render for AddLlmProviderModal {
                                             KeyBinding::for_action_in(
                                                 &menu::Confirm,
                                                 &focus_handle,
-                                                window,
                                                 cx,
                                             )
                                             .map(|kb| kb.size(rems_from_px(12.))),

@@ -466,11 +466,10 @@ impl PickerDelegate for BranchListDelegate {
                         this.delegate.set_selected_index(ix, window, cx);
                         this.delegate.confirm(true, window, cx);
                     }))
-                    .tooltip(move |window, cx| {
+                    .tooltip(move |_window, cx| {
                         Tooltip::for_action(
                             format!("Create branch based off default: {default_branch}"),
                             &menu::SecondaryConfirm,
-                            window,
                             cx,
                         )
                     }),

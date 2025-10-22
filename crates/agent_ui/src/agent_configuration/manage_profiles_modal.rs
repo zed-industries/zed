@@ -352,10 +352,9 @@ impl ManageProfilesModal {
                                         .size(LabelSize::Small)
                                         .color(Color::Muted),
                                 )
-                                .children(KeyBinding::for_action_in(
+                                .child(KeyBinding::for_action_in(
                                     &menu::Confirm,
                                     &self.focus_handle,
-                                    window,
                                     cx,
                                 )),
                         )
@@ -649,14 +648,13 @@ impl ManageProfilesModal {
                                         )
                                         .child(Label::new("Go Back"))
                                         .end_slot(
-                                            div().children(
+                                            div().child(
                                                 KeyBinding::for_action_in(
                                                     &menu::Cancel,
                                                     &self.focus_handle,
-                                                    window,
                                                     cx,
                                                 )
-                                                .map(|kb| kb.size(rems_from_px(12.))),
+                                                .size(rems_from_px(12.)),
                                             ),
                                         )
                                         .on_click({
@@ -700,14 +698,9 @@ impl Render for ManageProfilesModal {
                     )
                     .child(Label::new("Go Back"))
                     .end_slot(
-                        div().children(
-                            KeyBinding::for_action_in(
-                                &menu::Cancel,
-                                &self.focus_handle,
-                                window,
-                                cx,
-                            )
-                            .map(|kb| kb.size(rems_from_px(12.))),
+                        div().child(
+                            KeyBinding::for_action_in(&menu::Cancel, &self.focus_handle, cx)
+                                .size(rems_from_px(12.)),
                         ),
                     )
                     .on_click({
