@@ -52,11 +52,14 @@ This is mostly a formality on Wednesday's minor update releases, but can be bene
 1. Post the stable release notes to social media.
 
    - Bluesky and X posts will already be built as drafts in [Buffer](https://buffer.com).
+   - Double-check links.
    - Publish both, one at a time, ensuring both are posted to each respective platform.
 
 1. Send the stable release notes email.
 
    - The email broadcast will already be built as a draft in [Kit](https://kit.com).
+   - Double-check links.
+   - Publish the email.
 
 1. Build social media posts based on the popular items in preview.
 
