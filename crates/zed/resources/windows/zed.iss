@@ -31,7 +31,7 @@ WizardStyle=modern
 
 CloseApplications=force
 
-#ifdef DefaultSign
+#ifdef Defaultsign
 SignTool=Defaultsign
 #endif
 
