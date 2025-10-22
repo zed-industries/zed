@@ -196,6 +196,8 @@ impl EditPredictionProvider for CopilotCompletionProvider {
     }
 
     fn discard(&mut self, cx: &mut Context<Self>) {
+        self.completions.clear();
+
         let settings = AllLanguageSettings::get_global(cx);
 
         let copilot_enabled = settings.show_edit_predictions(None, cx);
@@ -437,8 +439,16 @@ mod tests {
             assert_eq!(editor.display_text(cx), "one.c   \ntwo\nthree\n");
             assert_eq!(editor.text(cx), "one.c   \ntwo\nthree\n");
 
-            // When undoing the previously active suggestion is shown again.
+            // When undoing the previously active suggestion isn't shown again.
             editor.undo(&Default::default(), window, cx);
+            assert!(!editor.has_active_edit_prediction());
+            assert_eq!(editor.display_text(cx), "one.c\ntwo\nthree\n");
+            assert_eq!(editor.text(cx), "one.c\ntwo\nthree\n");
+
+            editor.next_edit_prediction(&Default::default(), window, cx);
+        });
+        executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
+        cx.editor(|editor, _, cx| {
             assert!(editor.has_active_edit_prediction());
             assert_eq!(editor.display_text(cx), "one.copilot2\ntwo\nthree\n");
             assert_eq!(editor.text(cx), "one.c\ntwo\nthree\n");
