@@ -1945,7 +1945,7 @@ impl<'a> SemanticTokenStylizer<'a> {
                 // Rainbow color parameters
                 if let Some(cache) = variable_color_cache {
                     if let Some(theme) = theme {
-                        let identifier: String = buffer.text_for_range(range.clone()).collect();
+                        let identifier: String = buffer.text_for_range(range).collect();
                         if let Some(validated) =
                             crate::rainbow::validate_identifier_for_rainbow(&identifier)
                         {
@@ -1967,7 +1967,7 @@ impl<'a> SemanticTokenStylizer<'a> {
                 // Rainbow color regular variables
                 if let Some(cache) = variable_color_cache {
                     if let Some(theme) = theme {
-                        let identifier: String = buffer.text_for_range(range.clone()).collect();
+                        let identifier: String = buffer.text_for_range(range).collect();
                         if let Some(validated) =
                             crate::rainbow::validate_identifier_for_rainbow(&identifier)
                         {
