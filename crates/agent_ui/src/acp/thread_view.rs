@@ -1441,7 +1441,7 @@ impl AcpThreadView {
                 // Add login commands from the agent
                 for command_name in self.agent.login_commands() {
                     available_commands.push(acp::AvailableCommand {
-                        name: command_name.to_string(),
+                        name: command_name.to_owned(),
                         description: "Authenticate".to_owned(),
                         input: None,
                         meta: None,
@@ -1451,7 +1451,7 @@ impl AcpThreadView {
                 // Add logout commands from the agent
                 for command_name in self.agent.logout_commands() {
                     available_commands.push(acp::AvailableCommand {
-                        name: command_name.to_string(),
+                        name: command_name.to_owned(),
                         description: "Authenticate".to_owned(),
                         input: None,
                         meta: None,
