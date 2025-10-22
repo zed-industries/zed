@@ -28,14 +28,14 @@ This is mostly a formality on Wednesday's minor update releases, but can be bene
 1. Run `./script/get-preview-channel-changes` and store output locally.
 
 > **Note:** Always prioritize the stable release.
-  If you've completed aggregating stable release notes, you can move on to working on aggregating preview release notes, but once the stable build has finished, work through the rest of the stable steps to fully publish.
-  Preview can be finished up after.
+> If you've completed aggregating stable release notes, you can move on to working on aggregating preview release notes, but once the stable build has finished, work through the rest of the stable steps to fully publish.
+> Preview can be finished up after.
 
 ### Stable Release
 
 1. Aggregate preview release notes.
 
-    - Follow the instructions at the end of the script and aggregate the release notes into one structure.
+   - Follow the instructions at the end of the script and aggregate the release notes into one structure.
 
 1. Once the stable release draft is up on [GitHub Releases](https://github.com/zed-industries/zed/releases), paste the stable release notes into it and **save**.
 
