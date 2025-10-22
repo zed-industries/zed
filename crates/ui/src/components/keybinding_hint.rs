@@ -14,6 +14,7 @@ use theme::Appearance;
 /// use gpui::{App, Hsla, KeybindingKeystroke, Keystroke};
 /// use ui::prelude::*;
 /// use ui::{KeyBinding, KeybindingHint};
+/// use settings::KeybindSource;
 ///
 /// # fn example(cx: &App) {
 /// let hint = KeybindingHint::new(
@@ -43,9 +44,9 @@ impl KeybindingHint {
     ///
     /// ```no_run
     /// use gpui::{App, Hsla, KeybindingKeystroke, Keystroke};
-    /// use settings::KeybindSource;
     /// use ui::prelude::*;
     /// use ui::{KeyBinding, KeybindingHint};
+    /// use settings::KeybindSource;
     ///
     /// # fn example(cx: &App) {
     /// let hint = KeybindingHint::new(
