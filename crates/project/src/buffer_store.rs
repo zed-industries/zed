@@ -21,8 +21,8 @@ use rpc::{
     AnyProtoClient, ErrorCode, ErrorExt as _, TypedEnvelope,
     proto::{self},
 };
-use smol::channel::Receiver;
-use std::{io, pin::pin, sync::Arc, time::Instant};
+
+use std::{io, sync::Arc, time::Instant};
 use text::{BufferId, ReplicaId};
 use util::{ResultExt as _, TryFutureExt, debug_panic, maybe, paths::PathStyle, rel_path::RelPath};
 use worktree::{File, PathChange, ProjectEntryId, Worktree, WorktreeId};
