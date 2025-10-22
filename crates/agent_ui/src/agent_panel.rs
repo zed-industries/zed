@@ -869,8 +869,8 @@ impl AgentPanel {
                     && let Some(current_thread) = current_thread_view.read(cx).thread().cloned()
                     && current_thread.read(cx).status() == acp_thread::ThreadStatus::Generating
                 {
-                    current_thread.update(cx, |thread, _| {
-                        thread.detach_send_task();
+                    current_thread.update(cx, |thread, cx| {
+                        thread.detach_send_task(cx);
                     });
 
                     // Subscribe to CleanupDetachedSendTask event to clean up when done

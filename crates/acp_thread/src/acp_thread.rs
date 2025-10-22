@@ -1806,10 +1806,11 @@ impl AcpThread {
         cx.foreground_executor().spawn(send_task)
     }
 
-    pub fn detach_send_task(&mut self) -> bool {
+    pub fn detach_send_task(&mut self, cx: &mut Context<Self>) -> bool {
         if let Some(send_task) = self.send_task.take() {
             self.is_detached = true;
             send_task.detach();
+            cx.notify();
             true
         } else {
             false
