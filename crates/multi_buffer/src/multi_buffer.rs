@@ -2556,6 +2556,10 @@ impl MultiBuffer {
         self.buffers.values().for_each(|state| f(&state.buffer))
     }
 
+    pub fn explicit_title(&self) -> Option<&str> {
+        self.title.as_deref()
+    }
+
     pub fn title<'a>(&'a self, cx: &'a App) -> Cow<'a, str> {
         if let Some(title) = self.title.as_ref() {
             return title.into();

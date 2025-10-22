@@ -27,7 +27,7 @@ mod tab_map;
 mod wrap_map;
 
 use crate::{
-    EditorStyle, InlayId, RowExt, hover_links::InlayHighlight, movement::TextLayoutDetails,
+    EditorStyle, RowExt, hover_links::InlayHighlight, inlays::Inlay, movement::TextLayoutDetails,
 };
 pub use block_map::{
     Block, BlockChunks as DisplayChunks, BlockContext, BlockId, BlockMap, BlockPlacement,
@@ -45,7 +45,6 @@ pub use fold_map::{
 use gpui::{
     App, Context, Entity, Font, HighlightStyle, LineLayout, Pixels, Subscription, UnderlineStyle,
 };
-pub use inlay_map::Inlay;
 use inlay_map::InlaySnapshot;
 pub use inlay_map::{InlayOffset, InlayPoint};
 pub use invisibles::{is_invisible, replacement};
@@ -53,9 +52,10 @@ use language::{
     OffsetUtf16, Point, Subscription as BufferSubscription, language_settings::language_settings,
 };
 use multi_buffer::{
-    Anchor, AnchorRangeExt, ExcerptId, MultiBuffer, MultiBufferPoint, MultiBufferRow,
-    MultiBufferSnapshot, RowInfo, ToOffset, ToPoint,
+    Anchor, AnchorRangeExt, MultiBuffer, MultiBufferPoint, MultiBufferRow, MultiBufferSnapshot,
+    RowInfo, ToOffset, ToPoint,
 };
+use project::InlayId;
 use project::{
     Project, lsp_store::semantic_tokens::SemanticTokens, project_settings::DiagnosticSeverity,
 };

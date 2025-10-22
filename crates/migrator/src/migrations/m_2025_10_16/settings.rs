@@ -37,6 +37,9 @@ fn restore_code_actions_on_format_inner(value: &mut Value, path: &[&str]) -> Res
     } else {
         vec![formatter.clone()]
     };
+    if formatter_array.is_empty() {
+        return Ok(());
+    }
     let mut code_action_formatters = Vec::new();
     for formatter in formatter_array {
         let Some(code_action) = formatter.get("code_action") else {
@@ -58,7 +61,7 @@ fn restore_code_actions_on_format_inner(value: &mut Value, path: &[&str]) -> Res
             .map(|code_action| (code_action, Value::Bool(true))),
     );
 
-    obj.remove("formatter");
+    obj.insert("formatter".to_string(), Value::Array(vec![]));
     obj.insert(
         "code_actions_on_format".into(),
         Value::Object(code_actions_map),

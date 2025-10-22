@@ -390,12 +390,11 @@ impl PickerDelegate for RulePickerDelegate {
                                     div()
                                         .id("built-in-rule")
                                         .child(Icon::new(IconName::FileLock).color(Color::Muted))
-                                        .tooltip(move |window, cx| {
+                                        .tooltip(move |_window, cx| {
                                             Tooltip::with_meta(
                                                 "Built-in rule",
                                                 None,
                                                 BUILT_IN_TOOLTIP_TEXT,
-                                                window,
                                                 cx,
                                             )
                                         })
@@ -426,12 +425,11 @@ impl PickerDelegate for RulePickerDelegate {
                                                     "Remove from Default Rules",
                                                 ))
                                             } else {
-                                                this.tooltip(move |window, cx| {
+                                                this.tooltip(move |_window, cx| {
                                                     Tooltip::with_meta(
                                                         "Add to Default Rules",
                                                         None,
                                                         "Always included in every thread.",
-                                                        window,
                                                         cx,
                                                     )
                                                 })
@@ -1112,8 +1110,8 @@ impl RulesLibrary {
                     .justify_end()
                     .child(
                         IconButton::new("new-rule", IconName::Plus)
-                            .tooltip(move |window, cx| {
-                                Tooltip::for_action("New Rule", &NewRule, window, cx)
+                            .tooltip(move |_window, cx| {
+                                Tooltip::for_action("New Rule", &NewRule, cx)
                             })
                             .on_click(|_, window, cx| {
                                 window.dispatch_action(Box::new(NewRule), cx);
@@ -1215,7 +1213,7 @@ impl RulesLibrary {
                                                 .id("token_count")
                                                 .mr_1()
                                                 .flex_shrink_0()
-                                                .tooltip(move |window, cx| {
+                                                .tooltip(move |_window, cx| {
                                                     Tooltip::with_meta(
                                                         "Token Estimation",
                                                         None,
@@ -1226,7 +1224,6 @@ impl RulesLibrary {
                                                                 .map(|model| model.name().0)
                                                                 .unwrap_or_default()
                                                         ),
-                                                        window,
                                                         cx,
                                                     )
                                                 })
@@ -1245,23 +1242,21 @@ impl RulesLibrary {
                                                     Icon::new(IconName::FileLock)
                                                         .color(Color::Muted),
                                                 )
-                                                .tooltip(move |window, cx| {
+                                                .tooltip(move |_window, cx| {
                                                     Tooltip::with_meta(
                                                         "Built-in rule",
                                                         None,
                                                         BUILT_IN_TOOLTIP_TEXT,
-                                                        window,
                                                         cx,
                                                     )
                                                 })
                                                 .into_any()
                                         } else {
                                             IconButton::new("delete-rule", IconName::Trash)
-                                                .tooltip(move |window, cx| {
+                                                .tooltip(move |_window, cx| {
                                                     Tooltip::for_action(
                                                         "Delete Rule",
                                                         &DeleteRule,
-                                                        window,
                                                         cx,
                                                     )
                                                 })
@@ -1273,11 +1268,10 @@ impl RulesLibrary {
                                         })
                                         .child(
                                             IconButton::new("duplicate-rule", IconName::BookCopy)
-                                                .tooltip(move |window, cx| {
+                                                .tooltip(move |_window, cx| {
                                                     Tooltip::for_action(
                                                         "Duplicate Rule",
                                                         &DuplicateRule,
-                                                        window,
                                                         cx,
                                                     )
                                                 })
@@ -1305,12 +1299,11 @@ impl RulesLibrary {
                                                         "Remove from Default Rules",
                                                     ))
                                                 } else {
-                                                    this.tooltip(move |window, cx| {
+                                                    this.tooltip(move |_window, cx| {
                                                         Tooltip::with_meta(
                                                             "Add to Default Rules",
                                                             None,
                                                             "Always included in every thread.",
-                                                            window,
                                                             cx,
                                                         )
                                                     })
@@ -1417,7 +1410,7 @@ impl Render for RulesLibrary {
                                                                 .full_width()
                                                                 .key_binding(
                                                                     KeyBinding::for_action(
-                                                                        &NewRule, window, cx,
+                                                                        &NewRule, cx,
                                                                     ),
                                                                 )
                                                                 .on_click(|_, window, cx| {

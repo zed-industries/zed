@@ -2159,20 +2159,16 @@ impl SettingsWindow {
                     .flex_shrink_0()
                     .border_t_1()
                     .border_color(cx.theme().colors().border_variant)
-                    .children(
-                        KeyBinding::for_action_in(
-                            &ToggleFocusNav,
-                            &self.navbar_focus_handle.focus_handle(cx),
-                            window,
-                            cx,
+                    .child(
+                        KeybindingHint::new(
+                            KeyBinding::for_action_in(
+                                &ToggleFocusNav,
+                                &self.navbar_focus_handle.focus_handle(cx),
+                                cx,
+                            ),
+                            cx.theme().colors().surface_background.opacity(0.5),
                         )
-                        .map(|this| {
-                            KeybindingHint::new(
-                                this,
-                                cx.theme().colors().surface_background.opacity(0.5),
-                            )
-                            .suffix(focus_keybind_label)
-                        }),
+                        .suffix(focus_keybind_label),
                     ),
             )
     }

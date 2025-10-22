@@ -145,9 +145,9 @@ pub use task_inventory::{
 
 pub use buffer_store::ProjectTransaction;
 pub use lsp_store::{
-    DiagnosticSummary, LanguageServerLogType, LanguageServerProgress, LanguageServerPromptRequest,
-    LanguageServerStatus, LanguageServerToQuery, LspStore, LspStoreEvent,
-    SERVER_PROGRESS_THROTTLE_TIMEOUT,
+    DiagnosticSummary, InvalidationStrategy, LanguageServerLogType, LanguageServerProgress,
+    LanguageServerPromptRequest, LanguageServerStatus, LanguageServerToQuery, LspStore,
+    LspStoreEvent, SERVER_PROGRESS_THROTTLE_TIMEOUT,
 };
 pub use toolchain_store::{ToolchainStore, Toolchains};
 const MAX_PROJECT_SEARCH_HISTORY_SIZE: usize = 500;
@@ -338,7 +338,7 @@ pub enum Event {
     HostReshared,
     Reshared,
     Rejoined,
-    RefreshInlayHints,
+    RefreshInlayHints(LanguageServerId),
     RefreshCodeLens,
     LanguageServerIndexingComplete {
         language_server_id: LanguageServerId,
@@ -403,6 +403,26 @@ pub enum PrepareRenameResponse {
     OnlyUnpreparedRenameSupported,
     #[default]
     InvalidPosition,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum InlayId {
+    EditPrediction(usize),
+    DebuggerValue(usize),
+    // LSP
+    Hint(usize),
+    Color(usize),
+}
+
+impl InlayId {
+    pub fn id(&self) -> usize {
+        match self {
+            Self::EditPrediction(id) => *id,
+            Self::DebuggerValue(id) => *id,
+            Self::Hint(id) => *id,
+            Self::Color(id) => *id,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -3061,7 +3081,9 @@ impl Project {
                     return;
                 };
             }
-            LspStoreEvent::RefreshInlayHints => cx.emit(Event::RefreshInlayHints),
+            LspStoreEvent::RefreshInlayHints(server_id) => {
+                cx.emit(Event::RefreshInlayHints(*server_id))
+            }
             LspStoreEvent::RefreshCodeLens => cx.emit(Event::RefreshCodeLens),
             LspStoreEvent::LanguageServerIndexingComplete { language_server_id } => {
                 cx.emit(Event::LanguageServerIndexingComplete {
@@ -3986,19 +4008,6 @@ impl Project {
                 })
             })?
             .await
-        })
-    }
-
-    pub fn inlay_hints<T: ToOffset>(
-        &mut self,
-        buffer_handle: Entity<Buffer>,
-        range: Range<T>,
-        cx: &mut Context<Self>,
-    ) -> Task<anyhow::Result<Vec<InlayHint>>> {
-        let buffer = buffer_handle.read(cx);
-        let range = buffer.anchor_before(range.start)..buffer.anchor_before(range.end);
-        self.lsp_store.update(cx, |lsp_store, cx| {
-            lsp_store.inlay_hints(buffer_handle, range, cx)
         })
     }
 
@@ -5283,6 +5292,7 @@ impl Project {
             })
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     pub fn has_language_servers_for(&self, buffer: &Buffer, cx: &mut App) -> bool {
         self.lsp_store.update(cx, |this, cx| {
             this.language_servers_for_local_buffer(buffer, cx)
