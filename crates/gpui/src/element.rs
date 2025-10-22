@@ -741,7 +741,17 @@ impl Element for Empty {
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
-        (window.request_layout(Style::default(), None, cx), ())
+        (
+            window.request_layout(
+                Style {
+                    display: crate::Display::None,
+                    ..Default::default()
+                },
+                None,
+                cx,
+            ),
+            (),
+        )
     }
 
     fn prepaint(
