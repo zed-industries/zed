@@ -27,7 +27,7 @@ mod environment;
 use buffer_diff::BufferDiff;
 use context_server_store::ContextServerStore;
 
-use encodings::EncodingOptions;
+use encodings::{Encoding, EncodingOptions};
 pub use environment::ProjectEnvironmentEvent;
 use git::repository::get_git_committer;
 use git_store::{Repository, RepositoryId};
@@ -5408,7 +5408,9 @@ impl Project {
         };
         cx.spawn(async move |cx| {
             let file = worktree
-                .update(cx, |worktree, cx| worktree.load_file(&rel_path, cx))?
+                .update(cx, |worktree, cx| {
+                    worktree.load_file(&rel_path, None, false, true, None, cx)
+                })?
                 .await
                 .context("Failed to load settings file")?;
 
@@ -5423,6 +5425,11 @@ impl Project {
                         Rope::from_str(&new_text, cx.background_executor()),
                         line_ending,
                         cx,
+                        Encoding::default(),
+                        new_text.into(),
+                        line_ending,
+                        cx,
+                        Encoding::default(),
                     )
                 })?
                 .await

@@ -69,7 +69,6 @@ unicase = "2.6"
 util.workspace = true
 watch.workspace = true
 zlog.workspace = true
-diffy = "0.4.2"
 encoding = "0.2.33"
 
 [dev-dependencies]

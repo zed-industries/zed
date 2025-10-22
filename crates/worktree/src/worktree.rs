@@ -706,7 +706,7 @@ impl Worktree {
 
     pub fn load_file(
         &self,
-        path: &Path,
+        path: &RelPath,
         encoding: Option<Encoding>,
         force: bool,
         detect_utf16: bool,
@@ -1326,7 +1326,7 @@ impl LocalWorktree {
 
     fn load_file(
         &self,
-        path: &Path,
+        path: &RelPath,
         encoding: Option<Encoding>,
         force: bool,
         detect_utf16: bool,
@@ -3189,7 +3189,7 @@ impl language::LocalFile for File {
         let abs_path = worktree.absolutize(&self.path);
         let fs = worktree.fs.clone();
         cx.background_spawn(async move {
-            fs.load_with_encoding(&abs_path?, encoding, force, detect_utf16, buffer_encoding)
+            fs.load_with_encoding(&abs_path, encoding, force, detect_utf16, buffer_encoding)
                 .await
         })
     }

@@ -463,97 +463,6 @@ impl MessageEditor {
         })
     }
 
-    fn confirm_mention_for_directory(
-        &mut self,
-        abs_path: PathBuf,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<Mention>> {
-        fn collect_files_in_path(worktree: &Worktree, path: &Path) -> Vec<(Arc<Path>, PathBuf)> {
-            let mut files = Vec::new();
-
-            for entry in worktree.child_entries(path) {
-                if entry.is_dir() {
-                    files.extend(collect_files_in_path(worktree, &entry.path));
-                } else if entry.is_file() {
-                    files.push((entry.path.clone(), worktree.full_path(&entry.path)));
-                }
-            }
-
-            files
-        }
-
-        let Some(project_path) = self
-            .project
-            .read(cx)
-            .project_path_for_absolute_path(&abs_path, cx)
-        else {
-            return Task::ready(Err(anyhow!("project path not found")));
-        };
-        let Some(entry) = self.project.read(cx).entry_for_path(&project_path, cx) else {
-            return Task::ready(Err(anyhow!("project entry not found")));
-        };
-        let directory_path = entry.path.clone();
-        let worktree_id = project_path.worktree_id;
-        let Some(worktree) = self.project.read(cx).worktree_for_id(worktree_id, cx) else {
-            return Task::ready(Err(anyhow!("worktree not found")));
-        };
-        let project = self.project.clone();
-        cx.spawn(async move |_, cx| {
-            let file_paths = worktree.read_with(cx, |worktree, _cx| {
-                collect_files_in_path(worktree, &directory_path)
-            })?;
-            let descendants_future = cx.update(|cx| {
-                join_all(file_paths.into_iter().map(|(worktree_path, full_path)| {
-                    let rel_path = worktree_path
-                        .strip_prefix(&directory_path)
-                        .log_err()
-                        .map_or_else(|| worktree_path.clone(), |rel_path| rel_path.into());
-
-                    let open_task = project.update(cx, |project, cx| {
-                        project.buffer_store().update(cx, |buffer_store, cx| {
-                            let project_path = ProjectPath {
-                                worktree_id,
-                                path: worktree_path,
-                            };
-                            buffer_store.open_buffer(project_path, None, false, true, cx)
-                        })
-                    });
-
-                    cx.spawn(async move |cx| {
-                        let buffer = open_task.await.log_err()?;
-                        let buffer_content = outline::get_buffer_content_or_outline(
-                            buffer.clone(),
-                            Some(&full_path),
-                            &cx,
-                        )
-                        .await
-                        .ok()?;
-
-                        Some((rel_path, full_path, buffer_content.text, buffer))
-                    })
-                }))
-            })?;
-
-            let contents = cx
-                .background_spawn(async move {
-                    let (contents, tracked_buffers) = descendants_future
-                        .await
-                        .into_iter()
-                        .flatten()
-                        .map(|(rel_path, full_path, rope, buffer)| {
-                            ((rel_path, full_path, rope), buffer)
-                        })
-                        .unzip();
-                    Mention::Text {
-                        content: render_directory_contents(contents),
-                        tracked_buffers,
-                    }
-                })
-                .await;
-            anyhow::Ok(contents)
-        })
-    }
-
     fn confirm_mention_for_fetch(
         &mut self,
         url: url::Url,
@@ -1339,7 +1248,7 @@ fn full_mention_for_directory(
                             worktree_id,
                             path: worktree_path,
                         };
-                        buffer_store.open_buffer(project_path, cx)
+                        buffer_store.open_buffer(project_path, None, false, true, cx)
                     })
                 });
 

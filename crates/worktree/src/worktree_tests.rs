@@ -468,7 +468,7 @@ async fn test_open_gitignored_files(cx: &mut TestAppContext) {
     let loaded = tree
         .update(cx, |tree, cx| {
             tree.load_file(
-                "one/node_modules/b/b1.js".as_ref(),
+                rel_path("one/node_modules/b/b1.js"),
                 None,
                 false,
                 false,
@@ -515,7 +515,7 @@ async fn test_open_gitignored_files(cx: &mut TestAppContext) {
     let loaded = tree
         .update(cx, |tree, cx| {
             tree.load_file(
-                "one/node_modules/a/a2.js".as_ref(),
+                rel_path("one/node_modules/a/a2.js"),
                 None,
                 false,
                 false,
@@ -1964,101 +1964,6 @@ fn random_filename(rng: &mut impl Rng) -> String {
         .map(|_| rng.sample(rand::distr::Alphanumeric))
         .map(char::from)
         .collect()
-}
-
-#[gpui::test]
-async fn test_rename_file_to_new_directory(cx: &mut TestAppContext) {
-    init_test(cx);
-    let fs = FakeFs::new(cx.background_executor.clone());
-    let expected_contents = "content";
-    fs.as_fake()
-        .insert_tree(
-            "/root",
-            json!({
-                "test.txt": expected_contents
-            }),
-        )
-        .await;
-    let worktree = Worktree::local(
-        Path::new("/root"),
-        true,
-        fs.clone(),
-        Arc::default(),
-        &mut cx.to_async(),
-    )
-    .await
-    .unwrap();
-    cx.read(|cx| worktree.read(cx).as_local().unwrap().scan_complete())
-        .await;
-
-    let entry_id = worktree.read_with(cx, |worktree, _| {
-        worktree.entry_for_path("test.txt").unwrap().id
-    });
-    let _result = worktree
-        .update(cx, |worktree, cx| {
-            worktree.rename_entry(entry_id, Path::new("dir1/dir2/dir3/test.txt"), cx)
-        })
-        .await
-        .unwrap();
-    worktree.read_with(cx, |worktree, _| {
-        assert!(
-            worktree.entry_for_path("test.txt").is_none(),
-            "Old file should have been removed"
-        );
-        assert!(
-            worktree.entry_for_path("dir1/dir2/dir3/test.txt").is_some(),
-            "Whole directory hierarchy and the new file should have been created"
-        );
-    });
-    assert_eq!(
-        worktree
-            .update(cx, |worktree, cx| {
-                worktree.load_file("dir1/dir2/dir3/test.txt".as_ref(), None, cx)
-            })
-            .await
-            .unwrap()
-            .text,
-        expected_contents,
-        "Moved file's contents should be preserved"
-    );
-
-    let entry_id = worktree.read_with(cx, |worktree, _| {
-        worktree
-            .entry_for_path("dir1/dir2/dir3/test.txt")
-            .unwrap()
-            .id
-    });
-    let _result = worktree
-        .update(cx, |worktree, cx| {
-            worktree.rename_entry(entry_id, Path::new("dir1/dir2/test.txt"), cx)
-        })
-        .await
-        .unwrap();
-    worktree.read_with(cx, |worktree, _| {
-        assert!(
-            worktree.entry_for_path("test.txt").is_none(),
-            "First file should not reappear"
-        );
-        assert!(
-            worktree.entry_for_path("dir1/dir2/dir3/test.txt").is_none(),
-            "Old file should have been removed"
-        );
-        assert!(
-            worktree.entry_for_path("dir1/dir2/test.txt").is_some(),
-            "No error should have occurred after moving into existing directory"
-        );
-    });
-    assert_eq!(
-        worktree
-            .update(cx, |worktree, cx| {
-                worktree.load_file("dir1/dir2/test.txt".as_ref(), None, cx)
-            })
-            .await
-            .unwrap()
-            .text,
-        expected_contents,
-        "Moved file's contents should be preserved"
-    );
 }
 
 #[gpui::test]

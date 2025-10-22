@@ -363,7 +363,6 @@ mod tests {
     use language::Rope;
     use project::{FakeFs, Fs, Project};
     use settings::SettingsStore;
-    use project::{FakeFs, Fs, Project, encodings::EncodingWrapper};
     use std::path::PathBuf;
     use unindent::unindent;
     use util::path;

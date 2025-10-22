@@ -3878,7 +3878,14 @@ async fn test_rename_file_to_new_directory(cx: &mut gpui::TestAppContext) {
     assert_eq!(
         worktree
             .update(cx, |worktree, cx| {
-                worktree.load_file(rel_path("dir1/dir2/dir3/test.txt"), cx)
+                worktree.load_file(
+                    rel_path("dir1/dir2/dir3/test.txt"),
+                    None,
+                    false,
+                    true,
+                    None,
+                    cx,
+                )
             })
             .await
             .unwrap()
@@ -3925,7 +3932,7 @@ async fn test_rename_file_to_new_directory(cx: &mut gpui::TestAppContext) {
     assert_eq!(
         worktree
             .update(cx, |worktree, cx| {
-                worktree.load_file(rel_path("dir1/dir2/test.txt"), cx)
+                worktree.load_file(rel_path("dir1/dir2/test.txt"), None, false, true, None, cx)
             })
             .await
             .unwrap()
@@ -9003,7 +9010,14 @@ async fn test_ignored_dirs_events(cx: &mut gpui::TestAppContext) {
     let tree = project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
     tree.flush_fs_events(cx).await;
     tree.update(cx, |tree, cx| {
-        tree.load_file(rel_path("project/target/debug/important_text.txt"), cx)
+        tree.load_file(
+            rel_path("project/target/debug/important_text.txt"),
+            None,
+            false,
+            true,
+            None,
+            cx,
+        )
     })
     .await
     .unwrap();
@@ -9164,7 +9178,14 @@ async fn test_odd_events_for_ignored_dirs(
 
     let tree = project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
     tree.update(cx, |tree, cx| {
-        tree.load_file(rel_path("target/debug/foo.txt"), cx)
+        tree.load_file(
+            rel_path("target/debug/foo.txt"),
+            None,
+            false,
+            true,
+            None,
+            cx,
+        )
     })
     .await
     .unwrap();

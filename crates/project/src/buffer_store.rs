@@ -8,8 +8,7 @@ use anyhow::{Context as _, Result, anyhow};
 use client::Client;
 use collections::{HashMap, HashSet, hash_map};
 use encodings::Encoding;
-use fs::Fs;
-use futures::{Future, FutureExt as _, StreamExt, channel::oneshot, future::Shared};
+use futures::{Future, FutureExt as _, channel::oneshot, future::Shared};
 use gpui::{
     App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Subscription, Task, WeakEntity,
 };
@@ -27,7 +26,7 @@ use rpc::{
 use smol::channel::Receiver;
 use std::{io, pin::pin, sync::Arc, time::Instant};
 use text::{BufferId, ReplicaId};
-use util::{ResultExt as _, TryFutureExt, debug_panic, maybe, paths::PathStyle, rel_path::RelPath};
+use util::{ResultExt as _, TryFutureExt, debug_panic, maybe, rel_path::RelPath};
 use worktree::{File, PathChange, ProjectEntryId, Worktree, WorktreeId};
 
 /// A set of open buffers.
@@ -398,7 +397,7 @@ impl LocalBufferStore {
         }
 
         let save = worktree.update(cx, |worktree, cx| {
-            worktree.write_file(path.as_ref(), text, line_ending, cx, (*encoding).clone())
+            worktree.write_file(path.clone(), text, line_ending, cx, (*encoding).clone())
         });
 
         cx.spawn(async move |this, cx| {
@@ -633,8 +632,6 @@ impl LocalBufferStore {
         detect_utf16: bool,
         cx: &mut Context<BufferStore>,
     ) -> Task<Result<Entity<Buffer>>> {
-        println!("{:?}", encoding);
-
         let load_buffer = worktree.update(cx, |worktree, cx| {
             let reservation = cx.reserve_entity();
             let buffer_id = BufferId::from(reservation.entity_id().as_non_zero_u64());
@@ -653,7 +650,7 @@ impl LocalBufferStore {
 
                 let buffer = cx.insert_entity(reservation, |_| {
                     Buffer::build(
-                        text::Buffer::new(0, buffer_id, loaded_file.text),
+                        text::Buffer::new(ReplicaId::LOCAL, buffer_id, loaded_file.text),
                         Some(loaded_file.file),
                         Capability::ReadWrite,
                     )
