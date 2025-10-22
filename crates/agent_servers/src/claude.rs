@@ -56,11 +56,19 @@ impl AgentServer for ClaudeCode {
         });
     }
 
-    fn login_commands(&self) -> Vec<&'static str> {
+    fn local_login_commands(&self) -> Vec<&'static str> {
         vec!["login"]
     }
 
-    fn logout_commands(&self) -> Vec<&'static str> {
+    fn remote_login_commands(&self) -> Vec<&'static str> {
+        vec!["login"]
+    }
+
+    fn local_logout_commands(&self) -> Vec<&'static str> {
+        vec!["logout"]
+    }
+
+    fn remote_logout_commands(&self) -> Vec<&'static str> {
         vec!["logout"]
     }
 

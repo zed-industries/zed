@@ -1055,13 +1055,24 @@ impl AcpThreadView {
 
         // Check if this is a login or logout command
         let command_name = text.strip_prefix('/');
+        let is_remote = self.project.read(cx).is_via_remote_server();
+        let login_commands = if is_remote {
+            self.agent.remote_login_commands()
+        } else {
+            self.agent.local_login_commands()
+        };
+        let logout_commands = if is_remote {
+            self.agent.remote_logout_commands()
+        } else {
+            self.agent.local_logout_commands()
+        };
         let is_login_command = if let Some(cmd) = command_name {
-            self.agent.login_commands().contains(&cmd)
+            login_commands.contains(&cmd)
         } else {
             false
         };
         let is_logout_command = if let Some(cmd) = command_name {
-            self.agent.logout_commands().contains(&cmd)
+            logout_commands.contains(&cmd)
         } else {
             false
         };
@@ -1438,10 +1449,22 @@ impl AcpThreadView {
             AcpThreadEvent::AvailableCommandsUpdated(available_commands) => {
                 let mut available_commands = available_commands.clone();
 
+                let is_remote = self.project.read(cx).is_via_remote_server();
+                let login_commands = if is_remote {
+                    self.agent.remote_login_commands()
+                } else {
+                    self.agent.local_login_commands()
+                };
+                let logout_commands = if is_remote {
+                    self.agent.remote_logout_commands()
+                } else {
+                    self.agent.local_logout_commands()
+                };
+
                 // Add login commands from the agent
-                for command_name in self.agent.login_commands() {
+                for command_name in login_commands {
                     available_commands.push(acp::AvailableCommand {
-                        name: command_name.to_owned(),
+                        name: command_name.to_string(),
                         description: "Authenticate".to_owned(),
                         input: None,
                         meta: None,
@@ -1449,9 +1472,9 @@ impl AcpThreadView {
                 }
 
                 // Add logout commands from the agent
-                for command_name in self.agent.logout_commands() {
+                for command_name in logout_commands {
                     available_commands.push(acp::AvailableCommand {
-                        name: command_name.to_owned(),
+                        name: command_name.to_string(),
                         description: "Authenticate".to_owned(),
                         input: None,
                         meta: None,
@@ -6025,6 +6048,22 @@ pub(crate) mod tests {
 
         fn name(&self) -> SharedString {
             "Test".into()
+        }
+
+        fn local_login_commands(&self) -> Vec<&'static str> {
+            vec![]
+        }
+
+        fn remote_login_commands(&self) -> Vec<&'static str> {
+            vec![]
+        }
+
+        fn local_logout_commands(&self) -> Vec<&'static str> {
+            vec![]
+        }
+
+        fn remote_logout_commands(&self) -> Vec<&'static str> {
+            vec![]
         }
 
         fn connect(

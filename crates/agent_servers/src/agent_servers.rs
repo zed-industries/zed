@@ -69,14 +69,24 @@ pub trait AgentServer: Send {
     }
 
     /// Returns the list of slash commands that should trigger Zed's authentication UI
-    /// when the user types them (e.g., "/login").
+    /// when running locally (e.g., "/login").
     /// These commands will be intercepted by Zed to show the auth method selection UI.
-    fn login_commands(&self) -> Vec<&'static str>;
+    fn local_login_commands(&self) -> Vec<&'static str>;
+
+    /// Returns the list of slash commands that should trigger Zed's authentication UI
+    /// when running remotely (e.g., "/login").
+    /// These commands will be intercepted by Zed to show the auth method selection UI.
+    fn remote_login_commands(&self) -> Vec<&'static str>;
 
     /// Returns the list of logout-related slash commands that should be sent to the agent
-    /// to let it reset internal state (e.g., "/logout").
+    /// when running locally to let it reset internal state (e.g., "/logout").
     /// These commands will be added to available_commands and passed through to the agent.
-    fn logout_commands(&self) -> Vec<&'static str>;
+    fn local_logout_commands(&self) -> Vec<&'static str>;
+
+    /// Returns the list of logout-related slash commands that should be sent to the agent
+    /// when running remotely to let it reset internal state (e.g., "/logout").
+    /// These commands will be added to available_commands and passed through to the agent.
+    fn remote_logout_commands(&self) -> Vec<&'static str>;
 
     fn connect(
         &self,

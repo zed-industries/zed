@@ -34,6 +34,22 @@ impl crate::AgentServer for CustomAgentServer {
         IconName::Terminal
     }
 
+    fn local_login_commands(&self) -> Vec<&'static str> {
+        vec![]
+    }
+
+    fn remote_login_commands(&self) -> Vec<&'static str> {
+        vec![]
+    }
+
+    fn local_logout_commands(&self) -> Vec<&'static str> {
+        vec![]
+    }
+
+    fn remote_logout_commands(&self) -> Vec<&'static str> {
+        vec![]
+    }
+
     fn default_mode(&self, cx: &mut App) -> Option<acp::SessionModeId> {
         let settings = cx.read_global(|settings: &SettingsStore, _| {
             settings
