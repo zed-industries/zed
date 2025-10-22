@@ -352,6 +352,10 @@ impl<D: PickerDelegate> Picker<D> {
         self
     }
 
+    pub fn set_max_height(&mut self, max_height: Option<gpui::Length>) {
+        self.max_height = max_height;
+    }
+
     pub fn focus(&self, window: &mut Window, cx: &mut App) {
         self.focus_handle(cx).focus(window);
     }

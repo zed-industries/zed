@@ -28,9 +28,11 @@ use util::ResultExt;
 use workspace::{ModalView, Workspace, WorkspaceSettings};
 use zed_actions::{OpenZedUrl, command_palette::Toggle};
 
-const MIN_COMMAND_PALETTE_WIDTH: Pixels = px(500.);
-const MAX_COMMAND_PALETTE_WIDTH: Pixels = px(800.);
-const RESIZE_HANDLE_SIZE: Pixels = px(6.);
+const MIN_COMMAND_PALETTE_WIDTH: Pixels = px(480.);
+const MAX_COMMAND_PALETTE_WIDTH: Pixels = px(960.);
+const MIN_COMMAND_PALETTE_HEIGHT: Pixels = px(320.);
+const MAX_COMMAND_PALETTE_HEIGHT: Pixels = px(640.);
+const RESIZE_HANDLE_SIZE: Pixels = px(16.);
 
 pub fn init(cx: &mut App) {
     client::init_settings(cx);
@@ -43,7 +45,8 @@ impl ModalView for CommandPalette {}
 pub struct CommandPalette {
     picker: Entity<Picker<CommandPaletteDelegate>>,
     width: Pixels,
-    drag_start_position: Option<(Pixels, Pixels)>,
+    height: Pixels,
+    drag_start_position: Option<(Pixels, Pixels, Pixels, Pixels)>,
 }
 
 /// Removes subsequent whitespace characters and double colons from the query.
@@ -127,12 +130,6 @@ impl CommandPalette {
             previous_focus_handle,
         );
 
-        let picker = cx.new(|cx| {
-            let picker = Picker::uniform_list(delegate, window, cx);
-            picker.set_query(query, window, cx);
-            picker
-        });
-
         let width = COMMAND_PALETTE
             .get_command_palette_width()
             .ok()
@@ -140,9 +137,23 @@ impl CommandPalette {
             .map(px)
             .unwrap_or(MIN_COMMAND_PALETTE_WIDTH);
 
+        let height = COMMAND_PALETTE
+            .get_command_palette_height()
+            .ok()
+            .flatten()
+            .map(px)
+            .unwrap_or(MIN_COMMAND_PALETTE_HEIGHT);
+
+        let picker = cx.new(|cx| {
+            let picker = Picker::uniform_list(delegate, window, cx).max_height(Some(height.into()));
+            picker.set_query(query, window, cx);
+            picker
+        });
+
         Self {
             picker,
             width,
+            height,
             drag_start_position: None,
         }
     }
@@ -164,94 +175,102 @@ impl Focusable for CommandPalette {
 impl Render for CommandPalette {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let width = self.width;
+        let height = self.height;
 
-        let create_resize_handle = |side: ResizeSide| {
-            let handle = div()
-                .id(match side {
-                    ResizeSide::Left => "resize-handle-left",
-                    ResizeSide::Right => "resize-handle-right",
-                })
-                .on_drag(CommandPaletteResizeHandle(side), move |this, _, _, cx| {
+        let resize_handle = div()
+            .id("resize-handle-corner")
+            .on_drag(CommandPaletteResizeHandle, move |this, _, _, cx| {
+                cx.stop_propagation();
+                cx.new(|_| this.clone())
+            })
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |_, _, _, cx| {
                     cx.stop_propagation();
-                    cx.new(|_| this.clone())
-                })
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(move |_, _, _, cx| {
-                        cx.stop_propagation();
-                    }),
-                )
-                .on_mouse_up_out(
-                    MouseButton::Left,
-                    cx.listener(move |this, _, _, cx| {
-                        this.drag_start_position = None;
-
-                        let width_value: f32 = this.width.into();
-                        cx.background_spawn(async move {
-                            COMMAND_PALETTE.set_command_palette_width(width_value).await
-                        })
-                        .detach_and_log_err(cx);
-                    }),
-                )
-                .occlude();
-
-            deferred(
-                handle
-                    .absolute()
-                    .top(px(0.))
-                    .h_full()
-                    .w(RESIZE_HANDLE_SIZE)
-                    .cursor_col_resize()
-                    .when(side == ResizeSide::Left, |this| {
-                        this.left(-RESIZE_HANDLE_SIZE / 2.)
-                    })
-                    .when(side == ResizeSide::Right, |this| {
-                        this.right(-RESIZE_HANDLE_SIZE / 2.)
-                    }),
+                }),
             )
-        };
+            .on_mouse_up_out(
+                MouseButton::Left,
+                cx.listener(move |this, _, _, cx| {
+                    this.drag_start_position = None;
+
+                    let width_value: f32 = this.width.into();
+                    let height_value: f32 = this.height.into();
+                    cx.background_spawn(async move {
+                        COMMAND_PALETTE
+                            .set_command_palette_width(width_value)
+                            .await?;
+                        COMMAND_PALETTE
+                            .set_command_palette_height(height_value)
+                            .await
+                    })
+                    .detach_and_log_err(cx);
+                }),
+            )
+            .occlude();
+
+        let resize_handle = deferred(
+            resize_handle
+                .absolute()
+                .bottom(px(0.))
+                .right(px(0.))
+                .w(RESIZE_HANDLE_SIZE)
+                .h(RESIZE_HANDLE_SIZE)
+                .cursor_nwse_resize(),
+        );
 
         v_flex()
             .key_context("CommandPalette")
             .w(width)
+            .h(height)
             .min_w(MIN_COMMAND_PALETTE_WIDTH)
             .max_w(MAX_COMMAND_PALETTE_WIDTH)
+            .min_h(MIN_COMMAND_PALETTE_HEIGHT)
+            .max_h(MAX_COMMAND_PALETTE_HEIGHT)
             .relative()
             .on_drag_move(cx.listener(
                 move |this, e: &DragMoveEvent<CommandPaletteResizeHandle>, _, cx| {
                     if this.drag_start_position.is_none() {
-                        this.drag_start_position = Some((e.event.position.x, this.width));
+                        this.drag_start_position = Some((
+                            e.event.position.x,
+                            e.event.position.y,
+                            this.width,
+                            this.height,
+                        ));
                     }
 
-                    if let Some((start_x, start_width)) = this.drag_start_position {
-                        let delta = e.event.position.x - start_x;
-                        let new_width = match e.drag(cx).0 {
-                            ResizeSide::Left => start_width - delta * 2.,
-                            ResizeSide::Right => start_width + delta * 2.,
-                        };
+                    if let Some((start_x, start_y, start_width, start_height)) =
+                        this.drag_start_position
+                    {
+                        let delta_x = e.event.position.x - start_x;
+                        let delta_y = e.event.position.y - start_y;
+
+                        let new_width = start_width + delta_x * 2.;
+                        let new_height = start_height + delta_y;
 
                         this.width = new_width
                             .max(MIN_COMMAND_PALETTE_WIDTH)
                             .min(MAX_COMMAND_PALETTE_WIDTH);
 
+                        this.height = new_height
+                            .max(MIN_COMMAND_PALETTE_HEIGHT)
+                            .min(MAX_COMMAND_PALETTE_HEIGHT);
+
+                        this.picker.update(cx, |picker, _cx| {
+                            picker.set_max_height(Some(this.height.into()));
+                        });
+
                         cx.notify();
                     }
                 },
             ))
-            .child(create_resize_handle(ResizeSide::Left))
-            .child(create_resize_handle(ResizeSide::Right))
+            .child(resize_handle)
             .child(self.picker.clone())
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum ResizeSide {
-    Left,
-    Right,
-}
-
 #[derive(Clone)]
-struct CommandPaletteResizeHandle(ResizeSide);
+struct CommandPaletteResizeHandle;
 
 impl Render for CommandPaletteResizeHandle {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
