@@ -1259,6 +1259,7 @@ impl AcpThreadView {
                 .await?;
             this.update_in(cx, |this, window, cx| {
                 this.send_impl(message_editor, window, cx);
+                this.focus_handle(cx).focus(window);
             })?;
             anyhow::Ok(())
         })
