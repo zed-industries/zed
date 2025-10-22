@@ -13,6 +13,7 @@ test-support = ["db/test-support"]
 eval = []
 edit-agent-eval = []
 e2e = []
+eval = []
 
 [lints]
 workspace = true
