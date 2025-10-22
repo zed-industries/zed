@@ -78,6 +78,155 @@ pub(crate) const XINPUT_ALL_DEVICE_GROUPS: xinput::DeviceId = 1;
 
 const GPUI_X11_SCALE_FACTOR_ENV: &str = "GPUI_X11_SCALE_FACTOR";
 
+// ============================================================================
+// Input State Management Structures (NEW)
+// ============================================================================
+
+/// Manages input state across focus transitions and drag operations
+#[derive(Debug)]
+struct InputStateManager {
+    /// Per-device scroll accumulators for handling unfocused scroll events
+    scroll_accumulators: HashMap<xinput::DeviceId, ScrollAccumulator>,
+    /// Current drag operation state
+    drag_state: DragState,
+    /// Whether an XDND operation is currently active
+    xdnd_active: bool,
+    /// Timestamp of last focus change for timeout detection
+    last_focus_change: Instant,
+}
+
+#[derive(Debug)]
+struct ScrollAccumulator {
+    /// Accumulated horizontal scroll delta while unfocused
+    accumulated_x: f32,
+    /// Accumulated vertical scroll delta while unfocused
+    accumulated_y: f32,
+    /// Last time this accumulator was updated
+    last_update: Instant,
+}
+
+#[derive(Debug)]
+enum DragState {
+    /// No drag operation in progress
+    Inactive,
+    /// Local selection/drag started within the application
+    LocalSelection {
+        start_time: Instant,
+        button: MouseButton
+    },
+    /// Cross-application drag operation (XDND)
+    CrossApplication {
+        start_time: Instant
+    },
+}
+
+impl Default for InputStateManager {
+    fn default() -> Self {
+        Self {
+            scroll_accumulators: HashMap::default(),
+            drag_state: DragState::Inactive,
+            xdnd_active: false,
+            last_focus_change: Instant::now(),
+        }
+    }
+}
+
+impl InputStateManager {
+    fn should_preserve_drag_state(&self) -> bool {
+        matches!(self.drag_state, DragState::CrossApplication { .. }) || self.xdnd_active
+    }
+
+    fn start_xdnd_operation(&mut self) {
+        self.drag_state = DragState::CrossApplication { start_time: Instant::now() };
+        self.xdnd_active = true;
+        self.log_transition("XDND started");
+    }
+
+    fn end_xdnd_operation(&mut self) {
+        self.drag_state = DragState::Inactive;
+        self.xdnd_active = false;
+        self.log_transition("XDND ended");
+    }
+
+    fn start_local_drag(&mut self, button: MouseButton) {
+        self.drag_state = DragState::LocalSelection { start_time: Instant::now(), button };
+        self.log_transition("Local drag started");
+    }
+
+    fn end_local_drag(&mut self) {
+        if matches!(self.drag_state, DragState::LocalSelection { .. }) {
+            self.drag_state = DragState::Inactive;
+            self.log_transition("Local drag ended");
+        }
+    }
+
+    fn reset_scroll_accumulators(&mut self) {
+        self.scroll_accumulators.clear();
+        self.log_transition("Scroll accumulators reset");
+    }
+
+    fn accumulate_scroll(&mut self, device_id: xinput::DeviceId, delta_x: f32, delta_y: f32) {
+        let accumulator = self.scroll_accumulators.entry(device_id)
+            .or_insert_with(|| ScrollAccumulator {
+                accumulated_x: 0.0,
+                accumulated_y: 0.0,
+                last_update: Instant::now(),
+            });
+
+        accumulator.accumulated_x += delta_x;
+        accumulator.accumulated_y += delta_y;
+        accumulator.last_update = Instant::now();
+    }
+
+    fn take_accumulated_scroll(&mut self, device_id: xinput::DeviceId) -> Point<f32> {
+        if let Some(accumulator) = self.scroll_accumulators.remove(&device_id) {
+            Point::new(accumulator.accumulated_x, accumulator.accumulated_y)
+        } else {
+            Point::new(0.0, 0.0)
+        }
+    }
+
+    fn cleanup_stuck_operations(&mut self) {
+        const OPERATION_TIMEOUT: Duration = Duration::from_secs(10);
+        let now = Instant::now();
+
+        match self.drag_state {
+            DragState::CrossApplication { start_time } |
+            DragState::LocalSelection { start_time, .. } => {
+                if now.duration_since(start_time) > OPERATION_TIMEOUT {
+                    self.drag_state = DragState::Inactive;
+                    self.xdnd_active = false;
+                    self.log_transition("Cleaned up stuck operation");
+                }
+            }
+            DragState::Inactive => {}
+        }
+
+        const ACCUMULATOR_TIMEOUT: Duration = Duration::from_secs(5);
+        self.scroll_accumulators.retain(|_, accumulator| {
+            now.duration_since(accumulator.last_update) < ACCUMULATOR_TIMEOUT
+        });
+    }
+
+    fn record_focus_change(&mut self) {
+        self.last_focus_change = Instant::now();
+    }
+
+    fn get_local_drag_button(&self) -> Option<MouseButton> {
+        match self.drag_state {
+            DragState::LocalSelection { button, .. } => Some(button),
+            _ => None,
+        }
+    }
+
+    fn log_transition(&self, event: &str) {
+        log::debug!(
+            "InputState: {} [Drag: {:?}, XDND: {}, Focus age: {:?}]",
+            event, self.drag_state, self.xdnd_active, self.last_focus_change.elapsed()
+        );
+    }
+}
+
 pub(crate) struct WindowRef {
     window: X11WindowStatePtr,
     refresh_state: Option<RefreshState>,
@@ -146,6 +295,7 @@ pub struct Xdnd {
     drag_type: u32,
     retrieved: bool,
     position: Point<Pixels>,
+    is_active: bool,  // ADDED
 }
 
 #[derive(Debug)]
@@ -216,6 +366,9 @@ pub struct X11ClientState {
     pub(crate) clipboard: Clipboard,
     pub(crate) clipboard_item: Option<ClipboardItem>,
     pub(crate) xdnd_state: Xdnd,
+
+    // ADDED: Input state management
+    pub(crate) input_state_manager: InputStateManager,
 }
 
 #[derive(Clone)]
@@ -514,6 +667,7 @@ impl X11Client {
             clipboard,
             clipboard_item: None,
             xdnd_state: Xdnd::default(),
+            input_state_manager: InputStateManager::default(),  // ADDED
         }))))
     }
 
@@ -777,8 +931,12 @@ impl X11Client {
                         })
                 }
 
+                // MODIFIED: Enhanced XDND handling
                 if event.type_ == state.atoms.XdndEnter {
                     state.xdnd_state.other_window = atom;
+                    state.xdnd_state.is_active = true;
+                    state.input_state_manager.start_xdnd_operation();
+
                     if (arg1 & 0x1) == 0x1 {
                         state.xdnd_state.drag_type = xdnd_get_supported_atom(
                             &state.xcb_connection,
@@ -794,6 +952,9 @@ impl X11Client {
                         }
                     }
                 } else if event.type_ == state.atoms.XdndLeave {
+                    state.xdnd_state.is_active = false;
+                    state.input_state_manager.end_xdnd_operation();
+
                     let position = state.xdnd_state.position;
                     drop(state);
                     window
@@ -808,6 +969,47 @@ impl X11Client {
                         state.xdnd_state.position =
                             Point::new(Pixels(pos.win_x as f32), Pixels(pos.win_y as f32));
                     }
+                    if !state.xdnd_state.retrieved {
+                        check_reply(
+                            || "Failed to convert selection for drag and drop",
+                            state.xcb_connection.convert_selection(
+                                event.window,
+                                state.atoms.XdndSelection,
+                                state.xdnd_state.drag_type,
+                                state.atoms.XDND_DATA,
+                                arg3,
+                            ),
+                        )
+                        .log_err();
+                    }
+                    xdnd_send_status(
+                        &state.xcb_connection,
+                        &state.atoms,
+                        event.window,
+                        state.xdnd_state.other_window,
+                        arg4,
+                    );
+                    let position = state.xdnd_state.position;
+                    drop(state);
+                    window
+                        .handle_input(PlatformInput::FileDrop(FileDropEvent::Pending { position }));
+                } else if event.type_ == state.atoms.XdndDrop {
+                    xdnd_send_finished(
+                        &state.xcb_connection,
+                        &state.atoms,
+                        event.window,
+                        state.xdnd_state.other_window,
+                    );
+                    state.xdnd_state.is_active = false;
+                    let position = state.xdnd_state.position;
+                    drop(state);
+                    window
+                        .handle_input(PlatformInput::FileDrop(FileDropEvent::Submit { position }));
+
+                    let mut state = self.0.borrow_mut();
+                    state.xdnd_state = Xdnd::default();
+                    state.input_state_manager.end_xdnd_operation();
+                }
                     if !state.xdnd_state.retrieved {
                         check_reply(
                             || "Failed to convert selection for drag and drop",
@@ -903,27 +1105,62 @@ impl X11Client {
                     .context("X11: Failed to handle property notify")
                     .log_err();
             }
+            // MODIFIED: Enhanced FocusIn handler
             Event::FocusIn(event) => {
                 let window = self.get_window(event.event)?;
                 window.set_active(true);
+
                 let mut state = self.0.borrow_mut();
                 state.keyboard_focused_window = Some(event.event);
-                if let Some(handler) = state.xim_handler.as_mut() {
-                    handler.window = event.event;
-                }
+                state.input_state_manager.record_focus_change();
+
+                // Clean up any stuck operations
+                state.input_state_manager.cleanup_stuck_operations();
                 drop(state);
+
                 self.enable_ime();
             }
+            // MODIFIED: Enhanced FocusOut handler
             Event::FocusOut(event) => {
                 let window = self.get_window(event.event)?;
                 window.set_active(false);
+
                 let mut state = self.0.borrow_mut();
                 state.keyboard_focused_window = None;
+                state.input_state_manager.record_focus_change();
+
+                // Only reset state if not in cross-application drag
+                if !state.input_state_manager.should_preserve_drag_state() {
+                    state.input_state_manager.reset_scroll_accumulators();
+
+                    // Cancel stuck mouse operations
+                    if let Some(button) = state.input_state_manager.get_local_drag_button() {
+                        let position = state.last_location;
+                        let modifiers = state.modifiers;
+                        let click_count = state.current_count;
+                        drop(state);
+
+                        // Send synthetic mouse up to cancel the operation
+                        window.handle_input(PlatformInput::MouseUp(crate::MouseUpEvent {
+                            button, position, modifiers, click_count,
+                        }));
+
+                        state = self.0.borrow_mut();
+                        state.input_state_manager.end_local_drag();
+                    }
+
+                    // Reset mouse tracking state
+                    state.last_mouse_button = None;
+                    state.current_count = 0;
+                }
+
+                // Existing IME cleanup
                 if let Some(compose_state) = state.compose_state.as_mut() {
                     compose_state.reset();
                 }
                 state.pre_edit_text.take();
                 drop(state);
+
                 self.reset_ime();
                 window.handle_ime_delete();
             }
@@ -1117,6 +1354,11 @@ impl X11Client {
                         state.last_location = position;
                         let current_count = state.current_count;
 
+                        // Track potential drag start
+                        if is_potential_drag_button(button) {
+                            state.input_state_manager.start_local_drag(button);
+                        }
+
                         drop(state);
                         window.handle_input(PlatformInput::MouseDown(crate::MouseDownEvent {
                             button,
@@ -1163,6 +1405,10 @@ impl X11Client {
                 match button_or_scroll_from_event_detail(event.detail) {
                     Some(ButtonOrScroll::Button(button)) => {
                         let click_count = state.current_count;
+
+                        // End drag tracking
+                        state.input_state_manager.end_local_drag();
+
                         drop(state);
                         window.handle_input(PlatformInput::MouseUp(crate::MouseUpEvent {
                             button,
@@ -1185,6 +1431,8 @@ impl X11Client {
                 );
                 let modifiers = modifiers_from_xinput_info(event.mods);
                 state.modifiers = modifiers;
+
+                let has_focus = state.keyboard_focused_window == Some(event.event);
                 drop(state);
 
                 if event.valuator_mask[0] & 3 != 0 {
@@ -1197,7 +1445,9 @@ impl X11Client {
 
                 state = self.0.borrow_mut();
                 if let Some(mut pointer) = state.pointer_device_states.get_mut(&event.sourceid) {
-                    let scroll_delta = get_scroll_delta_and_update_state(pointer, &event);
+                    let scroll_delta = get_scroll_delta_and_update_state_focused(
+                        pointer, &event, has_focus, event.sourceid, &mut state.input_state_manager
+                    );
                     drop(state);
                     if let Some(scroll_delta) = scroll_delta {
                         window.handle_input(PlatformInput::ScrollWheel(make_scroll_wheel_event(
@@ -2144,6 +2394,10 @@ fn is_pointer_device(type_: xinput::DeviceType) -> bool {
     type_ == xinput::DeviceType::SLAVE_POINTER
 }
 
+fn is_potential_drag_button(button: MouseButton) -> bool {
+    matches!(button, MouseButton::Left | MouseButton::Middle)
+}
+
 fn scroll_data_to_axis_state(
     data: &xinput::DeviceClassDataScroll,
     old_axis_state_with_valid_scroll_value: Option<&ScrollAxisState>,
@@ -2169,6 +2423,7 @@ fn reset_pointer_device_scroll_positions(pointer: &mut PointerDeviceState) {
 }
 
 /// Returns the scroll delta for a smooth scrolling motion event, or `None` if no scroll data is present.
+/// Returns the scroll delta for a smooth scrolling motion event, or `None` if no scroll data is present.
 fn get_scroll_delta_and_update_state(
     pointer: &mut PointerDeviceState,
     event: &xinput::MotionEvent,
@@ -2179,6 +2434,35 @@ fn get_scroll_delta_and_update_state(
         Some(Point::new(delta_x.unwrap_or(0.0), delta_y.unwrap_or(0.0)))
     } else {
         None
+    }
+}
+
+// MODIFIED: Focus-aware scroll delta calculation
+fn get_scroll_delta_and_update_state_focused(
+    pointer: &mut PointerDeviceState,
+    event: &xinput::MotionEvent,
+    has_focus: bool,
+    device_id: xinput::DeviceId,
+    input_state: &mut InputStateManager,
+) -> Option<Point<f32>> {
+    let delta_x = get_axis_scroll_delta_and_update_state(event, &mut pointer.horizontal);
+    let delta_y = get_axis_scroll_delta_and_update_state(event, &mut pointer.vertical);
+
+    if delta_x.is_none() && delta_y.is_none() {
+        return None;
+    }
+
+    let dx = delta_x.unwrap_or(0.0);
+    let dy = delta_y.unwrap_or(0.0);
+
+    if !has_focus {
+        // Accumulate scroll for when focus returns
+        input_state.accumulate_scroll(device_id, dx, dy);
+        None
+    } else {
+        // Check if we have accumulated scroll to add
+        let accumulated = input_state.take_accumulated_scroll(device_id);
+        Some(Point::new(dx + accumulated.x, dy + accumulated.y))
     }
 }
 
