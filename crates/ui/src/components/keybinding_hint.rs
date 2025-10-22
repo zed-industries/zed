@@ -18,7 +18,7 @@ use theme::Appearance;
 ///
 /// # fn example(cx: &App) {
 /// let hint = KeybindingHint::new(
-///     KeyBinding::from_keystrokes(vec![KeybindingKeystroke::from_keystroke(Keystroke::parse("ctrl-s").unwrap())].into(), Source::Base),
+///     KeyBinding::from_keystrokes(vec![KeybindingKeystroke::from_keystroke(Keystroke::parse("ctrl-s").unwrap())].into(), KeybindSource::Base),
 ///     Hsla::black()
 /// )
 ///     .prefix("Save:")
@@ -50,7 +50,7 @@ impl KeybindingHint {
     ///
     /// # fn example(cx: &App) {
     /// let hint = KeybindingHint::new(
-    ///     KeyBinding::from_keystrokes(vec![KeybindingKeystroke::from_keystroke(Keystroke::parse("ctrl-c").unwrap())].into(), Source::Base),
+    ///     KeyBinding::from_keystrokes(vec![KeybindingKeystroke::from_keystroke(Keystroke::parse("ctrl-c").unwrap())].into(), KeybindSource::Base),
     ///     Hsla::black()
     /// );
     /// # }
@@ -81,7 +81,7 @@ impl KeybindingHint {
     /// # fn example(cx: &App) {
     /// let hint = KeybindingHint::with_prefix(
     ///     "Copy:",
-    ///     KeyBinding::from_keystrokes(vec![KeybindingKeystroke::from_keystroke(Keystroke::parse("ctrl-c").unwrap())].into(), Source::Base),
+    ///     KeyBinding::from_keystrokes(vec![KeybindingKeystroke::from_keystroke(Keystroke::parse("ctrl-c").unwrap())].into(), KeybindSource::Base),
     ///     Hsla::black()
     /// );
     /// # }
@@ -115,7 +115,7 @@ impl KeybindingHint {
     ///
     /// # fn example(cx: &App) {
     /// let hint = KeybindingHint::with_suffix(
-    ///     KeyBinding::from_keystrokes(vec![KeybindingKeystroke::from_keystroke(Keystroke::parse("ctrl-v").unwrap())].into(), Source::Base),
+    ///     KeyBinding::from_keystrokes(vec![KeybindingKeystroke::from_keystroke(Keystroke::parse("ctrl-v").unwrap())].into(), KeybindSource::Base),
     ///     "Paste",
     ///     Hsla::black()
     /// );
@@ -149,7 +149,7 @@ impl KeybindingHint {
     ///
     /// # fn example(cx: &App) {
     /// let hint = KeybindingHint::new(
-    ///     KeyBinding::from_keystrokes(vec![KeybindingKeystroke::from_keystroke(Keystroke::parse("ctrl-x").unwrap())].into(), Source::Base),
+    ///     KeyBinding::from_keystrokes(vec![KeybindingKeystroke::from_keystroke(Keystroke::parse("ctrl-x").unwrap())].into(), KeybindSource::Base),
     ///     Hsla::black()
     /// )
     ///     .prefix("Cut:");
@@ -174,7 +174,7 @@ impl KeybindingHint {
     ///
     /// # fn example(cx: &App) {
     /// let hint = KeybindingHint::new(
-    ///     KeyBinding::from_keystrokes(vec![KeybindingKeystroke::from_keystroke(Keystroke::parse("ctrl-f").unwrap())].into(), Source::Base),
+    ///     KeyBinding::from_keystrokes(vec![KeybindingKeystroke::from_keystroke(Keystroke::parse("ctrl-f").unwrap())].into(), KeybindSource::Base),
     ///     Hsla::black()
     /// )
     ///     .suffix("Find");
@@ -199,7 +199,7 @@ impl KeybindingHint {
     ///
     /// # fn example(cx: &App) {
     /// let hint = KeybindingHint::new(
-    ///     KeyBinding::from_keystrokes(vec![KeybindingKeystroke::from_keystroke(Keystroke::parse("ctrl-z").unwrap())].into(), Source::Base),
+    ///     KeyBinding::from_keystrokes(vec![KeybindingKeystroke::from_keystroke(Keystroke::parse("ctrl-z").unwrap())].into(), KeybindSource::Base),
     ///     Hsla::black()
     /// )
     ///     .size(Pixels::from(16.0));
