@@ -19309,7 +19309,6 @@ async fn test_toggle_selected_diff_hunks(executor: BackgroundExecutor, cx: &mut 
         "#
         .unindent(),
     );
-
 }
 
 #[gpui::test]
