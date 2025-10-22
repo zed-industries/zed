@@ -1005,6 +1005,7 @@ mod tests {
         let display_map = cx.new(|cx| {
             DisplayMap::new(
                 buffer,
+                None,
                 font,
                 font_size,
                 None,
@@ -1203,6 +1204,7 @@ mod tests {
             let display_map = cx.new(|cx| {
                 DisplayMap::new(
                     multibuffer,
+                    None,
                     font,
                     px(14.0),
                     None,

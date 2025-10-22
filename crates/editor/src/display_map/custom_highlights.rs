@@ -323,7 +323,6 @@ mod tests {
             false,
             None,
             None,
-            None,
             &buffer_snapshot,
         );
 

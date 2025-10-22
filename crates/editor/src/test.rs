@@ -65,6 +65,7 @@ pub fn marked_display_snapshot(
     let display_map = cx.new(|cx| {
         DisplayMap::new(
             buffer,
+            None,
             font,
             font_size,
             None,
