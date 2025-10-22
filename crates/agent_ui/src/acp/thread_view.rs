@@ -1067,12 +1067,12 @@ impl AcpThreadView {
             self.agent.local_logout_commands()
         };
         let is_login_command = if let Some(cmd) = command_name {
-            login_commands.contains(&cmd)
+            login_commands.iter().any(|c| c == cmd)
         } else {
             false
         };
         let is_logout_command = if let Some(cmd) = command_name {
-            logout_commands.contains(&cmd)
+            logout_commands.iter().any(|c| c == cmd)
         } else {
             false
         };
@@ -1464,7 +1464,7 @@ impl AcpThreadView {
                 // Add login commands from the agent
                 for command_name in login_commands {
                     available_commands.push(acp::AvailableCommand {
-                        name: command_name.to_string(),
+                        name: command_name,
                         description: "Authenticate".to_owned(),
                         input: None,
                         meta: None,
@@ -1474,7 +1474,7 @@ impl AcpThreadView {
                 // Add logout commands from the agent
                 for command_name in logout_commands {
                     available_commands.push(acp::AvailableCommand {
-                        name: command_name.to_string(),
+                        name: command_name,
                         description: "Authenticate".to_owned(),
                         input: None,
                         meta: None,
@@ -6050,19 +6050,19 @@ pub(crate) mod tests {
             "Test".into()
         }
 
-        fn local_login_commands(&self) -> Vec<&'static str> {
+        fn local_login_commands(&self) -> Vec<String> {
             vec![]
         }
 
-        fn remote_login_commands(&self) -> Vec<&'static str> {
+        fn remote_login_commands(&self) -> Vec<String> {
             vec![]
         }
 
-        fn local_logout_commands(&self) -> Vec<&'static str> {
+        fn local_logout_commands(&self) -> Vec<String> {
             vec![]
         }
 
-        fn remote_logout_commands(&self) -> Vec<&'static str> {
+        fn remote_logout_commands(&self) -> Vec<String> {
             vec![]
         }
 

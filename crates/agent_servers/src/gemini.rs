@@ -25,21 +25,21 @@ impl AgentServer for Gemini {
         ui::IconName::AiGemini
     }
 
-    fn local_login_commands(&self) -> Vec<&'static str> {
-        vec!["login"]
+    fn local_login_commands(&self) -> Vec<String> {
+        vec!["login".to_string()]
     }
 
-    fn remote_login_commands(&self) -> Vec<&'static str> {
+    fn remote_login_commands(&self) -> Vec<String> {
         // When remote, OAuth doesn't work, so login is handled via the
         // auth_commands mapping (oauth-personal -> spawn-gemini-cli)
         vec![]
     }
 
-    fn local_logout_commands(&self) -> Vec<&'static str> {
+    fn local_logout_commands(&self) -> Vec<String> {
         vec![]
     }
 
-    fn remote_logout_commands(&self) -> Vec<&'static str> {
+    fn remote_logout_commands(&self) -> Vec<String> {
         vec![]
     }
 

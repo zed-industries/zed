@@ -34,19 +34,19 @@ impl crate::AgentServer for CustomAgentServer {
         IconName::Terminal
     }
 
-    fn local_login_commands(&self) -> Vec<&'static str> {
+    fn local_login_commands(&self) -> Vec<String> {
         vec![]
     }
 
-    fn remote_login_commands(&self) -> Vec<&'static str> {
+    fn remote_login_commands(&self) -> Vec<String> {
         vec![]
     }
 
-    fn local_logout_commands(&self) -> Vec<&'static str> {
+    fn local_logout_commands(&self) -> Vec<String> {
         vec![]
     }
 
-    fn remote_logout_commands(&self) -> Vec<&'static str> {
+    fn remote_logout_commands(&self) -> Vec<String> {
         vec![]
     }
 
