@@ -1344,9 +1344,13 @@ impl pet_core::os_environment::Environment for EnvironmentApi<'_> {
 
     fn get_know_global_search_locations(&self) -> Vec<PathBuf> {
         if self.global_search_locations.lock().is_empty() {
-            let mut paths =
-                std::env::split_paths(&self.get_env_var("PATH".to_string()).unwrap_or_default())
-                    .collect::<Vec<PathBuf>>();
+            let mut paths = std::env::split_paths(
+                &self
+                    .get_env_var("PATH".to_string())
+                    .or_else(|| self.get_env_var("Path".to_string()))
+                    .unwrap_or_default(),
+            )
+            .collect::<Vec<PathBuf>>();
 
             log::trace!("Env PATH: {:?}", paths);
             for p in self.pet_env.get_know_global_search_locations() {
