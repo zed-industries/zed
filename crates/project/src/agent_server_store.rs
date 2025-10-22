@@ -95,7 +95,13 @@ pub trait ExternalAgentServer {
         status_tx: Option<watch::Sender<SharedString>>,
         new_version_available_tx: Option<watch::Sender<Option<String>>>,
         cx: &mut AsyncApp,
-    ) -> Task<Result<(AgentServerCommand, String, Option<task::SpawnInTerminal>)>>;
+    ) -> Task<
+        Result<(
+            AgentServerCommand,
+            String,
+            HashMap<String, task::SpawnInTerminal>,
+        )>,
+    >;
 
     fn as_any_mut(&mut self) -> &mut dyn Any;
 }
@@ -158,15 +164,21 @@ mod ext_agent_tests {
             _status_tx: Option<watch::Sender<SharedString>>,
             _new_version_available_tx: Option<watch::Sender<Option<String>>>,
             _cx: &mut AsyncApp,
-        ) -> Task<Result<(AgentServerCommand, String, Option<task::SpawnInTerminal>)>> {
+        ) -> Task<
+            Result<(
+                AgentServerCommand,
+                String,
+                HashMap<String, task::SpawnInTerminal>,
+            )>,
+        > {
             Task::ready(Ok((
                 AgentServerCommand {
                     path: PathBuf::from("noop"),
-                    args: vec![],
-                    env: Some(HashMap::default()),
+                    args: Vec::new(),
+                    env: None,
                 },
-                String::from(""),
-                None,
+                "/".to_string(),
+                HashMap::default(),
             )))
         }
 
@@ -258,7 +270,7 @@ mod ext_agent_tests {
 
         // Resolve the command
         let task = agent.get_command(None, extra_env, None, None, &mut cx.to_async());
-        let (cmd, _root, _login) = task.await.expect("command resolved");
+        let (cmd, _root, _auth_commands) = task.await.expect("command resolved");
 
         assert_eq!(cmd.path, bin_path);
         assert_eq!(cmd.args, vec!["--foo"]);
@@ -349,15 +361,21 @@ mod ext_agent_tests_dup {
             _status_tx: Option<watch::Sender<SharedString>>,
             _new_version_available_tx: Option<watch::Sender<Option<String>>>,
             _cx: &mut AsyncApp,
-        ) -> Task<Result<(AgentServerCommand, String, Option<task::SpawnInTerminal>)>> {
+        ) -> Task<
+            Result<(
+                AgentServerCommand,
+                String,
+                HashMap<String, task::SpawnInTerminal>,
+            )>,
+        > {
             Task::ready(Ok((
                 AgentServerCommand {
                     path: PathBuf::from("noop"),
-                    args: vec![],
-                    env: Some(HashMap::default()),
+                    args: Vec::new(),
+                    env: None,
                 },
-                String::from(""),
-                None,
+                "/".to_string(),
+                HashMap::default(),
             )))
         }
 
@@ -829,7 +847,7 @@ impl AgentServerStore {
         envelope: TypedEnvelope<proto::GetAgentServerCommand>,
         mut cx: AsyncApp,
     ) -> Result<proto::AgentServerCommand> {
-        let (command, root_dir, login) = this
+        let (command, root_dir, auth_commands) = this
             .update(&mut cx, |this, cx| {
                 let AgentServerStoreState::Local {
                     downstream_client, ..
@@ -886,14 +904,14 @@ impl AgentServerStore {
                         (status_tx, new_version_available_tx)
                     })
                     .unzip();
-                anyhow::Ok(agent.get_command(
+                agent.get_command(
                     envelope.payload.root_dir.as_deref(),
                     HashMap::default(),
                     status_tx,
                     new_version_available_tx,
                     &mut cx.to_async(),
-                ))
-            })??
+                )
+            })?
             .await?;
         Ok(proto::AgentServerCommand {
             path: command.path.to_string_lossy().into_owned(),
@@ -903,7 +921,13 @@ impl AgentServerStore {
                 .map(|env| env.into_iter().collect())
                 .unwrap_or_default(),
             root_dir: root_dir,
-            login: login.map(|login| login.to_proto()),
+            auth_commands: auth_commands
+                .into_iter()
+                .map(|(auth_method_id, spawn_terminal)| proto::AuthCommand {
+                    auth_method_id,
+                    command: Some(spawn_terminal.to_proto()),
+                })
+                .collect(),
         })
     }
 
@@ -1211,7 +1235,13 @@ impl ExternalAgentServer for RemoteExternalAgentServer {
         status_tx: Option<watch::Sender<SharedString>>,
         new_version_available_tx: Option<watch::Sender<Option<String>>>,
         cx: &mut AsyncApp,
-    ) -> Task<Result<(AgentServerCommand, String, Option<task::SpawnInTerminal>)>> {
+    ) -> Task<
+        Result<(
+            AgentServerCommand,
+            String,
+            HashMap<String, task::SpawnInTerminal>,
+        )>,
+    > {
         let project_id = self.project_id;
         let name = self.name.to_string();
         let upstream_client = self.upstream_client.downgrade();
@@ -1241,6 +1271,19 @@ impl ExternalAgentServer for RemoteExternalAgentServer {
                     None,
                 )
             })??;
+            let auth_commands = response
+                .auth_commands
+                .into_iter()
+                .filter_map(|auth_cmd| {
+                    auth_cmd.command.map(|cmd| {
+                        (
+                            auth_cmd.auth_method_id,
+                            task::SpawnInTerminal::from_proto(cmd),
+                        )
+                    })
+                })
+                .collect();
+
             Ok((
                 AgentServerCommand {
                     path: command.program.into(),
@@ -1248,9 +1291,7 @@ impl ExternalAgentServer for RemoteExternalAgentServer {
                     env: Some(command.env),
                 },
                 root_dir,
-                response
-                    .login
-                    .map(|login| task::SpawnInTerminal::from_proto(login)),
+                auth_commands,
             ))
         })
     }
@@ -1276,7 +1317,13 @@ impl ExternalAgentServer for LocalGemini {
         status_tx: Option<watch::Sender<SharedString>>,
         new_version_available_tx: Option<watch::Sender<Option<String>>>,
         cx: &mut AsyncApp,
-    ) -> Task<Result<(AgentServerCommand, String, Option<task::SpawnInTerminal>)>> {
+    ) -> Task<
+        Result<(
+            AgentServerCommand,
+            String,
+            HashMap<String, task::SpawnInTerminal>,
+        )>,
+    > {
         let fs = self.fs.clone();
         let node_runtime = self.node_runtime.clone();
         let project_environment = self.project_environment.downgrade();
@@ -1343,12 +1390,15 @@ impl ExternalAgentServer for LocalGemini {
                 ..Default::default()
             };
 
+            let mut auth_commands = HashMap::default();
+            auth_commands.insert("oauth-personal".to_string(), login);
+
             command.env.get_or_insert_default().extend(extra_env);
             command.args.push("--experimental-acp".into());
             Ok((
                 command,
                 root_dir.to_string_lossy().into_owned(),
-                Some(login),
+                auth_commands,
             ))
         })
     }
@@ -1373,7 +1423,13 @@ impl ExternalAgentServer for LocalClaudeCode {
         status_tx: Option<watch::Sender<SharedString>>,
         new_version_available_tx: Option<watch::Sender<Option<String>>>,
         cx: &mut AsyncApp,
-    ) -> Task<Result<(AgentServerCommand, String, Option<task::SpawnInTerminal>)>> {
+    ) -> Task<
+        Result<(
+            AgentServerCommand,
+            String,
+            HashMap<String, task::SpawnInTerminal>,
+        )>,
+    > {
         let fs = self.fs.clone();
         let node_runtime = self.node_runtime.clone();
         let project_environment = self.project_environment.downgrade();
@@ -1396,10 +1452,10 @@ impl ExternalAgentServer for LocalClaudeCode {
                 .unwrap_or_default();
             env.insert("ANTHROPIC_API_KEY".into(), "".into());
 
-            let (mut command, login) = if let Some(mut custom_command) = custom_command {
+            let (mut command, auth_commands) = if let Some(mut custom_command) = custom_command {
                 env.extend(custom_command.env.unwrap_or_default());
                 custom_command.env = Some(env);
-                (custom_command, None)
+                (custom_command, HashMap::default())
             } else {
                 let mut command = get_or_npm_install_builtin_agent(
                     "claude-code-acp".into(),
@@ -1433,11 +1489,19 @@ impl ExternalAgentServer for LocalClaudeCode {
                         label: "claude /login".into(),
                         ..Default::default()
                     });
-                (command, login)
+                let mut auth_commands = HashMap::default();
+                if let Some(login_cmd) = login {
+                    auth_commands.insert("claude-login".to_string(), login_cmd);
+                }
+                (command, auth_commands)
             };
 
             command.env.get_or_insert_default().extend(extra_env);
-            Ok((command, root_dir.to_string_lossy().into_owned(), login))
+            Ok((
+                command,
+                root_dir.to_string_lossy().into_owned(),
+                auth_commands,
+            ))
         })
     }
 
@@ -1462,7 +1526,13 @@ impl ExternalAgentServer for LocalCodex {
         _status_tx: Option<watch::Sender<SharedString>>,
         _new_version_available_tx: Option<watch::Sender<Option<String>>>,
         cx: &mut AsyncApp,
-    ) -> Task<Result<(AgentServerCommand, String, Option<task::SpawnInTerminal>)>> {
+    ) -> Task<
+        Result<(
+            AgentServerCommand,
+            String,
+            HashMap<String, task::SpawnInTerminal>,
+        )>,
+    > {
         let fs = self.fs.clone();
         let project_environment = self.project_environment.downgrade();
         let http = self.http_client.clone();
@@ -1553,7 +1623,11 @@ impl ExternalAgentServer for LocalCodex {
             };
 
             command.env.get_or_insert_default().extend(extra_env);
-            Ok((command, root_dir.to_string_lossy().into_owned(), None))
+            Ok((
+                command,
+                root_dir.to_string_lossy().into_owned(),
+                HashMap::default(),
+            ))
         })
     }
 
@@ -1648,7 +1722,13 @@ impl ExternalAgentServer for LocalExtensionBinaryAgent {
         _status_tx: Option<watch::Sender<SharedString>>,
         _new_version_available_tx: Option<watch::Sender<Option<String>>>,
         cx: &mut AsyncApp,
-    ) -> Task<Result<(AgentServerCommand, String, Option<task::SpawnInTerminal>)>> {
+    ) -> Task<
+        Result<(
+            AgentServerCommand,
+            String,
+            HashMap<String, task::SpawnInTerminal>,
+        )>,
+    > {
         let bin_name = self.bin_name.clone();
         let args = self.args.clone();
         let mut base_env = self.env.clone();
@@ -1692,27 +1772,32 @@ impl ExternalAgentServer for LocalExtensionBinaryAgent {
                 env: Some(merged_env),
             };
 
-            // TODO: Select appropriate auth command based on ACP auth method
-            let login = auth_commands.first().map(|auth_cmd| {
-                let login_command = if let Some(ref custom_cmd) = auth_cmd.command {
-                    custom_cmd.clone()
-                } else {
-                    command.path.to_string_lossy().into_owned()
-                };
+            // Build auth commands map keyed by auth_method_id
+            let auth_cmds = auth_commands
+                .into_iter()
+                .map(|auth_cmd| {
+                    let login_command = if let Some(ref custom_cmd) = auth_cmd.command {
+                        custom_cmd.clone()
+                    } else {
+                        command.path.to_string_lossy().into_owned()
+                    };
 
-                let mut login_env = command.env.clone().unwrap_or_default();
-                login_env.extend(auth_cmd.env.clone());
+                    let mut login_env = command.env.clone().unwrap_or_default();
+                    login_env.extend(auth_cmd.env.clone());
 
-                task::SpawnInTerminal {
-                    command: Some(login_command),
-                    args: auth_cmd.args.clone(),
-                    env: login_env,
-                    label: auth_cmd.label.clone(),
-                    ..Default::default()
-                }
-            });
+                    let spawn_terminal = task::SpawnInTerminal {
+                        command: Some(login_command),
+                        args: auth_cmd.args.clone(),
+                        env: login_env,
+                        label: auth_cmd.label.clone(),
+                        ..Default::default()
+                    };
 
-            Ok((command, root_dir.to_string_lossy().into_owned(), login))
+                    (auth_cmd.auth_method_id.clone(), spawn_terminal)
+                })
+                .collect();
+
+            Ok((command, root_dir.to_string_lossy().into_owned(), auth_cmds))
         })
     }
 
@@ -1729,7 +1814,13 @@ impl ExternalAgentServer for LocalExtensionNpmAgent {
         status_tx: Option<watch::Sender<SharedString>>,
         new_version_available_tx: Option<watch::Sender<Option<String>>>,
         cx: &mut AsyncApp,
-    ) -> Task<Result<(AgentServerCommand, String, Option<task::SpawnInTerminal>)>> {
+    ) -> Task<
+        Result<(
+            AgentServerCommand,
+            String,
+            HashMap<String, task::SpawnInTerminal>,
+        )>,
+    > {
         let fs = self.fs.clone();
         let node_runtime = self.node_runtime.clone();
         let project_environment = self.project_environment.downgrade();
@@ -1823,35 +1914,40 @@ impl ExternalAgentServer for LocalExtensionNpmAgent {
                 .await?
             };
 
-            // Build login command before modifying command
-            // TODO: Select appropriate auth command based on ACP auth method
-            let login = auth_commands.first().map(|auth_cmd| {
-                let (login_command, login_args) = if let Some(ref custom_cmd) = auth_cmd.command {
-                    (custom_cmd.clone(), auth_cmd.args.clone())
-                } else {
-                    // Default: use node runtime with args as the entrypoint override
-                    (
-                        command.path.to_string_lossy().into_owned(),
-                        auth_cmd.args.clone(),
-                    )
-                };
+            // Build auth commands map keyed by auth_method_id
+            let auth_cmds = auth_commands
+                .into_iter()
+                .map(|auth_cmd| {
+                    let (login_command, login_args) = if let Some(ref custom_cmd) = auth_cmd.command
+                    {
+                        (custom_cmd.clone(), auth_cmd.args.clone())
+                    } else {
+                        // Default: use node runtime with args as the entrypoint override
+                        (
+                            command.path.to_string_lossy().into_owned(),
+                            auth_cmd.args.clone(),
+                        )
+                    };
 
-                let mut login_env = env.clone();
-                login_env.extend(auth_cmd.env.clone());
+                    let mut login_env = env.clone();
+                    login_env.extend(auth_cmd.env.clone());
 
-                task::SpawnInTerminal {
-                    command: Some(login_command),
-                    args: login_args,
-                    env: login_env,
-                    label: auth_cmd.label.clone(),
-                    ..Default::default()
-                }
-            });
+                    let spawn_terminal = task::SpawnInTerminal {
+                        command: Some(login_command),
+                        args: login_args,
+                        env: login_env,
+                        label: auth_cmd.label.clone(),
+                        ..Default::default()
+                    };
+
+                    (auth_cmd.auth_method_id.clone(), spawn_terminal)
+                })
+                .collect();
 
             command.args.extend(args);
             command.env = Some(env);
 
-            Ok((command, root_dir.to_string_lossy().into_owned(), login))
+            Ok((command, root_dir.to_string_lossy().into_owned(), auth_cmds))
         })
     }
 
@@ -1868,7 +1964,13 @@ impl ExternalAgentServer for LocalExtensionGithubReleaseAgent {
         _status_tx: Option<watch::Sender<SharedString>>,
         _new_version_available_tx: Option<watch::Sender<Option<String>>>,
         cx: &mut AsyncApp,
-    ) -> Task<Result<(AgentServerCommand, String, Option<task::SpawnInTerminal>)>> {
+    ) -> Task<
+        Result<(
+            AgentServerCommand,
+            String,
+            HashMap<String, task::SpawnInTerminal>,
+        )>,
+    > {
         let fs = self.fs.clone();
         let http_client = self.http_client.clone();
         let project_environment = self.project_environment.downgrade();
@@ -1990,26 +2092,30 @@ impl ExternalAgentServer for LocalExtensionGithubReleaseAgent {
                 bin_path.to_string_lossy()
             );
 
-            // Build login command before constructing main command
-            // TODO: Select appropriate auth command based on ACP auth method
-            let login = auth_commands.first().map(|auth_cmd| {
-                let login_command = if let Some(ref custom_cmd) = auth_cmd.command {
-                    custom_cmd.clone()
-                } else {
-                    bin_path.to_string_lossy().into_owned()
-                };
+            // Build auth commands map keyed by auth_method_id
+            let auth_cmds: HashMap<String, task::SpawnInTerminal> = auth_commands
+                .into_iter()
+                .map(|auth_cmd| {
+                    let login_command = if let Some(ref custom_cmd) = auth_cmd.command {
+                        custom_cmd.clone()
+                    } else {
+                        bin_path.to_string_lossy().into_owned()
+                    };
 
-                let mut login_env = env.clone();
-                login_env.extend(auth_cmd.env.clone());
+                    let mut login_env = env.clone();
+                    login_env.extend(auth_cmd.env.clone());
 
-                task::SpawnInTerminal {
-                    command: Some(login_command),
-                    args: auth_cmd.args.clone(),
-                    env: login_env,
-                    label: auth_cmd.label.clone(),
-                    ..Default::default()
-                }
-            });
+                    let spawn_terminal = task::SpawnInTerminal {
+                        command: Some(login_command),
+                        args: auth_cmd.args.clone(),
+                        env: login_env,
+                        label: auth_cmd.label.clone(),
+                        ..Default::default()
+                    };
+
+                    (auth_cmd.auth_method_id.clone(), spawn_terminal)
+                })
+                .collect();
 
             let command = AgentServerCommand {
                 path: bin_path,
@@ -2017,7 +2123,7 @@ impl ExternalAgentServer for LocalExtensionGithubReleaseAgent {
                 env: Some(env),
             };
 
-            Ok((command, root_dir.to_string_lossy().into_owned(), login))
+            Ok((command, root_dir.to_string_lossy().into_owned(), auth_cmds))
         })
     }
 
@@ -2034,7 +2140,13 @@ impl ExternalAgentServer for LocalCustomAgent {
         _status_tx: Option<watch::Sender<SharedString>>,
         _new_version_available_tx: Option<watch::Sender<Option<String>>>,
         cx: &mut AsyncApp,
-    ) -> Task<Result<(AgentServerCommand, String, Option<task::SpawnInTerminal>)>> {
+    ) -> Task<
+        Result<(
+            AgentServerCommand,
+            String,
+            HashMap<String, task::SpawnInTerminal>,
+        )>,
+    > {
         let mut command = self.command.clone();
         let root_dir: Arc<Path> = root_dir
             .map(|root_dir| Path::new(root_dir))
@@ -2055,7 +2167,11 @@ impl ExternalAgentServer for LocalCustomAgent {
             env.extend(command.env.unwrap_or_default());
             env.extend(extra_env);
             command.env = Some(env);
-            Ok((command, root_dir.to_string_lossy().into_owned(), None))
+            Ok((
+                command,
+                root_dir.to_string_lossy().into_owned(),
+                HashMap::default(),
+            ))
         })
     }
 
@@ -2310,15 +2426,21 @@ mod npm_launcher_tests {
             _status_tx: Option<watch::Sender<SharedString>>,
             _new_version_available_tx: Option<watch::Sender<Option<String>>>,
             _cx: &mut AsyncApp,
-        ) -> Task<Result<(AgentServerCommand, String, Option<task::SpawnInTerminal>)>> {
+        ) -> Task<
+            Result<(
+                AgentServerCommand,
+                String,
+                HashMap<String, task::SpawnInTerminal>,
+            )>,
+        > {
             Task::ready(Ok((
                 AgentServerCommand {
                     path: PathBuf::from("noop"),
-                    args: vec![],
-                    env: Some(HashMap::default()),
+                    args: Vec::new(),
+                    env: None,
                 },
-                String::from(""),
-                None,
+                "/".to_string(),
+                HashMap::default(),
             )))
         }
 
