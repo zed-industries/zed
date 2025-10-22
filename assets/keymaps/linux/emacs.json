@@ -172,7 +172,7 @@
     // Unbind so Zed ignores these keys and lets emacs handle them.
     // NOTE:
     //  "terminal::SendKeystroke" only works for a single key stroke (e.g. ctrl-x),
-    //  so overwride with null for compound sequences (e.g. ctrl-x ctrl-c).
+    //  so override with null for compound sequences (e.g. ctrl-x ctrl-c).
     "context": "Terminal",
     "bindings": {
       // If you want to perfect your emacs-in-zed setup, also consider the following.
