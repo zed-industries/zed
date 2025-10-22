@@ -2090,6 +2090,21 @@ mod tests {
                 .unindent(),
             ),
         );
+
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2025_10_16::restore_code_actions_on_format,
+            )],
+            &r#"{
+                "formatter": [],
+                "code_actions_on_format": {
+                    "bar": true,
+                    "baz": false
+                }
+            }"#
+            .unindent(),
+            None,
+        );
     }
 
     #[test]
