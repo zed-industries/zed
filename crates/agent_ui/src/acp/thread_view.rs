@@ -4583,14 +4583,29 @@ impl AcpThreadView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if window.is_window_active() || !self.notifications.is_empty() {
+        if !self.notifications.is_empty() {
+            return;
+        }
+
+        let settings = AgentSettings::get_global(cx);
+
+        // Determine if we should show the notification
+        let should_notify = if window.is_window_active() {
+            // Window is active, check if panel is hidden and setting allows notifications
+            settings.notify_when_agent_is_hidden && self.is_agent_panel_hidden(cx)
+        } else {
+            // Window is not active, always notify (subject to notify_when_agent_waiting)
+            true
+        };
+
+        if !should_notify {
             return;
         }
 
         // TODO: Change this once we have title summarization for external agents.
         let title = self.agent.name();
 
-        match AgentSettings::get_global(cx).notify_when_agent_waiting {
+        match settings.notify_when_agent_waiting {
             NotifyWhenAgentWaiting::PrimaryScreen => {
                 if let Some(primary) = cx.primary_display() {
                     self.pop_up(icon, caption.into(), title, window, primary, cx);
@@ -4606,6 +4621,35 @@ impl AcpThreadView {
                 // Don't show anything
             }
         }
+    }
+
+    fn is_agent_panel_hidden(&self, cx: &App) -> bool {
+        use crate::AgentPanel;
+
+        self.workspace
+            .upgrade()
+            .and_then(|workspace| {
+                let workspace_read = workspace.read(cx);
+                let panel = workspace_read.panel::<AgentPanel>(cx)?;
+
+                // Check left dock
+                if let Some(left_panel) = workspace_read.left_dock().read(cx).visible_panel() {
+                    if left_panel.panel_id() == Entity::entity_id(&panel) {
+                        return Some(false);
+                    }
+                }
+
+                // Check right dock
+                if let Some(right_panel) = workspace_read.right_dock().read(cx).visible_panel() {
+                    if right_panel.panel_id() == Entity::entity_id(&panel) {
+                        return Some(false);
+                    }
+                }
+
+                // Panel is not visible in any dock
+                Some(true)
+            })
+            .unwrap_or(true)
     }
 
     fn pop_up(
@@ -5912,6 +5956,169 @@ pub(crate) mod tests {
             cx.windows()
                 .iter()
                 .any(|window| window.downcast::<AgentNotification>().is_some())
+        );
+    }
+
+    #[gpui::test]
+    async fn test_notification_when_panel_hidden_and_setting_enabled(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        // Enable the notify_when_agent_is_hidden setting
+        cx.update(|cx| {
+            AgentSettings::override_global(
+                AgentSettings {
+                    notify_when_agent_is_hidden: true,
+                    ..AgentSettings::get_global(cx).clone()
+                },
+                cx,
+            );
+        });
+
+        let (thread_view, cx) = setup_thread_view(StubAgentServer::default_response(), cx).await;
+
+        // Add thread view to workspace so we can control panel visibility
+        add_to_workspace(thread_view.clone(), cx);
+
+        let message_editor = cx.read(|cx| thread_view.read(cx).message_editor.clone());
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Hello", window, cx);
+        });
+
+        // Window is active (don't deactivate), but panel will be hidden
+        // Note: In the test environment, the panel is not actually added to the dock,
+        // so is_agent_panel_hidden will return true
+
+        thread_view.update_in(cx, |thread_view, window, cx| {
+            thread_view.send(window, cx);
+        });
+
+        cx.run_until_parked();
+
+        // Should show notification because window is active, panel is hidden, and setting is enabled
+        assert!(
+            cx.windows()
+                .iter()
+                .any(|window| window.downcast::<AgentNotification>().is_some()),
+            "Expected notification when panel is hidden and setting is enabled"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_no_notification_when_panel_hidden_and_setting_disabled(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        // Disable the notify_when_agent_is_hidden setting (default is false)
+        cx.update(|cx| {
+            AgentSettings::override_global(
+                AgentSettings {
+                    notify_when_agent_is_hidden: false,
+                    ..AgentSettings::get_global(cx).clone()
+                },
+                cx,
+            );
+        });
+
+        let (thread_view, cx) = setup_thread_view(StubAgentServer::default_response(), cx).await;
+
+        let message_editor = cx.read(|cx| thread_view.read(cx).message_editor.clone());
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Hello", window, cx);
+        });
+
+        // Window is active (don't deactivate)
+
+        thread_view.update_in(cx, |thread_view, window, cx| {
+            thread_view.send(window, cx);
+        });
+
+        cx.run_until_parked();
+
+        // Should NOT show notification because setting is disabled
+        assert!(
+            !cx.windows()
+                .iter()
+                .any(|window| window.downcast::<AgentNotification>().is_some()),
+            "Expected no notification when setting is disabled"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_notification_still_works_when_window_inactive(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        // Disable the notify_when_agent_is_hidden setting
+        cx.update(|cx| {
+            AgentSettings::override_global(
+                AgentSettings {
+                    notify_when_agent_is_hidden: false,
+                    ..AgentSettings::get_global(cx).clone()
+                },
+                cx,
+            );
+        });
+
+        let (thread_view, cx) = setup_thread_view(StubAgentServer::default_response(), cx).await;
+
+        let message_editor = cx.read(|cx| thread_view.read(cx).message_editor.clone());
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Hello", window, cx);
+        });
+
+        // Deactivate window - should show notification regardless of setting
+        cx.deactivate_window();
+
+        thread_view.update_in(cx, |thread_view, window, cx| {
+            thread_view.send(window, cx);
+        });
+
+        cx.run_until_parked();
+
+        // Should still show notification when window is inactive (existing behavior)
+        assert!(
+            cx.windows()
+                .iter()
+                .any(|window| window.downcast::<AgentNotification>().is_some()),
+            "Expected notification when window is inactive, regardless of notify_when_agent_is_hidden setting"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_notification_respects_never_setting(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        // Enable notify_when_agent_is_hidden but set notify_when_agent_waiting to Never
+        cx.update(|cx| {
+            AgentSettings::override_global(
+                AgentSettings {
+                    notify_when_agent_is_hidden: true,
+                    notify_when_agent_waiting: NotifyWhenAgentWaiting::Never,
+                    ..AgentSettings::get_global(cx).clone()
+                },
+                cx,
+            );
+        });
+
+        let (thread_view, cx) = setup_thread_view(StubAgentServer::default_response(), cx).await;
+
+        let message_editor = cx.read(|cx| thread_view.read(cx).message_editor.clone());
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Hello", window, cx);
+        });
+
+        // Window is active
+
+        thread_view.update_in(cx, |thread_view, window, cx| {
+            thread_view.send(window, cx);
+        });
+
+        cx.run_until_parked();
+
+        // Should NOT show notification because notify_when_agent_waiting is Never
+        assert!(
+            !cx.windows()
+                .iter()
+                .any(|window| window.downcast::<AgentNotification>().is_some()),
+            "Expected no notification when notify_when_agent_waiting is Never"
         );
     }
 
