@@ -163,7 +163,7 @@
       "cmd-alt-f": "buffer_search::DeployReplace",
       "cmd-alt-l": ["buffer_search::Deploy", { "selection_search_enabled": true }],
       "cmd-e": ["buffer_search::Deploy", { "focus": false }],
-      "cmd->": "agent::QuoteSelection",
+      "cmd->": "agent::AddSelectionToThread",
       "cmd-<": "assistant::InsertIntoEditor",
       "cmd-alt-e": "editor::SelectEnclosingSymbol",
       "alt-enter": "editor::OpenSelectionsInMultibuffer"
@@ -282,7 +282,7 @@
       "cmd-shift-i": "agent::ToggleOptionsMenu",
       "cmd-alt-shift-n": "agent::ToggleNewThreadMenu",
       "shift-alt-escape": "agent::ExpandMessageEditor",
-      "cmd->": "agent::QuoteSelection",
+      "cmd->": "agent::AddSelectionToThread",
       "cmd-alt-e": "agent::RemoveAllContext",
       "cmd-shift-e": "project_panel::ToggleFocus",
       "cmd-ctrl-b": "agent::ToggleBurnMode",
