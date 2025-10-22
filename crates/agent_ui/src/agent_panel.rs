@@ -897,6 +897,19 @@ impl AgentPanel {
                         let new_session_id = thread.read(cx).session_id().clone();
                         this.thread_view_cache
                             .insert(new_session_id, new_view.clone());
+                    } else {
+                        // Thread not ready yet, observe and cache when it becomes ready
+                        let view_for_cache = new_view.clone();
+                        cx.observe(&new_view, move |this: &mut AgentPanel, view, cx| {
+                            if let Some(thread) = view.read(cx).thread() {
+                                let session_id = thread.read(cx).session_id().clone();
+                                if !this.thread_view_cache.contains_key(&session_id) {
+                                    this.thread_view_cache
+                                        .insert(session_id, view_for_cache.clone());
+                                }
+                            }
+                        })
+                        .detach();
                     }
 
                     new_view
