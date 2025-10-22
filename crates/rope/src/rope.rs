@@ -44,7 +44,7 @@ impl Rope {
         }
         let (start, _, item) = self.chunks.find::<usize, _>((), &offset, Bias::Left);
         let chunk_offset = offset - start;
-        item.map(|chunk| chunk.text.is_char_boundary(chunk_offset))
+        item.map(|chunk| chunk.is_char_boundary(chunk_offset))
             .unwrap_or(false)
     }
 
