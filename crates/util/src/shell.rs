@@ -4,6 +4,7 @@ use std::{borrow::Cow, fmt, path::Path, sync::LazyLock};
 
 /// Shell configuration to open the terminal with.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
 pub enum Shell {
     /// Use the system's default terminal configuration in /etc/passwd
     #[default]
