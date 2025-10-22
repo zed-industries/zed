@@ -1660,7 +1660,7 @@ impl AgentPanel {
                                     id: None,
                                 }),
                             )
-                            .action("Add Custom Server", Box::new(AddContextServer))
+                            .action("Add Custom Server…", Box::new(AddContextServer))
                             .separator();
 
                         menu = menu
