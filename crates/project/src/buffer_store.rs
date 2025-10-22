@@ -8,6 +8,8 @@ use anyhow::{Context as _, Result, anyhow};
 use client::Client;
 use collections::{HashMap, HashSet, hash_map};
 use encodings::Encoding;
+use fs::Fs;
+use futures::StreamExt;
 use futures::{Future, FutureExt as _, channel::oneshot, future::Shared};
 use gpui::{
     App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Subscription, Task, WeakEntity,
@@ -1189,7 +1191,7 @@ impl BufferStore {
                 let buffers = this.update(cx, |this, cx| {
                     project_paths
                         .into_iter()
-                        .map(|project_path| this.open_buffer(project_path, None, cx))
+                        .map(|project_path| this.open_buffer(project_path, None, false, true, cx))
                         .collect::<Vec<_>>()
                 })?;
                 for buffer_task in buffers {
