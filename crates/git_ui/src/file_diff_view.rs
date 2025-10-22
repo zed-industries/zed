@@ -360,9 +360,8 @@ mod tests {
     use editor::test::editor_test_context::assert_state_with_diff;
     use encodings::Encoding;
     use gpui::TestAppContext;
-    use project::{FakeFs, Fs, Project};
+    use project::{FakeFs, Fs};
     use settings::SettingsStore;
-    use project::{FakeFs, Fs, Project, encodings::EncodingWrapper};
     use std::path::PathBuf;
     use unindent::unindent;
     use util::path;

@@ -75,7 +75,7 @@ impl Render for EncodingIndicator {
                             let weak_workspace = workspace.weak_handle();
 
                             if let Some(path) = buffer.read(cx).file() {
-                                let path = path.clone().path().to_path_buf();
+                                let path = path.clone().path().to_rel_path_buf();
                                 workspace.toggle_modal(window, cx, |window, cx| {
                                     let selector = EncodingSelector::new(
                                         window,
@@ -83,7 +83,7 @@ impl Render for EncodingIndicator {
                                         Action::Save,
                                         Some(buffer.downgrade()),
                                         weak_workspace,
-                                        Some(path),
+                                        Some(path.as_std_path().to_path_buf()),
                                     );
                                     selector
                                 });

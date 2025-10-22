@@ -506,16 +506,7 @@ impl HeadlessProject {
         let (buffer_store, buffer) = this.update(&mut cx, |this, cx| {
             let buffer_store = this.buffer_store.clone();
             let buffer = this.buffer_store.update(cx, |buffer_store, cx| {
-                buffer_store.open_buffer(
-                    ProjectPath {
-                        worktree_id,
-                        path: Arc::<Path>::from_proto(message.payload.path),
-                    },
-                    None,
-                    false,
-                    true,
-                    cx,
-                )
+                buffer_store.open_buffer(ProjectPath { worktree_id, path }, None, false, true, cx)
             });
             anyhow::Ok((buffer_store, buffer))
         })??;
