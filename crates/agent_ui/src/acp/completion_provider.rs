@@ -1047,6 +1047,12 @@ impl SlashCommandCompletion {
         let mut argument = None;
         let mut command = None;
         if let Some((command_text, args)) = last_command.split_once(char::is_whitespace) {
+            // If the args start with '@', treat this as a mention completion, not a slash command argument.
+            // Early-return None to let MentionCompletion::try_parse handle it.
+            if args.trim_start().starts_with('@') {
+                return None;
+            }
+
             if !args.is_empty() {
                 argument = Some(args.trim_end().to_string());
             }
