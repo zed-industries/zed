@@ -1266,8 +1266,9 @@ mod internal_tests {
         )
         .await;
         let project = Project::test(fs.clone(), [], cx).await;
-        let context_store = cx.new(|cx| assistant_context::ContextStore::fake(project.clone(), cx));
-        let history_store = cx.new(|cx| HistoryStore::new(context_store, cx));
+        let text_thread_store =
+            cx.new(|cx| assistant_text_thread::TextThreadStore::fake(project.clone(), cx));
+        let history_store = cx.new(|cx| HistoryStore::new(text_thread_store, cx));
         let agent = NativeAgent::new(
             project.clone(),
             history_store,
@@ -1327,8 +1328,9 @@ mod internal_tests {
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree("/", json!({ "a": {}  })).await;
         let project = Project::test(fs.clone(), [], cx).await;
-        let context_store = cx.new(|cx| assistant_context::ContextStore::fake(project.clone(), cx));
-        let history_store = cx.new(|cx| HistoryStore::new(context_store, cx));
+        let text_thread_store =
+            cx.new(|cx| assistant_text_thread::TextThreadStore::fake(project.clone(), cx));
+        let history_store = cx.new(|cx| HistoryStore::new(text_thread_store, cx));
         let connection = NativeAgentConnection(
             NativeAgent::new(
                 project.clone(),
@@ -1402,8 +1404,9 @@ mod internal_tests {
         .await;
         let project = Project::test(fs.clone(), [], cx).await;
 
-        let context_store = cx.new(|cx| assistant_context::ContextStore::fake(project.clone(), cx));
-        let history_store = cx.new(|cx| HistoryStore::new(context_store, cx));
+        let text_thread_store =
+            cx.new(|cx| assistant_text_thread::TextThreadStore::fake(project.clone(), cx));
+        let history_store = cx.new(|cx| HistoryStore::new(text_thread_store, cx));
 
         // Create the agent and connection
         let agent = NativeAgent::new(
@@ -1474,8 +1477,9 @@ mod internal_tests {
         )
         .await;
         let project = Project::test(fs.clone(), [path!("/a").as_ref()], cx).await;
-        let context_store = cx.new(|cx| assistant_context::ContextStore::fake(project.clone(), cx));
-        let history_store = cx.new(|cx| HistoryStore::new(context_store, cx));
+        let text_thread_store =
+            cx.new(|cx| assistant_text_thread::TextThreadStore::fake(project.clone(), cx));
+        let history_store = cx.new(|cx| HistoryStore::new(text_thread_store, cx));
         let agent = NativeAgent::new(
             project.clone(),
             history_store.clone(),

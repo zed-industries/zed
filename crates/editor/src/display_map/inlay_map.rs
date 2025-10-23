@@ -1,17 +1,18 @@
-use crate::{ChunkRenderer, HighlightStyles, InlayId};
-use collections::BTreeSet;
-use gpui::{Hsla, Rgba};
-use language::{Chunk, Edit, Point, TextSummary};
-use multi_buffer::{
-    Anchor, MultiBufferRow, MultiBufferRows, MultiBufferSnapshot, RowInfo, ToOffset,
+use crate::{
+    ChunkRenderer, HighlightStyles,
+    inlays::{Inlay, InlayContent},
 };
+use collections::BTreeSet;
+use language::{Chunk, Edit, Point, TextSummary};
+use multi_buffer::{MultiBufferRow, MultiBufferRows, MultiBufferSnapshot, RowInfo, ToOffset};
+use project::InlayId;
 use std::{
     cmp,
     ops::{Add, AddAssign, Range, Sub, SubAssign},
-    sync::{Arc, OnceLock},
+    sync::Arc,
 };
 use sum_tree::{Bias, Cursor, Dimensions, SumTree};
-use text::{ChunkBitmaps, Patch, Rope};
+use text::{ChunkBitmaps, Patch};
 use ui::{ActiveTheme, IntoElement as _, ParentElement as _, Styled as _, div};
 
 use super::{Highlights, custom_highlights::CustomHighlightsChunks, fold_map::ChunkRendererId};
@@ -35,85 +36,6 @@ pub struct InlaySnapshot {
 enum Transform {
     Isomorphic(TextSummary),
     Inlay(Inlay),
-}
-
-#[derive(Debug, Clone)]
-pub struct Inlay {
-    pub id: InlayId,
-    pub position: Anchor,
-    pub content: InlayContent,
-}
-
-#[derive(Debug, Clone)]
-pub enum InlayContent {
-    Text(text::Rope),
-    Color(Hsla),
-}
-
-impl Inlay {
-    pub fn hint(id: u32, position: Anchor, hint: &project::InlayHint) -> Self {
-        let mut text = hint.text();
-        if hint.padding_right && text.reversed_chars_at(text.len()).next() != Some(' ') {
-            text.push(" ");
-        }
-        if hint.padding_left && text.chars_at(0).next() != Some(' ') {
-            text.push_front(" ");
-        }
-        Self {
-            id: InlayId::Hint(id),
-            position,
-            content: InlayContent::Text(text),
-        }
-    }
-
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn mock_hint(id: u32, position: Anchor, text: impl Into<Rope>) -> Self {
-        Self {
-            id: InlayId::Hint(id),
-            position,
-            content: InlayContent::Text(text.into()),
-        }
-    }
-
-    pub fn color(id: u32, position: Anchor, color: Rgba) -> Self {
-        Self {
-            id: InlayId::Color(id),
-            position,
-            content: InlayContent::Color(color.into()),
-        }
-    }
-
-    pub fn edit_prediction<T: Into<Rope>>(id: u32, position: Anchor, text: T) -> Self {
-        Self {
-            id: InlayId::EditPrediction(id),
-            position,
-            content: InlayContent::Text(text.into()),
-        }
-    }
-
-    pub fn debugger<T: Into<Rope>>(id: u32, position: Anchor, text: T) -> Self {
-        Self {
-            id: InlayId::DebuggerValue(id),
-            position,
-            content: InlayContent::Text(text.into()),
-        }
-    }
-
-    pub fn text(&self) -> &Rope {
-        static COLOR_TEXT: OnceLock<Rope> = OnceLock::new();
-        match &self.content {
-            InlayContent::Text(text) => text,
-            InlayContent::Color(_) => COLOR_TEXT.get_or_init(|| Rope::from("◼")),
-        }
-    }
-
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn get_color(&self) -> Option<Hsla> {
-        match self.content {
-            InlayContent::Color(color) => Some(color),
-            _ => None,
-        }
-    }
 }
 
 impl sum_tree::Item for Transform {
@@ -750,7 +672,7 @@ impl InlayMap {
     #[cfg(test)]
     pub(crate) fn randomly_mutate(
         &mut self,
-        next_inlay_id: &mut u32,
+        next_inlay_id: &mut usize,
         rng: &mut rand::rngs::StdRng,
     ) -> (InlaySnapshot, Vec<InlayEdit>) {
         use rand::prelude::*;
@@ -1245,17 +1167,18 @@ const fn is_utf8_char_boundary(byte: u8) -> bool {
 mod tests {
     use super::*;
     use crate::{
-        InlayId, MultiBuffer,
+        MultiBuffer,
         display_map::{HighlightKey, InlayHighlights, TextHighlights},
         hover_links::InlayHighlight,
     };
     use gpui::{App, HighlightStyle};
+    use multi_buffer::Anchor;
     use project::{InlayHint, InlayHintLabel, ResolveState};
     use rand::prelude::*;
     use settings::SettingsStore;
     use std::{any::TypeId, cmp::Reverse, env, sync::Arc};
     use sum_tree::TreeMap;
-    use text::Patch;
+    use text::{Patch, Rope};
     use util::RandomCharIter;
     use util::post_inc;
 
@@ -1263,7 +1186,7 @@ mod tests {
     fn test_inlay_properties_label_padding() {
         assert_eq!(
             Inlay::hint(
-                0,
+                InlayId::Hint(0),
                 Anchor::min(),
                 &InlayHint {
                     label: InlayHintLabel::String("a".to_string()),
@@ -1283,7 +1206,7 @@ mod tests {
 
         assert_eq!(
             Inlay::hint(
-                0,
+                InlayId::Hint(0),
                 Anchor::min(),
                 &InlayHint {
                     label: InlayHintLabel::String("a".to_string()),
@@ -1303,7 +1226,7 @@ mod tests {
 
         assert_eq!(
             Inlay::hint(
-                0,
+                InlayId::Hint(0),
                 Anchor::min(),
                 &InlayHint {
                     label: InlayHintLabel::String(" a ".to_string()),
@@ -1323,7 +1246,7 @@ mod tests {
 
         assert_eq!(
             Inlay::hint(
-                0,
+                InlayId::Hint(0),
                 Anchor::min(),
                 &InlayHint {
                     label: InlayHintLabel::String(" a ".to_string()),
@@ -1346,7 +1269,7 @@ mod tests {
     fn test_inlay_hint_padding_with_multibyte_chars() {
         assert_eq!(
             Inlay::hint(
-                0,
+                InlayId::Hint(0),
                 Anchor::min(),
                 &InlayHint {
                     label: InlayHintLabel::String("🎨".to_string()),

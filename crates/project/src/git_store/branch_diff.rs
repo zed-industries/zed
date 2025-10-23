@@ -17,7 +17,7 @@ use util::ResultExt;
 
 use crate::{
     Project,
-    git_store::{GitStoreEvent, Repository},
+    git_store::{GitStoreEvent, Repository, RepositoryEvent},
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -63,7 +63,11 @@ impl BranchDiff {
             window,
             move |this, _git_store, event, _window, cx| match event {
                 GitStoreEvent::ActiveRepositoryChanged(_)
-                | GitStoreEvent::RepositoryUpdated(_, _, true)
+                | GitStoreEvent::RepositoryUpdated(
+                    _,
+                    RepositoryEvent::StatusesChanged { full_scan: _ },
+                    true,
+                )
                 | GitStoreEvent::ConflictsUpdated => {
                     cx.emit(BranchDiffEvent::FileListChanged);
                     *this.update_needed.borrow_mut() = ();

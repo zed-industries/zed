@@ -75,7 +75,7 @@ impl Focusable for InvalidItemView {
 }
 
 impl Render for InvalidItemView {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl gpui::IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl gpui::IntoElement {
         let abs_path = self.abs_path.clone();
         v_flex()
             .size_full()
@@ -103,11 +103,7 @@ impl Render for InvalidItemView {
                                             cx.open_with_system(&abs_path);
                                         })
                                         .style(ButtonStyle::Outlined)
-                                        .key_binding(KeyBinding::for_action(
-                                            &OpenWithSystem,
-                                            window,
-                                            cx,
-                                        )),
+                                        .key_binding(KeyBinding::for_action(&OpenWithSystem, cx)),
                                 ),
                             )
                         }),

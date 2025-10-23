@@ -868,5 +868,6 @@ fn init_test(cx: &mut TestAppContext) {
         Project::init_settings(cx);
         ExtensionSettings::register(cx);
         language::init(cx);
+        gpui_tokio::init(cx);
     });
 }

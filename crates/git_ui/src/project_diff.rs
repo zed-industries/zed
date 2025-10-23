@@ -6,7 +6,7 @@ use crate::{
 };
 use anyhow::{Context as _, Result, anyhow};
 use buffer_diff::{BufferDiff, DiffHunkSecondaryStatus};
-use collections::HashSet;
+use collections::{HashMap, HashSet};
 use editor::{
     Addon, Editor, EditorEvent, SelectionEffects,
     actions::{GoToHunk, GoToPreviousHunk},
@@ -37,7 +37,7 @@ use std::ops::Range;
 use std::sync::Arc;
 use theme::ActiveTheme;
 use ui::{KeyBinding, Tooltip, prelude::*, vertical_divider};
-use util::ResultExt as _;
+use util::{ResultExt as _, rel_path::RelPath};
 use workspace::{
     CloseActiveItem, ItemNavHistory, SerializableItem, ToolbarItemEvent, ToolbarItemLocation,
     ToolbarItemView, Workspace,
@@ -64,6 +64,7 @@ pub struct ProjectDiff {
     multibuffer: Entity<MultiBuffer>,
     branch_diff: Entity<branch_diff::BranchDiff>,
     editor: Entity<Editor>,
+    buffer_diff_subscriptions: HashMap<Arc<RelPath>, (Entity<BufferDiff>, Subscription)>,
     workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
     pending_scroll: Option<PathKey>,
@@ -261,12 +262,10 @@ impl ProjectDiff {
             window,
             move |this, _git_store, event, window, cx| match event {
                 BranchDiffEvent::FileListChanged => {
-                    this._task = {
-                        window.spawn(cx, {
-                            let this = cx.weak_entity();
-                            async |cx| Self::refresh(this, cx).await
-                        })
-                    }
+                    this._task = window.spawn(cx, {
+                        let this = cx.weak_entity();
+                        async |cx| Self::refresh(this, cx).await
+                    })
                 }
             },
         );
@@ -305,6 +304,7 @@ impl ProjectDiff {
             focus_handle,
             editor,
             multibuffer,
+            buffer_diff_subscriptions: Default::default(),
             pending_scroll: None,
             _task: task,
             _subscription: branch_diff_subscription,
@@ -465,6 +465,15 @@ impl ProjectDiff {
                 multibuffer.add_diff(diff.clone(), cx);
             });
         }
+        let subscription = cx.subscribe_in(&diff, window, move |this, _, _, window, cx| {
+            this._task = window.spawn(cx, {
+                let this = cx.weak_entity();
+                async |cx| Self::refresh(this, cx).await
+            })
+        });
+        self.buffer_diff_subscriptions
+            .insert(path_key.path.clone(), (diff.clone(), subscription));
+
         let conflict_addon = self
             .editor
             .read(cx)
@@ -482,9 +491,10 @@ impl ProjectDiff {
             .unwrap_or_default();
         let conflicts = conflicts.iter().map(|conflict| conflict.range.clone());
 
-        let excerpt_ranges = merge_anchor_ranges(diff_hunk_ranges, conflicts, &snapshot)
-            .map(|range| range.to_point(&snapshot))
-            .collect::<Vec<_>>();
+        let excerpt_ranges =
+            merge_anchor_ranges(diff_hunk_ranges.into_iter(), conflicts, &snapshot)
+                .map(|range| range.to_point(&snapshot))
+                .collect::<Vec<_>>();
 
         let (was_empty, is_excerpt_newly_added) = self.multibuffer.update(cx, |multibuffer, cx| {
             let was_empty = multibuffer.is_empty();
@@ -556,6 +566,7 @@ impl ProjectDiff {
 
             this.multibuffer.update(cx, |multibuffer, cx| {
                 for path in previous_paths {
+                    this.buffer_diff_subscriptions.remove(&path.path);
                     multibuffer.remove_excerpts_for_path(path, cx);
                 }
             });
@@ -585,8 +596,7 @@ impl ProjectDiff {
         self.multibuffer
             .read(cx)
             .excerpt_paths()
-            .map(|key| key.path())
-            .cloned()
+            .map(|key| key.path.clone())
             .collect()
     }
 }
@@ -783,7 +793,7 @@ impl Item for ProjectDiff {
 }
 
 impl Render for ProjectDiff {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let is_empty = self.multibuffer.read(cx).is_empty();
 
         div()
@@ -828,7 +838,6 @@ impl Render for ProjectDiff {
                                     .key_binding(KeyBinding::for_action_in(
                                         &CloseActiveItem::default(),
                                         &keybinding_focus_handle,
-                                        window,
                                         cx,
                                     ))
                                     .on_click(move |_, window, cx| {
@@ -1807,8 +1816,8 @@ mod tests {
             cx,
             &"
                 - original
-                + different
-                  ˇ"
+                + ˇdifferent
+            "
             .unindent(),
         );
     }
@@ -2136,6 +2145,7 @@ mod tests {
             .unindent(),
         );
 
+        // The project diff updates its excerpts when a new hunk appears in a buffer that already has a diff.
         let buffer = project
             .update(cx, |project, cx| {
                 project.open_local_buffer(path!("/project/foo.txt"), cx)
@@ -2280,5 +2290,64 @@ mod tests {
                 )
             ])
         );
+    }
+
+    #[gpui::test]
+    async fn test_update_on_uncommit(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "README.md": "# My cool project\n".to_owned()
+            }),
+        )
+        .await;
+        fs.set_head_and_index_for_repo(
+            Path::new(path!("/project/.git")),
+            &[("README.md", "# My cool project\n".to_owned())],
+        );
+        let project = Project::test(fs.clone(), [Path::new(path!("/project"))], cx).await;
+        let worktree_id = project.read_with(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        });
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        cx.run_until_parked();
+
+        let _editor = workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.open_path((worktree_id, rel_path("README.md")), None, true, window, cx)
+            })
+            .await
+            .unwrap()
+            .downcast::<Editor>()
+            .unwrap();
+
+        cx.focus(&workspace);
+        cx.update(|window, cx| {
+            window.dispatch_action(project_diff::Diff.boxed_clone(), cx);
+        });
+        cx.run_until_parked();
+        let item = workspace.update(cx, |workspace, cx| {
+            workspace.active_item_as::<ProjectDiff>(cx).unwrap()
+        });
+        cx.focus(&item);
+        let editor = item.read_with(cx, |item, _| item.editor.clone());
+
+        fs.set_head_and_index_for_repo(
+            Path::new(path!("/project/.git")),
+            &[(
+                "README.md",
+                "# My cool project\nDetails to come.\n".to_owned(),
+            )],
+        );
+        cx.run_until_parked();
+
+        let mut cx = EditorTestContext::for_editor_in(editor, cx).await;
+
+        cx.assert_excerpts_with_selections("[EXCERPT]\nˇ# My cool project\nDetails to come.\n");
     }
 }
