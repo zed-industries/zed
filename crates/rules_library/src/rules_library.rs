@@ -1102,23 +1102,42 @@ impl RulesLibrary {
             .w_64()
             .overflow_x_hidden()
             .bg(cx.theme().colors().panel_background)
-            .child(
-                h_flex()
-                    .p(DynamicSpacing::Base04.rems(cx))
-                    .h_9()
-                    .w_full()
-                    .flex_none()
-                    .justify_end()
-                    .child(
-                        IconButton::new("new-rule", IconName::Plus)
-                            .tooltip(move |_window, cx| {
-                                Tooltip::for_action("New Rule", &NewRule, cx)
-                            })
-                            .on_click(|_, window, cx| {
-                                window.dispatch_action(Box::new(NewRule), cx);
-                            }),
-                    ),
-            )
+            .map(|this| {
+                if cfg!(target_os = "macos") {
+                    this.child(
+                        h_flex()
+                            .p(DynamicSpacing::Base04.rems(cx))
+                            .h_9()
+                            .w_full()
+                            .flex_none()
+                            .justify_end()
+                            .child(
+                                IconButton::new("new-rule", IconName::Plus)
+                                    .tooltip(move |_window, cx| {
+                                        Tooltip::for_action("New Rule", &NewRule, cx)
+                                    })
+                                    .on_click(|_, window, cx| {
+                                        window.dispatch_action(Box::new(NewRule), cx);
+                                    }),
+                            ),
+                    )
+                } else {
+                    this.child(
+                        h_flex().p_1().w_full().child(
+                            Button::new("new-rule", "New Rule")
+                                .full_width()
+                                .style(ButtonStyle::Outlined)
+                                .icon(IconName::Plus)
+                                .icon_size(IconSize::Small)
+                                .icon_position(IconPosition::Start)
+                                .icon_color(Color::Muted)
+                                .on_click(|_, window, cx| {
+                                    window.dispatch_action(Box::new(NewRule), cx);
+                                }),
+                        ),
+                    )
+                }
+            })
             .child(div().flex_grow().child(self.picker.clone()))
     }
 
