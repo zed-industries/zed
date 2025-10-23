@@ -29,6 +29,7 @@ use util::{ResultExt, maybe};
 
 use crate::language_settings::language_settings;
 
+
 pub struct RustLspAdapter;
 
 #[cfg(target_os = "macos")]
