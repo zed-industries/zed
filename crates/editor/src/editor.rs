@@ -10520,9 +10520,12 @@ impl Editor {
         self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
 
         let snapshot = self.buffer.read(cx).snapshot(cx);
+        let max_point = snapshot.max_point();
 
         let mut edits = Vec::new();
         let mut boundaries = Vec::new();
+
+        let is_line_mode = self.selections.line_mode();
 
         for selection in self
             .selections
@@ -10539,8 +10542,19 @@ impl Editor {
             let open_tag = format!("{}{}", wrap_config.start_prefix, wrap_config.start_suffix);
             let close_tag = format!("{}{}", wrap_config.end_prefix, wrap_config.end_suffix);
 
-            let start_before = snapshot.anchor_before(selection.start);
-            let end_after = snapshot.anchor_after(selection.end);
+            let start_point: Point;
+            let end_point: Point;
+
+            if is_line_mode {
+                start_point = Point::new(selection.start.row, 0);
+                end_point = cmp::min(max_point, Point::new(selection.end.row + 1, 0));
+            } else {
+                start_point = selection.start;
+                end_point = selection.end;
+            }
+
+            let start_before = snapshot.anchor_before(start_point);
+            let end_after = snapshot.anchor_after(end_point);
 
             edits.push((start_before..start_before, open_tag));
             edits.push((end_after..end_after, close_tag));
