@@ -1704,11 +1704,9 @@ impl ExternalAgentServer for LocalCodex {
 
 pub const CODEX_ACP_REPO: &str = "zed-industries/codex-acp";
 
-/// Assemble Codex release URL for the current OS/arch and the given version number.
-/// Returns None if the current target is unsupported.
-/// Example output:
-/// https://github.com/zed-industries/codex-acp/releases/download/v{version}/codex-acp-{version}-{arch}-{platform}.{ext}
-fn asset_name(version: &str) -> Option<String> {
+/// Get platform-specific values for asset matching.
+/// Returns (arch, platform, ext) or None if unsupported.
+fn get_platform_info() -> Option<(&'static str, &'static str, &'static str)> {
     let arch = if cfg!(target_arch = "x86_64") {
         "x86_64"
     } else if cfg!(target_arch = "aarch64") {
@@ -1734,6 +1732,15 @@ fn asset_name(version: &str) -> Option<String> {
         "tar.gz"
     };
 
+    Some((arch, platform, ext))
+}
+
+/// Assemble Codex release URL for the current OS/arch and the given version number.
+/// Returns None if the current target is unsupported.
+/// Example output:
+/// https://github.com/zed-industries/codex-acp/releases/download/v{version}/codex-acp-{version}-{arch}-{platform}.{ext}
+fn asset_name(version: &str) -> Option<String> {
+    let (arch, platform, ext) = get_platform_info()?;
     Some(format!("codex-acp-{version}-{arch}-{platform}.{ext}"))
 }
 
@@ -2059,30 +2066,9 @@ impl ExternalAgentServer for LocalExtensionGithubReleaseAgent {
 
             let version_dir = dir.join(&tag);
             if !fs.is_dir(&version_dir).await {
-                // Determine platform-specific values for pattern substitution
-                let arch = if cfg!(target_arch = "x86_64") {
-                    "x86_64"
-                } else if cfg!(target_arch = "aarch64") {
-                    "aarch64"
-                } else {
-                    "unknown"
-                };
-
-                let platform = if cfg!(target_os = "macos") {
-                    "apple-darwin"
-                } else if cfg!(target_os = "windows") {
-                    "pc-windows-msvc"
-                } else if cfg!(target_os = "linux") {
-                    "unknown-linux-gnu"
-                } else {
-                    "unknown"
-                };
-
-                let ext = if cfg!(target_os = "windows") {
-                    "zip"
-                } else {
-                    "tar.gz"
-                };
+                // Get platform-specific values for pattern substitution
+                let (arch, platform, ext) = get_platform_info()
+                    .context("unsupported platform for GitHub release download")?;
 
                 // Substitute platform variables in pattern: {arch}, {platform}, {ext}
                 let expanded_pattern = asset_pattern
@@ -2119,12 +2105,13 @@ impl ExternalAgentServer for LocalExtensionGithubReleaseAgent {
                     anyhow::bail!("unsupported asset type: {}", asset.name);
                 };
 
-                // Download and extract
                 // Strip "sha256:" prefix from digest if present (GitHub API format)
                 let digest = asset
                     .digest
                     .as_deref()
                     .and_then(|d| d.strip_prefix("sha256:").or(Some(d)));
+
+                // Download and extract - reuses existing LSP download code
                 ::http_client::github_download::download_server_binary(
                     &*http_client,
                     &asset.browser_download_url,
