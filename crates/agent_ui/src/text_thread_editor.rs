@@ -75,9 +75,9 @@ use zed_actions::agent::{AddSelectionToThread, ToggleModelSelector};
 
 use crate::{slash_command::SlashCommandCompletionProvider, slash_command_picker};
 use assistant_text_thread::{
-    AssistantContext, CacheStatus, Content, ContextEvent, TextThreadId, InvokedSlashCommandId,
-    InvokedSlashCommandStatus, Message, MessageId, MessageMetadata, MessageStatus,
-    PendingSlashCommandStatus, ThoughtProcessOutputSection,
+    CacheStatus, Content, InvokedSlashCommandId, InvokedSlashCommandStatus, Message, MessageId,
+    MessageMetadata, MessageStatus, PendingSlashCommandStatus, TextThread, TextThreadEvent,
+    TextThreadId, ThoughtProcessOutputSection,
 };
 
 actions!(
@@ -177,7 +177,7 @@ struct GlobalAssistantPanelDelegate(Arc<dyn AgentPanelDelegate>);
 impl Global for GlobalAssistantPanelDelegate {}
 
 pub struct TextThreadEditor {
-    context: Entity<AssistantContext>,
+    context: Entity<TextThread>,
     fs: Arc<dyn Fs>,
     slash_commands: Arc<SlashCommandWorkingSet>,
     workspace: WeakEntity<Workspace>,
@@ -224,7 +224,7 @@ impl TextThreadEditor {
     }
 
     pub fn for_context(
-        context: Entity<AssistantContext>,
+        context: Entity<TextThread>,
         fs: Arc<dyn Fs>,
         workspace: WeakEntity<Workspace>,
         project: Entity<Project>,
@@ -337,7 +337,7 @@ impl TextThreadEditor {
         });
     }
 
-    pub fn context(&self) -> &Entity<AssistantContext> {
+    pub fn context(&self) -> &Entity<TextThread> {
         &self.context
     }
 
@@ -564,30 +564,30 @@ impl TextThreadEditor {
 
     fn handle_context_event(
         &mut self,
-        _: &Entity<AssistantContext>,
-        event: &ContextEvent,
+        _: &Entity<TextThread>,
+        event: &TextThreadEvent,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let context_editor = cx.entity().downgrade();
 
         match event {
-            ContextEvent::MessagesEdited => {
+            TextThreadEvent::MessagesEdited => {
                 self.update_message_headers(cx);
                 self.update_image_blocks(cx);
                 self.context.update(cx, |context, cx| {
                     context.save(Some(Duration::from_millis(500)), self.fs.clone(), cx);
                 });
             }
-            ContextEvent::SummaryChanged => {
+            TextThreadEvent::SummaryChanged => {
                 cx.emit(EditorEvent::TitleChanged);
                 self.context.update(cx, |context, cx| {
                     context.save(Some(Duration::from_millis(500)), self.fs.clone(), cx);
                 });
             }
-            ContextEvent::SummaryGenerated => {}
-            ContextEvent::PathChanged { .. } => {}
-            ContextEvent::StartedThoughtProcess(range) => {
+            TextThreadEvent::SummaryGenerated => {}
+            TextThreadEvent::PathChanged { .. } => {}
+            TextThreadEvent::StartedThoughtProcess(range) => {
                 let creases = self.insert_thought_process_output_sections(
                     [(
                         ThoughtProcessOutputSection {
@@ -600,7 +600,7 @@ impl TextThreadEditor {
                 );
                 self.pending_thought_process = Some((creases[0], range.start));
             }
-            ContextEvent::EndedThoughtProcess(end) => {
+            TextThreadEvent::EndedThoughtProcess(end) => {
                 if let Some((crease_id, start)) = self.pending_thought_process.take() {
                     self.editor.update(cx, |editor, cx| {
                         let multi_buffer_snapshot = editor.buffer().read(cx).snapshot(cx);
@@ -626,7 +626,7 @@ impl TextThreadEditor {
                     );
                 }
             }
-            ContextEvent::StreamedCompletion => {
+            TextThreadEvent::StreamedCompletion => {
                 self.editor.update(cx, |editor, cx| {
                     if let Some(scroll_position) = self.scroll_position {
                         let snapshot = editor.snapshot(window, cx);
@@ -641,7 +641,7 @@ impl TextThreadEditor {
                     }
                 });
             }
-            ContextEvent::ParsedSlashCommandsUpdated { removed, updated } => {
+            TextThreadEvent::ParsedSlashCommandsUpdated { removed, updated } => {
                 self.editor.update(cx, |editor, cx| {
                     let buffer = editor.buffer().read(cx).snapshot(cx);
                     let (&excerpt_id, _, _) = buffer.as_singleton().unwrap();
@@ -712,17 +712,17 @@ impl TextThreadEditor {
                     );
                 })
             }
-            ContextEvent::InvokedSlashCommandChanged { command_id } => {
+            TextThreadEvent::InvokedSlashCommandChanged { command_id } => {
                 self.update_invoked_slash_command(*command_id, window, cx);
             }
-            ContextEvent::SlashCommandOutputSectionAdded { section } => {
+            TextThreadEvent::SlashCommandOutputSectionAdded { section } => {
                 self.insert_slash_command_output_sections([section.clone()], false, window, cx);
             }
-            ContextEvent::Operation(_) => {}
-            ContextEvent::ShowAssistError(error_message) => {
+            TextThreadEvent::Operation(_) => {}
+            TextThreadEvent::ShowAssistError(error_message) => {
                 self.last_error = Some(AssistError::Message(error_message.clone()));
             }
-            ContextEvent::ShowPaymentRequiredError => {
+            TextThreadEvent::ShowPaymentRequiredError => {
                 self.last_error = Some(AssistError::PaymentRequired);
             }
         }
@@ -1162,7 +1162,7 @@ impl TextThreadEditor {
                                             let error = error.clone();
                                             move |_, _window, cx| {
                                                 context.update(cx, |_, cx| {
-                                                    cx.emit(ContextEvent::ShowAssistError(
+                                                    cx.emit(TextThreadEvent::ShowAssistError(
                                                         error.clone(),
                                                     ));
                                                 });
@@ -2757,7 +2757,7 @@ enum PendingSlashCommand {}
 
 fn invoked_slash_command_fold_placeholder(
     command_id: InvokedSlashCommandId,
-    context: WeakEntity<AssistantContext>,
+    context: WeakEntity<TextThread>,
 ) -> FoldPlaceholder {
     FoldPlaceholder {
         constrain_width: false,
@@ -2808,7 +2808,7 @@ enum TokenState {
     },
 }
 
-fn token_state(context: &Entity<AssistantContext>, cx: &App) -> Option<TokenState> {
+fn token_state(context: &Entity<TextThread>, cx: &App) -> Option<TokenState> {
     const WARNING_TOKEN_THRESHOLD: f32 = 0.8;
 
     let model = LanguageModelRegistry::read_global(cx)
@@ -3083,7 +3083,7 @@ mod tests {
         messages: Vec<(Role, &str)>,
         cx: &mut TestAppContext,
     ) -> (
-        Entity<AssistantContext>,
+        Entity<TextThread>,
         Entity<TextThreadEditor>,
         VisualTestContext,
     ) {
@@ -3117,7 +3117,7 @@ mod tests {
     }
 
     fn message_range(
-        context: &Entity<AssistantContext>,
+        context: &Entity<TextThread>,
         message_ix: usize,
         cx: &mut TestAppContext,
     ) -> Range<usize> {
@@ -3161,11 +3161,11 @@ mod tests {
     fn create_context_with_messages(
         mut messages: Vec<(Role, &str)>,
         cx: &mut TestAppContext,
-    ) -> Entity<AssistantContext> {
+    ) -> Entity<TextThread> {
         let registry = Arc::new(LanguageRegistry::test(cx.executor()));
         let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
         cx.new(|cx| {
-            let mut context = AssistantContext::local(
+            let mut context = TextThread::local(
                 registry,
                 None,
                 None,

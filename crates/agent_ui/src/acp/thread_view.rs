@@ -5735,7 +5735,7 @@ fn terminal_command_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
 pub(crate) mod tests {
     use acp_thread::StubAgentConnection;
     use agent_client_protocol::SessionId;
-    use assistant_text_thread::ContextStore;
+    use assistant_text_thread::TextThreadStore;
     use editor::EditorSettings;
     use fs::FakeFs;
     use gpui::{EventEmitter, SemanticVersion, TestAppContext, VisualTestContext};
@@ -5899,7 +5899,7 @@ pub(crate) mod tests {
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
         let context_store =
-            cx.update(|_window, cx| cx.new(|cx| ContextStore::fake(project.clone(), cx)));
+            cx.update(|_window, cx| cx.new(|cx| TextThreadStore::fake(project.clone(), cx)));
         let history_store =
             cx.update(|_window, cx| cx.new(|cx| HistoryStore::new(context_store, cx)));
 
@@ -6171,7 +6171,7 @@ pub(crate) mod tests {
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
         let context_store =
-            cx.update(|_window, cx| cx.new(|cx| ContextStore::fake(project.clone(), cx)));
+            cx.update(|_window, cx| cx.new(|cx| TextThreadStore::fake(project.clone(), cx)));
         let history_store =
             cx.update(|_window, cx| cx.new(|cx| HistoryStore::new(context_store, cx)));
 

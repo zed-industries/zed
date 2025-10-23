@@ -36,8 +36,8 @@ use crate::{
 use agent_settings::AgentSettings;
 use ai_onboarding::AgentPanelOnboarding;
 use anyhow::{Result, anyhow};
-use assistant_text_thread::{AssistantContext, ContextEvent, ContextSummary};
 use assistant_slash_command::SlashCommandWorkingSet;
+use assistant_text_thread::{ContextSummary, TextThread, TextThreadEvent};
 use client::{UserStore, zed_urls};
 use cloud_llm_client::{Plan, PlanV1, PlanV2, UsageLimit};
 use editor::{Anchor, AnchorRangeExt as _, Editor, EditorEvent, MultiBuffer};
@@ -333,11 +333,9 @@ impl ActiveView {
                             let new_summary = editor.read(cx).text(cx);
 
                             context_editor.update(cx, |context_editor, cx| {
-                                context_editor
-                                    .context()
-                                    .update(cx, |text_thread, cx| {
-                                        text_thread.set_custom_summary(new_summary, cx);
-                                    })
+                                context_editor.context().update(cx, |text_thread, cx| {
+                                    text_thread.set_custom_summary(new_summary, cx);
+                                })
                             })
                         }
                         EditorEvent::Blurred => {
@@ -361,14 +359,14 @@ impl ActiveView {
             window.subscribe(&context_editor.read(cx).context().clone(), cx, {
                 let editor = editor.clone();
                 move |text_thread, event, window, cx| match event {
-                    ContextEvent::SummaryGenerated => {
+                    TextThreadEvent::SummaryGenerated => {
                         let summary = text_thread.read(cx).summary().or_default();
 
                         editor.update(cx, |editor, cx| {
                             editor.set_text(summary, window, cx);
                         })
                     }
-                    ContextEvent::PathChanged { old_path, new_path } => {
+                    TextThreadEvent::PathChanged { old_path, new_path } => {
                         acp_history_store.update(cx, |history_store, cx| {
                             if let Some(old_path) = old_path {
                                 history_store
@@ -410,7 +408,7 @@ pub struct AgentPanel {
     language_registry: Arc<LanguageRegistry>,
     acp_history: Entity<AcpThreadHistory>,
     history_store: Entity<agent::HistoryStore>,
-    text_thread_store: Entity<assistant_text_thread::ContextStore>,
+    text_thread_store: Entity<assistant_text_thread::TextThreadStore>,
     prompt_store: Option<Entity<PromptStore>>,
     context_server_registry: Entity<ContextServerRegistry>,
     inline_assist_context_store: Entity<ContextStore>,
@@ -474,7 +472,7 @@ impl AgentPanel {
             let text_thread_store = workspace
                 .update(cx, |workspace, cx| {
                     let project = workspace.project().clone();
-                    assistant_text_thread::ContextStore::new(
+                    assistant_text_thread::TextThreadStore::new(
                         project,
                         prompt_builder,
                         slash_commands,
@@ -512,7 +510,7 @@ impl AgentPanel {
 
     fn new(
         workspace: &Workspace,
-        text_thread_store: Entity<assistant_text_thread::ContextStore>,
+        text_thread_store: Entity<assistant_text_thread::TextThreadStore>,
         prompt_store: Option<Entity<PromptStore>>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -918,7 +916,7 @@ impl AgentPanel {
 
     pub(crate) fn open_text_thread(
         &mut self,
-        context: Entity<AssistantContext>,
+        context: Entity<TextThread>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {

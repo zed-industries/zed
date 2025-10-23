@@ -775,6 +775,7 @@ windows-capture = { git = "https://github.com/zed-industries/windows-capture.git
 
 [profile.dev]
 split-debuginfo = "unpacked"
+incremental = false
 codegen-units = 16
 
 # mirror configuration for crates compiled for the build platform

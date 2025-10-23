@@ -1,5 +1,5 @@
 use agent::outline;
-use assistant_text_thread::AssistantContext;
+use assistant_text_thread::TextThread;
 use futures::future;
 use futures::{FutureExt, future::Shared};
 use gpui::{App, AppContext as _, ElementId, Entity, SharedString, Task};
@@ -581,7 +581,7 @@ impl Display for ThreadContext {
 
 #[derive(Debug, Clone)]
 pub struct TextThreadContextHandle {
-    pub context: Entity<AssistantContext>,
+    pub context: Entity<TextThread>,
     pub context_id: ContextId,
 }
 

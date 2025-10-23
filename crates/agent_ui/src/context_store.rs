@@ -5,7 +5,7 @@ use crate::context::{
 };
 use agent_client_protocol as acp;
 use anyhow::{Context as _, Result, anyhow};
-use assistant_text_thread::AssistantContext;
+use assistant_text_thread::TextThread;
 use collections::{HashSet, IndexSet};
 use futures::{self, FutureExt};
 use gpui::{App, Context, Entity, EventEmitter, Image, SharedString, Task, WeakEntity};
@@ -200,7 +200,7 @@ impl ContextStore {
 
     pub fn add_text_thread(
         &mut self,
-        context: Entity<AssistantContext>,
+        context: Entity<TextThread>,
         remove_if_exists: bool,
         cx: &mut Context<Self>,
     ) -> Option<AgentContextHandle> {
@@ -544,7 +544,7 @@ pub enum SuggestedContext {
     // },
     TextThread {
         name: SharedString,
-        context: WeakEntity<AssistantContext>,
+        context: WeakEntity<TextThread>,
     },
 }
 

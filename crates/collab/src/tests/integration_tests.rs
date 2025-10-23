@@ -6,8 +6,8 @@ use crate::{
     },
 };
 use anyhow::{Result, anyhow};
-use assistant_text_thread::ContextStore;
 use assistant_slash_command::SlashCommandWorkingSet;
+use assistant_text_thread::ContextStore;
 use buffer_diff::{DiffHunkSecondaryStatus, DiffHunkStatus, assert_hunks};
 use call::{ActiveCall, ParticipantLocation, Room, room};
 use client::{RECEIVE_TIMEOUT, User};
@@ -6879,7 +6879,7 @@ async fn test_context_collaboration_with_reconnect(
     let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
     let context_store_a = cx_a
         .update(|cx| {
-            ContextStore::new(
+            TextThreadStore::new(
                 project_a.clone(),
                 prompt_builder.clone(),
                 Arc::new(SlashCommandWorkingSet::default()),
@@ -6890,7 +6890,7 @@ async fn test_context_collaboration_with_reconnect(
         .unwrap();
     let context_store_b = cx_b
         .update(|cx| {
-            ContextStore::new(
+            TextThreadStore::new(
                 project_b.clone(),
                 prompt_builder.clone(),
                 Arc::new(SlashCommandWorkingSet::default()),

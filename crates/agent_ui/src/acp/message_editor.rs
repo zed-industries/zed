@@ -1591,7 +1591,7 @@ mod tests {
     use acp_thread::MentionUri;
     use agent::{HistoryStore, outline};
     use agent_client_protocol as acp;
-    use assistant_text_thread::ContextStore;
+    use assistant_text_thread::TextThreadStore;
     use editor::{AnchorRangeExt as _, Editor, EditorMode};
     use fs::FakeFs;
     use futures::StreamExt as _;
@@ -1622,7 +1622,7 @@ mod tests {
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
-        let context_store = cx.new(|cx| ContextStore::fake(project.clone(), cx));
+        let context_store = cx.new(|cx| TextThreadStore::fake(project.clone(), cx));
         let history_store = cx.new(|cx| HistoryStore::new(context_store, cx));
 
         let message_editor = cx.update(|window, cx| {
@@ -1727,7 +1727,7 @@ mod tests {
         .await;
 
         let project = Project::test(fs.clone(), ["/test".as_ref()], cx).await;
-        let context_store = cx.new(|cx| ContextStore::fake(project.clone(), cx));
+        let context_store = cx.new(|cx| TextThreadStore::fake(project.clone(), cx));
         let history_store = cx.new(|cx| HistoryStore::new(context_store, cx));
         let prompt_capabilities = Rc::new(RefCell::new(acp::PromptCapabilities::default()));
         // Start with no available commands - simulating Claude which doesn't support slash commands
@@ -1891,7 +1891,7 @@ mod tests {
 
         let mut cx = VisualTestContext::from_window(*window, cx);
 
-        let context_store = cx.new(|cx| ContextStore::fake(project.clone(), cx));
+        let context_store = cx.new(|cx| TextThreadStore::fake(project.clone(), cx));
         let history_store = cx.new(|cx| HistoryStore::new(context_store, cx));
         let prompt_capabilities = Rc::new(RefCell::new(acp::PromptCapabilities::default()));
         let available_commands = Rc::new(RefCell::new(vec![
@@ -2131,7 +2131,7 @@ mod tests {
             opened_editors.push(buffer);
         }
 
-        let context_store = cx.new(|cx| ContextStore::fake(project.clone(), cx));
+        let context_store = cx.new(|cx| TextThreadStore::fake(project.clone(), cx));
         let history_store = cx.new(|cx| HistoryStore::new(context_store, cx));
         let prompt_capabilities = Rc::new(RefCell::new(acp::PromptCapabilities::default()));
 
@@ -2658,7 +2658,7 @@ mod tests {
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
-        let context_store = cx.new(|cx| ContextStore::fake(project.clone(), cx));
+        let context_store = cx.new(|cx| TextThreadStore::fake(project.clone(), cx));
         let history_store = cx.new(|cx| HistoryStore::new(context_store, cx));
 
         let message_editor = cx.update(|window, cx| {

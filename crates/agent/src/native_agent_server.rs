@@ -81,7 +81,7 @@ impl AgentServer for NativeAgentServer {
 mod tests {
     use super::*;
 
-    use assistant_text_thread::ContextStore;
+    use assistant_text_thread::TextThreadStore;
     use gpui::AppContext;
 
     agent_servers::e2e_tests::common_e2e_tests!(
@@ -116,7 +116,7 @@ mod tests {
             });
 
             let history = cx.update(|cx| {
-                let context_store = cx.new(move |cx| ContextStore::fake(project.clone(), cx));
+                let context_store = cx.new(move |cx| TextThreadStore::fake(project.clone(), cx));
                 cx.new(move |cx| HistoryStore::new(context_store, cx))
             });
 

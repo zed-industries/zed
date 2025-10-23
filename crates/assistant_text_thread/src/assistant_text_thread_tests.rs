@@ -1,6 +1,6 @@
 use crate::{
-    AssistantContext, CacheStatus, ContextEvent, TextThreadId, ContextOperation, ContextSummary,
-    InvokedSlashCommandId, MessageCacheMetadata, MessageId, MessageStatus,
+    TextThread, CacheStatus, ContextSummary, InvokedSlashCommandId, MessageCacheMetadata,
+    MessageId, MessageStatus, TextThreadEvent, TextThreadId, TextThreadOperation,
 };
 use anyhow::Result;
 use assistant_slash_command::{
@@ -48,7 +48,7 @@ fn test_inserting_and_removing_messages(cx: &mut App) {
     let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
     let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
     let context = cx.new(|cx| {
-        AssistantContext::local(
+        TextThread::local(
             registry,
             None,
             None,
@@ -187,7 +187,7 @@ fn test_message_splitting(cx: &mut App) {
 
     let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
     let context = cx.new(|cx| {
-        AssistantContext::local(
+        TextThread::local(
             registry.clone(),
             None,
             None,
@@ -288,7 +288,7 @@ fn test_messages_for_offsets(cx: &mut App) {
     let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
     let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
     let context = cx.new(|cx| {
-        AssistantContext::local(
+        TextThread::local(
             registry,
             None,
             None,
@@ -360,7 +360,7 @@ fn test_messages_for_offsets(cx: &mut App) {
     );
 
     fn message_ids_for_offsets(
-        context: &Entity<AssistantContext>,
+        context: &Entity<TextThread>,
         offsets: &[usize],
         cx: &App,
     ) -> Vec<MessageId> {
@@ -399,7 +399,7 @@ async fn test_slash_commands(cx: &mut TestAppContext) {
     let registry = Arc::new(LanguageRegistry::test(cx.executor()));
     let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
     let context = cx.new(|cx| {
-        AssistantContext::local(
+        TextThread::local(
             registry.clone(),
             None,
             None,
@@ -423,13 +423,13 @@ async fn test_slash_commands(cx: &mut TestAppContext) {
             move |context, _, event, _| {
                 let mut context_ranges = context_ranges.borrow_mut();
                 match event {
-                    ContextEvent::InvokedSlashCommandChanged { command_id } => {
+                    TextThreadEvent::InvokedSlashCommandChanged { command_id } => {
                         let command = context.invoked_slash_command(command_id).unwrap();
                         context_ranges
                             .command_outputs
                             .insert(*command_id, command.range.clone());
                     }
-                    ContextEvent::ParsedSlashCommandsUpdated { removed, updated } => {
+                    TextThreadEvent::ParsedSlashCommandsUpdated { removed, updated } => {
                         for range in removed {
                             context_ranges.parsed_commands.remove(range);
                         }
@@ -439,7 +439,7 @@ async fn test_slash_commands(cx: &mut TestAppContext) {
                                 .insert(command.source_range.clone());
                         }
                     }
-                    ContextEvent::SlashCommandOutputSectionAdded { section } => {
+                    TextThreadEvent::SlashCommandOutputSectionAdded { section } => {
                         context_ranges.output_sections.insert(section.range.clone());
                     }
                     _ => {}
@@ -671,7 +671,7 @@ async fn test_serialization(cx: &mut TestAppContext) {
     let registry = Arc::new(LanguageRegistry::test(cx.executor()));
     let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
     let context = cx.new(|cx| {
-        AssistantContext::local(
+        TextThread::local(
             registry.clone(),
             None,
             None,
@@ -714,7 +714,7 @@ async fn test_serialization(cx: &mut TestAppContext) {
 
     let serialized_context = context.read_with(cx, |context, cx| context.serialize(cx));
     let deserialized_context = cx.new(|cx| {
-        AssistantContext::deserialize(
+        TextThread::deserialize(
             serialized_context,
             Path::new("").into(),
             registry.clone(),
@@ -769,7 +769,7 @@ async fn test_random_context_collaboration(cx: &mut TestAppContext, mut rng: Std
     let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
     for i in 0..num_peers {
         let context = cx.new(|cx| {
-            AssistantContext::new(
+            TextThread::new(
                 context_id.clone(),
                 ReplicaId::new(i as u16),
                 language::Capability::ReadWrite,
@@ -786,7 +786,7 @@ async fn test_random_context_collaboration(cx: &mut TestAppContext, mut rng: Std
             cx.subscribe(&context, {
                 let network = network.clone();
                 move |_, event, _| {
-                    if let ContextEvent::Operation(op) = event {
+                    if let TextThreadEvent::Operation(op) = event {
                         network
                             .lock()
                             .broadcast(ReplicaId::new(i as u16), vec![op.to_proto()]);
@@ -959,7 +959,7 @@ async fn test_random_context_collaboration(cx: &mut TestAppContext, mut rng: Std
                     let ops_to_receive = ops_to_receive
                         .await
                         .into_iter()
-                        .map(ContextOperation::from_proto)
+                        .map(TextThreadOperation::from_proto)
                         .collect::<Result<Vec<_>>>()
                         .unwrap();
                     log::info!(
@@ -979,7 +979,7 @@ async fn test_random_context_collaboration(cx: &mut TestAppContext, mut rng: Std
                     let ops = network.lock().receive(replica_id);
                     let ops = ops
                         .into_iter()
-                        .map(ContextOperation::from_proto)
+                        .map(TextThreadOperation::from_proto)
                         .collect::<Result<Vec<_>>>()
                         .unwrap();
                     context.update(cx, |context, cx| context.apply_ops(ops, cx));
@@ -1028,7 +1028,7 @@ fn test_mark_cache_anchors(cx: &mut App) {
     let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
     let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
     let context = cx.new(|cx| {
-        AssistantContext::local(
+        TextThread::local(
             registry,
             None,
             None,
@@ -1037,7 +1037,7 @@ fn test_mark_cache_anchors(cx: &mut App) {
             cx,
         )
     });
-    let buffer = context.read(cx).buffer.clone();
+    let buffer = context.read(cx).buffer().clone();
 
     // Create a test cache configuration
     let cache_configuration = &Some(LanguageModelCacheConfiguration {
@@ -1285,7 +1285,7 @@ async fn test_thread_summary_error_retry(cx: &mut TestAppContext) {
 
 fn test_summarize_error(
     model: &Arc<FakeLanguageModel>,
-    context: &Entity<AssistantContext>,
+    context: &Entity<TextThread>,
     cx: &mut TestAppContext,
 ) {
     let message_1 = context.read_with(cx, |context, _cx| context.message_anchors[0].clone());
@@ -1320,7 +1320,7 @@ fn test_summarize_error(
 
 fn setup_context_editor_with_fake_model(
     cx: &mut TestAppContext,
-) -> (Entity<AssistantContext>, Arc<FakeLanguageModel>) {
+) -> (Entity<TextThread>, Arc<FakeLanguageModel>) {
     let registry = Arc::new(LanguageRegistry::test(cx.executor()));
 
     let fake_provider = Arc::new(FakeLanguageModelProvider::default());
@@ -1340,7 +1340,7 @@ fn setup_context_editor_with_fake_model(
 
     let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
     let context = cx.new(|cx| {
-        AssistantContext::local(
+        TextThread::local(
             registry,
             None,
             None,
@@ -1360,7 +1360,7 @@ fn simulate_successful_response(fake_model: &FakeLanguageModel, cx: &mut TestApp
     cx.run_until_parked();
 }
 
-fn messages(context: &Entity<AssistantContext>, cx: &App) -> Vec<(MessageId, Role, Range<usize>)> {
+fn messages(context: &Entity<TextThread>, cx: &App) -> Vec<(MessageId, Role, Range<usize>)> {
     context
         .read(cx)
         .messages(cx)
@@ -1369,7 +1369,7 @@ fn messages(context: &Entity<AssistantContext>, cx: &App) -> Vec<(MessageId, Rol
 }
 
 fn messages_cache(
-    context: &Entity<AssistantContext>,
+    context: &Entity<TextThread>,
     cx: &App,
 ) -> Vec<(MessageId, Option<MessageCacheMetadata>)> {
     context

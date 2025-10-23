@@ -2,12 +2,12 @@ use crate::{DbThread, DbThreadMetadata, ThreadsDatabase};
 use acp_thread::MentionUri;
 use agent_client_protocol as acp;
 use anyhow::{Context as _, Result, anyhow};
-use assistant_text_thread::{AssistantContext, SavedContextMetadata};
+use assistant_text_thread::{SavedTextThreadMetadata, TextThread};
 use chrono::{DateTime, Utc};
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{App, AsyncApp, Entity, SharedString, Task, prelude::*};
 use itertools::Itertools;
-use paths::contexts_dir;
+use paths::text_threads_dir;
 use project::Project;
 use serde::{Deserialize, Serialize};
 use std::{collections::VecDeque, path::Path, rc::Rc, sync::Arc, time::Duration};
@@ -50,7 +50,7 @@ pub fn load_agent_thread(
 #[derive(Clone, Debug)]
 pub enum HistoryEntry {
     AcpThread(DbThreadMetadata),
-    TextThread(SavedContextMetadata),
+    TextThread(SavedTextThreadMetadata),
 }
 
 impl HistoryEntry {
@@ -120,7 +120,7 @@ enum SerializedRecentOpen {
 pub struct HistoryStore {
     threads: Vec<DbThreadMetadata>,
     entries: Vec<HistoryEntry>,
-    text_thread_store: Entity<assistant_text_thread::ContextStore>,
+    text_thread_store: Entity<assistant_text_thread::TextThreadStore>,
     recently_opened_entries: VecDeque<HistoryEntryId>,
     _subscriptions: Vec<gpui::Subscription>,
     _save_recently_opened_entries_task: Task<()>,
@@ -128,7 +128,7 @@ pub struct HistoryStore {
 
 impl HistoryStore {
     pub fn new(
-        text_thread_store: Entity<assistant_text_thread::ContextStore>,
+        text_thread_store: Entity<assistant_text_thread::TextThreadStore>,
         cx: &mut Context<Self>,
     ) -> Self {
         let subscriptions =
@@ -192,16 +192,16 @@ impl HistoryStore {
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         self.text_thread_store
-            .update(cx, |store, cx| store.delete_local_context(path, cx))
+            .update(cx, |store, cx| store.delete_local(path, cx))
     }
 
     pub fn load_text_thread(
         &self,
         path: Arc<Path>,
         cx: &mut Context<Self>,
-    ) -> Task<Result<Entity<AssistantContext>>> {
+    ) -> Task<Result<Entity<TextThread>>> {
         self.text_thread_store
-            .update(cx, |store, cx| store.open_local_context(path, cx))
+            .update(cx, |store, cx| store.open_local(path, cx))
     }
 
     pub fn reload(&self, cx: &mut Context<Self>) {
@@ -243,7 +243,7 @@ impl HistoryStore {
         history_entries.extend(
             self.text_thread_store
                 .read(cx)
-                .unordered_contexts()
+                .unordered_text_threads()
                 .cloned()
                 .map(HistoryEntry::TextThread),
         );
@@ -278,7 +278,7 @@ impl HistoryStore {
         let context_entries = self
             .text_thread_store
             .read(cx)
-            .unordered_contexts()
+            .unordered_text_threads()
             .flat_map(|context| {
                 self.recently_opened_entries
                     .iter()
@@ -347,7 +347,7 @@ impl HistoryStore {
                         acp::SessionId(id.as_str().into()),
                     )),
                     SerializedRecentOpen::TextThread(file_name) => Some(
-                        HistoryEntryId::TextThread(contexts_dir().join(file_name).into()),
+                        HistoryEntryId::TextThread(text_threads_dir().join(file_name).into()),
                     ),
                 })
                 .collect();
