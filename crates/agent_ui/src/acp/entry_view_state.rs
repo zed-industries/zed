@@ -466,8 +466,8 @@ mod tests {
             connection.send_update(session_id, acp::SessionUpdate::ToolCall(tool_call), cx)
         });
 
-        let context_store = cx.new(|cx| TextThreadStore::fake(project.clone(), cx));
-        let history_store = cx.new(|cx| HistoryStore::new(context_store, cx));
+        let text_thread_store = cx.new(|cx| TextThreadStore::fake(project.clone(), cx));
+        let history_store = cx.new(|cx| HistoryStore::new(text_thread_store, cx));
 
         let view_state = cx.new(|_cx| {
             EntryViewState::new(

@@ -116,8 +116,9 @@ mod tests {
             });
 
             let history = cx.update(|cx| {
-                let context_store = cx.new(move |cx| TextThreadStore::fake(project.clone(), cx));
-                cx.new(move |cx| HistoryStore::new(context_store, cx))
+                let text_thread_store =
+                    cx.new(move |cx| TextThreadStore::fake(project.clone(), cx));
+                cx.new(move |cx| HistoryStore::new(text_thread_store, cx))
             });
 
             NativeAgentServer::new(fs.clone(), history)

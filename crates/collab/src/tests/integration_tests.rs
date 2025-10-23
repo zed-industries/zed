@@ -6877,7 +6877,7 @@ async fn test_context_collaboration_with_reconnect(
     });
 
     let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
-    let context_store_a = cx_a
+    let text_thread_store_a = cx_a
         .update(|cx| {
             TextThreadStore::new(
                 project_a.clone(),
@@ -6888,7 +6888,7 @@ async fn test_context_collaboration_with_reconnect(
         })
         .await
         .unwrap();
-    let context_store_b = cx_b
+    let text_thread_store_b = cx_b
         .update(|cx| {
             TextThreadStore::new(
                 project_b.clone(),
@@ -6901,11 +6901,11 @@ async fn test_context_collaboration_with_reconnect(
         .unwrap();
 
     // Client A creates a new chats.
-    let context_a = context_store_a.update(cx_a, |store, cx| store.create(cx));
+    let text_thread_a = text_thread_store_a.update(cx_a, |store, cx| store.create(cx));
     executor.run_until_parked();
 
     // Client B retrieves host's contexts and joins one.
-    let context_b = context_store_b
+    let text_thread_b = text_thread_store_b
         .update(cx_b, |store, cx| {
             let host_text_threads = store.host_text_threads().collect::<Vec<_>>();
             assert_eq!(host_text_threads.len(), 1);
@@ -6915,46 +6915,46 @@ async fn test_context_collaboration_with_reconnect(
         .unwrap();
 
     // Host and guest make changes
-    context_a.update(cx_a, |context, cx| {
-        context.buffer().update(cx, |buffer, cx| {
+    text_thread_a.update(cx_a, |text_thread, cx| {
+        text_thread.buffer().update(cx, |buffer, cx| {
             buffer.edit([(0..0, "Host change\n")], None, cx)
         })
     });
-    context_b.update(cx_b, |context, cx| {
-        context.buffer().update(cx, |buffer, cx| {
+    text_thread_b.update(cx_b, |text_thread, cx| {
+        text_thread.buffer().update(cx, |buffer, cx| {
             buffer.edit([(0..0, "Guest change\n")], None, cx)
         })
     });
     executor.run_until_parked();
     assert_eq!(
-        context_a.read_with(cx_a, |context, cx| context.buffer().read(cx).text()),
+        text_thread_a.read_with(cx_a, |text_thread, cx| text_thread.buffer().read(cx).text()),
         "Guest change\nHost change\n"
     );
     assert_eq!(
-        context_b.read_with(cx_b, |context, cx| context.buffer().read(cx).text()),
+        text_thread_b.read_with(cx_b, |text_thread, cx| text_thread.buffer().read(cx).text()),
         "Guest change\nHost change\n"
     );
 
     // Disconnect client A and make some changes while disconnected.
     server.disconnect_client(client_a.peer_id().unwrap());
     server.forbid_connections();
-    context_a.update(cx_a, |context, cx| {
-        context.buffer().update(cx, |buffer, cx| {
+    text_thread_a.update(cx_a, |text_thread, cx| {
+        text_thread.buffer().update(cx, |buffer, cx| {
             buffer.edit([(0..0, "Host offline change\n")], None, cx)
         })
     });
-    context_b.update(cx_b, |context, cx| {
-        context.buffer().update(cx, |buffer, cx| {
+    text_thread_b.update(cx_b, |text_thread, cx| {
+        text_thread.buffer().update(cx, |buffer, cx| {
             buffer.edit([(0..0, "Guest offline change\n")], None, cx)
         })
     });
     executor.run_until_parked();
     assert_eq!(
-        context_a.read_with(cx_a, |context, cx| context.buffer().read(cx).text()),
+        text_thread_a.read_with(cx_a, |text_thread, cx| text_thread.buffer().read(cx).text()),
         "Host offline change\nGuest change\nHost change\n"
     );
     assert_eq!(
-        context_b.read_with(cx_b, |context, cx| context.buffer().read(cx).text()),
+        text_thread_b.read_with(cx_b, |text_thread, cx| text_thread.buffer().read(cx).text()),
         "Guest offline change\nGuest change\nHost change\n"
     );
 
@@ -6962,11 +6962,11 @@ async fn test_context_collaboration_with_reconnect(
     server.allow_connections();
     executor.advance_clock(RECEIVE_TIMEOUT);
     assert_eq!(
-        context_a.read_with(cx_a, |context, cx| context.buffer().read(cx).text()),
+        text_thread_a.read_with(cx_a, |text_thread, cx| text_thread.buffer().read(cx).text()),
         "Guest offline change\nHost offline change\nGuest change\nHost change\n"
     );
     assert_eq!(
-        context_b.read_with(cx_b, |context, cx| context.buffer().read(cx).text()),
+        text_thread_b.read_with(cx_b, |text_thread, cx| text_thread.buffer().read(cx).text()),
         "Guest offline change\nHost offline change\nGuest change\nHost change\n"
     );
 
@@ -6974,8 +6974,8 @@ async fn test_context_collaboration_with_reconnect(
     server.forbid_connections();
     server.disconnect_client(client_a.peer_id().unwrap());
     executor.advance_clock(RECEIVE_TIMEOUT + RECONNECT_TIMEOUT);
-    context_b.read_with(cx_b, |context, cx| {
-        assert!(context.buffer().read(cx).read_only());
+    text_thread_b.read_with(cx_b, |text_thread, cx| {
+        assert!(text_thread.buffer().read(cx).read_only());
     });
 }
 

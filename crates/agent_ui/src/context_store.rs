@@ -200,13 +200,13 @@ impl ContextStore {
 
     pub fn add_text_thread(
         &mut self,
-        context: Entity<TextThread>,
+        text_thread: Entity<TextThread>,
         remove_if_exists: bool,
         cx: &mut Context<Self>,
     ) -> Option<AgentContextHandle> {
         let context_id = self.next_context_id.post_inc();
         let context = AgentContextHandle::TextThread(TextThreadContextHandle {
-            context,
+            text_thread,
             context_id,
         });
 
@@ -362,12 +362,15 @@ impl ContextStore {
             //         );
             //     }
             // }
-            SuggestedContext::TextThread { context, name: _ } => {
-                if let Some(context) = context.upgrade() {
+            SuggestedContext::TextThread {
+                text_thread,
+                name: _,
+            } => {
+                if let Some(text_thread) = text_thread.upgrade() {
                     let context_id = self.next_context_id.post_inc();
                     self.insert_context(
                         AgentContextHandle::TextThread(TextThreadContextHandle {
-                            context,
+                            text_thread,
                             context_id,
                         }),
                         cx,
@@ -392,7 +395,7 @@ impl ContextStore {
             // }
             AgentContextHandle::TextThread(text_thread_context) => {
                 self.context_text_thread_paths
-                    .extend(text_thread_context.context.read(cx).path().cloned());
+                    .extend(text_thread_context.text_thread.read(cx).path().cloned());
             }
             _ => {}
         }
@@ -414,7 +417,7 @@ impl ContextStore {
                         .remove(thread_context.thread.read(cx).id());
                 }
                 AgentContextHandle::TextThread(text_thread_context) => {
-                    if let Some(path) = text_thread_context.context.read(cx).path() {
+                    if let Some(path) = text_thread_context.text_thread.read(cx).path() {
                         self.context_text_thread_paths.remove(path);
                     }
                 }
@@ -544,7 +547,7 @@ pub enum SuggestedContext {
     // },
     TextThread {
         name: SharedString,
-        context: WeakEntity<TextThread>,
+        text_thread: WeakEntity<TextThread>,
     },
 }
 

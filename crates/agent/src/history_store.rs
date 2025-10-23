@@ -57,14 +57,16 @@ impl HistoryEntry {
     pub fn updated_at(&self) -> DateTime<Utc> {
         match self {
             HistoryEntry::AcpThread(thread) => thread.updated_at,
-            HistoryEntry::TextThread(context) => context.mtime.to_utc(),
+            HistoryEntry::TextThread(text_thread) => text_thread.mtime.to_utc(),
         }
     }
 
     pub fn id(&self) -> HistoryEntryId {
         match self {
             HistoryEntry::AcpThread(thread) => HistoryEntryId::AcpThread(thread.id.clone()),
-            HistoryEntry::TextThread(context) => HistoryEntryId::TextThread(context.path.clone()),
+            HistoryEntry::TextThread(text_thread) => {
+                HistoryEntryId::TextThread(text_thread.path.clone())
+            }
         }
     }
 
@@ -74,9 +76,9 @@ impl HistoryEntry {
                 id: thread.id.clone(),
                 name: thread.title.to_string(),
             },
-            HistoryEntry::TextThread(context) => MentionUri::TextThread {
-                path: context.path.as_ref().to_owned(),
-                name: context.title.to_string(),
+            HistoryEntry::TextThread(text_thread) => MentionUri::TextThread {
+                path: text_thread.path.as_ref().to_owned(),
+                name: text_thread.title.to_string(),
             },
         }
     }
@@ -90,7 +92,7 @@ impl HistoryEntry {
                     &thread.title
                 }
             }
-            HistoryEntry::TextThread(context) => &context.title,
+            HistoryEntry::TextThread(text_thread) => &text_thread.title,
         }
     }
 }
@@ -279,13 +281,13 @@ impl HistoryStore {
             .text_thread_store
             .read(cx)
             .unordered_text_threads()
-            .flat_map(|context| {
+            .flat_map(|text_thread| {
                 self.recently_opened_entries
                     .iter()
                     .enumerate()
                     .flat_map(|(index, entry)| match entry {
-                        HistoryEntryId::TextThread(path) if &context.path == path => {
-                            Some((index, HistoryEntry::TextThread(context.clone())))
+                        HistoryEntryId::TextThread(path) if &text_thread.path == path => {
+                            Some((index, HistoryEntry::TextThread(text_thread.clone())))
                         }
                         _ => None,
                     })

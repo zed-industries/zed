@@ -164,9 +164,9 @@ impl TextThreadStore {
                 .payload
                 .contexts
                 .into_iter()
-                .map(|context| RemoteTextThreadMetadata {
-                    id: TextThreadId::from_proto(context.context_id),
-                    summary: context.summary,
+                .map(|text_thread| RemoteTextThreadMetadata {
+                    id: TextThreadId::from_proto(text_thread.context_id),
+                    summary: text_thread.summary,
                 })
                 .collect();
             cx.notify();
@@ -185,16 +185,16 @@ impl TextThreadStore {
                 "only the host contexts can be opened"
             );
 
-            let context = this
+            let text_thread = this
                 .loaded_text_thread_for_id(&context_id, cx)
                 .context("context not found")?;
             anyhow::ensure!(
-                context.read(cx).replica_id() == ReplicaId::default(),
+                text_thread.read(cx).replica_id() == ReplicaId::default(),
                 "context must be opened via the host"
             );
 
             anyhow::Ok(
-                context
+                text_thread
                     .read(cx)
                     .serialize_ops(&ContextVersion::default(), cx),
             )
@@ -216,12 +216,12 @@ impl TextThreadStore {
                 "can only create contexts as the host"
             );
 
-            let context = this.create(cx);
-            let context_id = context.read(cx).id().clone();
+            let text_thread = this.create(cx);
+            let context_id = text_thread.read(cx).id().clone();
 
             anyhow::Ok((
                 context_id,
-                context
+                text_thread
                     .read(cx)
                     .serialize_ops(&ContextVersion::default(), cx),
             ))
@@ -240,10 +240,10 @@ impl TextThreadStore {
     ) -> Result<()> {
         this.update(&mut cx, |this, cx| {
             let context_id = TextThreadId::from_proto(envelope.payload.context_id);
-            if let Some(context) = this.loaded_text_thread_for_id(&context_id, cx) {
+            if let Some(text_thread) = this.loaded_text_thread_for_id(&context_id, cx) {
                 let operation_proto = envelope.payload.operation.context("invalid operation")?;
                 let operation = TextThreadOperation::from_proto(operation_proto)?;
-                context.update(cx, |context, cx| context.apply_ops([operation], cx));
+                text_thread.update(cx, |text_thread, cx| text_thread.apply_ops([operation], cx));
             }
             Ok(())
         })?
@@ -264,10 +264,10 @@ impl TextThreadStore {
             for remote_version_proto in envelope.payload.contexts {
                 let remote_version = ContextVersion::from_proto(&remote_version_proto);
                 let context_id = TextThreadId::from_proto(remote_version_proto.context_id);
-                if let Some(context) = this.loaded_text_thread_for_id(&context_id, cx) {
-                    let context = context.read(cx);
-                    let operations = context.serialize_ops(&remote_version, cx);
-                    local_versions.push(context.version(cx).to_proto(context_id.clone()));
+                if let Some(text_thread) = this.loaded_text_thread_for_id(&context_id, cx) {
+                    let text_thread = text_thread.read(cx);
+                    let operations = text_thread.serialize_ops(&remote_version, cx);
+                    local_versions.push(text_thread.version(cx).to_proto(context_id.clone()));
                     let client = this.client.clone();
                     let project_id = envelope.payload.project_id;
                     cx.background_spawn(async move {
@@ -301,9 +301,9 @@ impl TextThreadStore {
         }
 
         if is_shared {
-            self.text_threads.retain_mut(|context| {
-                if let Some(strong_context) = context.upgrade() {
-                    *context = TextThreadHandle::Strong(strong_context);
+            self.text_threads.retain_mut(|text_thread| {
+                if let Some(strong_context) = text_thread.upgrade() {
+                    *text_thread = TextThreadHandle::Strong(strong_context);
                     true
                 } else {
                     false
@@ -338,12 +338,12 @@ impl TextThreadStore {
                 self.synchronize_contexts(cx);
             }
             project::Event::DisconnectedFromHost => {
-                self.text_threads.retain_mut(|context| {
-                    if let Some(strong_context) = context.upgrade() {
-                        *context = TextThreadHandle::Weak(context.downgrade());
-                        strong_context.update(cx, |context, cx| {
-                            if context.replica_id() != ReplicaId::default() {
-                                context.set_capability(language::Capability::ReadOnly, cx);
+                self.text_threads.retain_mut(|text_thread| {
+                    if let Some(strong_context) = text_thread.upgrade() {
+                        *text_thread = TextThreadHandle::Weak(text_thread.downgrade());
+                        strong_context.update(cx, |text_thread, cx| {
+                            if text_thread.replica_id() != ReplicaId::default() {
+                                text_thread.set_capability(language::Capability::ReadOnly, cx);
                             }
                         });
                         true
@@ -377,7 +377,7 @@ impl TextThreadStore {
                 cx,
             )
         });
-        self.register_context(&context, cx);
+        self.register_text_thread(&context, cx);
         context
     }
 
@@ -399,7 +399,7 @@ impl TextThreadStore {
             let response = request.await?;
             let context_id = TextThreadId::from_proto(response.context_id);
             let context_proto = response.context.context("invalid context")?;
-            let context = cx.new(|cx| {
+            let text_thread = cx.new(|cx| {
                 TextThread::new(
                     context_id.clone(),
                     replica_id,
@@ -421,14 +421,14 @@ impl TextThreadStore {
                         .collect::<Result<Vec<_>>>()
                 })
                 .await?;
-            context.update(cx, |context, cx| context.apply_ops(operations, cx))?;
+            text_thread.update(cx, |context, cx| context.apply_ops(operations, cx))?;
             this.update(cx, |this, cx| {
                 if let Some(existing_context) = this.loaded_text_thread_for_id(&context_id, cx) {
                     existing_context
                 } else {
-                    this.register_context(&context, cx);
+                    this.register_text_thread(&text_thread, cx);
                     this.synchronize_contexts(cx);
-                    context
+                    text_thread
                 }
             })
         })
@@ -475,7 +475,7 @@ impl TextThreadStore {
                 if let Some(existing_context) = this.loaded_text_thread_for_path(&path, cx) {
                     existing_context
                 } else {
-                    this.register_context(&context, cx);
+                    this.register_text_thread(&context, cx);
                     context
                 }
             })
@@ -503,7 +503,7 @@ impl TextThreadStore {
                         != Some(&path)
                 });
                 this.text_threads_metadata
-                    .retain(|context| context.path.as_ref() != path.as_ref());
+                    .retain(|text_thread| text_thread.path.as_ref() != path.as_ref());
             })?;
 
             Ok(())
@@ -564,7 +564,7 @@ impl TextThreadStore {
         cx.spawn(async move |this, cx| {
             let response = request.await?;
             let context_proto = response.context.context("invalid context")?;
-            let context = cx.new(|cx| {
+            let text_thread = cx.new(|cx| {
                 TextThread::new(
                     text_thread_id.clone(),
                     replica_id,
@@ -586,34 +586,35 @@ impl TextThreadStore {
                         .collect::<Result<Vec<_>>>()
                 })
                 .await?;
-            context.update(cx, |context, cx| context.apply_ops(operations, cx))?;
+            text_thread.update(cx, |context, cx| context.apply_ops(operations, cx))?;
             this.update(cx, |this, cx| {
                 if let Some(existing_context) = this.loaded_text_thread_for_id(&text_thread_id, cx)
                 {
                     existing_context
                 } else {
-                    this.register_context(&context, cx);
+                    this.register_text_thread(&text_thread, cx);
                     this.synchronize_contexts(cx);
-                    context
+                    text_thread
                 }
             })
         })
     }
 
-    fn register_context(&mut self, context: &Entity<TextThread>, cx: &mut Context<Self>) {
+    fn register_text_thread(&mut self, text_thread: &Entity<TextThread>, cx: &mut Context<Self>) {
         let handle = if self.project_is_shared {
-            TextThreadHandle::Strong(context.clone())
+            TextThreadHandle::Strong(text_thread.clone())
         } else {
-            TextThreadHandle::Weak(context.downgrade())
+            TextThreadHandle::Weak(text_thread.downgrade())
         };
         self.text_threads.push(handle);
         self.advertise_contexts(cx);
-        cx.subscribe(context, Self::handle_context_event).detach();
+        cx.subscribe(text_thread, Self::handle_context_event)
+            .detach();
     }
 
     fn handle_context_event(
         &mut self,
-        context: Entity<TextThread>,
+        text_thread: Entity<TextThread>,
         event: &TextThreadEvent,
         cx: &mut Context<Self>,
     ) {
@@ -636,7 +637,7 @@ impl TextThreadStore {
                 }
             }
             TextThreadEvent::Operation(operation) => {
-                let context_id = context.read(cx).id().to_proto();
+                let context_id = text_thread.read(cx).id().to_proto();
                 let operation = operation.to_proto();
                 self.client
                     .send(proto::UpdateContext {
@@ -664,12 +665,12 @@ impl TextThreadStore {
             .text_threads
             .iter()
             .rev()
-            .filter_map(|context| {
-                let context = context.upgrade()?.read(cx);
-                if context.replica_id() == ReplicaId::default() {
+            .filter_map(|text_thread| {
+                let text_thread = text_thread.upgrade()?.read(cx);
+                if text_thread.replica_id() == ReplicaId::default() {
                     Some(proto::ContextMetadata {
-                        context_id: context.id().to_proto(),
-                        summary: context
+                        context_id: text_thread.id().to_proto(),
+                        summary: text_thread
                             .summary()
                             .content()
                             .map(|summary| summary.text.clone()),
@@ -713,21 +714,21 @@ impl TextThreadStore {
         cx.spawn(async move |this, cx| {
             let response = request.await?;
 
-            let mut context_ids = Vec::new();
+            let mut text_thread_ids = Vec::new();
             let mut operations = Vec::new();
             this.read_with(cx, |this, cx| {
                 for context_version_proto in response.contexts {
                     let context_version = ContextVersion::from_proto(&context_version_proto);
-                    let context_id = TextThreadId::from_proto(context_version_proto.context_id);
-                    if let Some(context) = this.loaded_text_thread_for_id(&context_id, cx) {
-                        context_ids.push(context_id);
-                        operations.push(context.read(cx).serialize_ops(&context_version, cx));
+                    let text_thread_id = TextThreadId::from_proto(context_version_proto.context_id);
+                    if let Some(text_thread) = this.loaded_text_thread_for_id(&text_thread_id, cx) {
+                        text_thread_ids.push(text_thread_id);
+                        operations.push(text_thread.read(cx).serialize_ops(&context_version, cx));
                     }
                 }
             })?;
 
             let operations = futures::future::join_all(operations).await;
-            for (context_id, operations) in context_ids.into_iter().zip(operations) {
+            for (context_id, operations) in text_thread_ids.into_iter().zip(operations) {
                 for operation in operations {
                     client.send(proto::UpdateContext {
                         project_id,
@@ -816,7 +817,7 @@ impl TextThreadStore {
                     }
                 }
             }
-            contexts.sort_unstable_by_key(|context| Reverse(context.mtime));
+            contexts.sort_unstable_by_key(|text_thread| Reverse(text_thread.mtime));
 
             this.update(cx, |this, cx| {
                 this.text_threads_metadata = contexts;

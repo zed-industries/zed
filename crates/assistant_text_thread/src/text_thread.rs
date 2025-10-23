@@ -906,7 +906,7 @@ impl TextThread {
 
     pub fn version(&self, cx: &App) -> ContextVersion {
         ContextVersion {
-            context: self.version.clone(),
+            text_thread: self.version.clone(),
             buffer: self.buffer.read(cx).version(),
         }
     }
@@ -939,7 +939,7 @@ impl TextThread {
         let mut context_ops = self
             .operations
             .iter()
-            .filter(|op| !since.context.observed(op.timestamp()))
+            .filter(|op| !since.text_thread.observed(op.timestamp()))
             .cloned()
             .collect::<Vec<_>>();
         context_ops.extend(self.pending_ops.iter().cloned());
@@ -2970,14 +2970,14 @@ impl TextThread {
 
 #[derive(Debug, Default)]
 pub struct ContextVersion {
-    context: clock::Global,
+    text_thread: clock::Global,
     buffer: clock::Global,
 }
 
 impl ContextVersion {
     pub fn from_proto(proto: &proto::ContextVersion) -> Self {
         Self {
-            context: language::proto::deserialize_version(&proto.context_version),
+            text_thread: language::proto::deserialize_version(&proto.context_version),
             buffer: language::proto::deserialize_version(&proto.buffer_version),
         }
     }
@@ -2985,7 +2985,7 @@ impl ContextVersion {
     pub fn to_proto(&self, context_id: TextThreadId) -> proto::ContextVersion {
         proto::ContextVersion {
             context_id: context_id.to_proto(),
-            context_version: language::proto::serialize_version(&self.context),
+            context_version: language::proto::serialize_version(&self.text_thread),
             buffer_version: language::proto::serialize_version(&self.buffer),
         }
     }

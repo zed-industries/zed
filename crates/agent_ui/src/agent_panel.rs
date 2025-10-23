@@ -199,7 +199,7 @@ enum ActiveView {
         thread_view: Entity<AcpThreadView>,
     },
     TextThread {
-        context_editor: Entity<TextThreadEditor>,
+        text_thread_editor: Entity<TextThreadEditor>,
         title_editor: Entity<Editor>,
         buffer_search_bar: Entity<BufferSearchBar>,
         _subscriptions: Vec<gpui::Subscription>,
@@ -301,13 +301,13 @@ impl ActiveView {
     }
 
     pub fn text_thread(
-        context_editor: Entity<TextThreadEditor>,
+        text_thread_editor: Entity<TextThreadEditor>,
         acp_history_store: Entity<agent::HistoryStore>,
         language_registry: Arc<LanguageRegistry>,
         window: &mut Window,
         cx: &mut App,
     ) -> Self {
-        let title = context_editor.read(cx).title(cx).to_string();
+        let title = text_thread_editor.read(cx).title(cx).to_string();
 
         let editor = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
@@ -323,7 +323,7 @@ impl ActiveView {
         let subscriptions = vec![
             window.subscribe(&editor, cx, {
                 {
-                    let context_editor = context_editor.clone();
+                    let text_thread_editor = text_thread_editor.clone();
                     move |editor, event, window, cx| match event {
                         EditorEvent::BufferEdited => {
                             if suppress_first_edit {
@@ -332,17 +332,19 @@ impl ActiveView {
                             }
                             let new_summary = editor.read(cx).text(cx);
 
-                            context_editor.update(cx, |context_editor, cx| {
-                                context_editor.context().update(cx, |text_thread, cx| {
-                                    text_thread.set_custom_summary(new_summary, cx);
-                                })
+                            text_thread_editor.update(cx, |text_thread_editor, cx| {
+                                text_thread_editor
+                                    .text_thread()
+                                    .update(cx, |text_thread, cx| {
+                                        text_thread.set_custom_summary(new_summary, cx);
+                                    })
                             })
                         }
                         EditorEvent::Blurred => {
                             if editor.read(cx).text(cx).is_empty() {
-                                let summary = context_editor
+                                let summary = text_thread_editor
                                     .read(cx)
-                                    .context()
+                                    .text_thread()
                                     .read(cx)
                                     .summary()
                                     .or_default();
@@ -356,7 +358,7 @@ impl ActiveView {
                     }
                 }
             }),
-            window.subscribe(&context_editor.read(cx).context().clone(), cx, {
+            window.subscribe(&text_thread_editor.read(cx).text_thread().clone(), cx, {
                 let editor = editor.clone();
                 move |text_thread, event, window, cx| match event {
                     TextThreadEvent::SummaryGenerated => {
@@ -387,11 +389,11 @@ impl ActiveView {
         let buffer_search_bar =
             cx.new(|cx| BufferSearchBar::new(Some(language_registry), window, cx));
         buffer_search_bar.update(cx, |buffer_search_bar, cx| {
-            buffer_search_bar.set_active_pane_item(Some(&context_editor), window, cx)
+            buffer_search_bar.set_active_pane_item(Some(&text_thread_editor), window, cx)
         });
 
         Self::TextThread {
-            context_editor,
+            text_thread_editor,
             title_editor: editor,
             buffer_search_bar,
             _subscriptions: subscriptions,
@@ -563,8 +565,8 @@ impl AgentPanel {
             DefaultView::TextThread => {
                 let context = text_thread_store.update(cx, |store, cx| store.create(cx));
                 let lsp_adapter_delegate = make_lsp_adapter_delegate(&project.clone(), cx).unwrap();
-                let context_editor = cx.new(|cx| {
-                    let mut editor = TextThreadEditor::for_context(
+                let text_thread_editor = cx.new(|cx| {
+                    let mut editor = TextThreadEditor::for_text_thread(
                         context,
                         fs.clone(),
                         workspace.clone(),
@@ -577,7 +579,7 @@ impl AgentPanel {
                     editor
                 });
                 ActiveView::text_thread(
-                    context_editor,
+                    text_thread_editor,
                     history_store.clone(),
                     language_registry.clone(),
                     window,
@@ -734,8 +736,8 @@ impl AgentPanel {
             .log_err()
             .flatten();
 
-        let context_editor = cx.new(|cx| {
-            let mut editor = TextThreadEditor::for_context(
+        let text_thread_editor = cx.new(|cx| {
+            let mut editor = TextThreadEditor::for_text_thread(
                 context,
                 self.fs.clone(),
                 self.workspace.clone(),
@@ -755,7 +757,7 @@ impl AgentPanel {
 
         self.set_active_view(
             ActiveView::text_thread(
-                context_editor.clone(),
+                text_thread_editor.clone(),
                 self.history_store.clone(),
                 self.language_registry.clone(),
                 window,
@@ -764,7 +766,7 @@ impl AgentPanel {
             window,
             cx,
         );
-        context_editor.focus_handle(cx).focus(window);
+        text_thread_editor.focus_handle(cx).focus(window);
     }
 
     fn external_thread(
@@ -903,20 +905,20 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
-        let context = self
+        let text_thread_task = self
             .history_store
             .update(cx, |store, cx| store.load_text_thread(path, cx));
         cx.spawn_in(window, async move |this, cx| {
-            let context = context.await?;
+            let text_thread = text_thread_task.await?;
             this.update_in(cx, |this, window, cx| {
-                this.open_text_thread(context, window, cx);
+                this.open_text_thread(text_thread, window, cx);
             })
         })
     }
 
     pub(crate) fn open_text_thread(
         &mut self,
-        context: Entity<TextThread>,
+        text_thread: Entity<TextThread>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -924,8 +926,8 @@ impl AgentPanel {
             .log_err()
             .flatten();
         let editor = cx.new(|cx| {
-            TextThreadEditor::for_context(
-                context,
+            TextThreadEditor::for_text_thread(
+                text_thread,
                 self.fs.clone(),
                 self.workspace.clone(),
                 self.project.clone(),
@@ -963,8 +965,10 @@ impl AgentPanel {
                         ActiveView::ExternalAgentThread { thread_view } => {
                             thread_view.focus_handle(cx).focus(window);
                         }
-                        ActiveView::TextThread { context_editor, .. } => {
-                            context_editor.focus_handle(cx).focus(window);
+                        ActiveView::TextThread {
+                            text_thread_editor, ..
+                        } => {
+                            text_thread_editor.focus_handle(cx).focus(window);
                         }
                         ActiveView::History | ActiveView::Configuration => {}
                     }
@@ -1181,9 +1185,11 @@ impl AgentPanel {
         }
     }
 
-    pub(crate) fn active_context_editor(&self) -> Option<Entity<TextThreadEditor>> {
+    pub(crate) fn active_text_thread_editor(&self) -> Option<Entity<TextThreadEditor>> {
         match &self.active_view {
-            ActiveView::TextThread { context_editor, .. } => Some(context_editor.clone()),
+            ActiveView::TextThread {
+                text_thread_editor, ..
+            } => Some(text_thread_editor.clone()),
             _ => None,
         }
     }
@@ -1204,16 +1210,16 @@ impl AgentPanel {
         let new_is_special = new_is_history || new_is_config;
 
         match &new_view {
-            ActiveView::TextThread { context_editor, .. } => {
-                self.history_store.update(cx, |store, cx| {
-                    if let Some(path) = context_editor.read(cx).context().read(cx).path() {
-                        store.push_recently_opened_entry(
-                            agent::HistoryEntryId::TextThread(path.clone()),
-                            cx,
-                        )
-                    }
-                })
-            }
+            ActiveView::TextThread {
+                text_thread_editor, ..
+            } => self.history_store.update(cx, |store, cx| {
+                if let Some(path) = text_thread_editor.read(cx).text_thread().read(cx).path() {
+                    store.push_recently_opened_entry(
+                        agent::HistoryEntryId::TextThread(path.clone()),
+                        cx,
+                    )
+                }
+            }),
             ActiveView::ExternalAgentThread { .. } => {}
             ActiveView::History | ActiveView::Configuration => {}
         }
@@ -1370,7 +1376,9 @@ impl Focusable for AgentPanel {
         match &self.active_view {
             ActiveView::ExternalAgentThread { thread_view, .. } => thread_view.focus_handle(cx),
             ActiveView::History => self.acp_history.focus_handle(cx),
-            ActiveView::TextThread { context_editor, .. } => context_editor.focus_handle(cx),
+            ActiveView::TextThread {
+                text_thread_editor, ..
+            } => text_thread_editor.focus_handle(cx),
             ActiveView::Configuration => {
                 if let Some(configuration) = self.configuration.as_ref() {
                     configuration.focus_handle(cx)
@@ -1505,10 +1513,10 @@ impl AgentPanel {
             }
             ActiveView::TextThread {
                 title_editor,
-                context_editor,
+                text_thread_editor,
                 ..
             } => {
-                let summary = context_editor.read(cx).context().read(cx).summary();
+                let summary = text_thread_editor.read(cx).text_thread().read(cx).summary();
 
                 match summary {
                     ContextSummary::Pending => Label::new(ContextSummary::DEFAULT)
@@ -1535,10 +1543,10 @@ impl AgentPanel {
                             IconButton::new("retry-summary-generation", IconName::RotateCcw)
                                 .icon_size(IconSize::Small)
                                 .on_click({
-                                    let context_editor = context_editor.clone();
+                                    let text_thread_editor = text_thread_editor.clone();
                                     move |_, _window, cx| {
-                                        context_editor.update(cx, |context_editor, cx| {
-                                            context_editor.regenerate_summary(cx);
+                                        text_thread_editor.update(cx, |text_thread_editor, cx| {
+                                            text_thread_editor.regenerate_summary(cx);
                                         });
                                     }
                                 })
@@ -2241,7 +2249,7 @@ impl AgentPanel {
 
     fn render_text_thread(
         &self,
-        context_editor: &Entity<TextThreadEditor>,
+        text_thread_editor: &Entity<TextThreadEditor>,
         buffer_search_bar: &Entity<BufferSearchBar>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -2275,7 +2283,7 @@ impl AgentPanel {
                     )
                 })
             })
-            .child(context_editor.clone())
+            .child(text_thread_editor.clone())
             .child(self.render_drag_target(cx))
     }
 
@@ -2351,10 +2359,12 @@ impl AgentPanel {
                     thread_view.insert_dragged_files(paths, added_worktrees, window, cx);
                 });
             }
-            ActiveView::TextThread { context_editor, .. } => {
-                context_editor.update(cx, |context_editor, cx| {
+            ActiveView::TextThread {
+                text_thread_editor, ..
+            } => {
+                text_thread_editor.update(cx, |text_thread_editor, cx| {
                     TextThreadEditor::insert_dragged_files(
-                        context_editor,
+                        text_thread_editor,
                         paths,
                         added_worktrees,
                         window,
@@ -2425,7 +2435,7 @@ impl Render for AgentPanel {
                     .child(self.render_drag_target(cx)),
                 ActiveView::History => parent.child(self.acp_history.clone()),
                 ActiveView::TextThread {
-                    context_editor,
+                    text_thread_editor,
                     buffer_search_bar,
                     ..
                 } => {
@@ -2448,7 +2458,7 @@ impl Render for AgentPanel {
                             }
                         })
                         .child(self.render_text_thread(
-                            context_editor,
+                            text_thread_editor,
                             buffer_search_bar,
                             window,
                             cx,
@@ -2533,7 +2543,7 @@ impl AgentPanelDelegate for ConcreteAssistantPanelDelegate {
         cx: &mut Context<Workspace>,
     ) -> Option<Entity<TextThreadEditor>> {
         let panel = workspace.panel::<AgentPanel>(cx)?;
-        panel.read(cx).active_context_editor()
+        panel.read(cx).active_text_thread_editor()
     }
 
     fn open_local_text_thread(
@@ -2586,15 +2596,15 @@ impl AgentPanelDelegate for ConcreteAssistantPanelDelegate {
                     thread_view.update(cx, |thread_view, cx| {
                         thread_view.insert_selections(window, cx);
                     });
-                } else if let Some(context_editor) = panel.active_context_editor() {
+                } else if let Some(text_thread_editor) = panel.active_text_thread_editor() {
                     let snapshot = buffer.read(cx).snapshot(cx);
                     let selection_ranges = selection_ranges
                         .into_iter()
                         .map(|range| range.to_point(&snapshot))
                         .collect::<Vec<_>>();
 
-                    context_editor.update(cx, |context_editor, cx| {
-                        context_editor.quote_ranges(selection_ranges, snapshot, window, cx)
+                    text_thread_editor.update(cx, |text_thread_editor, cx| {
+                        text_thread_editor.quote_ranges(selection_ranges, snapshot, window, cx)
                     });
                 }
             });
