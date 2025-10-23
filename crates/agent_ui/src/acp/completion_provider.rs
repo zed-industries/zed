@@ -759,7 +759,7 @@ impl CompletionProvider for ContextPickerCompletionProvider {
                                 )),
                                 source: project::CompletionSource::Custom,
                                 icon_path: None,
-                                buffer_match: None, // todo! is this right?
+                                buffer_match: None,
                                 insert_text_mode: None,
                                 confirm: Some(Arc::new({
                                     let editor = editor.clone();
