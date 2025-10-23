@@ -330,6 +330,7 @@ impl Editor {
             }
         };
 
+        let multi_buffer = self.buffer().clone();
         let Some(inlay_hints) = self.inlay_hints.as_mut() else {
             return;
         };
@@ -365,6 +366,9 @@ impl Editor {
 
         let all_affected_buffers = Arc::new(Mutex::new(all_affected_buffers));
         for (buffer_id, visible_excerpts) in buffers_to_query {
+            let Some(buffer) = multi_buffer.read(cx).buffer(buffer_id) else {
+                continue;
+            };
             let fetched_tasks = inlay_hints.hint_chunk_fetched.entry(buffer_id).or_default();
             if visible_excerpts
                 .buffer_version
@@ -376,7 +380,7 @@ impl Editor {
             }
 
             let applicable_chunks =
-                semantics_provider.applicable_inlay_chunks(buffer_id, &visible_excerpts.ranges, cx);
+                semantics_provider.applicable_inlay_chunks(&buffer, &visible_excerpts.ranges, cx);
 
             match inlay_hints
                 .hint_refresh_tasks

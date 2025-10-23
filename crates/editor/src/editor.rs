@@ -22603,9 +22603,9 @@ pub trait SemanticsProvider {
 
     fn applicable_inlay_chunks(
         &self,
-        buffer_id: BufferId,
+        buffer: &Entity<Buffer>,
         ranges: &[Range<text::Anchor>],
-        cx: &App,
+        cx: &mut App,
     ) -> Vec<Range<BufferRow>>;
 
     fn invalidate_inlay_hints(&self, for_buffers: &HashSet<BufferId>, cx: &mut App);
@@ -23112,14 +23112,13 @@ impl SemanticsProvider for Entity<Project> {
 
     fn applicable_inlay_chunks(
         &self,
-        buffer_id: BufferId,
+        buffer: &Entity<Buffer>,
         ranges: &[Range<text::Anchor>],
-        cx: &App,
+        cx: &mut App,
     ) -> Vec<Range<BufferRow>> {
-        self.read(cx)
-            .lsp_store()
-            .read(cx)
-            .applicable_inlay_chunks(buffer_id, ranges)
+        self.read(cx).lsp_store().update(cx, |lsp_store, cx| {
+            lsp_store.applicable_inlay_chunks(buffer, ranges, cx)
+        })
     }
 
     fn invalidate_inlay_hints(&self, for_buffers: &HashSet<BufferId>, cx: &mut App) {
