@@ -1891,14 +1891,10 @@ impl Editor {
                     }
                     project::Event::LanguageServerBufferRegistered { buffer_id, .. } => {
                         let buffer_id = *buffer_id;
-                        log::debug!("LanguageServerBufferRegistered event for buffer {buffer_id}");
                         if let Some(_buffer) = editor.buffer().read(cx).buffer(buffer_id) {
                             editor.register_buffer(buffer_id, cx);
                             editor.update_lsp_data(Some(buffer_id), window, cx);
-                            editor.refresh_inlay_hints(
-                                InlayHintRefreshReason::NewLinesShown,
-                                cx,
-                            );
+                            editor.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
                             refresh_linked_ranges(editor, window, cx);
                             editor.refresh_code_actions(window, cx);
                             editor.refresh_document_highlights(cx);
@@ -1906,8 +1902,9 @@ impl Editor {
                         }
                     }
 
-                    project::Event::LanguageServerIndexingComplete { language_server_id } => {
-                        log::trace!("LSP server {language_server_id:?} indexing complete, requesting full tokens");
+                    project::Event::LanguageServerIndexingComplete {
+                        language_server_id: _,
+                    } => {
                         editor.refresh_semantic_tokens(None, cx);
                     }
 
@@ -22025,7 +22022,6 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        log::debug!("update_lsp_data called with for_buffer={:?}", for_buffer);
         self.pull_diagnostics(for_buffer, window, cx);
         self.refresh_colors_for_visible_range(for_buffer, window, cx);
     }
@@ -22147,21 +22143,14 @@ impl Editor {
                                 };
 
                                 if editor.pending_semantic_token_requests.contains(&buffer_id) {
-                                    log::trace!("Skipping duplicate semantic token request for buffer {buffer_id}");
                                     continue;
                                 }
 
                                 let max_lines = EditorSettings::get_global(cx).semantic_tokens_max_file_lines;
                                 let line_count = buffer.read(cx).max_point().row + 1;
                                 if line_count > max_lines {
-                                    log::debug!(
-                                        "Skipping semantic tokens for buffer {buffer_id}: {} lines exceeds limit of {}",
-                                        line_count, max_lines
-                                    );
                                     continue;
                                 }
-
-                                log::debug!("Requesting semantic tokens for buffer {buffer_id} ({} lines)", line_count);
                                 editor.pending_semantic_token_requests.insert(buffer_id);
 
                                 let project = project.clone();
@@ -22183,15 +22172,8 @@ impl Editor {
                                     };
 
                                     match lsp_task.await {
-                                        Ok(tokens) if tokens.server_id.is_some() => {
-                                            log::debug!(
-                                                "Semantic tokens received for buffer {buffer_id}, server {:?}",
-                                                tokens.server_id
-                                            );
-                                        }
-                                        Ok(_) => {
-                                            log::debug!("LSP not ready for buffer {buffer_id}");
-                                        }
+                                        Ok(tokens) if tokens.server_id.is_some() => {}
+                                        Ok(_) => {}
                                         Err(e) => {
                                             log::warn!("Failed to fetch semantic tokens for buffer {buffer_id}: {e:#}");
                                         }
