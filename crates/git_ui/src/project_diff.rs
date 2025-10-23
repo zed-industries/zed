@@ -640,16 +640,12 @@ impl Item for ProjectDiff {
         _workspace_id: Option<workspace::WorkspaceId>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Task<Option<Entity<Self>>>
+    ) -> Option<Entity<Self>>
     where
         Self: Sized,
     {
-        let Some(workspace) = self.workspace.upgrade() else {
-            return Task::ready(None);
-        };
-        Task::ready(Some(cx.new(|cx| {
-            ProjectDiff::new(self.project.clone(), workspace, window, cx)
-        })))
+        let workspace = self.workspace.upgrade()?;
+        Some(cx.new(|cx| ProjectDiff::new(self.project.clone(), workspace, window, cx)))
     }
 
     fn is_dirty(&self, cx: &App) -> bool {

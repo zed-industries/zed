@@ -6,7 +6,7 @@ use call::{RemoteVideoTrack, RemoteVideoTrackView, Room};
 use client::{User, proto::PeerId};
 use gpui::{
     AppContext as _, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement,
-    ParentElement, Render, SharedString, Styled, Task, div,
+    ParentElement, Render, SharedString, Styled, div,
 };
 use std::sync::Arc;
 use ui::{Icon, IconName, prelude::*};
@@ -114,14 +114,14 @@ impl Item for SharedScreen {
         _workspace_id: Option<WorkspaceId>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Task<Option<Entity<Self>>> {
-        Task::ready(Some(cx.new(|cx| Self {
+    ) -> Option<Entity<Self>> {
+        Some(cx.new(|cx| Self {
             view: self.view.update(cx, |view, cx| view.clone(window, cx)),
             peer_id: self.peer_id,
             user: self.user.clone(),
             nav_history: Default::default(),
             focus: cx.focus_handle(),
-        })))
+        }))
     }
 
     fn to_item_events(event: &Self::Event, mut f: impl FnMut(ItemEvent)) {
