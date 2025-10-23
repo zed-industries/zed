@@ -1,3 +1,4 @@
+use chrono::{DateTime, Local, Utc};
 use time::{OffsetDateTime, UtcOffset};
 
 /// The formatting style for a timestamp.
@@ -426,7 +427,25 @@ fn format_timestamp_fallback(timestamp: OffsetDateTime, reference: OffsetDateTim
         .get_or_init(|| sys_locale::get_locale().unwrap_or_else(|| String::from("en-US")));
 
     let is_12_hour_time = is_12_hour_time_by_locale(current_locale.as_str());
-    format_timestamp_naive(timestamp, reference, is_12_hour_time)
+
+    let local_offset = get_local_offset(timestamp);
+    let timestamp_local = timestamp.to_offset(local_offset);
+    let reference_local = reference.to_offset(local_offset);
+
+    format_timestamp_naive(timestamp_local, reference_local, is_12_hour_time)
+}
+
+/// Returns the local timezone offset at the given timestamp.
+pub fn get_local_offset(timestamp: OffsetDateTime) -> UtcOffset {
+    let chrono_utc =
+        DateTime::<Utc>::from_timestamp(timestamp.unix_timestamp(), timestamp.nanosecond())
+            .expect("invalid timestamp");
+
+    let chrono_local: DateTime<Local> = chrono_utc.with_timezone(&Local);
+
+    let offset_seconds = chrono_local.offset().local_minus_utc();
+
+    UtcOffset::from_whole_seconds(offset_seconds).unwrap_or(UtcOffset::UTC)
 }
 
 /// Returns `true` if the locale is recognized as a 12-hour time locale.
