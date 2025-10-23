@@ -983,7 +983,9 @@
     "bindings": {
       "ctrl-h": "editor::Backspace",
       "ctrl-u": "editor::DeleteToBeginningOfLine",
-      "ctrl-w": "editor::DeleteToPreviousWordStart"
+      "ctrl-w": "editor::DeleteToPreviousWordStart",
+      "ctrl-p": "menu::SelectPrevious",
+      "ctrl-n": "menu::SelectNext"
     }
   },
   {
