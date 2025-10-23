@@ -352,6 +352,16 @@ impl<D: PickerDelegate> Picker<D> {
         self
     }
 
+    pub fn list_measure_all(mut self) -> Self {
+        match self.element_container {
+            ElementContainer::List(state) => {
+                self.element_container = ElementContainer::List(state.measure_all());
+            }
+            _ => {}
+        }
+        self
+    }
+
     pub fn focus(&self, window: &mut Window, cx: &mut App) {
         self.focus_handle(cx).focus(window);
     }

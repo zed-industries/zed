@@ -96,7 +96,9 @@ impl NewProcessModal {
                     let debug_picker = cx.new(|cx| {
                         let delegate =
                             DebugDelegate::new(debug_panel.downgrade(), task_store.clone());
-                        Picker::uniform_list(delegate, window, cx).modal(false)
+                        Picker::list(delegate, window, cx)
+                            .modal(false)
+                            .list_measure_all()
                     });
 
                     let configure_mode = ConfigureMode::new(window, cx);
