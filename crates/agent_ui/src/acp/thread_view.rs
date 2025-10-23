@@ -3108,7 +3108,7 @@ impl AcpThreadView {
             .is_some()
             && self
                 .history_store
-                .update(cx, |history_store, cx| !history_store.is_empty(cx.as_ref()));
+                .update(cx, |history_store, cx| !history_store.is_empty(&*cx));
 
         v_flex()
             .size_full()
