@@ -1648,10 +1648,15 @@ impl ExternalAgentServer for LocalCodex {
                         .into_iter()
                         .find(|asset| asset.name == asset_name)
                         .with_context(|| format!("no asset found matching `{asset_name:?}`"))?;
+                    // Strip "sha256:" prefix from digest if present (GitHub API format)
+                    let digest = asset
+                        .digest
+                        .as_deref()
+                        .and_then(|d| d.strip_prefix("sha256:").or(Some(d)));
                     ::http_client::github_download::download_server_binary(
                         &*http,
                         &asset.browser_download_url,
-                        asset.digest.as_deref(),
+                        digest,
                         &version_dir,
                         if cfg!(target_os = "windows") && cfg!(target_arch = "x86_64") {
                             AssetKind::Zip
@@ -2054,21 +2059,55 @@ impl ExternalAgentServer for LocalExtensionGithubReleaseAgent {
 
             let version_dir = dir.join(&tag);
             if !fs.is_dir(&version_dir).await {
+                // Determine platform-specific values for pattern substitution
+                let arch = if cfg!(target_arch = "x86_64") {
+                    "x86_64"
+                } else if cfg!(target_arch = "aarch64") {
+                    "aarch64"
+                } else {
+                    "unknown"
+                };
+
+                let platform = if cfg!(target_os = "macos") {
+                    "apple-darwin"
+                } else if cfg!(target_os = "windows") {
+                    "pc-windows-msvc"
+                } else if cfg!(target_os = "linux") {
+                    "unknown-linux-gnu"
+                } else {
+                    "unknown"
+                };
+
+                let ext = if cfg!(target_os = "windows") {
+                    "zip"
+                } else {
+                    "tar.gz"
+                };
+
+                // Substitute platform variables in pattern: {arch}, {platform}, {ext}
+                let expanded_pattern = asset_pattern
+                    .replace("{arch}", arch)
+                    .replace("{platform}", platform)
+                    .replace("{ext}", ext);
+
                 // Find matching asset
                 let asset = release
                     .assets
                     .into_iter()
                     .find(|asset| {
                         // Simple glob-like matching - supports wildcards like "*" in pattern
-                        let pattern = asset_pattern.replace("*", ".*");
+                        let pattern = expanded_pattern.replace("*", ".*");
                         if let Ok(re) = regex::Regex::new(&format!("^{}$", pattern)) {
                             re.is_match(&asset.name)
                         } else {
-                            asset.name.contains(&asset_pattern)
+                            asset.name.contains(&expanded_pattern)
                         }
                     })
                     .with_context(|| {
-                        format!("no asset found matching pattern `{}`", asset_pattern)
+                        format!(
+                            "no asset found matching pattern `{}` (expanded to `{}`)",
+                            asset_pattern, expanded_pattern
+                        )
                     })?;
 
                 // Determine archive type from asset name
@@ -2081,10 +2120,15 @@ impl ExternalAgentServer for LocalExtensionGithubReleaseAgent {
                 };
 
                 // Download and extract
+                // Strip "sha256:" prefix from digest if present (GitHub API format)
+                let digest = asset
+                    .digest
+                    .as_deref()
+                    .and_then(|d| d.strip_prefix("sha256:").or(Some(d)));
                 ::http_client::github_download::download_server_binary(
                     &*http_client,
                     &asset.browser_download_url,
-                    asset.digest.as_deref(),
+                    digest,
                     &version_dir,
                     asset_kind,
                 )
