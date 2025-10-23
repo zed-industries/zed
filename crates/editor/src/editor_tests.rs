@@ -12615,18 +12615,6 @@ async fn test_strip_whitespace_and_format_via_lsp(cx: &mut TestAppContext) {
     )
     .await;
 
-    cx.run_until_parked();
-    // Set up a buffer white some trailing whitespace and no trailing newline.
-    cx.set_state(
-        &[
-            "one ",   //
-            "twoˇ",   //
-            "three ", //
-            "four",   //
-        ]
-        .join("\n"),
-    );
-
     // Record which buffer changes have been sent to the language server
     let buffer_changes = Arc::new(Mutex::new(Vec::new()));
     cx.lsp
@@ -12641,8 +12629,6 @@ async fn test_strip_whitespace_and_format_via_lsp(cx: &mut TestAppContext) {
                 );
             }
         });
-    cx.run_until_parked();
-
     // Handle formatting requests to the language server.
     cx.lsp
         .set_request_handler::<lsp::request::Formatting, _, _>({
@@ -12690,6 +12676,18 @@ async fn test_strip_whitespace_and_format_via_lsp(cx: &mut TestAppContext) {
                 }
             }
         });
+
+    // Set up a buffer white some trailing whitespace and no trailing newline.
+    cx.set_state(
+        &[
+            "one ",   //
+            "twoˇ",   //
+            "three ", //
+            "four",   //
+        ]
+        .join("\n"),
+    );
+    cx.run_until_parked();
 
     // Submit a format request.
     let format = cx

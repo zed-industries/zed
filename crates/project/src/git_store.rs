@@ -301,9 +301,13 @@ pub enum RepositoryState {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RepositoryEvent {
-    Updated { full_scan: bool, new_instance: bool },
+    StatusesChanged {
+        // TODO could report which statuses changed here
+        full_scan: bool,
+    },
     MergeHeadsChanged,
-    PathsChanged,
+    BranchChanged,
+    StashEntriesChanged,
 }
 
 #[derive(Clone, Debug)]
@@ -313,7 +317,7 @@ pub struct JobsUpdated;
 pub enum GitStoreEvent {
     ActiveRepositoryChanged(Option<RepositoryId>),
     RepositoryUpdated(RepositoryId, RepositoryEvent, bool),
-    RepositoryAdded(RepositoryId),
+    RepositoryAdded,
     RepositoryRemoved(RepositoryId),
     IndexWriteError(anyhow::Error),
     JobsUpdated,
@@ -1218,7 +1222,7 @@ impl GitStore {
                 self._subscriptions
                     .push(cx.subscribe(&repo, Self::on_jobs_updated));
                 self.repositories.insert(id, repo);
-                cx.emit(GitStoreEvent::RepositoryAdded(id));
+                cx.emit(GitStoreEvent::RepositoryAdded);
                 self.active_repo_id.get_or_insert_with(|| {
                     cx.emit(GitStoreEvent::ActiveRepositoryChanged(Some(id)));
                     id
@@ -1485,11 +1489,10 @@ impl GitStore {
             let id = RepositoryId::from_proto(update.id);
             let client = this.upstream_client().context("no upstream client")?;
 
-            let mut is_new = false;
+            let mut repo_subscription = None;
             let repo = this.repositories.entry(id).or_insert_with(|| {
-                is_new = true;
                 let git_store = cx.weak_entity();
-                cx.new(|cx| {
+                let repo = cx.new(|cx| {
                     Repository::remote(
                         id,
                         Path::new(&update.abs_path).into(),
@@ -1499,16 +1502,16 @@ impl GitStore {
                         git_store,
                         cx,
                     )
-                })
+                });
+                repo_subscription = Some(cx.subscribe(&repo, Self::on_repository_event));
+                cx.emit(GitStoreEvent::RepositoryAdded);
+                repo
             });
-            if is_new {
-                this._subscriptions
-                    .push(cx.subscribe(repo, Self::on_repository_event))
-            }
+            this._subscriptions.extend(repo_subscription);
 
             repo.update(cx, {
                 let update = update.clone();
-                |repo, cx| repo.apply_remote_update(update, is_new, cx)
+                |repo, cx| repo.apply_remote_update(update, cx)
             })?;
 
             this.active_repo_id.get_or_insert_with(|| {
@@ -3877,18 +3880,15 @@ impl Repository {
                     environment,
                     ..
                 } => {
+                    // TODO would be nice to not have to do this manually
                     let result = backend.stash_drop(index, environment).await;
                     if result.is_ok()
                         && let Ok(stash_entries) = backend.stash_entries().await
                     {
                         let snapshot = this.update(&mut cx, |this, cx| {
                             this.snapshot.stash_entries = stash_entries;
-                            let snapshot = this.snapshot.clone();
-                            cx.emit(RepositoryEvent::Updated {
-                                full_scan: false,
-                                new_instance: false,
-                            });
-                            snapshot
+                            cx.emit(RepositoryEvent::StashEntriesChanged);
+                            this.snapshot.clone()
                         })?;
                         if let Some(updates_tx) = updates_tx {
                             updates_tx
@@ -4048,18 +4048,15 @@ impl Repository {
                                 cx.clone(),
                             )
                             .await;
+                        // TODO would be nice to not have to do this manually
                         if result.is_ok() {
                             let branches = backend.branches().await?;
                             let branch = branches.into_iter().find(|branch| branch.is_head);
                             log::info!("head branch after scan is {branch:?}");
                             let snapshot = this.update(&mut cx, |this, cx| {
                                 this.snapshot.branch = branch;
-                                let snapshot = this.snapshot.clone();
-                                cx.emit(RepositoryEvent::Updated {
-                                    full_scan: false,
-                                    new_instance: false,
-                                });
-                                snapshot
+                                cx.emit(RepositoryEvent::BranchChanged);
+                                this.snapshot.clone()
                             })?;
                             if let Some(updates_tx) = updates_tx {
                                 updates_tx
@@ -4458,7 +4455,6 @@ impl Repository {
     pub(crate) fn apply_remote_update(
         &mut self,
         update: proto::UpdateRepository,
-        is_new: bool,
         cx: &mut Context<Self>,
     ) -> Result<()> {
         let conflicted_paths = TreeSet::from_ordered_entries(
@@ -4467,21 +4463,30 @@ impl Repository {
                 .into_iter()
                 .filter_map(|path| RepoPath::from_proto(&path).log_err()),
         );
-        self.snapshot.branch = update.branch_summary.as_ref().map(proto_to_branch);
-        self.snapshot.head_commit = update
+        let new_branch = update.branch_summary.as_ref().map(proto_to_branch);
+        let new_head_commit = update
             .head_commit_details
             .as_ref()
             .map(proto_to_commit_details);
+        if self.snapshot.branch != new_branch || self.snapshot.head_commit != new_head_commit {
+            cx.emit(RepositoryEvent::BranchChanged)
+        }
+        self.snapshot.branch = new_branch;
+        self.snapshot.head_commit = new_head_commit;
 
         self.snapshot.merge.conflicted_paths = conflicted_paths;
         self.snapshot.merge.message = update.merge_message.map(SharedString::from);
-        self.snapshot.stash_entries = GitStash {
+        let new_stash_entries = GitStash {
             entries: update
                 .stash_entries
                 .iter()
                 .filter_map(|entry| proto_to_stash(entry).ok())
                 .collect(),
         };
+        if self.snapshot.stash_entries != new_stash_entries {
+            cx.emit(RepositoryEvent::StashEntriesChanged)
+        }
+        self.snapshot.stash_entries = new_stash_entries;
 
         let edits = update
             .removed_statuses
@@ -4500,14 +4505,13 @@ impl Repository {
                     }),
             )
             .collect::<Vec<_>>();
+        if !edits.is_empty() {
+            cx.emit(RepositoryEvent::StatusesChanged { full_scan: true });
+        }
         self.snapshot.statuses_by_path.edit(edits, ());
         if update.is_last_update {
             self.snapshot.scan_id = update.scan_id;
         }
-        cx.emit(RepositoryEvent::Updated {
-            full_scan: true,
-            new_instance: is_new,
-        });
         Ok(())
     }
 
@@ -4830,21 +4834,17 @@ impl Repository {
                     .await;
 
                 this.update(&mut cx, |this, cx| {
-                    let needs_update = !changed_path_statuses.is_empty()
-                        || this.snapshot.stash_entries != stash_entries;
-                    this.snapshot.stash_entries = stash_entries;
+                    if this.snapshot.stash_entries != stash_entries {
+                        cx.emit(RepositoryEvent::StashEntriesChanged);
+                        this.snapshot.stash_entries = stash_entries;
+                    }
+
                     if !changed_path_statuses.is_empty() {
+                        cx.emit(RepositoryEvent::StatusesChanged { full_scan: false });
                         this.snapshot
                             .statuses_by_path
                             .edit(changed_path_statuses, ());
                         this.snapshot.scan_id += 1;
-                    }
-
-                    if needs_update {
-                        cx.emit(RepositoryEvent::Updated {
-                            full_scan: false,
-                            new_instance: false,
-                        });
                     }
 
                     if let Some(updates_tx) = updates_tx {
@@ -4854,7 +4854,6 @@ impl Repository {
                             ))
                             .ok();
                     }
-                    cx.emit(RepositoryEvent::PathsChanged);
                 })
             },
         );
@@ -5117,20 +5116,12 @@ async fn compute_snapshot(
         MergeDetails::load(&backend, &statuses_by_path, &prev_snapshot).await?;
     log::debug!("new merge details (changed={merge_heads_changed:?}): {merge_details:?}");
 
-    if merge_heads_changed
-        || branch != prev_snapshot.branch
-        || statuses_by_path != prev_snapshot.statuses_by_path
-    {
-        events.push(RepositoryEvent::Updated {
-            full_scan: true,
-            new_instance: false,
-        });
-    }
-
-    // Cache merge conflict paths so they don't change from staging/unstaging,
-    // until the merge heads change (at commit time, etc.).
     if merge_heads_changed {
         events.push(RepositoryEvent::MergeHeadsChanged);
+    }
+
+    if statuses_by_path != prev_snapshot.statuses_by_path {
+        events.push(RepositoryEvent::StatusesChanged { full_scan: true })
     }
 
     // Useful when branch is None in detached head state
@@ -5138,6 +5129,10 @@ async fn compute_snapshot(
         Some(head_sha) => backend.show(head_sha).await.log_err(),
         None => None,
     };
+
+    if branch != prev_snapshot.branch || head_commit != prev_snapshot.head_commit {
+        events.push(RepositoryEvent::BranchChanged);
+    }
 
     // Used by edit prediction data collection
     let remote_origin_url = backend.remote_url("origin");

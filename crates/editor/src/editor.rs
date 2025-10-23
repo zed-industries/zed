@@ -156,7 +156,7 @@ use project::{
         },
         session::{Session, SessionEvent},
     },
-    git_store::{GitStoreEvent, RepositoryEvent},
+    git_store::GitStoreEvent,
     lsp_store::{
         CacheInlayHints, CompletionDocumentation, FormatTrigger, LspFormatTarget,
         OpenLspBufferHandle,
@@ -1978,14 +1978,7 @@ impl Editor {
             let git_store = project.read(cx).git_store().clone();
             let project = project.clone();
             project_subscriptions.push(cx.subscribe(&git_store, move |this, _, event, cx| {
-                if let GitStoreEvent::RepositoryUpdated(
-                    _,
-                    RepositoryEvent::Updated {
-                        new_instance: true, ..
-                    },
-                    _,
-                ) = event
-                {
+                if let GitStoreEvent::RepositoryAdded = event {
                     this.load_diff_task = Some(
                         update_uncommitted_diff_for_buffer(
                             cx.entity(),
