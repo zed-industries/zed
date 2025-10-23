@@ -216,7 +216,7 @@ impl CursorPosition {
         text.push(')');
     }
 
-    fn short_label<'a>(name: &'a str) -> &'a str {
+    fn short_label(name: &str) -> &str {
         match name.char_indices().nth(1) {
             Some((index, _)) => &name[..index],
             None => name,
