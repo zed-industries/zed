@@ -110,34 +110,17 @@ pub fn match_fixed_path_set(
         AtomKind::Fuzzy,
     );
 
+    let path_prefix = worktree_root_name.unwrap_or(RelPath::empty().into());
+    let path_prefix_len = path_prefix.display(path_style).len();
+    let mut candidate_buf = dbg!(path_prefix.display(path_style).to_string());
     let mut results = Vec::with_capacity(candidates.len());
-    let (path_prefix, path_prefix_chars, lowercase_prefix) = match worktree_root_name {
-        Some(worktree_root_name) => {
-            let mut path_prefix_chars = worktree_root_name
-                .display(path_style)
-                .chars()
-                .collect::<Vec<_>>();
-            path_prefix_chars.extend(path_style.separator().chars());
-            let lowercase_pfx = path_prefix_chars
-                .iter()
-                .map(|c| c.to_ascii_lowercase())
-                .collect::<Vec<_>>();
-
-            (worktree_root_name, path_prefix_chars, lowercase_pfx)
-        }
-        None => (
-            RelPath::empty().into(),
-            Default::default(),
-            Default::default(),
-        ),
-    };
-
-    let mut results = Vec::new();
     for c in candidates {
         let mut indices = Vec::new();
         let mut buf = Vec::new();
+        candidate_buf.truncate(path_prefix_len);
+        candidate_buf.push_str(c.path.as_unix_str());
         if let Some(score) = pattern.indices(
-            nucleo::Utf32Str::new(&c.path.as_unix_str(), &mut buf),
+            nucleo::Utf32Str::new(&candidate_buf, &mut buf),
             &mut matcher,
             &mut indices,
         ) {
@@ -147,7 +130,7 @@ pub fn match_fixed_path_set(
                 positions: indices.into_iter().map(|n| n as usize).collect(),
                 is_dir: c.is_dir,
                 path: c.path.into(),
-                path_prefix: path_prefix.clone(),
+                path_prefix: Arc::clone(&path_prefix),
                 distance_to_relative_ancestor: usize::MAX,
             })
         };
@@ -160,38 +143,45 @@ pub fn match_fixed_path_set(
     results
 }
 
-// pub fn path_match_helper<'a>(
-//     matcher: &mut nucleo::Matcher,
-//     pattern: &Pattern,
-//     candidates: impl Iterator<Item = PathMatchCandidate<'a>>,
-//     worktree_id: usize,
-//     relative_to: &Option<Arc<RelPath>>,
-//     results: &mut Vec<PathMatch>,
-// ) {
-//     for c in candidates {
-//         let mut indices = Vec::new();
-//         let mut buf = Vec::new();
-//         if let Some(score) = pattern.indices(
-//             nucleo::Utf32Str::new(&c.path.as_unix_str(), &mut buf),
-//             matcher,
-//             &mut indices,
-//         ) {
-//             results.push(PathMatch {
-//                 score: score as f64,
-//                 worktree_id,
-//                 positions: indices.into_iter().map(|n| n as usize).collect(),
-//                 is_dir: c.is_dir,
-//                 path: c.path.into(),
-//                 path_prefix: RelPath::empty().into(),
-//                 distance_to_relative_ancestor: relative_to
-//                     .as_ref()
-//                     .map_or(usize::MAX, |relative_to| {
-//                         distance_between_paths(c.path, relative_to.as_ref())
-//                     }),
-//             })
-//         };
-//     }
-// }
+pub fn path_match_helper<'a>(
+    matcher: &mut nucleo::Matcher,
+    pattern: &Pattern,
+    candidates: impl Iterator<Item = PathMatchCandidate<'a>>,
+    worktree_id: usize,
+    relative_to: &Option<Arc<RelPath>>,
+    path_style: PathStyle,
+    results: &mut Vec<PathMatch>,
+) {
+    let path_prefix = relative_to.clone().unwrap_or(RelPath::empty().into());
+    let path_prefix_len = path_prefix.display(path_style).len();
+    let mut candidate_buf = dbg!(path_prefix.display(path_style).to_string());
+    for c in candidates {
+        let mut indices = Vec::new();
+        let mut buf = Vec::new();
+        candidate_buf.truncate(path_prefix_len);
+        candidate_buf.push_str(c.path.as_unix_str());
+        if let Some(score) = pattern.indices(
+            nucleo::Utf32Str::new(&candidate_buf, &mut buf),
+            matcher,
+            &mut indices,
+        ) {
+
+            results.push(PathMatch {
+                score: score as f64,
+                worktree_id,
+                positions: indices.into_iter().map(|n| n as usize).collect(),
+                is_dir: c.is_dir,
+                path: c.path.into(),
+                path_prefix: Arc::clone(&path_prefix),
+                distance_to_relative_ancestor: relative_to
+                    .as_ref()
+                    .map_or(usize::MAX, |relative_to| {
+                        distance_between_paths(c.path, relative_to.as_ref())
+                    }),
+            })
+        };
+    }
+}
 
 /// Query should contain spaces if you want it to be matched out of order
 /// for example: 'audio Cargo' matching 'audio/Cargo.toml'
