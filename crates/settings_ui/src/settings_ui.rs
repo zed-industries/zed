@@ -2575,17 +2575,23 @@ impl SettingsWindow {
                     Banner::new()
                         .severity(Severity::Warning)
                         .child(
-                            Label::new("Your Settings File is in an Invalid State. Setting Values May Be Incorrect, and Changes May Be Lost")
-                                .size(LabelSize::Large),
+                            v_flex()
+                                .my_0p5()
+                                .gap_0p5()
+                                .child(Label::new("Your settings file is in an invalid state."))
+                                .child(
+                                    Label::new(error).size(LabelSize::Small).color(Color::Muted),
+                                ),
                         )
-                        .child(Label::new(error).size(LabelSize::Small).color(Color::Muted))
                         .action_slot(
-                            Button::new("fix-in-json", "Fix in settings.json")
-                                .tab_index(0_isize)
-                                .style(ButtonStyle::OutlinedGhost)
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.open_current_settings_file(cx);
-                                })),
+                            div().pr_1().child(
+                                Button::new("fix-in-json", "Fix in settings.json")
+                                    .tab_index(0_isize)
+                                    .style(ButtonStyle::Tinted(ui::TintColor::Warning))
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.open_current_settings_file(cx);
+                                    })),
+                            ),
                         ),
                 )
                 .into_any_element()
@@ -2652,8 +2658,6 @@ impl SettingsWindow {
                 }
                 window.focus_prev();
             }))
-            .child(warning_banner)
-            .child(page_header)
             .when(sub_page_stack().is_empty(), |this| {
                 this.vertical_scrollbar_for(self.list_state.clone(), window, cx)
             })
@@ -2665,6 +2669,8 @@ impl SettingsWindow {
             .pt_6()
             .px_8()
             .bg(cx.theme().colors().editor_background)
+            .child(warning_banner)
+            .child(page_header)
             .child(
                 div()
                     .size_full()
