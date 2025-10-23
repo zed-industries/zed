@@ -2009,8 +2009,25 @@ impl AgentPanel {
             });
 
         let selected_agent_label = self.selected_agent.label();
+
+        // Get custom icon path for external agents
+        let custom_icon_path = if let AgentType::Custom { name, .. } = &self.selected_agent {
+            agent_server_store
+                .read(cx)
+                .agent_icon(&ExternalAgentServerName(name.clone()))
+        } else {
+            None
+        };
+
         let selected_agent = div()
             .id("selected_agent_icon")
+            .when_some(custom_icon_path, |this, icon_path| {
+                this.px(DynamicSpacing::Base02.rems(cx))
+                    .child(Icon::from_path(icon_path).color(Color::Muted))
+                    .tooltip(move |_window, cx| {
+                        Tooltip::with_meta(selected_agent_label.clone(), None, "Selected Agent", cx)
+                    })
+            })
             .when_some(self.selected_agent.icon(), |this, icon| {
                 this.px(DynamicSpacing::Base02.rems(cx))
                     .child(Icon::new(icon).color(Color::Muted))
