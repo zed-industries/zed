@@ -118,9 +118,9 @@ impl ModeSelector {
                                         ))
                                         .child(div().map(|this| {
                                             if is_default {
-                                                this.child("to also unset as default")
+                                                this.child("to unset as default")
                                             } else {
-                                                this.child("to also set as default")
+                                                this.child("to toggle as default")
                                             }
                                         })),
                                 )
@@ -144,6 +144,12 @@ impl ModeSelector {
                                         } else {
                                             Some(mode_id.clone())
                                         },
+                                        this.fs.clone(),
+                                        cx,
+                                    );
+                                } else {
+                                    this.agent_server.set_default_mode(
+                                        Some(mode_id.clone()),
                                         this.fs.clone(),
                                         cx,
                                     );
