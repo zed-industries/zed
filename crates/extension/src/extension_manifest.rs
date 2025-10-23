@@ -160,6 +160,17 @@ pub struct AgentServerManifestEntry {
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
+pub struct TargetConfig {
+    /// Archive filename for this target (e.g., "myagent-darwin-arm64.zip")
+    pub archive: String,
+    /// Command to run (e.g., "./myagent" or "./myagent.exe")
+    pub cmd: String,
+    /// Command-line arguments to pass to the agent server.
+    #[serde(default)]
+    pub args: Vec<String>,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
 #[serde(untagged)]
 pub enum AgentServerLauncher {
     Npm {
@@ -175,26 +186,19 @@ pub enum AgentServerLauncher {
         repo: String,
         /// Exact tag/release to download (e.g., "v1.2.3")
         tag: String,
-        /// Command to run (e.g., "opencode")
-        cmd: String,
-        /// Command-line arguments to pass to the agent server.
-        #[serde(default)]
-        args: Vec<String>,
-        /// Target asset names for each platform/architecture combination.
+        /// Per-target configuration for each platform/architecture combination.
         /// The key format is "{os}-{arch}" where:
         /// - os: "darwin" (macOS), "linux", "windows"
         /// - arch: "aarch64" (arm64), "x86_64"
         ///
         /// Example:
         /// ```toml
-        /// [agent_servers.myagent.launcher.targets]
-        /// darwin-aarch64 = "myagent-darwin-arm64.zip"
-        /// darwin-x86_64 = "myagent-darwin-x64.zip"
-        /// linux-aarch64 = "myagent-linux-arm64.tar.gz"
-        /// linux-x86_64 = "myagent-linux-x64.tar.gz"
-        /// windows-x86_64 = "myagent-windows-x64.zip"
+        /// [agent_servers.myagent.launcher.targets.darwin-aarch64]
+        /// archive = "myagent-darwin-arm64.zip"
+        /// cmd = "./myagent"
+        /// args = ["--serve"]
         /// ```
-        targets: HashMap<String, String>,
+        targets: HashMap<String, TargetConfig>,
     },
     Binary {
         /// Command to run (e.g., "my-agent")
