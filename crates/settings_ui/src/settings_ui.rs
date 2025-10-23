@@ -2851,13 +2851,11 @@ impl SettingsWindow {
                 corresponding_workspace
                     .update(cx, |_, window, cx| {
                         cx.spawn_in(window, async move |workspace, cx| {
-                            if let Some(create_task) = create_task
-                                && create_task.await.is_err()
-                            {
-                                return;
-                            }
+                            if let Some(create_task) = create_task {
+                                create_task.await.ok()?;
+                            };
 
-                            let Some(open_task) = workspace
+                            workspace
                                 .update_in(cx, |workspace, window, cx| {
                                     workspace.open_path(
                                         (worktree_id, settings_path.clone()),
@@ -2867,19 +2865,18 @@ impl SettingsWindow {
                                         cx,
                                     )
                                 })
-                                .ok()
-                            else {
-                                return;
-                            };
+                                .ok()?
+                                .await
+                                .log_err()?;
 
-                            if open_task.await.log_err().is_some() {
-                                workspace
-                                    .update_in(cx, |_, window, cx| {
-                                        window.activate_window();
-                                        cx.notify();
-                                    })
-                                    .ok();
-                            }
+                            workspace
+                                .update_in(cx, |_, window, cx| {
+                                    window.activate_window();
+                                    cx.notify();
+                                })
+                                .ok();
+
+                            Some(())
                         })
                         .detach();
                     })
