@@ -2126,6 +2126,10 @@ impl BufferSnapshot {
         self.visible_text.reversed_bytes_in_range(start..end)
     }
 
+    /// Returns the text in the given range.
+    ///
+    /// Note: This always uses `\n` as the line separator, regardless of the buffer's
+    /// actual line ending setting.
     pub fn text_for_range<T: ToOffset>(&self, range: Range<T>) -> Chunks<'_> {
         let start = range.start.to_offset(self);
         let end = range.end.to_offset(self);

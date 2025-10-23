@@ -7232,26 +7232,18 @@ impl LspStore {
                     .map(|edit| {
                         let edit_start = edit.new.start.0;
                         let edit_end = edit_start + (edit.old.end.0 - edit.old.start.0);
-
-                        // Collect changed text and preserve line endings.
-                        // text_for_range returns chunks with normalized \n, so we need to
-                        // convert to the buffer's actual line ending for LSP.
-                        let new_text: String = next_snapshot
-                            .text_for_range(edit.new.start.1..edit.new.end.1)
-                            .collect();
-                        let new_text = if line_ending.as_str() != "\n" {
-                            new_text.replace('\n', line_ending.as_str())
-                        } else {
-                            new_text
-                        };
-
                         lsp::TextDocumentContentChangeEvent {
                             range: Some(lsp::Range::new(
                                 point_to_lsp(edit_start),
                                 point_to_lsp(edit_end),
                             )),
                             range_length: None,
-                            text: new_text,
+                            // Collect changed text and preserve line endings.
+                            // text_for_range returns chunks with normalized \n, so we need to
+                            // convert to the buffer's actual line ending for LSP.
+                            text: line_ending.into_string(
+                                next_snapshot.text_for_range(edit.new.start.1..edit.new.end.1),
+                            ),
                         }
                     })
                     .collect()

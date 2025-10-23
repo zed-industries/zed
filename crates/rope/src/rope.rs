@@ -88,6 +88,21 @@ impl LineEnding {
             text
         }
     }
+
+    /// Converts text chunks into a [`String`] using the current line ending.
+    pub fn into_string(&self, chunks: Chunks<'_>) -> String {
+        match self {
+            LineEnding::Unix => chunks.collect(),
+            LineEnding::Windows => {
+                let line_ending = self.as_str();
+                let mut result = String::new();
+                for chunk in chunks {
+                    result.push_str(&chunk.replace('\n', line_ending));
+                }
+                result
+            }
+        }
+    }
 }
 
 #[derive(Clone, Default)]
@@ -424,20 +439,7 @@ impl Rope {
     /// Use this method to convert to different line endings for file operations,
     /// LSP communication, or other scenarios requiring specific line ending formats.
     pub fn to_string_with_line_ending(&self, line_ending: LineEnding) -> String {
-        match line_ending {
-            LineEnding::Unix => {
-                // rope already uses \n internally
-                self.to_string()
-            }
-            LineEnding::Windows => {
-                let mut result = String::new();
-                let line_ending = line_ending.as_str();
-                for chunk in self.chunks() {
-                    result.push_str(&chunk.replace('\n', line_ending));
-                }
-                result
-            }
-        }
+        line_ending.into_string(self.chunks())
     }
 
     pub fn offset_to_offset_utf16(&self, offset: usize) -> OffsetUtf16 {
