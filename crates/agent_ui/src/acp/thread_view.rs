@@ -263,7 +263,7 @@ pub struct AcpThreadView {
     workspace: WeakEntity<Workspace>,
     project: Entity<Project>,
     thread_state: ThreadState,
-    auth_commands: HashMap<String, task::SpawnInTerminal>,
+    auth_commands: Option<task::SpawnInTerminal>,
     history_store: Entity<HistoryStore>,
     hovered_recent_history_item: Option<usize>,
     entry_view_state: Entity<EntryViewState>,
@@ -416,7 +416,7 @@ impl AcpThreadView {
                 window,
                 cx,
             ),
-            auth_commands: HashMap::default(),
+            auth_commands: None,
             message_editor,
             model_selector: None,
             profile_selector: None,
@@ -1058,7 +1058,7 @@ impl AcpThreadView {
             };
 
             let connection = thread.read(cx).connection().clone();
-            let can_login = !connection.auth_methods().is_empty() || !self.auth_commands.is_empty();
+            let can_login = !connection.auth_methods().is_empty() || self.auth_commands.is_some();
             // Does the agent have a specific logout command? Prefer that in case they need to reset internal state.
             let logout_supported = text == "/logout"
                 && self
@@ -1562,7 +1562,7 @@ impl AcpThreadView {
         self.thread_error.take();
         configuration_view.take();
         pending_auth_method.replace(method.clone());
-        let authenticate = if let Some(login) = self.auth_commands.get(method.0.as_ref()).cloned() {
+        let authenticate = if let Some(login) = self.auth_commands.clone() {
             if let Some(workspace) = self.workspace.upgrade() {
                 Self::spawn_external_agent_login(login, workspace, false, window, cx)
             } else {
@@ -6031,13 +6031,8 @@ pub(crate) mod tests {
             _root_dir: Option<&Path>,
             _delegate: AgentServerDelegate,
             _cx: &mut App,
-        ) -> Task<
-            gpui::Result<(
-                Rc<dyn AgentConnection>,
-                HashMap<String, task::SpawnInTerminal>,
-            )>,
-        > {
-            Task::ready(Ok((Rc::new(self.connection.clone()), HashMap::default())))
+        ) -> Task<gpui::Result<(Rc<dyn AgentConnection>, Option<task::SpawnInTerminal>)>> {
+            Task::ready(Ok((Rc::new(self.connection.clone()), None)))
         }
 
         fn into_any(self: Rc<Self>) -> Rc<dyn Any> {

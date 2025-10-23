@@ -4,7 +4,6 @@ use std::{any::Any, path::Path};
 use crate::{AgentServer, AgentServerDelegate, load_proxy_env};
 use acp_thread::AgentConnection;
 use anyhow::{Context as _, Result};
-use collections::HashMap;
 use gpui::{App, SharedString, Task};
 use language_models::provider::google::GoogleLanguageModelProvider;
 use project::agent_server_store::GEMINI_NAME;
@@ -30,12 +29,7 @@ impl AgentServer for Gemini {
         root_dir: Option<&Path>,
         delegate: AgentServerDelegate,
         cx: &mut App,
-    ) -> Task<
-        Result<(
-            Rc<dyn AgentConnection>,
-            HashMap<String, task::SpawnInTerminal>,
-        )>,
-    > {
+    ) -> Task<Result<(Rc<dyn AgentConnection>, Option<task::SpawnInTerminal>)>> {
         let name = self.name();
         let root_dir = root_dir.map(|root_dir| root_dir.to_string_lossy().into_owned());
         let is_remote = delegate.project.read(cx).is_via_remote_server();
@@ -53,7 +47,7 @@ impl AgentServer for Gemini {
             {
                 extra_env.insert("GEMINI_API_KEY".into(), api_key);
             }
-            let (command, root_dir, auth_commands) = store
+            let (command, root_dir, login_command) = store
                 .update(cx, |store, cx| {
                     let agent = store
                         .get_external_agent(&GEMINI_NAME.into())
@@ -77,7 +71,7 @@ impl AgentServer for Gemini {
                 cx,
             )
             .await?;
-            Ok((connection, auth_commands))
+            Ok((connection, login_command))
         })
     }
 

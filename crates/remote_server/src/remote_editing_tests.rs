@@ -1825,7 +1825,7 @@ async fn test_remote_external_agent_server(
         }
     );
     assert_eq!(&PathBuf::from(root), paths::home_dir());
-    assert!(login.is_empty());
+    assert!(login.is_none());
 }
 
 pub async fn init_test(
