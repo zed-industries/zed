@@ -440,6 +440,21 @@ impl Rope {
             })
     }
 
+    pub fn point_utf16_to_point(&self, point: PointUtf16) -> Point {
+        if point >= self.summary().lines_utf16() {
+            return self.summary().lines;
+        }
+        let mut cursor = self.chunks.cursor::<Dimensions<PointUtf16, Point>>(());
+        cursor.seek(&point, Bias::Left);
+        let overshoot = point - cursor.start().0;
+        cursor.start().1
+            + cursor.item().map_or(Point::zero(), |chunk| {
+                chunk
+                    .as_slice()
+                    .offset_to_point(chunk.as_slice().point_utf16_to_offset(overshoot, false))
+            })
+    }
+
     pub fn point_to_offset(&self, point: Point) -> usize {
         if point >= self.summary().lines {
             return self.summary().len;
@@ -451,8 +466,25 @@ impl Rope {
         start.1 + item.map_or(0, |chunk| chunk.as_slice().point_to_offset(overshoot))
     }
 
+    pub fn point_to_offset_utf16(&self, point: Point) -> OffsetUtf16 {
+        if point >= self.summary().lines {
+            return self.summary().len_utf16;
+        }
+        let mut cursor = self.chunks.cursor::<Dimensions<Point, OffsetUtf16>>(());
+        cursor.seek(&point, Bias::Left);
+        let overshoot = point - cursor.start().0;
+        cursor.start().1
+            + cursor.item().map_or(OffsetUtf16(0), |chunk| {
+                chunk.as_slice().point_to_offset_utf16(overshoot)
+            })
+    }
+
     pub fn point_utf16_to_offset(&self, point: PointUtf16) -> usize {
         self.point_utf16_to_offset_impl(point, false)
+    }
+
+    pub fn point_utf16_to_offset_utf16(&self, point: PointUtf16) -> OffsetUtf16 {
+        self.point_utf16_to_offset_utf16_impl(point, false)
     }
 
     pub fn unclipped_point_utf16_to_offset(&self, point: Unclipped<PointUtf16>) -> usize {
@@ -470,6 +502,23 @@ impl Rope {
         start.1
             + item.map_or(0, |chunk| {
                 chunk.as_slice().point_utf16_to_offset(overshoot, clip)
+            })
+    }
+
+    fn point_utf16_to_offset_utf16_impl(&self, point: PointUtf16, clip: bool) -> OffsetUtf16 {
+        if point >= self.summary().lines_utf16() {
+            return self.summary().len_utf16;
+        }
+        let mut cursor = self
+            .chunks
+            .cursor::<Dimensions<PointUtf16, OffsetUtf16>>(());
+        cursor.seek(&point, Bias::Left);
+        let overshoot = point - cursor.start().0;
+        cursor.start().1
+            + cursor.item().map_or(OffsetUtf16(0), |chunk| {
+                chunk
+                    .as_slice()
+                    .offset_to_offset_utf16(chunk.as_slice().point_utf16_to_offset(overshoot, clip))
             })
     }
 

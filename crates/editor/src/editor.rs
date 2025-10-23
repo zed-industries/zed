@@ -140,7 +140,6 @@ use mouse_context_menu::MouseContextMenu;
 use movement::TextLayoutDetails;
 use multi_buffer::{
     ExcerptInfo, ExpandExcerptDirection, MultiBufferDiffHunk, MultiBufferPoint, MultiBufferRow,
-    ToOffsetUtf16,
 };
 use parking_lot::Mutex;
 use persistence::DB;
