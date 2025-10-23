@@ -4097,8 +4097,6 @@ impl Editor {
         let snapshot = self.buffer.read(cx).read(cx);
         let mut clear_linked_edit_ranges = false;
 
-        let selections_len = selections.len();
-
         for (selection, autoclose_region) in
             self.selections_with_autoclose_regions(selections, &snapshot)
         {
@@ -4350,14 +4348,8 @@ impl Editor {
             let initial_buffer_versions =
                 jsx_tag_auto_close::construct_initial_buffer_versions_map(this, &edits, cx);
 
-            let autoindent = if selections_len > 1 {
-                None
-            } else {
-                this.autoindent_mode.clone()
-            };
-
             this.buffer.update(cx, |buffer, cx| {
-                buffer.edit(edits, autoindent, cx);
+                buffer.edit(edits, this.autoindent_mode.clone(), cx);
             });
             for (buffer, edits) in linked_edits {
                 buffer.update(cx, |buffer, cx| {
