@@ -3373,7 +3373,7 @@ fn render_theme_picker(
                 let file = file.clone();
                 let current_value = current_value.clone();
                 theme_picker(
-                    current_value.clone(),
+                    current_value,
                     move |theme_name, cx| {
                         update_settings_file(file.clone(), cx, move |settings, _cx| {
                             (field.write)(settings, Some(settings::ThemeName(theme_name.into())));
@@ -3417,7 +3417,7 @@ fn render_icon_theme_picker(
                 let file = file.clone();
                 let current_value = current_value.clone();
                 icon_theme_picker(
-                    current_value.clone(),
+                    current_value,
                     move |theme_name, cx| {
                         update_settings_file(file.clone(), cx, move |settings, _cx| {
                             (field.write)(
