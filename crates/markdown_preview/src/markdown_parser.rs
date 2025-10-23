@@ -2537,8 +2537,6 @@ fn latex_to_unicode(latex: &str) -> String {
                                     _ => num.push(ch),
                                 }
                             }
-
-                            // denominator
                             if chars.peek() == Some(&'{') {
                                 chars.next();
                                 let mut den = String::new();
