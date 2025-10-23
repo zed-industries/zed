@@ -206,39 +206,46 @@ impl EventEmitter<DismissEvent> for ContextMenu {}
 impl FluentBuilder for ContextMenu {}
 
 impl ContextMenu {
+    pub fn new(
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        f: impl FnOnce(Self, &mut Window, &mut Context<Self>) -> Self,
+    ) -> Self {
+        let focus_handle = cx.focus_handle();
+        let _on_blur_subscription = cx.on_blur(
+            &focus_handle,
+            window,
+            |this: &mut ContextMenu, window, cx| this.cancel(&menu::Cancel, window, cx),
+        );
+        window.refresh();
+
+        f(
+            Self {
+                builder: None,
+                items: Default::default(),
+                focus_handle,
+                action_context: None,
+                selected_index: None,
+                delayed: false,
+                clicked: false,
+                key_context: "menu".into(),
+                _on_blur_subscription,
+                keep_open_on_confirm: false,
+                documentation_aside: None,
+                fixed_width: None,
+                end_slot_action: None,
+            },
+            window,
+            cx,
+        )
+    }
+
     pub fn build(
         window: &mut Window,
         cx: &mut App,
         f: impl FnOnce(Self, &mut Window, &mut Context<Self>) -> Self,
     ) -> Entity<Self> {
-        cx.new(|cx| {
-            let focus_handle = cx.focus_handle();
-            let _on_blur_subscription = cx.on_blur(
-                &focus_handle,
-                window,
-                |this: &mut ContextMenu, window, cx| this.cancel(&menu::Cancel, window, cx),
-            );
-            window.refresh();
-            f(
-                Self {
-                    builder: None,
-                    items: Default::default(),
-                    focus_handle,
-                    action_context: None,
-                    selected_index: None,
-                    delayed: false,
-                    clicked: false,
-                    key_context: "menu".into(),
-                    _on_blur_subscription,
-                    keep_open_on_confirm: false,
-                    documentation_aside: None,
-                    fixed_width: None,
-                    end_slot_action: None,
-                },
-                window,
-                cx,
-            )
-        })
+        cx.new(|cx| Self::new(window, cx, f))
     }
 
     /// Builds a [`ContextMenu`] that will stay open when making changes instead of closing after each confirmation.

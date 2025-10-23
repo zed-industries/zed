@@ -764,14 +764,16 @@ impl SettingsPageItem {
                     });
 
                 let field = match field_renderer_or_warning {
-                    Ok(field_renderer) => field_renderer(
-                        settings_window,
-                        setting_item,
-                        file.clone(),
-                        setting_item.metadata.as_deref(),
-                        window,
-                        cx,
-                    ),
+                    Ok(field_renderer) => window.with_id(item_index, |window| {
+                        field_renderer(
+                            settings_window,
+                            setting_item,
+                            file.clone(),
+                            setting_item.metadata.as_deref(),
+                            window,
+                            cx,
+                        )
+                    }),
                     Err(warning) => render_settings_item(
                         settings_window,
                         setting_item,
@@ -3254,30 +3256,32 @@ where
         } else {
             current_value_label.to_string()
         },
-        ContextMenu::build(window, cx, move |mut menu, _, _| {
-            for (&value, &label) in std::iter::zip(variants(), labels()) {
-                let file = file.clone();
-                menu = menu.toggleable_entry(
-                    if should_do_titlecase {
-                        label.to_title_case()
-                    } else {
-                        label.to_string()
-                    },
-                    value == current_value,
-                    IconPosition::End,
-                    None,
-                    move |_, cx| {
-                        if value == current_value {
-                            return;
-                        }
-                        update_settings_file(file.clone(), cx, move |settings, _cx| {
-                            (field.write)(settings, Some(value));
-                        })
-                        .log_err(); // todo(settings_ui) don't log err
-                    },
-                );
-            }
-            menu
+        window.use_state(cx, |window, cx| {
+            ContextMenu::new(window, cx, move |mut menu, _, _| {
+                for (&value, &label) in std::iter::zip(variants(), labels()) {
+                    let file = file.clone();
+                    menu = menu.toggleable_entry(
+                        if should_do_titlecase {
+                            label.to_title_case()
+                        } else {
+                            label.to_string()
+                        },
+                        value == current_value,
+                        IconPosition::End,
+                        None,
+                        move |_, cx| {
+                            if value == current_value {
+                                return;
+                            }
+                            update_settings_file(file.clone(), cx, move |settings, _cx| {
+                                (field.write)(settings, Some(value));
+                            })
+                            .log_err(); // todo(settings_ui) don't log err
+                        },
+                    );
+                }
+                menu
+            })
         }),
     )
     .trigger_size(ButtonSize::Medium)
@@ -3305,7 +3309,7 @@ fn render_font_picker(
     field: SettingField<settings::FontFamilyName>,
     file: SettingsUiFile,
     _metadata: Option<&SettingsFieldMetadata>,
-    window: &mut Window,
+    _window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
     let current_value = SettingsStore::global(cx)
@@ -3314,26 +3318,29 @@ fn render_font_picker(
         .cloned()
         .unwrap_or_else(|| SharedString::default().into());
 
-    let font_picker = cx.new(|cx| {
-        font_picker(
-            current_value.clone().into(),
-            move |font_name, cx| {
-                update_settings_file(file.clone(), cx, move |settings, _cx| {
-                    (field.write)(settings, Some(font_name.into()));
-                })
-                .log_err(); // todo(settings_ui) don't log err
-            },
-            window,
-            cx,
-        )
-    });
-
     PopoverMenu::new("font-picker")
-        .menu(move |_window, _cx| Some(font_picker.clone()))
         .trigger(render_picker_trigger_button(
             "font_family_picker_trigger".into(),
-            current_value.into(),
+            current_value.clone().into(),
         ))
+        .menu(move |window, cx| {
+            let file = file.clone();
+            let current_value = current_value.clone();
+
+            Some(cx.new(move |cx| {
+                font_picker(
+                    current_value.clone().into(),
+                    move |font_name, cx| {
+                        update_settings_file(file.clone(), cx, move |settings, _cx| {
+                            (field.write)(settings, Some(font_name.into()));
+                        })
+                        .log_err(); // todo(settings_ui) don't log err
+                    },
+                    window,
+                    cx,
+                )
+            }))
+        })
         .anchor(gpui::Corner::TopLeft)
         .offset(gpui::Point {
             x: px(0.0),
@@ -3347,7 +3354,7 @@ fn render_theme_picker(
     field: SettingField<settings::ThemeName>,
     file: SettingsUiFile,
     _metadata: Option<&SettingsFieldMetadata>,
-    window: &mut Window,
+    _window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
     let (_, value) = SettingsStore::global(cx).get_value_from_file(file.to_settings(), field.pick);
@@ -3356,26 +3363,28 @@ fn render_theme_picker(
         .map(|theme_name| theme_name.0.into())
         .unwrap_or_else(|| cx.theme().name.clone());
 
-    let theme_picker = cx.new(|cx| {
-        theme_picker(
-            current_value.clone(),
-            move |theme_name, cx| {
-                update_settings_file(file.clone(), cx, move |settings, _cx| {
-                    (field.write)(settings, Some(settings::ThemeName(theme_name.into())));
-                })
-                .log_err(); // todo(settings_ui) don't log err
-            },
-            window,
-            cx,
-        )
-    });
-
     PopoverMenu::new("theme-picker")
-        .menu(move |_window, _cx| Some(theme_picker.clone()))
         .trigger(render_picker_trigger_button(
             "theme_picker_trigger".into(),
-            current_value,
+            current_value.clone(),
         ))
+        .menu(move |window, cx| {
+            Some(cx.new(|cx| {
+                let file = file.clone();
+                let current_value = current_value.clone();
+                theme_picker(
+                    current_value.clone(),
+                    move |theme_name, cx| {
+                        update_settings_file(file.clone(), cx, move |settings, _cx| {
+                            (field.write)(settings, Some(settings::ThemeName(theme_name.into())));
+                        })
+                        .log_err(); // todo(settings_ui) don't log err
+                    },
+                    window,
+                    cx,
+                )
+            }))
+        })
         .anchor(gpui::Corner::TopLeft)
         .offset(gpui::Point {
             x: px(0.0),
@@ -3389,7 +3398,7 @@ fn render_icon_theme_picker(
     field: SettingField<settings::IconThemeName>,
     file: SettingsUiFile,
     _metadata: Option<&SettingsFieldMetadata>,
-    window: &mut Window,
+    _window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
     let (_, value) = SettingsStore::global(cx).get_value_from_file(file.to_settings(), field.pick);
@@ -3398,26 +3407,31 @@ fn render_icon_theme_picker(
         .map(|theme_name| theme_name.0.into())
         .unwrap_or_else(|| cx.theme().name.clone());
 
-    let icon_theme_picker = cx.new(|cx| {
-        icon_theme_picker(
-            current_value.clone(),
-            move |theme_name, cx| {
-                update_settings_file(file.clone(), cx, move |settings, _cx| {
-                    (field.write)(settings, Some(settings::IconThemeName(theme_name.into())));
-                })
-                .log_err(); // todo(settings_ui) don't log err
-            },
-            window,
-            cx,
-        )
-    });
-
     PopoverMenu::new("icon-theme-picker")
-        .menu(move |_window, _cx| Some(icon_theme_picker.clone()))
         .trigger(render_picker_trigger_button(
             "icon_theme_picker_trigger".into(),
-            current_value,
+            current_value.clone(),
         ))
+        .menu(move |window, cx| {
+            Some(cx.new(|cx| {
+                let file = file.clone();
+                let current_value = current_value.clone();
+                icon_theme_picker(
+                    current_value.clone(),
+                    move |theme_name, cx| {
+                        update_settings_file(file.clone(), cx, move |settings, _cx| {
+                            (field.write)(
+                                settings,
+                                Some(settings::IconThemeName(theme_name.into())),
+                            );
+                        })
+                        .log_err(); // todo(settings_ui) don't log err
+                    },
+                    window,
+                    cx,
+                )
+            }))
+        })
         .anchor(gpui::Corner::TopLeft)
         .offset(gpui::Point {
             x: px(0.0),
