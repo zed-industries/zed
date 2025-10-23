@@ -103,13 +103,29 @@ pub fn init(cx: &mut App) {
     });
 
     #[cfg(target_os = "windows")]
-    cx.on_action(|add_distro: &remote::OpenWslPath, cx| {
-        let add_distro = add_distro.clone();
-        with_active_or_new_workspace(cx, move |workspace, _window, cx| {
+    cx.on_action(|open_wsl: &remote::OpenWslPath, cx| {
+        let open_wsl = open_wsl.clone();
+        with_active_or_new_workspace(cx, move |workspace, window, cx| {
             let handle = cx.entity().downgrade();
             let fs = workspace.project().read(cx).fs().clone();
-            add_wsl_distro(fs, &add_distro.distro, cx);
-            // TODO: actually open it
+            add_wsl_distro(fs, &open_wsl.distro, cx);
+            let open_options = OpenOptions {
+                replace_window: window.window_handle().downcast::<Workspace>(),
+                ..Default::default()
+            };
+
+            let app_state = workspace.app_state().clone();
+
+            cx.spawn_in(window, async move |_, cx| {
+                open_remote_project(
+                    RemoteConnectionOptions::Wsl(open_wsl.distro.clone()),
+                    open_wsl.paths.clone(),
+                    app_state,
+                    open_options,
+                    cx,
+                )
+                .await
+            });
         });
     });
 

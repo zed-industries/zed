@@ -794,31 +794,34 @@ impl RemoteServerProjects {
         let wsl_picker = picker.clone();
         let creating = cx.spawn_in(window, async move |this, cx| {
             match connection.await {
-                Some(Some(client)) => this
-                    .update_in(cx, |this, window, cx| {
-                        telemetry::event!("WSL Distro Added");
-                        this.retained_connections.push(client);
-                        let fs = this.workspace.read_with(cx, |workspace, cx| {
+                Some(Some(client)) => this.update_in(cx, |this, window, cx| {
+                    telemetry::event!("WSL Distro Added");
+                    this.retained_connections.push(client);
+                    let Some(fs) = this
+                        .workspace
+                        .read_with(cx, |workspace, cx| {
                             workspace.project().read(cx).fs().clone()
-                        }).unwrap(); // TODO: don't
-                        crate::add_wsl_distro(fs, &connection_options, cx);
-                        this.mode = Mode::default_mode(&BTreeSet::new(), cx);
-                        this.focus_handle(cx).focus(window);
-                        cx.notify()
-                    })
-                    .log_err(),
-                _ => this
-                    .update(cx, |this, cx| {
-                        this.mode = Mode::AddWslDistro(AddWslDistro {
-                            picker: wsl_picker,
-                            connection_prompt: None,
-                            _creating: None,
-                        });
-                        cx.notify()
-                    })
-                    .log_err(),
-            };
-            ()
+                        })
+                        .log_err()
+                    else {
+                        return;
+                    };
+
+                    crate::add_wsl_distro(fs, &connection_options, cx);
+                    this.mode = Mode::default_mode(&BTreeSet::new(), cx);
+                    this.focus_handle(cx).focus(window);
+                    cx.notify();
+                }),
+                _ => this.update(cx, |this, cx| {
+                    this.mode = Mode::AddWslDistro(AddWslDistro {
+                        picker: wsl_picker,
+                        connection_prompt: None,
+                        _creating: None,
+                    });
+                    cx.notify();
+                }),
+            }
+            .log_err();
         });
 
         self.mode = Mode::AddWslDistro(AddWslDistro {

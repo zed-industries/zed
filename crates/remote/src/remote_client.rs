@@ -1092,11 +1092,13 @@ impl From<WslConnectionOptions> for RemoteConnectionOptions {
     }
 }
 
-/// Add a wsl distro.
+
+#[cfg(target_os = "windows")]
+/// Open a wsl path (\\wsl.localhost\<distro>\path)
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, schemars::JsonSchema, Action)]
 pub struct OpenWslPath {
     pub distro: WslConnectionOptions,
-    pub paths: Option<SshProject>,
+    pub paths: Vec<PathBuf>,
 }
 
 #[async_trait(?Send)]
