@@ -203,17 +203,6 @@ impl AsMut<Child> for MasterProcess {
     }
 }
 
-macro_rules! shell_script {
-    ($fmt:expr, $($name:ident = $arg:expr),+ $(,)?) => {{
-        format!(
-            $fmt,
-            $(
-                $name = shlex::try_quote($arg).unwrap()
-            ),+
-        )
-    }};
-}
-
 #[async_trait(?Send)]
 impl RemoteConnection for SshRemoteConnection {
     async fn kill(&self) -> Result<()> {
@@ -738,21 +727,24 @@ impl SshRemoteConnection {
         delegate.set_status(Some("Extracting remote development server"), cx);
         let server_mode = 0o755;
 
+        let shell_kind = ShellKind::Posix;
         let orig_tmp_path = tmp_path.display(self.path_style());
+        let server_mode = format!("{:o}", server_mode);
+        let server_mode = shell_kind
+            .try_quote(&server_mode)
+            .context("shell quoting")?;
+        let dst_path = dst_path.display(self.path_style());
+        let dst_path = shell_kind.try_quote(&dst_path).context("shell quoting")?;
         let script = if let Some(tmp_path) = orig_tmp_path.strip_suffix(".gz") {
-            shell_script!(
-                "gunzip -f {orig_tmp_path} && chmod {server_mode} {tmp_path} && mv {tmp_path} {dst_path}",
-                server_mode = &format!("{:o}", server_mode),
-                dst_path = &dst_path.display(self.path_style()),
+            format!(
+                "gunzip -f {orig_tmp_path} && chmod {server_mode} {tmp_path} && mv {tmp_path} {dst_path}"
             )
         } else {
-            shell_script!(
-                "chmod {server_mode} {orig_tmp_path} && mv {orig_tmp_path} {dst_path}",
-                server_mode = &format!("{:o}", server_mode),
-                dst_path = &dst_path.display(self.path_style())
-            )
+            format!("chmod {server_mode} {orig_tmp_path} && mv {orig_tmp_path} {dst_path}")
         };
-        self.socket.run_command("sh", &["-c", &script]).await?;
+        let script = shell_kind.try_quote(&script).context("shell quoting")?;
+        let args = shell_kind.args_for_shell(false, script.to_string());
+        self.socket.run_command("sh", &args).await?;
         Ok(())
     }
 
@@ -886,8 +878,12 @@ impl SshSocket {
     // into a machine. You must use `cd` to get back to $HOME.
     // You need to do it like this: $ ssh host "cd; sh -c 'ls -l /tmp'"
     fn ssh_command(&self, program: &str, args: &[impl AsRef<str>]) -> process::Command {
+        let shell_kind = ShellKind::Posix;
         let mut command = util::command::new_smol_command("ssh");
-        let mut to_run = shlex::try_quote(program).unwrap().into_owned();
+        let mut to_run = shell_kind
+            .try_quote(program)
+            .expect("shell quoting")
+            .into_owned();
         for arg in args {
             // We're trying to work with: sh, bash, zsh, fish, tcsh, ...?
             debug_assert!(
@@ -895,9 +891,10 @@ impl SshSocket {
                 "multiline arguments do not work in all shells"
             );
             to_run.push(' ');
-            to_run.push_str(&shlex::try_quote(arg.as_ref()).unwrap());
+            to_run.push_str(&shell_kind.try_quote(arg.as_ref()).expect("shell quoting"));
         }
-        let to_run = format!("cd; {to_run}");
+        let separator = shell_kind.sequential_commands_separator();
+        let to_run = format!("cd{separator} {to_run}");
         self.ssh_options(&mut command, true)
             .arg(self.connection_options.ssh_url())
             .arg("-T")
@@ -906,7 +903,7 @@ impl SshSocket {
         command
     }
 
-    async fn run_command(&self, program: &str, args: &[&str]) -> Result<String> {
+    async fn run_command(&self, program: &str, args: &[impl AsRef<str>]) -> Result<String> {
         let output = self.ssh_command(program, args).output().await?;
         anyhow::ensure!(
             output.status.success(),
@@ -1080,7 +1077,10 @@ impl SshConnectionOptions {
             "-w",
         ];
 
-        let mut tokens = shlex::split(input).context("invalid input")?.into_iter();
+        let mut tokens = ShellKind::Posix
+            .split(input)
+            .context("invalid input")?
+            .into_iter();
 
         'outer: while let Some(arg) = tokens.next() {
             if ALLOWED_OPTS.contains(&(&arg as &str)) {
@@ -1243,6 +1243,7 @@ fn build_command(
 ) -> Result<CommandTemplate> {
     use std::fmt::Write as _;
 
+    let shell_kind = ShellKind::new(ssh_shell, false);
     let mut exec = String::new();
     if let Some(working_dir) = working_dir {
         let working_dir = RemotePathBuf::new(working_dir, ssh_path_style).to_string();
@@ -1252,29 +1253,41 @@ fn build_command(
         const TILDE_PREFIX: &'static str = "~/";
         if working_dir.starts_with(TILDE_PREFIX) {
             let working_dir = working_dir.trim_start_matches("~").trim_start_matches("/");
-            write!(exec, "cd \"$HOME/{working_dir}\" && ",).unwrap();
+            write!(exec, "cd \"$HOME/{working_dir}\" && ",)?;
         } else {
-            write!(exec, "cd \"{working_dir}\" && ",).unwrap();
+            write!(exec, "cd \"{working_dir}\" && ",)?;
         }
     } else {
-        write!(exec, "cd && ").unwrap();
+        write!(exec, "cd && ")?;
     };
-    write!(exec, "exec env ").unwrap();
+    write!(exec, "exec env ")?;
 
     for (k, v) in input_env.iter() {
-        if let Some((k, v)) = shlex::try_quote(k).ok().zip(shlex::try_quote(v).ok()) {
-            write!(exec, "{}={} ", k, v).unwrap();
-        }
+        write!(
+            exec,
+            "{}={} ",
+            k,
+            shell_kind.try_quote(v).context("shell quoting")?
+        )?;
     }
 
     if let Some(input_program) = input_program {
-        write!(exec, "{}", shlex::try_quote(&input_program).unwrap()).unwrap();
+        write!(
+            exec,
+            "{}",
+            shell_kind
+                .try_quote(&input_program)
+                .context("shell quoting")?
+        )?;
         for arg in input_args {
-            let arg = shlex::try_quote(&arg)?;
-            write!(exec, " {}", &arg).unwrap();
+            write!(
+                exec,
+                " {}",
+                shell_kind.try_quote(&arg).context("shell quoting")?
+            )?;
         }
     } else {
-        write!(exec, "{ssh_shell} -l").unwrap();
+        write!(exec, "{ssh_shell} -l")?;
     };
 
     let mut args = Vec::new();
