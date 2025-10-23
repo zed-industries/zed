@@ -116,7 +116,6 @@ enum AgentServerStoreState {
         settings: Option<AllAgentServersSettings>,
         http_client: Arc<dyn HttpClient>,
         _subscriptions: [Subscription; 1],
-        ext_subscription: Option<Subscription>,
     },
     Remote {
         project_id: u64,
@@ -563,22 +562,10 @@ impl AgentServerStore {
                 downstream_client: None,
                 settings: None,
                 _subscriptions: [subscription],
-                ext_subscription: None,
             },
             external_agents: Default::default(),
         };
-        if let Some(_events) = extension::ExtensionEvents::try_global(cx) {
-            if let AgentServerStoreState::Local {
-                ext_subscription, ..
-            } = &mut this.state
-            {
-                // Note: ext_subscription is reserved for future use when we can
-                // access ExtensionStore without circular dependencies.
-                // For now, external code (e.g., Workspace) should call
-                // sync_extension_agents when extensions change.
-                *ext_subscription = None;
-            }
-        }
+        if let Some(_events) = extension::ExtensionEvents::try_global(cx) {}
         this.agent_servers_settings_changed(cx);
         this
     }
