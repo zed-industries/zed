@@ -415,7 +415,7 @@ impl ProjectDiff {
         self.multibuffer.update(cx, |multibuffer, cx| {
             for path in previous_paths {
                 self.buffer_diff_subscriptions
-                    .remove(&path.path().clone().into());
+                    .remove(&path.path.clone().into());
                 multibuffer.remove_excerpts_for_path(path, cx);
             }
         });
@@ -436,7 +436,7 @@ impl ProjectDiff {
             *this.update_needed.borrow_mut() = ();
         });
         self.buffer_diff_subscriptions
-            .insert(path_key.path().clone().into(), (diff.clone(), subscription));
+            .insert(path_key.path.clone().into(), (diff.clone(), subscription));
 
         let conflict_addon = self
             .editor
@@ -535,8 +535,7 @@ impl ProjectDiff {
         self.multibuffer
             .read(cx)
             .excerpt_paths()
-            .map(|key| key.path())
-            .cloned()
+            .map(|key| key.path.clone())
             .collect()
     }
 }

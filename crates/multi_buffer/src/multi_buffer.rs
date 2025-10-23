@@ -166,8 +166,8 @@ impl MultiBufferDiffHunk {
 #[derive(PartialEq, Eq, Ord, PartialOrd, Clone, Hash, Debug)]
 pub struct PathKey {
     // Used by the derived PartialOrd & Ord
-    sort_prefix: Option<u64>,
-    path: Arc<RelPath>,
+    pub sort_prefix: Option<u64>,
+    pub path: Arc<RelPath>,
 }
 
 impl PathKey {
@@ -189,11 +189,6 @@ impl PathKey {
                     .into_arc(),
             }
         }
-    }
-
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn path(&self) -> &Arc<RelPath> {
-        &self.path
     }
 }
 
