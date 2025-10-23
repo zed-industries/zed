@@ -504,6 +504,22 @@ pub enum DiffTreeType {
     },
 }
 
+impl DiffTreeType {
+    pub fn base(&self) -> &SharedString {
+        match self {
+            DiffTreeType::MergeBase { base, .. } => base,
+            DiffTreeType::Since { base, .. } => base,
+        }
+    }
+
+    pub fn head(&self) -> &SharedString {
+        match self {
+            DiffTreeType::MergeBase { head, .. } => head,
+            DiffTreeType::Since { head, .. } => head,
+        }
+    }
+}
+
 #[derive(Debug, PartialEq)]
 pub struct TreeDiff {
     pub entries: HashMap<RepoPath, TreeDiffStatus>,
