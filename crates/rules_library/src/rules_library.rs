@@ -1348,9 +1348,8 @@ impl Render for RulesLibrary {
 
         client_side_decorations(
             v_flex()
-                .bg(theme.colors().background)
                 .id("rules-library")
-                .key_context("PromptLibrary")
+                .key_context("RulesLibrary")
                 .on_action(cx.listener(|this, &NewRule, window, cx| this.new_rule(window, cx)))
                 .on_action(
                     cx.listener(|this, &DeleteRule, window, cx| {
@@ -1368,6 +1367,7 @@ impl Render for RulesLibrary {
                 .font(ui_font)
                 .text_color(theme.colors().text)
                 .children(self.title_bar.clone())
+                .bg(theme.colors().background)
                 .child(
                     h_flex()
                         .flex_1()
@@ -1376,52 +1376,20 @@ impl Render for RulesLibrary {
                             if self.store.read(cx).prompt_count() == 0 {
                                 el.child(
                                     v_flex()
-                                        .w_2_3()
-                                        .h_full()
+                                        .flex_1()
                                         .items_center()
                                         .justify_center()
-                                        .gap_4()
+                                        .border_l_1()
+                                        .border_color(cx.theme().colors().border)
                                         .bg(cx.theme().colors().editor_background)
                                         .child(
-                                            h_flex()
-                                                .gap_2()
-                                                .child(
-                                                    Icon::new(IconName::Book)
-                                                        .size(IconSize::Medium)
-                                                        .color(Color::Muted),
-                                                )
-                                                .child(
-                                                    Label::new("No rules yet")
-                                                        .size(LabelSize::Large)
-                                                        .color(Color::Muted),
-                                                ),
-                                        )
-                                        .child(
-                                            h_flex()
-                                                .child(h_flex())
-                                                .child(
-                                                    v_flex()
-                                                        .gap_1()
-                                                        .child(Label::new(
-                                                            "Create your first rule:",
-                                                        ))
-                                                        .child(
-                                                            Button::new("create-rule", "New Rule")
-                                                                .full_width()
-                                                                .key_binding(
-                                                                    KeyBinding::for_action(
-                                                                        &NewRule, cx,
-                                                                    ),
-                                                                )
-                                                                .on_click(|_, window, cx| {
-                                                                    window.dispatch_action(
-                                                                        NewRule.boxed_clone(),
-                                                                        cx,
-                                                                    )
-                                                                }),
-                                                        ),
-                                                )
-                                                .child(h_flex()),
+                                            Button::new("create-rule", "New Rule")
+                                                .style(ButtonStyle::Outlined)
+                                                .key_binding(KeyBinding::for_action(&NewRule, cx))
+                                                .on_click(|_, window, cx| {
+                                                    window
+                                                        .dispatch_action(NewRule.boxed_clone(), cx)
+                                                }),
                                         ),
                                 )
                             } else {
