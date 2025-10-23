@@ -482,11 +482,12 @@ version = "1.0.0"
 schema_version = 0
 
 [agent_servers.foo]
+name = "Foo Agent"
 [agent_servers.foo.launcher]
 package = "@example/agent-server"
 entrypoint = "node_modules/@example/agent-server/dist/index.js"
-min_version = "1.0.0"
-# removed: experimental flag should be provided by extension args if needed
+version = "1.0.0"
+args = []
 "#;
 
         let manifest: ExtensionManifest = toml::from_str(toml_src).expect("manifest should parse");
