@@ -389,6 +389,7 @@ pub fn init(cx: &mut App) {
                 .window_handle()
                 .downcast::<Workspace>()
                 .expect("Workspaces are root Windows");
+            dbg!("Open settings editor");
             open_settings_editor(workspace, None, window_handle, cx);
         });
     })
@@ -1216,7 +1217,24 @@ impl SettingsWindow {
             log::error!("App state doesn't exist when creating a new settings window");
         }
 
-        cx.subscribe_in_new(Self::handle_project_event).detach();
+        let this_weak = cx.weak_entity();
+        cx.observe_new::<Project>({
+            let this_weak = this_weak.clone();
+            move |_, window, cx| {
+                let project = cx.entity();
+                let Some(window) = window else {
+                    return;
+                };
+
+                this_weak
+                    .update(cx, |_, cx| {
+                        cx.subscribe_in(&project, window, Self::handle_project_event)
+                            .detach();
+                    })
+                    .ok();
+            }
+        })
+        .detach();
 
         let title_bar = if !cfg!(target_os = "macos") {
             Some(cx.new(|cx| PlatformTitleBar::new("settings-title-bar", cx)))
