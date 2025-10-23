@@ -1951,7 +1951,6 @@ mod tests {
     }
 }
 
-
 fn latex_to_unicode(latex: &str) -> String {
     let mut out = String::new();
     let mut chars = latex.chars().peekable();

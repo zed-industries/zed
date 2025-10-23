@@ -21,8 +21,6 @@ const PARSE_OPTIONS: Options = Options::ENABLE_TABLES
     .union(Options::ENABLE_GFM)
     .union(Options::ENABLE_MATH);
 
-
-
 pub fn parse_markdown(
     text: &str,
 ) -> (
@@ -329,7 +327,8 @@ pub fn parse_markdown(
             }
             pulldown_cmark::Event::DisplayMath(math) => {
                 events.push((range, MarkdownEvent::DisplayMath(math.to_string())))
-            }        }
+            }
+        }
     }
     (events, language_names, language_paths)
 }
