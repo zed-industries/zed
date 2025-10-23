@@ -628,6 +628,47 @@ impl SettingsStore {
         (SettingsFile::Default, None)
     }
 
+    #[inline(always)]
+    fn parse_zed_settings<SettingsContentType: serde::de::DeserializeOwned>(
+        &mut self,
+        user_settings_content: &str,
+        file: SettingsFile,
+    ) -> (Option<SettingsContentType>, SettingsParseResult) {
+        let mut migration_result = Ok(false);
+        let settings: SettingsContentType = if user_settings_content.is_empty() {
+            parse_json_with_comments("{}").expect("Empty settings should always be valid")
+        } else {
+            let migration_res = migrator::migrate_settings(user_settings_content);
+            let content = match &migration_res {
+                Ok(Some(content)) => content,
+                Ok(None) => user_settings_content,
+                Err(_) => user_settings_content,
+            };
+            let parse_result = parse_json_with_comments(content);
+            migration_result = migration_res
+                .map(|migrated| migrated.is_some())
+                .map_err(|err| err.to_string());
+            match parse_result {
+                Ok(settings) => settings,
+                Err(err) => {
+                    let result = SettingsParseResult {
+                        migration_result,
+                        parse_result: Err(err.to_string()),
+                    };
+                    self.file_errors.insert(file, result.clone());
+                    return (None, result);
+                }
+            }
+        };
+
+        let result = SettingsParseResult {
+            migration_result,
+            parse_result: Ok(()),
+        };
+        self.file_errors.insert(file, result.clone());
+        return (Some(settings), result);
+    }
+
     fn handle_potential_file_error<R>(
         &mut self,
         file: SettingsFile,
@@ -728,42 +769,14 @@ impl SettingsStore {
         user_settings_content: &str,
         cx: &mut App,
     ) -> SettingsParseResult {
-        let mut migration_result = Ok(false);
-        let settings: UserSettingsContent = if user_settings_content.is_empty() {
-            parse_json_with_comments("{}").expect("Empty settings should always be valid")
-        } else {
-            let migration_res = migrator::migrate_settings(user_settings_content);
-            let content = match &migration_res {
-                Ok(Some(content)) => content,
-                Ok(None) => user_settings_content,
-                Err(_) => user_settings_content,
-            };
-            let parse_result = self
-                .handle_potential_file_error(SettingsFile::User, parse_json_with_comments(content));
-            migration_result = migration_res
-                .map(|migrated| migrated.is_some())
-                .map_err(|err| err.to_string());
-            match parse_result {
-                Ok(settings) => settings,
-                Err(err) => {
-                    let result = SettingsParseResult {
-                        migration_result,
-                        parse_result: Err(err.to_string()),
-                    };
-                    self.file_errors.insert(SettingsFile::User, result.clone());
-                    return result;
-                }
-            }
-        };
+        let (settings, parse_result) = self
+            .parse_zed_settings::<UserSettingsContent>(user_settings_content, SettingsFile::User);
 
-        self.user_settings = Some(settings);
-        self.recompute_values(None, cx);
-        let result = SettingsParseResult {
-            migration_result,
-            parse_result: Ok(()),
-        };
-        self.file_errors.insert(SettingsFile::User, result.clone());
-        return result;
+        if let Some(settings) = settings {
+            self.user_settings = Some(settings);
+            self.recompute_values(None, cx);
+        }
+        return parse_result;
     }
 
     /// Sets the global settings via a JSON string.
@@ -773,40 +786,14 @@ impl SettingsStore {
         global_settings_content: &str,
         cx: &mut App,
     ) -> SettingsParseResult {
-        let mut migration_result = Ok(false);
-        let settings: SettingsContent = if global_settings_content.is_empty() {
-            parse_json_with_comments("{}").expect("Empty settings should always be valid")
-        } else {
-            let migration_res = migrator::migrate_settings(global_settings_content);
-            let content = match &migration_res {
-                Ok(Some(content)) => content,
-                Ok(None) => global_settings_content,
-                Err(_) => global_settings_content,
-            };
-            let parse_result = self.handle_potential_file_error(
-                SettingsFile::Global,
-                parse_json_with_comments(content),
-            );
-            migration_result = migration_res
-                .map(|migrated| migrated.is_some())
-                .map_err(|err| err.to_string());
-            match parse_result {
-                Ok(settings) => settings,
-                Err(err) => {
-                    return SettingsParseResult {
-                        migration_result,
-                        parse_result: Err(err.to_string()),
-                    };
-                }
-            }
-        };
+        let (settings, parse_result) = self
+            .parse_zed_settings::<SettingsContent>(global_settings_content, SettingsFile::Global);
 
-        self.global_settings = Some(Box::new(settings));
-        self.recompute_values(None, cx);
-        SettingsParseResult {
-            migration_result,
-            parse_result: Ok(()),
+        if let Some(settings) = settings {
+            self.global_settings = Some(Box::new(settings));
+            self.recompute_values(None, cx);
         }
+        return parse_result;
     }
 
     pub fn set_server_settings(
