@@ -1,14 +1,12 @@
 use command_palette_hooks::CommandPaletteFilter;
-use editor::{
-    Anchor, Editor, ExcerptId, SelectionEffects, display_map::SemanticTokenView, scroll::Autoscroll,
-};
+use editor::{Anchor, Editor, ExcerptId, SelectionEffects, scroll::Autoscroll};
 use gpui::{
     App, AppContext as _, Context, Div, Entity, EntityId, EventEmitter, FocusHandle, Focusable,
     Hsla, InteractiveElement, IntoElement, MouseButton, MouseDownEvent, MouseMoveEvent,
     ParentElement, Render, ScrollStrategy, SharedString, Styled, Task, UniformListScrollHandle,
     WeakEntity, Window, actions, div, rems, uniform_list,
 };
-use language::{Buffer, OwnedSyntaxLayer, ToPoint};
+use language::{Buffer, OwnedSyntaxLayer};
 use std::{any::TypeId, mem, ops::Range};
 use theme::ActiveTheme;
 use tree_sitter::{Node, TreeCursor};
@@ -370,13 +368,7 @@ impl SyntaxTreeView {
         Some(())
     }
 
-    fn render_node(
-        cursor: &TreeCursor,
-        depth: u32,
-        selected: bool,
-        semantic_tokens: Option<(&Buffer, &lsp::SemanticTokensLegend, &SemanticTokenView)>,
-        cx: &App,
-    ) -> Div {
+    fn render_node(cursor: &TreeCursor, depth: u32, selected: bool, cx: &App) -> Div {
         let colors = cx.theme().colors();
         let mut row = h_flex();
         if let Some(field_name) = cursor.field_name() {
@@ -384,70 +376,17 @@ impl SyntaxTreeView {
         }
 
         let node = cursor.node();
-        row = row
-            .child(if node.is_named() {
-                Label::new(node.kind()).color(Color::Default)
-            } else {
-                Label::new(format!("\"{}\"", node.kind())).color(Color::Created)
-            })
-            .child(
-                div()
-                    .child(Label::new(format_node_range(node)).color(Color::Muted))
-                    .pl_1(),
-            );
-
-        if node.child_count() == 0 {
-            if let Some((buffer, legend, sema)) = semantic_tokens {
-                for tok in sema
-                    .tokens
-                    .iter()
-                    .filter(|t| t.range.contains(&node.start_byte()))
-                {
-                    let range = buffer.range_from_version(tok.range.clone(), &sema.version);
-                    let start = range.start.to_point(&buffer);
-                    let end = range.end.to_point(&buffer);
-
-                    row = row
-                        .child(div().child(Label::new("LSP: ")).pl_1())
-                        .child(
-                            div()
-                                .child(
-                                    Label::new(format!(
-                                        "({}:{} - {}:{}) ",
-                                        start.row + 1,
-                                        start.column + 1,
-                                        end.row + 1,
-                                        end.column + 1,
-                                    ))
-                                    .color(Color::Muted),
-                                )
-                                .pl_1(),
-                        )
-                        .child(Label::new(format!(
-                            "{} ",
-                            legend.token_types[tok.lsp_type as usize].as_str(),
-                        )))
-                        .child(Label::new(format!(
-                            "({})",
-                            legend
-                                .token_modifiers
-                                .iter()
-                                .enumerate()
-                                .filter_map(|(i, modifier)| {
-                                    if (tok.lsp_modifiers & (1 << i)) != 0 {
-                                        Some(modifier.as_str())
-                                    } else {
-                                        None
-                                    }
-                                })
-                                .collect::<Vec<_>>()
-                                .join(", ")
-                        )));
-                }
-            }
-        }
-
-        row.text_bg(if selected {
+        row.child(if node.is_named() {
+            Label::new(node.kind()).color(Color::Default)
+        } else {
+            Label::new(format!("\"{}\"", node.kind())).color(Color::Created)
+        })
+        .child(
+            div()
+                .child(Label::new(format_node_range(node)).color(Color::Muted))
+                .pl_1(),
+        )
+        .text_bg(if selected {
             colors.element_selected
         } else {
             Hsla::default()
@@ -462,48 +401,6 @@ impl SyntaxTreeView {
         range: Range<usize>,
         cx: &Context<Self>,
     ) -> Vec<Div> {
-        let semantic_tokens = self.editor.as_ref().and_then(|state| {
-            let buffer_id = state.active_buffer.as_ref()?.buffer.read(cx).remote_id();
-
-            let buffer = state
-                .editor
-                .read(cx)
-                .buffer()
-                .read(cx)
-                .buffer(buffer_id)?
-                .read(cx);
-
-            let semantic_tokens = state
-                .editor
-                .read(cx)
-                .display_map
-                .read(cx)
-                .semantic_tokens
-                .get(&buffer_id)?;
-
-            // This is a hack: it just grabs the first server's capabilities, which isn't
-            // necessarily the server the semantic tokens came from.
-            let capabilities = state
-                .editor
-                .read(cx)
-                .project()?
-                .read(cx)
-                .lsp_store()
-                .read(cx)
-                .lsp_server_capabilities
-                .values()
-                .next()?;
-
-            let legend = match capabilities.semantic_tokens_provider.as_ref()? {
-                lsp::SemanticTokensServerCapabilities::SemanticTokensOptions(opts) => &opts.legend,
-                lsp::SemanticTokensServerCapabilities::SemanticTokensRegistrationOptions(opts) => {
-                    &opts.semantic_tokens_options.legend
-                }
-            };
-
-            Some((buffer, legend, &**semantic_tokens))
-        });
-
         let mut items = Vec::new();
         let mut cursor = layer.node().walk();
         let mut descendant_ix = range.start;
@@ -525,7 +422,6 @@ impl SyntaxTreeView {
                         &cursor,
                         depth,
                         Some(descendant_ix) == self.selected_descendant_ix,
-                        semantic_tokens,
                         cx,
                     )
                     .on_mouse_down(
