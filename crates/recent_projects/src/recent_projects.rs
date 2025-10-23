@@ -169,8 +169,8 @@ pub fn add_wsl_distro(
     connection_options: &remote::WslConnectionOptions,
     cx: &App,
 ) {
-    use settings::SettingsStore;
     use gpui::ReadGlobal;
+    use settings::SettingsStore;
 
     let distro_name = SharedString::from(&connection_options.distro_name);
     let user = connection_options.user.clone();
