@@ -322,7 +322,7 @@ pub struct BuiltinAgentServerSettings {
     /// When this is `true`, Zed will not search `$PATH`, and will always use
     /// its own binary.
     ///
-    /// Default: false
+    /// Default: true
     pub ignore_system_version: Option<bool>,
     /// The default mode to use for this agent.
     ///
