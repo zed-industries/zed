@@ -436,7 +436,7 @@ fn format_timestamp_fallback(timestamp: OffsetDateTime, reference: OffsetDateTim
 }
 
 /// Returns the local timezone offset at the given timestamp.
-pub fn get_local_offset(timestamp: OffsetDateTime) -> UtcOffset {
+fn get_local_offset(timestamp: OffsetDateTime) -> UtcOffset {
     let chrono_utc =
         DateTime::<Utc>::from_timestamp(timestamp.unix_timestamp(), timestamp.nanosecond())
             .expect("invalid timestamp");
