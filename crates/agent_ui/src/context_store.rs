@@ -5,7 +5,7 @@ use crate::context::{
 };
 use agent_client_protocol as acp;
 use anyhow::{Context as _, Result, anyhow};
-use assistant_context::AssistantContext;
+use assistant_text_thread::TextThread;
 use collections::{HashSet, IndexSet};
 use futures::{self, FutureExt};
 use gpui::{App, Context, Entity, EventEmitter, Image, SharedString, Task, WeakEntity};
@@ -200,13 +200,13 @@ impl ContextStore {
 
     pub fn add_text_thread(
         &mut self,
-        context: Entity<AssistantContext>,
+        text_thread: Entity<TextThread>,
         remove_if_exists: bool,
         cx: &mut Context<Self>,
     ) -> Option<AgentContextHandle> {
         let context_id = self.next_context_id.post_inc();
         let context = AgentContextHandle::TextThread(TextThreadContextHandle {
-            context,
+            text_thread,
             context_id,
         });
 
@@ -353,21 +353,15 @@ impl ContextStore {
                     );
                 };
             }
-            // SuggestedContext::Thread { thread, name: _ } => {
-            //     if let Some(thread) = thread.upgrade() {
-            //         let context_id = self.next_context_id.post_inc();
-            //         self.insert_context(
-            //             AgentContextHandle::Thread(ThreadContextHandle { thread, context_id }),
-            //             cx,
-            //         );
-            //     }
-            // }
-            SuggestedContext::TextThread { context, name: _ } => {
-                if let Some(context) = context.upgrade() {
+            SuggestedContext::TextThread {
+                text_thread,
+                name: _,
+            } => {
+                if let Some(text_thread) = text_thread.upgrade() {
                     let context_id = self.next_context_id.post_inc();
                     self.insert_context(
                         AgentContextHandle::TextThread(TextThreadContextHandle {
-                            context,
+                            text_thread,
                             context_id,
                         }),
                         cx,
@@ -392,7 +386,7 @@ impl ContextStore {
             // }
             AgentContextHandle::TextThread(text_thread_context) => {
                 self.context_text_thread_paths
-                    .extend(text_thread_context.context.read(cx).path().cloned());
+                    .extend(text_thread_context.text_thread.read(cx).path().cloned());
             }
             _ => {}
         }
@@ -414,7 +408,7 @@ impl ContextStore {
                         .remove(thread_context.thread.read(cx).id());
                 }
                 AgentContextHandle::TextThread(text_thread_context) => {
-                    if let Some(path) = text_thread_context.context.read(cx).path() {
+                    if let Some(path) = text_thread_context.text_thread.read(cx).path() {
                         self.context_text_thread_paths.remove(path);
                     }
                 }
@@ -538,13 +532,9 @@ pub enum SuggestedContext {
         icon_path: Option<SharedString>,
         buffer: WeakEntity<Buffer>,
     },
-    // Thread {
-    //     name: SharedString,
-    //     thread: WeakEntity<Thread>,
-    // },
     TextThread {
         name: SharedString,
-        context: WeakEntity<AssistantContext>,
+        text_thread: WeakEntity<TextThread>,
     },
 }
 
@@ -552,7 +542,6 @@ impl SuggestedContext {
     pub fn name(&self) -> &SharedString {
         match self {
             Self::File { name, .. } => name,
-            // Self::Thread { name, .. } => name,
             Self::TextThread { name, .. } => name,
         }
     }
@@ -560,7 +549,6 @@ impl SuggestedContext {
     pub fn icon_path(&self) -> Option<SharedString> {
         match self {
             Self::File { icon_path, .. } => icon_path.clone(),
-            // Self::Thread { .. } => None,
             Self::TextThread { .. } => None,
         }
     }
@@ -568,7 +556,6 @@ impl SuggestedContext {
     pub fn kind(&self) -> ContextKind {
         match self {
             Self::File { .. } => ContextKind::File,
-            // Self::Thread { .. } => ContextKind::Thread,
             Self::TextThread { .. } => ContextKind::TextThread,
         }
     }
