@@ -324,7 +324,9 @@ async fn load_direnv_environment(
     env: &HashMap<String, String>,
     dir: &Path,
 ) -> anyhow::Result<HashMap<String, Option<String>>> {
-    let direnv_path = which::which("direnv").context("finding direnv binary")?;
+    let Some(direnv_path) = which::which("direnv").ok() else {
+        return Ok(HashMap::default());
+    };
 
     let args = &["export", "json"];
     let direnv_output = smol::process::Command::new(&direnv_path)
