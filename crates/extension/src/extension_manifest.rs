@@ -171,6 +171,21 @@ pub enum AgentServerLauncher {
         repo: String,
         /// Exact tag/release to download (e.g., "v1.2.3")
         tag: String,
+        /// Asset names for each platform/architecture combination.
+        /// The key format is "{os}-{arch}" where:
+        /// - os: "darwin" (macOS), "linux", "windows"
+        /// - arch: "aarch64" (arm64), "x86_64"
+        ///
+        /// Example:
+        /// ```toml
+        /// [agent_servers.myagent.launcher.assets]
+        /// darwin-aarch64 = "myagent-darwin-arm64.zip"
+        /// darwin-x86_64 = "myagent-darwin-x64.zip"
+        /// linux-aarch64 = "myagent-linux-arm64.tar.gz"
+        /// linux-x86_64 = "myagent-linux-x64.tar.gz"
+        /// windows-x86_64 = "myagent-windows-x64.zip"
+        /// ```
+        assets: HashMap<String, String>,
     },
     Binary {
         binary_name: String,

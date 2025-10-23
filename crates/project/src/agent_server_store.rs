@@ -348,7 +348,7 @@ impl AgentServerStore {
                                         as Box<dyn ExternalAgentServer>,
                                 );
                             }
-                            extension::AgentServerLauncher::GithubRelease { repo, tag } => {
+                            extension::AgentServerLauncher::GithubRelease { repo, tag, assets } => {
                                 self.external_agents.insert(
                                     ExternalAgentServerName(display),
                                     Box::new(LocalExtensionGithubReleaseAgent {
@@ -359,6 +359,7 @@ impl AgentServerStore {
                                         agent_id: agent_name.clone(),
                                         repo: repo.clone(),
                                         tag: tag.clone(),
+                                        assets: assets.clone(),
                                         args: agent_entry.args.clone(),
                                         env: agent_entry.env.clone(),
                                         ignore_system_version: agent_entry
@@ -1508,6 +1509,7 @@ struct LocalExtensionGithubReleaseAgent {
     agent_id: Arc<str>,
     repo: String,
     tag: String,
+    assets: HashMap<String, String>,
     args: Vec<String>,
     env: HashMap<String, String>,
     ignore_system_version: bool,
@@ -1703,6 +1705,7 @@ impl ExternalAgentServer for LocalExtensionGithubReleaseAgent {
         let agent_id = self.agent_id.clone();
         let repo = self.repo.clone();
         let tag = self.tag.clone();
+        let assets = self.assets.clone();
         let args = self.args.clone();
         let base_env = self.env.clone();
         let ignore_system_version = self.ignore_system_version;
@@ -1764,47 +1767,50 @@ impl ExternalAgentServer for LocalExtensionGithubReleaseAgent {
 
             let version_dir = dir.join(&tag);
             if !fs.is_dir(&version_dir).await {
-                // Try to find the right asset for this platform
-                // We check for common platform string variations in asset names
-                let platform_strings = if cfg!(target_os = "macos") {
-                    vec!["darwin", "apple-darwin", "macos", "osx"]
+                // Determine the platform key for looking up the asset name
+                let os = if cfg!(target_os = "macos") {
+                    "darwin"
                 } else if cfg!(target_os = "linux") {
-                    vec!["linux", "unknown-linux"]
+                    "linux"
                 } else if cfg!(target_os = "windows") {
-                    vec!["windows", "win", "pc-windows"]
+                    "windows"
                 } else {
-                    vec![]
+                    anyhow::bail!("unsupported OS");
                 };
 
-                let arch_strings = if cfg!(target_arch = "aarch64") {
-                    vec!["aarch64", "arm64"]
+                let arch = if cfg!(target_arch = "aarch64") {
+                    "aarch64"
                 } else if cfg!(target_arch = "x86_64") {
-                    vec!["x86_64", "x64", "amd64"]
+                    "x86_64"
                 } else {
-                    vec![]
+                    anyhow::bail!("unsupported architecture");
                 };
 
-                // Find asset that matches both platform and architecture
-                let asset_names: Vec<String> = release.assets.iter().map(|a| a.name.clone()).collect();
+                let platform_key = format!("{}-{}", os, arch);
+                let asset_name = assets.get(&platform_key).with_context(|| {
+                    format!(
+                        "no asset specified for platform '{}'. Available platforms: {}",
+                        platform_key,
+                        assets
+                            .keys()
+                            .map(|k| k.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )
+                })?;
+
+                // Find the asset in the release
+                let available_assets: Vec<String> =
+                    release.assets.iter().map(|a| a.name.clone()).collect();
                 let asset = release
                     .assets
                     .into_iter()
-                    .find(|asset| {
-                        let name_lower = asset.name.to_lowercase();
-                        let matches_platform = platform_strings
-                            .iter()
-                            .any(|s| name_lower.contains(s));
-                        let matches_arch = arch_strings
-                            .iter()
-                            .any(|s| name_lower.contains(s));
-                        matches_platform && matches_arch
-                    })
+                    .find(|asset| &asset.name == asset_name)
                     .with_context(|| {
                         format!(
-                            "no asset found for platform {:?} and architecture {:?}. Available assets: {}",
-                            platform_strings,
-                            arch_strings,
-                            asset_names.join(", ")
+                            "asset '{}' not found in release. Available assets: {}",
+                            asset_name,
+                            available_assets.join(", ")
                         )
                     })?;
 
@@ -2174,11 +2180,16 @@ mod npm_launcher_tests {
         let mut env = HashMap::default();
         env.insert("GITHUB_TOKEN".into(), "secret".into());
 
+        let mut assets = HashMap::default();
+        assets.insert("darwin-aarch64".into(), "agent-darwin-arm64.tar.gz".into());
+        assets.insert("linux-x86_64".into(), "agent-linux-x64.tar.gz".into());
+
         let _entry = AgentServerManifestEntry {
             name: "GitHub Agent".into(),
             launcher: AgentServerLauncher::GithubRelease {
                 repo: "owner/repo".into(),
                 tag: "v1.0.0".into(),
+                assets,
             },
             env,
             args: vec![],
@@ -2206,6 +2217,7 @@ mod npm_launcher_tests {
             agent_id: Arc::from("my-agent"),
             repo: "owner/repo".into(),
             tag: "v1.0.0".into(),
+            assets: HashMap::default(),
             args: vec!["--serve".into()],
             env: {
                 let mut map = HashMap::default();
@@ -2235,11 +2247,15 @@ mod npm_launcher_tests {
         let mut env = HashMap::default();
         env.insert("API_KEY".into(), "secret".into());
 
+        let mut assets = HashMap::default();
+        assets.insert("darwin-aarch64".into(), "agent-macos-arm64.zip".into());
+
         let manifest_entry = AgentServerManifestEntry {
             name: "Release Agent".into(),
             launcher: AgentServerLauncher::GithubRelease {
                 repo: "org/project".into(),
                 tag: "v2.1.0".into(),
+                assets,
             },
             env,
             args: vec!["serve".into()],
