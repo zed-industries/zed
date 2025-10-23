@@ -11575,10 +11575,40 @@ impl Editor {
             }
         }
 
-        self.transact(window, cx, |this, _, cx| {
+        self.transact(window, cx, |this, window, cx| {
             this.buffer.update(cx, |buffer, cx| {
                 buffer.edit(edits, None, cx);
             });
+
+            // When duplicating upward with whole lines, move the cursor to the duplicated line
+            if upwards && whole_lines {
+                let display_map = this.display_map.update(cx, |map, cx| map.snapshot(cx));
+
+                this.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+                    let mut new_ranges = Vec::new();
+
+                    for selection in s.all::<Point>(&display_map) {
+                        let rows = selection.spanned_rows(false, &display_map);
+
+                        let row_count = rows.end.0 - rows.start.0;
+
+                        // Move selection up by the number of duplicated rows
+                        let new_start = Point::new(
+                            selection.start.row.saturating_sub(row_count),
+                            selection.start.column,
+                        );
+
+                        let new_end = Point::new(
+                            selection.end.row.saturating_sub(row_count),
+                            selection.end.column,
+                        );
+
+                        new_ranges.push(new_start..new_end);
+                    }
+
+                    s.select_ranges(new_ranges);
+                });
+            }
 
             this.request_autoscroll(Autoscroll::fit(), cx);
         });
