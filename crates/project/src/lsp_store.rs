@@ -2487,7 +2487,7 @@ impl LocalLspStore {
                         uri.clone(),
                         adapter.language_id(&language.name()),
                         0,
-                        initial_snapshot.text(),
+                        initial_snapshot.text_with_original_line_endings(),
                     );
 
                     vec![snapshot]
@@ -7522,6 +7522,7 @@ impl LspStore {
             let previous_snapshot = buffer_snapshots.last()?;
 
             let build_incremental_change = || {
+                let line_ending = next_snapshot.line_ending();
                 buffer
                     .edits_since::<Dimensions<PointUtf16, usize>>(
                         previous_snapshot.snapshot.version(),
@@ -7529,16 +7530,18 @@ impl LspStore {
                     .map(|edit| {
                         let edit_start = edit.new.start.0;
                         let edit_end = edit_start + (edit.old.end.0 - edit.old.start.0);
-                        let new_text = next_snapshot
-                            .text_for_range(edit.new.start.1..edit.new.end.1)
-                            .collect();
                         lsp::TextDocumentContentChangeEvent {
                             range: Some(lsp::Range::new(
                                 point_to_lsp(edit_start),
                                 point_to_lsp(edit_end),
                             )),
                             range_length: None,
-                            text: new_text,
+                            // Collect changed text and preserve line endings.
+                            // text_for_range returns chunks with normalized \n, so we need to
+                            // convert to the buffer's actual line ending for LSP.
+                            text: line_ending.into_string(
+                                next_snapshot.text_for_range(edit.new.start.1..edit.new.end.1),
+                            ),
                         }
                     })
                     .collect()
@@ -7558,7 +7561,7 @@ impl LspStore {
                     vec![lsp::TextDocumentContentChangeEvent {
                         range: None,
                         range_length: None,
-                        text: next_snapshot.text(),
+                        text: next_snapshot.text_with_original_line_endings(),
                     }]
                 }
                 Some(lsp::TextDocumentSyncKind::INCREMENTAL) => build_incremental_change(),
@@ -10922,13 +10925,12 @@ impl LspStore {
 
                     let snapshot = versions.last().unwrap();
                     let version = snapshot.version;
-                    let initial_snapshot = &snapshot.snapshot;
                     let uri = lsp::Uri::from_file_path(file.abs_path(cx)).unwrap();
                     language_server.register_buffer(
                         uri,
                         adapter.language_id(&language.name()),
                         version,
-                        initial_snapshot.text(),
+                        buffer_handle.read(cx).text_with_original_line_endings(),
                     );
                     buffer_paths_registered.push((buffer_id, file.abs_path(cx)));
                     local
