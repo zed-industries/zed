@@ -1745,7 +1745,42 @@ impl SettingsWindow {
                 .unwrap_or_else(|| cx.focus_handle().tab_index(0).tab_stop(true));
             ui_files.push((settings_ui_file, focus_handle));
         }
+
         ui_files.reverse();
+
+        let mut missing_worktrees = Vec::new();
+
+        for worktree in all_projects(cx)
+            .flat_map(|project| project.read(cx).worktrees(cx))
+            .filter(|tree| !self.worktree_root_dirs.contains_key(&tree.read(cx).id()))
+        {
+            let worktree = worktree.read(cx);
+            let worktree_id = worktree.id();
+            let Some(directory_name) = worktree.root_dir().and_then(|file| {
+                file.file_name()
+                    .map(|os_string| os_string.to_string_lossy().to_string())
+            }) else {
+                continue;
+            };
+
+            missing_worktrees.push((worktree_id, directory_name.clone()));
+            let path = RelPath::empty().to_owned().into_arc();
+
+            let settings_ui_file = SettingsUiFile::Project((worktree_id, path));
+
+            let focus_handle = prev_files
+                .iter()
+                .find_map(|(prev_file, handle)| {
+                    (prev_file == &settings_ui_file).then(|| handle.clone())
+                })
+                .unwrap_or_else(|| cx.focus_handle().tab_index(0).tab_stop(true));
+
+            ui_files.push((settings_ui_file, focus_handle));
+        }
+
+        self.worktree_root_dirs
+            .extend(missing_worktrees.into_iter());
+
         self.files = ui_files;
         let current_file_still_exists = self
             .files
@@ -3033,20 +3068,40 @@ fn update_settings_file(
     match file {
         SettingsUiFile::Project((worktree_id, rel_path)) => {
             let rel_path = rel_path.join(paths::local_settings_file_relative_path());
-            let project = all_projects(cx).find(|project| {
-                project.read_with(cx, |project, cx| {
-                    project.contains_local_settings_file(worktree_id, &rel_path, cx)
-                })
-            });
-            let Some(project) = project else {
-                anyhow::bail!(
-                    "Could not find worktree containing settings file: {}",
-                    &rel_path.display(PathStyle::local())
-                );
+            let Some((worktree, project)) = all_projects(cx).find_map(|project| {
+                project
+                    .read(cx)
+                    .worktree_for_id(worktree_id, cx)
+                    .zip(Some(project))
+            }) else {
+                anyhow::bail!("Could not find project with worktree id: {}", worktree_id);
             };
+
             project.update(cx, |project, cx| {
-                project.update_local_settings_file(worktree_id, rel_path, cx, update);
+                let task = if project.contains_local_settings_file(worktree_id, &rel_path, cx) {
+                    None
+                } else {
+                    Some(worktree.update(cx, |worktree, cx| {
+                        worktree.create_entry(rel_path.clone(), false, None, cx)
+                    }))
+                };
+
+                cx.spawn(async move |project, cx| {
+                    if let Some(task) = task
+                        && task.await.is_err()
+                    {
+                        return;
+                    };
+
+                    project
+                        .update(cx, |project, cx| {
+                            project.update_local_settings_file(worktree_id, rel_path, cx, update);
+                        })
+                        .ok();
+                })
+                .detach();
             });
+
             return Ok(());
         }
         SettingsUiFile::User => {
