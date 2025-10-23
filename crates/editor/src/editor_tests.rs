@@ -26229,6 +26229,83 @@ async fn test_paste_url_from_other_app_creates_markdown_link_selectively_in_mult
     ));
 }
 
+#[gpui::test]
+async fn test_non_linux_line_endings_registration(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let unix_newlines_file_text = "fn main() {
+        let a = 5;
+    }";
+    let clrf_file_text = unix_newlines_file_text.lines().join("\r\n");
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/a"),
+        json!({
+            "first.rs": &clrf_file_text,
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
+    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+
+    let registered_text = Arc::new(Mutex::new(Vec::new()));
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    let mut fake_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                color_provider: Some(lsp::ColorProviderCapability::Simple(true)),
+                ..lsp::ServerCapabilities::default()
+            },
+            name: "rust-analyzer",
+            initializer: Some({
+                let registered_text = registered_text.clone();
+                Box::new(move |fake_server| {
+                    fake_server.handle_notification::<lsp::notification::DidOpenTextDocument, _>({
+                        let registered_text = registered_text.clone();
+                        move |params, _| {
+                            registered_text.lock().push(params.text_document.text);
+                        }
+                    });
+                })
+            }),
+            ..FakeLspAdapter::default()
+        },
+    );
+
+    let editor = workspace
+        .update(cx, |workspace, window, cx| {
+            workspace.open_abs_path(
+                PathBuf::from(path!("/a/first.rs")),
+                OpenOptions::default(),
+                window,
+                cx,
+            )
+        })
+        .unwrap()
+        .await
+        .unwrap()
+        .downcast::<Editor>()
+        .unwrap();
+    let _fake_language_server = fake_servers.next().await.unwrap();
+    cx.executor().run_until_parked();
+
+    assert_eq!(
+        editor.update(cx, |editor, cx| editor.text(cx)),
+        unix_newlines_file_text,
+        "Default text API returns \n-separated text",
+    );
+    assert_eq!(
+        vec![clrf_file_text],
+        registered_text.lock().drain(..).collect::<Vec<_>>(),
+        "Expected the language server to receive the exact same text from the FS",
+    );
+}
+
 #[track_caller]
 fn extract_color_inlays(editor: &Editor, cx: &App) -> Vec<Rgba> {
     editor
