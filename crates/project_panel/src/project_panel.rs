@@ -4678,12 +4678,11 @@ impl ProjectPanel {
                             div()
                                 .id("symlink_icon")
                                 .pr_3()
-                                .tooltip(move |window, cx| {
+                                .tooltip(move |_window, cx| {
                                     Tooltip::with_meta(
                                         path.to_string(),
                                         None,
                                         "Symbolic Link",
-                                        window,
                                         cx,
                                     )
                                 })
@@ -5863,7 +5862,6 @@ impl Render for ProjectPanel {
                         .key_binding(KeyBinding::for_action_in(
                             &workspace::Open,
                             &focus_handle,
-                            window,
                             cx,
                         ))
                         .on_click(cx.listener(|this, _, window, cx| {

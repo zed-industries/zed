@@ -714,7 +714,7 @@ impl Item for ProjectDiff {
 }
 
 impl Render for ProjectDiff {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let is_empty = self.multibuffer.read(cx).is_empty();
 
         div()
@@ -759,7 +759,6 @@ impl Render for ProjectDiff {
                                     .key_binding(KeyBinding::for_action_in(
                                         &CloseActiveItem::default(),
                                         &keybinding_focus_handle,
-                                        window,
                                         cx,
                                     ))
                                     .on_click(move |_, window, cx| {

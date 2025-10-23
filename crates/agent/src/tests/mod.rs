@@ -1995,7 +1995,7 @@ async fn test_tool_updates_to_completion(cx: &mut TestAppContext) {
             locations: vec![],
             raw_input: Some(json!({})),
             raw_output: None,
-            meta: None,
+            meta: Some(json!({ "tool_name": "thinking" })),
         }
     );
     let update = expect_tool_call_update_fields(&mut events).await;

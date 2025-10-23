@@ -6,10 +6,10 @@ use editor::{Editor, EditorEvent};
 use feature_flags::FeatureFlag;
 use fuzzy::StringMatchCandidate;
 use gpui::{
-    Action, App, Div, Entity, FocusHandle, Focusable, Global, ListState, ReadGlobal as _,
-    ScrollHandle, Stateful, Subscription, Task, TitlebarOptions, UniformListScrollHandle, Window,
-    WindowBounds, WindowHandle, WindowOptions, actions, div, list, point, prelude::*, px, size,
-    uniform_list,
+    Action, App, DEFAULT_ADDITIONAL_WINDOW_SIZE, Div, Entity, FocusHandle, Focusable, Global,
+    ListState, ReadGlobal as _, ScrollHandle, Stateful, Subscription, Task, TitlebarOptions,
+    UniformListScrollHandle, Window, WindowBounds, WindowHandle, WindowOptions, actions, div, list,
+    point, prelude::*, px, uniform_list,
 };
 use heck::ToTitleCase as _;
 use project::{Project, WorktreeId};
@@ -574,7 +574,7 @@ pub fn open_settings_editor(
     cx.defer(move |cx| {
         let current_rem_size: f32 = theme::ThemeSettings::get_global(cx).ui_font_size(cx).into();
 
-        let default_bounds = size(px(900.), px(750.)); // 4:3 Aspect Ratio
+        let default_bounds = DEFAULT_ADDITIONAL_WINDOW_SIZE;
         let default_rem_size = 16.0;
         let scale_factor = current_rem_size / default_rem_size;
         let scaled_bounds: gpui::Size<Pixels> = default_bounds.map(|axis| axis * scale_factor);
@@ -1875,19 +1875,31 @@ impl SettingsWindow {
                                         "more-files",
                                         format!("+{}", self.files.len() - (OVERFLOW_LIMIT + 1)),
                                         ContextMenu::build(window, cx, move |mut menu, _, _| {
-                                            for (ix, (file, focus_handle)) in self
+                                            for (mut ix, (file, focus_handle)) in self
                                                 .files
                                                 .iter()
                                                 .enumerate()
                                                 .skip(OVERFLOW_LIMIT + 1)
                                             {
+                                                let (display_name, focus_handle) = if self
+                                                    .drop_down_file
+                                                    .is_some_and(|drop_down_ix| drop_down_ix == ix)
+                                                {
+                                                    ix = OVERFLOW_LIMIT;
+                                                    (
+                                                        self.display_name(&self.files[ix].0),
+                                                        self.files[ix].1.clone(),
+                                                    )
+                                                } else {
+                                                    (self.display_name(&file), focus_handle.clone())
+                                                };
+
                                                 menu = menu.entry(
-                                                    self.display_name(file)
+                                                    display_name
                                                         .expect("Files should always have a name"),
                                                     None,
                                                     {
                                                         let this = this.clone();
-                                                        let focus_handle = focus_handle.clone();
                                                         move |window, cx| {
                                                             this.update(cx, |this, cx| {
                                                                 this.change_file(
@@ -2200,20 +2212,16 @@ impl SettingsWindow {
                     .flex_shrink_0()
                     .border_t_1()
                     .border_color(cx.theme().colors().border_variant)
-                    .children(
-                        KeyBinding::for_action_in(
-                            &ToggleFocusNav,
-                            &self.navbar_focus_handle.focus_handle(cx),
-                            window,
-                            cx,
+                    .child(
+                        KeybindingHint::new(
+                            KeyBinding::for_action_in(
+                                &ToggleFocusNav,
+                                &self.navbar_focus_handle.focus_handle(cx),
+                                cx,
+                            ),
+                            cx.theme().colors().surface_background.opacity(0.5),
                         )
-                        .map(|this| {
-                            KeybindingHint::new(
-                                this,
-                                cx.theme().colors().surface_background.opacity(0.5),
-                            )
-                            .suffix(focus_keybind_label)
-                        }),
+                        .suffix(focus_keybind_label),
                     ),
             )
     }
@@ -2608,17 +2616,23 @@ impl SettingsWindow {
                     Banner::new()
                         .severity(Severity::Warning)
                         .child(
-                            Label::new("Your Settings File is in an Invalid State. Setting Values May Be Incorrect, and Changes May Be Lost")
-                                .size(LabelSize::Large),
+                            v_flex()
+                                .my_0p5()
+                                .gap_0p5()
+                                .child(Label::new("Your settings file is in an invalid state."))
+                                .child(
+                                    Label::new(error).size(LabelSize::Small).color(Color::Muted),
+                                ),
                         )
-                        .child(Label::new(error).size(LabelSize::Small).color(Color::Muted))
                         .action_slot(
-                            Button::new("fix-in-json", "Fix in settings.json")
-                                .tab_index(0_isize)
-                                .style(ButtonStyle::OutlinedGhost)
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.open_current_settings_file(cx);
-                                })),
+                            div().pr_1().child(
+                                Button::new("fix-in-json", "Fix in settings.json")
+                                    .tab_index(0_isize)
+                                    .style(ButtonStyle::Tinted(ui::TintColor::Warning))
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.open_current_settings_file(cx);
+                                    })),
+                            ),
                         ),
                 )
                 .into_any_element()
@@ -2685,8 +2699,6 @@ impl SettingsWindow {
                 }
                 window.focus_prev();
             }))
-            .child(warning_banner)
-            .child(page_header)
             .when(sub_page_stack().is_empty(), |this| {
                 this.vertical_scrollbar_for(self.list_state.clone(), window, cx)
             })
@@ -2698,6 +2710,8 @@ impl SettingsWindow {
             .pt_6()
             .px_8()
             .bg(cx.theme().colors().editor_background)
+            .child(warning_banner)
+            .child(page_header)
             .child(
                 div()
                     .size_full()

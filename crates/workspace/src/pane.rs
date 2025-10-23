@@ -2730,12 +2730,11 @@ impl Pane {
                 .map(|this| {
                     if is_active {
                         let focus_handle = focus_handle.clone();
-                        this.tooltip(move |window, cx| {
+                        this.tooltip(move |_window, cx| {
                             Tooltip::for_action_in(
                                 end_slot_tooltip_text,
                                 end_slot_action,
                                 &focus_handle,
-                                window,
                                 cx,
                             )
                         })
@@ -3038,9 +3037,7 @@ impl Pane {
             .disabled(!self.can_navigate_backward())
             .tooltip({
                 let focus_handle = focus_handle.clone();
-                move |window, cx| {
-                    Tooltip::for_action_in("Go Back", &GoBack, &focus_handle, window, cx)
-                }
+                move |_window, cx| Tooltip::for_action_in("Go Back", &GoBack, &focus_handle, cx)
             });
 
         let navigate_forward = IconButton::new("navigate_forward", IconName::ArrowRight)
@@ -3056,8 +3053,8 @@ impl Pane {
             .disabled(!self.can_navigate_forward())
             .tooltip({
                 let focus_handle = focus_handle.clone();
-                move |window, cx| {
-                    Tooltip::for_action_in("Go Forward", &GoForward, &focus_handle, window, cx)
+                move |_window, cx| {
+                    Tooltip::for_action_in("Go Forward", &GoForward, &focus_handle, cx)
                 }
             });
 
@@ -3660,11 +3657,10 @@ fn default_render_tab_bar_buttons(
                 .on_click(cx.listener(|pane, _, window, cx| {
                     pane.toggle_zoom(&crate::ToggleZoom, window, cx);
                 }))
-                .tooltip(move |window, cx| {
+                .tooltip(move |_window, cx| {
                     Tooltip::for_action(
                         if zoomed { "Zoom Out" } else { "Zoom In" },
                         &ToggleZoom,
-                        window,
                         cx,
                     )
                 })

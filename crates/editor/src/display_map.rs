@@ -27,7 +27,7 @@ mod tab_map;
 mod wrap_map;
 
 use crate::{
-    EditorStyle, InlayId, RowExt, hover_links::InlayHighlight, movement::TextLayoutDetails,
+    EditorStyle, RowExt, hover_links::InlayHighlight, inlays::Inlay, movement::TextLayoutDetails,
 };
 pub use block_map::{
     Block, BlockChunks as DisplayChunks, BlockContext, BlockId, BlockMap, BlockPlacement,
@@ -42,7 +42,6 @@ pub use fold_map::{
     ChunkRenderer, ChunkRendererContext, ChunkRendererId, Fold, FoldId, FoldPlaceholder, FoldPoint,
 };
 use gpui::{App, Context, Entity, Font, HighlightStyle, LineLayout, Pixels, UnderlineStyle};
-pub use inlay_map::Inlay;
 use inlay_map::InlaySnapshot;
 pub use inlay_map::{InlayOffset, InlayPoint};
 pub use invisibles::{is_invisible, replacement};
@@ -50,9 +49,10 @@ use language::{
     OffsetUtf16, Point, Subscription as BufferSubscription, language_settings::language_settings,
 };
 use multi_buffer::{
-    Anchor, AnchorRangeExt, ExcerptId, MultiBuffer, MultiBufferPoint, MultiBufferRow,
-    MultiBufferSnapshot, RowInfo, ToOffset, ToPoint,
+    Anchor, AnchorRangeExt, MultiBuffer, MultiBufferPoint, MultiBufferRow, MultiBufferSnapshot,
+    RowInfo, ToOffset, ToPoint,
 };
+use project::InlayId;
 use project::project_settings::DiagnosticSeverity;
 use serde::Deserialize;
 
@@ -592,25 +592,6 @@ impl DisplayMap {
             .wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
         self.block_map.read(snapshot, edits);
-    }
-
-    pub fn remove_inlays_for_excerpts(
-        &mut self,
-        excerpts_removed: &[ExcerptId],
-        cx: &mut Context<Self>,
-    ) {
-        let to_remove = self
-            .inlay_map
-            .current_inlays()
-            .filter_map(|inlay| {
-                if excerpts_removed.contains(&inlay.position.excerpt_id) {
-                    Some(inlay.id)
-                } else {
-                    None
-                }
-            })
-            .collect::<Vec<_>>();
-        self.splice_inlays(&to_remove, Vec::new(), cx);
     }
 
     fn tab_size(buffer: &Entity<MultiBuffer>, cx: &App) -> NonZeroU32 {

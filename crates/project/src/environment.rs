@@ -265,7 +265,7 @@ async fn load_shell_environment(
         (Some(fake_env), None)
     } else if cfg!(target_os = "windows") {
         let (shell, args) = shell.program_and_args();
-        let envs = match shell_env::capture(shell, args, dir).await {
+        let mut envs = match shell_env::capture(shell, args, dir).await {
             Ok(envs) => envs,
             Err(err) => {
                 util::log_err(&err);
@@ -278,6 +278,11 @@ async fn load_shell_environment(
                 );
             }
         };
+        if let Some(path) = envs.remove("Path") {
+            // windows env vars are case-insensitive, so normalize the path var
+            // so we can just assume `PATH` in other places
+            envs.insert("PATH".into(), path);
+        }
 
         // Note: direnv is not available on Windows, so we skip direnv processing
         // and just return the shell environment

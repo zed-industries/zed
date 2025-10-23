@@ -118,10 +118,12 @@ impl Keymap {
     pub fn all_bindings_for_input(&self, input: &[Keystroke]) -> Vec<KeyBinding> {
         self.bindings()
             .rev()
-            .filter_map(|binding| {
-                binding.match_keystrokes(input).filter(|pending| !pending)?;
-                Some(binding.clone())
+            .filter(|binding| {
+                binding
+                    .match_keystrokes(input)
+                    .is_some_and(|pending| !pending)
             })
+            .cloned()
             .collect()
     }
 
