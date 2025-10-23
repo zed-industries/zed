@@ -7,7 +7,6 @@ edition.workspace = true
 [dependencies]
 fs.workspace = true
 gpui = {workspace = true, features = ["windows-manifest"]}
-workspace-hack.workspace = true
 
 [lints]
 workspace = true

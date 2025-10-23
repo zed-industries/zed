@@ -1,10 +1,15 @@
 use agent_client_protocol as acp;
-
+use anyhow::Result;
 use futures::{FutureExt as _, future::Shared};
-use gpui::{App, AppContext, Context, Entity, Task};
+use gpui::{App, AppContext, AsyncApp, Context, Entity, Task};
 use language::LanguageRegistry;
 use markdown::Markdown;
+use project::Project;
+use settings::{Settings as _, SettingsLocation};
 use std::{path::PathBuf, process::ExitStatus, sync::Arc, time::Instant};
+use task::Shell;
+use terminal::terminal_settings::TerminalSettings;
+use util::get_default_system_shell_preferring_bash;
 
 pub struct Terminal {
     id: acp::TerminalId,
@@ -169,4 +174,69 @@ impl Terminal {
             self.terminal.read(cx).get_content()
         )
     }
+}
+
+pub async fn create_terminal_entity(
+    command: String,
+    args: &[String],
+    env_vars: Vec<(String, String)>,
+    cwd: Option<PathBuf>,
+    project: &Entity<Project>,
+    cx: &mut AsyncApp,
+) -> Result<Entity<terminal::Terminal>> {
+    let mut env = if let Some(dir) = &cwd {
+        project
+            .update(cx, |project, cx| {
+                let worktree = project.find_worktree(dir.as_path(), cx);
+                let shell = TerminalSettings::get(
+                    worktree.as_ref().map(|(worktree, path)| SettingsLocation {
+                        worktree_id: worktree.read(cx).id(),
+                        path: &path,
+                    }),
+                    cx,
+                )
+                .shell
+                .clone();
+                project.directory_environment(&shell, dir.clone().into(), cx)
+            })?
+            .await
+            .unwrap_or_default()
+    } else {
+        Default::default()
+    };
+
+    // Disables paging for `git` and hopefully other commands
+    env.insert("PAGER".into(), "".into());
+    env.extend(env_vars);
+
+    // Use remote shell or default system shell, as appropriate
+    let shell = project
+        .update(cx, |project, cx| {
+            project
+                .remote_client()
+                .and_then(|r| r.read(cx).default_system_shell())
+                .map(Shell::Program)
+        })?
+        .unwrap_or_else(|| Shell::Program(get_default_system_shell_preferring_bash()));
+    let is_windows = project
+        .read_with(cx, |project, cx| project.path_style(cx).is_windows())
+        .unwrap_or(cfg!(windows));
+    let (task_command, task_args) = task::ShellBuilder::new(&shell, is_windows)
+        .redirect_stdin_to_dev_null()
+        .build(Some(command.clone()), &args);
+
+    project
+        .update(cx, |project, cx| {
+            project.create_terminal_task(
+                task::SpawnInTerminal {
+                    command: Some(task_command),
+                    args: task_args,
+                    cwd,
+                    env,
+                    ..Default::default()
+                },
+                cx,
+            )
+        })?
+        .await
 }

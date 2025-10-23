@@ -20,7 +20,7 @@ test-support = ["sqlite"]
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
-async-tungstenite.workspace = true
+async-tungstenite = { workspace = true, features = ["tokio", "tokio-rustls-manual-roots" ] }
 aws-config = { version = "1.1.5" }
 aws-sdk-kinesis = "1.51.0"
 aws-sdk-s3 = { version = "1.15.0" }
@@ -47,7 +47,9 @@ reqwest = { version = "0.11", features = ["json"] }
 reqwest_client.workspace = true
 rpc.workspace = true
 scrypt = "0.11"
-sea-orm = { version = "1.1.0-rc.1", features = ["sqlx-postgres", "postgres-array", "runtime-tokio-rustls", "with-uuid"] }
+# sea-orm and sea-orm-macros versions must match exactly.
+sea-orm = { version = "=1.1.10", features = ["sqlx-postgres", "postgres-array", "runtime-tokio-rustls", "with-uuid"] }
+sea-orm-macros = "=1.1.10"
 semantic_version.workspace = true
 semver.workspace = true
 serde.workspace = true
@@ -68,11 +70,10 @@ tracing = "0.1.40"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter", "json", "registry", "tracing-log"] } # workaround for https://github.com/tokio-rs/tracing/issues/2927
 util.workspace = true
 uuid.workspace = true
-workspace-hack.workspace = true
 
 [dev-dependencies]
 agent_settings.workspace = true
-assistant_context.workspace = true
+assistant_text_thread.workspace = true
 assistant_slash_command.workspace = true
 async-trait.workspace = true
 audio.workspace = true
@@ -116,7 +117,7 @@ release_channel.workspace = true
 remote = { workspace = true, features = ["test-support"] }
 remote_server.workspace = true
 rpc = { workspace = true, features = ["test-support"] }
-sea-orm = { version = "1.1.0-rc.1", features = ["sqlx-sqlite"] }
+sea-orm = { version = "=1.1.10", features = ["sqlx-sqlite"] }
 serde_json.workspace = true
 session = { workspace = true, features = ["test-support"] }
 settings = { workspace = true, features = ["test-support"] }

@@ -344,13 +344,9 @@ impl SystemWindowTabController {
         let tab_group = self
             .tab_groups
             .iter()
-            .find_map(|(group, tabs)| tabs.iter().find(|tab| tab.id == id).map(|_| *group));
+            .find_map(|(group, tabs)| tabs.iter().find(|tab| tab.id == id).map(|_| *group))?;
 
-        if let Some(tab_group) = tab_group {
-            self.tab_groups.get(&tab_group)
-        } else {
-            None
-        }
+        self.tab_groups.get(&tab_group)
     }
 
     /// Initialize the visibility of the system window tab controller.
@@ -415,7 +411,8 @@ impl SystemWindowTabController {
         for windows in controller.tab_groups.values_mut() {
             for tab in windows.iter_mut() {
                 if tab.id == id {
-                    tab.title = title.clone();
+                    tab.title = title;
+                    return;
                 }
             }
         }
@@ -556,7 +553,7 @@ pub struct App {
     pub(crate) entities: EntityMap,
     pub(crate) window_update_stack: Vec<WindowId>,
     pub(crate) new_entity_observers: SubscriberSet<TypeId, NewEntityListener>,
-    pub(crate) windows: SlotMap<WindowId, Option<Window>>,
+    pub(crate) windows: SlotMap<WindowId, Option<Box<Window>>>,
     pub(crate) window_handles: FxHashMap<WindowId, AnyWindowHandle>,
     pub(crate) focus_handles: Arc<FocusMap>,
     pub(crate) keymap: Rc<RefCell<Keymap>>,
@@ -967,7 +964,7 @@ impl App {
                     clear.clear();
 
                     cx.window_handles.insert(id, window.handle);
-                    cx.windows.get_mut(id).unwrap().replace(window);
+                    cx.windows.get_mut(id).unwrap().replace(Box::new(window));
                     Ok(handle)
                 }
                 Err(e) => {
@@ -1242,7 +1239,7 @@ impl App {
                     .windows
                     .values()
                     .filter_map(|window| {
-                        let window = window.as_ref()?;
+                        let window = window.as_deref()?;
                         window.invalidator.is_dirty().then_some(window.handle)
                     })
                     .collect::<Vec<_>>()
@@ -1323,7 +1320,7 @@ impl App {
 
     fn apply_refresh_effect(&mut self) {
         for window in self.windows.values_mut() {
-            if let Some(window) = window.as_mut() {
+            if let Some(window) = window.as_deref_mut() {
                 window.refreshing = true;
                 window.invalidator.set_dirty(true);
             }
@@ -2202,7 +2199,7 @@ impl AppContext for App {
             .windows
             .get(window.id)
             .context("window not found")?
-            .as_ref()
+            .as_deref()
             .expect("attempted to read a window that is already on the stack");
 
         let root_view = window.root.clone().unwrap();

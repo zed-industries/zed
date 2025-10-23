@@ -547,11 +547,7 @@ impl PickerDelegate for RecentProjectsDelegate {
         )
     }
 
-    fn render_footer(
-        &self,
-        window: &mut Window,
-        cx: &mut Context<Picker<Self>>,
-    ) -> Option<AnyElement> {
+    fn render_footer(&self, _: &mut Window, cx: &mut Context<Picker<Self>>) -> Option<AnyElement> {
         Some(
             h_flex()
                 .w_full()
@@ -567,7 +563,6 @@ impl PickerDelegate for RecentProjectsDelegate {
                                 from_existing_connection: false,
                                 create_new_window: false,
                             },
-                            window,
                             cx,
                         ))
                         .on_click(|_, window, cx| {
@@ -583,7 +578,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                 )
                 .child(
                     Button::new("local", "Open Local Folder")
-                        .key_binding(KeyBinding::for_action(&workspace::Open, window, cx))
+                        .key_binding(KeyBinding::for_action(&workspace::Open, cx))
                         .on_click(|_, window, cx| {
                             window.dispatch_action(workspace::Open.boxed_clone(), cx)
                         }),

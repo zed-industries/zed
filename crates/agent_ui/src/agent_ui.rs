@@ -4,8 +4,10 @@ mod agent_diff;
 mod agent_model_selector;
 mod agent_panel;
 mod buffer_codegen;
+mod context;
 mod context_picker;
 mod context_server_configuration;
+mod context_store;
 mod context_strip;
 mod inline_assistant;
 mod inline_prompt_editor;
@@ -22,7 +24,6 @@ mod ui;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use agent::ThreadId;
 use agent_settings::{AgentProfileId, AgentSettings};
 use assistant_slash_command::SlashCommandRegistry;
 use client::Client;
@@ -129,20 +130,11 @@ actions!(
     ]
 );
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Action)]
-#[action(namespace = agent)]
-#[action(deprecated_aliases = ["assistant::QuoteSelection"])]
-/// Quotes the current selection in the agent panel's message editor.
-pub struct QuoteSelection;
-
 /// Creates a new conversation thread, optionally based on an existing thread.
 #[derive(Default, Clone, PartialEq, Deserialize, JsonSchema, Action)]
 #[action(namespace = agent)]
 #[serde(deny_unknown_fields)]
-pub struct NewThread {
-    #[serde(default)]
-    from_thread_id: Option<ThreadId>,
-}
+pub struct NewThread;
 
 /// Creates a new external agent conversation thread.
 #[derive(Default, Clone, PartialEq, Deserialize, JsonSchema, Action)]
@@ -196,13 +188,13 @@ impl ExternalAgent {
     pub fn server(
         &self,
         fs: Arc<dyn fs::Fs>,
-        history: Entity<agent2::HistoryStore>,
+        history: Entity<agent::HistoryStore>,
     ) -> Rc<dyn agent_servers::AgentServer> {
         match self {
             Self::Gemini => Rc::new(agent_servers::Gemini),
             Self::ClaudeCode => Rc::new(agent_servers::ClaudeCode),
             Self::Codex => Rc::new(agent_servers::Codex),
-            Self::NativeAgent => Rc::new(agent2::NativeAgentServer::new(fs, history)),
+            Self::NativeAgent => Rc::new(agent::NativeAgentServer::new(fs, history)),
             Self::Custom { name, command: _ } => {
                 Rc::new(agent_servers::CustomAgentServer::new(name.clone()))
             }
@@ -258,7 +250,7 @@ pub fn init(
 ) {
     AgentSettings::register(cx);
 
-    assistant_context::init(client.clone(), cx);
+    assistant_text_thread::init(client.clone(), cx);
     rules_library::init(cx);
     if !is_eval {
         // Initializing the language model from the user settings messes with the eval, so we only initialize them when
@@ -266,7 +258,6 @@ pub fn init(
         init_language_model_settings(cx);
     }
     assistant_slash_command::init(cx);
-    agent::init(fs.clone(), cx);
     agent_panel::init(cx);
     context_server_configuration::init(language_registry.clone(), fs.clone(), cx);
     TextThreadEditor::init(cx);

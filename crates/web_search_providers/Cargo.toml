@@ -22,4 +22,3 @@ language_model.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 web_search.workspace = true
-workspace-hack.workspace = true
