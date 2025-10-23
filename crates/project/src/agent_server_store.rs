@@ -491,10 +491,8 @@ impl AgentServerStore {
                 ..
             } => {
                 for (ext_id, manifest) in manifests {
-                    let parent_name = manifest.name.clone();
                     for (agent_name, agent_entry) in &manifest.agent_servers {
-                        let display =
-                            SharedString::from(format!("{}: {}", parent_name, agent_name));
+                        let display = SharedString::from(agent_name.to_string());
 
                         match &agent_entry.launcher {
                             extension::AgentServerLauncher::Binary { bin_name } => {
