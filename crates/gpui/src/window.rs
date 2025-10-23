@@ -2275,14 +2275,19 @@ impl Window {
         }
 
         self.next_frame.deferred_draws.extend(
-            self.rendered_frame
-                .deferred_draws
-                .drain(range.start.deferred_draws_index..range.end.deferred_draws_index)
-                .map(|mut deferred_draw| {
-                    deferred_draw.parent_node =
-                        reused_subtree.refresh_node_id(deferred_draw.parent_node);
-                    deferred_draw.element = None;
-                    deferred_draw
+            self.rendered_frame.deferred_draws
+                [range.start.deferred_draws_index..range.end.deferred_draws_index]
+                .iter()
+                .map(|deferred_draw| DeferredDraw {
+                    current_view: deferred_draw.current_view,
+                    parent_node: reused_subtree.refresh_node_id(deferred_draw.parent_node),
+                    element_id_stack: deferred_draw.element_id_stack.clone(),
+                    text_style_stack: deferred_draw.text_style_stack.clone(),
+                    priority: deferred_draw.priority,
+                    element: None,
+                    absolute_offset: deferred_draw.absolute_offset,
+                    prepaint_range: deferred_draw.prepaint_range.clone(),
+                    paint_range: deferred_draw.paint_range.clone(),
                 }),
         );
     }
