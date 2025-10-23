@@ -12629,6 +12629,12 @@ async fn test_strip_whitespace_and_format_via_lsp(cx: &mut TestAppContext) {
                 );
             }
         });
+
+    #[cfg(target_os = "windows")]
+    let line_ending = "\r\n";
+    #[cfg(not(target_os = "windows"))]
+    let line_ending = "\n";
+
     // Handle formatting requests to the language server.
     cx.lsp
         .set_request_handler::<lsp::request::Formatting, _, _>({
@@ -12652,7 +12658,7 @@ async fn test_strip_whitespace_and_format_via_lsp(cx: &mut TestAppContext) {
                             ),
                             (
                                 lsp::Range::new(lsp::Position::new(3, 4), lsp::Position::new(3, 4)),
-                                "\n".into()
+                                line_ending.into()
                             ),
                         ]
                     );
@@ -12663,14 +12669,14 @@ async fn test_strip_whitespace_and_format_via_lsp(cx: &mut TestAppContext) {
                                 lsp::Position::new(1, 0),
                                 lsp::Position::new(1, 0),
                             ),
-                            new_text: "\n".into(),
+                            new_text: line_ending.into(),
                         },
                         lsp::TextEdit {
                             range: lsp::Range::new(
                                 lsp::Position::new(2, 0),
                                 lsp::Position::new(2, 0),
                             ),
-                            new_text: "\n".into(),
+                            new_text: line_ending.into(),
                         },
                     ]))
                 }
