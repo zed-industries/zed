@@ -109,7 +109,7 @@ pub fn init(languages: Arc<LanguageRegistry>, fs: Arc<dyn Fs>, node: NodeRuntime
         fs.clone(),
     ));
     let vtsls_adapter = Arc::new(vtsls::VtslsLspAdapter::new(node.clone(), fs.clone()));
-    let yaml_lsp_adapter = Arc::new(yaml::YamlLspAdapter::new(node.clone()));
+    let yaml_lsp_adapter = Arc::new(yaml::YamlLspAdapter::new(node));
 
     let built_in_languages = [
         LanguageInfo {
@@ -179,14 +179,7 @@ pub fn init(languages: Arc<LanguageRegistry>, fs: Arc<dyn Fs>, node: NodeRuntime
         },
         LanguageInfo {
             name: "python",
-            // Order here just provides a stable default list; actual activation is user-configurable.
-            adapters: vec![
-                basedpyright_lsp_adapter,
-                ruff_lsp_adapter,
-                // You can also add pyright/ty/pylsp into the default list if desired:
-                // python_lsp_adapter.clone(), ty_lsp_adapter.clone(), py_lsp_adapter.clone(),
-                pyrefly_lsp_adapter.clone(),
-            ],
+            adapters: vec![basedpyright_lsp_adapter, ruff_lsp_adapter],
             context: Some(python_context_provider),
             toolchain: Some(python_toolchain_provider),
             manifest_name: Some(SharedString::new_static("pyproject.toml").into()),
@@ -255,7 +248,17 @@ pub fn init(languages: Arc<LanguageRegistry>, fs: Arc<dyn Fs>, node: NodeRuntime
     // Register globally available language servers.
     //
     // This will allow users to add support for a built-in language server (e.g., Tailwind)
-    // for a given language via the `language_servers` setting.
+    // for a given language via the `language_servers` setting:
+    //
+    // ```json
+    // {
+    //   "languages": {
+    //     "My Language": {
+    //       "language_servers": ["tailwindcss-language-server", "..."]
+    //     }
+    //   }
+    // }
+    // ```
     languages.register_available_lsp_adapter(
         LanguageServerName("tailwindcss-language-server".into()),
         tailwind_adapter.clone(),
@@ -270,25 +273,15 @@ pub fn init(languages: Arc<LanguageRegistry>, fs: Arc<dyn Fs>, node: NodeRuntime
         typescript_lsp_adapter,
     );
 
-    // Make the Python family available by name for user settings overrides.
     languages.register_available_lsp_adapter(python_lsp_adapter.name(), python_lsp_adapter);
     languages.register_available_lsp_adapter(py_lsp_adapter.name(), py_lsp_adapter);
     languages.register_available_lsp_adapter(ty_lsp_adapter.name(), ty_lsp_adapter);
-    languages.register_available_lsp_adapter(
-        basedpyright_lsp_adapter.name(),
-        basedpyright_lsp_adapter.clone(),
-    );
-    languages.register_available_lsp_adapter(
-        ruff_lsp_adapter.name(),
-        ruff_lsp_adapter.clone(),
-    );
-    // NEW: expose pyrefly so users can select it in settings
-    languages.register_available_lsp_adapter(
-        LanguageServerName("pyrefly".into()),
-        Arc::new(PyreflyLspAdapter::new()),
-    );
+    languages.register_available_lsp_adapter(pyrefly_lsp_adapter.name(), pyrefly_lsp_adapter);
 
     // Register Tailwind for the existing languages that should have it by default.
+    //
+    // This can be driven by the `language_servers` setting once we have a way for
+    // extensions to provide their own default value for that setting.
     let tailwind_languages = [
         "Astro",
         "CSS",
