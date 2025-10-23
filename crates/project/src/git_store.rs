@@ -3618,6 +3618,7 @@ impl Repository {
                             .read(cx)
                             .file()
                             .is_some_and(|file| file.disk_state().exists())
+                        && buffer.read(cx).has_unsaved_edits()
                     {
                         save_futures.push(buffer_store.save_buffer(buffer, cx));
                     }
@@ -3684,6 +3685,7 @@ impl Repository {
                             .read(cx)
                             .file()
                             .is_some_and(|file| file.disk_state().exists())
+                        && buffer.read(cx).has_unsaved_edits()
                     {
                         save_futures.push(buffer_store.save_buffer(buffer, cx));
                     }
