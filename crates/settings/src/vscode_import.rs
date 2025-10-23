@@ -663,6 +663,7 @@ impl VsCodeSettings {
                 .and_then(|b| if b { Some(ShowDiagnostics::Off) } else { None }),
             starts_open: None,
             sticky_scroll: None,
+            padding: None,
         };
 
         if let (Some(false), Some(false)) = (

@@ -3365,6 +3365,28 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
+                    title: "Project Panel Padding",
+                    description: "Padding for the project panel in pixels.",
+                    field: Box::new(SettingField {
+                        json_path: Some("project_panel.padding"),
+                        pick: |settings_content| {
+                            settings_content
+                                .project_panel
+                                .as_ref()?
+                                .padding
+                                .as_ref()
+                        },
+                        write: |settings_content, value| {
+                            settings_content
+                                .project_panel
+                                .get_or_insert_default()
+                                .padding = value;
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
                     title: "Hide .gitignore",
                     description: "Whether to hide the gitignore entries in the project panel.",
                     field: Box::new(SettingField {

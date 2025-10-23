@@ -594,6 +594,10 @@ pub struct ProjectPanelSettingsContent {
     ///
     /// Default: true
     pub open_file_on_paste: Option<bool>,
+    /// Padding around the project panel content
+    ///
+    /// Default: 0.0
+    pub padding: Option<f32>,
 }
 
 #[derive(

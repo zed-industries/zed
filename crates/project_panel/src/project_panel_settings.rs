@@ -30,6 +30,7 @@ pub struct ProjectPanelSettings {
     pub hide_hidden: bool,
     pub drag_and_drop: bool,
     pub open_file_on_paste: bool,
+    pub padding: f32,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -81,6 +82,7 @@ impl Settings for ProjectPanelSettings {
             hide_hidden: project_panel.hide_hidden.unwrap(),
             drag_and_drop: project_panel.drag_and_drop.unwrap(),
             open_file_on_paste: project_panel.open_file_on_paste.unwrap(),
+            padding: project_panel.padding.unwrap(),
         }
     }
 }

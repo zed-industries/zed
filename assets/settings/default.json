@@ -658,6 +658,8 @@
     "hide_gitignore": false,
     // Default width of the project panel.
     "default_width": 240,
+    // Padding inside the project panel, in pixels.
+    "padding": 0,
     // Where to dock the project panel. Can be 'left' or 'right'.
     "dock": "left",
     // Spacing between worktree entries in the project panel. Can be 'comfortable' or 'standard'.

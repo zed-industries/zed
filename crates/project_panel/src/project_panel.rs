@@ -5409,6 +5409,7 @@ impl Render for ProjectPanel {
                         .on_drag_move(cx.listener(handle_drag_move::<DraggedSelection>))
                 })
                 .size_full()
+                .p(px(panel_settings.padding))
                 .relative()
                 .on_modifiers_changed(cx.listener(
                     |this, event: &ModifiersChangedEvent, window, cx| {
