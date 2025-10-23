@@ -5646,8 +5646,8 @@ fn test_duplicate_line(cx: &mut TestAppContext) {
         );
     });
 
-    // With `move_upwards` the selections stay in place, except for
-    // the lines inserted above them
+    // With `duplicate_line_up` the selections move to the duplicated lines,
+    // which are inserted above the original lines
     let editor = cx.add_window(|window, cx| {
         let buffer = MultiBuffer::build_simple("abc\ndef\nghi\n", cx);
         build_editor(buffer, window, cx)
@@ -5669,7 +5669,7 @@ fn test_duplicate_line(cx: &mut TestAppContext) {
                 DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 1),
                 DisplayPoint::new(DisplayRow(0), 2)..DisplayPoint::new(DisplayRow(0), 2),
                 DisplayPoint::new(DisplayRow(2), 0)..DisplayPoint::new(DisplayRow(2), 0),
-                DisplayPoint::new(DisplayRow(6), 0)..DisplayPoint::new(DisplayRow(6), 0),
+                DisplayPoint::new(DisplayRow(5), 0)..DisplayPoint::new(DisplayRow(5), 0),
             ]
         );
     });
@@ -26807,8 +26807,8 @@ fn test_duplicate_line_up_on_last_line_without_newline(cx: &mut TestAppContext) 
 
             assert_eq!(
                 editor.selections.display_ranges(cx),
-                vec![DisplayPoint::new(DisplayRow(1), 0)..DisplayPoint::new(DisplayRow(1), 0)],
-                "Selection should remain on the original line"
+                vec![DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 0)],
+                "Selection should move to the duplicated line"
             );
         })
         .unwrap();

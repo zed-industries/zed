@@ -11559,7 +11559,7 @@ impl Editor {
                         end
                     } else {
                         text.push('\n');
-                        Point::new(rows.end.0, 0)
+                        Point::new(rows.start.0, 0)
                     }
                 } else {
                     text.push('\n');
@@ -11586,24 +11586,40 @@ impl Editor {
 
                 this.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                     let mut new_ranges = Vec::new();
+                    let selections = s.all::<Point>(&display_map);
+                    let mut selections_iter = selections.iter().peekable();
 
-                    for selection in s.all::<Point>(&display_map) {
-                        let rows = selection.spanned_rows(false, &display_map);
+                    while let Some(first_selection) = selections_iter.next() {
+                        // Group contiguous selections together to find the total row span
+                        let mut group_selections = vec![first_selection];
+                        let mut rows = first_selection.spanned_rows(false, &display_map);
+
+                        while let Some(next_selection) = selections_iter.peek() {
+                            let next_rows = next_selection.spanned_rows(false, &display_map);
+                            if next_rows.start < rows.end {
+                                rows.end = next_rows.end;
+                                group_selections.push(selections_iter.next().unwrap());
+                            } else {
+                                break;
+                            }
+                        }
 
                         let row_count = rows.end.0 - rows.start.0;
 
-                        // Move selection up by the number of duplicated rows
-                        let new_start = Point::new(
-                            selection.start.row.saturating_sub(row_count),
-                            selection.start.column,
-                        );
+                        // Move all selections in this group up by the total number of duplicated rows
+                        for selection in group_selections {
+                            let new_start = Point::new(
+                                selection.start.row.saturating_sub(row_count),
+                                selection.start.column,
+                            );
 
-                        let new_end = Point::new(
-                            selection.end.row.saturating_sub(row_count),
-                            selection.end.column,
-                        );
+                            let new_end = Point::new(
+                                selection.end.row.saturating_sub(row_count),
+                                selection.end.column,
+                            );
 
-                        new_ranges.push(new_start..new_end);
+                            new_ranges.push(new_start..new_end);
+                        }
                     }
 
                     s.select_ranges(new_ranges);
