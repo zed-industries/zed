@@ -15334,6 +15334,7 @@ dependencies = [
  "picker",
  "pretty_assertions",
  "project",
+ "release_channel",
  "schemars 1.0.4",
  "search",
  "serde",
