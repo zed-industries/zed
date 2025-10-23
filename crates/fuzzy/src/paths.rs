@@ -21,7 +21,7 @@ pub struct PathMatchCandidate<'a> {
 #[derive(Clone, Debug)]
 pub struct PathMatch {
     pub score: f64,
-    /// Guarenteed to be sorted
+    /// Guarenteed to be sorted, chars from the start of the string
     pub positions: Vec<usize>,
     pub worktree_id: usize,
     pub path: Arc<RelPath>,
@@ -67,7 +67,6 @@ impl Ord for PathMatch {
             "{:?}: {}, {:?} {}",
             self.path, self.score, other.path, other.score
         );
-        dbg!(self.score, other.score);
         self.score
             .total_cmp(&other.score)
             .reverse()
@@ -76,6 +75,10 @@ impl Ord for PathMatch {
                 other
                     .distance_to_relative_ancestor
                     .cmp(&self.distance_to_relative_ancestor)
+            })
+            .then_with(|| {
+                self.distance_from_end()
+                    .total_cmp(&other.distance_from_end())
             })
             // see shorter_over_lexicographical test for an example of why we want this
             .then_with(|| {
@@ -89,6 +92,19 @@ impl Ord for PathMatch {
     }
 }
 
+impl PathMatch {
+    fn distance_from_end(&self) -> f32 {
+        let len = self.path_prefix.as_unix_str().chars().count()
+            + 1
+            + self.path.as_unix_str().chars().count(); // add one for path separator
+        dbg!(&self.path, &self.path_prefix);
+        self.positions
+            .iter()
+            .map(|p| (dbg!(len) - dbg!(p)) as f32 / 1000.0)
+            .sum()
+    }
+}
+
 pub fn match_fixed_path_set(
     candidates: Vec<PathMatchCandidate>,
     worktree_id: usize,
@@ -98,7 +114,9 @@ pub fn match_fixed_path_set(
     max_results: usize,
     path_style: PathStyle,
 ) -> Vec<PathMatch> {
-    let mut matcher = matcher::get_matcher(nucleo::Config::DEFAULT);
+    let mut config = nucleo::Config::DEFAULT;
+    config.set_match_paths();
+    let mut matcher = matcher::get_matcher(config);
     let pattern = Pattern::new(
         query,
         if smart_case {
@@ -110,31 +128,21 @@ pub fn match_fixed_path_set(
         AtomKind::Fuzzy,
     );
 
-    let path_prefix = worktree_root_name.unwrap_or(RelPath::empty().into());
-    let path_prefix_len = path_prefix.display(path_style).len();
-    let mut candidate_buf = dbg!(path_prefix.display(path_style).to_string());
     let mut results = Vec::with_capacity(candidates.len());
-    for c in candidates {
-        let mut indices = Vec::new();
-        let mut buf = Vec::new();
-        candidate_buf.truncate(path_prefix_len);
-        candidate_buf.push_str(c.path.as_unix_str());
-        if let Some(score) = pattern.indices(
-            nucleo::Utf32Str::new(&candidate_buf, &mut buf),
-            &mut matcher,
-            &mut indices,
-        ) {
-            results.push(PathMatch {
-                score: score as f64,
-                worktree_id,
-                positions: indices.into_iter().map(|n| n as usize).collect(),
-                is_dir: c.is_dir,
-                path: c.path.into(),
-                path_prefix: Arc::clone(&path_prefix),
-                distance_to_relative_ancestor: usize::MAX,
-            })
-        };
-    }
+    path_match_helper(
+        &mut matcher,
+        &pattern,
+        candidates.into_iter(),
+        worktree_id,
+        &worktree_root_name
+            .clone()
+            .unwrap_or(RelPath::empty().into()),
+        &None,
+        path_style,
+        &AtomicBool::new(false),
+        &mut results,
+    )
+    .ok();
     matcher::return_matcher(matcher);
     util::truncate_to_bottom_n_sorted(&mut results, max_results);
     for r in &mut results {
@@ -143,29 +151,35 @@ pub fn match_fixed_path_set(
     results
 }
 
-pub fn path_match_helper<'a>(
+struct Cancelled;
+
+fn path_match_helper<'a>(
     matcher: &mut nucleo::Matcher,
     pattern: &Pattern,
     candidates: impl Iterator<Item = PathMatchCandidate<'a>>,
     worktree_id: usize,
+    path_prefix: &Arc<RelPath>,
     relative_to: &Option<Arc<RelPath>>,
     path_style: PathStyle,
+    cancel_flag: &AtomicBool,
     results: &mut Vec<PathMatch>,
-) {
-    let path_prefix = relative_to.clone().unwrap_or(RelPath::empty().into());
-    let path_prefix_len = path_prefix.display(path_style).len();
-    let mut candidate_buf = dbg!(path_prefix.display(path_style).to_string());
+) -> std::result::Result<(), Cancelled> {
+    let mut candidate_buf = path_prefix.display(path_style).to_string();
+    candidate_buf.push_str(path_style.separator());
+    let path_prefix_len = candidate_buf.len();
     for c in candidates {
+        if cancel_flag.load(std::sync::atomic::Ordering::Relaxed) {
+            return Err(Cancelled);
+        }
         let mut indices = Vec::new();
         let mut buf = Vec::new();
         candidate_buf.truncate(path_prefix_len);
         candidate_buf.push_str(c.path.as_unix_str());
         if let Some(score) = pattern.indices(
-            nucleo::Utf32Str::new(&candidate_buf, &mut buf),
+            nucleo::Utf32Str::new(dbg!(&candidate_buf), &mut buf),
             matcher,
             &mut indices,
         ) {
-
             results.push(PathMatch {
                 score: score as f64,
                 worktree_id,
@@ -181,6 +195,7 @@ pub fn path_match_helper<'a>(
             })
         };
     }
+    Ok(())
 }
 
 /// Query should contain spaces if you want it to be matched out of order
@@ -198,6 +213,7 @@ pub async fn match_path_sets<'a, Set: PathMatchCandidateSet<'a>>(
     if path_count == 0 {
         return Vec::new();
     }
+    dbg!(relative_to);
 
     let path_style = candidate_sets[0].path_style();
 
@@ -224,7 +240,9 @@ pub async fn match_path_sets<'a, Set: PathMatchCandidateSet<'a>>(
         .map(|_| Vec::with_capacity(max_results))
         .collect::<Vec<_>>();
 
-    let mut matchers = matcher::get_matchers(num_cpus, nucleo::Config::DEFAULT);
+    let mut config = nucleo::Config::DEFAULT;
+    config.set_match_paths();
+    let mut matchers = matcher::get_matchers(num_cpus, config);
 
     // This runs num_cpu parallel searches. Each search is going through all candidate sets
     // Each parallel search goes through one segment of the every candidate set. The segments are
@@ -243,7 +261,7 @@ pub async fn match_path_sets<'a, Set: PathMatchCandidateSet<'a>>(
                     let segment_end = segment_start + segment_size;
 
                     let mut tree_start = 0;
-                    'outer: for candidate_set in candidate_sets {
+                    for candidate_set in candidate_sets {
                         let tree_end = tree_start + candidate_set.len();
 
                         if tree_start < segment_end && segment_start < tree_end {
@@ -260,35 +278,21 @@ pub async fn match_path_sets<'a, Set: PathMatchCandidateSet<'a>>(
                             if !candidate_set.root_is_file() && !prefix.is_empty() {
                                 prefix.push('/');
                             }
-                            for c in candidates {
-                                if cancel_flag.load(std::sync::atomic::Ordering::Relaxed) {
-                                    break 'outer;
-                                }
-                                let mut indices = Vec::new();
-                                let mut buf = Vec::new();
-                                if let Some(score) = pattern.indices(
-                                    nucleo::Utf32Str::new(&c.path.as_unix_str(), &mut buf),
-                                    matcher,
-                                    &mut indices,
-                                ) {
-                                    results.push(PathMatch {
-                                        score: score as f64,
-                                        worktree_id,
-                                        positions: indices
-                                            .into_iter()
-                                            .map(|n| n as usize)
-                                            .collect(),
-                                        path: Arc::from(c.path),
-                                        is_dir: c.is_dir,
-                                        path_prefix: candidate_set.prefix(),
-                                        distance_to_relative_ancestor: relative_to.as_ref().map_or(
-                                            usize::MAX,
-                                            |relative_to| {
-                                                distance_between_paths(c.path, relative_to.as_ref())
-                                            },
-                                        ),
-                                    })
-                                };
+
+                            if path_match_helper(
+                                matcher,
+                                &pattern,
+                                candidates,
+                                worktree_id,
+                                &candidate_set.prefix(),
+                                &relative_to,
+                                path_style,
+                                cancel_flag,
+                                results,
+                            )
+                            .is_err()
+                            {
+                                break;
                             }
                         }
                         if tree_end >= segment_end {
@@ -387,9 +391,10 @@ mod tests {
         cx: &mut TestAppContext,
         candidates: &'static [&'static str],
         query: &'static str,
+        prefix: Option<&str>,
     ) -> Vec<String> {
         let set = TestCandidateSet {
-            prefix: RelPath::unix("a/b").unwrap().into(),
+            prefix: RelPath::unix(prefix.unwrap_or_default()).unwrap().into(),
             candidates: candidates
                 .into_iter()
                 .map(|s| PathMatchCandidate {
@@ -435,7 +440,7 @@ mod tests {
         ];
 
         assert_eq!(
-            path_matches(cx, CANDIDATES, "toml gpui").await,
+            path_matches(cx, CANDIDATES, "toml gpui", None).await,
             [
                 "gpui/Cargo.toml",
                 "gpui_more/Cargo.toml",
@@ -444,7 +449,7 @@ mod tests {
         );
 
         assert_eq!(
-            path_matches(cx, CANDIDATES, "gpui more").await,
+            path_matches(cx, CANDIDATES, "gpui more", None).await,
             ["gpui_more/Cargo.toml", "gpui_even_more/Cargo.toml",]
         );
     }
@@ -457,7 +462,7 @@ mod tests {
         ];
 
         assert_eq!(
-            path_matches(cx, CANDIDATES, "toml gpui").await,
+            path_matches(cx, CANDIDATES, "toml gpui", None).await,
             [
                 "crates/gpui/Cargo.toml",
                 "crates/gpui_tokio/Cargo.toml",
@@ -477,7 +482,7 @@ mod tests {
         ];
 
         assert_eq!(
-            path_matches(cx, CANDIDATES, "toml de").await,
+            path_matches(cx, CANDIDATES, "toml de", None).await,
             [
                 "crates/denoise/Cargo.toml",
                 "crates/deepseek/Cargo.toml",
@@ -494,14 +499,14 @@ mod tests {
             "blue", "red", "purple", "pink", "green", "yellow", "magenta", "orange", "ocean",
             "navy", "brown",
         ];
-        assert_eq!(path_matches(cx, CANDIDATES, "bl").await, ["blue"]);
+        assert_eq!(path_matches(cx, CANDIDATES, "bl", None).await, ["blue"]);
     }
 
     #[gpui::test]
     async fn shorter_over_lexicographical(cx: &mut TestAppContext) {
         const CANDIDATES: &'static [&'static str] = &["qr", "qqqqqqqqqqqq"];
         assert_eq!(
-            path_matches(cx, CANDIDATES, "q").await,
+            path_matches(cx, CANDIDATES, "q", None).await,
             ["qr", "qqqqqqqqqqqq"]
         );
     }
@@ -516,6 +521,26 @@ mod tests {
             "crates/livekit_api/vendored/protocol/README.md",
             "crates/assistant_tools/src/read_file_tool/description.md",
         ];
-        assert_eq!(path_matches(cx, CANDIDATES, "read").await, CANDIDATES);
+        assert_eq!(path_matches(cx, CANDIDATES, "read", None).await, CANDIDATES);
+    }
+
+    #[gpui::test]
+    async fn paprika(cx: &mut TestAppContext) {
+        const CANDIDATES: &'static [&'static str] = &["bar/neat.txt", "foo/bar.txt"];
+
+        assert_eq!(
+            path_matches(cx, CANDIDATES, "bar", None).await,
+            ["foo/bar.txt", "bar/neat.txt"]
+        );
+    }
+
+    #[gpui::test]
+    async fn aubergine(cx: &mut TestAppContext) {
+        const CANDIDATES: &'static [&'static str] =
+            &["vim_mode_setting/Cargo.toml", "vim/Cargo.toml"];
+        assert_eq!(
+            path_matches(cx, CANDIDATES, "Cargo.to vim", Some("crates")).await,
+            [CANDIDATES[1], CANDIDATES[0]]
+        );
     }
 }
