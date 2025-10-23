@@ -556,7 +556,7 @@ async fn test_editing_files(cx: &mut gpui::TestAppContext) {
         panel.filename_editor.update(cx, |editor, cx| {
             editor.set_text("the-new-filename", window, cx)
         });
-        panel.confirm_edit(window, cx).unwrap()
+        panel.confirm_edit(true, window, cx).unwrap()
     });
     assert_eq!(
         visible_entries_as_strings(&panel, 0..10, cx),
@@ -616,7 +616,7 @@ async fn test_editing_files(cx: &mut gpui::TestAppContext) {
             panel.filename_editor.update(cx, |editor, cx| {
                 editor.set_text("another-filename.txt", window, cx)
             });
-            panel.confirm_edit(window, cx).unwrap()
+            panel.confirm_edit(true, window, cx).unwrap()
         })
         .await
         .unwrap();
@@ -657,7 +657,7 @@ async fn test_editing_files(cx: &mut gpui::TestAppContext) {
 
     let confirm = panel.update_in(cx, |panel, window, cx| {
         panel.filename_editor.update(cx, |editor, cx| {
-            let file_name_selections = editor.selections.all::<usize>(cx);
+            let file_name_selections = editor.selections.all::<usize>(&editor.display_snapshot(cx));
             assert_eq!(
                 file_name_selections.len(),
                 1,
@@ -676,7 +676,7 @@ async fn test_editing_files(cx: &mut gpui::TestAppContext) {
 
             editor.set_text("a-different-filename.tar.gz", window, cx)
         });
-        panel.confirm_edit(window, cx).unwrap()
+        panel.confirm_edit(true, window, cx).unwrap()
     });
     assert_eq!(
         visible_entries_as_strings(&panel, 0..10, cx),
@@ -731,7 +731,7 @@ async fn test_editing_files(cx: &mut gpui::TestAppContext) {
 
     panel.update_in(cx, |panel, window, cx| {
             panel.filename_editor.update(cx, |editor, cx| {
-                let file_name_selections = editor.selections.all::<usize>(cx);
+                let file_name_selections = editor.selections.all::<usize>(&editor.display_snapshot(cx));
                 assert_eq!(file_name_selections.len(), 1, "File editing should have a single selection, but got: {file_name_selections:?}");
                 let file_name_selection = &file_name_selections[0];
                 assert_eq!(file_name_selection.start, 0, "Should select the file name from the start");
@@ -765,7 +765,7 @@ async fn test_editing_files(cx: &mut gpui::TestAppContext) {
         panel
             .filename_editor
             .update(cx, |editor, cx| editor.set_text("new-dir", window, cx));
-        panel.confirm_edit(window, cx).unwrap()
+        panel.confirm_edit(true, window, cx).unwrap()
     });
     panel.update_in(cx, |panel, window, cx| {
         panel.select_next(&Default::default(), window, cx)
@@ -863,11 +863,11 @@ async fn test_editing_files(cx: &mut gpui::TestAppContext) {
         panel.filename_editor.update(cx, |editor, cx| {
             editor.set_text("", window, cx);
         });
-        assert!(panel.confirm_edit(window, cx).is_none());
+        assert!(panel.confirm_edit(true, window, cx).is_none());
         panel.filename_editor.update(cx, |editor, cx| {
             editor.set_text("   ", window, cx);
         });
-        assert!(panel.confirm_edit(window, cx).is_none());
+        assert!(panel.confirm_edit(true, window, cx).is_none());
         panel.cancel(&menu::Cancel, window, cx);
         panel.update_visible_entries(None, false, false, window, cx);
     });
@@ -986,7 +986,7 @@ async fn test_adding_directories_via_file(cx: &mut gpui::TestAppContext) {
         panel.filename_editor.update(cx, |editor, cx| {
             editor.set_text("/bdir1/dir2/the-new-filename", window, cx)
         });
-        panel.confirm_edit(window, cx).unwrap()
+        panel.confirm_edit(true, window, cx).unwrap()
     });
 
     assert_eq!(
@@ -1082,7 +1082,7 @@ async fn test_adding_directory_via_file(cx: &mut gpui::TestAppContext) {
         panel
             .filename_editor
             .update(cx, |editor, cx| editor.set_text("new_dir/", window, cx));
-        panel.confirm_edit(window, cx).unwrap()
+        panel.confirm_edit(true, window, cx).unwrap()
     });
 
     assert_eq!(
@@ -1115,7 +1115,7 @@ async fn test_adding_directory_via_file(cx: &mut gpui::TestAppContext) {
         panel
             .filename_editor
             .update(cx, |editor, cx| editor.set_text("new dir 2/", window, cx));
-        panel.confirm_edit(window, cx).unwrap()
+        panel.confirm_edit(true, window, cx).unwrap()
     });
     confirm.await.unwrap();
     cx.run_until_parked();
@@ -1140,7 +1140,7 @@ async fn test_adding_directory_via_file(cx: &mut gpui::TestAppContext) {
             panel
                 .filename_editor
                 .update(cx, |editor, cx| editor.set_text("new_dir_3\\", window, cx));
-            panel.confirm_edit(window, cx).unwrap()
+            panel.confirm_edit(true, window, cx).unwrap()
         });
         confirm.await.unwrap();
         cx.run_until_parked();
@@ -1214,7 +1214,7 @@ async fn test_copy_paste(cx: &mut gpui::TestAppContext) {
 
     panel.update_in(cx, |panel, window, cx| {
         panel.filename_editor.update(cx, |editor, cx| {
-            let file_name_selections = editor.selections.all::<usize>(cx);
+            let file_name_selections = editor.selections.all::<usize>(&editor.display_snapshot(cx));
             assert_eq!(
                 file_name_selections.len(),
                 1,
@@ -1232,7 +1232,7 @@ async fn test_copy_paste(cx: &mut gpui::TestAppContext) {
                 "Should select the file name disambiguation until the extension"
             );
         });
-        assert!(panel.confirm_edit(window, cx).is_none());
+        assert!(panel.confirm_edit(true, window, cx).is_none());
     });
 
     panel.update_in(cx, |panel, window, cx| {
@@ -1253,7 +1253,7 @@ async fn test_copy_paste(cx: &mut gpui::TestAppContext) {
     );
 
     panel.update_in(cx, |panel, window, cx| {
-        assert!(panel.confirm_edit(window, cx).is_none())
+        assert!(panel.confirm_edit(true, window, cx).is_none())
     });
 }
 
@@ -1672,7 +1672,7 @@ async fn test_copy_paste_directory(cx: &mut gpui::TestAppContext) {
         panel
             .filename_editor
             .update(cx, |editor, cx| editor.set_text("c", window, cx));
-        panel.confirm_edit(window, cx).unwrap()
+        panel.confirm_edit(true, window, cx).unwrap()
     });
     assert_eq!(
         visible_entries_as_strings(&panel, 0..50, cx),
@@ -2060,7 +2060,7 @@ async fn test_create_duplicate_items(cx: &mut gpui::TestAppContext) {
             .filename_editor
             .update(cx, |editor, cx| editor.set_text("test", window, cx));
         assert!(
-            panel.confirm_edit(window, cx).is_none(),
+            panel.confirm_edit(true, window, cx).is_none(),
             "Should not allow to confirm on conflicting new directory name"
         );
     });
@@ -2116,7 +2116,7 @@ async fn test_create_duplicate_items(cx: &mut gpui::TestAppContext) {
             .filename_editor
             .update(cx, |editor, cx| editor.set_text("first.rs", window, cx));
         assert!(
-            panel.confirm_edit(window, cx).is_none(),
+            panel.confirm_edit(true, window, cx).is_none(),
             "Should not allow to confirm on conflicting new file name"
         );
     });
@@ -2174,7 +2174,7 @@ async fn test_create_duplicate_items(cx: &mut gpui::TestAppContext) {
             .filename_editor
             .update(cx, |editor, cx| editor.set_text("second.rs", window, cx));
         assert!(
-            panel.confirm_edit(window, cx).is_none(),
+            panel.confirm_edit(true, window, cx).is_none(),
             "Should not allow to confirm on conflicting file rename"
         )
     });
@@ -3041,7 +3041,7 @@ async fn test_rename_root_of_worktree(cx: &mut gpui::TestAppContext) {
         panel
             .filename_editor
             .update(cx, |editor, cx| editor.set_text("new_root1", window, cx));
-        panel.confirm_edit(window, cx).unwrap()
+        panel.confirm_edit(true, window, cx).unwrap()
     });
     confirm.await.unwrap();
     cx.run_until_parked();
@@ -4173,7 +4173,7 @@ async fn test_creating_excluded_entries(cx: &mut gpui::TestAppContext) {
             panel.filename_editor.update(cx, |editor, cx| {
                 editor.set_text(excluded_file_path, window, cx)
             });
-            panel.confirm_edit(window, cx).unwrap()
+            panel.confirm_edit(true, window, cx).unwrap()
         })
         .await
         .unwrap();
@@ -4229,7 +4229,7 @@ async fn test_creating_excluded_entries(cx: &mut gpui::TestAppContext) {
             panel.filename_editor.update(cx, |editor, cx| {
                 editor.set_text(excluded_file_path, window, cx)
             });
-            panel.confirm_edit(window, cx).unwrap()
+            panel.confirm_edit(true, window, cx).unwrap()
         })
         .await
         .unwrap();
@@ -4273,7 +4273,7 @@ async fn test_creating_excluded_entries(cx: &mut gpui::TestAppContext) {
             panel.filename_editor.update(cx, |editor, cx| {
                 editor.set_text(excluded_dir_path, window, cx)
             });
-            panel.confirm_edit(window, cx).unwrap()
+            panel.confirm_edit(true, window, cx).unwrap()
         })
         .await
         .unwrap();
@@ -5694,7 +5694,7 @@ async fn test_create_entries_without_selection(cx: &mut gpui::TestAppContext) {
             panel.filename_editor.update(cx, |editor, cx| {
                 editor.set_text("hello_from_no_selections", window, cx)
             });
-            panel.confirm_edit(window, cx).unwrap()
+            panel.confirm_edit(true, window, cx).unwrap()
         })
         .await
         .unwrap();
@@ -5792,7 +5792,7 @@ async fn test_create_entries_without_selection_hide_root(cx: &mut gpui::TestAppC
         panel.filename_editor.update(cx, |editor, cx| {
             editor.set_text("new_file_at_root.txt", window, cx)
         });
-        panel.confirm_edit(window, cx).unwrap()
+        panel.confirm_edit(true, window, cx).unwrap()
     });
     confirm.await.unwrap();
     cx.run_until_parked();
@@ -5843,7 +5843,7 @@ async fn test_create_entries_without_selection_hide_root(cx: &mut gpui::TestAppC
         panel.filename_editor.update(cx, |editor, cx| {
             editor.set_text("new_dir_at_root", window, cx)
         });
-        panel.confirm_edit(window, cx).unwrap()
+        panel.confirm_edit(true, window, cx).unwrap()
     });
     confirm.await.unwrap();
     cx.run_until_parked();

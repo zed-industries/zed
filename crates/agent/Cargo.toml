@@ -10,6 +10,8 @@ path = "src/agent.rs"
 
 [features]
 test-support = ["db/test-support"]
+eval = []
+edit-agent-eval = []
 e2e = []
 
 [lints]
@@ -69,7 +71,6 @@ util.workspace = true
 uuid.workspace = true
 watch.workspace = true
 web_search.workspace = true
-workspace-hack.workspace = true
 zed_env_vars.workspace = true
 zstd.workspace = true
 

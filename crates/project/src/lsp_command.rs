@@ -234,7 +234,7 @@ pub(crate) struct OnTypeFormatting {
     pub push_to_history: bool,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub(crate) struct InlayHints {
     pub range: Range<Anchor>,
 }
@@ -1834,13 +1834,20 @@ impl LspCommand for GetSignatureHelp {
         message: Option<lsp::SignatureHelp>,
         lsp_store: Entity<LspStore>,
         _: Entity<Buffer>,
-        _: LanguageServerId,
+        id: LanguageServerId,
         cx: AsyncApp,
     ) -> Result<Self::Response> {
         let Some(message) = message else {
             return Ok(None);
         };
-        cx.update(|cx| SignatureHelp::new(message, Some(lsp_store.read(cx).languages.clone()), cx))
+        cx.update(|cx| {
+            SignatureHelp::new(
+                message,
+                Some(lsp_store.read(cx).languages.clone()),
+                Some(id),
+                cx,
+            )
+        })
     }
 
     fn to_proto(&self, project_id: u64, buffer: &Buffer) -> Self::ProtoRequest {
@@ -1900,7 +1907,12 @@ impl LspCommand for GetSignatureHelp {
                 .signature_help
                 .map(proto_to_lsp_signature)
                 .and_then(|signature| {
-                    SignatureHelp::new(signature, Some(lsp_store.read(cx).languages.clone()), cx)
+                    SignatureHelp::new(
+                        signature,
+                        Some(lsp_store.read(cx).languages.clone()),
+                        None,
+                        cx,
+                    )
                 })
         })
     }

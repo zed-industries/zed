@@ -1306,7 +1306,7 @@ mod element {
             let overlay_opacity = WorkspaceSettings::get(None, cx)
                 .active_pane_modifiers
                 .inactive_opacity
-                .map(|val| val.clamp(0.0, 1.0))
+                .map(|val| val.0.clamp(0.0, 1.0))
                 .and_then(|val| (val <= 1.).then_some(val));
 
             let mut overlay_background = cx.theme().colors().editor_background;

@@ -306,7 +306,7 @@ pub async fn download_adapter_from_github(
     anyhow::ensure!(
         response.status().is_success(),
         "download failed with status {}",
-        response.status().to_string()
+        response.status()
     );
 
     delegate.output_to_console("Download complete".to_owned());

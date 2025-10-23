@@ -268,13 +268,19 @@ async fn load_directory_shell_environment(
         // Note: direnv is not available on Windows, so we skip direnv processing
         // and just return the shell environment
         let (shell, args) = shell.program_and_args();
-        util::shell_env::capture(shell, args, abs_path)
+        let mut envs = util::shell_env::capture(shell, args, abs_path)
             .await
             .with_context(|| {
                 tx.unbounded_send("Failed to load environment variables".into())
                     .ok();
                 "capturing shell environment"
-            })
+            })?;
+        if let Some(path) = envs.remove("Path") {
+            // windows env vars are case-insensitive, so normalize the path var
+            // so we can just assume `PATH` in other places
+            envs.insert("PATH".into(), path);
+        }
+        Ok(envs)
     } else {
         let (shell, args) = shell.program_and_args();
         let mut envs = util::shell_env::capture(shell, args, abs_path)

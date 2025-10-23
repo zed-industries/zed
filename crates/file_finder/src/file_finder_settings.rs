@@ -18,7 +18,11 @@ impl Settings for FileFinderSettings {
             file_icons: file_finder.file_icons.unwrap(),
             modal_max_width: file_finder.modal_max_width.unwrap().into(),
             skip_focus_for_active_in_search: file_finder.skip_focus_for_active_in_search.unwrap(),
-            include_ignored: file_finder.include_ignored,
+            include_ignored: match file_finder.include_ignored.unwrap() {
+                settings::IncludeIgnoredContent::All => Some(true),
+                settings::IncludeIgnoredContent::Indexed => Some(false),
+                settings::IncludeIgnoredContent::Smart => None,
+            },
         }
     }
 }

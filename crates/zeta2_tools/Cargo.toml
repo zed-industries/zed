@@ -27,11 +27,11 @@ multi_buffer.workspace = true
 ordered-float.workspace = true
 project.workspace = true
 serde.workspace = true
+telemetry.workspace = true
 text.workspace = true
 ui.workspace = true
 ui_input.workspace = true
 util.workspace = true
-workspace-hack.workspace = true
 workspace.workspace = true
 zeta2.workspace = true
 
