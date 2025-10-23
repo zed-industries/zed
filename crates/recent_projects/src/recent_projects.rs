@@ -13,7 +13,7 @@ use disconnected_overlay::DisconnectedOverlay;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     Action, AnyElement, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
-    Subscription, Task, WeakEntity, Window,
+    ReadGlobal, Subscription, Task, WeakEntity, Window,
 };
 use ordered_float::OrderedFloat;
 use picker::{
@@ -102,6 +102,17 @@ pub fn init(cx: &mut App) {
         });
     });
 
+    #[cfg(target_os = "windows")]
+    cx.on_action(|add_distro: &remote::OpenWslPath, cx| {
+        let add_distro = add_distro.clone();
+        with_active_or_new_workspace(cx, move |workspace, _window, cx| {
+            let handle = cx.entity().downgrade();
+            let fs = workspace.project().read(cx).fs().clone();
+            add_wsl_distro(fs, &add_distro.distro, cx);
+            // TODO: actually open it
+        });
+    });
+
     cx.on_action(|open_recent: &OpenRecent, cx| {
         let create_new_window = open_recent.create_new_window;
         with_active_or_new_workspace(cx, move |workspace, window, cx| {
@@ -134,6 +145,37 @@ pub fn init(cx: &mut App) {
     });
 
     cx.observe_new(DisconnectedOverlay::register).detach();
+}
+
+#[cfg(target_os = "windows")]
+pub fn add_wsl_distro(
+    fs: Arc<dyn project::Fs>,
+    connection_options: &remote::WslConnectionOptions,
+    cx: &App,
+) {
+    use settings::SettingsStore;
+
+    let distro_name = SharedString::from(&connection_options.distro_name);
+    let user = connection_options.user.clone();
+    SettingsStore::global(cx).update_settings_file(fs, move |setting, _| {
+        let connections = setting
+            .remote
+            .wsl_connections
+            .get_or_insert(Default::default());
+
+        if !connections
+            .iter()
+            .any(|conn| conn.distro_name == distro_name && conn.user == user)
+        {
+            use std::collections::BTreeSet;
+
+            connections.push(settings::WslConnection {
+                distro_name,
+                user,
+                projects: BTreeSet::new(),
+            })
+        }
+    });
 }
 
 pub struct RecentProjects {

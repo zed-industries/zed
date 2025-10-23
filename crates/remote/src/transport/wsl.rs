@@ -24,7 +24,7 @@ use util::{
     shell::ShellKind,
 };
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Deserialize, schemars::JsonSchema)]
 pub struct WslConnectionOptions {
     pub distro_name: String,
     pub user: Option<String>,

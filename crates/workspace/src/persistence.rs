@@ -1348,9 +1348,10 @@ impl WorkspaceDb {
             }
 
             let has_wsl_path = if cfg!(windows) {
-
-
-                paths.paths().iter().any(|path| util::paths::get_wsl_distro(path).is_some())
+                paths
+                    .paths()
+                    .iter()
+                    .any(|path| util::paths::get_wsl_distro(path).is_some())
             } else {
                 false
             };

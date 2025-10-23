@@ -21,7 +21,7 @@ use futures::{
     select, select_biased,
 };
 use gpui::{
-    App, AppContext as _, AsyncApp, BackgroundExecutor, BorrowAppContext, Context, Entity,
+    Action, App, AppContext as _, AsyncApp, BackgroundExecutor, BorrowAppContext, Context, Entity,
     EventEmitter, FutureExt, Global, SemanticVersion, Task, WeakEntity,
 };
 use parking_lot::Mutex;
@@ -31,8 +31,10 @@ use rpc::{
     AnyProtoClient, ErrorExt, ProtoClient, ProtoMessageHandlerSet, RpcError,
     proto::{self, Envelope, EnvelopedMessage, PeerId, RequestMessage, build_typed_envelope},
 };
+use serde::Deserialize;
+use settings::SshProject;
 use std::{
-    collections::VecDeque,
+    collections::{VecDeque},
     fmt,
     ops::ControlFlow,
     path::PathBuf,
@@ -1088,6 +1090,13 @@ impl From<WslConnectionOptions> for RemoteConnectionOptions {
     fn from(opts: WslConnectionOptions) -> Self {
         RemoteConnectionOptions::Wsl(opts)
     }
+}
+
+/// Add a wsl distro.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, schemars::JsonSchema, Action)]
+pub struct OpenWslPath {
+    pub distro: WslConnectionOptions,
+    pub paths: Option<SshProject>,
 }
 
 #[async_trait(?Send)]

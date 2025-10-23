@@ -5829,7 +5829,6 @@ impl Workspace {
             ))
             .on_action(cx.listener(Workspace::toggle_centered_layout))
             .on_action(cx.listener(Workspace::cancel))
-            .on_action(cx.listener(Workspace::add_wsl_distro))
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -6111,14 +6110,6 @@ impl Workspace {
         update_settings_file(fs, cx, move |file, _| {
             file.project.all_languages.defaults.show_edit_predictions = Some(!show_edit_predictions)
         });
-    }
-
-    fn add_wsl_project(
-        &mut self,
-        wsl_actions::AddDistro { distro, paths }: &wsl_actions::AddDistro,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
     }
 }
 
@@ -7335,11 +7326,10 @@ pub fn open_paths(
     let mut existing = None;
     let mut best_match = None;
     let mut open_visible = OpenVisible::All;
-    // #[cfg(target_os = "windows")]
+    #[cfg(target_os = "windows")]
     let wsl_path = abs_paths
         .iter()
-        .find(|p| util::paths::get_wsl_distro(p).is_some())
-        .cloned();
+        .find_map(|p| Some((p.clone(), util::paths::get_wsl_distro(p)?)));
 
     cx.spawn(async move |cx| {
         if open_options.open_new_workspace != Some(true) {
@@ -7441,22 +7431,28 @@ pub fn open_paths(
             })?
             .await
         };
-        if let Some(path) = wsl_path
+
+        #[cfg(target_os = "windows")]
+        if let Some((path, distro)) = wsl_path
             && let Ok((workspace, _)) = &result
         {
             workspace
-                .update(cx, |workspace, _window, cx| {
+                .update(cx, move |workspace, _window, cx| {
                     struct OpenInWsl;
-                    workspace.show_notification(NotificationId::unique::<OpenInWsl>(), cx, |cx| {
-                        let path = util::markdown::MarkdownInlineCode(&path.to_string_lossy());
-                        let msg = format!("{path} is inside a WSL filesystem, some features may not work unless you open it with WSL remote");
-                        cx.new(|cx| {
+                    workspace.show_notification(NotificationId::unique::<OpenInWsl>(), cx, move |cx| {
+                        let display_path = util::markdown::MarkdownInlineCode(&path.to_string_lossy());
+                        let msg = format!("{display_path} is inside a WSL filesystem, some features may not work unless you open it with WSL remote");
+                        cx.new(move |cx| {
                             MessageNotification::new(msg, cx)
                                 .primary_message("Open WSL Path")
                                 .primary_icon(IconName::FolderOpen)
-                                .primary_on_click(|window, cx| {
-                                    window.dispatch_action(Box::new(zed_actions::wsl_actions::OpenFolderInWsl {
-                                            create_new_window: false,
+                                .primary_on_click(move |window, cx| {
+                                    window.dispatch_action(Box::new(remote::OpenWslPath {
+                                            distro: remote::WslConnectionOptions {
+                                                    distro_name: distro.clone(),
+                                                user: None,
+                                            },
+                                            paths: Some(settings::SshProject{paths: vec![path.to_string_lossy().to_string()]}),
                                         }), cx)
                                 })
                         })
