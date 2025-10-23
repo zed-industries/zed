@@ -2701,6 +2701,7 @@ impl SettingsWindow {
                             })),
                     )
             }
+            let parse_failed = error.parse_result.is_err();
             warning_banner = v_flex()
                 .pb_4()
                 .when_some(error.parse_result.err(), |this, err| {
@@ -2715,7 +2716,7 @@ impl SettingsWindow {
                                 banner("Your Settings File Is Out Of Date, And Needs To Be Updated", "It May Be Possible To Automatically Migrate Your Settings File".to_string(), &mut self.shown_errors, cx)
                             )
                         },
-                        Err(err) => {
+                        Err(err) if !parse_failed => {
                             this.child(
                                 banner("Your Settings File Is Out Of Date, Automatic Migration Failed", err, &mut self.shown_errors, cx)
                             )
