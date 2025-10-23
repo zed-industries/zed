@@ -168,19 +168,20 @@ impl Project {
                         match remote_client {
                             Some(remote_client) => match activation_script.clone() {
                                 activation_script if !activation_script.is_empty() => {
-                                    let separator = shell_kind.sequential_commands_separator();
-                                    let activation_script =
-                                        activation_script.join(&format!("{separator} "));
+                                    let activation_script = activation_script.join("; ");
                                     let to_run = format_to_run();
-                                    let shell = remote_client
-                                        .read(cx)
-                                        .shell()
-                                        .unwrap_or_else(get_default_system_shell);
-                                    let arg = format!("{activation_script}{separator} {to_run}");
-                                    let args = shell_kind.args_for_shell(false, arg);
-
+                                    let args = vec![
+                                        "-c".to_owned(),
+                                        format!("{activation_script}; {to_run}"),
+                                    ];
                                     create_remote_shell(
-                                        Some((&shell, &args)),
+                                        Some((
+                                            &remote_client
+                                                .read(cx)
+                                                .shell()
+                                                .unwrap_or_else(get_default_system_shell),
+                                            &args,
+                                        )),
                                         env,
                                         path,
                                         remote_client,
@@ -561,7 +562,7 @@ fn create_remote_shell(
         Shell::WithArguments {
             program: command.program,
             args: command.args,
-            title_override: Some(format!("{} — Terminal", host)),
+            title_override: Some(format!("{} — Terminal", host).into()),
         },
         command.env,
     ))

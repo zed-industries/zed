@@ -657,7 +657,6 @@ impl LspCommand for GetLspRunnables {
                     );
                     task_template.args.extend(cargo.cargo_args);
                     if !cargo.executable_args.is_empty() {
-                        let shell_kind = task_template.shell.shell_kind(cfg!(windows));
                         task_template.args.push("--".to_string());
                         task_template.args.extend(
                             cargo
@@ -683,7 +682,7 @@ impl LspCommand for GetLspRunnables {
                                 // That bit is not auto-expanded when using single quotes.
                                 // Escape extra cargo args unconditionally as those are unlikely to contain `~`.
                                 .flat_map(|extra_arg| {
-                                    shell_kind.try_quote(&extra_arg).map(|s| s.to_string())
+                                    shlex::try_quote(&extra_arg).ok().map(|s| s.to_string())
                                 }),
                         );
                     }
