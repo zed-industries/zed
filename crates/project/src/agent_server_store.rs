@@ -247,7 +247,7 @@ mod ext_agent_tests {
         fs::set_permissions(&bin_path, perms).expect("chmod");
 
         // Create a project environment entity
-        let project_environment = cx.new(|_| crate::ProjectEnvironment::new(None));
+        let project_environment = cx.new(|cx| crate::ProjectEnvironment::new(None, cx));
 
         // Construct a LocalExtensionBinaryAgent pointing to our dummy binary name
         let mut agent = super::LocalExtensionBinaryAgent {
@@ -2046,7 +2046,7 @@ mod npm_launcher_tests {
     async fn npm_agent_uses_extension_and_agent_id_for_cache_key(cx: &mut TestAppContext) {
         let fs = fs::FakeFs::new(cx.background_executor.clone());
         let node_runtime = NodeRuntime::unavailable();
-        let project_environment = cx.new(|_| crate::ProjectEnvironment::new(None));
+        let project_environment = cx.new(|cx| crate::ProjectEnvironment::new(None, cx));
 
         let agent = LocalExtensionNpmAgent {
             fs,
@@ -2250,7 +2250,7 @@ mod npm_launcher_tests {
     ) {
         let fs = fs::FakeFs::new(cx.background_executor.clone());
         let http_client = http_client::FakeHttpClient::with_404_response();
-        let project_environment = cx.new(|_| crate::ProjectEnvironment::new(None));
+        let project_environment = cx.new(|cx| crate::ProjectEnvironment::new(None, cx));
 
         let agent = LocalExtensionGithubReleaseAgent {
             fs,
