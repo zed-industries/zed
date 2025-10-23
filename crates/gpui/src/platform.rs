@@ -1899,3 +1899,4 @@ impl From<String> for ClipboardString {
         }
     }
 }
+}
