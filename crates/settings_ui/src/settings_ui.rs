@@ -2054,12 +2054,9 @@ impl SettingsWindow {
         let mut key_context = KeyContext::new_with_defaults();
         key_context.add("NavigationMenu");
         key_context.add("menu");
-        let identifier = if self.search_bar.focus_handle(cx).is_focused(window) {
-            "editing"
-        } else {
-            "not_editing"
-        };
-        key_context.add(identifier);
+        if self.search_bar.focus_handle(cx).is_focused(window) {
+            key_context.add("search");
+        }
 
         v_flex()
             .key_context(key_context)
