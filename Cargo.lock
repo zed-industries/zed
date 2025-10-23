@@ -20578,8 +20578,6 @@ dependencies = [
  "component",
  "dap",
  "db",
- "extension",
- "extension_host",
  "fs",
  "futures 0.3.31",
  "gpui",
