@@ -333,13 +333,13 @@ impl AgentServerStore {
                         }
 
                         match &agent_entry.launcher {
-                            extension::AgentServerLauncher::Binary { binary_name } => {
+                            extension::AgentServerLauncher::Binary { cmd, args } => {
                                 self.external_agents.insert(
                                     ExternalAgentServerName(display),
                                     Box::new(LocalExtensionBinaryAgent {
                                         project_environment: project_environment.clone(),
-                                        bin_name: SharedString::from(binary_name.clone()),
-                                        args: agent_entry.args.clone(),
+                                        bin_name: SharedString::from(cmd.clone()),
+                                        args: args.clone(),
                                         env: agent_entry.env.clone(),
                                     })
                                         as Box<dyn ExternalAgentServer>,
@@ -349,6 +349,7 @@ impl AgentServerStore {
                                 package,
                                 version,
                                 entrypoint,
+                                args,
                             } => {
                                 self.external_agents.insert(
                                     ExternalAgentServerName(display),
@@ -361,7 +362,7 @@ impl AgentServerStore {
                                         package_name: SharedString::from(package.clone()),
                                         entrypoint: entrypoint.clone(),
                                         version: version.clone(),
-                                        args: agent_entry.args.clone(),
+                                        args: args.clone(),
                                         env: agent_entry.env.clone(),
                                         ignore_system_version: agent_entry
                                             .ignore_system_version
@@ -370,7 +371,13 @@ impl AgentServerStore {
                                         as Box<dyn ExternalAgentServer>,
                                 );
                             }
-                            extension::AgentServerLauncher::GithubRelease { repo, tag, assets } => {
+                            extension::AgentServerLauncher::GithubRelease {
+                                repo,
+                                tag,
+                                cmd,
+                                args,
+                                targets,
+                            } => {
                                 self.external_agents.insert(
                                     ExternalAgentServerName(display),
                                     Box::new(LocalExtensionGithubReleaseAgent {
@@ -381,8 +388,9 @@ impl AgentServerStore {
                                         agent_id: agent_name.clone(),
                                         repo: repo.clone(),
                                         tag: tag.clone(),
-                                        assets: assets.clone(),
-                                        args: agent_entry.args.clone(),
+                                        cmd: cmd.clone(),
+                                        targets: targets.clone(),
+                                        args: args.clone(),
                                         env: agent_entry.env.clone(),
                                         ignore_system_version: agent_entry
                                             .ignore_system_version
@@ -1537,9 +1545,10 @@ struct LocalExtensionGithubReleaseAgent {
     agent_id: Arc<str>,
     repo: String,
     tag: String,
-    assets: HashMap<String, String>,
+    cmd: String,
     args: Vec<String>,
     env: HashMap<String, String>,
+    targets: HashMap<String, String>,
     ignore_system_version: bool,
 }
 
@@ -1733,7 +1742,8 @@ impl ExternalAgentServer for LocalExtensionGithubReleaseAgent {
         let agent_id = self.agent_id.clone();
         let repo = self.repo.clone();
         let tag = self.tag.clone();
-        let assets = self.assets.clone();
+        let cmd = self.cmd.clone();
+        let targets = self.targets.clone();
         let args = self.args.clone();
         let base_env = self.env.clone();
         let ignore_system_version = self.ignore_system_version;
@@ -1762,9 +1772,9 @@ impl ExternalAgentServer for LocalExtensionGithubReleaseAgent {
 
             if !ignore_system_version {
                 let bin_name = if cfg!(target_os = "windows") {
-                    format!("{}.exe", agent_id)
+                    format!("{}.exe", cmd)
                 } else {
-                    agent_id.to_string()
+                    cmd.to_string()
                 };
                 if let Some(bin) = find_bin_in_path(
                     bin_name.clone().into(),
@@ -1815,11 +1825,11 @@ impl ExternalAgentServer for LocalExtensionGithubReleaseAgent {
                 };
 
                 let platform_key = format!("{}-{}", os, arch);
-                let asset_name = assets.get(&platform_key).with_context(|| {
+                let asset_name = targets.get(&platform_key).with_context(|| {
                     format!(
                         "no asset specified for platform '{}'. Available platforms: {}",
                         platform_key,
-                        assets
+                        targets
                             .keys()
                             .map(|k| k.as_str())
                             .collect::<Vec<_>>()
@@ -1869,9 +1879,9 @@ impl ExternalAgentServer for LocalExtensionGithubReleaseAgent {
             }
 
             let bin_name = if cfg!(target_os = "windows") {
-                format!("{}.exe", agent_id)
+                format!("{}.exe", cmd)
             } else {
-                agent_id.to_string()
+                cmd.to_string()
             };
             let bin_path = version_dir.join(&bin_name);
             anyhow::ensure!(
@@ -2089,9 +2099,9 @@ mod npm_launcher_tests {
                 package: "@example/test-pkg".into(),
                 version: "1.0.0".into(),
                 entrypoint: "lib/server.js".into(),
+                args: vec!["--flag".into()],
             },
             env,
-            args: vec!["--flag".into()],
             icon: None,
             ignore_system_version: None,
         };
@@ -2111,10 +2121,10 @@ mod npm_launcher_tests {
         let _entry = AgentServerManifestEntry {
             name: "Binary Agent".into(),
             launcher: AgentServerLauncher::Binary {
-                binary_name: "my-binary".into(),
+                cmd: "my-binary".into(),
+                args: vec!["--custom-arg".into()],
             },
             env,
-            args: vec!["--custom-arg".into()],
             icon: None,
             ignore_system_version: None,
         };
@@ -2220,10 +2230,11 @@ mod npm_launcher_tests {
             launcher: AgentServerLauncher::GithubRelease {
                 repo: "owner/repo".into(),
                 tag: "v1.0.0".into(),
-                assets,
+                cmd: "github-agent".into(),
+                args: vec![],
+                targets: assets,
             },
             env,
-            args: vec![],
             icon: None,
             ignore_system_version: None,
         };
@@ -2249,13 +2260,14 @@ mod npm_launcher_tests {
             agent_id: Arc::from("my-agent"),
             repo: "owner/repo".into(),
             tag: "v1.0.0".into(),
-            assets: HashMap::default(),
+            cmd: "my-agent".into(),
             args: vec!["--serve".into()],
             env: {
                 let mut map = HashMap::default();
                 map.insert("PORT".into(), "8080".into());
                 map
             },
+            targets: HashMap::default(),
             ignore_system_version: false,
         };
 
@@ -2287,16 +2299,19 @@ mod npm_launcher_tests {
             launcher: AgentServerLauncher::GithubRelease {
                 repo: "org/project".into(),
                 tag: "v2.1.0".into(),
-                assets: HashMap::default(),
+                cmd: "release-agent".into(),
+                args: vec!["serve".into()],
+                targets: HashMap::default(),
             },
             env,
-            args: vec!["serve".into()],
             icon: None,
             ignore_system_version: None,
         };
 
         // Verify fields are present
-        assert_eq!(manifest_entry.args, vec!["serve"]);
+        if let AgentServerLauncher::GithubRelease { args, .. } = &manifest_entry.launcher {
+            assert_eq!(args, &vec!["serve"]);
+        }
     }
 
     #[test]
@@ -2306,25 +2321,28 @@ mod npm_launcher_tests {
         let mut env = HashMap::default();
         env.insert("CUSTOM_VAR".into(), "custom_value".into());
 
+        // manifest_entry is used to test that it can be constructed; the fields match the above test
         let manifest_entry = AgentServerManifestEntry {
             name: "Example Agent".into(),
             launcher: AgentServerLauncher::Npm {
                 package: "@example/agent".into(),
                 version: "1.0.0".into(),
                 entrypoint: "dist/index.js".into(),
+                args: vec!["--experimental-acp".into()],
             },
             env,
-            args: vec!["--experimental-acp".into()],
             icon: None,
             ignore_system_version: None,
         };
 
+        if let AgentServerLauncher::Npm { args, .. } = &manifest_entry.launcher {
+            assert_eq!(args, &vec!["--experimental-acp"]);
+        }
         // Verify custom env is present
         assert_eq!(
             manifest_entry.env.get("CUSTOM_VAR"),
             Some(&"custom_value".to_string())
         );
-        assert_eq!(manifest_entry.args, vec!["--experimental-acp"]);
     }
 
     #[test]
@@ -2338,14 +2356,17 @@ mod npm_launcher_tests {
         let manifest_entry = AgentServerManifestEntry {
             name: "My Agent".into(),
             launcher: AgentServerLauncher::Binary {
-                binary_name: "my-agent".into(),
+                cmd: "my-agent".into(),
+                args: vec!["--flag".into()],
             },
             env: env.clone(),
-            args: vec!["--flag".into()],
             icon: None,
             ignore_system_version: Some(true),
         };
 
+        if let AgentServerLauncher::Binary { args, .. } = &manifest_entry.launcher {
+            assert_eq!(args, &vec!["--flag"]);
+        }
         assert_eq!(manifest_entry.env.len(), 2);
         assert_eq!(
             manifest_entry.env.get("API_ENDPOINT"),

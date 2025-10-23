@@ -149,9 +149,6 @@ pub struct AgentServerManifestEntry {
     /// Environment variables to set when launching the agent server.
     #[serde(default)]
     pub env: HashMap<String, String>,
-    /// Command-line arguments to pass to the agent server.
-    #[serde(default)]
-    pub args: Vec<String>,
     /// Optional icon path (relative to extension root, e.g., "ai.svg").
     /// Should be a small SVG icon for display in menus.
     #[serde(default)]
@@ -170,29 +167,41 @@ pub enum AgentServerLauncher {
         /// Exact version to install (e.g., "1.2.3")
         version: String,
         entrypoint: String,
+        /// Command-line arguments to pass to the agent server.
+        #[serde(default)]
+        args: Vec<String>,
     },
     GithubRelease {
         repo: String,
         /// Exact tag/release to download (e.g., "v1.2.3")
         tag: String,
-        /// Asset names for each platform/architecture combination.
+        /// Command to run (e.g., "opencode")
+        cmd: String,
+        /// Command-line arguments to pass to the agent server.
+        #[serde(default)]
+        args: Vec<String>,
+        /// Target asset names for each platform/architecture combination.
         /// The key format is "{os}-{arch}" where:
         /// - os: "darwin" (macOS), "linux", "windows"
         /// - arch: "aarch64" (arm64), "x86_64"
         ///
         /// Example:
         /// ```toml
-        /// [agent_servers.myagent.launcher.assets]
+        /// [agent_servers.myagent.launcher.targets]
         /// darwin-aarch64 = "myagent-darwin-arm64.zip"
         /// darwin-x86_64 = "myagent-darwin-x64.zip"
         /// linux-aarch64 = "myagent-linux-arm64.tar.gz"
         /// linux-x86_64 = "myagent-linux-x64.tar.gz"
         /// windows-x86_64 = "myagent-windows-x64.zip"
         /// ```
-        assets: HashMap<String, String>,
+        targets: HashMap<String, String>,
     },
     Binary {
-        binary_name: String,
+        /// Command to run (e.g., "my-agent")
+        cmd: String,
+        /// Command-line arguments to pass to the agent server.
+        #[serde(default)]
+        args: Vec<String>,
     },
 }
 
@@ -489,6 +498,7 @@ min_version = "1.0.0"
                 package,
                 version,
                 entrypoint,
+                args,
             } => {
                 assert_eq!(package, "@example/agent-server");
                 assert_eq!(
@@ -496,7 +506,7 @@ min_version = "1.0.0"
                     "node_modules/@example/agent-server/dist/index.js"
                 );
                 assert_eq!(version, "1.0.0");
-                assert!(entry.args.is_empty());
+                assert!(args.is_empty());
             }
             _ => panic!("expected Npm launcher"),
         }
