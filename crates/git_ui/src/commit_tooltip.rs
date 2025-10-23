@@ -1,4 +1,5 @@
 use crate::commit_view::CommitView;
+use chrono;
 use editor::hover_markdown_style;
 use futures::Future;
 use git::blame::BlameEntry;
@@ -190,9 +191,11 @@ impl Render for CommitTooltip {
             .map(|sha| sha.to_string().into())
             .unwrap_or_else(|| self.commit.sha.clone());
         let full_sha = self.commit.sha.to_string();
-        let absolute_timestamp = format_local_timestamp(
+        let local = chrono::Local::now().offset().local_minus_utc();
+        let absolute_timestamp = time_format::format_localized_timestamp(
             self.commit.commit_time,
             OffsetDateTime::now_utc(),
+            UtcOffset::from_whole_seconds(local).unwrap(),
             time_format::TimestampFormat::MediumAbsolute,
         );
         let markdown_style = {

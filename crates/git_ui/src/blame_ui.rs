@@ -2,6 +2,7 @@ use crate::{
     commit_tooltip::{CommitAvatar, CommitTooltip},
     commit_view::CommitView,
 };
+use chrono;
 use editor::{BlameRenderer, Editor, hover_markdown_style};
 use git::{
     blame::{BlameEntry, ParsedCommitMessage},
@@ -188,9 +189,11 @@ impl BlameRenderer for GitBlameRenderer {
             .get(..8)
             .map(|sha| sha.to_string().into())
             .unwrap_or_else(|| sha.clone());
-        let absolute_timestamp = format_local_timestamp(
+        let local = chrono::Local::now().offset().local_minus_utc();
+        let absolute_timestamp = time_format::format_localized_timestamp(
             commit_time,
             OffsetDateTime::now_utc(),
+            time::UtcOffset::from_whole_seconds(local).unwrap(),
             time_format::TimestampFormat::MediumAbsolute,
         );
         let link_color = cx.theme().colors().text_accent;

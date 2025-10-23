@@ -1,4 +1,5 @@
 use anyhow::Context as _;
+use chrono;
 use fuzzy::StringMatchCandidate;
 
 use collections::HashSet;
@@ -447,9 +448,11 @@ impl PickerDelegate for BranchListDelegate {
                 let subject = commit.subject.clone();
                 let commit_time = OffsetDateTime::from_unix_timestamp(commit.commit_timestamp)
                     .unwrap_or_else(|_| OffsetDateTime::now_utc());
-                let formatted_time = format_local_timestamp(
+                let local = chrono::Local::now().offset().local_minus_utc();
+                let formatted_time = time_format::format_localized_timestamp(
                     commit_time,
                     OffsetDateTime::now_utc(),
+                    time::UtcOffset::from_whole_seconds(local).unwrap(),
                     time_format::TimestampFormat::Relative,
                 );
                 let author = commit.author_name.clone();
