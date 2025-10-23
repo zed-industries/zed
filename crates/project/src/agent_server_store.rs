@@ -2064,6 +2064,7 @@ mod npm_launcher_tests {
             },
             env,
             args: vec!["--flag".into()],
+            icon: None,
             ignore_system_version: None,
         };
     }
@@ -2086,6 +2087,7 @@ mod npm_launcher_tests {
             },
             env,
             args: vec!["--custom-arg".into()],
+            icon: None,
             ignore_system_version: None,
         };
     }
@@ -2193,6 +2195,7 @@ mod npm_launcher_tests {
             },
             env,
             args: vec![],
+            icon: None,
             ignore_system_version: None,
         };
 
@@ -2247,7 +2250,7 @@ mod npm_launcher_tests {
         let mut env = HashMap::default();
         env.insert("API_KEY".into(), "secret".into());
 
-        let mut assets = HashMap::default();
+        let mut assets: HashMap<String, String> = HashMap::default();
         assets.insert("darwin-aarch64".into(), "agent-macos-arm64.zip".into());
 
         let manifest_entry = AgentServerManifestEntry {
@@ -2255,10 +2258,11 @@ mod npm_launcher_tests {
             launcher: AgentServerLauncher::GithubRelease {
                 repo: "org/project".into(),
                 tag: "v2.1.0".into(),
-                assets,
+                assets: HashMap::default(),
             },
             env,
             args: vec!["serve".into()],
+            icon: None,
             ignore_system_version: None,
         };
 
@@ -2282,6 +2286,7 @@ mod npm_launcher_tests {
             },
             env,
             args: vec!["--experimental-acp".into()],
+            icon: None,
             ignore_system_version: None,
         };
 
@@ -2308,6 +2313,7 @@ mod npm_launcher_tests {
             },
             env: env.clone(),
             args: vec!["--flag".into()],
+            icon: None,
             ignore_system_version: Some(true),
         };
 

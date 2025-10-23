@@ -152,6 +152,10 @@ pub struct AgentServerManifestEntry {
     /// Command-line arguments to pass to the agent server.
     #[serde(default)]
     pub args: Vec<String>,
+    /// Optional icon path (relative to extension root, e.g., "ai.svg").
+    /// Should be a small SVG icon for display in menus.
+    #[serde(default)]
+    pub icon: Option<String>,
     /// Whether to skip checking for system-installed versions of this agent.
     /// When true, always uses the extension-installed version.
     #[serde(default)]
