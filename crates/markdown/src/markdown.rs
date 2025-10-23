@@ -1971,7 +1971,7 @@ fn latex_to_unicode(latex: &str) -> String {
                 match cmd.as_str() {
                     "sqrt" => {
                         out.push('√');
-                        // อ่าน {content}
+                        //  {content}
                         if chars.peek() == Some(&'{') {
                             chars.next();
                             let mut inner = String::new();
