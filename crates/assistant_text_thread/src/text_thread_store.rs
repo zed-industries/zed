@@ -1,5 +1,5 @@
 use crate::{
-    AssistantContext, ContextEvent, ContextId, ContextOperation, ContextVersion, SavedContext,
+    AssistantContext, ContextEvent, TextThreadId, ContextOperation, ContextVersion, SavedContext,
     SavedContextMetadata,
 };
 use anyhow::{Context as _, Result};
@@ -36,7 +36,7 @@ pub(crate) fn init(client: &AnyProtoClient) {
 
 #[derive(Clone)]
 pub struct RemoteContextMetadata {
-    pub id: ContextId,
+    pub id: TextThreadId,
     pub summary: Option<String>,
 }
 
@@ -59,7 +59,7 @@ pub struct ContextStore {
 }
 
 pub enum ContextStoreEvent {
-    ContextCreated(ContextId),
+    ContextCreated(TextThreadId),
 }
 
 impl EventEmitter<ContextStoreEvent> for ContextStore {}
@@ -171,7 +171,7 @@ impl ContextStore {
                 .contexts
                 .into_iter()
                 .map(|context| RemoteContextMetadata {
-                    id: ContextId::from_proto(context.context_id),
+                    id: TextThreadId::from_proto(context.context_id),
                     summary: context.summary,
                 })
                 .collect();
@@ -184,7 +184,7 @@ impl ContextStore {
         envelope: TypedEnvelope<proto::OpenContext>,
         mut cx: AsyncApp,
     ) -> Result<proto::OpenContextResponse> {
-        let context_id = ContextId::from_proto(envelope.payload.context_id);
+        let context_id = TextThreadId::from_proto(envelope.payload.context_id);
         let operations = this.update(&mut cx, |this, cx| {
             anyhow::ensure!(
                 !this.project.read(cx).is_via_collab(),
@@ -246,7 +246,7 @@ impl ContextStore {
         mut cx: AsyncApp,
     ) -> Result<()> {
         this.update(&mut cx, |this, cx| {
-            let context_id = ContextId::from_proto(envelope.payload.context_id);
+            let context_id = TextThreadId::from_proto(envelope.payload.context_id);
             if let Some(context) = this.loaded_context_for_id(&context_id, cx) {
                 let operation_proto = envelope.payload.operation.context("invalid operation")?;
                 let operation = ContextOperation::from_proto(operation_proto)?;
@@ -270,7 +270,7 @@ impl ContextStore {
             let mut local_versions = Vec::new();
             for remote_version_proto in envelope.payload.contexts {
                 let remote_version = ContextVersion::from_proto(&remote_version_proto);
-                let context_id = ContextId::from_proto(remote_version_proto.context_id);
+                let context_id = TextThreadId::from_proto(remote_version_proto.context_id);
                 if let Some(context) = this.loaded_context_for_id(&context_id, cx) {
                     let context = context.read(cx);
                     let operations = context.serialize_ops(&remote_version, cx);
@@ -403,7 +403,7 @@ impl ContextStore {
         let request = self.client.request(proto::CreateContext { project_id });
         cx.spawn(async move |this, cx| {
             let response = request.await?;
-            let context_id = ContextId::from_proto(response.context_id);
+            let context_id = TextThreadId::from_proto(response.context_id);
             let context_proto = response.context.context("invalid context")?;
             let context = cx.new(|cx| {
                 AssistantContext::new(
@@ -533,7 +533,7 @@ impl ContextStore {
 
     pub fn loaded_context_for_id(
         &self,
-        id: &ContextId,
+        id: &TextThreadId,
         cx: &App,
     ) -> Option<Entity<AssistantContext>> {
         self.contexts.iter().find_map(|context| {
@@ -546,9 +546,9 @@ impl ContextStore {
         })
     }
 
-    pub fn open_remote_context(
+    pub fn open_remote_text_thread(
         &mut self,
-        context_id: ContextId,
+        context_id: TextThreadId,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<AssistantContext>>> {
         let project = self.project.read(cx);
@@ -727,7 +727,7 @@ impl ContextStore {
             this.read_with(cx, |this, cx| {
                 for context_version_proto in response.contexts {
                     let context_version = ContextVersion::from_proto(&context_version_proto);
-                    let context_id = ContextId::from_proto(context_version_proto.context_id);
+                    let context_id = TextThreadId::from_proto(context_version_proto.context_id);
                     if let Some(context) = this.loaded_context_for_id(&context_id, cx) {
                         context_ids.push(context_id);
                         operations.push(context.read(cx).serialize_ops(&context_version, cx));

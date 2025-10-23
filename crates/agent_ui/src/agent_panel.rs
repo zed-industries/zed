@@ -36,7 +36,7 @@ use crate::{
 use agent_settings::AgentSettings;
 use ai_onboarding::AgentPanelOnboarding;
 use anyhow::{Result, anyhow};
-use assistant_context::{AssistantContext, ContextEvent, ContextSummary};
+use assistant_text_thread::{AssistantContext, ContextEvent, ContextSummary};
 use assistant_slash_command::SlashCommandWorkingSet;
 use client::{UserStore, zed_urls};
 use cloud_llm_client::{Plan, PlanV1, PlanV2, UsageLimit};
@@ -335,8 +335,8 @@ impl ActiveView {
                             context_editor.update(cx, |context_editor, cx| {
                                 context_editor
                                     .context()
-                                    .update(cx, |assistant_context, cx| {
-                                        assistant_context.set_custom_summary(new_summary, cx);
+                                    .update(cx, |text_thread, cx| {
+                                        text_thread.set_custom_summary(new_summary, cx);
                                     })
                             })
                         }
@@ -360,9 +360,9 @@ impl ActiveView {
             }),
             window.subscribe(&context_editor.read(cx).context().clone(), cx, {
                 let editor = editor.clone();
-                move |assistant_context, event, window, cx| match event {
+                move |text_thread, event, window, cx| match event {
                     ContextEvent::SummaryGenerated => {
-                        let summary = assistant_context.read(cx).summary().or_default();
+                        let summary = text_thread.read(cx).summary().or_default();
 
                         editor.update(cx, |editor, cx| {
                             editor.set_text(summary, window, cx);
@@ -410,7 +410,7 @@ pub struct AgentPanel {
     language_registry: Arc<LanguageRegistry>,
     acp_history: Entity<AcpThreadHistory>,
     history_store: Entity<agent::HistoryStore>,
-    text_thread_store: Entity<assistant_context::ContextStore>,
+    text_thread_store: Entity<assistant_text_thread::ContextStore>,
     prompt_store: Option<Entity<PromptStore>>,
     context_server_registry: Entity<ContextServerRegistry>,
     inline_assist_context_store: Entity<ContextStore>,
@@ -474,7 +474,7 @@ impl AgentPanel {
             let text_thread_store = workspace
                 .update(cx, |workspace, cx| {
                     let project = workspace.project().clone();
-                    assistant_context::ContextStore::new(
+                    assistant_text_thread::ContextStore::new(
                         project,
                         prompt_builder,
                         slash_commands,
@@ -512,7 +512,7 @@ impl AgentPanel {
 
     fn new(
         workspace: &Workspace,
-        text_thread_store: Entity<assistant_context::ContextStore>,
+        text_thread_store: Entity<assistant_text_thread::ContextStore>,
         prompt_store: Option<Entity<PromptStore>>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -2528,7 +2528,7 @@ impl rules_library::InlineAssistDelegate for PromptLibraryInlineAssist {
 pub struct ConcreteAssistantPanelDelegate;
 
 impl AgentPanelDelegate for ConcreteAssistantPanelDelegate {
-    fn active_context_editor(
+    fn active_text_thread_editor(
         &self,
         workspace: &mut Workspace,
         _window: &mut Window,
@@ -2538,7 +2538,7 @@ impl AgentPanelDelegate for ConcreteAssistantPanelDelegate {
         panel.read(cx).active_context_editor()
     }
 
-    fn open_saved_context(
+    fn open_local_text_thread(
         &self,
         workspace: &mut Workspace,
         path: Arc<Path>,
@@ -2554,10 +2554,10 @@ impl AgentPanelDelegate for ConcreteAssistantPanelDelegate {
         })
     }
 
-    fn open_remote_context(
+    fn open_remote_text_thread(
         &self,
         _workspace: &mut Workspace,
-        _context_id: assistant_context::ContextId,
+        _text_thread_id: assistant_text_thread::TextThreadId,
         _window: &mut Window,
         _cx: &mut Context<Workspace>,
     ) -> Task<Result<Entity<TextThreadEditor>>> {

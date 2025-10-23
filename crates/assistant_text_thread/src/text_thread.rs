@@ -1,7 +1,3 @@
-#[cfg(test)]
-mod assistant_context_tests;
-mod context_store;
-
 use agent_settings::{AgentSettings, SUMMARIZE_THREAD_PROMPT};
 use anyhow::{Context as _, Result, bail};
 use assistant_slash_command::{
@@ -9,7 +5,7 @@ use assistant_slash_command::{
     SlashCommandResult, SlashCommandWorkingSet,
 };
 use assistant_slash_commands::FileCommandMetadata;
-use client::{self, Client, ModelRequestUsage, RequestUsage, proto, telemetry::Telemetry};
+use client::{self, ModelRequestUsage, RequestUsage, proto, telemetry::Telemetry};
 use clock::ReplicaId;
 use cloud_llm_client::{CompletionIntent, CompletionRequestStatus, UsageLimit};
 use collections::{HashMap, HashSet};
@@ -48,16 +44,10 @@ use ui::IconName;
 use util::{ResultExt, TryFutureExt, post_inc};
 use uuid::Uuid;
 
-pub use crate::context_store::*;
-
-pub fn init(client: Arc<Client>, _: &mut App) {
-    context_store::init(&client.into());
-}
-
 #[derive(Clone, Debug, Eq, PartialEq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
-pub struct ContextId(String);
+pub struct TextThreadId(String);
 
-impl ContextId {
+impl TextThreadId {
     pub fn new() -> Self {
         Self(Uuid::new_v4().to_string())
     }
@@ -669,7 +659,7 @@ struct PendingCompletion {
 pub struct InvokedSlashCommandId(clock::Lamport);
 
 pub struct AssistantContext {
-    id: ContextId,
+    id: TextThreadId,
     timestamp: clock::Lamport,
     version: clock::Global,
     pending_ops: Vec<ContextOperation>,
@@ -723,7 +713,7 @@ impl AssistantContext {
         cx: &mut Context<Self>,
     ) -> Self {
         Self::new(
-            ContextId::new(),
+            TextThreadId::new(),
             ReplicaId::default(),
             language::Capability::ReadWrite,
             language_registry,
@@ -744,7 +734,7 @@ impl AssistantContext {
     }
 
     pub fn new(
-        id: ContextId,
+        id: TextThreadId,
         replica_id: ReplicaId,
         capability: language::Capability,
         language_registry: Arc<LanguageRegistry>,
@@ -885,7 +875,7 @@ impl AssistantContext {
         telemetry: Option<Arc<Telemetry>>,
         cx: &mut Context<Self>,
     ) -> Self {
-        let id = saved_context.id.clone().unwrap_or_else(ContextId::new);
+        let id = saved_context.id.clone().unwrap_or_else(TextThreadId::new);
         let mut this = Self::new(
             id,
             ReplicaId::default(),
@@ -906,7 +896,7 @@ impl AssistantContext {
         this
     }
 
-    pub fn id(&self) -> &ContextId {
+    pub fn id(&self) -> &TextThreadId {
         &self.id
     }
 
@@ -2992,7 +2982,7 @@ impl ContextVersion {
         }
     }
 
-    pub fn to_proto(&self, context_id: ContextId) -> proto::ContextVersion {
+    pub fn to_proto(&self, context_id: TextThreadId) -> proto::ContextVersion {
         proto::ContextVersion {
             context_id: context_id.to_proto(),
             context_version: language::proto::serialize_version(&self.context),
@@ -3064,7 +3054,7 @@ pub struct SavedMessage {
 
 #[derive(Serialize, Deserialize)]
 pub struct SavedContext {
-    pub id: Option<ContextId>,
+    pub id: Option<TextThreadId>,
     pub zed: String,
     pub version: String,
     pub text: String,
@@ -3221,7 +3211,7 @@ struct SavedMessageMetadataPreV0_4_0 {
 
 #[derive(Serialize, Deserialize)]
 struct SavedContextV0_3_0 {
-    id: Option<ContextId>,
+    id: Option<TextThreadId>,
     zed: String,
     version: String,
     text: String,
@@ -3270,7 +3260,7 @@ impl SavedContextV0_3_0 {
 
 #[derive(Serialize, Deserialize)]
 struct SavedContextV0_2_0 {
-    id: Option<ContextId>,
+    id: Option<TextThreadId>,
     zed: String,
     version: String,
     text: String,
@@ -3299,7 +3289,7 @@ impl SavedContextV0_2_0 {
 
 #[derive(Serialize, Deserialize)]
 struct SavedContextV0_1_0 {
-    id: Option<ContextId>,
+    id: Option<TextThreadId>,
     zed: String,
     version: String,
     text: String,

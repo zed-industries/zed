@@ -1,5 +1,5 @@
 use crate::{
-    AssistantContext, CacheStatus, ContextEvent, ContextId, ContextOperation, ContextSummary,
+    AssistantContext, CacheStatus, ContextEvent, TextThreadId, ContextOperation, ContextSummary,
     InvokedSlashCommandId, MessageCacheMetadata, MessageId, MessageStatus,
 };
 use anyhow::Result;
@@ -765,7 +765,7 @@ async fn test_random_context_collaboration(cx: &mut TestAppContext, mut rng: Std
     let mut contexts = Vec::new();
 
     let num_peers = rng.random_range(min_peers..=max_peers);
-    let context_id = ContextId::new();
+    let context_id = TextThreadId::new();
     let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
     for i in 0..num_peers {
         let context = cx.new(|cx| {

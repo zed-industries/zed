@@ -5,7 +5,7 @@ use crate::context::{
 };
 use agent_client_protocol as acp;
 use anyhow::{Context as _, Result, anyhow};
-use assistant_context::AssistantContext;
+use assistant_text_thread::AssistantContext;
 use collections::{HashSet, IndexSet};
 use futures::{self, FutureExt};
 use gpui::{App, Context, Entity, EventEmitter, Image, SharedString, Task, WeakEntity};

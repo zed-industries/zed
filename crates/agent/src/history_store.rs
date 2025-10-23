@@ -2,7 +2,7 @@ use crate::{DbThread, DbThreadMetadata, ThreadsDatabase};
 use acp_thread::MentionUri;
 use agent_client_protocol as acp;
 use anyhow::{Context as _, Result, anyhow};
-use assistant_context::{AssistantContext, SavedContextMetadata};
+use assistant_text_thread::{AssistantContext, SavedContextMetadata};
 use chrono::{DateTime, Utc};
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{App, AsyncApp, Entity, SharedString, Task, prelude::*};
@@ -120,7 +120,7 @@ enum SerializedRecentOpen {
 pub struct HistoryStore {
     threads: Vec<DbThreadMetadata>,
     entries: Vec<HistoryEntry>,
-    text_thread_store: Entity<assistant_context::ContextStore>,
+    text_thread_store: Entity<assistant_text_thread::ContextStore>,
     recently_opened_entries: VecDeque<HistoryEntryId>,
     _subscriptions: Vec<gpui::Subscription>,
     _save_recently_opened_entries_task: Task<()>,
@@ -128,7 +128,7 @@ pub struct HistoryStore {
 
 impl HistoryStore {
     pub fn new(
-        text_thread_store: Entity<assistant_context::ContextStore>,
+        text_thread_store: Entity<assistant_text_thread::ContextStore>,
         cx: &mut Context<Self>,
     ) -> Self {
         let subscriptions =

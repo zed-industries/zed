@@ -74,8 +74,8 @@ use workspace::{
 use zed_actions::agent::{AddSelectionToThread, ToggleModelSelector};
 
 use crate::{slash_command::SlashCommandCompletionProvider, slash_command_picker};
-use assistant_context::{
-    AssistantContext, CacheStatus, Content, ContextEvent, ContextId, InvokedSlashCommandId,
+use assistant_text_thread::{
+    AssistantContext, CacheStatus, Content, ContextEvent, TextThreadId, InvokedSlashCommandId,
     InvokedSlashCommandStatus, Message, MessageId, MessageMetadata, MessageStatus,
     PendingSlashCommandStatus, ThoughtProcessOutputSection,
 };
@@ -126,14 +126,14 @@ pub enum ThoughtProcessStatus {
 }
 
 pub trait AgentPanelDelegate {
-    fn active_context_editor(
+    fn active_text_thread_editor(
         &self,
         workspace: &mut Workspace,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> Option<Entity<TextThreadEditor>>;
 
-    fn open_saved_context(
+    fn open_local_text_thread(
         &self,
         workspace: &mut Workspace,
         path: Arc<Path>,
@@ -141,10 +141,10 @@ pub trait AgentPanelDelegate {
         cx: &mut Context<Workspace>,
     ) -> Task<Result<()>>;
 
-    fn open_remote_context(
+    fn open_remote_text_thread(
         &self,
         workspace: &mut Workspace,
-        context_id: ContextId,
+        text_thread_id: TextThreadId,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> Task<Result<Entity<TextThreadEditor>>>;
@@ -1296,7 +1296,7 @@ impl TextThreadEditor {
             return;
         };
         let Some(context_editor_view) =
-            agent_panel_delegate.active_context_editor(workspace, window, cx)
+            agent_panel_delegate.active_text_thread_editor(workspace, window, cx)
         else {
             return;
         };
@@ -1324,7 +1324,7 @@ impl TextThreadEditor {
         let result = maybe!({
             let agent_panel_delegate = <dyn AgentPanelDelegate>::try_global(cx)?;
             let context_editor_view =
-                agent_panel_delegate.active_context_editor(workspace, window, cx)?;
+                agent_panel_delegate.active_text_thread_editor(workspace, window, cx)?;
             Self::get_selection_or_code_block(&context_editor_view, cx)
         });
         let Some((text, is_code_block)) = result else {
@@ -1361,7 +1361,7 @@ impl TextThreadEditor {
             return;
         };
         let Some(context_editor_view) =
-            agent_panel_delegate.active_context_editor(workspace, window, cx)
+            agent_panel_delegate.active_text_thread_editor(workspace, window, cx)
         else {
             return;
         };
@@ -2666,22 +2666,22 @@ impl FollowableItem for TextThreadEditor {
             unreachable!()
         };
 
-        let context_id = ContextId::from_proto(state.context_id);
+        let text_thread_id = TextThreadId::from_proto(state.context_id);
         let editor_state = state.editor?;
 
         let project = workspace.read(cx).project().clone();
         let agent_panel_delegate = <dyn AgentPanelDelegate>::try_global(cx)?;
 
-        let context_editor_task = workspace.update(cx, |workspace, cx| {
-            agent_panel_delegate.open_remote_context(workspace, context_id, window, cx)
+        let text_thread_editor_task = workspace.update(cx, |workspace, cx| {
+            agent_panel_delegate.open_remote_text_thread(workspace, text_thread_id, window, cx)
         });
 
         Some(window.spawn(cx, async move |cx| {
-            let context_editor = context_editor_task.await?;
-            context_editor
-                .update_in(cx, |context_editor, window, cx| {
-                    context_editor.remote_id = Some(id);
-                    context_editor.editor.update(cx, |editor, cx| {
+            let text_thread_editor = text_thread_editor_task.await?;
+            text_thread_editor
+                .update_in(cx, |text_thread_editor, window, cx| {
+                    text_thread_editor.remote_id = Some(id);
+                    text_thread_editor.editor.update(cx, |editor, cx| {
                         editor.apply_update_proto(
                             &project,
                             proto::update_view::Variant::Editor(proto::update_view::Editor {
@@ -2698,7 +2698,7 @@ impl FollowableItem for TextThreadEditor {
                     })
                 })?
                 .await?;
-            Ok(context_editor)
+            Ok(text_thread_editor)
         }))
     }
 

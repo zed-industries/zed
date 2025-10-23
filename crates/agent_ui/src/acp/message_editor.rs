@@ -1591,7 +1591,7 @@ mod tests {
     use acp_thread::MentionUri;
     use agent::{HistoryStore, outline};
     use agent_client_protocol as acp;
-    use assistant_context::ContextStore;
+    use assistant_text_thread::ContextStore;
     use editor::{AnchorRangeExt as _, Editor, EditorMode};
     use fs::FakeFs;
     use futures::StreamExt as _;

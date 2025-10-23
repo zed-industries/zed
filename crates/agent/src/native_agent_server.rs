@@ -81,7 +81,7 @@ impl AgentServer for NativeAgentServer {
 mod tests {
     use super::*;
 
-    use assistant_context::ContextStore;
+    use assistant_text_thread::ContextStore;
     use gpui::AppContext;
 
     agent_servers::e2e_tests::common_e2e_tests!(

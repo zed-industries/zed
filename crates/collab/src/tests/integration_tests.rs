@@ -6,7 +6,7 @@ use crate::{
     },
 };
 use anyhow::{Result, anyhow};
-use assistant_context::ContextStore;
+use assistant_text_thread::ContextStore;
 use assistant_slash_command::SlashCommandWorkingSet;
 use buffer_diff::{DiffHunkSecondaryStatus, DiffHunkStatus, assert_hunks};
 use call::{ActiveCall, ParticipantLocation, Room, room};
@@ -6909,7 +6909,7 @@ async fn test_context_collaboration_with_reconnect(
         .update(cx_b, |store, cx| {
             let host_contexts = store.host_contexts().to_vec();
             assert_eq!(host_contexts.len(), 1);
-            store.open_remote_context(host_contexts[0].id.clone(), cx)
+            store.open_remote_text_thread(host_contexts[0].id.clone(), cx)
         })
         .await
         .unwrap();

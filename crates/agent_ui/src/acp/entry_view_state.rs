@@ -402,7 +402,7 @@ mod tests {
     use agent::HistoryStore;
     use agent_client_protocol as acp;
     use agent_settings::AgentSettings;
-    use assistant_context::ContextStore;
+    use assistant_text_thread::ContextStore;
     use buffer_diff::{DiffHunkStatus, DiffHunkStatusKind};
     use editor::{EditorSettings, RowInfo};
     use fs::FakeFs;

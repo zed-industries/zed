@@ -5735,7 +5735,7 @@ fn terminal_command_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
 pub(crate) mod tests {
     use acp_thread::StubAgentConnection;
     use agent_client_protocol::SessionId;
-    use assistant_context::ContextStore;
+    use assistant_text_thread::ContextStore;
     use editor::EditorSettings;
     use fs::FakeFs;
     use gpui::{EventEmitter, SemanticVersion, TestAppContext, VisualTestContext};

@@ -1,5 +1,5 @@
 use agent::outline;
-use assistant_context::AssistantContext;
+use assistant_text_thread::AssistantContext;
 use futures::future;
 use futures::{FutureExt, future::Shared};
 use gpui::{App, AppContext as _, ElementId, Entity, SharedString, Task};
