@@ -4251,6 +4251,73 @@ async fn test_save_as(cx: &mut gpui::TestAppContext) {
     assert_eq!(opened_buffer, buffer);
 }
 
+#[gpui::test]
+async fn test_save_as_existing_file(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+
+    fs.insert_tree(
+        "/dir",
+        json!({
+                "data_a.txt": "data about a"
+        }),
+    )
+    .await;
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer("/dir/data_a.txt", cx)
+        })
+        .await
+        .unwrap();
+
+    buffer.update(cx, |buffer, cx| {
+        buffer.edit([(11..12, "b")], None, cx);
+    });
+
+    // Save buffer's contents as a new file and confirm that the buffer's now
+    // associated with `data_b.txt` instead of `data_a.txt`, confirming that the
+    // file associated with the buffer has now been updated to `data_b.txt`
+    project
+        .update(cx, |project, cx| {
+            let worktree_id = project.worktrees(cx).next().unwrap().read(cx).id();
+            let new_path = ProjectPath {
+                worktree_id,
+                path: rel_path("data_b.txt").into(),
+            };
+
+            project.save_buffer_as(buffer.clone(), new_path, cx)
+        })
+        .await
+        .unwrap();
+
+    buffer.update(cx, |buffer, cx| {
+        assert_eq!(
+            buffer.file().unwrap().full_path(cx),
+            Path::new("dir/data_b.txt")
+        )
+    });
+
+    // Open the original `data_a.txt` file, confirming that its contents are
+    // unchanged and the resulting buffer's associated file is `data_a.txt`.
+    let original_buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer("/dir/data_a.txt", cx)
+        })
+        .await
+        .unwrap();
+
+    original_buffer.update(cx, |buffer, cx| {
+        assert_eq!(buffer.text(), "data about a");
+        assert_eq!(
+            buffer.file().unwrap().full_path(cx),
+            Path::new("dir/data_a.txt")
+        )
+    });
+}
+
 #[gpui::test(retries = 5)]
 async fn test_rescan_and_remote_updates(cx: &mut gpui::TestAppContext) {
     use worktree::WorktreeModelHandle as _;
