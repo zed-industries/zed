@@ -1207,10 +1207,10 @@ impl EditorElement {
             if mouse_over_inline_blame || mouse_over_popover {
                 editor.show_blame_popover(*buffer_id, blame_entry, event.position, false, cx);
             } else if !keyboard_grace {
-                editor.hide_blame_popover(cx);
+                editor.hide_blame_popover(false, cx);
             }
         } else {
-            editor.hide_blame_popover(cx);
+            editor.hide_blame_popover(false, cx);
         }
 
         let breakpoint_indicator = if gutter_hovered {
@@ -1422,7 +1422,11 @@ impl EditorElement {
                     layouts.push(layout);
                 }
 
-                let player = editor.current_user_player_color(cx);
+                let mut player = editor.current_user_player_color(cx);
+                if !editor.is_focused(window) {
+                    const UNFOCUS_EDITOR_SELECTION_OPACITY: f32 = 0.5;
+                    player.selection = player.selection.opacity(UNFOCUS_EDITOR_SELECTION_OPACITY);
+                }
                 selections.push((player, layouts));
 
                 if let SelectionDragState::Dragging {
@@ -3910,7 +3914,7 @@ impl EditorElement {
                                         .children(toggle_chevron_icon)
                                         .tooltip({
                                             let focus_handle = focus_handle.clone();
-                                            move |window, cx| {
+                                            move |_window, cx| {
                                                 Tooltip::with_meta_in(
                                                     "Toggle Excerpt Fold",
                                                     Some(&ToggleFold),
@@ -3923,7 +3927,6 @@ impl EditorElement {
                                                         )
                                                     ),
                                                     &focus_handle,
-                                                    window,
                                                     cx,
                                                 )
                                             }
@@ -4024,15 +4027,11 @@ impl EditorElement {
                                             .id("jump-to-file-button")
                                             .gap_2p5()
                                             .child(Label::new("Jump To File"))
-                                            .children(
-                                                KeyBinding::for_action_in(
-                                                    &OpenExcerpts,
-                                                    &focus_handle,
-                                                    window,
-                                                    cx,
-                                                )
-                                                .map(|binding| binding.into_any_element()),
-                                            ),
+                                            .child(KeyBinding::for_action_in(
+                                                &OpenExcerpts,
+                                                &focus_handle,
+                                                cx,
+                                            )),
                                     )
                                 },
                             )
@@ -8931,10 +8930,20 @@ impl Element for EditorElement {
                         cx,
                     );
 
+                    let merged_highlighted_ranges =
+                        if let Some((_, colors)) = document_colors.as_ref() {
+                            &highlighted_ranges
+                                .clone()
+                                .into_iter()
+                                .chain(colors.clone())
+                                .collect()
+                        } else {
+                            &highlighted_ranges
+                        };
                     let bg_segments_per_row = Self::bg_segments_per_row(
                         start_row..end_row,
                         &selections,
-                        &highlighted_ranges,
+                        &merged_highlighted_ranges,
                         self.style.background,
                     );
 

@@ -34,7 +34,7 @@ use util::{
 
 pub(crate) struct SshRemoteConnection {
     socket: SshSocket,
-    master_process: Mutex<Option<Child>>,
+    master_process: Mutex<Option<MasterProcess>>,
     remote_binary_path: Option<Arc<RelPath>>,
     ssh_platform: RemotePlatform,
     ssh_path_style: PathStyle,
@@ -80,15 +80,127 @@ struct SshSocket {
     _proxy: askpass::PasswordProxy,
 }
 
-macro_rules! shell_script {
-    ($fmt:expr, $($name:ident = $arg:expr),+ $(,)?) => {{
-        format!(
-            $fmt,
-            $(
-                $name = shlex::try_quote($arg).unwrap()
-            ),+
-        )
-    }};
+struct MasterProcess {
+    process: Child,
+}
+
+#[cfg(not(target_os = "windows"))]
+impl MasterProcess {
+    pub fn new(
+        askpass_script_path: &std::ffi::OsStr,
+        additional_args: Vec<String>,
+        socket_path: &std::path::Path,
+        url: &str,
+    ) -> Result<Self> {
+        let args = [
+            "-N",
+            "-o",
+            "ControlPersist=no",
+            "-o",
+            "ControlMaster=yes",
+            "-o",
+        ];
+
+        let mut master_process = util::command::new_smol_command("ssh");
+        master_process
+            .kill_on_drop(true)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .env("SSH_ASKPASS_REQUIRE", "force")
+            .env("SSH_ASKPASS", askpass_script_path)
+            .args(additional_args)
+            .args(args);
+
+        master_process.arg(format!("ControlPath={}", socket_path.display()));
+
+        let process = master_process.arg(&url).spawn()?;
+
+        Ok(MasterProcess { process })
+    }
+
+    pub async fn wait_connected(&mut self) -> Result<()> {
+        let Some(mut stdout) = self.process.stdout.take() else {
+            anyhow::bail!("ssh process stdout capture failed");
+        };
+
+        let mut output = Vec::new();
+        stdout.read_to_end(&mut output).await?;
+        Ok(())
+    }
+}
+
+#[cfg(target_os = "windows")]
+impl MasterProcess {
+    const CONNECTION_ESTABLISHED_MAGIC: &str = "ZED_SSH_CONNECTION_ESTABLISHED";
+
+    pub fn new(
+        askpass_script_path: &std::ffi::OsStr,
+        additional_args: Vec<String>,
+        url: &str,
+    ) -> Result<Self> {
+        // On Windows, `ControlMaster` and `ControlPath` are not supported:
+        // https://github.com/PowerShell/Win32-OpenSSH/issues/405
+        // https://github.com/PowerShell/Win32-OpenSSH/wiki/Project-Scope
+        //
+        // Using an ugly workaround to detect connection establishment
+        // -N doesn't work with JumpHosts as windows openssh never closes stdin in that case
+        let args = [
+            "-t",
+            &format!("echo '{}'; exec $0", Self::CONNECTION_ESTABLISHED_MAGIC),
+        ];
+
+        let mut master_process = util::command::new_smol_command("ssh");
+        master_process
+            .kill_on_drop(true)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .env("SSH_ASKPASS_REQUIRE", "force")
+            .env("SSH_ASKPASS", askpass_script_path)
+            .args(additional_args)
+            .arg(url)
+            .args(args);
+
+        let process = master_process.spawn()?;
+
+        Ok(MasterProcess { process })
+    }
+
+    pub async fn wait_connected(&mut self) -> Result<()> {
+        use smol::io::AsyncBufReadExt;
+
+        let Some(stdout) = self.process.stdout.take() else {
+            anyhow::bail!("ssh process stdout capture failed");
+        };
+
+        let mut reader = smol::io::BufReader::new(stdout);
+
+        let mut line = String::new();
+
+        loop {
+            let n = reader.read_line(&mut line).await?;
+            if n == 0 {
+                anyhow::bail!("ssh process exited before connection established");
+            }
+
+            if line.contains(Self::CONNECTION_ESTABLISHED_MAGIC) {
+                return Ok(());
+            }
+        }
+    }
+}
+
+impl AsRef<Child> for MasterProcess {
+    fn as_ref(&self) -> &Child {
+        &self.process
+    }
+}
+
+impl AsMut<Child> for MasterProcess {
+    fn as_mut(&mut self) -> &mut Child {
+        &mut self.process
+    }
 }
 
 #[async_trait(?Send)]
@@ -97,8 +209,8 @@ impl RemoteConnection for SshRemoteConnection {
         let Some(mut process) = self.master_process.lock().take() else {
             return Ok(());
         };
-        process.kill().ok();
-        process.status().await?;
+        process.as_mut().kill().ok();
+        process.as_mut().status().await?;
         Ok(())
     }
 
@@ -302,45 +414,25 @@ impl SshRemoteConnection {
         #[cfg(not(target_os = "windows"))]
         let socket_path = temp_dir.path().join("ssh.sock");
 
-        let mut master_process = {
-            #[cfg(not(target_os = "windows"))]
-            let args = [
-                "-N",
-                "-o",
-                "ControlPersist=no",
-                "-o",
-                "ControlMaster=yes",
-                "-o",
-            ];
-            // On Windows, `ControlMaster` and `ControlPath` are not supported:
-            // https://github.com/PowerShell/Win32-OpenSSH/issues/405
-            // https://github.com/PowerShell/Win32-OpenSSH/wiki/Project-Scope
-            #[cfg(target_os = "windows")]
-            let args = ["-N"];
-            let mut master_process = util::command::new_smol_command("ssh");
-            master_process
-                .kill_on_drop(true)
-                .stdin(Stdio::null())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .env("SSH_ASKPASS_REQUIRE", "force")
-                .env("SSH_ASKPASS", askpass.script_path())
-                .args(connection_options.additional_args())
-                .args(args);
-            #[cfg(not(target_os = "windows"))]
-            master_process.arg(format!("ControlPath={}", socket_path.display()));
-            master_process.arg(&url).spawn()?
-        };
-        // Wait for this ssh process to close its stdout, indicating that authentication
-        // has completed.
-        let mut stdout = master_process.stdout.take().unwrap();
-        let mut output = Vec::new();
+        #[cfg(target_os = "windows")]
+        let mut master_process = MasterProcess::new(
+            askpass.script_path().as_ref(),
+            connection_options.additional_args(),
+            &url,
+        )?;
+        #[cfg(not(target_os = "windows"))]
+        let mut master_process = MasterProcess::new(
+            askpass.script_path().as_ref(),
+            connection_options.additional_args(),
+            &socket_path,
+            &url,
+        )?;
 
         let result = select_biased! {
             result = askpass.run().fuse() => {
                 match result {
                     AskPassResult::CancelledByUser => {
-                        master_process.kill().ok();
+                        master_process.as_mut().kill().ok();
                         anyhow::bail!("SSH connection canceled")
                     }
                     AskPassResult::Timedout => {
@@ -348,7 +440,7 @@ impl SshRemoteConnection {
                     }
                 }
             }
-            _ = stdout.read_to_end(&mut output).fuse() => {
+            _ = master_process.wait_connected().fuse() => {
                 anyhow::Ok(())
             }
         };
@@ -357,9 +449,10 @@ impl SshRemoteConnection {
             return Err(e.context("Failed to connect to host"));
         }
 
-        if master_process.try_status()?.is_some() {
+        if master_process.as_mut().try_status()?.is_some() {
+            let mut output = Vec::new();
             output.clear();
-            let mut stderr = master_process.stderr.take().unwrap();
+            let mut stderr = master_process.as_mut().stderr.take().unwrap();
             stderr.read_to_end(&mut output).await?;
 
             let error_message = format!(
@@ -634,21 +727,24 @@ impl SshRemoteConnection {
         delegate.set_status(Some("Extracting remote development server"), cx);
         let server_mode = 0o755;
 
+        let shell_kind = ShellKind::Posix;
         let orig_tmp_path = tmp_path.display(self.path_style());
+        let server_mode = format!("{:o}", server_mode);
+        let server_mode = shell_kind
+            .try_quote(&server_mode)
+            .context("shell quoting")?;
+        let dst_path = dst_path.display(self.path_style());
+        let dst_path = shell_kind.try_quote(&dst_path).context("shell quoting")?;
         let script = if let Some(tmp_path) = orig_tmp_path.strip_suffix(".gz") {
-            shell_script!(
-                "gunzip -f {orig_tmp_path} && chmod {server_mode} {tmp_path} && mv {tmp_path} {dst_path}",
-                server_mode = &format!("{:o}", server_mode),
-                dst_path = &dst_path.display(self.path_style()),
+            format!(
+                "gunzip -f {orig_tmp_path} && chmod {server_mode} {tmp_path} && mv {tmp_path} {dst_path}"
             )
         } else {
-            shell_script!(
-                "chmod {server_mode} {orig_tmp_path} && mv {orig_tmp_path} {dst_path}",
-                server_mode = &format!("{:o}", server_mode),
-                dst_path = &dst_path.display(self.path_style())
-            )
+            format!("chmod {server_mode} {orig_tmp_path} && mv {orig_tmp_path} {dst_path}")
         };
-        self.socket.run_command("sh", &["-c", &script]).await?;
+        let script = shell_kind.try_quote(&script).context("shell quoting")?;
+        let args = shell_kind.args_for_shell(false, script.to_string());
+        self.socket.run_command("sh", &args).await?;
         Ok(())
     }
 
@@ -782,8 +878,12 @@ impl SshSocket {
     // into a machine. You must use `cd` to get back to $HOME.
     // You need to do it like this: $ ssh host "cd; sh -c 'ls -l /tmp'"
     fn ssh_command(&self, program: &str, args: &[impl AsRef<str>]) -> process::Command {
+        let shell_kind = ShellKind::Posix;
         let mut command = util::command::new_smol_command("ssh");
-        let mut to_run = shlex::try_quote(program).unwrap().into_owned();
+        let mut to_run = shell_kind
+            .try_quote(program)
+            .expect("shell quoting")
+            .into_owned();
         for arg in args {
             // We're trying to work with: sh, bash, zsh, fish, tcsh, ...?
             debug_assert!(
@@ -791,9 +891,10 @@ impl SshSocket {
                 "multiline arguments do not work in all shells"
             );
             to_run.push(' ');
-            to_run.push_str(&shlex::try_quote(arg.as_ref()).unwrap());
+            to_run.push_str(&shell_kind.try_quote(arg.as_ref()).expect("shell quoting"));
         }
-        let to_run = format!("cd; {to_run}");
+        let separator = shell_kind.sequential_commands_separator();
+        let to_run = format!("cd{separator} {to_run}");
         self.ssh_options(&mut command, true)
             .arg(self.connection_options.ssh_url())
             .arg("-T")
@@ -802,7 +903,7 @@ impl SshSocket {
         command
     }
 
-    async fn run_command(&self, program: &str, args: &[&str]) -> Result<String> {
+    async fn run_command(&self, program: &str, args: &[impl AsRef<str>]) -> Result<String> {
         let output = self.ssh_command(program, args).output().await?;
         anyhow::ensure!(
             output.status.success(),
@@ -976,7 +1077,10 @@ impl SshConnectionOptions {
             "-w",
         ];
 
-        let mut tokens = shlex::split(input).context("invalid input")?.into_iter();
+        let mut tokens = ShellKind::Posix
+            .split(input)
+            .context("invalid input")?
+            .into_iter();
 
         'outer: while let Some(arg) = tokens.next() {
             if ALLOWED_OPTS.contains(&(&arg as &str)) {
@@ -1139,6 +1243,7 @@ fn build_command(
 ) -> Result<CommandTemplate> {
     use std::fmt::Write as _;
 
+    let shell_kind = ShellKind::new(ssh_shell, false);
     let mut exec = String::new();
     if let Some(working_dir) = working_dir {
         let working_dir = RemotePathBuf::new(working_dir, ssh_path_style).to_string();
@@ -1148,29 +1253,41 @@ fn build_command(
         const TILDE_PREFIX: &'static str = "~/";
         if working_dir.starts_with(TILDE_PREFIX) {
             let working_dir = working_dir.trim_start_matches("~").trim_start_matches("/");
-            write!(exec, "cd \"$HOME/{working_dir}\" && ",).unwrap();
+            write!(exec, "cd \"$HOME/{working_dir}\" && ",)?;
         } else {
-            write!(exec, "cd \"{working_dir}\" && ",).unwrap();
+            write!(exec, "cd \"{working_dir}\" && ",)?;
         }
     } else {
-        write!(exec, "cd && ").unwrap();
+        write!(exec, "cd && ")?;
     };
-    write!(exec, "exec env ").unwrap();
+    write!(exec, "exec env ")?;
 
     for (k, v) in input_env.iter() {
-        if let Some((k, v)) = shlex::try_quote(k).ok().zip(shlex::try_quote(v).ok()) {
-            write!(exec, "{}={} ", k, v).unwrap();
-        }
+        write!(
+            exec,
+            "{}={} ",
+            k,
+            shell_kind.try_quote(v).context("shell quoting")?
+        )?;
     }
 
     if let Some(input_program) = input_program {
-        write!(exec, "{}", shlex::try_quote(&input_program).unwrap()).unwrap();
+        write!(
+            exec,
+            "{}",
+            shell_kind
+                .try_quote(&input_program)
+                .context("shell quoting")?
+        )?;
         for arg in input_args {
-            let arg = shlex::try_quote(&arg)?;
-            write!(exec, " {}", &arg).unwrap();
+            write!(
+                exec,
+                " {}",
+                shell_kind.try_quote(&arg).context("shell quoting")?
+            )?;
         }
     } else {
-        write!(exec, "{ssh_shell} -l").unwrap();
+        write!(exec, "{ssh_shell} -l")?;
     };
 
     let mut args = Vec::new();

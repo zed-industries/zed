@@ -17,7 +17,7 @@ use language::{Buffer, DiskState};
 use ordered_float::OrderedFloat;
 use project::{Project, WorktreeId, telemetry_snapshot::TelemetrySnapshot};
 use ui::{ButtonLike, ContextMenu, ContextMenuEntry, DropdownMenu, KeyBinding, prelude::*};
-use ui_input::SingleLineInput;
+use ui_input::InputField;
 use util::{ResultExt, paths::PathStyle, rel_path::RelPath};
 use workspace::{Item, SplitDirection, Workspace};
 use zeta2::{PredictionDebugInfo, Zeta, Zeta2FeatureFlag, ZetaOptions};
@@ -65,11 +65,11 @@ pub struct Zeta2Inspector {
     focus_handle: FocusHandle,
     project: Entity<Project>,
     last_prediction: Option<LastPrediction>,
-    max_excerpt_bytes_input: Entity<SingleLineInput>,
-    min_excerpt_bytes_input: Entity<SingleLineInput>,
-    cursor_context_ratio_input: Entity<SingleLineInput>,
-    max_prompt_bytes_input: Entity<SingleLineInput>,
-    max_retrieved_declarations: Entity<SingleLineInput>,
+    max_excerpt_bytes_input: Entity<InputField>,
+    min_excerpt_bytes_input: Entity<InputField>,
+    cursor_context_ratio_input: Entity<InputField>,
+    max_prompt_bytes_input: Entity<InputField>,
+    max_retrieved_declarations: Entity<InputField>,
     active_view: ActiveView,
     zeta: Entity<Zeta>,
     _active_editor_subscription: Option<Subscription>,
@@ -225,9 +225,9 @@ impl Zeta2Inspector {
         label: &'static str,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Entity<SingleLineInput> {
+    ) -> Entity<InputField> {
         let input = cx.new(|cx| {
-            SingleLineInput::new(window, cx, "")
+            InputField::new(window, cx, "")
                 .label(label)
                 .label_min_width(px(64.))
         });
@@ -241,7 +241,7 @@ impl Zeta2Inspector {
                 };
 
                 fn number_input_value<T: FromStr + Default>(
-                    input: &Entity<SingleLineInput>,
+                    input: &Entity<InputField>,
                     cx: &App,
                 ) -> T {
                     input
@@ -873,16 +873,14 @@ impl Zeta2Inspector {
             })
     }
 
-    fn render_content(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    fn render_content(&self, _: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         if !cx.has_flag::<Zeta2FeatureFlag>() {
             return Self::render_message("`zeta2` feature flag is not enabled");
         }
 
         match self.last_prediction.as_ref() {
             None => Self::render_message("No prediction"),
-            Some(prediction) => self
-                .render_last_prediction(prediction, window, cx)
-                .into_any(),
+            Some(prediction) => self.render_last_prediction(prediction, cx).into_any(),
         }
     }
 
@@ -895,12 +893,7 @@ impl Zeta2Inspector {
             .into_any()
     }
 
-    fn render_last_prediction(
-        &self,
-        prediction: &LastPrediction,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Div {
+    fn render_last_prediction(&self, prediction: &LastPrediction, cx: &mut Context<Self>) -> Div {
         match &self.active_view {
             ActiveView::Context => div().size_full().child(prediction.context_editor.clone()),
             ActiveView::Inference => h_flex()
@@ -989,13 +982,12 @@ impl Zeta2Inspector {
                                                         *feedback_state == Some(Feedback::Positive),
                                                         |this| this.style(ButtonStyle::Filled),
                                                     )
-                                                    .children(
+                                                    .child(
                                                         KeyBinding::for_action(
                                                             &Zeta2RatePredictionPositive,
-                                                            window,
                                                             cx,
                                                         )
-                                                        .map(|k| k.size(TextSize::Small.rems(cx))),
+                                                        .size(TextSize::Small.rems(cx)),
                                                     )
                                                     .child(ui::Icon::new(ui::IconName::ThumbsUp))
                                                     .on_click(cx.listener(
@@ -1014,13 +1006,12 @@ impl Zeta2Inspector {
                                                         *feedback_state == Some(Feedback::Negative),
                                                         |this| this.style(ButtonStyle::Filled),
                                                     )
-                                                    .children(
+                                                    .child(
                                                         KeyBinding::for_action(
                                                             &Zeta2RatePredictionNegative,
-                                                            window,
                                                             cx,
                                                         )
-                                                        .map(|k| k.size(TextSize::Small.rems(cx))),
+                                                        .size(TextSize::Small.rems(cx)),
                                                     )
                                                     .child(ui::Icon::new(ui::IconName::ThumbsDown))
                                                     .on_click(cx.listener(

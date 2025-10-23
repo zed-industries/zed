@@ -94,7 +94,7 @@ impl HeadlessProject {
             store
         });
 
-        let environment = cx.new(|_| ProjectEnvironment::new(None));
+        let environment = cx.new(|cx| ProjectEnvironment::new(None, cx));
         let manifest_tree = ManifestTree::new(worktree_store.clone(), cx);
         let toolchain_store = cx.new(|cx| {
             ToolchainStore::local(
@@ -102,6 +102,7 @@ impl HeadlessProject {
                 worktree_store.clone(),
                 environment.clone(),
                 manifest_tree.clone(),
+                fs.clone(),
                 cx,
             )
         });
@@ -639,15 +640,9 @@ impl HeadlessProject {
             PathStyle::local(),
         )?;
         let results = this.update(&mut cx, |this, cx| {
-            project::Search::local(
-                this.fs.clone(),
-                this.buffer_store.clone(),
-                this.worktree_store.clone(),
-                message.limit as _,
-                cx,
-            )
-            .into_handle(query, cx)
-            .matching_buffers(cx)
+            this.buffer_store.update(cx, |buffer_store, cx| {
+                buffer_store.find_search_candidates(&query, message.limit as _, this.fs.clone(), cx)
+            })
         })?;
 
         let mut response = proto::FindSearchCandidatesResponse {
@@ -779,7 +774,7 @@ impl HeadlessProject {
         envelope: TypedEnvelope<proto::GetDirectoryEnvironment>,
         mut cx: AsyncApp,
     ) -> Result<proto::DirectoryEnvironment> {
-        let shell = task::Shell::from_proto(envelope.payload.shell.context("missing shell")?)?;
+        let shell = task::shell_from_proto(envelope.payload.shell.context("missing shell")?)?;
         let directory = PathBuf::from(envelope.payload.directory);
         let environment = this
             .update(&mut cx, |this, cx| {

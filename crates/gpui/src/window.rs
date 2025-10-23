@@ -60,6 +60,13 @@ pub use prompts::*;
 
 pub(crate) const DEFAULT_WINDOW_SIZE: Size<Pixels> = size(px(1536.), px(864.));
 
+/// A 6:5 aspect ratio minimum window size to be used for functional,
+/// additional-to-main-Zed windows, like the settings and rules library windows.
+pub const DEFAULT_ADDITIONAL_WINDOW_SIZE: Size<Pixels> = Size {
+    width: Pixels(900.),
+    height: Pixels(750.),
+};
+
 /// Represents the two different phases when dispatching events.
 #[derive(Default, Copy, Clone, Debug, Eq, PartialEq)]
 pub enum DispatchPhase {
@@ -863,6 +870,7 @@ pub struct Window {
     hovered: Rc<Cell<bool>>,
     pub(crate) needs_present: Rc<Cell<bool>>,
     pub(crate) last_input_timestamp: Rc<Cell<Instant>>,
+    last_input_was_keyboard: bool,
     pub(crate) refreshing: bool,
     pub(crate) activation_observers: SubscriberSet<(), AnyObserver>,
     pub(crate) focus: Option<FocusId>,
@@ -1246,6 +1254,7 @@ impl Window {
             hovered,
             needs_present,
             last_input_timestamp,
+            last_input_was_keyboard: false,
             refreshing: false,
             activation_observers: SubscriberSet::new(),
             focus: None,
@@ -1839,7 +1848,8 @@ impl Window {
         f: impl FnOnce(&GlobalElementId, &mut Self) -> R,
     ) -> R {
         self.element_id_stack.push(element_id);
-        let global_id = GlobalElementId(self.element_id_stack.clone());
+        let global_id = GlobalElementId(Arc::from(&*self.element_id_stack));
+
         let result = f(&global_id, self);
         self.element_id_stack.pop();
         result
@@ -1897,6 +1907,12 @@ impl Window {
     /// The current state of the keyboard's modifiers
     pub fn modifiers(&self) -> Modifiers {
         self.modifiers
+    }
+
+    /// Returns true if the last input event was keyboard-based (key press, tab navigation, etc.)
+    /// This is used for focus-visible styling to show focus indicators only for keyboard navigation.
+    pub fn last_input_was_keyboard(&self) -> bool {
+        self.last_input_was_keyboard
     }
 
     /// The current state of the keyboard's capslock
@@ -2245,7 +2261,7 @@ impl Window {
             self.rendered_frame.accessed_element_states[range.start.accessed_element_states_index
                 ..range.end.accessed_element_states_index]
                 .iter()
-                .map(|(id, type_id)| (GlobalElementId(id.0.clone()), *type_id)),
+                .map(|(id, type_id)| (id.clone(), *type_id)),
         );
         self.text_system
             .reuse_layouts(range.start.line_layout_index..range.end.line_layout_index);
@@ -2313,7 +2329,7 @@ impl Window {
             self.rendered_frame.accessed_element_states[range.start.accessed_element_states_index
                 ..range.end.accessed_element_states_index]
                 .iter()
-                .map(|(id, type_id)| (GlobalElementId(id.0.clone()), *type_id)),
+                .map(|(id, type_id)| (id.clone(), *type_id)),
         );
         self.next_frame.tab_stops.replay(
             &self.rendered_frame.tab_stops.insertion_history
@@ -2635,10 +2651,8 @@ impl Window {
     {
         self.invalidator.debug_assert_paint_or_prepaint();
 
-        let key = (GlobalElementId(global_id.0.clone()), TypeId::of::<S>());
-        self.next_frame
-            .accessed_element_states
-            .push((GlobalElementId(key.0.clone()), TypeId::of::<S>()));
+        let key = (global_id.clone(), TypeId::of::<S>());
+        self.next_frame.accessed_element_states.push(key.clone());
 
         if let Some(any) = self
             .next_frame
@@ -3580,6 +3594,15 @@ impl Window {
     #[profiling::function]
     pub fn dispatch_event(&mut self, event: PlatformInput, cx: &mut App) -> DispatchEventResult {
         self.last_input_timestamp.set(Instant::now());
+
+        // Track whether this input was keyboard-based for focus-visible styling
+        self.last_input_was_keyboard = matches!(
+            event,
+            PlatformInput::KeyDown(_)
+                | PlatformInput::KeyUp(_)
+                | PlatformInput::ModifiersChanged(_)
+        );
+
         // Handlers may set this to false by calling `stop_propagation`.
         cx.propagate_event = true;
         // Handlers may set this to true by calling `prevent_default`.

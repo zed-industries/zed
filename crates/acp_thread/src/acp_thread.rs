@@ -1422,15 +1422,18 @@ impl AcpThread {
 
                 if let Some(Some(location)) = resolved_locations.last() {
                     project.update(cx, |project, cx| {
-                        let should_ignore = if let Some(agent_location) = project.agent_location() {
+                        let should_ignore = if let Some(agent_location) = project
+                            .agent_location()
+                            .filter(|agent_location| agent_location.buffer == location.buffer)
+                        {
                             let snapshot = location.buffer.read(cx).snapshot();
                             let old_position = agent_location.position.to_point(&snapshot);
                             let new_position = location.position.to_point(&snapshot);
-                            agent_location.buffer == location.buffer
-                                // ignore this so that when we get updates from the edit tool
-                                // the position doesn't reset to the startof line
-                                && (old_position.row == new_position.row
-                                    && old_position.column > new_position.column)
+
+                            // ignore this so that when we get updates from the edit tool
+                            // the position doesn't reset to the startof line
+                            old_position.row == new_position.row
+                                && old_position.column > new_position.column
                         } else {
                             false
                         };

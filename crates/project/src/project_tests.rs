@@ -1815,7 +1815,10 @@ async fn test_disk_based_diagnostics_progress(cx: &mut gpui::TestAppContext) {
     fake_server
         .start_progress(format!("{}/0", progress_token))
         .await;
-    assert_eq!(events.next().await.unwrap(), Event::RefreshInlayHints);
+    assert_eq!(
+        events.next().await.unwrap(),
+        Event::RefreshInlayHints(fake_server.server.server_id())
+    );
     assert_eq!(
         events.next().await.unwrap(),
         Event::DiskBasedDiagnosticsStarted {
@@ -1954,7 +1957,10 @@ async fn test_restarting_server_with_diagnostics_running(cx: &mut gpui::TestAppC
             Some(worktree_id)
         )
     );
-    assert_eq!(events.next().await.unwrap(), Event::RefreshInlayHints);
+    assert_eq!(
+        events.next().await.unwrap(),
+        Event::RefreshInlayHints(fake_server.server.server_id())
+    );
     fake_server.start_progress(progress_token).await;
     assert_eq!(
         events.next().await.unwrap(),
@@ -9653,6 +9659,7 @@ fn python_lang(fs: Arc<FakeFs>) -> Arc<Language> {
             worktree_root: PathBuf,
             subroot_relative_path: Arc<RelPath>,
             _: Option<HashMap<String, String>>,
+            _: &dyn Fs,
         ) -> ToolchainList {
             // This lister will always return a path .venv directories within ancestors
             let ancestors = subroot_relative_path.ancestors().collect::<Vec<_>>();
@@ -9677,6 +9684,7 @@ fn python_lang(fs: Arc<FakeFs>) -> Arc<Language> {
             &self,
             _: PathBuf,
             _: Option<HashMap<String, String>>,
+            _: &dyn Fs,
         ) -> anyhow::Result<Toolchain> {
             Err(anyhow::anyhow!("Not implemented"))
         }
@@ -9689,7 +9697,7 @@ fn python_lang(fs: Arc<FakeFs>) -> Arc<Language> {
                 manifest_name: ManifestName::from(SharedString::new_static("pyproject.toml")),
             }
         }
-        async fn activation_script(&self, _: &Toolchain, _: ShellKind, _: &dyn Fs) -> Vec<String> {
+        fn activation_script(&self, _: &Toolchain, _: ShellKind) -> Vec<String> {
             vec![]
         }
     }

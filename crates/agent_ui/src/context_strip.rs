@@ -483,12 +483,11 @@ impl Render for ContextStrip {
                             .style(ui::ButtonStyle::Filled),
                         {
                             let focus_handle = focus_handle.clone();
-                            move |window, cx| {
+                            move |_window, cx| {
                                 Tooltip::for_action_in(
                                     "Add Context",
                                     &ToggleContextPicker,
                                     &focus_handle,
-                                    window,
                                     cx,
                                 )
                             }
@@ -558,12 +557,11 @@ impl Render for ContextStrip {
                             .icon_size(IconSize::Small)
                             .tooltip({
                                 let focus_handle = focus_handle.clone();
-                                move |window, cx| {
+                                move |_window, cx| {
                                     Tooltip::for_action_in(
                                         "Remove All Context",
                                         &RemoveAllContext,
                                         &focus_handle,
-                                        window,
                                         cx,
                                     )
                                 }

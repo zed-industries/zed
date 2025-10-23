@@ -1655,12 +1655,11 @@ impl AgentPanel {
                     .icon_size(IconSize::Small),
                 {
                     let focus_handle = focus_handle.clone();
-                    move |window, cx| {
+                    move |_window, cx| {
                         Tooltip::for_action_in(
                             "Toggle Agent Menu",
                             &ToggleOptionsMenu,
                             &focus_handle,
-                            window,
                             cx,
                         )
                     }
@@ -1724,7 +1723,7 @@ impl AgentPanel {
                             .separator();
 
                         menu = menu
-                            .action("Rules…", Box::new(OpenRulesLibrary::default()))
+                            .action("Rules", Box::new(OpenRulesLibrary::default()))
                             .action("Settings", Box::new(OpenSettings))
                             .separator()
                             .action(full_screen_label, Box::new(ToggleZoom));
@@ -1751,12 +1750,11 @@ impl AgentPanel {
             .trigger_with_tooltip(
                 IconButton::new("agent-nav-menu", icon).icon_size(IconSize::Small),
                 {
-                    move |window, cx| {
+                    move |_window, cx| {
                         Tooltip::for_action_in(
                             "Toggle Recent Threads",
                             &ToggleNavigationMenu,
                             &focus_handle,
-                            window,
                             cx,
                         )
                     }
@@ -1790,8 +1788,8 @@ impl AgentPanel {
                 this.go_back(&workspace::GoBack, window, cx);
             }))
             .tooltip({
-                move |window, cx| {
-                    Tooltip::for_action_in("Go Back", &workspace::GoBack, &focus_handle, window, cx)
+                move |_window, cx| {
+                    Tooltip::for_action_in("Go Back", &workspace::GoBack, &focus_handle, cx)
                 }
             })
     }
@@ -1812,12 +1810,11 @@ impl AgentPanel {
                 IconButton::new("new_thread_menu_btn", IconName::Plus).icon_size(IconSize::Small),
                 {
                     let focus_handle = focus_handle.clone();
-                    move |window, cx| {
+                    move |_window, cx| {
                         Tooltip::for_action_in(
                             "New…",
                             &ToggleNewThreadMenu,
                             &focus_handle,
-                            window,
                             cx,
                         )
                     }
@@ -2063,14 +2060,8 @@ impl AgentPanel {
             .when_some(self.selected_agent.icon(), |this, icon| {
                 this.px(DynamicSpacing::Base02.rems(cx))
                     .child(Icon::new(icon).color(Color::Muted))
-                    .tooltip(move |window, cx| {
-                        Tooltip::with_meta(
-                            selected_agent_label.clone(),
-                            None,
-                            "Selected Agent",
-                            window,
-                            cx,
-                        )
+                    .tooltip(move |_window, cx| {
+                        Tooltip::with_meta(selected_agent_label.clone(), None, "Selected Agent", cx)
                     })
             })
             .into_any_element();
@@ -2246,7 +2237,6 @@ impl AgentPanel {
         border_bottom: bool,
         configuration_error: &ConfigurationError,
         focus_handle: &FocusHandle,
-        window: &mut Window,
         cx: &mut App,
     ) -> impl IntoElement {
         let zed_provider_configured = AgentSettings::get_global(cx)
@@ -2295,7 +2285,7 @@ impl AgentPanel {
                         .style(ButtonStyle::Tinted(ui::TintColor::Warning))
                         .label_size(LabelSize::Small)
                         .key_binding(
-                            KeyBinding::for_action_in(&OpenSettings, focus_handle, window, cx)
+                            KeyBinding::for_action_in(&OpenSettings, focus_handle, cx)
                                 .map(|kb| kb.size(rems_from_px(12.))),
                         )
                         .on_click(|_event, window, cx| {
@@ -2513,7 +2503,6 @@ impl Render for AgentPanel {
                                     true,
                                     err,
                                     &self.focus_handle(cx),
-                                    window,
                                     cx,
                                 ))
                             } else {

@@ -266,12 +266,11 @@ impl Render for BufferSearchBar {
                     .toggle_state(self.selection_search_enabled.is_some())
                     .tooltip({
                         let focus_handle = focus_handle.clone();
-                        move |window, cx| {
+                        move |_window, cx| {
                             Tooltip::for_action_in(
                                 "Toggle Search Selection",
                                 &ToggleSelection,
                                 &focus_handle,
-                                window,
                                 cx,
                             )
                         }

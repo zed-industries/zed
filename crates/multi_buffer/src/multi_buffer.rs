@@ -51,7 +51,7 @@ use text::{
 use theme::SyntaxTheme;
 use util::{post_inc, rel_path::RelPath};
 
-const NEWLINES: &[u8] = &[b'\n'; u8::MAX as usize];
+const NEWLINES: &[u8] = &[b'\n'; rope::Chunk::MASK_BITS];
 
 #[derive(Debug, Default, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ExcerptId(u32);
@@ -2556,6 +2556,10 @@ impl MultiBuffer {
         self.buffers.values().for_each(|state| f(&state.buffer))
     }
 
+    pub fn explicit_title(&self) -> Option<&str> {
+        self.title.as_deref()
+    }
+
     pub fn title<'a>(&'a self, cx: &'a App) -> Cow<'a, str> {
         if let Some(title) = self.title.as_ref() {
             return title.into();
@@ -4454,10 +4458,23 @@ impl MultiBufferSnapshot {
             && region.has_trailing_newline
             && !region.is_main_buffer
         {
-            return Some((&cursor.excerpt()?.buffer, cursor.main_buffer_position()?));
+            let main_buffer_position = cursor.main_buffer_position()?;
+            let buffer_snapshot = &cursor.excerpt()?.buffer;
+            // remove this assert once we figure out the cause of the panics for #40453
+            buffer_snapshot
+                .text
+                .as_rope()
+                .assert_char_boundary(main_buffer_position);
+            return Some((buffer_snapshot, main_buffer_position));
         } else if buffer_offset > region.buffer.len() {
             return None;
         }
+        // remove this assert once we figure out the cause of the panics for #40453
+        region
+            .buffer
+            .text
+            .as_rope()
+            .assert_char_boundary(buffer_offset);
         Some((region.buffer, buffer_offset))
     }
 
@@ -6157,22 +6174,20 @@ impl MultiBufferSnapshot {
     ) -> SmallVec<[Locator; 1]> {
         let mut sorted_ids = ids.into_iter().collect::<SmallVec<[_; 1]>>();
         sorted_ids.sort_unstable();
+        sorted_ids.dedup();
         let mut locators = SmallVec::new();
 
         while sorted_ids.last() == Some(&ExcerptId::max()) {
             sorted_ids.pop();
-            if let Some(mapping) = self.excerpt_ids.last() {
-                locators.push(mapping.locator.clone());
-            }
+            locators.push(Locator::max());
         }
 
-        let mut sorted_ids = sorted_ids.into_iter().dedup().peekable();
-        if sorted_ids.peek() == Some(&ExcerptId::min()) {
-            sorted_ids.next();
-            if let Some(mapping) = self.excerpt_ids.first() {
-                locators.push(mapping.locator.clone());
-            }
-        }
+        let mut sorted_ids = sorted_ids.into_iter().peekable();
+        locators.extend(
+            sorted_ids
+                .peeking_take_while(|excerpt| *excerpt == ExcerptId::min())
+                .map(|_| Locator::min()),
+        );
 
         let mut cursor = self.excerpt_ids.cursor::<ExcerptId>(());
         for id in sorted_ids {
@@ -7719,7 +7734,7 @@ impl<'a> Iterator for MultiBufferChunks<'a> {
                     let split_idx = diff_transform_end - self.range.start;
                     let (before, after) = chunk.text.split_at(split_idx);
                     self.range.start = diff_transform_end;
-                    let mask = (1 << split_idx) - 1;
+                    let mask = 1u128.unbounded_shl(split_idx as u32).wrapping_sub(1);
                     let chars = chunk.chars & mask;
                     let tabs = chunk.tabs & mask;
 
@@ -7871,7 +7886,9 @@ impl<'a> Iterator for ExcerptChunks<'a> {
 
         if self.footer_height > 0 {
             let text = unsafe { str::from_utf8_unchecked(&NEWLINES[..self.footer_height]) };
-            let chars = (1 << self.footer_height) - 1;
+            let chars = 1u128
+                .unbounded_shl(self.footer_height as u32)
+                .wrapping_sub(1);
             self.footer_height = 0;
             return Some(Chunk {
                 text,

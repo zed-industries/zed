@@ -4,7 +4,6 @@ mod point;
 mod point_utf16;
 mod unclipped;
 
-use chunk::Chunk;
 use rayon::iter::{IntoParallelIterator, ParallelIterator as _};
 use smallvec::SmallVec;
 use std::{
@@ -14,11 +13,13 @@ use std::{
 };
 use sum_tree::{Bias, Dimension, Dimensions, SumTree};
 
-pub use chunk::ChunkSlice;
+pub use chunk::{Chunk, ChunkSlice};
 pub use offset_utf16::OffsetUtf16;
 pub use point::Point;
 pub use point_utf16::PointUtf16;
 pub use unclipped::Unclipped;
+
+use crate::chunk::Bitmap;
 
 #[derive(Clone, Default)]
 pub struct Rope {
@@ -43,8 +44,31 @@ impl Rope {
         }
         let (start, _, item) = self.chunks.find::<usize, _>((), &offset, Bias::Left);
         let chunk_offset = offset - start;
-        item.map(|chunk| chunk.text.is_char_boundary(chunk_offset))
+        item.map(|chunk| chunk.is_char_boundary(chunk_offset))
             .unwrap_or(false)
+    }
+
+    #[track_caller]
+    #[inline(always)]
+    pub fn assert_char_boundary(&self, offset: usize) {
+        if self.is_char_boundary(offset) {
+            return;
+        }
+        panic_char_boundary(self, offset);
+
+        #[cold]
+        #[inline(never)]
+        fn panic_char_boundary(rope: &Rope, offset: usize) {
+            // find the character
+            let char_start = rope.floor_char_boundary(offset);
+            // `char_start` must be less than len and a char boundary
+            let ch = rope.chars_at(char_start).next().unwrap();
+            let char_range = char_start..char_start + ch.len_utf8();
+            panic!(
+                "byte index {} is not a char boundary; it is inside {:?} (bytes {:?})",
+                offset, ch, char_range,
+            );
+        }
     }
 
     pub fn floor_char_boundary(&self, index: usize) -> usize {
@@ -653,9 +677,9 @@ pub struct ChunkBitmaps<'a> {
     /// A slice of text up to 128 bytes in size
     pub text: &'a str,
     /// Bitmap of character locations in text. LSB ordered
-    pub chars: u128,
+    pub chars: Bitmap,
     /// Bitmap of tab locations in text. LSB ordered
-    pub tabs: u128,
+    pub tabs: Bitmap,
 }
 
 #[derive(Clone)]
@@ -827,39 +851,6 @@ impl<'a> Chunks<'a> {
         self.offset < initial_offset && self.offset == 0
     }
 
-    /// Returns bitmaps that represent character positions and tab positions
-    pub fn peek_with_bitmaps(&self) -> Option<ChunkBitmaps<'a>> {
-        if !self.offset_is_valid() {
-            return None;
-        }
-
-        let chunk = self.chunks.item()?;
-        let chunk_start = *self.chunks.start();
-        let slice_range = if self.reversed {
-            let slice_start = cmp::max(chunk_start, self.range.start) - chunk_start;
-            let slice_end = self.offset - chunk_start;
-            slice_start..slice_end
-        } else {
-            let slice_start = self.offset - chunk_start;
-            let slice_end = cmp::min(self.chunks.end(), self.range.end) - chunk_start;
-            slice_start..slice_end
-        };
-
-        // slice range has a bounds between 0 and 128 in non test builds
-        // We use a non wrapping sub because we want to overflow in the case where slice_range.end == 128
-        // because that represents a full chunk and the bitmask shouldn't remove anything
-        let bitmask = (1u128.unbounded_shl(slice_range.end as u32)).wrapping_sub(1);
-
-        let chars = (chunk.chars() & bitmask) >> slice_range.start;
-        let tabs = (chunk.tabs & bitmask) >> slice_range.start;
-
-        Some(ChunkBitmaps {
-            text: &chunk.text[slice_range],
-            chars,
-            tabs,
-        })
-    }
-
     pub fn peek(&self) -> Option<&'a str> {
         if !self.offset_is_valid() {
             return None;
@@ -880,7 +871,8 @@ impl<'a> Chunks<'a> {
         Some(&chunk.text[slice_range])
     }
 
-    pub fn peek_tabs(&self) -> Option<ChunkBitmaps<'a>> {
+    /// Returns bitmaps that represent character positions and tab positions
+    pub fn peek_with_bitmaps(&self) -> Option<ChunkBitmaps<'a>> {
         if !self.offset_is_valid() {
             return None;
         }
@@ -900,7 +892,7 @@ impl<'a> Chunks<'a> {
         let slice_text = &chunk.text[slice_range];
 
         // Shift the tabs to align with our slice window
-        let shifted_tabs = chunk.tabs >> chunk_start_offset;
+        let shifted_tabs = chunk.tabs() >> chunk_start_offset;
         let shifted_chars = chunk.chars() >> chunk_start_offset;
 
         Some(ChunkBitmaps {

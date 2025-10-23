@@ -23,20 +23,19 @@ impl Example for Planets {
     }
 
     async fn conversation(&self, cx: &mut ExampleContext) -> Result<()> {
-        cx.push_user_message(
-            r#"
+        let response = cx
+            .prompt(
+                r#"
             Make a plain JavaScript web page which renders an animated 3D solar system.
             Let me drag to rotate the camera around.
             Do not use npm.
-            "#
-            .to_string(),
-        );
-
-        let response = cx.run_to_end().await?;
+            "#,
+            )
+            .await?;
         let mut open_tool_uses = 0;
         let mut terminal_tool_uses = 0;
 
-        for tool_use in response.tool_uses() {
+        for tool_use in response.tool_calls() {
             if tool_use.name == OpenTool::name() {
                 open_tool_uses += 1;
             } else if tool_use.name == TerminalTool::name() {

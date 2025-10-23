@@ -58,7 +58,7 @@ members = [
     "crates/edit_prediction_context",
     "crates/zeta2_tools",
     "crates/editor",
-    # "crates/eval",
+    "crates/eval",
     "crates/explorer_command_injector",
     "crates/extension",
     "crates/extension_api",
@@ -126,7 +126,6 @@ members = [
     "crates/picker",
     "crates/prettier",
     "crates/project",
-    "crates/project_benchmarks",
     "crates/project_panel",
     "crates/project_symbols",
     "crates/prompt_store",
@@ -195,7 +194,6 @@ members = [
     "crates/web_search_providers",
     "crates/workspace",
     "crates/worktree",
-    "crates/worktree_benchmarks",
     "crates/x_ai",
     "crates/zed",
     "crates/zed_actions",
@@ -454,7 +452,7 @@ async-fs = "2.1"
 async-lock = "2.1"
 async-pipe = { git = "https://github.com/zed-industries/async-pipe-rs", rev = "82d00a04211cf4e1236029aa03e6b6ce2a74c553" }
 async-recursion = "1.0.0"
-async-tar = "0.5.0"
+async-tar = "0.5.1"
 async-task = "4.7"
 async-trait = "0.1"
 async-tungstenite = "0.31.0"
@@ -902,4 +900,5 @@ ignored = [
     "serde",
     "component",
     "documented",
+    "sea-orm-macros",
 ]

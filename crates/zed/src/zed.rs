@@ -178,6 +178,9 @@ pub fn init(cx: &mut App) {
             open_log_file(workspace, window, cx);
         });
     });
+    cx.on_action(|_: &workspace::RevealLogInFileManager, cx| {
+        cx.reveal_path(paths::log_file().as_path());
+    });
     cx.on_action(|_: &zed_actions::OpenLicenses, cx| {
         with_active_or_new_workspace(cx, |workspace, window, cx| {
             open_bundled_file(
@@ -2836,14 +2839,16 @@ mod tests {
         });
 
         // Split the pane with the first entry, then open the second entry again.
-        window
+        let (task1, task2) = window
             .update(cx, |w, window, cx| {
-                w.split_and_clone(w.active_pane().clone(), SplitDirection::Right, window, cx);
-                w.open_path(file2.clone(), None, true, window, cx)
+                (
+                    w.split_and_clone(w.active_pane().clone(), SplitDirection::Right, window, cx),
+                    w.open_path(file2.clone(), None, true, window, cx),
+                )
             })
-            .unwrap()
-            .await
             .unwrap();
+        task1.await.unwrap();
+        task2.await.unwrap();
 
         window
             .read_with(cx, |w, cx| {
@@ -3466,7 +3471,13 @@ mod tests {
                     SplitDirection::Right,
                     window,
                     cx,
-                );
+                )
+            })
+            .unwrap()
+            .await
+            .unwrap();
+        window
+            .update(cx, |workspace, window, cx| {
                 workspace.open_path(
                     (worktree.read(cx).id(), rel_path("the-new-name.rs")),
                     None,
