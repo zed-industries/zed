@@ -6,11 +6,14 @@ mod unclipped;
 
 use chunk::Chunk;
 use rayon::iter::{IntoParallelIterator, ParallelIterator as _};
+use regex::Regex;
 use smallvec::SmallVec;
 use std::{
+    borrow::Cow,
     cmp, fmt, io, mem,
     ops::{self, AddAssign, Range},
     str,
+    sync::{Arc, LazyLock},
 };
 use sum_tree::{Bias, Dimension, Dimensions, SumTree};
 
@@ -19,6 +22,73 @@ pub use offset_utf16::OffsetUtf16;
 pub use point::Point;
 pub use point_utf16::PointUtf16;
 pub use unclipped::Unclipped;
+
+static LINE_SEPARATORS_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\r\n|\r").expect("Failed to create LINE_SEPARATORS_REGEX"));
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum LineEnding {
+    Unix,
+    Windows,
+}
+
+impl Default for LineEnding {
+    fn default() -> Self {
+        #[cfg(unix)]
+        return Self::Unix;
+
+        #[cfg(not(unix))]
+        return Self::Windows;
+    }
+}
+
+impl LineEnding {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            LineEnding::Unix => "\n",
+            LineEnding::Windows => "\r\n",
+        }
+    }
+
+    pub fn detect(text: &str) -> Self {
+        let mut max_ix = cmp::min(text.len(), 1000);
+        while !text.is_char_boundary(max_ix) {
+            max_ix -= 1;
+        }
+
+        if let Some(ix) = text[..max_ix].find(['\n']) {
+            if ix > 0 && text.as_bytes()[ix - 1] == b'\r' {
+                Self::Windows
+            } else {
+                Self::Unix
+            }
+        } else {
+            Self::default()
+        }
+    }
+
+    pub fn normalize(text: &mut String) {
+        if let Cow::Owned(replaced) = LINE_SEPARATORS_REGEX.replace_all(text, "\n") {
+            *text = replaced;
+        }
+    }
+
+    pub fn normalize_arc(text: Arc<str>) -> Arc<str> {
+        if let Cow::Owned(replaced) = LINE_SEPARATORS_REGEX.replace_all(&text, "\n") {
+            replaced.into()
+        } else {
+            text
+        }
+    }
+
+    pub fn normalize_cow(text: Cow<str>) -> Cow<str> {
+        if let Cow::Owned(replaced) = LINE_SEPARATORS_REGEX.replace_all(&text, "\n") {
+            replaced.into()
+        } else {
+            text
+        }
+    }
+}
 
 #[derive(Clone, Default)]
 pub struct Rope {
@@ -353,22 +423,20 @@ impl Rope {
     /// The rope internally stores all line breaks as `\n` (see `Display` impl).
     /// Use this method to convert to different line endings for file operations,
     /// LSP communication, or other scenarios requiring specific line ending formats.
-    ///
-    /// Common line endings:
-    /// - `"\n"` for Unix/Linux/macOS
-    /// - `"\r\n"` for Windows
-    /// - `"\r"` for classic Mac OS (rarely used)
-    pub fn to_string_with_line_ending(&self, line_ending: &str) -> String {
-        if line_ending == "\n" {
-            // Fast path: rope already uses \n internally
-            self.to_string()
-        } else {
-            // Convert \n to target line ending
-            let mut result = String::new();
-            for chunk in self.chunks() {
-                result.push_str(&chunk.replace('\n', line_ending));
+    pub fn to_string_with_line_ending(&self, line_ending: LineEnding) -> String {
+        match line_ending {
+            LineEnding::Unix => {
+                // rope already uses \n internally
+                self.to_string()
             }
-            result
+            LineEnding::Windows => {
+                let mut result = String::new();
+                let line_ending = line_ending.as_str();
+                for chunk in self.chunks() {
+                    result.push_str(&chunk.replace('\n', line_ending));
+                }
+                result
+            }
         }
     }
 
@@ -567,11 +635,11 @@ impl From<&String> for Rope {
 /// Note: This always uses `\n` as the line separator, regardless of the original
 /// file's line endings. The rope internally normalizes all line breaks to `\n`.
 /// If you need to preserve original line endings (e.g., for LSP communication),
-/// use `to_string_with_line_ending()` instead.
+/// use `to_string_with_line_ending` instead.
 impl fmt::Display for Rope {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for chunk in self.chunks() {
-            write!(f, "{}", chunk)?;
+            write!(f, "{chunk}")?;
         }
         Ok(())
     }
@@ -2255,35 +2323,35 @@ mod tests {
     fn test_to_string_with_line_ending() {
         // Test Unix line endings (no conversion)
         let rope = Rope::from("line1\nline2\nline3");
-        assert_eq!(rope.to_string_with_line_ending("\n"), "line1\nline2\nline3");
+        assert_eq!(
+            rope.to_string_with_line_ending(LineEnding::Unix),
+            "line1\nline2\nline3"
+        );
 
         // Test Windows line endings
         assert_eq!(
-            rope.to_string_with_line_ending("\r\n"),
+            rope.to_string_with_line_ending(LineEnding::Windows),
             "line1\r\nline2\r\nline3"
-        );
-
-        // Test custom line ending
-        assert_eq!(
-            rope.to_string_with_line_ending("\r"),
-            "line1\rline2\rline3"
         );
 
         // Test empty rope
         let empty_rope = Rope::from("");
-        assert_eq!(empty_rope.to_string_with_line_ending("\r\n"), "");
+        assert_eq!(
+            empty_rope.to_string_with_line_ending(LineEnding::Windows),
+            ""
+        );
 
         // Test single line (no newlines)
         let single_line = Rope::from("single line");
         assert_eq!(
-            single_line.to_string_with_line_ending("\r\n"),
+            single_line.to_string_with_line_ending(LineEnding::Windows),
             "single line"
         );
 
         // Test rope ending with newline
         let ending_newline = Rope::from("line1\nline2\n");
         assert_eq!(
-            ending_newline.to_string_with_line_ending("\r\n"),
+            ending_newline.to_string_with_line_ending(LineEnding::Windows),
             "line1\r\nline2\r\n"
         );
 
@@ -2292,7 +2360,7 @@ mod tests {
         for i in 0..100 {
             large_rope.push(&format!("line{}\n", i));
         }
-        let result = large_rope.to_string_with_line_ending("\r\n");
+        let result = large_rope.to_string_with_line_ending(LineEnding::Windows);
         assert!(result.contains("\r\n"));
         assert!(!result.contains("\n\n"));
         assert_eq!(result.matches("\r\n").count(), 100);
