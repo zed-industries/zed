@@ -10,6 +10,12 @@ use ui::{
 use util::paths::FILE_ROW_COLUMN_DELIMITER;
 use workspace::{StatusBarSettings, StatusItemView, Workspace, item::ItemHandle};
 
+struct LabelTexts<'a> {
+    line: &'a str,
+    selection: &'a str,
+    character: &'a str,
+}
+
 #[derive(Copy, Clone, Debug, Default, PartialOrd, PartialEq)]
 pub(crate) struct SelectionStats {
     pub lines: usize,
@@ -162,6 +168,18 @@ impl CursorPosition {
             // Do not write out anything if we have just one empty selection.
             return;
         }
+        self.write_position_with_labels(
+            text,
+            cx,
+            LabelTexts {
+                line: "line",
+                selection: "selection",
+                character: "character",
+            },
+        );
+    }
+
+    fn write_position_with_labels(&self, text: &mut String, cx: &App, labels: LabelTexts<'_>) {
         let SelectionStats {
             lines,
             characters,
@@ -169,9 +187,9 @@ impl CursorPosition {
         } = self.selected_count;
         let format = LineIndicatorFormat::get(None, cx);
         let is_short_format = format == &LineIndicatorFormat::Short;
-        let lines = (lines > 1).then_some((lines, "line"));
-        let selections = (selections > 1).then_some((selections, "selection"));
-        let characters = (characters > 0).then_some((characters, "character"));
+        let lines = (lines > 1).then_some((lines, labels.line));
+        let selections = (selections > 1).then_some((selections, labels.selection));
+        let characters = (characters > 0).then_some((characters, labels.character));
         if (None, None, None) == (characters, selections, lines) {
             // Nothing to display.
             return;
@@ -182,7 +200,11 @@ impl CursorPosition {
             if wrote_once {
                 write!(text, ", ").unwrap();
             }
-            let name = if is_short_format { &name[..1] } else { name };
+            let name = if is_short_format {
+                Self::short_label(name)
+            } else {
+                name
+            };
             let plural_suffix = if count > 1 && !is_short_format {
                 "s"
             } else {
@@ -192,6 +214,13 @@ impl CursorPosition {
             wrote_once = true;
         }
         text.push(')');
+    }
+
+    fn short_label<'a>(name: &'a str) -> &'a str {
+        match name.char_indices().nth(1) {
+            Some((index, _)) => &name[..index],
+            None => name,
+        }
     }
 
     #[cfg(test)]
@@ -308,5 +337,77 @@ impl From<settings::LineIndicatorFormat> for LineIndicatorFormat {
 impl Settings for LineIndicatorFormat {
     fn from_settings(content: &settings::SettingsContent) -> Self {
         content.line_indicator_format.unwrap().into()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::{AppContext, TestAppContext};
+    use project::{FakeFs, Project};
+    use serde_json::json;
+    use std::sync::Arc;
+    use util::path;
+    use workspace::{AppState, Workspace};
+
+    fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
+        cx.update(|cx| {
+            let state = AppState::test(cx);
+            language::init(cx);
+            crate::init(cx);
+            editor::init(cx);
+            workspace::init_settings(cx);
+            Project::init_settings(cx);
+            state
+        })
+    }
+
+    #[gpui::test]
+    async fn write_position_handles_multibyte_short_labels(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/dir"), json!({ "file.txt": "" }))
+            .await;
+
+        let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+        let (workspace, window_cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let cursor_position = workspace.update(&mut *window_cx, |workspace, cx| {
+            cx.new(|_| CursorPosition::new(workspace))
+        });
+
+        cx.update(|cx| {
+            LineIndicatorFormat::override_global(LineIndicatorFormat::Short, cx);
+        });
+
+        cursor_position.update(cx, |cursor_position, cx| {
+            cursor_position.selected_count = SelectionStats {
+                lines: 2,
+                characters: 3,
+                selections: 2,
+            };
+
+            let mut text = "1:1".to_string();
+            cursor_position.write_position_with_labels(
+                &mut text,
+                cx,
+                LabelTexts {
+                    line: "行",
+                    selection: "选区",
+                    character: "字符",
+                },
+            );
+
+            let expected = format!(
+                "1:1 (2 {}, 2 {}, 3 {})",
+                CursorPosition::short_label("选区"),
+                CursorPosition::short_label("行"),
+                CursorPosition::short_label("字符"),
+            );
+
+            assert_eq!(text, expected);
+        });
     }
 }
