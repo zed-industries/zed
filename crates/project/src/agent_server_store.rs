@@ -304,7 +304,7 @@ mod ext_agent_tests_additional {
             "AgentName".into(),
             extension::AgentServerManifestEntry {
                 launcher: extension::AgentServerLauncher::Binary {
-                    bin_name: "mybin".to_string(),
+                    binary_name: "mybin".to_string(),
                 },
                 env: Default::default(),
                 args: Vec::new(),
@@ -2451,7 +2451,7 @@ mod npm_launcher_tests {
         assert_eq!(agent.repo, "owner/repo");
         assert_eq!(agent.tag, "v1.0.0");
         assert_eq!(agent.asset_pattern, "*.tar.gz");
-        assert_eq!(agent.binary_name, None);
+        assert_eq!(agent.binary_name, "my-server");
         assert_eq!(agent.args, vec!["--serve"]);
         assert_eq!(agent.env.get("PORT"), Some(&"8080".to_string()));
     }
@@ -2520,7 +2520,7 @@ mod npm_launcher_tests {
 
         let manifest_entry = AgentServerManifestEntry {
             launcher: AgentServerLauncher::Binary {
-                bin_name: "my-agent".into(),
+                binary_name: "my-agent".into(),
             },
             env: env.clone(),
             args: vec!["--flag".into()],
