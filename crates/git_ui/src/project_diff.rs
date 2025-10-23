@@ -6,7 +6,7 @@ use crate::{
 };
 use anyhow::Result;
 use buffer_diff::{BufferDiff, DiffHunkSecondaryStatus};
-use collections::HashSet;
+use collections::{HashMap, HashSet};
 use editor::{
     Editor, EditorEvent, SelectionEffects,
     actions::{GoToHunk, GoToPreviousHunk},
@@ -57,7 +57,7 @@ pub struct ProjectDiff {
     multibuffer: Entity<MultiBuffer>,
     editor: Entity<Editor>,
     git_store: Entity<GitStore>,
-    buffers: Vec<DiffBuffer>,
+    buffer_diff_subscriptions: HashMap<RepoPath, Subscription>,
     workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
     update_needed: postage::watch::Sender<()>,
@@ -72,7 +72,6 @@ struct DiffBuffer {
     buffer: Entity<Buffer>,
     diff: Entity<BufferDiff>,
     file_status: FileStatus,
-    _subscription: Subscription,
 }
 
 const CONFLICT_SORT_PREFIX: u64 = 1;
@@ -223,7 +222,7 @@ impl ProjectDiff {
             focus_handle,
             editor,
             multibuffer,
-            buffers: Default::default(),
+            buffer_diff_subscriptions: Default::default(),
             pending_scroll: None,
             update_needed: send,
             _task: worker,
@@ -372,12 +371,12 @@ impl ProjectDiff {
             self.multibuffer.update(cx, |multibuffer, cx| {
                 multibuffer.clear(cx);
             });
+            self.buffer_diff_subscriptions.clear();
             return vec![];
         };
 
         let mut previous_paths = self.multibuffer.read(cx).paths().collect::<HashSet<_>>();
 
-        let this = cx.weak_entity();
         let mut result = vec![];
         repo.update(cx, |repo, cx| {
             for entry in repo.cached_status() {
@@ -397,7 +396,6 @@ impl ProjectDiff {
                     .update(cx, |project, cx| project.open_buffer(project_path, cx));
 
                 let project = self.project.clone();
-                let this = this.clone();
                 result.push(cx.spawn(async move |_, cx| {
                     let buffer = load_buffer.await?;
                     let changes = project
@@ -405,25 +403,19 @@ impl ProjectDiff {
                             project.open_uncommitted_diff(buffer.clone(), cx)
                         })?
                         .await?;
-                    let subscription = cx.subscribe(&changes, move |_, _, cx| {
-                        this.update(cx, |this, _| {
-                            // TODO may be able to do a more fine-grained update
-                            *this.update_needed.borrow_mut() = ();
-                        })
-                        .ok();
-                    })?;
                     Ok(DiffBuffer {
                         path_key,
                         buffer,
                         diff: changes,
                         file_status: entry.status,
-                        _subscription: subscription,
                     })
                 }));
             }
         });
         self.multibuffer.update(cx, |multibuffer, cx| {
             for path in previous_paths {
+                self.buffer_diff_subscriptions
+                    .remove(&path.path().clone().into());
                 multibuffer.remove_excerpts_for_path(path, cx);
             }
         });
@@ -439,6 +431,12 @@ impl ProjectDiff {
         let path_key = diff_buffer.path_key.clone();
         let buffer = diff_buffer.buffer.clone();
         let diff = diff_buffer.diff.clone();
+
+        let subscription = cx.subscribe(&diff, move |this, _, _, _| {
+            *this.update_needed.borrow_mut() = ();
+        });
+        self.buffer_diff_subscriptions
+            .insert(path_key.path().clone().into(), subscription);
 
         let conflict_addon = self
             .editor
@@ -506,7 +504,6 @@ impl ProjectDiff {
         if self.pending_scroll.as_ref() == Some(&path_key) {
             self.move_to_path(path_key, window, cx);
         }
-        self.buffers.push(diff_buffer);
     }
 
     pub async fn handle_status_updates(
