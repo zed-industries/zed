@@ -115,7 +115,6 @@ impl<'a, T: 'static> Context<'a, T> {
                 .subscribe_internal(&cx.entity(), {
                     let this = this.clone();
                     let on_event = on_event.clone();
-                    let handle = handle.clone();
 
                     move |e, event, cx| {
                         if let Some(this) = this.upgrade()
