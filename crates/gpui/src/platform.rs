@@ -714,6 +714,7 @@ impl PlatformTextSystem for NoopTextSystem {
 // Adapted from https://github.com/microsoft/terminal/blob/1283c0f5b99a2961673249fa77c6b986efb5086c/src/renderer/atlas/dwrite.cpp
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT license.
+#[allow(dead_code)]
 pub(crate) fn get_gamma_correction_ratios(gamma: f32) -> [f32; 4] {
     const GAMMA_INCORRECT_TARGET_RATIOS: [[f32; 4]; 13] = [
         [0.0000 / 4.0, 0.0000 / 4.0, 0.0000 / 4.0, 0.0000 / 4.0], // gamma = 1.0
@@ -1898,5 +1899,4 @@ impl From<String> for ClipboardString {
             metadata: None,
         }
     }
-}
 }
