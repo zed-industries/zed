@@ -791,7 +791,7 @@ impl MessageEditor {
                         // } else {
                         //     text[ix..].trim_end().to_owned()
                         // };
-                        let last_chunk = text[ix..].trim_end().to_owned();
+                        let last_chunk = text[ix..].trim().to_owned();
                         if !last_chunk.is_empty() {
                             chunks.push(last_chunk.into());
                         }
