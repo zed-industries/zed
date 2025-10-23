@@ -7233,16 +7233,9 @@ impl EditorElement {
                             * ScrollPixelOffset::from(max_glyph_advance)
                             - ScrollPixelOffset::from(delta.x * scroll_sensitivity))
                             / ScrollPixelOffset::from(max_glyph_advance);
-
-                        let scale_factor = window.scale_factor();
-                        let y = (current_scroll_position.y
-                            * ScrollPixelOffset::from(line_height)
-                            * ScrollPixelOffset::from(scale_factor)
+                        let y = (current_scroll_position.y * ScrollPixelOffset::from(line_height)
                             - ScrollPixelOffset::from(delta.y * scroll_sensitivity))
-                        .round()
-                            / ScrollPixelOffset::from(line_height)
-                            / ScrollPixelOffset::from(scale_factor);
-
+                            / ScrollPixelOffset::from(line_height);
                         let mut scroll_position =
                             point(x, y).clamp(&point(0., 0.), &position_map.scroll_max);
                         let forbid_vertical_scroll = editor.scroll_manager.forbid_vertical_scroll();
