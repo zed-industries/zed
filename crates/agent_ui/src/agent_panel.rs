@@ -2079,6 +2079,7 @@ impl AgentPanel {
 
         let selected_agent_label = self.selected_agent.label();
 
+        let has_custom_icon = selected_agent_custom_icon.is_some();
         let selected_agent = div()
             .id("selected_agent_icon")
             .when_some(selected_agent_custom_icon, |this, icon_path| {
@@ -2089,13 +2090,15 @@ impl AgentPanel {
                         Tooltip::with_meta(label.clone(), None, "Selected Agent", cx)
                     })
             })
-            .when_some(self.selected_agent.icon(), |this, icon| {
-                let label = selected_agent_label.clone();
-                this.px(DynamicSpacing::Base02.rems(cx))
-                    .child(Icon::new(icon).color(Color::Muted))
-                    .tooltip(move |_window, cx| {
-                        Tooltip::with_meta(label.clone(), None, "Selected Agent", cx)
-                    })
+            .when(!has_custom_icon, |this| {
+                this.when_some(self.selected_agent.icon(), |this, icon| {
+                    let label = selected_agent_label.clone();
+                    this.px(DynamicSpacing::Base02.rems(cx))
+                        .child(Icon::new(icon).color(Color::Muted))
+                        .tooltip(move |_window, cx| {
+                            Tooltip::with_meta(label.clone(), None, "Selected Agent", cx)
+                        })
+                })
             })
             .into_any_element();
 
