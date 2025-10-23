@@ -5883,6 +5883,7 @@ dependencies = [
  "fs",
  "futures 0.3.31",
  "gpui",
+ "gpui_tokio",
  "http_client",
  "language",
  "language_extension",
