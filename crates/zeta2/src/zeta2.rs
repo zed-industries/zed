@@ -36,6 +36,7 @@ use workspace::notifications::{ErrorMessagePrompt, NotificationId, show_app_noti
 
 mod prediction;
 mod provider;
+mod related_excerpts;
 
 use crate::prediction::EditPrediction;
 pub use provider::ZetaEditPredictionProvider;
@@ -183,6 +184,44 @@ pub enum Event {
     },
 }
 
+impl Event {
+    pub fn to_request_event(&self, cx: &App) -> Option<predict_edits_v3::Event> {
+        match self {
+            Event::BufferChange {
+                old_snapshot,
+                new_snapshot,
+                ..
+            } => {
+                let path = new_snapshot.file().map(|f| f.full_path(cx));
+
+                let old_path = old_snapshot.file().and_then(|f| {
+                    let old_path = f.full_path(cx);
+                    if Some(&old_path) != path.as_ref() {
+                        Some(old_path)
+                    } else {
+                        None
+                    }
+                });
+
+                // TODO [zeta2] move to bg?
+                let diff = language::unified_diff(&old_snapshot.text(), &new_snapshot.text());
+
+                if path == old_path && diff.is_empty() {
+                    None
+                } else {
+                    Some(predict_edits_v3::Event::BufferChange {
+                        old_path,
+                        path,
+                        diff,
+                        //todo: Actually detect if this edit was predicted or not
+                        predicted: false,
+                    })
+                }
+            }
+        }
+    }
+}
+
 impl Zeta {
     pub fn try_global(cx: &App) -> Option<Entity<Self>> {
         cx.try_global::<ZetaGlobal>().map(|global| global.0.clone())
@@ -246,6 +285,14 @@ impl Zeta {
         for zeta_project in self.projects.values_mut() {
             zeta_project.events.clear();
         }
+    }
+
+    pub fn history_for_project(&self, project: &Entity<Project>) -> impl Iterator<Item = &Event> {
+        static EMPTY_EVENTS: VecDeque<Event> = VecDeque::new();
+        self.projects
+            .get(&project.entity_id())
+            .map_or(&EMPTY_EVENTS, |project| &project.events)
+            .iter()
     }
 
     pub fn usage(&self, cx: &App) -> Option<EditPredictionUsage> {
@@ -525,40 +572,7 @@ impl Zeta {
                 state
                     .events
                     .iter()
-                    .filter_map(|event| match event {
-                        Event::BufferChange {
-                            old_snapshot,
-                            new_snapshot,
-                            ..
-                        } => {
-                            let path = new_snapshot.file().map(|f| f.full_path(cx));
-
-                            let old_path = old_snapshot.file().and_then(|f| {
-                                let old_path = f.full_path(cx);
-                                if Some(&old_path) != path.as_ref() {
-                                    Some(old_path)
-                                } else {
-                                    None
-                                }
-                            });
-
-                            // TODO [zeta2] move to bg?
-                            let diff =
-                                language::unified_diff(&old_snapshot.text(), &new_snapshot.text());
-
-                            if path == old_path && diff.is_empty() {
-                                None
-                            } else {
-                                Some(predict_edits_v3::Event::BufferChange {
-                                    old_path,
-                                    path,
-                                    diff,
-                                    //todo: Actually detect if this edit was predicted or not
-                                    predicted: false,
-                                })
-                            }
-                        }
-                    })
+                    .filter_map(|event| event.to_request_event(cx))
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();

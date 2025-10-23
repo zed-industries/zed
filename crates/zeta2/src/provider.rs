@@ -12,7 +12,10 @@ use language::ToPoint as _;
 use project::Project;
 use util::ResultExt as _;
 
-use crate::{BufferEditPrediction, Zeta};
+use crate::{
+    BufferEditPrediction, Zeta,
+    related_excerpts::{RelatedExcerpt, find_related_excerpts},
+};
 
 pub struct ZetaEditPredictionProvider {
     zeta: Entity<Zeta>,
@@ -20,6 +23,13 @@ pub struct ZetaEditPredictionProvider {
     pending_predictions: ArrayVec<PendingPrediction, 2>,
     last_request_timestamp: Instant,
     project: Entity<Project>,
+    context: Option<CursorContext>,
+    refresh_context_task: Option<Task<anyhow::Result<()>>>,
+}
+
+struct CursorContext {
+    timestamp: Instant,
+    related_excerpts: Vec<RelatedExcerpt>,
 }
 
 impl ZetaEditPredictionProvider {
@@ -42,6 +52,8 @@ impl ZetaEditPredictionProvider {
             pending_predictions: ArrayVec::new(),
             last_request_timestamp: Instant::now(),
             project: project,
+            refresh_context_task: None,
+            context: None,
         }
     }
 }
@@ -198,6 +210,45 @@ impl EditPredictionProvider for ZetaEditPredictionProvider {
         cursor_position: language::Anchor,
         cx: &mut Context<Self>,
     ) -> Option<edit_prediction::EditPrediction> {
+        let last_context_timestamp = self.context.as_ref().map(|c| c.timestamp);
+
+        self.refresh_context_task.get_or_insert_with(|| {
+            let buffer = buffer.clone();
+            cx.spawn(async move |this, cx| {
+                if let Some(timestamp) = last_context_timestamp {
+                    let now = Instant::now();
+                    let next_request_time = timestamp + Self::THROTTLE_TIMEOUT;
+                    if next_request_time > now {
+                        cx.background_executor()
+                            .timer(next_request_time - now)
+                            .await;
+                    }
+                }
+
+                let related_excerpts = this
+                    .update(cx, |this, cx| {
+                        let zeta = this.zeta.read(cx);
+                        find_related_excerpts(
+                            buffer,
+                            cursor_position,
+                            &this.project,
+                            zeta.history_for_project(&this.project),
+                            &zeta.options().context.excerpt,
+                            cx,
+                        )
+                    })?
+                    .await?;
+
+                this.update(cx, |this, _cx| {
+                    this.context = Some(CursorContext {
+                        timestamp: Instant::now(),
+                        related_excerpts,
+                    });
+                    this.refresh_context_task.take();
+                })
+            })
+        });
+
         let prediction =
             self.zeta
                 .read(cx)
