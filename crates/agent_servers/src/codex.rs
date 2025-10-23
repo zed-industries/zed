@@ -70,7 +70,7 @@ impl AgentServer for Codex {
         let default_mode = self.default_mode(cx);
 
         cx.spawn(async move |cx| {
-            let (command, root_dir, login_command) = store
+            let (command, root_dir, login) = store
                 .update(cx, |store, cx| {
                     let agent = store
                         .get_external_agent(&CODEX_NAME.into())
@@ -96,7 +96,7 @@ impl AgentServer for Codex {
                 cx,
             )
             .await?;
-            Ok((connection, login_command))
+            Ok((connection, login))
         })
     }
 

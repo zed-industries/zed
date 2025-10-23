@@ -47,7 +47,7 @@ impl AgentServer for Gemini {
             {
                 extra_env.insert("GEMINI_API_KEY".into(), api_key);
             }
-            let (command, root_dir, login_command) = store
+            let (command, root_dir, login) = store
                 .update(cx, |store, cx| {
                     let agent = store
                         .get_external_agent(&GEMINI_NAME.into())
@@ -71,7 +71,7 @@ impl AgentServer for Gemini {
                 cx,
             )
             .await?;
-            Ok((connection, login_command))
+            Ok((connection, login))
         })
     }
 

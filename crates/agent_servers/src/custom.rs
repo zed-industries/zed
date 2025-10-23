@@ -74,7 +74,7 @@ impl crate::AgentServer for CustomAgentServer {
         let extra_env = load_proxy_env(cx);
 
         cx.spawn(async move |cx| {
-            let (command, root_dir, login_command) = store
+            let (command, root_dir, login) = store
                 .update(cx, |store, cx| {
                     let agent = store
                         .get_external_agent(&ExternalAgentServerName(name.clone()))
@@ -99,7 +99,7 @@ impl crate::AgentServer for CustomAgentServer {
                 cx,
             )
             .await?;
-            Ok((connection, login_command))
+            Ok((connection, login))
         })
     }
 
