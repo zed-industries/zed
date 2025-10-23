@@ -1745,7 +1745,41 @@ impl SettingsWindow {
                 .unwrap_or_else(|| cx.focus_handle().tab_index(0).tab_stop(true));
             ui_files.push((settings_ui_file, focus_handle));
         }
+
         ui_files.reverse();
+
+        let mut missing_worktrees = Vec::new();
+
+        for worktree in all_projects(cx)
+            .flat_map(|project| project.read(cx).worktrees(cx))
+            .filter(|tree| !self.worktree_root_dirs.contains_key(&tree.read(cx).id()))
+        {
+            let worktree = worktree.read(cx);
+            let worktree_id = worktree.id();
+            let Some(directory_name) = worktree.root_dir().and_then(|file| {
+                file.file_name()
+                    .map(|os_string| os_string.to_string_lossy().to_string())
+            }) else {
+                continue;
+            };
+
+            missing_worktrees.push((worktree_id, directory_name.clone()));
+            let path = RelPath::empty().to_owned().into_arc();
+
+            let settings_ui_file = SettingsUiFile::Project((worktree_id, path));
+
+            let focus_handle = prev_files
+                .iter()
+                .find_map(|(prev_file, handle)| {
+                    (prev_file == &settings_ui_file).then(|| handle.clone())
+                })
+                .unwrap_or_else(|| cx.focus_handle().tab_index(0).tab_stop(true));
+
+            ui_files.push((settings_ui_file, focus_handle));
+        }
+
+        self.worktree_root_dirs.extend(missing_worktrees);
+
         self.files = ui_files;
         let current_file_still_exists = self
             .files
@@ -2718,6 +2752,9 @@ impl SettingsWindow {
             );
     }
 
+    /// This function will create a new settings file if one doesn't exist
+    /// if the current file is a project settings with a valid worktree id
+    /// We do this because the settings ui allows initializing project settings
     fn open_current_settings_file(&mut self, cx: &mut Context<Self>) {
         match &self.current_file {
             SettingsUiFile::User => {
@@ -2762,58 +2799,83 @@ impl SettingsWindow {
                     .ok();
             }
             SettingsUiFile::Project((worktree_id, path)) => {
-                let mut corresponding_workspace: Option<WindowHandle<Workspace>> = None;
                 let settings_path = path.join(paths::local_settings_file_relative_path());
                 let Some(app_state) = workspace::AppState::global(cx).upgrade() else {
                     return;
                 };
-                for workspace in app_state.workspace_store.read(cx).workspaces() {
-                    let contains_settings_file = workspace
-                        .read_with(cx, |workspace, cx| {
-                            workspace.project().read(cx).contains_local_settings_file(
-                                *worktree_id,
-                                settings_path.as_ref(),
-                                cx,
-                            )
-                        })
-                        .ok();
-                    if Some(true) == contains_settings_file {
-                        corresponding_workspace = Some(*workspace);
 
-                        break;
-                    }
-                }
-
-                let Some(corresponding_workspace) = corresponding_workspace else {
+                let Some((worktree, corresponding_workspace)) = app_state
+                    .workspace_store
+                    .read(cx)
+                    .workspaces()
+                    .iter()
+                    .find_map(|workspace| {
+                        workspace
+                            .read_with(cx, |workspace, cx| {
+                                workspace
+                                    .project()
+                                    .read(cx)
+                                    .worktree_for_id(*worktree_id, cx)
+                            })
+                            .ok()
+                            .flatten()
+                            .zip(Some(*workspace))
+                    })
+                else {
                     log::error!(
-                        "No corresponding workspace found for settings file {}",
-                        settings_path.as_std_path().display()
+                        "No corresponding workspace contains worktree id: {}",
+                        worktree_id
                     );
 
                     return;
                 };
 
+                let create_task = if worktree.read(cx).entry_for_path(&settings_path).is_some() {
+                    None
+                } else {
+                    Some(worktree.update(cx, |tree, cx| {
+                        tree.create_entry(
+                            settings_path.clone(),
+                            false,
+                            Some("{\n\n}".as_bytes().to_vec()),
+                            cx,
+                        )
+                    }))
+                };
+
+                let worktree_id = *worktree_id;
+
                 // TODO: move zed::open_local_file() APIs to this crate, and
                 // re-implement the "initial_contents" behavior
                 corresponding_workspace
-                    .update(cx, |workspace, window, cx| {
-                        let open_task = workspace.open_path(
-                            (*worktree_id, settings_path.clone()),
-                            None,
-                            true,
-                            window,
-                            cx,
-                        );
-
+                    .update(cx, |_, window, cx| {
                         cx.spawn_in(window, async move |workspace, cx| {
-                            if open_task.await.log_err().is_some() {
-                                workspace
-                                    .update_in(cx, |_, window, cx| {
-                                        window.activate_window();
-                                        cx.notify();
-                                    })
-                                    .ok();
-                            }
+                            if let Some(create_task) = create_task {
+                                create_task.await.ok()?;
+                            };
+
+                            workspace
+                                .update_in(cx, |workspace, window, cx| {
+                                    workspace.open_path(
+                                        (worktree_id, settings_path.clone()),
+                                        None,
+                                        true,
+                                        window,
+                                        cx,
+                                    )
+                                })
+                                .ok()?
+                                .await
+                                .log_err()?;
+
+                            workspace
+                                .update_in(cx, |_, window, cx| {
+                                    window.activate_window();
+                                    cx.notify();
+                                })
+                                .ok();
+
+                            Some(())
                         })
                         .detach();
                     })
@@ -3033,20 +3095,40 @@ fn update_settings_file(
     match file {
         SettingsUiFile::Project((worktree_id, rel_path)) => {
             let rel_path = rel_path.join(paths::local_settings_file_relative_path());
-            let project = all_projects(cx).find(|project| {
-                project.read_with(cx, |project, cx| {
-                    project.contains_local_settings_file(worktree_id, &rel_path, cx)
-                })
-            });
-            let Some(project) = project else {
-                anyhow::bail!(
-                    "Could not find worktree containing settings file: {}",
-                    &rel_path.display(PathStyle::local())
-                );
+            let Some((worktree, project)) = all_projects(cx).find_map(|project| {
+                project
+                    .read(cx)
+                    .worktree_for_id(worktree_id, cx)
+                    .zip(Some(project))
+            }) else {
+                anyhow::bail!("Could not find project with worktree id: {}", worktree_id);
             };
+
             project.update(cx, |project, cx| {
-                project.update_local_settings_file(worktree_id, rel_path, cx, update);
+                let task = if project.contains_local_settings_file(worktree_id, &rel_path, cx) {
+                    None
+                } else {
+                    Some(worktree.update(cx, |worktree, cx| {
+                        worktree.create_entry(rel_path.clone(), false, None, cx)
+                    }))
+                };
+
+                cx.spawn(async move |project, cx| {
+                    if let Some(task) = task
+                        && task.await.is_err()
+                    {
+                        return;
+                    };
+
+                    project
+                        .update(cx, |project, cx| {
+                            project.update_local_settings_file(worktree_id, rel_path, cx, update);
+                        })
+                        .ok();
+                })
+                .detach();
             });
+
             return Ok(());
         }
         SettingsUiFile::User => {
