@@ -127,8 +127,8 @@ impl<'a> MarkdownParser<'a> {
             | Event::Html(_)
             | Event::InlineHtml(_)
             | Event::FootnoteReference(_)
-            | Event::InlineMath(_)  // ← ADD THIS
-            | Event::DisplayMath(_) // ← ADD THIS
+            | Event::InlineMath(_)
+            | Event::DisplayMath(_)
             | Event::Start(Tag::Link { .. })
             | Event::Start(Tag::Emphasis)
             | Event::Start(Tag::Strong)
@@ -363,7 +363,6 @@ impl<'a> MarkdownParser<'a> {
                     });
                 }
                 Event::InlineMath(math) => {
-                    // Convert LaTeX to Unicode
                     let converted = latex_to_unicode(math);
                     text.push_str(&converted);
                     region_ranges.push(prev_len..text.len());
@@ -378,12 +377,10 @@ impl<'a> MarkdownParser<'a> {
                 }
 
                 Event::DisplayMath(math) => {
-                    // Convert LaTeX to Unicode
                     let converted = latex_to_unicode(math);
                     text.push_str(&converted);
                     region_ranges.push(prev_len..text.len());
 
-                    // Add math highlighting (maybe different style for display math)
                     highlights.push((
                         prev_len..text.len(),
                         MarkdownHighlight::Style(MarkdownHighlightStyle {
