@@ -3148,7 +3148,7 @@ impl Editor {
             refresh_linked_ranges(self, window, cx);
 
             self.refresh_selected_text_highlights(false, window, cx);
-            self.refresh_bracket_highlights(BracketRefreshReason::SelectionsChanged, cx);
+            self.refresh_bracket_highlights(BracketRefreshReason::SelectionsChanged, window, cx);
             self.update_visible_edit_prediction(window, cx);
             self.edit_prediction_requires_modifier_in_indent_conflict = true;
             self.inline_blame_popover.take();
@@ -20720,7 +20720,7 @@ impl Editor {
                 self.refresh_code_actions(window, cx);
                 self.refresh_selected_text_highlights(true, window, cx);
                 self.refresh_single_line_folds(window, cx);
-                self.refresh_bracket_highlights(BracketRefreshReason::BufferEdited, cx);
+                self.refresh_bracket_highlights(BracketRefreshReason::BufferEdited, window, cx);
                 if self.has_active_edit_prediction() {
                     self.update_visible_edit_prediction(window, cx);
                 }
