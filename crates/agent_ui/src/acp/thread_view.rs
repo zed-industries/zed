@@ -263,7 +263,7 @@ pub struct AcpThreadView {
     workspace: WeakEntity<Workspace>,
     project: Entity<Project>,
     thread_state: ThreadState,
-    auth_commands: Option<task::SpawnInTerminal>,
+    login: Option<task::SpawnInTerminal>,
     history_store: Entity<HistoryStore>,
     hovered_recent_history_item: Option<usize>,
     entry_view_state: Entity<EntryViewState>,
@@ -416,7 +416,7 @@ impl AcpThreadView {
                 window,
                 cx,
             ),
-            auth_commands: None,
+            login: None,
             message_editor,
             model_selector: None,
             profile_selector: None,
@@ -509,9 +509,8 @@ impl AcpThreadView {
         let connect_task = agent.connect(root_dir.as_deref(), delegate, cx);
         let load_task = cx.spawn_in(window, async move |this, cx| {
             let connection = match connect_task.await {
-                Ok((connection, auth_commands)) => {
-                    this.update(cx, |this, _| this.auth_commands = auth_commands)
-                        .ok();
+                Ok((connection, login)) => {
+                    this.update(cx, |this, _| this.login = login).ok();
                     connection
                 }
                 Err(err) => {
@@ -1058,7 +1057,7 @@ impl AcpThreadView {
             };
 
             let connection = thread.read(cx).connection().clone();
-            let can_login = !connection.auth_methods().is_empty() || self.auth_commands.is_some();
+            let can_login = !connection.auth_methods().is_empty() || self.login.is_some();
             // Does the agent have a specific logout command? Prefer that in case they need to reset internal state.
             let logout_supported = text == "/logout"
                 && self
@@ -1562,7 +1561,7 @@ impl AcpThreadView {
         self.thread_error.take();
         configuration_view.take();
         pending_auth_method.replace(method.clone());
-        let authenticate = if let Some(login) = self.auth_commands.clone() {
+        let authenticate = if let Some(login) = self.login.clone() {
             if let Some(workspace) = self.workspace.upgrade() {
                 Self::spawn_external_agent_login(login, workspace, false, window, cx)
             } else {
