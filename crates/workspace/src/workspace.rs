@@ -66,6 +66,7 @@ pub use pane_group::{
     ActivePaneDecorator, HANDLE_HITBOX_SIZE, Member, PaneAxis, PaneGroup, PaneRenderContext,
     SplitDirection,
 };
+use paths;
 use persistence::{DB, SerializedWindowBounds, model::SerializedWorkspace};
 pub use persistence::{
     DB as WORKSPACE_DB, WorkspaceDb, delete_unloaded_items,
@@ -5261,12 +5262,15 @@ impl Workspace {
 
     fn sync_agent_servers_from_extensions(&mut self, cx: &mut Context<Self>) {
         if let Some(extension_store) = ExtensionStore::try_global(cx) {
-            let manifests: Vec<_> = {
-                let installed = extension_store.read(cx).installed_extensions();
-                installed
+            let (manifests, extensions_dir) = {
+                let store = extension_store.read(cx);
+                let installed = store.installed_extensions();
+                let manifests: Vec<_> = installed
                     .iter()
                     .map(|(id, entry)| (id.clone(), entry.manifest.clone()))
-                    .collect()
+                    .collect();
+                let extensions_dir = paths::extensions_dir().join("installed");
+                (manifests, extensions_dir)
             };
 
             self.project.update(cx, |project, cx| {
@@ -5275,7 +5279,7 @@ impl Workspace {
                         .iter()
                         .map(|(id, manifest)| (id.as_ref(), manifest.as_ref()))
                         .collect();
-                    store.sync_extension_agents(manifest_refs, cx);
+                    store.sync_extension_agents(manifest_refs, extensions_dir, cx);
                 });
             });
         }

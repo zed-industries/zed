@@ -127,6 +127,7 @@ enum AgentServerStoreState {
 pub struct AgentServerStore {
     state: AgentServerStoreState,
     external_agents: HashMap<ExternalAgentServerName, Box<dyn ExternalAgentServer>>,
+    agent_icons: HashMap<ExternalAgentServerName, SharedString>,
 }
 
 pub struct AgentServersUpdated;
@@ -144,6 +145,7 @@ mod ext_agent_tests {
         AgentServerStore {
             state: AgentServerStoreState::Collab,
             external_agents: HashMap::default(),
+            agent_icons: HashMap::default(),
         }
     }
 
@@ -271,8 +273,12 @@ mod ext_agent_tests {
 
 impl AgentServerStore {
     /// Synchronizes extension-provided agent servers with the store.
-    pub fn sync_extension_agents<'a, I>(&mut self, manifests: I, cx: &mut Context<Self>)
-    where
+    pub fn sync_extension_agents<'a, I>(
+        &mut self,
+        manifests: I,
+        extensions_dir: PathBuf,
+        cx: &mut Context<Self>,
+    ) where
         I: IntoIterator<Item = (&'a str, &'a extension::ExtensionManifest)>,
     {
         // Collect manifests first so we can iterate twice
@@ -293,8 +299,9 @@ impl AgentServerStore {
             })
             .cloned()
             .collect();
-        for key in keys_to_remove {
-            self.external_agents.remove(&key);
+        for key in &keys_to_remove {
+            self.external_agents.remove(key);
+            self.agent_icons.remove(key);
         }
 
         // Insert agent servers from extension manifests
@@ -309,6 +316,21 @@ impl AgentServerStore {
                 for (ext_id, manifest) in manifests {
                     for (agent_name, agent_entry) in &manifest.agent_servers {
                         let display = SharedString::from(agent_entry.name.clone());
+
+                        // Store absolute icon path if provided, resolving symlinks for dev extensions
+                        if let Some(icon) = &agent_entry.icon {
+                            let icon_path = extensions_dir.join(ext_id).join(icon);
+                            // Canonicalize to resolve symlinks (dev extensions are symlinked)
+                            let absolute_icon_path = icon_path
+                                .canonicalize()
+                                .unwrap_or(icon_path)
+                                .to_string_lossy()
+                                .to_string();
+                            self.agent_icons.insert(
+                                ExternalAgentServerName(display.clone()),
+                                SharedString::from(absolute_icon_path),
+                            );
+                        }
 
                         match &agent_entry.launcher {
                             extension::AgentServerLauncher::Binary { binary_name } => {
@@ -380,6 +402,11 @@ impl AgentServerStore {
 
         cx.emit(AgentServersUpdated);
     }
+
+    pub fn agent_icon(&self, name: &ExternalAgentServerName) -> Option<SharedString> {
+        self.agent_icons.get(name).cloned()
+    }
+
     pub fn init_remote(session: &AnyProtoClient) {
         session.add_entity_message_handler(Self::handle_external_agents_updated);
         session.add_entity_message_handler(Self::handle_loading_status_updated);
@@ -526,6 +553,7 @@ impl AgentServerStore {
                 _subscriptions: [subscription],
             },
             external_agents: Default::default(),
+            agent_icons: Default::default(),
         };
         if let Some(_events) = extension::ExtensionEvents::try_global(cx) {}
         this.agent_servers_settings_changed(cx);
@@ -536,7 +564,7 @@ impl AgentServerStore {
         // Set up the builtin agents here so they're immediately available in
         // remote projects--we know that the HeadlessProject on the other end
         // will have them.
-        let external_agents = [
+        let external_agents: [(ExternalAgentServerName, Box<dyn ExternalAgentServer>); 3] = [
             (
                 CLAUDE_CODE_NAME.into(),
                 Box::new(RemoteExternalAgentServer {
@@ -567,16 +595,15 @@ impl AgentServerStore {
                     new_version_available_tx: None,
                 }) as Box<dyn ExternalAgentServer>,
             ),
-        ]
-        .into_iter()
-        .collect();
+        ];
 
         Self {
             state: AgentServerStoreState::Remote {
                 project_id,
                 upstream_client,
             },
-            external_agents,
+            external_agents: external_agents.into_iter().collect(),
+            agent_icons: HashMap::default(),
         }
     }
 
@@ -584,6 +611,7 @@ impl AgentServerStore {
         Self {
             state: AgentServerStoreState::Collab,
             external_agents: Default::default(),
+            agent_icons: Default::default(),
         }
     }
 
@@ -2138,6 +2166,7 @@ mod npm_launcher_tests {
         let mut store = AgentServerStore {
             state: AgentServerStoreState::Collab,
             external_agents: HashMap::default(),
+            agent_icons: HashMap::default(),
         };
 
         // Seed with extension agents (contain ": ") and custom agents (don't contain ": ")

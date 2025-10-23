@@ -1751,12 +1751,7 @@ impl AgentPanel {
                 {
                     let focus_handle = focus_handle.clone();
                     move |_window, cx| {
-                        Tooltip::for_action_in(
-                            "New…",
-                            &ToggleNewThreadMenu,
-                            &focus_handle,
-                            cx,
-                        )
+                        Tooltip::for_action_in("New…", &ToggleNewThreadMenu, &focus_handle, cx)
                     }
                 },
             )
@@ -1775,8 +1770,7 @@ impl AgentPanel {
 
                     let active_thread = active_thread.clone();
                     Some(ContextMenu::build(window, cx, |menu, _window, cx| {
-                        menu
-                            .context(focus_handle.clone())
+                        menu.context(focus_handle.clone())
                             .header("Zed Agent")
                             .when_some(active_thread, |this, active_thread| {
                                 let thread = active_thread.read(cx);
@@ -1933,63 +1927,83 @@ impl AgentPanel {
                                     }),
                             )
                             .map(|mut menu| {
-                                let agent_names = agent_server_store
-                                    .read(cx)
+                                let agent_server_store_read = agent_server_store.read(cx);
+                                let agent_names = agent_server_store_read
                                     .external_agents()
                                     .filter(|name| {
-                                        name.0 != GEMINI_NAME && name.0 != CLAUDE_CODE_NAME && name.0 != CODEX_NAME
+                                        name.0 != GEMINI_NAME
+                                            && name.0 != CLAUDE_CODE_NAME
+                                            && name.0 != CODEX_NAME
                                     })
                                     .cloned()
                                     .collect::<Vec<_>>();
-                                let custom_settings = cx.global::<SettingsStore>().get::<AllAgentServersSettings>(None).custom.clone();
+                                let custom_settings = cx
+                                    .global::<SettingsStore>()
+                                    .get::<AllAgentServersSettings>(None)
+                                    .custom
+                                    .clone();
                                 for agent_name in agent_names {
-                                    menu = menu.item(
-                                        ContextMenuEntry::new(format!("New {} Thread", agent_name))
-                                            .icon(IconName::Terminal)
-                                            .icon_color(Color::Muted)
-                                            .disabled(is_via_collab)
-                                            .handler({
-                                                let workspace = workspace.clone();
-                                                let agent_name = agent_name.clone();
-                                                let custom_settings = custom_settings.clone();
-                                                move |window, cx| {
-                                                    if let Some(workspace) = workspace.upgrade() {
-                                                        workspace.update(cx, |workspace, cx| {
-                                                            if let Some(panel) =
-                                                                workspace.panel::<AgentPanel>(cx)
-                                                            {
-                                                                panel.update(cx, |panel, cx| {
-                                                                    panel.new_agent_thread(
-                                                                        AgentType::Custom {
-                                                                            name: agent_name.clone().into(),
-                                                                            command: custom_settings
-                                                                                .get(&agent_name.0)
-                                                                                .map(|settings| {
-                                                                                    settings.command.clone()
-                                                                                })
-                                                                                .unwrap_or(placeholder_command()),
-                                                                        },
-                                                                        window,
-                                                                        cx,
-                                                                    );
-                                                                });
-                                                            }
-                                                        });
-                                                    }
+                                    let icon_path = agent_server_store_read.agent_icon(&agent_name);
+                                    let mut entry =
+                                        ContextMenuEntry::new(format!("New {} Thread", agent_name));
+                                    if let Some(icon_path) = icon_path {
+                                        entry = entry.custom_icon_path(icon_path);
+                                    } else {
+                                        entry = entry.icon(IconName::Terminal);
+                                    }
+                                    entry = entry
+                                        .icon_color(Color::Muted)
+                                        .disabled(is_via_collab)
+                                        .handler({
+                                            let workspace = workspace.clone();
+                                            let agent_name = agent_name.clone();
+                                            let custom_settings = custom_settings.clone();
+                                            move |window, cx| {
+                                                if let Some(workspace) = workspace.upgrade() {
+                                                    workspace.update(cx, |workspace, cx| {
+                                                        if let Some(panel) =
+                                                            workspace.panel::<AgentPanel>(cx)
+                                                        {
+                                                            panel.update(cx, |panel, cx| {
+                                                                panel.new_agent_thread(
+                                                                    AgentType::Custom {
+                                                                        name: agent_name
+                                                                            .clone()
+                                                                            .into(),
+                                                                        command: custom_settings
+                                                                            .get(&agent_name.0)
+                                                                            .map(|settings| {
+                                                                                settings
+                                                                                    .command
+                                                                                    .clone()
+                                                                            })
+                                                                            .unwrap_or(
+                                                                                placeholder_command(
+                                                                                ),
+                                                                            ),
+                                                                    },
+                                                                    window,
+                                                                    cx,
+                                                                );
+                                                            });
+                                                        }
+                                                    });
                                                 }
-                                            }),
-                                    );
+                                            }
+                                        });
+                                    menu = menu.item(entry);
                                 }
 
                                 menu
                             })
-                            .separator().link(
-                                    "Add Other Agents",
-                                    OpenBrowser {
-                                        url: zed_urls::external_agents_docs(cx),
-                                    }
-                                    .boxed_clone(),
-                                )
+                            .separator()
+                            .link(
+                                "Add Other Agents",
+                                OpenBrowser {
+                                    url: zed_urls::external_agents_docs(cx),
+                                }
+                                .boxed_clone(),
+                            )
                     }))
                 }
             });
