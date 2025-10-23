@@ -257,8 +257,16 @@
   "rainbow_highlighting": {
     // Whether to enable rainbow highlighting.
     // Default: false
-    "enabled": false
+    "enabled": false,
+    // Which semantic token types should receive rainbow colors.
+    // Options: "parameter", "variable", "property"
+    // Default: ["parameter", "variable"]
+    "token_types": ["parameter", "variable"]
   },
+  // Maximum file line count for semantic token requests from LSP.
+  // Files exceeding this limit will not request semantic tokens to avoid performance issues.
+  // Default: 5000
+  "semantic_tokens_max_file_lines": 5000,
   // Whether to pop the completions menu while typing in an editor without
   // explicitly requesting it.
   "show_completions_on_input": true,

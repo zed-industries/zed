@@ -60,6 +60,7 @@ use project::{
     Project, lsp_store::semantic_tokens::SemanticTokens, project_settings::DiagnosticSeverity,
 };
 use serde::Deserialize;
+use settings::Settings;
 use theme::SyntaxTheme;
 use util::ResultExt;
 
@@ -149,6 +150,9 @@ pub struct DisplayMap {
 pub struct SemanticTokenView {
     pub tokens: Vec<MultibufferSemanticToken>,
     pub version: Global,
+    /// Tracks whether this view was generated with rainbow cache available.
+    /// Used to detect when tokens need regeneration due to rainbow highlighting toggle.
+    pub had_rainbow_cache: bool,
 }
 
 /// A `SemanticToken`, but attached to a `MultiBuffer`.
@@ -731,19 +735,26 @@ impl DisplayMap {
         };
         let buffer_snapshot = buffer.read(cx).snapshot();
 
-        // Check cache: skip regeneration if buffer version AND token count unchanged
+        let syntax_theme = cx.theme().syntax().clone();
+        let variable_color_cache = self.variable_color_cache.clone();
+        let rainbow_config = crate::editor_settings::EditorSettings::get_global(cx)
+            .rainbow_highlighting
+            .clone();
+
+        // Check cache: skip regeneration if buffer version, token count, AND rainbow cache state unchanged
         // (token count check handles partial → full token transitions during LSP indexing)
+        // (rainbow cache check ensures tokens are regenerated when rainbow highlighting is toggled)
         let incoming_token_count = tokens.tokens().count();
         if let Some(cached_view) = self.semantic_tokens.get(&buffer_id) {
+            let rainbow_cache_state_matches =
+                cached_view.had_rainbow_cache == variable_color_cache.is_some();
             if cached_view.version == *buffer_snapshot.version()
                 && cached_view.tokens.len() == incoming_token_count
+                && rainbow_cache_state_matches
             {
                 return;
             }
         }
-
-        let syntax_theme = cx.theme().syntax().clone();
-        let variable_color_cache = self.variable_color_cache.clone();
 
         let task = cx.spawn(async move |this, cx| {
             let view = cx
@@ -755,6 +766,7 @@ impl DisplayMap {
                         &legend,
                         variable_color_cache.as_ref(),
                         Some(&syntax_theme),
+                        rainbow_config,
                     )
                 })
                 .await;
@@ -1767,10 +1779,8 @@ impl SemanticTokenView {
         legend: &lsp::SemanticTokensLegend,
         variable_color_cache: Option<&Arc<crate::rainbow::VariableColorCache>>,
         syntax_theme: Option<&theme::SyntaxTheme>,
+        rainbow_config: crate::editor_settings::RainbowConfig,
     ) -> Option<SemanticTokenView> {
-        // Use default rainbow config since we're on background thread
-        // The actual rainbow highlighting is applied during rendering anyway
-        let rainbow_config = crate::editor_settings::RainbowConfig::default();
         let highlights_config = buffer_snapshot
             .language()
             .and_then(|lang| lang.grammar())
@@ -1787,17 +1797,19 @@ impl SemanticTokenView {
                     &buffer_snapshot.text,
                 );
 
+                let style = stylizer.convert(
+                    syntax_theme,
+                    token.token_type,
+                    token.token_modifiers,
+                    &buffer_snapshot.text,
+                    start_offset..end_offset,
+                    variable_color_cache,
+                    highlights_config,
+                )?;
+
                 Some(MultibufferSemanticToken {
                     range: start_offset..end_offset,
-                    style: stylizer.convert(
-                        syntax_theme,
-                        token.token_type,
-                        token.token_modifiers,
-                        &buffer_snapshot.text,
-                        start_offset..end_offset,
-                        variable_color_cache,
-                        highlights_config,
-                    )?,
+                    style,
                     lsp_type: token.token_type,
                     lsp_modifiers: token.token_modifiers,
                 })
@@ -1810,6 +1822,7 @@ impl SemanticTokenView {
         Some(SemanticTokenView {
             tokens,
             version: buffer_snapshot.version().clone(),
+            had_rainbow_cache: variable_color_cache.is_some(),
         })
     }
 
@@ -1849,12 +1862,14 @@ fn point_offset_to_offsets(
 struct SemanticTokenStylizer<'a> {
     token_types: Vec<&'a str>,
     modifier_mask: HashMap<&'a str, u32>,
+    rainbow_enabled: bool,
+    rainbow_token_types: &'a [crate::editor_settings::RainbowTokenType],
 }
 
 impl<'a> SemanticTokenStylizer<'a> {
     pub fn new(
         legend: &'a lsp::SemanticTokensLegend,
-        _rainbow_config: &'a crate::editor_settings::RainbowConfig,
+        rainbow_config: &'a crate::editor_settings::RainbowConfig,
     ) -> Self {
         let token_types = legend.token_types.iter().map(|s| s.as_str()).collect();
         let modifier_mask = legend
@@ -1866,6 +1881,8 @@ impl<'a> SemanticTokenStylizer<'a> {
         SemanticTokenStylizer {
             token_types,
             modifier_mask,
+            rainbow_enabled: rainbow_config.enabled,
+            rainbow_token_types: &rainbow_config.token_types,
         }
     }
 
@@ -1880,6 +1897,24 @@ impl<'a> SemanticTokenStylizer<'a> {
         (token_modifiers & mask) != 0
     }
 
+    /// Try to apply rainbow highlighting to an identifier if cache is available.
+    /// Returns Some(style) if rainbow color was applied, None otherwise.
+    fn try_apply_rainbow(
+        &self,
+        buffer: &text::BufferSnapshot,
+        range: Range<usize>,
+        variable_color_cache: Option<&Arc<crate::rainbow::VariableColorCache>>,
+        theme: Option<&'a SyntaxTheme>,
+    ) -> Option<HighlightStyle> {
+        let cache = variable_color_cache?;
+        let theme = theme?;
+        let identifier: String = buffer.text_for_range(range).collect();
+        let validated = crate::rainbow::validate_identifier_for_rainbow(&identifier)?;
+        let style = cache.get_or_insert(validated, theme);
+        style.color.as_ref()?;
+        Some(style)
+    }
+
     pub fn convert(
         &self,
         theme: Option<&'a SyntaxTheme>,
@@ -1892,6 +1927,35 @@ impl<'a> SemanticTokenStylizer<'a> {
     ) -> Option<HighlightStyle> {
         let token_type_name = self.token_type(token_type)?;
         let has_modifier = |modifier| self.has_modifier(modifiers, modifier);
+
+        // Early return: try rainbow highlighting for eligible token types
+        // This keeps rainbow logic separate from theme color mapping
+        if self.rainbow_enabled && variable_color_cache.is_some() && theme.is_some() {
+            let should_apply_rainbow =
+                self.rainbow_token_types
+                    .iter()
+                    .any(|rainbow_type| match rainbow_type {
+                        crate::editor_settings::RainbowTokenType::Parameter => {
+                            token_type_name == "parameter"
+                        }
+                        crate::editor_settings::RainbowTokenType::Variable => {
+                            token_type_name == "variable"
+                                && !has_modifier("defaultLibrary")
+                                && !has_modifier("constant")
+                        }
+                        crate::editor_settings::RainbowTokenType::Property => {
+                            token_type_name == "property"
+                        }
+                    });
+
+            if should_apply_rainbow {
+                if let Some(style) =
+                    self.try_apply_rainbow(buffer, range, variable_color_cache, theme)
+                {
+                    return Some(style);
+                }
+            }
+        }
 
         let choices: &[&str] = match token_type_name {
             // Types
@@ -1940,46 +2004,14 @@ impl<'a> SemanticTokenStylizer<'a> {
             }
             "type" => &["type"],
 
-            // References - apply rainbow coloring to variables and parameters
-            "parameter" => {
-                // Rainbow color parameters
-                if let Some(cache) = variable_color_cache {
-                    if let Some(theme) = theme {
-                        let identifier: String = buffer.text_for_range(range).collect();
-                        if let Some(validated) =
-                            crate::rainbow::validate_identifier_for_rainbow(&identifier)
-                        {
-                            let style = cache.get_or_insert(validated, theme);
-                            if style.color.is_some() {
-                                return Some(style);
-                            }
-                        }
-                    }
-                }
-                &["parameter"]
-            }
+            // References
+            "parameter" => &["parameter"],
             "variable" if has_modifier("defaultLibrary") && has_modifier("constant") => {
                 &["constant.builtin", "constant"]
             }
             "variable" if has_modifier("defaultLibrary") => &["variable.builtin", "variable"],
             "variable" if has_modifier("constant") => &["constant"],
-            "variable" => {
-                // Rainbow color regular variables
-                if let Some(cache) = variable_color_cache {
-                    if let Some(theme) = theme {
-                        let identifier: String = buffer.text_for_range(range).collect();
-                        if let Some(validated) =
-                            crate::rainbow::validate_identifier_for_rainbow(&identifier)
-                        {
-                            let style = cache.get_or_insert(validated, theme);
-                            if style.color.is_some() {
-                                return Some(style);
-                            }
-                        }
-                    }
-                }
-                &["variable"]
-            }
+            "variable" => &["variable"],
             "const" => &["const", "constant", "variable"],
             "property" => &["property"],
             "enumMember" => &["type.enum.member", "type.enum", "variant"],
@@ -2033,9 +2065,9 @@ impl<'a> SemanticTokenStylizer<'a> {
             }
         }
 
-        // No color found in theme: return None to preserve tree-sitter syntax + rainbow colors
-        // This allows fallback highlighting (including rainbow) to show through
-        None
+        // No color found in theme: return empty style to preserve tree-sitter syntax + rainbow colors
+        // This ensures the semantic token is still created but won't override existing highlighting
+        Some(HighlightStyle::default())
     }
 }
 

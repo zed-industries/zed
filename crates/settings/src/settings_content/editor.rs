@@ -200,6 +200,11 @@ pub struct EditorSettingsContent {
 
     /// Rainbow highlighting settings
     pub rainbow_highlighting: Option<RainbowHighlightingContent>,
+
+    /// Maximum file line count for semantic token requests from LSP.
+    /// Files exceeding this limit will not request semantic tokens to avoid performance issues.
+    /// Default: 5000
+    pub semantic_tokens_max_file_lines: Option<u32>,
 }
 
 /// Variable color highlighting settings.
@@ -222,6 +227,16 @@ pub struct RainbowHighlightingContent {
     ///
     /// Default: "theme_palette"
     pub mode: Option<String>,
+
+    /// Which semantic token types should receive rainbow colors.
+    ///
+    /// Options: "parameter", "variable", "property"
+    ///
+    /// LSP Specification:
+    /// https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#semanticTokenTypes
+    ///
+    /// Default: ["parameter", "variable"]
+    pub token_types: Option<Vec<String>>,
 }
 
 // Toolbar related settings

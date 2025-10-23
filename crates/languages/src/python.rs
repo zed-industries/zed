@@ -40,7 +40,6 @@ use std::{
 use task::{ShellKind, TaskTemplate, TaskTemplates, VariableName};
 use util::{ResultExt, maybe};
 
-
 #[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct PythonToolchainData {
     #[serde(flatten)]

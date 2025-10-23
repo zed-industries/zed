@@ -300,6 +300,7 @@ impl VsCodeSettings {
             use_smartcase_search: self.read_bool("search.smartCase"),
             vertical_scroll_margin: self.read_f32("editor.cursorSurroundingLines"),
             rainbow_highlighting: None,
+            semantic_tokens_max_file_lines: None,
         }
     }
 

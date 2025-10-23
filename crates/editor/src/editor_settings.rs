@@ -56,6 +56,9 @@ pub struct EditorSettings {
     pub lsp_document_colors: DocumentColorsRenderMode,
     pub minimum_contrast_for_highlights: f32,
     pub rainbow_highlighting: RainbowConfig,
+    /// Maximum file line count for semantic token requests from LSP.
+    /// Files exceeding this limit will not request semantic tokens to avoid performance issues.
+    pub semantic_tokens_max_file_lines: u32,
 }
 #[derive(Debug, Clone)]
 pub struct Jupyter {
@@ -172,11 +175,22 @@ pub enum VariableColorMode {
     DynamicHSL,
 }
 
+/// Semantic token types eligible for rainbow highlighting.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub enum RainbowTokenType {
+    /// Function/method parameters
+    Parameter,
+    /// Local variables (excludes constants and built-in variables)
+    Variable,
+    /// Object/struct properties
+    Property,
+}
+
 /// Variable color highlighting configuration.
 ///
 /// This feature assigns consistent, distinct colors to different variables
 /// to improve code readability and help distinguish between identifiers.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RainbowConfig {
     /// Whether variable color highlighting is enabled.
     ///
@@ -190,6 +204,11 @@ pub struct RainbowConfig {
     ///
     /// Default: ThemePalette
     pub mode: VariableColorMode,
+
+    /// Which semantic token types should receive rainbow colors.
+    ///
+    /// Default: [Parameter, Variable]
+    pub token_types: Vec<RainbowTokenType>,
 }
 
 impl Default for RainbowConfig {
@@ -197,6 +216,7 @@ impl Default for RainbowConfig {
         Self {
             enabled: false,
             mode: VariableColorMode::ThemePalette,
+            token_types: vec![RainbowTokenType::Parameter, RainbowTokenType::Variable],
         }
     }
 }
@@ -222,10 +242,12 @@ mod rainbow_tests {
         let config = RainbowConfig {
             enabled: true,
             mode: VariableColorMode::DynamicHSL,
+            token_types: vec![RainbowTokenType::Parameter, RainbowTokenType::Variable],
         };
 
         assert!(config.enabled);
         assert_eq!(config.mode, VariableColorMode::DynamicHSL);
+        assert_eq!(config.token_types.len(), 2);
     }
 }
 
@@ -344,11 +366,27 @@ impl Settings for EditorSettings {
                     }
                 };
 
+                let token_types = rh.token_types.as_ref().map(|types| {
+                    types.iter().filter_map(|s| {
+                        match s.as_str() {
+                            "parameter" => Some(RainbowTokenType::Parameter),
+                            "variable" => Some(RainbowTokenType::Variable),
+                            "property" => Some(RainbowTokenType::Property),
+                            other => {
+                                log::warn!("Unknown rainbow token type '{}', ignoring", other);
+                                None
+                            }
+                        }
+                    }).collect()
+                }).unwrap_or_else(|| vec![RainbowTokenType::Parameter, RainbowTokenType::Variable]);
+
                 RainbowConfig {
                     enabled: rh.enabled.unwrap_or(false),
                     mode,
+                    token_types,
                 }
             }).unwrap_or_default(),
+            semantic_tokens_max_file_lines: editor.semantic_tokens_max_file_lines.unwrap_or(5000),
         }
     }
 }

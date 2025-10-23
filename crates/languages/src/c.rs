@@ -12,7 +12,6 @@ use smol::fs;
 use std::{env::consts, path::PathBuf, sync::Arc};
 use util::{ResultExt, fs::remove_matching, maybe, merge_json_value_into};
 
-
 pub struct CLspAdapter;
 
 impl CLspAdapter {

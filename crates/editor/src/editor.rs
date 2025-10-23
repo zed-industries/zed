@@ -53,7 +53,7 @@ pub(crate) use actions::*;
 pub use display_map::{ChunkRenderer, ChunkRendererContext, DisplayPoint, FoldPlaceholder};
 pub use edit_prediction::Direction;
 pub use editor_settings::{
-    CurrentLineHighlight, DocumentColorsRenderMode, EditorSettings, HideMouseMode,
+    CurrentLineHighlight, DocumentColorsRenderMode, EditorSettings, HideMouseMode, RainbowConfig,
     ScrollBeyondLastLine, ScrollbarAxes, SearchSettings, ShowMinimap,
 };
 pub use element::{
@@ -1154,6 +1154,8 @@ pub struct Editor {
     pending_semantic_token_buffers: Arc<Mutex<HashSet<BufferId>>>,
     semantic_tokens_refresh_active: Arc<Mutex<bool>>,
     semantic_tokens_refresh_task: Task<()>,
+    last_rainbow_config: RainbowConfig,
+    last_semantic_tokens_max_lines: u32,
     load_diff_task: Option<Shared<Task<()>>>,
     /// Whether we are temporarily displaying a diff other than git's
     temporary_diff_override: bool,
@@ -2256,6 +2258,9 @@ impl Editor {
             pending_semantic_token_buffers: Arc::new(Mutex::new(HashSet::default())),
             semantic_tokens_refresh_active: Arc::new(Mutex::new(false)),
             semantic_tokens_refresh_task: Task::ready(()),
+            last_rainbow_config: EditorSettings::get_global(cx).rainbow_highlighting.clone(),
+            last_semantic_tokens_max_lines: EditorSettings::get_global(cx)
+                .semantic_tokens_max_file_lines,
             _scroll_cursor_center_top_bottom_task: Task::ready(()),
             selection_mark_mode: false,
             toggle_fold_multiple_buffers: Task::ready(()),
@@ -2292,7 +2297,7 @@ impl Editor {
 
         // Initialize rainbow highlighting cache BEFORE buffer registration
         // This ensures the cache is available when DisplayMap reacts to Reparsed events
-        let rainbow_config = EditorSettings::get_global(cx).rainbow_highlighting;
+        let rainbow_config = EditorSettings::get_global(cx).rainbow_highlighting.clone();
         editor.display_map.update(cx, |display_map, _| {
             let cache = if rainbow_config.enabled {
                 match display_map.get_variable_color_cache() {
@@ -21003,7 +21008,7 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         match event {
-            display_map::DisplayMapEvent::SemanticTokensReady { buffer_id } => {
+            display_map::DisplayMapEvent::SemanticTokensReady { buffer_id: _ } => {
                 cx.notify(); // Force editor to redraw with new semantic tokens
             }
         }
@@ -21029,27 +21034,31 @@ impl Editor {
             cx,
         );
 
-        let rainbow_config = EditorSettings::get_global(cx).rainbow_highlighting;
-        self.display_map.update(cx, |display_map, _| {
-            let cache = if rainbow_config.enabled {
-                // Only create a new cache if we don't have one, or if the mode changed
-                match display_map.get_variable_color_cache() {
-                    Some(existing) if existing.mode() == rainbow_config.mode => {
-                        // Keep existing cache - don't lose color assignments
-                        Some(existing)
-                    }
-                    _ => {
-                        // Create new cache: either we don't have one, or mode changed
-                        Some(Arc::new(rainbow::VariableColorCache::new(
-                            rainbow_config.mode,
-                        )))
-                    }
-                }
-            } else {
-                None
-            };
-            display_map.set_variable_color_cache(cache);
-        });
+        let rainbow_config = EditorSettings::get_global(cx).rainbow_highlighting.clone();
+        let semantic_tokens_max_lines =
+            EditorSettings::get_global(cx).semantic_tokens_max_file_lines;
+
+        let rainbow_changed = rainbow_config != self.last_rainbow_config;
+        let max_lines_changed = semantic_tokens_max_lines != self.last_semantic_tokens_max_lines;
+
+        if rainbow_changed {
+            self.display_map.update(cx, |display_map, _| {
+                let cache = if rainbow_config.enabled {
+                    Some(Arc::new(rainbow::VariableColorCache::new(
+                        rainbow_config.mode,
+                    )))
+                } else {
+                    None
+                };
+                display_map.set_variable_color_cache(cache);
+            });
+            self.last_rainbow_config = rainbow_config;
+        }
+
+        if rainbow_changed || max_lines_changed {
+            self.last_semantic_tokens_max_lines = semantic_tokens_max_lines;
+            self.refresh_semantic_tokens(None, cx);
+        }
 
         let old_cursor_shape = self.cursor_shape;
         let old_show_breadcrumbs = self.show_breadcrumbs;
@@ -22127,7 +22136,7 @@ impl Editor {
                 } else {
                     CHUNK_SIZE_NORMAL
                 };
-                
+
                 for chunk in buffers_to_process.chunks(chunk_size) {
                     let chunk_tasks: Vec<_> = editor
                         .update(cx, |editor, cx| {
@@ -22142,13 +22151,17 @@ impl Editor {
                                     continue;
                                 }
 
-                                const MAX_LINES_FOR_SEMANTIC_TOKENS: u32 = 5000;
+                                let max_lines = EditorSettings::get_global(cx).semantic_tokens_max_file_lines;
                                 let line_count = buffer.read(cx).max_point().row + 1;
-                                if line_count > MAX_LINES_FOR_SEMANTIC_TOKENS {
+                                if line_count > max_lines {
+                                    log::debug!(
+                                        "Skipping semantic tokens for buffer {buffer_id}: {} lines exceeds limit of {}",
+                                        line_count, max_lines
+                                    );
                                     continue;
                                 }
 
-                                log::debug!("Requesting semantic tokens for buffer {buffer_id}");
+                                log::debug!("Requesting semantic tokens for buffer {buffer_id} ({} lines)", line_count);
                                 editor.pending_semantic_token_requests.insert(buffer_id);
 
                                 let project = project.clone();
@@ -23998,7 +24011,7 @@ impl Render for Editor {
                 edit_prediction_styles: make_suggestion_styles(cx),
                 unnecessary_code_fade: ThemeSettings::get_global(cx).unnecessary_code_fade,
                 show_underlines: self.diagnostics_enabled(),
-                rainbow_highlighting: EditorSettings::get_global(cx).rainbow_highlighting,
+                rainbow_highlighting: EditorSettings::get_global(cx).rainbow_highlighting.clone(),
             },
         )
     }

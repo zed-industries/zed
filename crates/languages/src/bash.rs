@@ -158,5 +158,4 @@ mod tests {
             buffer
         });
     }
-
 }
