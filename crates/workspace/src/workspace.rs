@@ -1458,7 +1458,7 @@ impl Workspace {
             }),
             cx.on_release(move |this, cx| {
                 this.app_state.workspace_store.update(cx, move |store, _| {
-                    store.workspaces.remove(&window_handle.clone());
+                    store.workspaces.remove(&window_handle);
                 })
             }),
         ];

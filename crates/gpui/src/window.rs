@@ -1316,9 +1316,7 @@ impl Window {
         for view_id in self
             .rendered_frame
             .dispatch_tree
-            .view_path(view_id)
-            .into_iter()
-            .rev()
+            .view_path_reversed(view_id)
         {
             if !self.dirty_views.insert(view_id) {
                 break;
@@ -1848,7 +1846,8 @@ impl Window {
         f: impl FnOnce(&GlobalElementId, &mut Self) -> R,
     ) -> R {
         self.element_id_stack.push(element_id);
-        let global_id = GlobalElementId(self.element_id_stack.clone());
+        let global_id = GlobalElementId(Arc::from(&*self.element_id_stack));
+
         let result = f(&global_id, self);
         self.element_id_stack.pop();
         result
@@ -2260,7 +2259,7 @@ impl Window {
             self.rendered_frame.accessed_element_states[range.start.accessed_element_states_index
                 ..range.end.accessed_element_states_index]
                 .iter()
-                .map(|(id, type_id)| (GlobalElementId(id.0.clone()), *type_id)),
+                .map(|(id, type_id)| (id.clone(), *type_id)),
         );
         self.text_system
             .reuse_layouts(range.start.line_layout_index..range.end.line_layout_index);
@@ -2276,19 +2275,14 @@ impl Window {
         }
 
         self.next_frame.deferred_draws.extend(
-            self.rendered_frame.deferred_draws
-                [range.start.deferred_draws_index..range.end.deferred_draws_index]
-                .iter()
-                .map(|deferred_draw| DeferredDraw {
-                    current_view: deferred_draw.current_view,
-                    parent_node: reused_subtree.refresh_node_id(deferred_draw.parent_node),
-                    element_id_stack: deferred_draw.element_id_stack.clone(),
-                    text_style_stack: deferred_draw.text_style_stack.clone(),
-                    priority: deferred_draw.priority,
-                    element: None,
-                    absolute_offset: deferred_draw.absolute_offset,
-                    prepaint_range: deferred_draw.prepaint_range.clone(),
-                    paint_range: deferred_draw.paint_range.clone(),
+            self.rendered_frame
+                .deferred_draws
+                .drain(range.start.deferred_draws_index..range.end.deferred_draws_index)
+                .map(|mut deferred_draw| {
+                    deferred_draw.parent_node =
+                        reused_subtree.refresh_node_id(deferred_draw.parent_node);
+                    deferred_draw.element = None;
+                    deferred_draw
                 }),
         );
     }
@@ -2328,7 +2322,7 @@ impl Window {
             self.rendered_frame.accessed_element_states[range.start.accessed_element_states_index
                 ..range.end.accessed_element_states_index]
                 .iter()
-                .map(|(id, type_id)| (GlobalElementId(id.0.clone()), *type_id)),
+                .map(|(id, type_id)| (id.clone(), *type_id)),
         );
         self.next_frame.tab_stops.replay(
             &self.rendered_frame.tab_stops.insertion_history
@@ -2650,10 +2644,8 @@ impl Window {
     {
         self.invalidator.debug_assert_paint_or_prepaint();
 
-        let key = (GlobalElementId(global_id.0.clone()), TypeId::of::<S>());
-        self.next_frame
-            .accessed_element_states
-            .push((GlobalElementId(key.0.clone()), TypeId::of::<S>()));
+        let key = (global_id.clone(), TypeId::of::<S>());
+        self.next_frame.accessed_element_states.push(key.clone());
 
         if let Some(any) = self
             .next_frame
@@ -4903,7 +4895,7 @@ pub enum ElementId {
     /// A code location.
     CodeLocation(core::panic::Location<'static>),
     /// A labeled child of an element.
-    NamedChild(Box<ElementId>, SharedString),
+    NamedChild(Arc<ElementId>, SharedString),
 }
 
 impl ElementId {
@@ -5017,7 +5009,7 @@ impl From<(&'static str, u32)> for ElementId {
 
 impl<T: Into<SharedString>> From<(ElementId, T)> for ElementId {
     fn from((id, name): (ElementId, T)) -> Self {
-        ElementId::NamedChild(Box::new(id), name.into())
+        ElementId::NamedChild(Arc::new(id), name.into())
     }
 }
 

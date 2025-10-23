@@ -436,11 +436,11 @@ impl SemanticsProvider for BranchBufferSemanticsProvider {
 
     fn applicable_inlay_chunks(
         &self,
-        buffer_id: BufferId,
+        buffer: &Entity<Buffer>,
         ranges: &[Range<text::Anchor>],
-        cx: &App,
+        cx: &mut App,
     ) -> Vec<Range<BufferRow>> {
-        self.0.applicable_inlay_chunks(buffer_id, ranges, cx)
+        self.0.applicable_inlay_chunks(buffer, ranges, cx)
     }
 
     fn invalidate_inlay_hints(&self, for_buffers: &HashSet<BufferId>, cx: &mut App) {
