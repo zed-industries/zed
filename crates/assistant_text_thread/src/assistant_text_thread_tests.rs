@@ -1,6 +1,6 @@
 use crate::{
-    TextThread, CacheStatus, ContextSummary, InvokedSlashCommandId, MessageCacheMetadata,
-    MessageId, MessageStatus, TextThreadEvent, TextThreadId, TextThreadOperation,
+    CacheStatus, ContextSummary, InvokedSlashCommandId, MessageCacheMetadata, MessageId,
+    MessageStatus, TextThread, TextThreadEvent, TextThreadId, TextThreadOperation,
 };
 use anyhow::Result;
 use assistant_slash_command::{
@@ -57,7 +57,7 @@ fn test_inserting_and_removing_messages(cx: &mut App) {
             cx,
         )
     });
-    let buffer = context.read(cx).buffer.clone();
+    let buffer = context.read(cx).buffer().clone();
 
     let message_1 = context.read(cx).message_anchors[0].clone();
     assert_eq!(
@@ -196,7 +196,7 @@ fn test_message_splitting(cx: &mut App) {
             cx,
         )
     });
-    let buffer = context.read(cx).buffer.clone();
+    let buffer = context.read(cx).buffer().clone();
 
     let message_1 = context.read(cx).message_anchors[0].clone();
     assert_eq!(
@@ -297,7 +297,7 @@ fn test_messages_for_offsets(cx: &mut App) {
             cx,
         )
     });
-    let buffer = context.read(cx).buffer.clone();
+    let buffer = context.read(cx).buffer().clone();
 
     let message_1 = context.read(cx).message_anchors[0].clone();
     assert_eq!(
@@ -449,7 +449,7 @@ async fn test_slash_commands(cx: &mut TestAppContext) {
         .detach();
     });
 
-    let buffer = context.read_with(cx, |context, _| context.buffer.clone());
+    let buffer = context.read_with(cx, |context, _| context.buffer().clone());
 
     // Insert a slash command
     buffer.update(cx, |buffer, cx| {
@@ -680,7 +680,7 @@ async fn test_serialization(cx: &mut TestAppContext) {
             cx,
         )
     });
-    let buffer = context.read_with(cx, |context, _| context.buffer.clone());
+    let buffer = context.read_with(cx, |context, _| context.buffer().clone());
     let message_0 = context.read_with(cx, |context, _| context.message_anchors[0].id);
     let message_1 = context.update(cx, |context, cx| {
         context
@@ -726,7 +726,7 @@ async fn test_serialization(cx: &mut TestAppContext) {
         )
     });
     let deserialized_buffer =
-        deserialized_context.read_with(cx, |context, _| context.buffer.clone());
+        deserialized_context.read_with(cx, |context, _| context.buffer().clone());
     assert_eq!(
         deserialized_buffer.read_with(cx, |buffer, _| buffer.text()),
         "a\nb\nc\n"
@@ -814,14 +814,14 @@ async fn test_random_context_collaboration(cx: &mut TestAppContext, mut rng: Std
                 log::info!("Context {}: edit buffer", context_index);
                 context.update(cx, |context, cx| {
                     context
-                        .buffer
+                        .buffer()
                         .update(cx, |buffer, cx| buffer.randomly_edit(&mut rng, 1, cx));
                 });
                 mutation_count -= 1;
             }
             30..=44 if mutation_count > 0 => {
                 context.update(cx, |context, cx| {
-                    let range = context.buffer.read(cx).random_byte_range(0, &mut rng);
+                    let range = context.buffer().read(cx).random_byte_range(0, &mut rng);
                     log::info!("Context {}: split message at {:?}", context_index, range);
                     context.split_message(range, cx);
                 });
@@ -854,7 +854,7 @@ async fn test_random_context_collaboration(cx: &mut TestAppContext, mut rng: Std
                             .clone()
                             .as_ref();
 
-                    let command_range = context.buffer.update(cx, |buffer, cx| {
+                    let command_range = context.buffer().update(cx, |buffer, cx| {
                         let offset = buffer.random_byte_range(0, &mut rng).start;
                         buffer.edit(
                             [(offset..offset, format!("\n{}\n", command_text))],
@@ -908,8 +908,8 @@ async fn test_random_context_collaboration(cx: &mut TestAppContext, mut rng: Std
                         events.len()
                     );
 
-                    let command_range = context.buffer.read(cx).anchor_after(command_range.start)
-                        ..context.buffer.read(cx).anchor_after(command_range.end);
+                    let command_range = context.buffer().read(cx).anchor_after(command_range.start)
+                        ..context.buffer().read(cx).anchor_after(command_range.end);
                     context.insert_command_output(
                         command_range,
                         "/command",
@@ -994,28 +994,28 @@ async fn test_random_context_collaboration(cx: &mut TestAppContext, mut rng: Std
             let context = context.read(cx);
             assert!(context.pending_ops.is_empty(), "pending ops: {:?}", context.pending_ops);
             assert_eq!(
-                context.buffer.read(cx).text(),
-                first_context.buffer.read(cx).text(),
+                context.buffer().read(cx).text(),
+                first_context.buffer().read(cx).text(),
                 "Context {:?} text != Context 0 text",
-                context.buffer.read(cx).replica_id()
+                context.buffer().read(cx).replica_id()
             );
             assert_eq!(
                 context.message_anchors,
                 first_context.message_anchors,
                 "Context {:?} messages != Context 0 messages",
-                context.buffer.read(cx).replica_id()
+                context.buffer().read(cx).replica_id()
             );
             assert_eq!(
                 context.messages_metadata,
                 first_context.messages_metadata,
                 "Context {:?} message metadata != Context 0 message metadata",
-                context.buffer.read(cx).replica_id()
+                context.buffer().read(cx).replica_id()
             );
             assert_eq!(
                 context.slash_command_output_sections,
                 first_context.slash_command_output_sections,
                 "Context {:?} slash command output sections != Context 0 slash command output sections",
-                context.buffer.read(cx).replica_id()
+                context.buffer().read(cx).replica_id()
             );
         }
     });

@@ -11,7 +11,7 @@ use context_server::ContextServerId;
 use fs::{Fs, RemoveOptions};
 use futures::StreamExt;
 use fuzzy::StringMatchCandidate;
-use gpui::{App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Task, WeakEntity};
+use gpui::{App, AppContext as _, AsyncApp, Context, Entity, Task, WeakEntity};
 use language::LanguageRegistry;
 use paths::text_threads_dir;
 use project::{
@@ -360,6 +360,10 @@ impl TextThreadStore {
 
     pub fn unordered_text_threads(&self) -> impl Iterator<Item = &SavedTextThreadMetadata> {
         self.text_threads_metadata.iter()
+    }
+
+    pub fn host_text_threads(&self) -> impl Iterator<Item = &RemoteTextThreadMetadata> {
+        self.host_text_threads.iter()
     }
 
     pub fn create(&mut self, cx: &mut Context<Self>) -> Entity<TextThread> {
