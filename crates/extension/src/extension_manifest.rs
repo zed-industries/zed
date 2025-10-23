@@ -497,7 +497,4 @@ min_version = "1.0.0"
             _ => panic!("expected Npm launcher"),
         }
     }
-
-    // Test for auth_commands removed - auth commands are no longer supported for extension agents.
-    // Authentication is handled through the protocol's available auth methods only.
 }
