@@ -4137,6 +4137,7 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
   "project_panel": {
     "button": true,
     "default_width": 240,
+    "padding": 0,
     "dock": "left",
     "entry_spacing": "comfortable",
     "file_icons": true,
