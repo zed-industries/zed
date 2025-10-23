@@ -762,11 +762,11 @@ impl Item for Editor {
         _workspace_id: Option<WorkspaceId>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Task<Option<Entity<Editor>>>
+    ) -> Option<Entity<Editor>>
     where
         Self: Sized,
     {
-        Task::ready(Some(cx.new(|cx| self.clone(window, cx))))
+        Some(cx.new(|cx| self.clone(window, cx)))
     }
 
     fn set_nav_history(

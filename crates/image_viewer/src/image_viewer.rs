@@ -179,15 +179,15 @@ impl Item for ImageView {
         _workspace_id: Option<WorkspaceId>,
         _: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Task<Option<Entity<Self>>>
+    ) -> Option<Entity<Self>>
     where
         Self: Sized,
     {
-        Task::ready(Some(cx.new(|cx| Self {
+        Some(cx.new(|cx| Self {
             image_item: self.image_item.clone(),
             project: self.project.clone(),
             focus_handle: cx.focus_handle(),
-        })))
+        }))
     }
 
     fn has_deleted_file(&self, cx: &App) -> bool {

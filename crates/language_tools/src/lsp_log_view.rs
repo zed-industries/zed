@@ -3,7 +3,7 @@ use copilot::Copilot;
 use editor::{Editor, EditorEvent, actions::MoveToEnd, scroll::Autoscroll};
 use gpui::{
     AnyView, App, Context, Corner, Entity, EventEmitter, FocusHandle, Focusable, IntoElement,
-    ParentElement, Render, Styled, Subscription, Task, WeakEntity, Window, actions, div,
+    ParentElement, Render, Styled, Subscription, WeakEntity, Window, actions, div,
 };
 use itertools::Itertools;
 use language::{LanguageServerId, language_settings::SoftWrap};
@@ -763,11 +763,11 @@ impl Item for LspLogView {
         _workspace_id: Option<WorkspaceId>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Task<Option<Entity<Self>>>
+    ) -> Option<Entity<Self>>
     where
         Self: Sized,
     {
-        Task::ready(Some(cx.new(|cx| {
+        Some(cx.new(|cx| {
             let mut new_view = Self::new(self.project.clone(), self.log_store.clone(), window, cx);
             if let Some(server_id) = self.current_server_id {
                 match self.active_entry_kind {
@@ -778,7 +778,7 @@ impl Item for LspLogView {
                 }
             }
             new_view
-        })))
+        }))
     }
 }
 

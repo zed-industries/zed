@@ -498,8 +498,8 @@ impl Item for ChannelView {
         _: Option<WorkspaceId>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Task<Option<Entity<Self>>> {
-        Task::ready(Some(cx.new(|cx| {
+    ) -> Option<Entity<Self>> {
+        Some(cx.new(|cx| {
             Self::new(
                 self.project.clone(),
                 self.workspace.clone(),
@@ -508,7 +508,7 @@ impl Item for ChannelView {
                 window,
                 cx,
             )
-        })))
+        }))
     }
 
     fn navigate(
