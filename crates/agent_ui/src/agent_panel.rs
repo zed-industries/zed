@@ -44,6 +44,8 @@ use assistant_slash_command::SlashCommandWorkingSet;
 use client::{UserStore, zed_urls};
 use cloud_llm_client::{Plan, PlanV1, PlanV2, UsageLimit};
 use editor::{Anchor, AnchorRangeExt as _, Editor, EditorEvent, MultiBuffer};
+use extension::ExtensionEvents;
+use extension_host::ExtensionStore;
 use fs::Fs;
 use gpui::{
     Action, AnyElement, App, AsyncWindowContext, Corner, DismissEvent, Entity, EventEmitter,
@@ -425,6 +427,7 @@ pub struct AgentPanel {
     agent_panel_menu_handle: PopoverMenuHandle<ContextMenu>,
     agent_navigation_menu_handle: PopoverMenuHandle<ContextMenu>,
     agent_navigation_menu: Option<Entity<ContextMenu>>,
+    _extension_subscription: Option<Subscription>,
     width: Option<Pixels>,
     height: Option<Pixels>,
     zoomed: bool,
@@ -635,7 +638,24 @@ impl AgentPanel {
             )
         });
 
-        Self {
+        // Subscribe to extension events to sync agent servers when extensions change
+        let extension_subscription = if let Some(extension_events) = ExtensionEvents::try_global(cx)
+        {
+            Some(
+                cx.subscribe(&extension_events, |this, _source, event, cx| match event {
+                    extension::Event::ExtensionInstalled(_)
+                    | extension::Event::ExtensionUninstalled(_)
+                    | extension::Event::ExtensionsInstalledChanged => {
+                        this.sync_agent_servers_from_extensions(cx);
+                    }
+                    _ => {}
+                }),
+            )
+        } else {
+            None
+        };
+
+        let mut panel = Self {
             active_view,
             workspace,
             user_store,
@@ -653,6 +673,7 @@ impl AgentPanel {
             agent_panel_menu_handle: PopoverMenuHandle::default(),
             agent_navigation_menu_handle: PopoverMenuHandle::default(),
             agent_navigation_menu: None,
+            _extension_subscription: extension_subscription,
             width: None,
             height: None,
             zoomed: false,
@@ -662,7 +683,11 @@ impl AgentPanel {
             history_store,
             selected_agent: AgentType::default(),
             loading: false,
-        }
+        };
+
+        // Initial sync of agent servers from extensions
+        panel.sync_agent_servers_from_extensions(cx);
+        panel
     }
 
     pub fn toggle_focus(
@@ -1306,6 +1331,31 @@ impl AgentPanel {
 
     pub fn selected_agent(&self) -> AgentType {
         self.selected_agent.clone()
+    }
+
+    fn sync_agent_servers_from_extensions(&mut self, cx: &mut Context<Self>) {
+        if let Some(extension_store) = ExtensionStore::try_global(cx) {
+            let (manifests, extensions_dir) = {
+                let store = extension_store.read(cx);
+                let installed = store.installed_extensions();
+                let manifests: Vec<_> = installed
+                    .iter()
+                    .map(|(id, entry)| (id.clone(), entry.manifest.clone()))
+                    .collect();
+                let extensions_dir = paths::extensions_dir().join("installed");
+                (manifests, extensions_dir)
+            };
+
+            self.project.update(cx, |project, cx| {
+                project.agent_server_store().update(cx, |store, cx| {
+                    let manifest_refs: Vec<_> = manifests
+                        .iter()
+                        .map(|(id, manifest)| (id.as_ref(), manifest.as_ref()))
+                        .collect();
+                    store.sync_extension_agents(manifest_refs, extensions_dir, cx);
+                });
+            });
+        }
     }
 
     pub fn new_agent_thread(

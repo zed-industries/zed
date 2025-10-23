@@ -20589,7 +20589,6 @@ dependencies = [
  "menu",
  "node_runtime",
  "parking_lot",
- "paths",
  "postage",
  "pretty_assertions",
  "project",
