@@ -21,7 +21,7 @@ use futures::{
     select, select_biased,
 };
 use gpui::{
-    Action, App, AppContext as _, AsyncApp, BackgroundExecutor, BorrowAppContext, Context, Entity,
+    App, AppContext as _, AsyncApp, BackgroundExecutor, BorrowAppContext, Context, Entity,
     EventEmitter, FutureExt, Global, SemanticVersion, Task, WeakEntity,
 };
 use parking_lot::Mutex;
@@ -31,7 +31,6 @@ use rpc::{
     AnyProtoClient, ErrorExt, ProtoClient, ProtoMessageHandlerSet, RpcError,
     proto::{self, Envelope, EnvelopedMessage, PeerId, RequestMessage, build_typed_envelope},
 };
-use serde::Deserialize;
 use std::{
     collections::VecDeque,
     fmt,

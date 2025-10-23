@@ -13,7 +13,7 @@ use disconnected_overlay::DisconnectedOverlay;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     Action, AnyElement, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
-    ReadGlobal, Subscription, Task, WeakEntity, Window,
+    Subscription, Task, WeakEntity, Window,
 };
 use ordered_float::OrderedFloat;
 use picker::{
