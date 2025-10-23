@@ -3149,7 +3149,7 @@ impl EditorElement {
         buffer_rows: &[RowInfo],
         rows: &Range<DisplayRow>,
         relative_to: Option<DisplayRow>,
-        use_display_offset: bool,
+        count_wrapped_lines: bool,
     ) -> HashMap<DisplayRow, DisplayRowDelta> {
         let mut relative_rows: HashMap<DisplayRow, DisplayRowDelta> = Default::default();
         let Some(relative_to) = relative_to else {
@@ -3162,7 +3162,7 @@ impl EditorElement {
         let mut delta = 1;
         let mut i = head_idx + 1;
         let should_count_line = |row_info: &RowInfo| {
-            if use_display_offset {
+            if count_wrapped_lines {
                 row_info.buffer_row.is_some() || row_info.wrapped_buffer_row.is_some()
             } else {
                 row_info.buffer_row.is_some()
@@ -3179,7 +3179,7 @@ impl EditorElement {
         }
         delta = 1;
         i = head_idx.min(buffer_rows.len() as u32 - 1);
-        while i > 0 && buffer_rows[i as usize].buffer_row.is_none() && !use_display_offset {
+        while i > 0 && buffer_rows[i as usize].buffer_row.is_none() && !count_wrapped_lines {
             i -= 1;
         }
 
