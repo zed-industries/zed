@@ -2,7 +2,7 @@ use crate::{
     RemoteClientDelegate, RemotePlatform,
     remote_client::{CommandTemplate, RemoteConnection, RemoteConnectionOptions},
 };
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Result, anyhow, bail};
 use async_trait::async_trait;
 use collections::HashMap;
 use futures::channel::mpsc::{Sender, UnboundedReceiver, UnboundedSender};
@@ -441,7 +441,6 @@ impl RemoteConnection for WslRemoteConnection {
             bail!("WSL shares the network interface with the host system");
         }
 
-        let shell = ShellKind::new(&self.shell, false);
         let working_dir = working_dir
             .map(|working_dir| RemotePathBuf::new(working_dir, PathStyle::Posix).to_string())
             .unwrap_or("~".to_string());
@@ -449,26 +448,19 @@ impl RemoteConnection for WslRemoteConnection {
         let mut exec = String::from("exec env ");
 
         for (k, v) in env.iter() {
-            write!(
-                exec,
-                "{}={} ",
-                k,
-                shell.try_quote(&v).context("shell quoting")?
-            )?;
+            if let Some((k, v)) = shlex::try_quote(k).ok().zip(shlex::try_quote(v).ok()) {
+                write!(exec, "{}={} ", k, v).unwrap();
+            }
         }
 
         if let Some(program) = program {
-            write!(
-                exec,
-                "{}",
-                shell.try_quote(&program).context("shell quoting")?
-            )?;
+            write!(exec, "{}", shlex::try_quote(&program)?).unwrap();
             for arg in args {
-                let arg = shell.try_quote(&arg).context("shell quoting")?;
-                write!(exec, " {}", &arg)?;
+                let arg = shlex::try_quote(&arg)?;
+                write!(exec, " {}", &arg).unwrap();
             }
         } else {
-            write!(&mut exec, "{} -l", self.shell)?;
+            write!(&mut exec, "{} -l", self.shell).unwrap();
         }
 
         let wsl_args = if let Some(user) = &self.connection_options.user {
