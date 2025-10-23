@@ -1778,8 +1778,7 @@ impl SettingsWindow {
             ui_files.push((settings_ui_file, focus_handle));
         }
 
-        self.worktree_root_dirs
-            .extend(missing_worktrees.into_iter());
+        self.worktree_root_dirs.extend(missing_worktrees);
 
         self.files = ui_files;
         let current_file_still_exists = self
@@ -2820,7 +2819,7 @@ impl SettingsWindow {
                             })
                             .ok()
                             .flatten()
-                            .zip(Some(workspace.clone()))
+                            .zip(Some(*workspace))
                     })
                 else {
                     log::error!(
