@@ -6499,19 +6499,16 @@ impl LspStore {
     }
 
     pub fn applicable_inlay_chunks(
-        &self,
-        buffer_id: BufferId,
+        &mut self,
+        buffer: &Entity<Buffer>,
         ranges: &[Range<text::Anchor>],
+        cx: &mut Context<Self>,
     ) -> Vec<Range<BufferRow>> {
-        self.lsp_data
-            .get(&buffer_id)
-            .map(|data| {
-                data.inlay_hints
-                    .applicable_chunks(ranges)
-                    .map(|chunk| chunk.start..chunk.end)
-                    .collect()
-            })
-            .unwrap_or_default()
+        self.latest_lsp_data(buffer, cx)
+            .inlay_hints
+            .applicable_chunks(ranges)
+            .map(|chunk| chunk.start..chunk.end)
+            .collect()
     }
 
     pub fn invalidate_inlay_hints<'a>(

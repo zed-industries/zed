@@ -12,7 +12,7 @@ use gpui::{
     point, prelude::*, px, uniform_list,
 };
 use heck::ToTitleCase as _;
-use project::WorktreeId;
+use project::{Project, WorktreeId};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use settings::{Settings, SettingsContent, SettingsStore};
@@ -33,7 +33,7 @@ use ui::{
 };
 use ui_input::{NumberField, NumberFieldType};
 use util::{ResultExt as _, paths::PathStyle, rel_path::RelPath};
-use workspace::{OpenOptions, OpenVisible, Workspace, client_side_decorations};
+use workspace::{AppState, OpenOptions, OpenVisible, Workspace, client_side_decorations};
 use zed_actions::{OpenSettings, OpenSettingsAt};
 
 use crate::components::{SettingsInputField, font_picker, icon_theme_picker, theme_picker};
@@ -559,7 +559,6 @@ pub fn open_settings_editor(
         existing_window
             .update(cx, |settings_window, window, cx| {
                 settings_window.original_window = Some(workspace_handle);
-                settings_window.observe_last_window_close(cx);
                 window.activate_window();
                 if let Some(path) = path {
                     open_path(path, settings_window, window, cx);
@@ -643,7 +642,6 @@ pub struct SettingsWindow {
     title_bar: Option<Entity<PlatformTitleBar>>,
     original_window: Option<WindowHandle<Workspace>>,
     files: Vec<(SettingsUiFile, FocusHandle)>,
-    drop_down_file: Option<usize>,
     worktree_root_dirs: HashMap<WorktreeId, String>,
     current_file: SettingsUiFile,
     pages: Vec<SettingsPage>,
@@ -1016,7 +1014,7 @@ impl std::fmt::Debug for FileMask {
         if self.contains(USER) {
             items.push("USER");
         }
-        if self.contains(LOCAL) {
+        if self.contains(PROJECT) {
             items.push("LOCAL");
         }
         if self.contains(SERVER) {
@@ -1028,7 +1026,7 @@ impl std::fmt::Debug for FileMask {
 }
 
 const USER: FileMask = FileMask(1 << 0);
-const LOCAL: FileMask = FileMask(1 << 2);
+const PROJECT: FileMask = FileMask(1 << 2);
 const SERVER: FileMask = FileMask(1 << 3);
 
 impl std::ops::BitAnd for FileMask {
@@ -1138,14 +1136,14 @@ impl SettingsUiFile {
     fn mask(&self) -> FileMask {
         match self {
             SettingsUiFile::User => USER,
-            SettingsUiFile::Project(_) => LOCAL,
+            SettingsUiFile::Project(_) => PROJECT,
             SettingsUiFile::Server(_) => SERVER,
         }
     }
 }
 
 impl SettingsWindow {
-    pub fn new(
+    fn new(
         original_window: Option<WindowHandle<Workspace>>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -1182,6 +1180,60 @@ impl SettingsWindow {
         })
         .detach();
 
+        cx.on_window_closed(|cx| {
+            if let Some(existing_window) = cx
+                .windows()
+                .into_iter()
+                .find_map(|window| window.downcast::<SettingsWindow>())
+                && cx.windows().len() == 1
+            {
+                cx.update_window(*existing_window, |_, window, _| {
+                    window.remove_window();
+                })
+                .ok();
+            }
+        })
+        .detach();
+
+        if let Some(app_state) = AppState::global(cx).upgrade() {
+            for project in app_state
+                .workspace_store
+                .read(cx)
+                .workspaces()
+                .iter()
+                .filter_map(|space| {
+                    space
+                        .read(cx)
+                        .ok()
+                        .map(|workspace| workspace.project().clone())
+                })
+                .collect::<Vec<_>>()
+            {
+                cx.subscribe_in(&project, window, Self::handle_project_event)
+                    .detach();
+            }
+        } else {
+            log::error!("App state doesn't exist when creating a new settings window");
+        }
+
+        let this_weak = cx.weak_entity();
+        cx.observe_new::<Project>({
+            move |_, window, cx| {
+                let project = cx.entity();
+                let Some(window) = window else {
+                    return;
+                };
+
+                this_weak
+                    .update(cx, |_, cx| {
+                        cx.subscribe_in(&project, window, Self::handle_project_event)
+                            .detach();
+                    })
+                    .ok();
+            }
+        })
+        .detach();
+
         let title_bar = if !cfg!(target_os = "macos") {
             Some(cx.new(|cx| PlatformTitleBar::new("settings-title-bar", cx)))
         } else {
@@ -1198,7 +1250,7 @@ impl SettingsWindow {
 
             worktree_root_dirs: HashMap::default(),
             files: vec![],
-            drop_down_file: None,
+
             current_file: current_file,
             pages: vec![],
             navbar_entries: vec![],
@@ -1232,8 +1284,6 @@ impl SettingsWindow {
             list_state,
         };
 
-        this.observe_last_window_close(cx);
-
         this.fetch_files(window, cx);
         this.build_ui(window, cx);
         this.build_search_index();
@@ -1245,21 +1295,21 @@ impl SettingsWindow {
         this
     }
 
-    fn observe_last_window_close(&mut self, cx: &mut App) {
-        cx.on_window_closed(|cx| {
-            if let Some(existing_window) = cx
-                .windows()
-                .into_iter()
-                .find_map(|window| window.downcast::<SettingsWindow>())
-                && cx.windows().len() == 1
-            {
-                cx.update_window(*existing_window, |_, window, _| {
-                    window.remove_window();
-                })
-                .ok();
+    fn handle_project_event(
+        &mut self,
+        _: &Entity<Project>,
+        event: &project::Event,
+        window: &mut Window,
+        cx: &mut Context<SettingsWindow>,
+    ) {
+        match event {
+            project::Event::WorktreeRemoved(_) | project::Event::WorktreeAdded(_) => {
+                cx.defer_in(window, |this, window, cx| {
+                    this.fetch_files(window, cx);
+                });
             }
-        })
-        .detach();
+            _ => {}
+        }
     }
 
     fn toggle_navbar_entry(&mut self, nav_entry_index: usize) {
@@ -1695,14 +1745,48 @@ impl SettingsWindow {
                 .unwrap_or_else(|| cx.focus_handle().tab_index(0).tab_stop(true));
             ui_files.push((settings_ui_file, focus_handle));
         }
+
         ui_files.reverse();
+
+        let mut missing_worktrees = Vec::new();
+
+        for worktree in all_projects(cx)
+            .flat_map(|project| project.read(cx).worktrees(cx))
+            .filter(|tree| !self.worktree_root_dirs.contains_key(&tree.read(cx).id()))
+        {
+            let worktree = worktree.read(cx);
+            let worktree_id = worktree.id();
+            let Some(directory_name) = worktree.root_dir().and_then(|file| {
+                file.file_name()
+                    .map(|os_string| os_string.to_string_lossy().to_string())
+            }) else {
+                continue;
+            };
+
+            missing_worktrees.push((worktree_id, directory_name.clone()));
+            let path = RelPath::empty().to_owned().into_arc();
+
+            let settings_ui_file = SettingsUiFile::Project((worktree_id, path));
+
+            let focus_handle = prev_files
+                .iter()
+                .find_map(|(prev_file, handle)| {
+                    (prev_file == &settings_ui_file).then(|| handle.clone())
+                })
+                .unwrap_or_else(|| cx.focus_handle().tab_index(0).tab_stop(true));
+
+            ui_files.push((settings_ui_file, focus_handle));
+        }
+
+        self.worktree_root_dirs.extend(missing_worktrees);
+
         self.files = ui_files;
         let current_file_still_exists = self
             .files
             .iter()
             .any(|(file, _)| file == &self.current_file);
         if !current_file_still_exists {
-            self.change_file(0, false, window, cx);
+            self.change_file(0, window, cx);
         }
     }
 
@@ -1732,20 +1816,11 @@ impl SettingsWindow {
         self.open_navbar_entry_page(first_navbar_entry_index);
     }
 
-    fn change_file(
-        &mut self,
-        ix: usize,
-        drop_down_file: bool,
-        window: &mut Window,
-        cx: &mut Context<SettingsWindow>,
-    ) {
+    fn change_file(&mut self, ix: usize, window: &mut Window, cx: &mut Context<SettingsWindow>) {
         if ix >= self.files.len() {
             self.current_file = SettingsUiFile::User;
             self.build_ui(window, cx);
             return;
-        }
-        if drop_down_file {
-            self.drop_down_file = Some(ix);
         }
 
         if self.files[ix].0 == self.current_file {
@@ -1770,7 +1845,7 @@ impl SettingsWindow {
         window: &mut Window,
         cx: &mut Context<SettingsWindow>,
     ) -> impl IntoElement {
-        const OVERFLOW_LIMIT: usize = 1;
+        static OVERFLOW_LIMIT: usize = 1;
 
         let file_button =
             |ix, file: &SettingsUiFile, focus_handle, cx: &mut Context<SettingsWindow>| {
@@ -1785,7 +1860,7 @@ impl SettingsWindow {
                 .on_click(cx.listener({
                     let focus_handle = focus_handle.clone();
                     move |this, _: &gpui::ClickEvent, window, cx| {
-                        this.change_file(ix, false, window, cx);
+                        this.change_file(ix, window, cx);
                         focus_handle.focus(window);
                     }
                 }))
@@ -1810,25 +1885,24 @@ impl SettingsWindow {
                         ),
                     )
                     .when(self.files.len() > OVERFLOW_LIMIT, |div| {
-                        div.children(
-                            self.files
-                                .iter()
-                                .enumerate()
-                                .skip(OVERFLOW_LIMIT)
-                                .find(|(_, (file, _))| file == &self.current_file)
-                                .map(|(ix, (file, focus_handle))| {
-                                    file_button(ix, file, focus_handle, cx)
-                                })
-                                .or_else(|| {
-                                    let ix = self.drop_down_file.unwrap_or(OVERFLOW_LIMIT);
-                                    self.files.get(ix).map(|(file, focus_handle)| {
-                                        file_button(ix, file, focus_handle, cx)
-                                    })
-                                }),
-                        )
-                        .when(
-                            self.files.len() > OVERFLOW_LIMIT + 1,
-                            |div| {
+                        let selected_file_ix = self
+                            .files
+                            .iter()
+                            .enumerate()
+                            .skip(OVERFLOW_LIMIT)
+                            .find_map(|(ix, (file, _))| {
+                                if file == &self.current_file {
+                                    Some(ix)
+                                } else {
+                                    None
+                                }
+                            })
+                            .unwrap_or(OVERFLOW_LIMIT);
+
+                        let (file, focus_handle) = &self.files[selected_file_ix];
+
+                        div.child(file_button(selected_file_ix, file, focus_handle, cx))
+                            .when(self.files.len() > OVERFLOW_LIMIT + 1, |div| {
                                 div.child(
                                     DropdownMenu::new(
                                         "more-files",
@@ -1840,18 +1914,19 @@ impl SettingsWindow {
                                                 .enumerate()
                                                 .skip(OVERFLOW_LIMIT + 1)
                                             {
-                                                let (display_name, focus_handle) = if self
-                                                    .drop_down_file
-                                                    .is_some_and(|drop_down_ix| drop_down_ix == ix)
-                                                {
-                                                    ix = OVERFLOW_LIMIT;
-                                                    (
-                                                        self.display_name(&self.files[ix].0),
-                                                        self.files[ix].1.clone(),
-                                                    )
-                                                } else {
-                                                    (self.display_name(&file), focus_handle.clone())
-                                                };
+                                                let (display_name, focus_handle) =
+                                                    if selected_file_ix == ix {
+                                                        ix = OVERFLOW_LIMIT;
+                                                        (
+                                                            self.display_name(&self.files[ix].0),
+                                                            self.files[ix].1.clone(),
+                                                        )
+                                                    } else {
+                                                        (
+                                                            self.display_name(&file),
+                                                            focus_handle.clone(),
+                                                        )
+                                                    };
 
                                                 menu = menu.entry(
                                                     display_name
@@ -1861,9 +1936,7 @@ impl SettingsWindow {
                                                         let this = this.clone();
                                                         move |window, cx| {
                                                             this.update(cx, |this, cx| {
-                                                                this.change_file(
-                                                                    ix, true, window, cx,
-                                                                );
+                                                                this.change_file(ix, window, cx);
                                                             });
                                                             focus_handle.focus(window);
                                                         }
@@ -1884,8 +1957,7 @@ impl SettingsWindow {
                                     })
                                     .tab_index(0),
                                 )
-                            },
-                        )
+                            })
                     }),
             )
             .child(
@@ -2680,6 +2752,9 @@ impl SettingsWindow {
             );
     }
 
+    /// This function will create a new settings file if one doesn't exist
+    /// if the current file is a project settings with a valid worktree id
+    /// We do this because the settings ui allows initializing project settings
     fn open_current_settings_file(&mut self, cx: &mut Context<Self>) {
         match &self.current_file {
             SettingsUiFile::User => {
@@ -2724,58 +2799,83 @@ impl SettingsWindow {
                     .ok();
             }
             SettingsUiFile::Project((worktree_id, path)) => {
-                let mut corresponding_workspace: Option<WindowHandle<Workspace>> = None;
                 let settings_path = path.join(paths::local_settings_file_relative_path());
                 let Some(app_state) = workspace::AppState::global(cx).upgrade() else {
                     return;
                 };
-                for workspace in app_state.workspace_store.read(cx).workspaces() {
-                    let contains_settings_file = workspace
-                        .read_with(cx, |workspace, cx| {
-                            workspace.project().read(cx).contains_local_settings_file(
-                                *worktree_id,
-                                settings_path.as_ref(),
-                                cx,
-                            )
-                        })
-                        .ok();
-                    if Some(true) == contains_settings_file {
-                        corresponding_workspace = Some(*workspace);
 
-                        break;
-                    }
-                }
-
-                let Some(corresponding_workspace) = corresponding_workspace else {
+                let Some((worktree, corresponding_workspace)) = app_state
+                    .workspace_store
+                    .read(cx)
+                    .workspaces()
+                    .iter()
+                    .find_map(|workspace| {
+                        workspace
+                            .read_with(cx, |workspace, cx| {
+                                workspace
+                                    .project()
+                                    .read(cx)
+                                    .worktree_for_id(*worktree_id, cx)
+                            })
+                            .ok()
+                            .flatten()
+                            .zip(Some(*workspace))
+                    })
+                else {
                     log::error!(
-                        "No corresponding workspace found for settings file {}",
-                        settings_path.as_std_path().display()
+                        "No corresponding workspace contains worktree id: {}",
+                        worktree_id
                     );
 
                     return;
                 };
 
+                let create_task = if worktree.read(cx).entry_for_path(&settings_path).is_some() {
+                    None
+                } else {
+                    Some(worktree.update(cx, |tree, cx| {
+                        tree.create_entry(
+                            settings_path.clone(),
+                            false,
+                            Some("{\n\n}".as_bytes().to_vec()),
+                            cx,
+                        )
+                    }))
+                };
+
+                let worktree_id = *worktree_id;
+
                 // TODO: move zed::open_local_file() APIs to this crate, and
                 // re-implement the "initial_contents" behavior
                 corresponding_workspace
-                    .update(cx, |workspace, window, cx| {
-                        let open_task = workspace.open_path(
-                            (*worktree_id, settings_path.clone()),
-                            None,
-                            true,
-                            window,
-                            cx,
-                        );
-
+                    .update(cx, |_, window, cx| {
                         cx.spawn_in(window, async move |workspace, cx| {
-                            if open_task.await.log_err().is_some() {
-                                workspace
-                                    .update_in(cx, |_, window, cx| {
-                                        window.activate_window();
-                                        cx.notify();
-                                    })
-                                    .ok();
-                            }
+                            if let Some(create_task) = create_task {
+                                create_task.await.ok()?;
+                            };
+
+                            workspace
+                                .update_in(cx, |workspace, window, cx| {
+                                    workspace.open_path(
+                                        (worktree_id, settings_path.clone()),
+                                        None,
+                                        true,
+                                        window,
+                                        cx,
+                                    )
+                                })
+                                .ok()?
+                                .await
+                                .log_err()?;
+
+                            workspace
+                                .update_in(cx, |_, window, cx| {
+                                    window.activate_window();
+                                    cx.notify();
+                                })
+                                .ok();
+
+                            Some(())
                         })
                         .detach();
                     })
@@ -2995,20 +3095,40 @@ fn update_settings_file(
     match file {
         SettingsUiFile::Project((worktree_id, rel_path)) => {
             let rel_path = rel_path.join(paths::local_settings_file_relative_path());
-            let project = all_projects(cx).find(|project| {
-                project.read_with(cx, |project, cx| {
-                    project.contains_local_settings_file(worktree_id, &rel_path, cx)
-                })
-            });
-            let Some(project) = project else {
-                anyhow::bail!(
-                    "Could not find worktree containing settings file: {}",
-                    &rel_path.display(PathStyle::local())
-                );
+            let Some((worktree, project)) = all_projects(cx).find_map(|project| {
+                project
+                    .read(cx)
+                    .worktree_for_id(worktree_id, cx)
+                    .zip(Some(project))
+            }) else {
+                anyhow::bail!("Could not find project with worktree id: {}", worktree_id);
             };
+
             project.update(cx, |project, cx| {
-                project.update_local_settings_file(worktree_id, rel_path, cx, update);
+                let task = if project.contains_local_settings_file(worktree_id, &rel_path, cx) {
+                    None
+                } else {
+                    Some(worktree.update(cx, |worktree, cx| {
+                        worktree.create_entry(rel_path.clone(), false, None, cx)
+                    }))
+                };
+
+                cx.spawn(async move |project, cx| {
+                    if let Some(task) = task
+                        && task.await.is_err()
+                    {
+                        return;
+                    };
+
+                    project
+                        .update(cx, |project, cx| {
+                            project.update_local_settings_file(worktree_id, rel_path, cx, update);
+                        })
+                        .ok();
+                })
+                .detach();
             });
+
             return Ok(());
         }
         SettingsUiFile::User => {
@@ -3399,7 +3519,6 @@ pub mod test {
             worktree_root_dirs: HashMap::default(),
             files: Vec::default(),
             current_file: crate::SettingsUiFile::User,
-            drop_down_file: None,
             pages,
             search_bar: cx.new(|cx| Editor::single_line(window, cx)),
             navbar_entry: selected_idx.expect("Must have a selected navbar entry"),

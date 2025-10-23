@@ -19,6 +19,7 @@ use util::test::TempTree;
 
 fn extension_benchmarks(c: &mut Criterion) {
     let cx = init();
+    cx.update(gpui_tokio::init);
 
     let mut group = c.benchmark_group("load");
 
@@ -37,7 +38,7 @@ fn extension_benchmarks(c: &mut Criterion) {
             |wasm_bytes| {
                 let _extension = cx
                     .executor()
-                    .block(wasm_host.load_extension(wasm_bytes, &manifest, cx.executor()))
+                    .block(wasm_host.load_extension(wasm_bytes, &manifest, &cx.to_async()))
                     .unwrap();
             },
             BatchSize::SmallInput,

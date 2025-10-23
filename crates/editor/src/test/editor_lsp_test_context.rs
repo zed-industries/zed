@@ -19,7 +19,6 @@ use language::{
     point_to_lsp,
 };
 use lsp::{notification, request};
-use multi_buffer::ToPointUtf16;
 use project::Project;
 use smol::stream::StreamExt;
 use workspace::{AppState, Workspace, WorkspaceHandle};

@@ -203,6 +203,10 @@ fn template_big_table_of_actions(book: &mut Book) {
     });
 }
 
+fn format_binding(binding: String) -> String {
+    binding.replace("\\", "\\\\")
+}
+
 fn template_and_validate_keybindings(book: &mut Book, errors: &mut HashSet<PreprocessorError>) {
     let regex = Regex::new(r"\{#kb (.*?)\}").unwrap();
 
@@ -223,7 +227,10 @@ fn template_and_validate_keybindings(book: &mut Book, errors: &mut HashSet<Prepr
                     return "<div>No default binding</div>".to_string();
                 }
 
-                format!("<kbd class=\"keybinding\">{macos_binding}|{linux_binding}</kbd>")
+                let formatted_macos_binding = format_binding(macos_binding);
+                let formatted_linux_binding = format_binding(linux_binding);
+
+                format!("<kbd class=\"keybinding\">{formatted_macos_binding}|{formatted_linux_binding}</kbd>")
             })
             .into_owned()
     });

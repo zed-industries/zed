@@ -72,7 +72,7 @@ impl StashList {
         if let Some(repo) = repository.clone() {
             _subscriptions.push(
                 cx.subscribe_in(&repo, window, |this, _, event, window, cx| {
-                    if matches!(event, RepositoryEvent::Updated { .. }) {
+                    if matches!(event, RepositoryEvent::StashEntriesChanged) {
                         let stash_entries = this.picker.read_with(cx, |picker, cx| {
                             picker
                                 .delegate

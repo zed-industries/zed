@@ -140,7 +140,6 @@ use mouse_context_menu::MouseContextMenu;
 use movement::TextLayoutDetails;
 use multi_buffer::{
     ExcerptInfo, ExpandExcerptDirection, MultiBufferDiffHunk, MultiBufferPoint, MultiBufferRow,
-    ToOffsetUtf16,
 };
 use parking_lot::Mutex;
 use persistence::DB;
@@ -156,7 +155,7 @@ use project::{
         },
         session::{Session, SessionEvent},
     },
-    git_store::{GitStoreEvent, RepositoryEvent},
+    git_store::GitStoreEvent,
     lsp_store::{
         CacheInlayHints, CompletionDocumentation, FormatTrigger, LspFormatTarget,
         OpenLspBufferHandle,
@@ -1978,14 +1977,7 @@ impl Editor {
             let git_store = project.read(cx).git_store().clone();
             let project = project.clone();
             project_subscriptions.push(cx.subscribe(&git_store, move |this, _, event, cx| {
-                if let GitStoreEvent::RepositoryUpdated(
-                    _,
-                    RepositoryEvent::Updated {
-                        new_instance: true, ..
-                    },
-                    _,
-                ) = event
-                {
+                if let GitStoreEvent::RepositoryAdded = event {
                     this.load_diff_task = Some(
                         update_uncommitted_diff_for_buffer(
                             cx.entity(),
@@ -21351,7 +21343,10 @@ impl Editor {
                 if selection.range.is_empty() {
                     None
                 } else {
-                    Some(selection.range)
+                    Some(
+                        snapshot.offset_utf16_to_offset(OffsetUtf16(selection.range.start))
+                            ..snapshot.offset_utf16_to_offset(OffsetUtf16(selection.range.end)),
+                    )
                 }
             })
             .unwrap_or_else(|| 0..snapshot.len());
@@ -22600,9 +22595,9 @@ pub trait SemanticsProvider {
 
     fn applicable_inlay_chunks(
         &self,
-        buffer_id: BufferId,
+        buffer: &Entity<Buffer>,
         ranges: &[Range<text::Anchor>],
-        cx: &App,
+        cx: &mut App,
     ) -> Vec<Range<BufferRow>>;
 
     fn invalidate_inlay_hints(&self, for_buffers: &HashSet<BufferId>, cx: &mut App);
@@ -23109,14 +23104,13 @@ impl SemanticsProvider for Entity<Project> {
 
     fn applicable_inlay_chunks(
         &self,
-        buffer_id: BufferId,
+        buffer: &Entity<Buffer>,
         ranges: &[Range<text::Anchor>],
-        cx: &App,
+        cx: &mut App,
     ) -> Vec<Range<BufferRow>> {
-        self.read(cx)
-            .lsp_store()
-            .read(cx)
-            .applicable_inlay_chunks(buffer_id, ranges)
+        self.read(cx).lsp_store().update(cx, |lsp_store, cx| {
+            lsp_store.applicable_inlay_chunks(buffer, ranges, cx)
+        })
     }
 
     fn invalidate_inlay_hints(&self, for_buffers: &HashSet<BufferId>, cx: &mut App) {
