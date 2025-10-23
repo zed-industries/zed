@@ -48,22 +48,8 @@ use util::rel_path::RelPath;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ProjectSnapshot {
-    pub worktree_snapshots: Vec<WorktreeSnapshot>,
+    pub worktree_snapshots: Vec<project::telemetry_snapshot::TelemetryWorktreeSnapshot>,
     pub timestamp: DateTime<Utc>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct WorktreeSnapshot {
-    pub worktree_path: String,
-    pub git_state: Option<GitState>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct GitState {
-    pub remote_url: Option<String>,
-    pub head_sha: Option<String>,
-    pub current_branch: Option<String>,
-    pub diff: Option<String>,
 }
 
 const RULES_FILE_NAMES: [&str; 9] = [

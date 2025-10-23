@@ -31,6 +31,7 @@ use language::{
     tree_sitter_python,
 };
 use language_settings::Formatter;
+use languages::rust_lang;
 use lsp::CompletionParams;
 use multi_buffer::{IndentGuide, PathKey};
 use parking_lot::Mutex;
@@ -50,7 +51,7 @@ use std::{
     iter,
     sync::atomic::{self, AtomicUsize},
 };
-use test::{build_editor_with_project, editor_lsp_test_context::rust_lang};
+use test::build_editor_with_project;
 use text::ToPoint as _;
 use unindent::Unindent;
 use util::{
@@ -62,7 +63,7 @@ use util::{
 use workspace::{
     CloseActiveItem, CloseAllItems, CloseOtherItems, MoveItemToPaneInDirection, NavigationEntry,
     OpenOptions, ViewId,
-    invalid_buffer_view::InvalidBufferView,
+    invalid_item_view::InvalidItemView,
     item::{FollowEvent, FollowableItem, Item, ItemHandle, SaveOptions},
     register_project_item,
 };
@@ -12641,6 +12642,7 @@ async fn test_strip_whitespace_and_format_via_lsp(cx: &mut TestAppContext) {
                 );
             }
         });
+    cx.run_until_parked();
 
     // Handle formatting requests to the language server.
     cx.lsp
@@ -26252,7 +26254,7 @@ async fn test_non_utf_8_opens(cx: &mut TestAppContext) {
 
     assert_eq!(
         handle.to_any().entity_type(),
-        TypeId::of::<InvalidBufferView>()
+        TypeId::of::<InvalidItemView>()
     );
 }
 
@@ -26838,4 +26840,25 @@ async fn test_copy_line_without_trailing_newline(cx: &mut TestAppContext) {
     cx.update_editor(|e, window, cx| e.paste(&Paste, window, cx));
 
     cx.assert_editor_state("line1\nline2\nˇ");
+}
+
+#[gpui::test]
+async fn test_end_of_editor_context(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state("line1\nline2ˇ");
+    cx.update_editor(|e, window, cx| {
+        e.set_mode(EditorMode::SingleLine);
+        assert!(e.key_context(window, cx).contains("end_of_input"));
+    });
+    cx.set_state("ˇline1\nline2");
+    cx.update_editor(|e, window, cx| {
+        assert!(!e.key_context(window, cx).contains("end_of_input"));
+    });
+    cx.set_state("line1ˇ\nline2");
+    cx.update_editor(|e, window, cx| {
+        assert!(!e.key_context(window, cx).contains("end_of_input"));
+    });
 }

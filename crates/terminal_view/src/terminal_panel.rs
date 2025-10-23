@@ -210,11 +210,10 @@ impl TerminalPanel {
                             .on_click(cx.listener(|pane, _, window, cx| {
                                 pane.toggle_zoom(&workspace::ToggleZoom, window, cx);
                             }))
-                            .tooltip(move |window, cx| {
+                            .tooltip(move |_window, cx| {
                                 Tooltip::for_action(
                                     if zoomed { "Zoom Out" } else { "Zoom In" },
                                     &ToggleZoom,
-                                    window,
                                     cx,
                                 )
                             })
@@ -462,11 +461,11 @@ impl TerminalPanel {
         cx.spawn_in(window, async move |panel, cx| {
             let terminal = project
                 .update(cx, |project, cx| match terminal_view {
-                    Some(view) => Task::ready(project.clone_terminal(
+                    Some(view) => project.clone_terminal(
                         &view.read(cx).terminal.clone(),
                         cx,
                         working_directory,
-                    )),
+                    ),
                     None => project.create_terminal_shell(working_directory, cx),
                 })
                 .ok()?
@@ -1103,6 +1102,7 @@ pub fn new_terminal_pane(
             Default::default(),
             None,
             NewTerminal.boxed_clone(),
+            false,
             window,
             cx,
         );
@@ -1664,6 +1664,10 @@ impl Panel for TerminalPanel {
         "TerminalPanel"
     }
 
+    fn panel_key() -> &'static str {
+        TERMINAL_PANEL_KEY
+    }
+
     fn icon(&self, _window: &Window, cx: &App) -> Option<IconName> {
         if (self.is_enabled(cx) || !self.has_no_terminals(cx))
             && TerminalSettings::get_global(cx).button
@@ -1734,20 +1738,16 @@ impl Render for InlineAssistTabBarButton {
             .on_click(cx.listener(|_, _, window, cx| {
                 window.dispatch_action(InlineAssist::default().boxed_clone(), cx);
             }))
-            .tooltip(move |window, cx| {
-                Tooltip::for_action_in(
-                    "Inline Assist",
-                    &InlineAssist::default(),
-                    &focus_handle,
-                    window,
-                    cx,
-                )
+            .tooltip(move |_window, cx| {
+                Tooltip::for_action_in("Inline Assist", &InlineAssist::default(), &focus_handle, cx)
             })
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::num::NonZero;
+
     use super::*;
     use gpui::{TestAppContext, UpdateGlobal as _};
     use pretty_assertions::assert_eq;
@@ -1802,6 +1802,46 @@ mod tests {
                 );
             })
             .unwrap();
+    }
+
+    #[gpui::test]
+    async fn test_bypass_max_tabs_limit(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let workspace = cx.add_window(|window, cx| Workspace::test_new(project, window, cx));
+
+        let (window_handle, terminal_panel) = workspace
+            .update(cx, |workspace, window, cx| {
+                let window_handle = window.window_handle();
+                let terminal_panel = cx.new(|cx| TerminalPanel::new(workspace, window, cx));
+                (window_handle, terminal_panel)
+            })
+            .unwrap();
+
+        set_max_tabs(cx, Some(3));
+
+        for _ in 0..5 {
+            let task = window_handle
+                .update(cx, |_, window, cx| {
+                    terminal_panel.update(cx, |panel, cx| {
+                        panel.add_terminal_shell(None, RevealStrategy::Always, window, cx)
+                    })
+                })
+                .unwrap();
+            task.await.unwrap();
+        }
+
+        cx.run_until_parked();
+
+        let item_count =
+            terminal_panel.read_with(cx, |panel, cx| panel.active_pane.read(cx).items_len());
+
+        assert_eq!(
+            item_count, 5,
+            "Terminal panel should bypass max_tabs limit and have all 5 terminals"
+        );
     }
 
     // A complex Unix command won't be properly parsed by the Windows terminal hence omit the test there.
@@ -1916,6 +1956,14 @@ mod tests {
                 })
             })
             .unwrap();
+    }
+
+    fn set_max_tabs(cx: &mut TestAppContext, value: Option<usize>) {
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.workspace.max_tabs = value.map(|v| NonZero::new(v).unwrap())
+            });
+        });
     }
 
     pub fn init_test(cx: &mut TestAppContext) {

@@ -47,6 +47,7 @@ pub enum OpenRequestKind {
     AgentPanel,
     DockMenuAction { index: usize },
     BuiltinJsonSchema { schema_path: String },
+    Setting { setting_path: String },
 }
 
 impl OpenRequest {
@@ -92,6 +93,10 @@ impl OpenRequest {
             } else if let Some(schema_path) = url.strip_prefix("zed://schemas/") {
                 this.kind = Some(OpenRequestKind::BuiltinJsonSchema {
                     schema_path: schema_path.to_string(),
+                });
+            } else if let Some(setting_path) = url.strip_prefix("zed://settings/") {
+                this.kind = Some(OpenRequestKind::Setting {
+                    setting_path: setting_path.to_string(),
                 });
             } else if url.starts_with("ssh://") {
                 this.parse_ssh_file_path(&url, cx)?
@@ -328,6 +333,7 @@ pub async fn handle_cli_connection(
                 wait,
                 wsl,
                 open_new_workspace,
+                reuse,
                 env,
                 user_data_dir: _,
             } => {
@@ -363,6 +369,7 @@ pub async fn handle_cli_connection(
                     paths,
                     diff_paths,
                     open_new_workspace,
+                    reuse,
                     &responses,
                     wait,
                     app_state.clone(),
@@ -382,6 +389,7 @@ async fn open_workspaces(
     paths: Vec<String>,
     diff_paths: Vec<[String; 2]>,
     open_new_workspace: Option<bool>,
+    reuse: bool,
     responses: &IpcSender<CliResponse>,
     wait: bool,
     app_state: Arc<AppState>,
@@ -441,6 +449,7 @@ async fn open_workspaces(
                         workspace_paths,
                         diff_paths.clone(),
                         open_new_workspace,
+                        reuse,
                         wait,
                         responses,
                         env.as_ref(),
@@ -487,6 +496,7 @@ async fn open_local_workspace(
     workspace_paths: Vec<String>,
     diff_paths: Vec<[String; 2]>,
     open_new_workspace: Option<bool>,
+    reuse: bool,
     wait: bool,
     responses: &IpcSender<CliResponse>,
     env: Option<&HashMap<String, String>>,
@@ -497,12 +507,30 @@ async fn open_local_workspace(
 
     let paths_with_position =
         derive_paths_with_position(app_state.fs.as_ref(), workspace_paths).await;
+
+    // Handle reuse flag by finding existing window to replace
+    let replace_window = if reuse {
+        cx.update(|cx| workspace::local_workspace_windows(cx).into_iter().next())
+            .ok()
+            .flatten()
+    } else {
+        None
+    };
+
+    // For reuse, force new workspace creation but with replace_window set
+    let effective_open_new_workspace = if reuse {
+        Some(true)
+    } else {
+        open_new_workspace
+    };
+
     match open_paths_with_positions(
         &paths_with_position,
         &diff_paths,
         app_state.clone(),
         workspace::OpenOptions {
-            open_new_workspace,
+            open_new_workspace: effective_open_new_workspace,
+            replace_window,
             env: env.cloned(),
             ..Default::default()
         },
@@ -614,7 +642,9 @@ mod tests {
     };
     use editor::Editor;
     use gpui::TestAppContext;
+    use language::LineEnding;
     use remote::SshConnectionOptions;
+    use rope::Rope;
     use serde_json::json;
     use std::sync::Arc;
     use util::path;
@@ -780,6 +810,7 @@ mod tests {
                     vec![],
                     open_new_workspace,
                     false,
+                    false,
                     &response_tx,
                     None,
                     &app_state,
@@ -790,5 +821,103 @@ mod tests {
             .await;
 
         assert!(!errored);
+    }
+
+    #[gpui::test]
+    async fn test_reuse_flag_functionality(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+
+        let root_dir = if cfg!(windows) { "C:\\root" } else { "/root" };
+        let file1_path = if cfg!(windows) {
+            "C:\\root\\file1.txt"
+        } else {
+            "/root/file1.txt"
+        };
+        let file2_path = if cfg!(windows) {
+            "C:\\root\\file2.txt"
+        } else {
+            "/root/file2.txt"
+        };
+
+        app_state.fs.create_dir(Path::new(root_dir)).await.unwrap();
+        app_state
+            .fs
+            .create_file(Path::new(file1_path), Default::default())
+            .await
+            .unwrap();
+        app_state
+            .fs
+            .save(
+                Path::new(file1_path),
+                &Rope::from("content1"),
+                LineEnding::Unix,
+            )
+            .await
+            .unwrap();
+        app_state
+            .fs
+            .create_file(Path::new(file2_path), Default::default())
+            .await
+            .unwrap();
+        app_state
+            .fs
+            .save(
+                Path::new(file2_path),
+                &Rope::from("content2"),
+                LineEnding::Unix,
+            )
+            .await
+            .unwrap();
+
+        // First, open a workspace normally
+        let (response_tx, _response_rx) = ipc::channel::<CliResponse>().unwrap();
+        let workspace_paths = vec![file1_path.to_string()];
+
+        let _errored = cx
+            .spawn({
+                let app_state = app_state.clone();
+                let response_tx = response_tx.clone();
+                |mut cx| async move {
+                    open_local_workspace(
+                        workspace_paths,
+                        vec![],
+                        None,
+                        false,
+                        false,
+                        &response_tx,
+                        None,
+                        &app_state,
+                        &mut cx,
+                    )
+                    .await
+                }
+            })
+            .await;
+
+        // Now test the reuse functionality - should replace the existing workspace
+        let workspace_paths_reuse = vec![file1_path.to_string()];
+
+        let errored_reuse = cx
+            .spawn({
+                let app_state = app_state.clone();
+                let response_tx = response_tx.clone();
+                |mut cx| async move {
+                    open_local_workspace(
+                        workspace_paths_reuse,
+                        vec![],
+                        None, // open_new_workspace will be overridden by reuse logic
+                        true, // reuse = true
+                        false,
+                        &response_tx,
+                        None,
+                        &app_state,
+                        &mut cx,
+                    )
+                    .await
+                }
+            })
+            .await;
+
+        assert!(!errored_reuse);
     }
 }

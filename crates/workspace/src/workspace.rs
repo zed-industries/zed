@@ -1,6 +1,6 @@
 pub mod dock;
 pub mod history_manager;
-pub mod invalid_buffer_view;
+pub mod invalid_item_view;
 pub mod item;
 mod modal_layer;
 pub mod notifications;
@@ -83,7 +83,7 @@ use remote::{
 use schemars::JsonSchema;
 use serde::Deserialize;
 use session::AppSession;
-use settings::{Settings, SettingsLocation, update_settings_file};
+use settings::{CenteredPaddingSettings, Settings, SettingsLocation, update_settings_file};
 use shared_screen::SharedScreen;
 use sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
@@ -102,7 +102,10 @@ use std::{
     path::{Path, PathBuf},
     process::ExitStatus,
     rc::Rc,
-    sync::{Arc, LazyLock, Weak, atomic::AtomicUsize},
+    sync::{
+        Arc, LazyLock, Weak,
+        atomic::{AtomicBool, AtomicUsize},
+    },
     time::Duration,
 };
 use task::{DebugScenario, SpawnInTerminal, TaskContext};
@@ -301,6 +304,12 @@ pub struct MoveItemToPaneInDirection {
     #[serde(default)]
     pub clone: bool,
 }
+
+/// Creates a new file in a split of the desired direction.
+#[derive(Clone, Deserialize, PartialEq, JsonSchema, Action)]
+#[action(namespace = workspace)]
+#[serde(deny_unknown_fields)]
+pub struct NewFileSplit(pub SplitDirection);
 
 fn default_right() -> SplitDirection {
     SplitDirection::Right
@@ -1190,9 +1199,6 @@ struct FollowerView {
 }
 
 impl Workspace {
-    const DEFAULT_PADDING: f32 = 0.2;
-    const MAX_PADDING: f32 = 0.4;
-
     pub fn new(
         workspace_id: Option<WorkspaceId>,
         project: Entity<Project>,
@@ -1325,6 +1331,7 @@ impl Workspace {
                 pane_history_timestamp.clone(),
                 None,
                 NewFile.boxed_clone(),
+                true,
                 window,
                 cx,
             );
@@ -3229,6 +3236,7 @@ impl Workspace {
                 self.pane_history_timestamp.clone(),
                 None,
                 NewFile.boxed_clone(),
+                true,
                 window,
                 cx,
             );
@@ -3619,7 +3627,8 @@ impl Workspace {
         if let Some(pane) = panes.get(action.0).map(|p| (*p).clone()) {
             window.focus(&pane.focus_handle(cx));
         } else {
-            self.split_and_clone(self.active_pane.clone(), SplitDirection::Right, window, cx);
+            self.split_and_clone(self.active_pane.clone(), SplitDirection::Right, window, cx)
+                .detach();
         }
     }
 
@@ -3986,7 +3995,8 @@ impl Workspace {
                 clone_active_item,
             } => {
                 if *clone_active_item {
-                    self.split_and_clone(pane.clone(), *direction, window, cx);
+                    self.split_and_clone(pane.clone(), *direction, window, cx)
+                        .detach();
                 } else {
                     self.split_and_move(pane.clone(), *direction, window, cx);
                 }
@@ -4127,21 +4137,27 @@ impl Workspace {
         direction: SplitDirection,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Option<Entity<Pane>> {
-        let item = pane.read(cx).active_item()?;
-        let maybe_pane_handle =
-            if let Some(clone) = item.clone_on_split(self.database_id(), window, cx) {
-                let new_pane = self.add_pane(window, cx);
-                new_pane.update(cx, |pane, cx| {
-                    pane.add_item(clone, true, true, None, window, cx)
-                });
-                self.center.split(&pane, &new_pane, direction).unwrap();
-                cx.notify();
-                Some(new_pane)
+    ) -> Task<Option<Entity<Pane>>> {
+        let Some(item) = pane.read(cx).active_item() else {
+            return Task::ready(None);
+        };
+        let task = item.clone_on_split(self.database_id(), window, cx);
+        cx.spawn_in(window, async move |this, cx| {
+            if let Some(clone) = task.await {
+                this.update_in(cx, |this, window, cx| {
+                    let new_pane = this.add_pane(window, cx);
+                    new_pane.update(cx, |pane, cx| {
+                        pane.add_item(clone, true, true, None, window, cx)
+                    });
+                    this.center.split(&pane, &new_pane, direction).unwrap();
+                    cx.notify();
+                    new_pane
+                })
+                .ok()
             } else {
                 None
-            };
-        maybe_pane_handle
+            }
+        })
     }
 
     pub fn join_all_panes(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -5919,8 +5935,11 @@ impl Workspace {
 
     fn adjust_padding(padding: Option<f32>) -> f32 {
         padding
-            .unwrap_or(Self::DEFAULT_PADDING)
-            .clamp(0.0, Self::MAX_PADDING)
+            .unwrap_or(CenteredPaddingSettings::default().0)
+            .clamp(
+                CenteredPaddingSettings::MIN_PADDING,
+                CenteredPaddingSettings::MAX_PADDING,
+            )
     }
 
     fn render_dock(
@@ -6350,6 +6369,10 @@ impl Render for DraggedDock {
 
 impl Render for Workspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        static FIRST_PAINT: AtomicBool = AtomicBool::new(true);
+        if FIRST_PAINT.swap(false, std::sync::atomic::Ordering::Relaxed) {
+            log::info!("Rendered first frame");
+        }
         let mut context = KeyContext::new_with_defaults();
         context.add("Workspace");
         context.set("keyboard_layout", cx.keyboard_layout().name().to_string());
@@ -6364,6 +6387,24 @@ impl Render for Workspace {
                 }
                 ThreadStatus::Stopped => context.add("debugger_stopped"),
                 ThreadStatus::Exited | ThreadStatus::Ended => {}
+            }
+        }
+
+        if self.left_dock.read(cx).is_open() {
+            if let Some(active_panel) = self.left_dock.read(cx).active_panel() {
+                context.set("left_dock", active_panel.panel_key());
+            }
+        }
+
+        if self.right_dock.read(cx).is_open() {
+            if let Some(active_panel) = self.right_dock.read(cx).active_panel() {
+                context.set("right_dock", active_panel.panel_key());
+            }
+        }
+
+        if self.bottom_dock.read(cx).is_open() {
+            if let Some(active_panel) = self.bottom_dock.read(cx).active_panel() {
+                context.set("bottom_dock", active_panel.panel_key());
             }
         }
 
@@ -6382,8 +6423,12 @@ impl Render for Workspace {
         let paddings = if centered_layout {
             let settings = WorkspaceSettings::get_global(cx).centered_layout;
             (
-                render_padding(Self::adjust_padding(settings.left_padding)),
-                render_padding(Self::adjust_padding(settings.right_padding)),
+                render_padding(Self::adjust_padding(
+                    settings.left_padding.map(|padding| padding.0),
+                )),
+                render_padding(Self::adjust_padding(
+                    settings.right_padding.map(|padding| padding.0),
+                )),
             )
         } else {
             (None, None)
@@ -6974,7 +7019,9 @@ actions!(
     zed,
     [
         /// Opens the Zed log file.
-        OpenLog
+        OpenLog,
+        /// Reveals the Zed log file in the system file manager.
+        RevealLogInFileManager
     ]
 );
 
@@ -8144,19 +8191,27 @@ pub fn clone_active_item(
     let Some(active_item) = source.read(cx).active_item() else {
         return;
     };
-    destination.update(cx, |target_pane, cx| {
-        let Some(clone) = active_item.clone_on_split(workspace_id, window, cx) else {
-            return;
-        };
-        target_pane.add_item(
-            clone,
-            focus_destination,
-            focus_destination,
-            Some(target_pane.items_len()),
-            window,
-            cx,
-        );
-    });
+    let destination = destination.downgrade();
+    let task = active_item.clone_on_split(workspace_id, window, cx);
+    window
+        .spawn(cx, async move |cx| {
+            let Some(clone) = task.await else {
+                return;
+            };
+            destination
+                .update_in(cx, |target_pane, window, cx| {
+                    target_pane.add_item(
+                        clone,
+                        focus_destination,
+                        focus_destination,
+                        Some(target_pane.items_len()),
+                        window,
+                        cx,
+                    );
+                })
+                .log_err();
+        })
+        .detach();
 }
 
 #[derive(Debug)]
@@ -8663,25 +8718,24 @@ mod tests {
                 cx,
             );
 
-            let right_pane = workspace
-                .split_and_clone(left_pane.clone(), SplitDirection::Right, window, cx)
-                .unwrap();
+            let right_pane =
+                workspace.split_and_clone(left_pane.clone(), SplitDirection::Right, window, cx);
 
-            right_pane.update(cx, |pane, cx| {
-                pane.add_item(
-                    single_entry_items[1].boxed_clone(),
-                    true,
-                    true,
-                    None,
-                    window,
-                    cx,
-                );
-                pane.add_item(Box::new(item_3_4.clone()), true, true, None, window, cx);
+            let boxed_clone = single_entry_items[1].boxed_clone();
+            let right_pane = window.spawn(cx, async move |cx| {
+                right_pane.await.inspect(|right_pane| {
+                    right_pane
+                        .update_in(cx, |pane, window, cx| {
+                            pane.add_item(boxed_clone, true, true, None, window, cx);
+                            pane.add_item(Box::new(item_3_4.clone()), true, true, None, window, cx);
+                        })
+                        .unwrap();
+                })
             });
 
             (left_pane, right_pane)
         });
-
+        let right_pane = right_pane.await.unwrap();
         cx.focus(&right_pane);
 
         let mut close = right_pane.update_in(cx, |pane, window, cx| {
@@ -8799,8 +8853,9 @@ mod tests {
         item.update(cx, |item, cx| {
             SettingsStore::update_global(cx, |settings, cx| {
                 settings.update_user_settings(cx, |settings| {
-                    settings.workspace.autosave =
-                        Some(AutosaveSetting::AfterDelay { milliseconds: 500 });
+                    settings.workspace.autosave = Some(AutosaveSetting::AfterDelay {
+                        milliseconds: 500.into(),
+                    });
                 })
             });
             item.is_dirty = true;
@@ -10497,7 +10552,10 @@ mod tests {
                 window,
                 cx,
             );
+        });
+        cx.run_until_parked();
 
+        workspace.update(cx, |workspace, cx| {
             assert_eq!(workspace.panes.len(), 3, "Two new panes were created");
             for pane in workspace.panes() {
                 assert_eq!(

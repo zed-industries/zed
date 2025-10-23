@@ -3098,13 +3098,12 @@ impl GitPanel {
             IconButton::new("generate-commit-message", IconName::AiEdit)
                 .shape(ui::IconButtonShape::Square)
                 .icon_color(Color::Muted)
-                .tooltip(move |window, cx| {
+                .tooltip(move |_window, cx| {
                     if can_commit {
                         Tooltip::for_action_in(
                             "Generate Commit Message",
                             &git::GenerateCommitMessage,
                             &editor_focus_handle,
-                            window,
                             cx,
                         )
                     } else {
@@ -3466,12 +3465,11 @@ impl GitPanel {
                                 panel_icon_button("expand-commit-editor", IconName::Maximize)
                                     .icon_size(IconSize::Small)
                                     .size(ui::ButtonSize::Default)
-                                    .tooltip(move |window, cx| {
+                                    .tooltip(move |_window, cx| {
                                         Tooltip::for_action_in(
                                             "Open Commit Modal",
                                             &git::ExpandCommitEditor,
                                             &expand_tooltip_focus_handle,
-                                            window,
                                             cx,
                                         )
                                     })
@@ -3533,7 +3531,7 @@ impl GitPanel {
                 .disabled(!can_commit || self.modal_open)
                 .tooltip({
                     let handle = commit_tooltip_focus_handle.clone();
-                    move |window, cx| {
+                    move |_window, cx| {
                         if can_commit {
                             Tooltip::with_meta_in(
                                 tooltip,
@@ -3544,7 +3542,6 @@ impl GitPanel {
                                     if signoff { " --signoff" } else { "" }
                                 ),
                                 &handle.clone(),
-                                window,
                                 cx,
                             )
                         } else {
@@ -3618,9 +3615,10 @@ impl GitPanel {
                             let repo = active_repository.downgrade();
                             move |_, window, cx| {
                                 CommitView::open(
-                                    commit.clone(),
+                                    commit.sha.to_string(),
                                     repo.clone(),
                                     workspace.clone(),
+                                    None,
                                     window,
                                     cx,
                                 );
@@ -3646,7 +3644,7 @@ impl GitPanel {
                         panel_icon_button("undo", IconName::Undo)
                             .icon_size(IconSize::XSmall)
                             .icon_color(Color::Muted)
-                            .tooltip(move |window, cx| {
+                            .tooltip(move |_window, cx| {
                                 Tooltip::with_meta(
                                     "Uncommit",
                                     Some(&git::Uncommit),
@@ -3655,7 +3653,6 @@ impl GitPanel {
                                     } else {
                                         "git reset HEAD^"
                                     },
-                                    window,
                                     cx,
                                 )
                             })
@@ -4126,13 +4123,13 @@ impl GitPanel {
                                     .ok();
                                 }
                             })
-                            .tooltip(move |window, cx| {
+                            .tooltip(move |_window, cx| {
                                 let is_staged = entry_staging.is_fully_staged();
 
                                 let action = if is_staged { "Unstage" } else { "Stage" };
                                 let tooltip_name = action.to_string();
 
-                                Tooltip::for_action(tooltip_name, &ToggleStaged, window, cx)
+                                Tooltip::for_action(tooltip_name, &ToggleStaged, cx)
                             }),
                     ),
             )
@@ -4424,6 +4421,10 @@ impl editor::Addon for GitPanelAddon {
 impl Panel for GitPanel {
     fn persistent_name() -> &'static str {
         "GitPanel"
+    }
+
+    fn panel_key() -> &'static str {
+        GIT_PANEL_KEY
     }
 
     fn position(&self, _: &Window, cx: &App) -> DockPosition {

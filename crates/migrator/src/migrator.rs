@@ -212,6 +212,7 @@ pub fn migrate_settings(text: &str) -> Result<Option<String>> {
             &SETTINGS_QUERY_2025_10_03,
         ),
         MigrationType::Json(migrations::m_2025_10_16::restore_code_actions_on_format),
+        MigrationType::Json(migrations::m_2025_10_17::make_file_finder_include_ignored_an_enum),
     ];
     run_migrations(text, migrations)
 }
@@ -2015,9 +2016,9 @@ mod tests {
                 &r#"{
                     "code_actions_on_format": {
                         "foo": true
-                    }
-                }
-                "#
+                    },
+                    "formatter": []
+                }"#
                 .unindent(),
             ),
         );
@@ -2052,6 +2053,7 @@ mod tests {
             .unindent(),
             Some(
                 &r#"{
+                    "formatter": [],
                     "code_actions_on_format": {
                         "foo": true,
                         "bar": true,
@@ -2079,11 +2081,98 @@ mod tests {
             .unindent(),
             Some(
                 &r#"{
+                    "formatter": [],
                     "code_actions_on_format": {
                         "foo": true,
                         "qux": true,
                         "bar": true,
                         "baz": false
+                    }
+                }"#
+                .unindent(),
+            ),
+        );
+
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2025_10_16::restore_code_actions_on_format,
+            )],
+            &r#"{
+                "formatter": [],
+                "code_actions_on_format": {
+                    "bar": true,
+                    "baz": false
+                }
+            }"#
+            .unindent(),
+            None,
+        );
+    }
+
+    #[test]
+    fn test_make_file_finder_include_ignored_an_enum() {
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2025_10_17::make_file_finder_include_ignored_an_enum,
+            )],
+            &r#"{ }"#.unindent(),
+            None,
+        );
+
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2025_10_17::make_file_finder_include_ignored_an_enum,
+            )],
+            &r#"{
+                "file_finder": {
+                    "include_ignored": true
+                }
+            }"#
+            .unindent(),
+            Some(
+                &r#"{
+                    "file_finder": {
+                        "include_ignored": "all"
+                    }
+                }"#
+                .unindent(),
+            ),
+        );
+
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2025_10_17::make_file_finder_include_ignored_an_enum,
+            )],
+            &r#"{
+                "file_finder": {
+                    "include_ignored": false
+                }
+            }"#
+            .unindent(),
+            Some(
+                &r#"{
+                    "file_finder": {
+                        "include_ignored": "indexed"
+                    }
+                }"#
+                .unindent(),
+            ),
+        );
+
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2025_10_17::make_file_finder_include_ignored_an_enum,
+            )],
+            &r#"{
+                "file_finder": {
+                    "include_ignored": null
+                }
+            }"#
+            .unindent(),
+            Some(
+                &r#"{
+                    "file_finder": {
+                        "include_ignored": "smart"
                     }
                 }"#
                 .unindent(),

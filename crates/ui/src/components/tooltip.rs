@@ -64,11 +64,11 @@ impl Tooltip {
     ) -> impl Fn(&mut Window, &mut App) -> AnyView + use<T> {
         let title = title.into();
         let action = action.boxed_clone();
-        move |window, cx| {
+        move |_, cx| {
             cx.new(|cx| Self {
                 title: Title::Str(title.clone()),
                 meta: None,
-                key_binding: KeyBinding::for_action(action.as_ref(), window, cx),
+                key_binding: Some(KeyBinding::for_action(action.as_ref(), cx)),
             })
             .into()
         }
@@ -82,11 +82,15 @@ impl Tooltip {
         let title = title.into();
         let action = action.boxed_clone();
         let focus_handle = focus_handle.clone();
-        move |window, cx| {
+        move |_, cx| {
             cx.new(|cx| Self {
                 title: Title::Str(title.clone()),
                 meta: None,
-                key_binding: KeyBinding::for_action_in(action.as_ref(), &focus_handle, window, cx),
+                key_binding: Some(KeyBinding::for_action_in(
+                    action.as_ref(),
+                    &focus_handle,
+                    cx,
+                )),
             })
             .into()
         }
@@ -95,13 +99,12 @@ impl Tooltip {
     pub fn for_action(
         title: impl Into<SharedString>,
         action: &dyn Action,
-        window: &mut Window,
         cx: &mut App,
     ) -> AnyView {
         cx.new(|cx| Self {
             title: Title::Str(title.into()),
             meta: None,
-            key_binding: KeyBinding::for_action(action, window, cx),
+            key_binding: Some(KeyBinding::for_action(action, cx)),
         })
         .into()
     }
@@ -110,13 +113,12 @@ impl Tooltip {
         title: impl Into<SharedString>,
         action: &dyn Action,
         focus_handle: &FocusHandle,
-        window: &mut Window,
         cx: &mut App,
     ) -> AnyView {
         cx.new(|cx| Self {
             title: title.into().into(),
             meta: None,
-            key_binding: KeyBinding::for_action_in(action, focus_handle, window, cx),
+            key_binding: Some(KeyBinding::for_action_in(action, focus_handle, cx)),
         })
         .into()
     }
@@ -125,13 +127,12 @@ impl Tooltip {
         title: impl Into<SharedString>,
         action: Option<&dyn Action>,
         meta: impl Into<SharedString>,
-        window: &mut Window,
         cx: &mut App,
     ) -> AnyView {
         cx.new(|cx| Self {
             title: title.into().into(),
             meta: Some(meta.into()),
-            key_binding: action.and_then(|action| KeyBinding::for_action(action, window, cx)),
+            key_binding: action.map(|action| KeyBinding::for_action(action, cx)),
         })
         .into()
     }
@@ -141,14 +142,12 @@ impl Tooltip {
         action: Option<&dyn Action>,
         meta: impl Into<SharedString>,
         focus_handle: &FocusHandle,
-        window: &mut Window,
         cx: &mut App,
     ) -> AnyView {
         cx.new(|cx| Self {
             title: title.into().into(),
             meta: Some(meta.into()),
-            key_binding: action
-                .and_then(|action| KeyBinding::for_action_in(action, focus_handle, window, cx)),
+            key_binding: action.map(|action| KeyBinding::for_action_in(action, focus_handle, cx)),
         })
         .into()
     }

@@ -468,12 +468,11 @@ impl<T: 'static> PromptEditor<T> {
                 IconButton::new("stop", IconName::Stop)
                     .icon_color(Color::Error)
                     .shape(IconButtonShape::Square)
-                    .tooltip(move |window, cx| {
+                    .tooltip(move |_window, cx| {
                         Tooltip::with_meta(
                             mode.tooltip_interrupt(),
                             Some(&menu::Cancel),
                             "Changes won't be discarded",
-                            window,
                             cx,
                         )
                     })
@@ -487,12 +486,11 @@ impl<T: 'static> PromptEditor<T> {
                         IconButton::new("restart", IconName::RotateCw)
                             .icon_color(Color::Info)
                             .shape(IconButtonShape::Square)
-                            .tooltip(move |window, cx| {
+                            .tooltip(move |_window, cx| {
                                 Tooltip::with_meta(
                                     mode.tooltip_restart(),
                                     Some(&menu::Confirm),
                                     "Changes will be discarded",
-                                    window,
                                     cx,
                                 )
                             })
@@ -505,8 +503,8 @@ impl<T: 'static> PromptEditor<T> {
                     let accept = IconButton::new("accept", IconName::Check)
                         .icon_color(Color::Info)
                         .shape(IconButtonShape::Square)
-                        .tooltip(move |window, cx| {
-                            Tooltip::for_action(mode.tooltip_accept(), &menu::Confirm, window, cx)
+                        .tooltip(move |_window, cx| {
+                            Tooltip::for_action(mode.tooltip_accept(), &menu::Confirm, cx)
                         })
                         .on_click(cx.listener(|_, _, _, cx| {
                             cx.emit(PromptEditorEvent::ConfirmRequested { execute: false });
@@ -519,11 +517,10 @@ impl<T: 'static> PromptEditor<T> {
                             IconButton::new("confirm", IconName::PlayFilled)
                                 .icon_color(Color::Info)
                                 .shape(IconButtonShape::Square)
-                                .tooltip(|window, cx| {
+                                .tooltip(|_window, cx| {
                                     Tooltip::for_action(
                                         "Execute Generated Command",
                                         &menu::SecondaryConfirm,
-                                        window,
                                         cx,
                                     )
                                 })
@@ -615,13 +612,12 @@ impl<T: 'static> PromptEditor<T> {
                     .shape(IconButtonShape::Square)
                     .tooltip({
                         let focus_handle = self.editor.focus_handle(cx);
-                        move |window, cx| {
+                        move |_window, cx| {
                             cx.new(|cx| {
                                 let mut tooltip = Tooltip::new("Previous Alternative").key_binding(
                                     KeyBinding::for_action_in(
                                         &CyclePreviousInlineAssist,
                                         &focus_handle,
-                                        window,
                                         cx,
                                     ),
                                 );
@@ -657,13 +653,12 @@ impl<T: 'static> PromptEditor<T> {
                     .shape(IconButtonShape::Square)
                     .tooltip({
                         let focus_handle = self.editor.focus_handle(cx);
-                        move |window, cx| {
+                        move |_window, cx| {
                             cx.new(|cx| {
                                 let mut tooltip = Tooltip::new("Next Alternative").key_binding(
                                     KeyBinding::for_action_in(
                                         &CycleNextInlineAssist,
                                         &focus_handle,
-                                        window,
                                         cx,
                                     ),
                                 );

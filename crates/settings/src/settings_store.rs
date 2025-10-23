@@ -148,15 +148,44 @@ pub struct SettingsStore {
     _setting_file_updates: Task<()>,
     setting_file_updates_tx:
         mpsc::UnboundedSender<Box<dyn FnOnce(AsyncApp) -> LocalBoxFuture<'static, Result<()>>>>,
+    file_errors: BTreeMap<SettingsFile, String>,
 }
 
-#[derive(Clone, PartialEq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub enum SettingsFile {
     User,
     Server,
     Default,
     /// Represents project settings in ssh projects as well as local projects
     Project((WorktreeId, Arc<RelPath>)),
+}
+
+impl PartialOrd for SettingsFile {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+/// Sorted in order of precedence
+impl Ord for SettingsFile {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        use SettingsFile::*;
+        use std::cmp::Ordering;
+        match (self, other) {
+            (User, User) => Ordering::Equal,
+            (Server, Server) => Ordering::Equal,
+            (Default, Default) => Ordering::Equal,
+            (Project((id1, rel_path1)), Project((id2, rel_path2))) => id1
+                .cmp(id2)
+                .then_with(|| rel_path1.cmp(rel_path2).reverse()),
+            (Project(_), _) => Ordering::Less,
+            (_, Project(_)) => Ordering::Greater,
+            (Server, _) => Ordering::Less,
+            (_, Server) => Ordering::Greater,
+            (User, _) => Ordering::Less,
+            (_, User) => Ordering::Greater,
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -228,6 +257,7 @@ impl SettingsStore {
                     (setting_file_update)(cx.clone()).await.log_err();
                 }
             }),
+            file_errors: BTreeMap::default(),
         }
     }
 
@@ -586,6 +616,24 @@ impl SettingsStore {
 
         (SettingsFile::Default, None)
     }
+
+    fn handle_potential_file_error<R>(
+        &mut self,
+        file: SettingsFile,
+        result: Result<R>,
+    ) -> Result<R> {
+        if let Err(err) = result.as_ref() {
+            let message = err.to_string();
+            self.file_errors.insert(file, message);
+        } else {
+            self.file_errors.remove(&file);
+        }
+        return result;
+    }
+
+    pub fn error_for_file(&self, file: SettingsFile) -> Option<String> {
+        self.file_errors.get(&file).cloned()
+    }
 }
 
 impl SettingsStore {
@@ -658,7 +706,10 @@ impl SettingsStore {
         let settings: UserSettingsContent = if user_settings_content.is_empty() {
             parse_json_with_comments("{}")?
         } else {
-            parse_json_with_comments(user_settings_content)?
+            self.handle_potential_file_error(
+                SettingsFile::User,
+                parse_json_with_comments(user_settings_content),
+            )?
         };
 
         self.user_settings = Some(settings);
@@ -691,7 +742,10 @@ impl SettingsStore {
         let settings: Option<SettingsContent> = if server_settings_content.is_empty() {
             None
         } else {
-            parse_json_with_comments(server_settings_content)?
+            self.handle_potential_file_error(
+                SettingsFile::Server,
+                parse_json_with_comments(server_settings_content),
+            )?
         };
 
         // Rewrite the server settings into a content type
@@ -740,20 +794,24 @@ impl SettingsStore {
                 zed_settings_changed = self
                     .local_settings
                     .remove(&(root_id, directory_path.clone()))
-                    .is_some()
+                    .is_some();
+                self.file_errors
+                    .remove(&SettingsFile::Project((root_id, directory_path.clone())));
             }
             (LocalSettingsKind::Editorconfig, None) => {
                 self.raw_editorconfig_settings
                     .remove(&(root_id, directory_path.clone()));
             }
             (LocalSettingsKind::Settings, Some(settings_contents)) => {
-                let new_settings = parse_json_with_comments::<ProjectSettingsContent>(
-                    settings_contents,
-                )
-                .map_err(|e| InvalidSettingsError::LocalSettings {
-                    path: directory_path.join(local_settings_file_relative_path()),
-                    message: e.to_string(),
-                })?;
+                let new_settings = self
+                    .handle_potential_file_error(
+                        SettingsFile::Project((root_id, directory_path.clone())),
+                        parse_json_with_comments::<ProjectSettingsContent>(settings_contents),
+                    )
+                    .map_err(|e| InvalidSettingsError::LocalSettings {
+                        path: directory_path.join(local_settings_file_relative_path()),
+                        message: e.to_string(),
+                    })?;
                 match self.local_settings.entry((root_id, directory_path.clone())) {
                     btree_map::Entry::Vacant(v) => {
                         v.insert(SettingsContent {
@@ -931,6 +989,7 @@ impl SettingsStore {
             .to_value()
     }
 
+    // todo -> this function never fails, and should not return a result
     fn recompute_values(
         &mut self,
         changed_local_path: Option<(WorktreeId, &RelPath)>,
@@ -2031,5 +2090,46 @@ mod tests {
 
         let overrides = store.get_overrides_for_field(SettingsFile::Project(wt0_child1), get);
         assert_eq!(overrides, vec![]);
+    }
+
+    #[test]
+    fn test_file_ord() {
+        let wt0_root =
+            SettingsFile::Project((WorktreeId::from_usize(0), RelPath::empty().into_arc()));
+        let wt0_child1 =
+            SettingsFile::Project((WorktreeId::from_usize(0), rel_path("child1").into_arc()));
+        let wt0_child2 =
+            SettingsFile::Project((WorktreeId::from_usize(0), rel_path("child2").into_arc()));
+
+        let wt1_root =
+            SettingsFile::Project((WorktreeId::from_usize(1), RelPath::empty().into_arc()));
+        let wt1_subdir =
+            SettingsFile::Project((WorktreeId::from_usize(1), rel_path("subdir").into_arc()));
+
+        let mut files = vec![
+            &wt1_root,
+            &SettingsFile::Default,
+            &wt0_root,
+            &wt1_subdir,
+            &wt0_child2,
+            &SettingsFile::Server,
+            &wt0_child1,
+            &SettingsFile::User,
+        ];
+
+        files.sort();
+        pretty_assertions::assert_eq!(
+            files,
+            vec![
+                &wt0_child2,
+                &wt0_child1,
+                &wt0_root,
+                &wt1_subdir,
+                &wt1_root,
+                &SettingsFile::Server,
+                &SettingsFile::User,
+                &SettingsFile::Default,
+            ]
+        )
     }
 }

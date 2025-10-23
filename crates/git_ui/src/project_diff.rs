@@ -641,12 +641,16 @@ impl Item for ProjectDiff {
         _workspace_id: Option<workspace::WorkspaceId>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Option<Entity<Self>>
+    ) -> Task<Option<Entity<Self>>>
     where
         Self: Sized,
     {
-        let workspace = self.workspace.upgrade()?;
-        Some(cx.new(|cx| ProjectDiff::new(self.project.clone(), workspace, window, cx)))
+        let Some(workspace) = self.workspace.upgrade() else {
+            return Task::ready(None);
+        };
+        Task::ready(Some(cx.new(|cx| {
+            ProjectDiff::new(self.project.clone(), workspace, window, cx)
+        })))
     }
 
     fn is_dirty(&self, cx: &App) -> bool {
@@ -726,7 +730,7 @@ impl Item for ProjectDiff {
 }
 
 impl Render for ProjectDiff {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let is_empty = self.multibuffer.read(cx).is_empty();
 
         div()
@@ -771,7 +775,6 @@ impl Render for ProjectDiff {
                                     .key_binding(KeyBinding::for_action_in(
                                         &CloseActiveItem::default(),
                                         &keybinding_focus_handle,
-                                        window,
                                         cx,
                                     ))
                                     .on_click(move |_, window, cx| {
@@ -963,6 +966,11 @@ impl Render for ProjectDiffToolbar {
                                     &StageAndNext,
                                     &focus_handle,
                                 ))
+                                .disabled(
+                                    !button_states.prev_next
+                                        && !button_states.stage_all
+                                        && !button_states.unstage_all,
+                                )
                                 .on_click(cx.listener(|this, _, window, cx| {
                                     this.dispatch_action(&StageAndNext, window, cx)
                                 })),
@@ -974,6 +982,11 @@ impl Render for ProjectDiffToolbar {
                                     &UnstageAndNext,
                                     &focus_handle,
                                 ))
+                                .disabled(
+                                    !button_states.prev_next
+                                        && !button_states.stage_all
+                                        && !button_states.unstage_all,
+                                )
                                 .on_click(cx.listener(|this, _, window, cx| {
                                     this.dispatch_action(&UnstageAndNext, window, cx)
                                 })),

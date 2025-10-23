@@ -1,7 +1,7 @@
 use crate::{
     CollaboratorId, DelayedDebouncedEditAction, FollowableViewRegistry, ItemNavHistory,
     SerializableItemRegistry, ToolbarItemLocation, ViewId, Workspace, WorkspaceId,
-    invalid_buffer_view::InvalidBufferView,
+    invalid_item_view::InvalidItemView,
     pane::{self, Pane},
     persistence::model::ItemId,
     searchable::SearchableItemHandle,
@@ -11,8 +11,9 @@ use anyhow::Result;
 use client::{Client, proto};
 use futures::{StreamExt, channel::mpsc};
 use gpui::{
-    Action, AnyElement, AnyView, App, Context, Entity, EntityId, EventEmitter, FocusHandle,
-    Focusable, Font, HighlightStyle, Pixels, Point, Render, SharedString, Task, WeakEntity, Window,
+    Action, AnyElement, AnyView, App, AppContext, Context, Entity, EntityId, EventEmitter,
+    FocusHandle, Focusable, Font, HighlightStyle, Pixels, Point, Render, SharedString, Task,
+    WeakEntity, Window,
 };
 use project::{Project, ProjectEntryId, ProjectPath};
 pub use settings::{
@@ -217,11 +218,11 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
         _workspace_id: Option<WorkspaceId>,
         _window: &mut Window,
         _: &mut Context<Self>,
-    ) -> Option<Entity<Self>>
+    ) -> Task<Option<Entity<Self>>>
     where
         Self: Sized,
     {
-        None
+        Task::ready(None)
     }
     fn is_dirty(&self, _: &App) -> bool {
         false
@@ -422,7 +423,7 @@ pub trait ItemHandle: 'static + Send {
         workspace_id: Option<WorkspaceId>,
         window: &mut Window,
         cx: &mut App,
-    ) -> Option<Box<dyn ItemHandle>>;
+    ) -> Task<Option<Box<dyn ItemHandle>>>;
     fn added_to_pane(
         &self,
         workspace: &mut Workspace,
@@ -635,9 +636,12 @@ impl<T: Item> ItemHandle for Entity<T> {
         workspace_id: Option<WorkspaceId>,
         window: &mut Window,
         cx: &mut App,
-    ) -> Option<Box<dyn ItemHandle>> {
-        self.update(cx, |item, cx| item.clone_on_split(workspace_id, window, cx))
-            .map(|handle| Box::new(handle) as Box<dyn ItemHandle>)
+    ) -> Task<Option<Box<dyn ItemHandle>>> {
+        let task = self.update(cx, |item, cx| item.clone_on_split(workspace_id, window, cx));
+        cx.background_spawn(async move {
+            task.await
+                .map(|handle| Box::new(handle) as Box<dyn ItemHandle>)
+        })
     }
 
     fn added_to_pane(
@@ -811,7 +815,7 @@ impl<T: Item> ItemHandle for Entity<T> {
                             let autosave = item.workspace_settings(cx).autosave;
 
                             if let AutosaveSetting::AfterDelay { milliseconds } = autosave {
-                                let delay = Duration::from_millis(milliseconds);
+                                let delay = Duration::from_millis(milliseconds.0);
                                 let item = item.clone();
                                 pending_autosave.fire_new(
                                     delay,
@@ -1058,7 +1062,7 @@ pub trait ProjectItem: Item {
         _e: &anyhow::Error,
         _window: &mut Window,
         _cx: &mut App,
-    ) -> Option<InvalidBufferView>
+    ) -> Option<InvalidItemView>
     where
         Self: Sized,
     {
@@ -1504,11 +1508,11 @@ pub mod test {
             _workspace_id: Option<WorkspaceId>,
             _: &mut Window,
             cx: &mut Context<Self>,
-        ) -> Option<Entity<Self>>
+        ) -> Task<Option<Entity<Self>>>
         where
             Self: Sized,
         {
-            Some(cx.new(|cx| Self {
+            Task::ready(Some(cx.new(|cx| Self {
                 state: self.state.clone(),
                 label: self.label.clone(),
                 save_count: self.save_count,
@@ -1525,7 +1529,7 @@ pub mod test {
                 workspace_id: self.workspace_id,
                 focus_handle: cx.focus_handle(),
                 serialize: None,
-            }))
+            })))
         }
 
         fn is_dirty(&self, _: &App) -> bool {

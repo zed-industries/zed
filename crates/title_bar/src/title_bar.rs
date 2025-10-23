@@ -374,7 +374,7 @@ impl TitleBar {
                         )
                         .child(Label::new(nickname).size(LabelSize::Small).truncate()),
                 )
-                .tooltip(move |window, cx| {
+                .tooltip(move |_window, cx| {
                     Tooltip::with_meta(
                         "Remote Project",
                         Some(&OpenRemote {
@@ -382,7 +382,6 @@ impl TitleBar {
                             create_new_window: false,
                         }),
                         meta.clone(),
-                        window,
                         cx,
                     )
                 })
@@ -476,13 +475,12 @@ impl TitleBar {
             .when(!is_project_selected, |b| b.color(Color::Muted))
             .style(ButtonStyle::Subtle)
             .label_size(LabelSize::Small)
-            .tooltip(move |window, cx| {
+            .tooltip(move |_window, cx| {
                 Tooltip::for_action(
                     "Recent Projects",
                     &zed_actions::OpenRecent {
                         create_new_window: false,
                     },
-                    window,
                     cx,
                 )
             })
@@ -522,12 +520,11 @@ impl TitleBar {
                 .color(Color::Muted)
                 .style(ButtonStyle::Subtle)
                 .label_size(LabelSize::Small)
-                .tooltip(move |window, cx| {
+                .tooltip(move |_window, cx| {
                     Tooltip::with_meta(
                         "Recent Branches",
                         Some(&zed_actions::git::Branch),
                         "Local branches only",
-                        window,
                         cx,
                     )
                 })
