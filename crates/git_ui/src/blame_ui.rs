@@ -17,7 +17,6 @@ use project::{git_store::Repository, project_settings::ProjectSettings};
 use settings::Settings as _;
 use theme::ThemeSettings;
 use time::OffsetDateTime;
-use time_format::format_local_timestamp;
 use ui::{ContextMenu, Divider, prelude::*, tooltip_container};
 use workspace::Workspace;
 
