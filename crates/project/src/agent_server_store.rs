@@ -1,6 +1,7 @@
 use std::{
     any::Any,
     borrow::Borrow,
+    collections::HashSet,
     path::{Path, PathBuf},
     str::FromStr as _,
     sync::Arc,
@@ -187,14 +188,13 @@ mod ext_agent_tests {
     fn sync_extension_agents_removes_previous_extension_entries() {
         let mut store = collab_store();
 
-        // Seed with a couple of entries that look like extension-provided agents
-        // (they include ": " in the display name) plus a custom entry.
+        // Seed with a couple of agents that will be replaced by extensions
         store.external_agents.insert(
-            ExternalAgentServerName(SharedString::from("Foo Ext: FooAgent")),
+            ExternalAgentServerName(SharedString::from("foo-agent")),
             Box::new(NoopExternalAgent) as Box<dyn ExternalAgentServer>,
         );
         store.external_agents.insert(
-            ExternalAgentServerName(SharedString::from("Bar Ext: BarAgent")),
+            ExternalAgentServerName(SharedString::from("bar-agent")),
             Box::new(NoopExternalAgent) as Box<dyn ExternalAgentServer>,
         );
         store.external_agents.insert(
@@ -202,12 +202,17 @@ mod ext_agent_tests {
             Box::new(NoopExternalAgent) as Box<dyn ExternalAgentServer>,
         );
 
-        // Simulate the removal phase of sync_extension_agents by pruning entries
-        // with ": " in their display names.
+        // Simulate the removal phase: if we're syncing extensions that provide
+        // "foo-agent" and "bar-agent", those should be removed first
+        let extension_agent_names: HashSet<String> =
+            ["foo-agent".to_string(), "bar-agent".to_string()]
+                .into_iter()
+                .collect();
+
         let keys_to_remove: Vec<_> = store
             .external_agents
             .keys()
-            .filter(|name| name.0.contains(": "))
+            .filter(|name| extension_agent_names.contains(name.0.as_ref()))
             .cloned()
             .collect();
 
@@ -376,14 +381,13 @@ mod ext_agent_tests_dup {
     fn sync_extension_agents_removes_previous_extension_entries() {
         let mut store = collab_store();
 
-        // Seed with a couple of entries that look like extension-provided agents
-        // (they include ": " in the display name) plus a custom entry.
+        // Seed with a couple of agents that will be replaced by extensions
         store.external_agents.insert(
-            ExternalAgentServerName(SharedString::from("Foo Ext: FooAgent")),
+            ExternalAgentServerName(SharedString::from("foo-agent")),
             Box::new(NoopExternalAgent) as Box<dyn ExternalAgentServer>,
         );
         store.external_agents.insert(
-            ExternalAgentServerName(SharedString::from("Bar Ext: BarAgent")),
+            ExternalAgentServerName(SharedString::from("bar-agent")),
             Box::new(NoopExternalAgent) as Box<dyn ExternalAgentServer>,
         );
         store.external_agents.insert(
@@ -391,12 +395,17 @@ mod ext_agent_tests_dup {
             Box::new(NoopExternalAgent) as Box<dyn ExternalAgentServer>,
         );
 
-        // Simulate the removal phase of sync_extension_agents by pruning entries
-        // with ": " in their display names.
+        // Simulate the removal phase: if we're syncing extensions that provide
+        // "foo-agent" and "bar-agent", those should be removed first
+        let extension_agent_names: HashSet<String> =
+            ["foo-agent".to_string(), "bar-agent".to_string()]
+                .into_iter()
+                .collect();
+
         let keys_to_remove: Vec<_> = store
             .external_agents
             .keys()
-            .filter(|name| name.0.contains(": "))
+            .filter(|name| extension_agent_names.contains(name.0.as_ref()))
             .cloned()
             .collect();
 
@@ -452,11 +461,22 @@ impl AgentServerStore {
     where
         I: IntoIterator<Item = (&'a str, &'a extension::ExtensionManifest)>,
     {
-        // Remove existing extension-provided agents (heuristic: entries with ": " in their display name)
+        // Collect manifests first so we can iterate twice
+        let manifests: Vec<_> = manifests.into_iter().collect();
+
+        // Remove existing extension-provided agents by tracking which ones we're about to add
+        let extension_agent_names: HashSet<_> = manifests
+            .iter()
+            .flat_map(|(_, manifest)| manifest.agent_servers.keys().map(|k| k.to_string()))
+            .collect();
+
         let keys_to_remove: Vec<_> = self
             .external_agents
             .keys()
-            .filter(|name| name.0.contains(": "))
+            .filter(|name| {
+                // Remove if it matches an extension agent name from any extension
+                extension_agent_names.contains(name.0.as_ref())
+            })
             .cloned()
             .collect();
         for key in keys_to_remove {
@@ -472,7 +492,7 @@ impl AgentServerStore {
                 http_client,
                 ..
             } => {
-                for (ext_id, manifest) in manifests {
+                for (ext_id, manifest) in &manifests {
                     for (agent_name, agent_entry) in &manifest.agent_servers {
                         let display = SharedString::from(agent_name.to_string());
 
@@ -500,7 +520,7 @@ impl AgentServerStore {
                                         fs: fs.clone(),
                                         node_runtime: node_runtime.clone(),
                                         project_environment: project_environment.clone(),
-                                        extension_id: Arc::from(ext_id),
+                                        extension_id: Arc::from(*ext_id),
                                         agent_id: Arc::from(&**agent_name),
                                         package_name: SharedString::from(package.clone()),
                                         entrypoint: entrypoint.clone(),
@@ -526,7 +546,7 @@ impl AgentServerStore {
                                         fs: fs.clone(),
                                         http_client: http_client.clone(),
                                         project_environment: project_environment.clone(),
-                                        extension_id: Arc::from(ext_id),
+                                        extension_id: Arc::from(*ext_id),
                                         agent_id: Arc::from(&**agent_name),
                                         repo: repo.clone(),
                                         tag: tag.clone(),
@@ -898,14 +918,7 @@ impl AgentServerStore {
                 .map(|env| env.into_iter().collect())
                 .unwrap_or_default(),
             root_dir: root_dir,
-            auth_commands: login_command
-                .map(|spawn_terminal| {
-                    vec![proto::AuthCommand {
-                        auth_method_id: String::new(),
-                        command: Some(spawn_terminal.to_proto()),
-                    }]
-                })
-                .unwrap_or_default(),
+            login: login_command.map(|cmd| cmd.to_proto()),
         })
     }
 
@@ -1307,12 +1320,6 @@ impl ExternalAgentServer for RemoteExternalAgentServer {
                     None,
                 )
             })??;
-            let login_command = response.auth_commands.into_iter().find_map(|auth_cmd| {
-                auth_cmd
-                    .command
-                    .map(|cmd| task::SpawnInTerminal::from_proto(cmd))
-            });
-
             Ok((
                 AgentServerCommand {
                     path: command.program.into(),
@@ -1320,7 +1327,7 @@ impl ExternalAgentServer for RemoteExternalAgentServer {
                     env: Some(command.env),
                 },
                 root_dir,
-                login_command,
+                None,
             ))
         })
     }
