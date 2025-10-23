@@ -57,7 +57,7 @@ pub struct ProjectDiff {
     multibuffer: Entity<MultiBuffer>,
     editor: Entity<Editor>,
     git_store: Entity<GitStore>,
-    buffer_diff_subscriptions: HashMap<RepoPath, Subscription>,
+    buffer_diff_subscriptions: HashMap<RepoPath, (Entity<BufferDiff>, Subscription)>,
     workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
     update_needed: postage::watch::Sender<()>,
@@ -436,7 +436,7 @@ impl ProjectDiff {
             *this.update_needed.borrow_mut() = ();
         });
         self.buffer_diff_subscriptions
-            .insert(path_key.path().clone().into(), subscription);
+            .insert(path_key.path().clone().into(), (diff.clone(), subscription));
 
         let conflict_addon = self
             .editor
@@ -1624,8 +1624,8 @@ mod tests {
             cx,
             &"
                 - original
-                + different
-                  ˇ"
+                + ˇdifferent
+            "
             .unindent(),
         );
     }
@@ -1953,6 +1953,7 @@ mod tests {
             .unindent(),
         );
 
+        // The project diff updates its excerpts when a new hunk appears in a buffer that already has a diff.
         let buffer = project
             .update(cx, |project, cx| {
                 project.open_local_buffer(path!("/project/foo.txt"), cx)
