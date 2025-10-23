@@ -1092,7 +1092,7 @@ impl From<WslConnectionOptions> for RemoteConnectionOptions {
 
 #[cfg(target_os = "windows")]
 /// Open a wsl path (\\wsl.localhost\<distro>\path)
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, schemars::JsonSchema, Action)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, schemars::JsonSchema, gpui::Action)]
 pub struct OpenWslPath {
     pub distro: WslConnectionOptions,
     pub paths: Vec<PathBuf>,
