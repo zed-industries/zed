@@ -7,6 +7,7 @@ pub mod fs_watcher;
 use anyhow::{Context as _, Result, anyhow};
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use ashpd::desktop::trash;
+use futures::stream::iter;
 use gpui::App;
 use gpui::BackgroundExecutor;
 use gpui::Global;
@@ -56,6 +57,9 @@ use parking_lot::Mutex;
 use smol::io::AsyncReadExt;
 #[cfg(any(test, feature = "test-support"))]
 use std::ffi::OsStr;
+
+#[cfg(any(test, feature = "test-support"))]
+pub use fake_git_repo::{LOAD_HEAD_TEXT_TASK, LOAD_INDEX_TEXT_TASK};
 
 pub trait Watcher: Send + Sync {
     fn add(&self, path: &Path) -> Result<()>;
@@ -320,7 +324,33 @@ impl FileHandle for std::fs::File {
 
     #[cfg(target_os = "windows")]
     fn current_path(&self, _: &Arc<dyn Fs>) -> Result<PathBuf> {
-        anyhow::bail!("unimplemented")
+        use std::ffi::OsString;
+        use std::os::windows::ffi::OsStringExt;
+        use std::os::windows::io::AsRawHandle;
+
+        use windows::Win32::Foundation::HANDLE;
+        use windows::Win32::Storage::FileSystem::{
+            FILE_NAME_NORMALIZED, GetFinalPathNameByHandleW,
+        };
+
+        let handle = HANDLE(self.as_raw_handle() as _);
+
+        // Query required buffer size (in wide chars)
+        let required_len =
+            unsafe { GetFinalPathNameByHandleW(handle, &mut [], FILE_NAME_NORMALIZED) };
+        if required_len == 0 {
+            anyhow::bail!("GetFinalPathNameByHandleW returned 0 length");
+        }
+
+        // Allocate buffer and retrieve the path
+        let mut buf: Vec<u16> = vec![0u16; required_len as usize + 1];
+        let written = unsafe { GetFinalPathNameByHandleW(handle, &mut buf, FILE_NAME_NORMALIZED) };
+        if written == 0 {
+            anyhow::bail!("GetFinalPathNameByHandleW failed to write path");
+        }
+
+        let os_str: OsString = OsString::from_wide(&buf[..written as usize]);
+        Ok(PathBuf::from(os_str))
     }
 }
 
@@ -557,17 +587,29 @@ impl Fs for RealFs {
     }
 
     async fn open_handle(&self, path: &Path) -> Result<Arc<dyn FileHandle>> {
-        Ok(Arc::new(std::fs::File::open(path)?))
+        let mut options = std::fs::OpenOptions::new();
+        options.read(true);
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::OpenOptionsExt;
+            options.custom_flags(windows::Win32::Storage::FileSystem::FILE_FLAG_BACKUP_SEMANTICS.0);
+        }
+        Ok(Arc::new(options.open(path)?))
     }
 
     async fn load(&self, path: &Path) -> Result<String> {
         let path = path.to_path_buf();
-        let text = smol::unblock(|| std::fs::read_to_string(path)).await?;
-        Ok(text)
+        self.executor
+            .spawn(async move { Ok(std::fs::read_to_string(path)?) })
+            .await
     }
+
     async fn load_bytes(&self, path: &Path) -> Result<Vec<u8>> {
         let path = path.to_path_buf();
-        let bytes = smol::unblock(|| std::fs::read(path)).await?;
+        let bytes = self
+            .executor
+            .spawn(async move { std::fs::read(path) })
+            .await?;
         Ok(bytes)
     }
 
@@ -635,30 +677,46 @@ impl Fs for RealFs {
         if let Some(path) = path.parent() {
             self.create_dir(path).await?;
         }
-        smol::fs::write(path, content).await?;
-        Ok(())
+        let path = path.to_owned();
+        let contents = content.to_owned();
+        self.executor
+            .spawn(async move {
+                std::fs::write(path, contents)?;
+                Ok(())
+            })
+            .await
     }
 
     async fn canonicalize(&self, path: &Path) -> Result<PathBuf> {
-        Ok(smol::fs::canonicalize(path)
+        let path = path.to_owned();
+        self.executor
+            .spawn(async move {
+                std::fs::canonicalize(&path).with_context(|| format!("canonicalizing {path:?}"))
+            })
             .await
-            .with_context(|| format!("canonicalizing {path:?}"))?)
     }
 
     async fn is_file(&self, path: &Path) -> bool {
-        smol::fs::metadata(path)
+        let path = path.to_owned();
+        self.executor
+            .spawn(async move { std::fs::metadata(path).is_ok_and(|metadata| metadata.is_file()) })
             .await
-            .is_ok_and(|metadata| metadata.is_file())
     }
 
     async fn is_dir(&self, path: &Path) -> bool {
-        smol::fs::metadata(path)
+        let path = path.to_owned();
+        self.executor
+            .spawn(async move { std::fs::metadata(path).is_ok_and(|metadata| metadata.is_dir()) })
             .await
-            .is_ok_and(|metadata| metadata.is_dir())
     }
 
     async fn metadata(&self, path: &Path) -> Result<Option<Metadata>> {
-        let symlink_metadata = match smol::fs::symlink_metadata(path).await {
+        let path_buf = path.to_owned();
+        let symlink_metadata = match self
+            .executor
+            .spawn(async move { std::fs::symlink_metadata(&path_buf) })
+            .await
+        {
             Ok(metadata) => metadata,
             Err(err) => {
                 return match (err.kind(), err.raw_os_error()) {
@@ -669,19 +727,28 @@ impl Fs for RealFs {
             }
         };
 
-        let path_buf = path.to_path_buf();
-        let path_exists = smol::unblock(move || {
-            path_buf
-                .try_exists()
-                .with_context(|| format!("checking existence for path {path_buf:?}"))
-        })
-        .await?;
         let is_symlink = symlink_metadata.file_type().is_symlink();
-        let metadata = match (is_symlink, path_exists) {
-            (true, true) => smol::fs::metadata(path)
-                .await
-                .with_context(|| "accessing symlink for path {path}")?,
-            _ => symlink_metadata,
+        let metadata = if is_symlink {
+            let path_buf = path.to_path_buf();
+            let path_exists = self
+                .executor
+                .spawn(async move {
+                    path_buf
+                        .try_exists()
+                        .with_context(|| format!("checking existence for path {path_buf:?}"))
+                })
+                .await?;
+            if path_exists {
+                let path_buf = path.to_path_buf();
+                self.executor
+                    .spawn(async move { std::fs::metadata(path_buf) })
+                    .await
+                    .with_context(|| "accessing symlink for path {path}")?
+            } else {
+                symlink_metadata
+            }
+        } else {
+            symlink_metadata
         };
 
         #[cfg(unix)]
@@ -707,7 +774,11 @@ impl Fs for RealFs {
     }
 
     async fn read_link(&self, path: &Path) -> Result<PathBuf> {
-        let path = smol::fs::read_link(path).await?;
+        let path = path.to_owned();
+        let path = self
+            .executor
+            .spawn(async move { std::fs::read_link(&path) })
+            .await?;
         Ok(path)
     }
 
@@ -715,7 +786,13 @@ impl Fs for RealFs {
         &self,
         path: &Path,
     ) -> Result<Pin<Box<dyn Send + Stream<Item = Result<PathBuf>>>>> {
-        let result = smol::fs::read_dir(path).await?.map(|entry| match entry {
+        let path = path.to_owned();
+        let result = iter(
+            self.executor
+                .spawn(async move { std::fs::read_dir(path) })
+                .await?,
+        )
+        .map(|entry| match entry {
             Ok(entry) => Ok(entry.path()),
             Err(error) => Err(anyhow!("failed to read dir entry {error:?}")),
         });
@@ -749,11 +826,14 @@ impl Fs for RealFs {
                         events
                             .into_iter()
                             .map(|event| {
+                                log::trace!("fs path event: {event:?}");
                                 let kind = if event.flags.contains(StreamFlags::ITEM_REMOVED) {
                                     Some(PathEventKind::Removed)
                                 } else if event.flags.contains(StreamFlags::ITEM_CREATED) {
                                     Some(PathEventKind::Created)
-                                } else if event.flags.contains(StreamFlags::ITEM_MODIFIED) {
+                                } else if event.flags.contains(StreamFlags::ITEM_MODIFIED)
+                                    | event.flags.contains(StreamFlags::ITEM_RENAMED)
+                                {
                                     Some(PathEventKind::Changed)
                                 } else {
                                     None
@@ -791,15 +871,20 @@ impl Fs for RealFs {
         let watcher = Arc::new(fs_watcher::FsWatcher::new(tx, pending_paths.clone()));
 
         // If the path doesn't exist yet (e.g. settings.json), watch the parent dir to learn when it's created.
-        if watcher.add(path).is_err()
+        if let Err(e) = watcher.add(path)
             && let Some(parent) = path.parent()
-            && let Err(e) = watcher.add(parent)
+            && let Err(parent_e) = watcher.add(parent)
         {
-            log::warn!("Failed to watch: {e}");
+            log::warn!(
+                "Failed to watch {} and its parent directory {}:\n{e}\n{parent_e}",
+                path.display(),
+                parent.display()
+            );
         }
 
         // Check if path is a symlink and follow the target parent
         if let Some(mut target) = self.read_link(path).await.ok() {
+            log::trace!("watch symlink {path:?} -> {target:?}");
             // Check if symlink target is relative path, if so make it absolute
             if target.is_relative()
                 && let Some(parent) = path.parent()
@@ -1257,7 +1342,7 @@ impl FakeFs {
             async move {
                 while let Ok(git_event) = rx.recv().await {
                     if let Some(mut state) = this.state.try_lock() {
-                        state.emit_event([(git_event, None)]);
+                        state.emit_event([(git_event, Some(PathEventKind::Changed))]);
                     } else {
                         panic!("Failed to lock file system state, this execution would have caused a test hang");
                     }
@@ -1304,7 +1389,7 @@ impl FakeFs {
                 Ok(())
             })
             .unwrap();
-        state.emit_event([(path.to_path_buf(), None)]);
+        state.emit_event([(path.to_path_buf(), Some(PathEventKind::Changed))]);
     }
 
     pub async fn insert_file(&self, path: impl AsRef<Path>, content: Vec<u8>) {
@@ -1327,7 +1412,7 @@ impl FakeFs {
                 }
             })
             .unwrap();
-        state.emit_event([(path, None)]);
+        state.emit_event([(path, Some(PathEventKind::Created))]);
     }
 
     fn write_file_internal(
@@ -1518,7 +1603,7 @@ impl FakeFs {
 
             drop(repo_state);
             if emit_git_event {
-                state.emit_event([(dot_git, None)]);
+                state.emit_event([(dot_git, Some(PathEventKind::Changed))]);
             }
 
             Ok(result)
@@ -1569,7 +1654,7 @@ impl FakeFs {
 
             if emit_git_event {
                 drop(repo_state);
-                state.emit_event([(canonical_path, None)]);
+                state.emit_event([(canonical_path, Some(PathEventKind::Changed))]);
             }
 
             Ok(result)
@@ -1882,6 +1967,10 @@ impl FakeFs {
             .unwrap_or(0)
     }
 
+    pub fn emit_fs_event(&self, path: impl Into<PathBuf>, event: Option<PathEventKind>) {
+        self.state.lock().emit_event(std::iter::once((path, event)));
+    }
+
     fn simulate_random_delay(&self) -> impl futures::Future<Output = ()> {
         self.executor.simulate_random_delay()
     }
@@ -2049,7 +2138,7 @@ impl Fs for FakeFs {
                 }
             })
             .unwrap();
-        state.emit_event([(path, None)]);
+        state.emit_event([(path, Some(PathEventKind::Created))]);
 
         Ok(())
     }

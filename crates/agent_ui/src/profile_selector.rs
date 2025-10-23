@@ -15,7 +15,8 @@ use std::{
     sync::{Arc, atomic::AtomicBool},
 };
 use ui::{
-    HighlightedLabel, ListItem, ListItemSpacing, PopoverMenuHandle, TintColor, Tooltip, prelude::*,
+    DocumentationAside, DocumentationEdge, DocumentationSide, HighlightedLabel, LabelSize,
+    ListItem, ListItemSpacing, PopoverMenuHandle, TintColor, Tooltip, prelude::*,
 };
 
 /// Trait for types that can provide and manage agent profiles
@@ -86,8 +87,8 @@ impl ProfileSelector {
             let picker = cx.new(|cx| {
                 Picker::list(delegate, window, cx)
                     .show_scrollbar(true)
-                    .width(rems(20.))
-                    .max_height(Some(rems(16.).into()))
+                    .width(rems(18.))
+                    .max_height(Some(rems(20.).into()))
             });
 
             self.picker = Some(picker);
@@ -143,10 +144,16 @@ impl Render for ProfileSelector {
             .unwrap_or_else(|| "Unknown".into());
         let focus_handle = self.focus_handle.clone();
 
+        let icon = if self.picker_handle.is_deployed() {
+            IconName::ChevronUp
+        } else {
+            IconName::ChevronDown
+        };
+
         let trigger_button = Button::new("profile-selector", selected_profile)
             .label_size(LabelSize::Small)
             .color(Color::Muted)
-            .icon(IconName::ChevronDown)
+            .icon(icon)
             .icon_size(IconSize::XSmall)
             .icon_position(IconPosition::End)
             .icon_color(Color::Muted)
@@ -155,12 +162,11 @@ impl Render for ProfileSelector {
         PickerPopoverMenu::new(
             picker,
             trigger_button,
-            move |window, cx| {
+            move |_window, cx| {
                 Tooltip::for_action_in(
                     "Toggle Profile Menu",
                     &ToggleProfileSelector,
                     &focus_handle,
-                    window,
                     cx,
                 )
             },
@@ -536,18 +542,10 @@ impl PickerDelegate for ProfilePickerDelegate {
                         .inset(true)
                         .spacing(ListItemSpacing::Sparse)
                         .toggle_state(selected)
-                        .child(
-                            v_flex()
-                                .child(HighlightedLabel::new(
-                                    candidate.name.clone(),
-                                    entry.positions.clone(),
-                                ))
-                                .when_some(Self::documentation(candidate), |this, doc| {
-                                    this.child(
-                                        Label::new(doc).size(LabelSize::Small).color(Color::Muted),
-                                    )
-                                }),
-                        )
+                        .child(HighlightedLabel::new(
+                            candidate.name.clone(),
+                            entry.positions.clone(),
+                        ))
                         .when(is_active, |this| {
                             this.end_slot(
                                 div()
@@ -559,6 +557,36 @@ impl PickerDelegate for ProfilePickerDelegate {
                 )
             }
         }
+    }
+
+    fn documentation_aside(
+        &self,
+        _window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) -> Option<DocumentationAside> {
+        use std::rc::Rc;
+
+        let entry = match self.filtered_entries.get(self.selected_index)? {
+            ProfilePickerEntry::Profile(entry) => entry,
+            ProfilePickerEntry::Header(_) => return None,
+        };
+
+        let candidate = self.candidates.get(entry.candidate_index)?;
+        let docs_aside = Self::documentation(candidate)?.to_string();
+
+        let settings = AgentSettings::get_global(cx);
+        let side = match settings.dock {
+            settings::DockPosition::Left => DocumentationSide::Right,
+            settings::DockPosition::Bottom | settings::DockPosition::Right => {
+                DocumentationSide::Left
+            }
+        };
+
+        Some(DocumentationAside {
+            side,
+            edge: DocumentationEdge::Top,
+            render: Rc::new(move |_| Label::new(docs_aside.clone()).into_any_element()),
+        })
     }
 
     fn render_footer(

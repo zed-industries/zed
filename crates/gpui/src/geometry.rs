@@ -2809,6 +2809,12 @@ impl From<Pixels> for u32 {
     }
 }
 
+impl From<&Pixels> for u32 {
+    fn from(pixels: &Pixels) -> Self {
+        pixels.0 as u32
+    }
+}
+
 impl From<u32> for Pixels {
     fn from(pixels: u32) -> Self {
         Pixels(pixels as f32)
@@ -2962,6 +2968,15 @@ impl ScaledPixels {
     /// # Returns
     ///
     /// Returns a new `ScaledPixels` instance with the rounded value.
+    pub fn round(&self) -> Self {
+        Self(self.0.round())
+    }
+
+    /// Ceils the `ScaledPixels` value to the nearest whole number.
+    ///
+    /// # Returns
+    ///
+    /// Returns a new `ScaledPixels` instance with the ceiled value.
     pub fn ceil(&self) -> Self {
         Self(self.0.ceil())
     }

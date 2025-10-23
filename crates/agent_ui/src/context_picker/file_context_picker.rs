@@ -12,8 +12,10 @@ use ui::{ListItem, Tooltip, prelude::*};
 use util::{ResultExt as _, paths::PathStyle, rel_path::RelPath};
 use workspace::Workspace;
 
-use crate::context_picker::ContextPicker;
-use agent::context_store::{ContextStore, FileInclusion};
+use crate::{
+    context_picker::ContextPicker,
+    context_store::{ContextStore, FileInclusion},
+};
 
 pub struct FileContextPicker {
     picker: Entity<Picker<FileContextPickerDelegate>>,

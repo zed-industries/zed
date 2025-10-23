@@ -21,13 +21,12 @@ gpui.workspace = true
 denoise = { path = "../denoise" }
 log.workspace = true
 parking_lot.workspace = true
-rodio = { workspace = true, features = [ "wav", "playback", "wav_output" ] }
+rodio.workspace = true
 serde.workspace = true
 settings.workspace = true
 smol.workspace = true
 thiserror.workspace = true
 util.workspace = true
-workspace-hack.workspace = true
 
 [target.'cfg(not(any(all(target_os = "windows", target_env = "gnu"), target_os = "freebsd")))'.dependencies]
 libwebrtc = { rev = "5f04705ac3f356350ae31534ffbc476abc9ea83d", git = "https://github.com/zed-industries/livekit-rust-sdks" }

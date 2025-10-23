@@ -2,8 +2,9 @@
 name = "semantic_version"
 version = "0.1.0"
 edition.workspace = true
-publish.workspace = true
+publish = false
 license = "Apache-2.0"
+description = "A library for working with semantic versioning in gpui and Zed"
 
 [lints]
 workspace = true
@@ -14,4 +15,3 @@ path = "src/semantic_version.rs"
 [dependencies]
 anyhow.workspace = true
 serde.workspace = true
-workspace-hack.workspace = true

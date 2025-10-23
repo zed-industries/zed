@@ -68,7 +68,7 @@ impl QuickActionBar {
         let button = IconButton::new(button_id, IconName::Eye)
             .icon_size(IconSize::Small)
             .style(ButtonStyle::Subtle)
-            .tooltip(move |window, cx| {
+            .tooltip(move |_window, cx| {
                 Tooltip::with_meta(
                     tooltip_text,
                     Some(open_action_for_tooltip),
@@ -76,7 +76,6 @@ impl QuickActionBar {
                         "{} to open in a split",
                         text_for_keystroke(&alt_click.modifiers, &alt_click.key, cx)
                     ),
-                    window,
                     cx,
                 )
             })

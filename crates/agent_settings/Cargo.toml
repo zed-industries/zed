@@ -24,7 +24,6 @@ schemars.workspace = true
 serde.workspace = true
 settings.workspace = true
 util.workspace = true
-workspace-hack.workspace = true
 
 [dev-dependencies]
 fs.workspace = true

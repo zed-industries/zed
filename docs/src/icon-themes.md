@@ -18,7 +18,7 @@ Your selected icon theme is stored in your settings file. You can open your sett
 
 Just like with themes, Zed allows for configuring different icon themes for light and dark mode. You can set the mode to `"light"` or `"dark"` to ignore the current system mode.
 
-```json
+```json [settings]
 {
   "icon_theme": {
     "mode": "system",

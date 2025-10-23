@@ -3,9 +3,9 @@ use collections::{HashMap, HashSet};
 use editor::{CompletionProvider, SelectionEffects};
 use editor::{CurrentLineHighlight, Editor, EditorElement, EditorEvent, EditorStyle, actions::Tab};
 use gpui::{
-    Action, App, Bounds, Entity, EventEmitter, Focusable, PromptLevel, Subscription, Task,
-    TextStyle, TitlebarOptions, WindowBounds, WindowHandle, WindowOptions, actions, point, size,
-    transparent_black,
+    Action, App, Bounds, DEFAULT_ADDITIONAL_WINDOW_SIZE, Entity, EventEmitter, Focusable,
+    PromptLevel, Subscription, Task, TextStyle, TitlebarOptions, WindowBounds, WindowHandle,
+    WindowOptions, actions, point, size, transparent_black,
 };
 use language::{Buffer, LanguageRegistry, language_settings::SoftWrap};
 use language_model::{
@@ -129,13 +129,14 @@ pub fn open_rules_library(
                     titlebar: Some(TitlebarOptions {
                         title: Some("Rules Library".into()),
                         appears_transparent: true,
-                        traffic_light_position: Some(point(px(9.0), px(9.0))),
+                        traffic_light_position: Some(point(px(12.0), px(12.0))),
                     }),
                     app_id: Some(app_id.to_owned()),
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
                     window_background: cx.theme().window_background_appearance(),
                     window_decorations: Some(window_decorations),
-                    window_min_size: Some(size(px(800.), px(600.))), // 4:3 Aspect Ratio
+                    window_min_size: Some(DEFAULT_ADDITIONAL_WINDOW_SIZE),
+                    kind: gpui::WindowKind::Floating,
                     ..Default::default()
                 },
                 |window, cx| {
@@ -368,10 +369,9 @@ impl PickerDelegate for RulePickerDelegate {
                         .spacing(ListItemSpacing::Sparse)
                         .toggle_state(selected)
                         .child(
-                            h_flex()
-                                .h_5()
-                                .line_height(relative(1.))
-                                .child(Label::new(rule.title.clone().unwrap_or("Untitled".into()))),
+                            Label::new(rule.title.clone().unwrap_or("Untitled".into()))
+                                .truncate()
+                                .mr_10(),
                         )
                         .end_slot::<IconButton>(default.then(|| {
                             IconButton::new("toggle-default-rule", IconName::Paperclip)
@@ -389,12 +389,11 @@ impl PickerDelegate for RulePickerDelegate {
                                     div()
                                         .id("built-in-rule")
                                         .child(Icon::new(IconName::FileLock).color(Color::Muted))
-                                        .tooltip(move |window, cx| {
+                                        .tooltip(move |_window, cx| {
                                             Tooltip::with_meta(
                                                 "Built-in rule",
                                                 None,
                                                 BUILT_IN_TOOLTIP_TEXT,
-                                                window,
                                                 cx,
                                             )
                                         })
@@ -425,12 +424,11 @@ impl PickerDelegate for RulePickerDelegate {
                                                     "Remove from Default Rules",
                                                 ))
                                             } else {
-                                                this.tooltip(move |window, cx| {
+                                                this.tooltip(move |_window, cx| {
                                                     Tooltip::with_meta(
                                                         "Add to Default Rules",
                                                         None,
                                                         "Always included in every thread.",
-                                                        window,
                                                         cx,
                                                     )
                                                 })
@@ -454,13 +452,15 @@ impl PickerDelegate for RulePickerDelegate {
         cx: &mut Context<Picker<Self>>,
     ) -> Div {
         h_flex()
-            .bg(cx.theme().colors().editor_background)
-            .rounded_sm()
-            .overflow_hidden()
-            .flex_none()
             .py_1()
-            .px_2()
+            .px_1p5()
             .mx_1()
+            .gap_1p5()
+            .rounded_sm()
+            .bg(cx.theme().colors().editor_background)
+            .border_1()
+            .border_color(cx.theme().colors().border)
+            .child(Icon::new(IconName::MagnifyingGlass).color(Color::Muted))
             .child(editor.clone())
     }
 }
@@ -1097,11 +1097,11 @@ impl RulesLibrary {
         v_flex()
             .id("rule-list")
             .capture_action(cx.listener(Self::focus_active_rule))
-            .bg(cx.theme().colors().panel_background)
+            .px_1p5()
             .h_full()
-            .px_1()
-            .w_1_3()
+            .w_64()
             .overflow_x_hidden()
+            .bg(cx.theme().colors().panel_background)
             .child(
                 h_flex()
                     .p(DynamicSpacing::Base04.rems(cx))
@@ -1111,8 +1111,8 @@ impl RulesLibrary {
                     .justify_end()
                     .child(
                         IconButton::new("new-rule", IconName::Plus)
-                            .tooltip(move |window, cx| {
-                                Tooltip::for_action("New Rule", &NewRule, window, cx)
+                            .tooltip(move |_window, cx| {
+                                Tooltip::for_action("New Rule", &NewRule, cx)
                             })
                             .on_click(|_, window, cx| {
                                 window.dispatch_action(Box::new(NewRule), cx);
@@ -1122,16 +1122,55 @@ impl RulesLibrary {
             .child(div().flex_grow().child(self.picker.clone()))
     }
 
+    fn render_active_rule_editor(
+        &self,
+        editor: &Entity<Editor>,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let settings = ThemeSettings::get_global(cx);
+
+        div()
+            .w_full()
+            .on_action(cx.listener(Self::move_down_from_title))
+            .pl_1()
+            .border_1()
+            .border_color(transparent_black())
+            .rounded_sm()
+            .group_hover("active-editor-header", |this| {
+                this.border_color(cx.theme().colors().border_variant)
+            })
+            .child(EditorElement::new(
+                &editor,
+                EditorStyle {
+                    background: cx.theme().system().transparent,
+                    local_player: cx.theme().players().local(),
+                    text: TextStyle {
+                        color: cx.theme().colors().editor_foreground,
+                        font_family: settings.ui_font.family.clone(),
+                        font_features: settings.ui_font.features.clone(),
+                        font_size: HeadlineSize::Large.rems().into(),
+                        font_weight: settings.ui_font.weight,
+                        line_height: relative(settings.buffer_line_height.value()),
+                        ..Default::default()
+                    },
+                    scrollbar_width: Pixels::ZERO,
+                    syntax: cx.theme().syntax().clone(),
+                    status: cx.theme().status().clone(),
+                    inlay_hints_style: editor::make_inlay_hints_style(cx),
+                    edit_prediction_styles: editor::make_suggestion_styles(cx),
+                    ..EditorStyle::default()
+                },
+            ))
+    }
+
     fn render_active_rule(&mut self, cx: &mut Context<RulesLibrary>) -> gpui::Stateful<Div> {
         div()
-            .w_2_3()
-            .h_full()
             .id("rule-editor")
+            .h_full()
+            .flex_grow()
             .border_l_1()
             .border_color(cx.theme().colors().border)
             .bg(cx.theme().colors().editor_background)
-            .flex_none()
-            .min_w_64()
             .children(self.active_rule_id.and_then(|prompt_id| {
                 let rule_metadata = self.store.read(cx).metadata(prompt_id)?;
                 let rule_editor = &self.rule_editors[&prompt_id];
@@ -1139,7 +1178,6 @@ impl RulesLibrary {
                 let model = LanguageModelRegistry::read_global(cx)
                     .default_model()
                     .map(|default| default.model);
-                let settings = ThemeSettings::get_global(cx);
 
                 Some(
                     v_flex()
@@ -1159,46 +1197,7 @@ impl RulesLibrary {
                                 .gap_2()
                                 .justify_between()
                                 .child(
-                                    div()
-                                        .w_full()
-                                        .on_action(cx.listener(Self::move_down_from_title))
-                                        .pl_1()
-                                        .border_1()
-                                        .border_color(transparent_black())
-                                        .rounded_sm()
-                                        .group_hover("active-editor-header", |this| {
-                                            this.border_color(cx.theme().colors().border_variant)
-                                        })
-                                        .child(EditorElement::new(
-                                            &rule_editor.title_editor,
-                                            EditorStyle {
-                                                background: cx.theme().system().transparent,
-                                                local_player: cx.theme().players().local(),
-                                                text: TextStyle {
-                                                    color: cx.theme().colors().editor_foreground,
-                                                    font_family: settings.ui_font.family.clone(),
-                                                    font_features: settings
-                                                        .ui_font
-                                                        .features
-                                                        .clone(),
-                                                    font_size: HeadlineSize::Large.rems().into(),
-                                                    font_weight: settings.ui_font.weight,
-                                                    line_height: relative(
-                                                        settings.buffer_line_height.value(),
-                                                    ),
-                                                    ..Default::default()
-                                                },
-                                                scrollbar_width: Pixels::ZERO,
-                                                syntax: cx.theme().syntax().clone(),
-                                                status: cx.theme().status().clone(),
-                                                inlay_hints_style: editor::make_inlay_hints_style(
-                                                    cx,
-                                                ),
-                                                edit_prediction_styles:
-                                                    editor::make_suggestion_styles(cx),
-                                                ..EditorStyle::default()
-                                            },
-                                        )),
+                                    self.render_active_rule_editor(&rule_editor.title_editor, cx),
                                 )
                                 .child(
                                     h_flex()
@@ -1214,7 +1213,7 @@ impl RulesLibrary {
                                                 .id("token_count")
                                                 .mr_1()
                                                 .flex_shrink_0()
-                                                .tooltip(move |window, cx| {
+                                                .tooltip(move |_window, cx| {
                                                     Tooltip::with_meta(
                                                         "Token Estimation",
                                                         None,
@@ -1225,7 +1224,6 @@ impl RulesLibrary {
                                                                 .map(|model| model.name().0)
                                                                 .unwrap_or_default()
                                                         ),
-                                                        window,
                                                         cx,
                                                     )
                                                 })
@@ -1244,23 +1242,21 @@ impl RulesLibrary {
                                                     Icon::new(IconName::FileLock)
                                                         .color(Color::Muted),
                                                 )
-                                                .tooltip(move |window, cx| {
+                                                .tooltip(move |_window, cx| {
                                                     Tooltip::with_meta(
                                                         "Built-in rule",
                                                         None,
                                                         BUILT_IN_TOOLTIP_TEXT,
-                                                        window,
                                                         cx,
                                                     )
                                                 })
                                                 .into_any()
                                         } else {
                                             IconButton::new("delete-rule", IconName::Trash)
-                                                .tooltip(move |window, cx| {
+                                                .tooltip(move |_window, cx| {
                                                     Tooltip::for_action(
                                                         "Delete Rule",
                                                         &DeleteRule,
-                                                        window,
                                                         cx,
                                                     )
                                                 })
@@ -1272,11 +1268,10 @@ impl RulesLibrary {
                                         })
                                         .child(
                                             IconButton::new("duplicate-rule", IconName::BookCopy)
-                                                .tooltip(move |window, cx| {
+                                                .tooltip(move |_window, cx| {
                                                     Tooltip::for_action(
                                                         "Duplicate Rule",
                                                         &DuplicateRule,
-                                                        window,
                                                         cx,
                                                     )
                                                 })
@@ -1304,12 +1299,11 @@ impl RulesLibrary {
                                                         "Remove from Default Rules",
                                                     ))
                                                 } else {
-                                                    this.tooltip(move |window, cx| {
+                                                    this.tooltip(move |_window, cx| {
                                                         Tooltip::with_meta(
                                                             "Add to Default Rules",
                                                             None,
                                                             "Always included in every thread.",
-                                                            window,
                                                             cx,
                                                         )
                                                     })
@@ -1416,7 +1410,7 @@ impl Render for RulesLibrary {
                                                                 .full_width()
                                                                 .key_binding(
                                                                     KeyBinding::for_action(
-                                                                        &NewRule, window, cx,
+                                                                        &NewRule, cx,
                                                                     ),
                                                                 )
                                                                 .on_click(|_, window, cx| {

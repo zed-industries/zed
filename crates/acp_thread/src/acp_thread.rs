@@ -12,7 +12,7 @@ use language::language_settings::FormatOnSave;
 pub use mention::*;
 use project::lsp_store::{FormatTrigger, LspFormatTarget};
 use serde::{Deserialize, Serialize};
-use settings::Settings as _;
+use settings::{Settings as _, SettingsLocation};
 use task::{Shell, ShellBuilder};
 pub use terminal::*;
 
@@ -35,7 +35,7 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 use std::{fmt::Display, mem, path::PathBuf, sync::Arc};
 use ui::App;
-use util::{ResultExt, get_default_system_shell};
+use util::{ResultExt, get_default_system_shell_preferring_bash};
 use uuid::Uuid;
 
 #[derive(Debug)]
@@ -328,7 +328,7 @@ impl ToolCall {
         location: acp::ToolCallLocation,
         project: WeakEntity<Project>,
         cx: &mut AsyncApp,
-    ) -> Option<AgentLocation> {
+    ) -> Option<ResolvedLocation> {
         let buffer = project
             .update(cx, |project, cx| {
                 project
@@ -350,17 +350,14 @@ impl ToolCall {
             })
             .ok()?;
 
-        Some(AgentLocation {
-            buffer: buffer.downgrade(),
-            position,
-        })
+        Some(ResolvedLocation { buffer, position })
     }
 
     fn resolve_locations(
         &self,
         project: Entity<Project>,
         cx: &mut App,
-    ) -> Task<Vec<Option<AgentLocation>>> {
+    ) -> Task<Vec<Option<ResolvedLocation>>> {
         let locations = self.locations.clone();
         project.update(cx, |_, cx| {
             cx.spawn(async move |project, cx| {
@@ -371,6 +368,23 @@ impl ToolCall {
                 new_locations
             })
         })
+    }
+}
+
+// Separate so we can hold a strong reference to the buffer
+// for saving on the thread
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ResolvedLocation {
+    buffer: Entity<Buffer>,
+    position: Anchor,
+}
+
+impl From<&ResolvedLocation> for AgentLocation {
+    fn from(value: &ResolvedLocation) -> Self {
+        Self {
+            buffer: value.buffer.downgrade(),
+            position: value.position,
+        }
     }
 }
 
@@ -1393,35 +1407,46 @@ impl AcpThread {
         let task = tool_call.resolve_locations(project, cx);
         cx.spawn(async move |this, cx| {
             let resolved_locations = task.await;
+
             this.update(cx, |this, cx| {
                 let project = this.project.clone();
+
+                for location in resolved_locations.iter().flatten() {
+                    this.shared_buffers
+                        .insert(location.buffer.clone(), location.buffer.read(cx).snapshot());
+                }
                 let Some((ix, tool_call)) = this.tool_call_mut(&id) else {
                     return;
                 };
+
                 if let Some(Some(location)) = resolved_locations.last() {
                     project.update(cx, |project, cx| {
-                        if let Some(agent_location) = project.agent_location() {
-                            let should_ignore = agent_location.buffer == location.buffer
-                                && location
-                                    .buffer
-                                    .update(cx, |buffer, _| {
-                                        let snapshot = buffer.snapshot();
-                                        let old_position =
-                                            agent_location.position.to_point(&snapshot);
-                                        let new_position = location.position.to_point(&snapshot);
-                                        // ignore this so that when we get updates from the edit tool
-                                        // the position doesn't reset to the startof line
-                                        old_position.row == new_position.row
-                                            && old_position.column > new_position.column
-                                    })
-                                    .ok()
-                                    .unwrap_or_default();
-                            if !should_ignore {
-                                project.set_agent_location(Some(location.clone()), cx);
-                            }
+                        let should_ignore = if let Some(agent_location) = project
+                            .agent_location()
+                            .filter(|agent_location| agent_location.buffer == location.buffer)
+                        {
+                            let snapshot = location.buffer.read(cx).snapshot();
+                            let old_position = agent_location.position.to_point(&snapshot);
+                            let new_position = location.position.to_point(&snapshot);
+
+                            // ignore this so that when we get updates from the edit tool
+                            // the position doesn't reset to the startof line
+                            old_position.row == new_position.row
+                                && old_position.column > new_position.column
+                        } else {
+                            false
+                        };
+                        if !should_ignore {
+                            project.set_agent_location(Some(location.into()), cx);
                         }
                     });
                 }
+
+                let resolved_locations = resolved_locations
+                    .iter()
+                    .map(|l| l.as_ref().map(|l| AgentLocation::from(l)))
+                    .collect::<Vec<_>>();
+
                 if tool_call.resolved_locations != resolved_locations {
                     tool_call.resolved_locations = resolved_locations;
                     cx.emit(AcpThreadEvent::EntryUpdated(ix));
@@ -2086,7 +2111,16 @@ impl AcpThread {
     ) -> Task<Result<Entity<Terminal>>> {
         let env = match &cwd {
             Some(dir) => self.project.update(cx, |project, cx| {
-                let shell = TerminalSettings::get_global(cx).shell.clone();
+                let worktree = project.find_worktree(dir.as_path(), cx);
+                let shell = TerminalSettings::get(
+                    worktree.as_ref().map(|(worktree, path)| SettingsLocation {
+                        worktree_id: worktree.read(cx).id(),
+                        path: &path,
+                    }),
+                    cx,
+                )
+                .shell
+                .clone();
                 project.directory_environment(&shell, dir.as_path().into(), cx)
             }),
             None => Task::ready(None).shared(),
@@ -2103,24 +2137,24 @@ impl AcpThread {
 
         let project = self.project.clone();
         let language_registry = project.read(cx).languages().clone();
+        let is_windows = project.read(cx).path_style(cx).is_windows();
 
         let terminal_id = acp::TerminalId(Uuid::new_v4().to_string().into());
         let terminal_task = cx.spawn({
             let terminal_id = terminal_id.clone();
             async move |_this, cx| {
                 let env = env.await;
-                let (task_command, task_args) = ShellBuilder::new(
-                    project
-                        .update(cx, |project, cx| {
-                            project
-                                .remote_client()
-                                .and_then(|r| r.read(cx).default_system_shell())
-                        })?
-                        .as_deref(),
-                    &Shell::Program(get_default_system_shell()),
-                )
-                .redirect_stdin_to_dev_null()
-                .build(Some(command.clone()), &args);
+                let shell = project
+                    .update(cx, |project, cx| {
+                        project
+                            .remote_client()
+                            .and_then(|r| r.read(cx).default_system_shell())
+                    })?
+                    .unwrap_or_else(|| get_default_system_shell_preferring_bash());
+                let (task_command, task_args) =
+                    ShellBuilder::new(&Shell::Program(shell), is_windows)
+                        .redirect_stdin_to_dev_null()
+                        .build(Some(command.clone()), &args);
                 let terminal = project
                     .update(cx, |project, cx| {
                         project.create_terminal_task(
@@ -2333,12 +2367,10 @@ mod tests {
         // Create a display-only terminal and then send Created
         let lower = cx.new(|cx| {
             let builder = ::terminal::TerminalBuilder::new_display_only(
-                None,
                 ::terminal::terminal_settings::CursorShape::default(),
                 ::terminal::terminal_settings::AlternateScroll::On,
                 None,
                 0,
-                cx,
             )
             .unwrap();
             builder.subscribe(cx)
@@ -2412,12 +2444,10 @@ mod tests {
         // Now create a display-only lower-level terminal and send Created
         let lower = cx.new(|cx| {
             let builder = ::terminal::TerminalBuilder::new_display_only(
-                None,
                 ::terminal::terminal_settings::CursorShape::default(),
                 ::terminal::terminal_settings::AlternateScroll::On,
                 None,
                 0,
-                cx,
             )
             .unwrap();
             builder.subscribe(cx)

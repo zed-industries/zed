@@ -1,14 +1,14 @@
 use crate::{ApplyAllDiffHunks, Editor, EditorEvent, SelectionEffects, SemanticsProvider};
 use buffer_diff::BufferDiff;
-use collections::HashSet;
+use collections::{HashMap, HashSet};
 use futures::{channel::mpsc, future::join_all};
 use gpui::{App, Entity, EventEmitter, Focusable, Render, Subscription, Task};
-use language::{Buffer, BufferEvent, Capability};
+use language::{Buffer, BufferEvent, BufferRow, Capability};
 use multi_buffer::{ExcerptRange, MultiBuffer};
-use project::Project;
+use project::{InvalidationStrategy, Project, lsp_store::CacheInlayHints};
 use smol::stream::StreamExt;
 use std::{any::TypeId, ops::Range, rc::Rc, time::Duration};
-use text::ToOffset;
+use text::{BufferId, ToOffset};
 use ui::{ButtonLike, KeyBinding, prelude::*};
 use workspace::{
     Item, ItemHandle as _, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
@@ -370,17 +370,15 @@ impl ProposedChangesEditorToolbar {
 }
 
 impl Render for ProposedChangesEditorToolbar {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let button_like = ButtonLike::new("apply-changes").child(Label::new("Apply All"));
 
         match &self.current_editor {
             Some(editor) => {
                 let focus_handle = editor.focus_handle(cx);
-                let keybinding =
-                    KeyBinding::for_action_in(&ApplyAllDiffHunks, &focus_handle, window, cx)
-                        .map(|binding| binding.into_any_element());
+                let keybinding = KeyBinding::for_action_in(&ApplyAllDiffHunks, &focus_handle, cx);
 
-                button_like.children(keybinding).on_click({
+                button_like.child(keybinding).on_click({
                     move |_event, window, cx| {
                         focus_handle.dispatch_action(&ApplyAllDiffHunks, window, cx)
                     }
@@ -436,14 +434,34 @@ impl SemanticsProvider for BranchBufferSemanticsProvider {
         self.0.hover(&buffer, position, cx)
     }
 
+    fn applicable_inlay_chunks(
+        &self,
+        buffer: &Entity<Buffer>,
+        ranges: &[Range<text::Anchor>],
+        cx: &mut App,
+    ) -> Vec<Range<BufferRow>> {
+        self.0.applicable_inlay_chunks(buffer, ranges, cx)
+    }
+
+    fn invalidate_inlay_hints(&self, for_buffers: &HashSet<BufferId>, cx: &mut App) {
+        self.0.invalidate_inlay_hints(for_buffers, cx);
+    }
+
     fn inlay_hints(
         &self,
+        invalidate: InvalidationStrategy,
         buffer: Entity<Buffer>,
-        range: Range<text::Anchor>,
+        ranges: Vec<Range<text::Anchor>>,
+        known_chunks: Option<(clock::Global, HashSet<Range<BufferRow>>)>,
         cx: &mut App,
-    ) -> Option<Task<anyhow::Result<Vec<project::InlayHint>>>> {
-        let buffer = self.to_base(&buffer, &[range.start, range.end], cx)?;
-        self.0.inlay_hints(buffer, range, cx)
+    ) -> Option<HashMap<Range<BufferRow>, Task<anyhow::Result<CacheInlayHints>>>> {
+        let positions = ranges
+            .iter()
+            .flat_map(|range| [range.start, range.end])
+            .collect::<Vec<_>>();
+        let buffer = self.to_base(&buffer, &positions, cx)?;
+        self.0
+            .inlay_hints(invalidate, buffer, ranges, known_chunks, cx)
     }
 
     fn inline_values(
@@ -453,17 +471,6 @@ impl SemanticsProvider for BranchBufferSemanticsProvider {
         _: &mut App,
     ) -> Option<Task<anyhow::Result<Vec<project::InlayHint>>>> {
         None
-    }
-
-    fn resolve_inlay_hint(
-        &self,
-        hint: project::InlayHint,
-        buffer: Entity<Buffer>,
-        server_id: lsp::LanguageServerId,
-        cx: &mut App,
-    ) -> Option<Task<anyhow::Result<project::InlayHint>>> {
-        let buffer = self.to_base(&buffer, &[], cx)?;
-        self.0.resolve_inlay_hint(hint, buffer, server_id, cx)
     }
 
     fn supports_inlay_hints(&self, buffer: &Entity<Buffer>, cx: &mut App) -> bool {

@@ -9,7 +9,7 @@ Svelte support is available through the [Svelte extension](https://github.com/ze
 
 You can modify how certain styles, such as directives and modifiers, appear in attributes:
 
-```json
+```json [settings]
 "syntax": {
   // Styling for directives (e.g., `class:foo` or `on:click`) (the `on` or `class` part of the attribute).
   "attribute.function": {
@@ -26,7 +26,7 @@ You can modify how certain styles, such as directives and modifiers, appear in a
 
 When inlay hints is enabled in Zed, to make the language server send them back, Zed sets the following initialization options:
 
-```json
+```json [settings]
 "inlayHints": {
   "parameterNames": {
     "enabled": "all",
@@ -53,16 +53,16 @@ When inlay hints is enabled in Zed, to make the language server send them back, 
 
 To override these settings, use the following:
 
-```json
+```json [settings]
 "lsp": {
   "svelte-language-server": {
     "initialization_options": {
       "configuration": {
         "typescript": {
-          ......
+          // ......
         },
         "javascript": {
-          ......
+          // ......
         }
       }
     }

@@ -17,7 +17,6 @@ doctest = false
 anyhow.workspace = true
 log.workspace = true
 simplelog.workspace = true
-workspace-hack.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows.workspace = true

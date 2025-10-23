@@ -14,14 +14,16 @@ use raw_window_handle as rwh;
 use wayland_backend::client::ObjectId;
 use wayland_client::WEnum;
 use wayland_client::{Proxy, protocol::wl_surface};
-use wayland_protocols::wp::fractional_scale::v1::client::wp_fractional_scale_v1;
 use wayland_protocols::wp::viewporter::client::wp_viewport;
 use wayland_protocols::xdg::decoration::zv1::client::zxdg_toplevel_decoration_v1;
 use wayland_protocols::xdg::shell::client::xdg_surface;
 use wayland_protocols::xdg::shell::client::xdg_toplevel::{self};
+use wayland_protocols::{
+    wp::fractional_scale::v1::client::wp_fractional_scale_v1,
+    xdg::shell::client::xdg_toplevel::XdgToplevel,
+};
 use wayland_protocols_plasma::blur::client::org_kde_kwin_blur;
 
-use crate::scene::Scene;
 use crate::{
     AnyWindowHandle, Bounds, Decorations, Globals, GpuSpecs, Modifiers, Output, Pixels,
     PlatformDisplay, PlatformInput, Point, PromptButton, PromptLevel, RequestFrameOptions,
@@ -36,6 +38,7 @@ use crate::{
         linux::wayland::{display::WaylandDisplay, serial::SerialKind},
     },
 };
+use crate::{WindowKind, scene::Scene};
 
 #[derive(Default)]
 pub(crate) struct Callbacks {
@@ -276,12 +279,17 @@ impl WaylandWindow {
         client: WaylandClientStatePtr,
         params: WindowParams,
         appearance: WindowAppearance,
+        parent: Option<XdgToplevel>,
     ) -> anyhow::Result<(Self, ObjectId)> {
         let surface = globals.compositor.create_surface(&globals.qh, ());
         let xdg_surface = globals
             .wm_base
             .get_xdg_surface(&surface, &globals.qh, surface.id());
         let toplevel = xdg_surface.get_toplevel(&globals.qh, surface.id());
+
+        if params.kind == WindowKind::Floating {
+            toplevel.set_parent(parent.as_ref());
+        }
 
         if let Some(size) = params.window_min_size {
             toplevel.set_min_size(size.width.0 as i32, size.height.0 as i32);
@@ -335,6 +343,10 @@ impl WaylandWindowStatePtr {
 
     pub fn surface(&self) -> wl_surface::WlSurface {
         self.state.borrow().surface.clone()
+    }
+
+    pub fn toplevel(&self) -> xdg_toplevel::XdgToplevel {
+        self.state.borrow().toplevel.clone()
     }
 
     pub fn ptr_eq(&self, other: &Self) -> bool {

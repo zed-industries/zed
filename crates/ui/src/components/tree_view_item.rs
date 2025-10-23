@@ -9,7 +9,7 @@ pub struct TreeViewItem {
     id: ElementId,
     group_name: Option<SharedString>,
     label: SharedString,
-    toggle: bool,
+    expanded: bool,
     selected: bool,
     disabled: bool,
     focused: bool,
@@ -20,6 +20,8 @@ pub struct TreeViewItem {
     on_hover: Option<Box<dyn Fn(&bool, &mut Window, &mut App) + 'static>>,
     on_toggle: Option<Arc<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
     on_secondary_mouse_down: Option<Box<dyn Fn(&MouseDownEvent, &mut Window, &mut App) + 'static>>,
+    tab_index: Option<isize>,
+    focus_handle: Option<gpui::FocusHandle>,
 }
 
 impl TreeViewItem {
@@ -28,7 +30,7 @@ impl TreeViewItem {
             id: id.into(),
             group_name: None,
             label: label.into(),
-            toggle: false,
+            expanded: false,
             selected: false,
             disabled: false,
             focused: false,
@@ -39,6 +41,8 @@ impl TreeViewItem {
             on_hover: None,
             on_toggle: None,
             on_secondary_mouse_down: None,
+            tab_index: None,
+            focus_handle: None,
         }
     }
 
@@ -73,8 +77,13 @@ impl TreeViewItem {
         self
     }
 
-    pub fn toggle(mut self, toggle: bool) -> Self {
-        self.toggle = toggle;
+    pub fn tab_index(mut self, tab_index: isize) -> Self {
+        self.tab_index = Some(tab_index);
+        self
+    }
+
+    pub fn expanded(mut self, toggle: bool) -> Self {
+        self.expanded = toggle;
         self
     }
 
@@ -100,6 +109,11 @@ impl TreeViewItem {
         self.focused = focused;
         self
     }
+
+    pub fn track_focus(mut self, focus_handle: &gpui::FocusHandle) -> Self {
+        self.focus_handle = Some(focus_handle.clone());
+        self
+    }
 }
 
 impl Disableable for TreeViewItem {
@@ -119,11 +133,13 @@ impl Toggleable for TreeViewItem {
 impl RenderOnce for TreeViewItem {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let selected_bg = cx.theme().colors().element_active.opacity(0.5);
-        let selected_border = cx.theme().colors().border.opacity(0.6);
-        let focused_border = cx.theme().colors().border_focused;
-        let transparent_border = cx.theme().colors().border_transparent;
 
-        let indentation_line = h_flex().size_7().flex_none().justify_center().child(
+        let transparent_border = cx.theme().colors().border.opacity(0.);
+        let selected_border = cx.theme().colors().border.opacity(0.4);
+        let focused_border = cx.theme().colors().border_focused;
+
+        let item_size = rems_from_px(28.);
+        let indentation_line = h_flex().size(item_size).flex_none().justify_center().child(
             div()
                 .w_px()
                 .h_full()
@@ -137,34 +153,30 @@ impl RenderOnce for TreeViewItem {
             .child(
                 h_flex()
                     .id("inner_tree_view_item")
-                    .group("tree_view_item")
+                    .cursor_pointer()
                     .size_full()
-                    .relative()
+                    .h(item_size)
+                    .rounded_sm()
+                    .border_1()
+                    .border_color(transparent_border)
+                    .focus(|s| s.border_color(focused_border))
+                    .when(self.selected, |this| {
+                        this.border_color(selected_border).bg(selected_bg)
+                    })
+                    .hover(|s| s.bg(cx.theme().colors().element_hover))
                     .map(|this| {
                         let label = self.label;
+
                         if self.root_item {
                             this.px_1()
-                                .mb_1()
                                 .gap_2p5()
-                                .rounded_sm()
-                                .border_1()
-                                .map(|this| {
-                                    if self.focused && self.selected {
-                                        this.border_color(focused_border).bg(selected_bg)
-                                    } else if self.focused {
-                                        this.border_color(focused_border)
-                                    } else if self.selected {
-                                        this.border_color(selected_border).bg(selected_bg)
-                                    } else {
-                                        this.border_color(transparent_border)
-                                    }
-                                })
-                                .hover(|s| s.bg(cx.theme().colors().element_hover))
                                 .child(
-                                    Disclosure::new("toggle", self.toggle)
+                                    Disclosure::new("toggle", self.expanded)
                                         .when_some(
                                             self.on_toggle.clone(),
-                                            |disclosure, on_toggle| disclosure.on_toggle(on_toggle),
+                                            |disclosure, on_toggle| {
+                                                disclosure.on_toggle_expanded(on_toggle)
+                                            },
                                         )
                                         .opened_icon(IconName::ChevronDown)
                                         .closed_icon(IconName::ChevronRight),
@@ -176,23 +188,10 @@ impl RenderOnce for TreeViewItem {
                         } else {
                             this.child(indentation_line).child(
                                 h_flex()
+                                    .id("nested_inner_tree_view_item")
                                     .w_full()
                                     .flex_grow()
                                     .px_1()
-                                    .rounded_sm()
-                                    .border_1()
-                                    .map(|this| {
-                                        if self.focused && self.selected {
-                                            this.border_color(focused_border).bg(selected_bg)
-                                        } else if self.focused {
-                                            this.border_color(focused_border)
-                                        } else if self.selected {
-                                            this.border_color(selected_border).bg(selected_bg)
-                                        } else {
-                                            this.border_color(transparent_border)
-                                        }
-                                    })
-                                    .hover(|s| s.bg(cx.theme().colors().element_hover))
                                     .child(
                                         Label::new(label)
                                             .when(!self.selected, |this| this.color(Color::Muted)),
@@ -200,10 +199,12 @@ impl RenderOnce for TreeViewItem {
                             )
                         }
                     })
+                    .when_some(self.focus_handle, |this, handle| this.track_focus(&handle))
+                    .when_some(self.tab_index, |this, index| this.tab_index(index))
                     .when_some(self.on_hover, |this, on_hover| this.on_hover(on_hover))
                     .when_some(
                         self.on_click.filter(|_| !self.disabled),
-                        |this, on_click| this.cursor_pointer().on_click(on_click),
+                        |this, on_click| this.on_click(on_click),
                     )
                     .when_some(self.on_secondary_mouse_down, |this, on_mouse_down| {
                         this.on_mouse_down(MouseButton::Right, move |event, window, cx| {

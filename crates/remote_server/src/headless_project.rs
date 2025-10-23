@@ -26,7 +26,7 @@ use rpc::{
     proto::{self, REMOTE_SERVER_PEER_ID, REMOTE_SERVER_PROJECT_ID},
 };
 
-use settings::initial_server_settings_content;
+use settings::{Settings as _, initial_server_settings_content};
 use smol::stream::StreamExt;
 use std::{
     path::{Path, PathBuf},
@@ -50,6 +50,7 @@ pub struct HeadlessProject {
     pub languages: Arc<LanguageRegistry>,
     pub extensions: Entity<HeadlessExtensionStore>,
     pub git_store: Entity<GitStore>,
+    pub environment: Entity<ProjectEnvironment>,
     // Used mostly to keep alive the toolchain store for RPC handlers.
     // Local variant is used within LSP store, but that's a separate entity.
     pub _toolchain_store: Entity<ToolchainStore>,
@@ -69,6 +70,7 @@ impl HeadlessProject {
         settings::init(cx);
         language::init(cx);
         project::Project::init_settings(cx);
+        extension_host::ExtensionSettings::register(cx);
         log_store::init(true, cx);
     }
 
@@ -92,7 +94,7 @@ impl HeadlessProject {
             store
         });
 
-        let environment = cx.new(|_| ProjectEnvironment::new(None));
+        let environment = cx.new(|cx| ProjectEnvironment::new(None, cx));
         let manifest_tree = ManifestTree::new(worktree_store.clone(), cx);
         let toolchain_store = cx.new(|cx| {
             ToolchainStore::local(
@@ -100,6 +102,7 @@ impl HeadlessProject {
                 worktree_store.clone(),
                 environment.clone(),
                 manifest_tree.clone(),
+                fs.clone(),
                 cx,
             )
         });
@@ -122,6 +125,7 @@ impl HeadlessProject {
                 toolchain_store.read(cx).as_language_toolchain_store(),
                 worktree_store.clone(),
                 breakpoint_store.clone(),
+                true,
                 cx,
             );
             dap_store.shared(REMOTE_SERVER_PROJECT_ID, session.clone(), cx);
@@ -194,8 +198,13 @@ impl HeadlessProject {
         });
 
         let agent_server_store = cx.new(|cx| {
-            let mut agent_server_store =
-                AgentServerStore::local(node_runtime.clone(), fs.clone(), environment, cx);
+            let mut agent_server_store = AgentServerStore::local(
+                node_runtime.clone(),
+                fs.clone(),
+                environment.clone(),
+                http_client.clone(),
+                cx,
+            );
             agent_server_store.shared(REMOTE_SERVER_PROJECT_ID, session.clone(), cx);
             agent_server_store
         });
@@ -248,6 +257,7 @@ impl HeadlessProject {
         session.add_entity_request_handler(Self::handle_open_new_buffer);
         session.add_entity_request_handler(Self::handle_find_search_candidates);
         session.add_entity_request_handler(Self::handle_open_server_settings);
+        session.add_entity_request_handler(Self::handle_get_directory_environment);
         session.add_entity_message_handler(Self::handle_toggle_lsp_logs);
 
         session.add_entity_request_handler(BufferStore::handle_update_buffer);
@@ -288,6 +298,7 @@ impl HeadlessProject {
             languages,
             extensions,
             git_store,
+            environment,
             _toolchain_store: toolchain_store,
         }
     }
@@ -756,6 +767,26 @@ impl HeadlessProject {
         processes.sort_by_key(|p| p.name.clone());
 
         Ok(proto::GetProcessesResponse { processes })
+    }
+
+    async fn handle_get_directory_environment(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::GetDirectoryEnvironment>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::DirectoryEnvironment> {
+        let shell = task::Shell::from_proto(envelope.payload.shell.context("missing shell")?)?;
+        let directory = PathBuf::from(envelope.payload.directory);
+        let environment = this
+            .update(&mut cx, |this, cx| {
+                this.environment.update(cx, |environment, cx| {
+                    environment.get_local_directory_environment(&shell, directory.into(), cx)
+                })
+            })?
+            .await
+            .context("failed to get directory environment")?
+            .into_iter()
+            .collect();
+        Ok(proto::DirectoryEnvironment { environment })
     }
 }
 

@@ -20,7 +20,7 @@ use settings::Settings;
 use theme::{ActiveTheme, ThemeSettings};
 use ui::{ListItem, ListItemSpacing, prelude::*};
 use util::ResultExt;
-use workspace::{DismissDecision, ModalView};
+use workspace::{DismissDecision, ModalView, Workspace};
 
 pub fn init(cx: &mut App) {
     cx.observe_new(OutlineView::register).detach();
@@ -48,7 +48,8 @@ pub fn toggle(
         .snapshot(cx)
         .outline(Some(cx.theme().syntax()));
 
-    if let Some((workspace, outline)) = editor.read(cx).workspace().zip(outline) {
+    let workspace = window.root::<Workspace>().flatten();
+    if let Some((workspace, outline)) = workspace.zip(outline) {
         workspace.update(cx, |workspace, cx| {
             workspace.toggle_modal(window, cx, |window, cx| {
                 OutlineView::new(outline, editor, window, cx)
@@ -244,7 +245,10 @@ impl PickerDelegate for OutlineViewDelegate {
 
             let (buffer, cursor_offset) = self.active_editor.update(cx, |editor, cx| {
                 let buffer = editor.buffer().read(cx).snapshot(cx);
-                let cursor_offset = editor.selections.newest::<usize>(cx).head();
+                let cursor_offset = editor
+                    .selections
+                    .newest::<usize>(&editor.display_snapshot(cx))
+                    .head();
                 (buffer, cursor_offset)
             });
             selected_index = self
@@ -672,7 +676,7 @@ mod tests {
         let selections = editor.update(cx, |editor, cx| {
             editor
                 .selections
-                .all::<rope::Point>(cx)
+                .all::<rope::Point>(&editor.display_snapshot(cx))
                 .into_iter()
                 .map(|s| s.start..s.end)
                 .collect::<Vec<_>>()

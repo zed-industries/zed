@@ -8,7 +8,7 @@
 - [Linux](./linux.md)
 - [Windows](./windows.md)
 - [Telemetry](./telemetry.md)
-- [Workspace Persistence](./workspace-persistence.md)
+- [Troubleshooting](./troubleshooting.md)
 - [Additional Learning Materials](./additional-learning-materials.md)
 
 # Configuration
@@ -160,4 +160,5 @@
   - [Using Debuggers](./development/debuggers.md)
   - [Glossary](./development/glossary.md)
 - [Release Process](./development/releases.md)
+- [Release Notes](./development/release-notes.md)
 - [Debugging Crashes](./development/debugging-crashes.md)

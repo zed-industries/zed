@@ -108,7 +108,7 @@ pub fn assert_text_with_selections(
     assert_eq!(editor.text(cx), unmarked_text, "text doesn't match");
     let actual = generate_marked_text(
         &editor.text(cx),
-        &editor.selections.ranges(cx),
+        &editor.selections.ranges(&editor.display_snapshot(cx)),
         marked_text.contains("«"),
     );
     assert_eq!(actual, marked_text, "Selections don't match");
@@ -186,7 +186,7 @@ pub fn editor_content_with_blocks(editor: &Entity<Editor>, cx: &mut VisualTestCo
         match block {
             Block::Custom(custom_block) => {
                 if let BlockPlacement::Near(x) = &custom_block.placement
-                    && snapshot.intersects_fold(x.to_point(&snapshot.buffer_snapshot))
+                    && snapshot.intersects_fold(x.to_point(&snapshot.buffer_snapshot()))
                 {
                     continue;
                 };
