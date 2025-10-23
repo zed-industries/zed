@@ -1025,9 +1025,9 @@ impl std::fmt::Debug for FileMask {
     }
 }
 
-const USER: FileMask = FileMask(1 << 0);
-const PROJECT: FileMask = FileMask(1 << 2);
-const SERVER: FileMask = FileMask(1 << 3);
+static USER: FileMask = FileMask(1 << 0);
+static PROJECT: FileMask = FileMask(1 << 2);
+static SERVER: FileMask = FileMask(1 << 3);
 
 impl std::ops::BitAnd for FileMask {
     type Output = Self;
