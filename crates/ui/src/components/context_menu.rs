@@ -92,6 +92,12 @@ impl ContextMenuEntry {
         self
     }
 
+    pub fn custom_icon_path(mut self, path: impl Into<SharedString>) -> Self {
+        self.custom_icon_path = Some(path.into());
+        self.icon = None; // Clear IconName if custom path is set
+        self
+    }
+
     pub fn icon_position(mut self, position: IconPosition) -> Self {
         self.icon_position = position;
         self

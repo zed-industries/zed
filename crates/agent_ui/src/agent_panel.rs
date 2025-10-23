@@ -6,8 +6,11 @@ use std::sync::Arc;
 use acp_thread::AcpThread;
 use agent::{ContextServerRegistry, DbThreadMetadata, HistoryEntry, HistoryStore};
 use db::kvp::{Dismissable, KEY_VALUE_STORE};
-use project::agent_server_store::{
-    AgentServerCommand, AllAgentServersSettings, CLAUDE_CODE_NAME, CODEX_NAME, GEMINI_NAME,
+use project::{
+    ExternalAgentServerName,
+    agent_server_store::{
+        AgentServerCommand, AllAgentServersSettings, CLAUDE_CODE_NAME, CODEX_NAME, GEMINI_NAME,
+    },
 };
 use serde::{Deserialize, Serialize};
 use settings::{
@@ -1738,6 +1741,16 @@ impl AgentPanel {
         let agent_server_store = self.project.read(cx).agent_server_store().clone();
         let focus_handle = self.focus_handle(cx);
 
+        // Get custom icon path for selected agent before building menu (to avoid borrow issues)
+        let selected_agent_custom_icon =
+            if let AgentType::Custom { name, .. } = &self.selected_agent {
+                agent_server_store
+                    .read(cx)
+                    .agent_icon(&ExternalAgentServerName(name.clone()))
+            } else {
+                None
+            };
+
         let active_thread = match &self.active_view {
             ActiveView::ExternalAgentThread { thread_view } => {
                 thread_view.read(cx).as_native_thread(cx)
@@ -2010,29 +2023,22 @@ impl AgentPanel {
 
         let selected_agent_label = self.selected_agent.label();
 
-        // Get custom icon path for external agents
-        let custom_icon_path = if let AgentType::Custom { name, .. } = &self.selected_agent {
-            agent_server_store
-                .read(cx)
-                .agent_icon(&ExternalAgentServerName(name.clone()))
-        } else {
-            None
-        };
-
         let selected_agent = div()
             .id("selected_agent_icon")
-            .when_some(custom_icon_path, |this, icon_path| {
+            .when_some(selected_agent_custom_icon, |this, icon_path| {
+                let label = selected_agent_label.clone();
                 this.px(DynamicSpacing::Base02.rems(cx))
                     .child(Icon::from_path(icon_path).color(Color::Muted))
                     .tooltip(move |_window, cx| {
-                        Tooltip::with_meta(selected_agent_label.clone(), None, "Selected Agent", cx)
+                        Tooltip::with_meta(label.clone(), None, "Selected Agent", cx)
                     })
             })
             .when_some(self.selected_agent.icon(), |this, icon| {
+                let label = selected_agent_label.clone();
                 this.px(DynamicSpacing::Base02.rems(cx))
                     .child(Icon::new(icon).color(Color::Muted))
                     .tooltip(move |_window, cx| {
-                        Tooltip::with_meta(selected_agent_label.clone(), None, "Selected Agent", cx)
+                        Tooltip::with_meta(label.clone(), None, "Selected Agent", cx)
                     })
             })
             .into_any_element();
