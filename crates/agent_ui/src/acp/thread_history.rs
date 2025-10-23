@@ -423,8 +423,8 @@ impl AcpThreadHistory {
                                 .shape(IconButtonShape::Square)
                                 .icon_size(IconSize::XSmall)
                                 .icon_color(Color::Muted)
-                                .tooltip(move |window, cx| {
-                                    Tooltip::for_action("Delete", &RemoveSelectedThread, window, cx)
+                                .tooltip(move |_window, cx| {
+                                    Tooltip::for_action("Delete", &RemoveSelectedThread, cx)
                                 })
                                 .on_click(
                                     cx.listener(move |this, _, _, cx| this.remove_thread(ix, cx)),
@@ -595,8 +595,8 @@ impl RenderOnce for AcpHistoryEntryElement {
                         .shape(IconButtonShape::Square)
                         .icon_size(IconSize::XSmall)
                         .icon_color(Color::Muted)
-                        .tooltip(move |window, cx| {
-                            Tooltip::for_action("Delete", &RemoveSelectedThread, window, cx)
+                        .tooltip(move |_window, cx| {
+                            Tooltip::for_action("Delete", &RemoveSelectedThread, cx)
                         })
                         .on_click({
                             let thread_view = self.thread_view.clone();

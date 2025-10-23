@@ -30,12 +30,12 @@ pub struct OpenZedUrl {
 actions!(
     zed,
     [
+        /// Opens the settings editor.
         #[action(deprecated_aliases = ["zed_actions::OpenSettingsEditor"])]
         OpenSettings,
         /// Opens the settings JSON file.
         #[action(deprecated_aliases = ["zed_actions::OpenSettings"])]
         OpenSettingsFile,
-        /// Opens the settings editor.
         /// Opens the default keymap file.
         OpenDefaultKeymap,
         /// Opens the user keymap file.
@@ -106,6 +106,16 @@ pub struct DecreaseBufferFontSize {
 pub struct IncreaseBufferFontSize {
     #[serde(default)]
     pub persist: bool,
+}
+
+/// Increases the font size in the editor buffer.
+#[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
+#[action(namespace = zed)]
+#[serde(deny_unknown_fields)]
+pub struct OpenSettingsAt {
+    /// A path to a specific setting (e.g. `theme.mode`)
+    #[serde(default)]
+    pub path: String,
 }
 
 /// Resets the buffer font size to the default value.
@@ -297,7 +307,10 @@ pub mod agent {
             #[action(deprecated_aliases = ["assistant::ToggleModelSelector", "assistant2::ToggleModelSelector"])]
             ToggleModelSelector,
             /// Triggers re-authentication on Gemini
-            ReauthenticateAgent
+            ReauthenticateAgent,
+            /// Add the current selection as context for threads in the agent panel.
+            #[action(deprecated_aliases = ["assistant::QuoteSelection", "agent::QuoteSelection"])]
+            AddSelectionToThread,
         ]
     );
 }

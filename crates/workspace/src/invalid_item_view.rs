@@ -10,17 +10,17 @@ use zed_actions::workspace::OpenWithSystem;
 
 use crate::Item;
 
-/// A view to display when a certain buffer fails to open.
-pub struct InvalidBufferView {
+/// A view to display when a certain buffer/image/other item fails to open.
+pub struct InvalidItemView {
     /// Which path was attempted to open.
     pub abs_path: Arc<Path>,
-    /// An error message, happened when opening the buffer.
+    /// An error message, happened when opening the item.
     pub error: SharedString,
     is_local: bool,
     focus_handle: FocusHandle,
 }
 
-impl InvalidBufferView {
+impl InvalidItemView {
     pub fn new(
         abs_path: &Path,
         is_local: bool,
@@ -37,7 +37,7 @@ impl InvalidBufferView {
     }
 }
 
-impl Item for InvalidBufferView {
+impl Item for InvalidItemView {
     type Event = ();
 
     fn tab_content_text(&self, mut detail: usize, _: &App) -> SharedString {
@@ -66,16 +66,16 @@ impl Item for InvalidBufferView {
     }
 }
 
-impl EventEmitter<()> for InvalidBufferView {}
+impl EventEmitter<()> for InvalidItemView {}
 
-impl Focusable for InvalidBufferView {
+impl Focusable for InvalidItemView {
     fn focus_handle(&self, _: &App) -> FocusHandle {
         self.focus_handle.clone()
     }
 }
 
-impl Render for InvalidBufferView {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl gpui::IntoElement {
+impl Render for InvalidItemView {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl gpui::IntoElement {
         let abs_path = self.abs_path.clone();
         v_flex()
             .size_full()
@@ -83,7 +83,7 @@ impl Render for InvalidBufferView {
             .flex_none()
             .justify_center()
             .overflow_hidden()
-            .key_context("InvalidBuffer")
+            .key_context("InvalidItem")
             .child(
                 h_flex().size_full().justify_center().child(
                     v_flex()
@@ -103,11 +103,7 @@ impl Render for InvalidBufferView {
                                             cx.open_with_system(&abs_path);
                                         })
                                         .style(ButtonStyle::Outlined)
-                                        .key_binding(KeyBinding::for_action(
-                                            &OpenWithSystem,
-                                            window,
-                                            cx,
-                                        )),
+                                        .key_binding(KeyBinding::for_action(&OpenWithSystem, cx)),
                                 ),
                             )
                         }),
