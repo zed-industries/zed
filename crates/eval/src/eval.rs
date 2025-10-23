@@ -61,9 +61,22 @@ struct Args {
     /// Maximum number of examples to run concurrently.
     #[arg(long, default_value = "4")]
     concurrency: usize,
+    /// Output current environment variables as JSON to stdout
+    #[arg(long, hide = true)]
+    printenv: bool,
 }
 
 fn main() {
+    let args = Args::parse();
+
+    // This prevents errors showing up in the logs, because
+    // project::environment::load_shell_environment() calls
+    // std::env::current_exe().unwrap() --printenv
+    if args.printenv {
+        util::shell_env::print_env();
+        return;
+    }
+
     dotenvy::from_filename(CARGO_MANIFEST_DIR.join(".env")).ok();
 
     env_logger::init();
@@ -99,7 +112,6 @@ fn main() {
 
     let zed_commit_sha = commit_sha_for_path(&root_dir);
     let zed_branch_name = git_branch_for_path(&root_dir);
-    let args = Args::parse();
     let languages: HashSet<String> = args.languages.into_iter().collect();
 
     let http_client = Arc::new(ReqwestClient::new());
@@ -126,19 +138,20 @@ fn main() {
 
         let mut cumulative_tool_metrics = ToolMetrics::default();
 
-        let agent_model = load_model(&args.model, cx).unwrap();
-        let judge_model = load_model(&args.judge_model, cx).unwrap();
-
-        LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
-            registry.set_default_model(Some(agent_model.clone()), cx);
+        let tasks = LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
+            registry.providers().iter().map(|p| p.authenticate(cx)).collect::<Vec<_>>()
         });
 
-        let auth1 = agent_model.provider.authenticate(cx);
-        let auth2 = judge_model.provider.authenticate(cx);
-
         cx.spawn(async move |cx| {
-            auth1.await?;
-            auth2.await?;
+            future::join_all(tasks).await;
+            let judge_model = cx.update(|cx| {
+                let agent_model = load_model(&args.model, cx).unwrap();
+                let judge_model = load_model(&args.judge_model, cx).unwrap();
+                LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
+                    registry.set_default_model(Some(agent_model.clone()), cx);
+                });
+                judge_model
+            })?;
 
             let mut examples = Vec::new();
 
@@ -268,7 +281,6 @@ fn main() {
 
             future::join_all((0..args.concurrency).map(|_| {
                 let app_state = app_state.clone();
-                let model = agent_model.model.clone();
                 let judge_model = judge_model.model.clone();
                 let zed_commit_sha = zed_commit_sha.clone();
                 let zed_branch_name = zed_branch_name.clone();
@@ -283,7 +295,7 @@ fn main() {
                         let result = async {
                             example.setup().await?;
                             let run_output = cx
-                                .update(|cx| example.run(model.clone(), app_state.clone(), cx))?
+                                .update(|cx| example.run(app_state.clone(), cx))?
                                 .await?;
                             let judge_output = judge_example(
                                 example.clone(),
@@ -429,7 +441,6 @@ pub fn init(cx: &mut App) -> Arc<AgentAppState> {
         true,
         cx,
     );
-    assistant_tools::init(client.http_client(), cx);
 
     SettingsStore::update_global(cx, |store, cx| {
         store.set_user_settings(include_str!("../runner_settings.json"), cx)
@@ -525,7 +536,6 @@ async fn judge_example(
             diff_evaluation = judge_output.diff.clone(),
             thread_evaluation = judge_output.thread,
             tool_metrics = run_output.tool_metrics,
-            response_count = run_output.response_count,
             token_usage = run_output.token_usage,
             model = model.telemetry_id(),
             model_provider = model.provider_id().to_string(),

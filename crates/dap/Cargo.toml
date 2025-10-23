@@ -49,7 +49,6 @@ smol.workspace = true
 task.workspace = true
 telemetry.workspace = true
 util.workspace = true
-workspace-hack.workspace = true
 
 [target.'cfg(not(windows))'.dependencies]
 libc.workspace = true

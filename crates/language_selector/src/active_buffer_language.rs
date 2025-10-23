@@ -1,11 +1,12 @@
-use editor::{Editor, EditorSettings};
+use editor::Editor;
 use gpui::{
-    Context, Entity, IntoElement, ParentElement, Render, Subscription, WeakEntity, Window, div,
+    Context, Entity, IntoElement, ParentElement, Render, Styled, Subscription, WeakEntity, Window,
+    div,
 };
 use language::LanguageName;
 use settings::Settings as _;
 use ui::{Button, ButtonCommon, Clickable, FluentBuilder, LabelSize, Tooltip};
-use workspace::{StatusItemView, Workspace, item::ItemHandle};
+use workspace::{StatusBarSettings, StatusItemView, Workspace, item::ItemHandle};
 
 use crate::{LanguageSelector, Toggle};
 
@@ -40,11 +41,8 @@ impl ActiveBufferLanguage {
 
 impl Render for ActiveBufferLanguage {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if !EditorSettings::get_global(cx)
-            .status_bar
-            .active_language_button
-        {
-            return div();
+        if !StatusBarSettings::get_global(cx).active_language_button {
+            return div().hidden();
         }
 
         div().when_some(self.active_language.as_ref(), |el, active_language| {
@@ -64,9 +62,7 @@ impl Render for ActiveBufferLanguage {
                             });
                         }
                     }))
-                    .tooltip(|window, cx| {
-                        Tooltip::for_action("Select Language", &Toggle, window, cx)
-                    }),
+                    .tooltip(|_window, cx| Tooltip::for_action("Select Language", &Toggle, cx)),
             )
         })
     }

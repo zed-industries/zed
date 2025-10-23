@@ -20,4 +20,3 @@ anyhow.workspace = true
 schemars = { workspace = true, optional = true }
 serde.workspace = true
 strum.workspace = true
-workspace-hack.workspace = true

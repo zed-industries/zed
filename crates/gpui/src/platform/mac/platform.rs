@@ -187,7 +187,7 @@ impl Default for MacPlatform {
 
 impl MacPlatform {
     pub(crate) fn new(headless: bool) -> Self {
-        let dispatcher = Arc::new(MacDispatcher::new());
+        let dispatcher = Arc::new(MacDispatcher);
 
         #[cfg(feature = "font-kit")]
         let text_system = Arc::new(crate::MacTextSystem::new());
@@ -543,6 +543,10 @@ impl Platform for MacPlatform {
             open "$1"
         "#;
 
+        #[allow(
+            clippy::disallowed_methods,
+            reason = "We are restarting ourselves, using std command thus is fine"
+        )]
         let restart_process = Command::new("/bin/bash")
             .arg("-c")
             .arg(script)
@@ -855,11 +859,14 @@ impl Platform for MacPlatform {
             .lock()
             .background_executor
             .spawn(async move {
-                let _ = std::process::Command::new("open")
+                if let Some(mut child) = smol::process::Command::new("open")
                     .arg(path)
                     .spawn()
                     .context("invoking open command")
-                    .log_err();
+                    .log_err()
+                {
+                    child.status().await.log_err();
+                }
             })
             .detach();
     }
@@ -1600,6 +1607,7 @@ impl From<ImageFormat> for UTType {
             ImageFormat::Gif => Self::gif(),
             ImageFormat::Bmp => Self::bmp(),
             ImageFormat::Svg => Self::svg(),
+            ImageFormat::Ico => Self::ico(),
         }
     }
 }
@@ -1636,6 +1644,11 @@ impl UTType {
     pub fn svg() -> Self {
         // https://developer.apple.com/documentation/uniformtypeidentifiers/uttype-swift.struct/svg
         Self(unsafe { ns_string("public.svg-image") })
+    }
+
+    pub fn ico() -> Self {
+        // https://developer.apple.com/documentation/uniformtypeidentifiers/uttype-swift.struct/ico
+        Self(unsafe { ns_string("com.microsoft.ico") })
     }
 
     pub fn tiff() -> Self {

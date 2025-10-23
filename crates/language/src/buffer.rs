@@ -1,7 +1,7 @@
 use crate::{
     DebuggerTextObject, LanguageScope, Outline, OutlineConfig, RunnableCapture, RunnableTag,
     TextObject, TreeSitterOptions,
-    diagnostic_set::{DiagnosticEntry, DiagnosticGroup},
+    diagnostic_set::{DiagnosticEntry, DiagnosticEntryRef, DiagnosticGroup},
     language_settings::{LanguageSettings, language_settings},
     outline::OutlineItem,
     syntax_map::{
@@ -18,8 +18,8 @@ pub use crate::{
     proto,
 };
 use anyhow::{Context as _, Result};
+use clock::Lamport;
 pub use clock::ReplicaId;
-use clock::{AGENT_REPLICA_ID, Lamport};
 use collections::HashMap;
 use fs::MTime;
 use futures::channel::oneshot;
@@ -41,13 +41,12 @@ use std::{
     cell::Cell,
     cmp::{self, Ordering, Reverse},
     collections::{BTreeMap, BTreeSet},
-    ffi::OsStr,
     future::Future,
     iter::{self, Iterator, Peekable},
     mem,
     num::NonZeroU32,
     ops::{Deref, Range},
-    path::{Path, PathBuf},
+    path::PathBuf,
     rc,
     sync::{Arc, LazyLock},
     time::{Duration, Instant},
@@ -65,7 +64,7 @@ pub use text::{
 use theme::{ActiveTheme as _, SyntaxTheme};
 #[cfg(any(test, feature = "test-support"))]
 use util::RandomCharIter;
-use util::{RangeExt, debug_panic, maybe};
+use util::{RangeExt, debug_panic, maybe, paths::PathStyle, rel_path::RelPath};
 
 #[cfg(any(test, feature = "test-support"))]
 pub use {tree_sitter_python, tree_sitter_rust, tree_sitter_typescript};
@@ -349,15 +348,18 @@ pub trait File: Send + Sync + Any {
     fn disk_state(&self) -> DiskState;
 
     /// Returns the path of this file relative to the worktree's root directory.
-    fn path(&self) -> &Arc<Path>;
+    fn path(&self) -> &Arc<RelPath>;
 
     /// Returns the path of this file relative to the worktree's parent directory (this means it
     /// includes the name of the worktree's root folder).
     fn full_path(&self, cx: &App) -> PathBuf;
 
+    /// Returns the path style of this file.
+    fn path_style(&self, cx: &App) -> PathStyle;
+
     /// Returns the last component of this handle's absolute path. If this handle refers to the root
     /// of its worktree, then this method will return the name of the worktree itself.
-    fn file_name<'a>(&'a self, cx: &'a App) -> &'a OsStr;
+    fn file_name<'a>(&'a self, cx: &'a App) -> &'a str;
 
     /// Returns the id of the worktree to which this file belongs.
     ///
@@ -504,15 +506,15 @@ pub struct Chunk<'a> {
     pub highlight_style: Option<HighlightStyle>,
     /// The severity of diagnostic associated with this chunk, if any.
     pub diagnostic_severity: Option<DiagnosticSeverity>,
-    /// Whether this chunk of text is marked as unnecessary.
-    pub is_unnecessary: bool,
-    /// Whether this chunk of text was originally a tab character.
-    pub is_tab: bool,
     /// A bitset of which characters are tabs in this string.
     pub tabs: u128,
     /// Bitmap of character indices in this chunk
     pub chars: u128,
+    /// Whether this chunk of text is marked as unnecessary.
+    pub is_unnecessary: bool,
     /// Whether this chunk of text was originally a tab character.
+    pub is_tab: bool,
+    /// Whether this chunk of text was originally an inlay.
     pub is_inlay: bool,
     /// Whether to underline the corresponding text range in the editor.
     pub underline: bool,
@@ -579,7 +581,7 @@ pub struct HighlightedText {
 #[derive(Default, Debug)]
 struct HighlightedTextBuilder {
     pub text: String,
-    pub highlights: Vec<(Range<usize>, HighlightStyle)>,
+    highlights: Vec<(Range<usize>, HighlightStyle)>,
 }
 
 impl HighlightedText {
@@ -622,10 +624,11 @@ impl HighlightedText {
         let preview_highlights = self
             .highlights
             .into_iter()
+            .skip_while(|(range, _)| range.end <= preview_start_ix)
             .take_while(|(range, _)| range.start < newline_ix)
             .filter_map(|(mut range, highlight)| {
                 range.start = range.start.saturating_sub(preview_start_ix);
-                range.end = range.end.saturating_sub(preview_start_ix).min(newline_ix);
+                range.end = range.end.min(newline_ix).saturating_sub(preview_start_ix);
                 if range.is_empty() {
                     None
                 } else {
@@ -825,7 +828,11 @@ impl Buffer {
     /// Create a new buffer with the given base text.
     pub fn local<T: Into<String>>(base_text: T, cx: &Context<Self>) -> Self {
         Self::build(
-            TextBuffer::new(0, cx.entity_id().as_non_zero_u64().into(), base_text.into()),
+            TextBuffer::new(
+                ReplicaId::LOCAL,
+                cx.entity_id().as_non_zero_u64().into(),
+                base_text.into(),
+            ),
             None,
             Capability::ReadWrite,
         )
@@ -839,7 +846,7 @@ impl Buffer {
     ) -> Self {
         Self::build(
             TextBuffer::new_normalized(
-                0,
+                ReplicaId::LOCAL,
                 cx.entity_id().as_non_zero_u64().into(),
                 line_ending,
                 base_text_normalized,
@@ -988,10 +995,10 @@ impl Buffer {
             language: None,
             remote_selections: Default::default(),
             diagnostics: Default::default(),
-            diagnostics_timestamp: Default::default(),
+            diagnostics_timestamp: Lamport::MIN,
             completion_triggers: Default::default(),
             completion_triggers_per_language_server: Default::default(),
-            completion_triggers_timestamp: Default::default(),
+            completion_triggers_timestamp: Lamport::MIN,
             deferred_ops: OperationQueue::new(),
             has_conflict: false,
             change_bits: Default::default(),
@@ -1009,7 +1016,8 @@ impl Buffer {
         let buffer_id = entity_id.as_non_zero_u64().into();
         async move {
             let text =
-                TextBuffer::new_normalized(0, buffer_id, Default::default(), text).snapshot();
+                TextBuffer::new_normalized(ReplicaId::LOCAL, buffer_id, Default::default(), text)
+                    .snapshot();
             let mut syntax = SyntaxMap::new(&text).snapshot();
             if let Some(language) = language.clone() {
                 let language_registry = language_registry.clone();
@@ -1030,8 +1038,13 @@ impl Buffer {
     pub fn build_empty_snapshot(cx: &mut App) -> BufferSnapshot {
         let entity_id = cx.reserve_entity::<Self>().entity_id();
         let buffer_id = entity_id.as_non_zero_u64().into();
-        let text =
-            TextBuffer::new_normalized(0, buffer_id, Default::default(), Rope::new()).snapshot();
+        let text = TextBuffer::new_normalized(
+            ReplicaId::LOCAL,
+            buffer_id,
+            Default::default(),
+            Rope::new(),
+        )
+        .snapshot();
         let syntax = SyntaxMap::new(&text).snapshot();
         BufferSnapshot {
             text,
@@ -1053,7 +1066,9 @@ impl Buffer {
     ) -> BufferSnapshot {
         let entity_id = cx.reserve_entity::<Self>().entity_id();
         let buffer_id = entity_id.as_non_zero_u64().into();
-        let text = TextBuffer::new_normalized(0, buffer_id, Default::default(), text).snapshot();
+        let text =
+            TextBuffer::new_normalized(ReplicaId::LOCAL, buffer_id, Default::default(), text)
+                .snapshot();
         let mut syntax = SyntaxMap::new(&text).snapshot();
         if let Some(language) = language.clone() {
             syntax.reparse(&text, language_registry, language);
@@ -1310,9 +1325,8 @@ impl Buffer {
         mtime: Option<MTime>,
         cx: &mut Context<Self>,
     ) {
-        self.saved_version = version;
-        self.has_unsaved_edits
-            .set((self.saved_version().clone(), false));
+        self.saved_version = version.clone();
+        self.has_unsaved_edits.set((version, false));
         self.has_conflict = false;
         self.saved_mtime = mtime;
         self.was_changed();
@@ -2064,12 +2078,15 @@ impl Buffer {
         }
     }
 
+    /// Set the change bit for all "listeners".
     fn was_changed(&mut self) {
         self.change_bits.retain(|change_bit| {
-            change_bit.upgrade().is_some_and(|bit| {
-                bit.replace(true);
-                true
-            })
+            change_bit
+                .upgrade()
+                .inspect(|bit| {
+                    _ = bit.replace(true);
+                })
+                .is_some()
         });
     }
 
@@ -2258,7 +2275,7 @@ impl Buffer {
     ) {
         let lamport_timestamp = self.text.lamport_clock.tick();
         self.remote_selections.insert(
-            AGENT_REPLICA_ID,
+            ReplicaId::AGENT,
             SelectionSet {
                 selections,
                 lamport_timestamp,
@@ -2915,7 +2932,7 @@ impl Buffer {
 
             edits.push((range, new_text));
         }
-        log::info!("mutating buffer {} with {:?}", self.replica_id(), edits);
+        log::info!("mutating buffer {:?} with {:?}", self.replica_id(), edits);
         self.edit(edits, None, cx);
     }
 
@@ -4517,7 +4534,7 @@ impl BufferSnapshot {
         &'a self,
         search_range: Range<T>,
         reversed: bool,
-    ) -> impl 'a + Iterator<Item = DiagnosticEntry<O>>
+    ) -> impl 'a + Iterator<Item = DiagnosticEntryRef<'a, O>>
     where
         T: 'a + Clone + ToOffset,
         O: 'a + FromAnchor,
@@ -4550,11 +4567,13 @@ impl BufferSnapshot {
                 })?;
             iterators[next_ix]
                 .next()
-                .map(|DiagnosticEntry { range, diagnostic }| DiagnosticEntry {
-                    diagnostic,
-                    range: FromAnchor::from_anchor(&range.start, self)
-                        ..FromAnchor::from_anchor(&range.end, self),
-                })
+                .map(
+                    |DiagnosticEntryRef { range, diagnostic }| DiagnosticEntryRef {
+                        diagnostic,
+                        range: FromAnchor::from_anchor(&range.start, self)
+                            ..FromAnchor::from_anchor(&range.end, self),
+                    },
+                )
         })
     }
 
@@ -4570,7 +4589,7 @@ impl BufferSnapshot {
     pub fn diagnostic_groups(
         &self,
         language_server_id: Option<LanguageServerId>,
-    ) -> Vec<(LanguageServerId, DiagnosticGroup<Anchor>)> {
+    ) -> Vec<(LanguageServerId, DiagnosticGroup<'_, Anchor>)> {
         let mut groups = Vec::new();
 
         if let Some(language_server_id) = language_server_id {
@@ -4601,7 +4620,7 @@ impl BufferSnapshot {
     pub fn diagnostic_group<O>(
         &self,
         group_id: usize,
-    ) -> impl Iterator<Item = DiagnosticEntry<O>> + '_
+    ) -> impl Iterator<Item = DiagnosticEntryRef<'_, O>> + use<'_, O>
     where
         O: FromAnchor + 'static,
     {
@@ -4626,13 +4645,12 @@ impl BufferSnapshot {
         self.file.as_ref()
     }
 
-    /// Resolves the file path (relative to the worktree root) associated with the underlying file.
-    pub fn resolve_file_path(&self, cx: &App, include_root: bool) -> Option<PathBuf> {
+    pub fn resolve_file_path(&self, include_root: bool, cx: &App) -> Option<String> {
         if let Some(file) = self.file() {
             if file.path().file_name().is_none() || include_root {
-                Some(file.full_path(cx))
+                Some(file.full_path(cx).to_string_lossy().into_owned())
             } else {
-                Some(file.path().to_path_buf())
+                Some(file.path().display(file.path_style(cx)).to_string())
             }
         } else {
             None
@@ -4967,7 +4985,7 @@ impl<'a> Iterator for BufferChunks<'a> {
             text: chunk,
             chars: chars_map,
             tabs,
-        }) = self.chunks.peek_tabs()
+        }) = self.chunks.peek_with_bitmaps()
         {
             let chunk_start = self.range.start;
             let mut chunk_end = (self.chunks.offset() + chunk.len())
@@ -4980,18 +4998,14 @@ impl<'a> Iterator for BufferChunks<'a> {
                 chunk_end = chunk_end.min(*parent_capture_end);
                 highlight_id = Some(*parent_highlight_id);
             }
-
-            let slice =
-                &chunk[chunk_start - self.chunks.offset()..chunk_end - self.chunks.offset()];
+            let bit_start = chunk_start - self.chunks.offset();
             let bit_end = chunk_end - self.chunks.offset();
 
-            let mask = if bit_end >= 128 {
-                u128::MAX
-            } else {
-                (1u128 << bit_end) - 1
-            };
-            let tabs = (tabs >> (chunk_start - self.chunks.offset())) & mask;
-            let chars_map = (chars_map >> (chunk_start - self.chunks.offset())) & mask;
+            let slice = &chunk[bit_start..bit_end];
+
+            let mask = 1u128.unbounded_shl(bit_end as u32).wrapping_sub(1);
+            let tabs = (tabs >> bit_start) & mask;
+            let chars = (chars_map >> bit_start) & mask;
 
             self.range.start = chunk_end;
             if self.range.start == self.chunks.offset() + chunk.len() {
@@ -5005,7 +5019,7 @@ impl<'a> Iterator for BufferChunks<'a> {
                 diagnostic_severity: self.current_diagnostic_severity(),
                 is_unnecessary: self.current_code_is_unnecessary(),
                 tabs,
-                chars: chars_map,
+                chars,
                 ..Chunk::default()
             })
         } else {
@@ -5117,19 +5131,19 @@ impl IndentSize {
 
 #[cfg(any(test, feature = "test-support"))]
 pub struct TestFile {
-    pub path: Arc<Path>,
+    pub path: Arc<RelPath>,
     pub root_name: String,
     pub local_root: Option<PathBuf>,
 }
 
 #[cfg(any(test, feature = "test-support"))]
 impl File for TestFile {
-    fn path(&self) -> &Arc<Path> {
+    fn path(&self) -> &Arc<RelPath> {
         &self.path
     }
 
     fn full_path(&self, _: &gpui::App) -> PathBuf {
-        PathBuf::from(&self.root_name).join(self.path.as_ref())
+        PathBuf::from(self.root_name.clone()).join(self.path.as_std_path())
     }
 
     fn as_local(&self) -> Option<&dyn LocalFile> {
@@ -5144,7 +5158,7 @@ impl File for TestFile {
         unimplemented!()
     }
 
-    fn file_name<'a>(&'a self, _: &'a gpui::App) -> &'a std::ffi::OsStr {
+    fn file_name<'a>(&'a self, _: &'a gpui::App) -> &'a str {
         self.path().file_name().unwrap_or(self.root_name.as_ref())
     }
 
@@ -5159,6 +5173,10 @@ impl File for TestFile {
     fn is_private(&self) -> bool {
         false
     }
+
+    fn path_style(&self, _cx: &App) -> PathStyle {
+        PathStyle::local()
+    }
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -5166,7 +5184,7 @@ impl LocalFile for TestFile {
     fn abs_path(&self, _cx: &App) -> PathBuf {
         PathBuf::from(self.local_root.as_ref().unwrap())
             .join(&self.root_name)
-            .join(self.path.as_ref())
+            .join(self.path.as_std_path())
     }
 
     fn load(&self, _cx: &App) -> Task<Result<String>> {

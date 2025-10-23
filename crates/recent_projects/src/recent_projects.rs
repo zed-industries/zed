@@ -311,8 +311,7 @@ impl PickerDelegate for RecentProjectsDelegate {
             .filter(|(_, (id, _, _))| !self.is_current_workspace(*id, cx))
             .map(|(id, (_, _, paths))| {
                 let combined_string = paths
-                    .paths()
-                    .iter()
+                    .ordered_paths()
                     .map(|path| path.compact().to_string_lossy().into_owned())
                     .collect::<Vec<_>>()
                     .join("");
@@ -328,7 +327,12 @@ impl PickerDelegate for RecentProjectsDelegate {
             &Default::default(),
             cx.background_executor().clone(),
         ));
-        self.matches.sort_unstable_by_key(|m| m.candidate_id);
+        self.matches.sort_unstable_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score) // Descending score
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| a.candidate_id.cmp(&b.candidate_id)) // Ascending candidate_id for ties
+        });
 
         if self.reset_selected_match_index {
             self.selected_match_index = self
@@ -457,8 +461,7 @@ impl PickerDelegate for RecentProjectsDelegate {
         let mut path_start_offset = 0;
 
         let (match_labels, paths): (Vec<_>, Vec<_>) = paths
-            .paths()
-            .iter()
+            .ordered_paths()
             .map(|p| p.compact())
             .map(|path| {
                 let highlighted_text =
@@ -468,7 +471,15 @@ impl PickerDelegate for RecentProjectsDelegate {
             })
             .unzip();
 
+        let prefix = match &location {
+            SerializedWorkspaceLocation::Remote(RemoteConnectionOptions::Wsl(wsl)) => {
+                Some(SharedString::from(&wsl.distro_name))
+            }
+            _ => None,
+        };
+
         let highlighted_match = HighlightedMatchWithPaths {
+            prefix,
             match_label: HighlightedMatch::join(match_labels.into_iter().flatten(), ", "),
             paths,
         };
@@ -536,11 +547,7 @@ impl PickerDelegate for RecentProjectsDelegate {
         )
     }
 
-    fn render_footer(
-        &self,
-        window: &mut Window,
-        cx: &mut Context<Picker<Self>>,
-    ) -> Option<AnyElement> {
+    fn render_footer(&self, _: &mut Window, cx: &mut Context<Picker<Self>>) -> Option<AnyElement> {
         Some(
             h_flex()
                 .w_full()
@@ -556,7 +563,6 @@ impl PickerDelegate for RecentProjectsDelegate {
                                 from_existing_connection: false,
                                 create_new_window: false,
                             },
-                            window,
                             cx,
                         ))
                         .on_click(|_, window, cx| {
@@ -572,7 +578,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                 )
                 .child(
                     Button::new("local", "Open Local Folder")
-                        .key_binding(KeyBinding::for_action(&workspace::Open, window, cx))
+                        .key_binding(KeyBinding::for_action(&workspace::Open, cx))
                         .on_click(|_, window, cx| {
                             window.dispatch_action(workspace::Open.boxed_clone(), cx)
                         }),
@@ -604,7 +610,7 @@ fn highlights_for_path(
     // Again subset the highlight positions to just those that line up with the file_name
     // again adjusted to the start of the file_name
     let file_name_text_and_positions = path.file_name().map(|file_name| {
-        let file_name_text = file_name.to_string_lossy().to_string();
+        let file_name_text = file_name.to_string_lossy().into_owned();
         let file_name_start_byte = path_byte_len - file_name_text.len();
         let highlight_positions = path_positions
             .iter()
@@ -683,8 +689,8 @@ struct MatchTooltip {
 }
 
 impl Render for MatchTooltip {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        tooltip_container(window, cx, |div, _, _| {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        tooltip_container(cx, |div, _| {
             self.highlighted_location.render_paths_children(div)
         })
     }

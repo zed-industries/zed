@@ -8,7 +8,7 @@
 - [Linux](./linux.md)
 - [Windows](./windows.md)
 - [Telemetry](./telemetry.md)
-- [Workspace Persistence](./workspace-persistence.md)
+- [Troubleshooting](./troubleshooting.md)
 - [Additional Learning Materials](./additional-learning-materials.md)
 
 # Configuration
@@ -58,9 +58,9 @@
   - [LLM Providers](./ai/llm-providers.md)
   - [Agent Settings](./ai/agent-settings.md)
 - [Subscription](./ai/subscription.md)
+  - [Models](./ai/models.md)
   - [Plans and Usage](./ai/plans-and-usage.md)
   - [Billing](./ai/billing.md)
-  - [Models](./ai/models.md)
 - [Privacy and Security](./ai/privacy-and-security.md)
   - [AI Improvement](./ai/ai-improvement.md)
 
@@ -160,4 +160,5 @@
   - [Using Debuggers](./development/debuggers.md)
   - [Glossary](./development/glossary.md)
 - [Release Process](./development/releases.md)
+- [Release Notes](./development/release-notes.md)
 - [Debugging Crashes](./development/debugging-crashes.md)

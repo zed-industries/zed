@@ -416,7 +416,12 @@ message Envelope {
         StashDrop stash_drop = 378;
         StashApply stash_apply = 379;
 
-        GitRenameBranch git_rename_branch = 380; // current max
+        GitRenameBranch git_rename_branch = 380;
+
+        RemoteStarted remote_started = 381;
+
+        GetDirectoryEnvironment get_directory_environment = 382;
+        DirectoryEnvironment directory_environment = 383; // current max
     }
 
     reserved 87 to 88;
@@ -490,3 +495,5 @@ message Test {
 message FlushBufferedMessages {}
 
 message FlushBufferedMessagesResponse {}
+
+message RemoteStarted {}

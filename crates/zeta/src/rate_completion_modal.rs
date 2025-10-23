@@ -382,11 +382,7 @@ impl RateCompletionModal {
         )
     }
 
-    fn render_active_completion(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Option<impl IntoElement> {
+    fn render_active_completion(&mut self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
         let active_completion = self.active_completion.as_ref()?;
         let completion_id = active_completion.completion.id;
         let focus_handle = &self.focus_handle(cx);
@@ -500,7 +496,6 @@ impl RateCompletionModal {
                                         .key_binding(KeyBinding::for_action_in(
                                             &ThumbsDownActiveCompletion,
                                             focus_handle,
-                                            window,
                                             cx
                                         ))
                                         .on_click(cx.listener(move |this, _, window, cx| {
@@ -521,7 +516,6 @@ impl RateCompletionModal {
                                         .key_binding(KeyBinding::for_action_in(
                                             &ThumbsUpActiveCompletion,
                                             focus_handle,
-                                            window,
                                             cx
                                         ))
                                         .on_click(cx.listener(move |this, _, window, cx| {
@@ -619,8 +613,8 @@ impl Render for RateCompletionModal {
                                                 (false, false) => (IconName::FileDiff, Color::Accent, "Edits Available"),
                                             };
 
-                                            let file_name = completion.path.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or("untitled".to_string());
-                                            let file_path = completion.path.parent().map(|p| p.to_string_lossy().to_string());
+                                            let file_name = completion.path.file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or("untitled".to_string());
+                                            let file_path = completion.path.parent().map(|p| p.to_string_lossy().into_owned());
 
                                             ListItem::new(completion.id)
                                                 .inset(true)
@@ -658,7 +652,7 @@ impl Render for RateCompletionModal {
                             )
                     ),
             )
-            .children(self.render_active_completion(window, cx))
+            .children(self.render_active_completion( cx))
             .on_mouse_down_out(cx.listener(|_, _, _, cx| cx.emit(DismissEvent)))
     }
 }

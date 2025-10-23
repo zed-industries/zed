@@ -18,7 +18,7 @@ impl BurnModeTooltip {
 }
 
 impl Render for BurnModeTooltip {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let (icon, color) = if self.selected {
             (IconName::ZedBurnModeOn, Color::Error)
         } else {
@@ -45,16 +45,15 @@ impl Render for BurnModeTooltip {
             .child(Label::new("Burn Mode"))
             .when(self.selected, |title| title.child(turned_on));
 
-        let keybinding = KeyBinding::for_action(&ToggleBurnMode, window, cx)
-            .map(|kb| kb.size(rems_from_px(12.)));
+        let keybinding = KeyBinding::for_action(&ToggleBurnMode, cx).size(rems_from_px(12.));
 
-        tooltip_container(window, cx, |this, _, _| {
+        tooltip_container(cx, |this, _| {
             this
                 .child(
                     h_flex()
                         .justify_between()
                         .child(title)
-                        .children(keybinding)
+                        .child(keybinding)
                 )
                 .child(
                     div()

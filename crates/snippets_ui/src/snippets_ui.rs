@@ -221,15 +221,19 @@ impl PickerDelegate for ScopeSelectorDelegate {
 
                     workspace.update_in(cx, |workspace, window, cx| {
                         workspace
-                            .open_abs_path(
-                                snippets_dir().join(scope_file_name.with_extension()),
-                                OpenOptions {
-                                    visible: Some(OpenVisible::None),
-                                    ..Default::default()
-                                },
-                                window,
-                                cx,
-                            )
+                            .with_local_workspace(window, cx, |workspace, window, cx| {
+                                workspace
+                                    .open_abs_path(
+                                        snippets_dir().join(scope_file_name.with_extension()),
+                                        OpenOptions {
+                                            visible: Some(OpenVisible::None),
+                                            ..Default::default()
+                                        },
+                                        window,
+                                        cx,
+                                    )
+                                    .detach();
+                            })
                             .detach();
                     })
                 })

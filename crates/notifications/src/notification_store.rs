@@ -123,14 +123,16 @@ impl NotificationStore {
             return None;
         }
         let ix = count - 1 - ix;
-        let mut cursor = self.notifications.cursor::<Count>(&());
-        cursor.seek(&Count(ix), Bias::Right);
-        cursor.item()
+        let (.., item) = self
+            .notifications
+            .find::<Count, _>((), &Count(ix), Bias::Right);
+        item
     }
     pub fn notification_for_id(&self, id: u64) -> Option<&NotificationEntry> {
-        let mut cursor = self.notifications.cursor::<NotificationId>(&());
-        cursor.seek(&NotificationId(id), Bias::Left);
-        if let Some(item) = cursor.item()
+        let (.., item) =
+            self.notifications
+                .find::<NotificationId, _>((), &NotificationId(id), Bias::Left);
+        if let Some(item) = item
             && item.id == id
         {
             return Some(item);
@@ -297,12 +299,12 @@ impl NotificationStore {
     ) {
         let mut cursor = self
             .notifications
-            .cursor::<Dimensions<NotificationId, Count>>(&());
+            .cursor::<Dimensions<NotificationId, Count>>(());
         let mut new_notifications = SumTree::default();
         let mut old_range = 0..0;
 
         for (i, (id, new_notification)) in notifications.into_iter().enumerate() {
-            new_notifications.append(cursor.slice(&NotificationId(id), Bias::Left), &());
+            new_notifications.append(cursor.slice(&NotificationId(id), Bias::Left), ());
 
             if i == 0 {
                 old_range.start = cursor.start().1.0;
@@ -334,13 +336,13 @@ impl NotificationStore {
             }
 
             if let Some(notification) = new_notification {
-                new_notifications.push(notification, &());
+                new_notifications.push(notification, ());
             }
         }
 
         old_range.end = cursor.start().1.0;
         let new_count = new_notifications.summary().count - old_range.start;
-        new_notifications.append(cursor.suffix(), &());
+        new_notifications.append(cursor.suffix(), ());
         drop(cursor);
 
         self.notifications = new_notifications;
@@ -381,7 +383,7 @@ impl EventEmitter<NotificationEvent> for NotificationStore {}
 impl sum_tree::Item for NotificationEntry {
     type Summary = NotificationSummary;
 
-    fn summary(&self, _cx: &()) -> Self::Summary {
+    fn summary(&self, _cx: ()) -> Self::Summary {
         NotificationSummary {
             max_id: self.id,
             count: 1,
@@ -390,14 +392,12 @@ impl sum_tree::Item for NotificationEntry {
     }
 }
 
-impl sum_tree::Summary for NotificationSummary {
-    type Context = ();
-
-    fn zero(_cx: &()) -> Self {
+impl sum_tree::ContextLessSummary for NotificationSummary {
+    fn zero() -> Self {
         Default::default()
     }
 
-    fn add_summary(&mut self, summary: &Self, _: &()) {
+    fn add_summary(&mut self, summary: &Self) {
         self.max_id = self.max_id.max(summary.max_id);
         self.count += summary.count;
         self.unread_count += summary.unread_count;
@@ -405,22 +405,22 @@ impl sum_tree::Summary for NotificationSummary {
 }
 
 impl sum_tree::Dimension<'_, NotificationSummary> for NotificationId {
-    fn zero(_cx: &()) -> Self {
+    fn zero(_cx: ()) -> Self {
         Default::default()
     }
 
-    fn add_summary(&mut self, summary: &NotificationSummary, _: &()) {
+    fn add_summary(&mut self, summary: &NotificationSummary, _: ()) {
         debug_assert!(summary.max_id > self.0);
         self.0 = summary.max_id;
     }
 }
 
 impl sum_tree::Dimension<'_, NotificationSummary> for Count {
-    fn zero(_cx: &()) -> Self {
+    fn zero(_cx: ()) -> Self {
         Default::default()
     }
 
-    fn add_summary(&mut self, summary: &NotificationSummary, _: &()) {
+    fn add_summary(&mut self, summary: &NotificationSummary, _: ()) {
         self.0 += summary.count;
     }
 }
