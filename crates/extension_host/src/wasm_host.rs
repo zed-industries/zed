@@ -30,12 +30,14 @@ use node_runtime::NodeRuntime;
 use release_channel::ReleaseChannel;
 use semantic_version::SemanticVersion;
 use settings::Settings;
-use std::borrow::Cow;
-use std::sync::{LazyLock, OnceLock};
-use std::time::Duration;
 use std::{
+    borrow::Cow,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{
+        Arc, LazyLock, OnceLock,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Duration,
 };
 use task::{DebugScenario, SpawnInTerminal, TaskTemplate, ZedDebugConfig};
 use util::paths::SanitizedPath;
@@ -495,6 +497,11 @@ pub struct WasmState {
     pub(crate) capability_granter: CapabilityGranter,
 }
 
+std::thread_local! {
+    /// Used by the crash handler to ignore panics in extension-related threads.
+    pub static IS_WASM_THREAD: AtomicBool = const { AtomicBool::new(false) };
+}
+
 type MainThreadCall = Box<dyn Send + for<'a> FnOnce(&'a mut AsyncApp) -> LocalBoxFuture<'a, ()>>;
 
 type ExtensionCall = Box<
@@ -529,6 +536,7 @@ fn wasm_engine(executor: &BackgroundExecutor) -> wasmtime::Engine {
             let engine_ref = engine.weak();
             executor
                 .spawn(async move {
+                    IS_WASM_THREAD.with(|v| v.store(true, Ordering::Release));
                     // Somewhat arbitrary interval, as it isn't a guaranteed interval.
                     // But this is a rough upper bound for how long the extension execution can block on
                     // `Future::poll`.
