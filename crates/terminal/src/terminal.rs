@@ -423,233 +423,232 @@ impl TerminalBuilder {
         completion_tx: Option<Sender<Option<ExitStatus>>>,
         cx: &App,
         activation_script: Vec<String>,
-    ) -> Task<Result<TerminalBuilder>> {
-        let version = release_channel::AppVersion::global(cx);
-        cx.background_spawn(async move {
-            // If the parent environment doesn't have a locale set
-            // (As is the case when launched from a .app on MacOS),
-            // and the Project doesn't have a locale set, then
-            // set a fallback for our child environment to use.
-            if std::env::var("LANG").is_err() {
-                env.entry("LANG".to_string())
-                    .or_insert_with(|| "en_US.UTF-8".to_string());
-            }
+    ) -> Result<TerminalBuilder> {
+        // If the parent environment doesn't have a locale set
+        // (As is the case when launched from a .app on MacOS),
+        // and the Project doesn't have a locale set, then
+        // set a fallback for our child environment to use.
+        if std::env::var("LANG").is_err() {
+            env.entry("LANG".to_string())
+                .or_insert_with(|| "en_US.UTF-8".to_string());
+        }
 
-            env.insert("ZED_TERM".to_string(), "true".to_string());
-            env.insert("TERM_PROGRAM".to_string(), "zed".to_string());
-            env.insert("TERM".to_string(), "xterm-256color".to_string());
-            env.insert("COLORTERM".to_string(), "truecolor".to_string());
-            env.insert("TERM_PROGRAM_VERSION".to_string(), version.to_string());
+        env.insert("ZED_TERM".to_string(), "true".to_string());
+        env.insert("TERM_PROGRAM".to_string(), "zed".to_string());
+        env.insert("TERM".to_string(), "xterm-256color".to_string());
+        env.insert("COLORTERM".to_string(), "truecolor".to_string());
+        env.insert(
+            "TERM_PROGRAM_VERSION".to_string(),
+            release_channel::AppVersion::global(cx).to_string(),
+        );
 
-            #[derive(Default)]
-            struct ShellParams {
+        #[derive(Default)]
+        struct ShellParams {
+            program: String,
+            args: Option<Vec<String>>,
+            title_override: Option<SharedString>,
+        }
+
+        impl ShellParams {
+            fn new(
                 program: String,
                 args: Option<Vec<String>>,
                 title_override: Option<SharedString>,
-            }
-
-            impl ShellParams {
-                fn new(
-                    program: String,
-                    args: Option<Vec<String>>,
-                    title_override: Option<SharedString>,
-                ) -> Self {
-                    log::debug!("Using {program} as shell");
-                    Self {
-                        program,
-                        args,
-                        title_override,
-                    }
-                }
-            }
-
-            let shell_params = match shell.clone() {
-                Shell::System => {
-                    if cfg!(windows) {
-                        Some(ShellParams::new(
-                            util::shell::get_windows_system_shell(),
-                            None,
-                            None,
-                        ))
-                    } else {
-                        None
-                    }
-                }
-                Shell::Program(program) => Some(ShellParams::new(program, None, None)),
-                Shell::WithArguments {
+            ) -> Self {
+                log::info!("Using {program} as shell");
+                Self {
                     program,
                     args,
                     title_override,
-                } => Some(ShellParams::new(program, Some(args), title_override)),
-            };
-            let terminal_title_override =
-                shell_params.as_ref().and_then(|e| e.title_override.clone());
+                }
+            }
+        }
 
-            #[cfg(windows)]
-            let shell_program = shell_params.as_ref().map(|params| {
-                use util::ResultExt;
+        let shell_params = match shell.clone() {
+            Shell::System => {
+                if cfg!(windows) {
+                    Some(ShellParams::new(
+                        util::shell::get_windows_system_shell(),
+                        None,
+                        None,
+                    ))
+                } else {
+                    None
+                }
+            }
+            Shell::Program(program) => Some(ShellParams::new(program, None, None)),
+            Shell::WithArguments {
+                program,
+                args,
+                title_override,
+            } => Some(ShellParams::new(program, Some(args), title_override)),
+        };
+        let terminal_title_override = shell_params.as_ref().and_then(|e| e.title_override.clone());
 
-                Self::resolve_path(&params.program)
-                    .log_err()
-                    .unwrap_or(params.program.clone())
+        #[cfg(windows)]
+        let shell_program = shell_params.as_ref().map(|params| {
+            use util::ResultExt;
+
+            Self::resolve_path(&params.program)
+                .log_err()
+                .unwrap_or(params.program.clone())
+        });
+
+        // Note: when remoting, this shell_kind will scrutinize `ssh` or
+        // `wsl.exe` as a shell and fall back to posix or powershell based on
+        // the compilation target. This is fine right now due to the restricted
+        // way we use the return value, but would become incorrect if we
+        // supported remoting into windows.
+        let shell_kind = shell.shell_kind(cfg!(windows));
+
+        let pty_options = {
+            let alac_shell = shell_params.as_ref().map(|params| {
+                alacritty_terminal::tty::Shell::new(
+                    params.program.clone(),
+                    params.args.clone().unwrap_or_default(),
+                )
             });
 
-            // Note: when remoting, this shell_kind will scrutinize `ssh` or
-            // `wsl.exe` as a shell and fall back to posix or powershell based on
-            // the compilation target. This is fine right now due to the restricted
-            // way we use the return value, but would become incorrect if we
-            // supported remoting into windows.
-            let shell_kind = shell.shell_kind(cfg!(windows));
-
-            let pty_options = {
-                let alac_shell = shell_params.as_ref().map(|params| {
-                    alacritty_terminal::tty::Shell::new(
-                        params.program.clone(),
-                        params.args.clone().unwrap_or_default(),
-                    )
-                });
-
-                alacritty_terminal::tty::Options {
-                    shell: alac_shell,
-                    working_directory: working_directory.clone(),
-                    drain_on_exit: true,
-                    env: env.clone().into_iter().collect(),
-                    // We do not want to escape arguments if we are using CMD as our shell.
-                    // If we do we end up with too many quotes/escaped quotes for CMD to handle.
-                    #[cfg(windows)]
-                    escape_args: shell_kind != util::shell::ShellKind::Cmd,
-                }
-            };
-
-            let default_cursor_style = AlacCursorStyle::from(cursor_shape);
-            let scrolling_history = if task.is_some() {
-                // Tasks like `cargo build --all` may produce a lot of output, ergo allow maximum scrolling.
-                // After the task finishes, we do not allow appending to that terminal, so small tasks output should not
-                // cause excessive memory usage over time.
-                MAX_SCROLL_HISTORY_LINES
-            } else {
-                max_scroll_history_lines
-                    .unwrap_or(DEFAULT_SCROLL_HISTORY_LINES)
-                    .min(MAX_SCROLL_HISTORY_LINES)
-            };
-            let config = Config {
-                scrolling_history,
-                default_cursor_style,
-                ..Config::default()
-            };
-
-            //Spawn a task so the Alacritty EventLoop can communicate with us
-            //TODO: Remove with a bounded sender which can be dispatched on &self
-            let (events_tx, events_rx) = unbounded();
-            //Set up the terminal...
-            let mut term = Term::new(
-                config.clone(),
-                &TerminalBounds::default(),
-                ZedListener(events_tx.clone()),
-            );
-
-            //Alacritty defaults to alternate scrolling being on, so we just need to turn it off.
-            if let AlternateScroll::Off = alternate_scroll {
-                term.unset_private_mode(PrivateMode::Named(NamedPrivateMode::AlternateScroll));
-            }
-
-            let term = Arc::new(FairMutex::new(term));
-
-            //Setup the pty...
-            let pty = match tty::new(&pty_options, TerminalBounds::default().into(), window_id) {
-                Ok(pty) => pty,
-                Err(error) => {
-                    bail!(TerminalError {
-                        directory: working_directory,
-                        program: shell_params.as_ref().map(|params| params.program.clone()),
-                        args: shell_params.as_ref().and_then(|params| params.args.clone()),
-                        title_override: terminal_title_override,
-                        source: error,
-                    });
-                }
-            };
-
-            let pty_info = PtyProcessInfo::new(&pty);
-
-            //And connect them together
-            let event_loop = EventLoop::new(
-                term.clone(),
-                ZedListener(events_tx),
-                pty,
-                pty_options.drain_on_exit,
-                false,
-            )
-            .context("failed to create event loop")?;
-
-            //Kick things off
-            let pty_tx = event_loop.channel();
-            let _io_thread = event_loop.spawn(); // DANGER
-
-            let no_task = task.is_none();
-
-            let terminal = Terminal {
-                task,
-                terminal_type: TerminalType::Pty {
-                    pty_tx: Notifier(pty_tx),
-                    info: pty_info,
-                },
-                completion_tx,
-                term,
-                term_config: config,
-                title_override: terminal_title_override,
-                events: VecDeque::with_capacity(10), //Should never get this high.
-                last_content: Default::default(),
-                last_mouse: None,
-                matches: Vec::new(),
-                selection_head: None,
-                breadcrumb_text: String::new(),
-                scroll_px: px(0.),
-                next_link_id: 0,
-                selection_phase: SelectionPhase::Ended,
-                hyperlink_regex_searches: RegexSearches::new(),
-                vi_mode_enabled: false,
-                is_ssh_terminal,
-                last_mouse_move_time: Instant::now(),
-                last_hyperlink_search_position: None,
+            alacritty_terminal::tty::Options {
+                shell: alac_shell,
+                working_directory: working_directory.clone(),
+                drain_on_exit: true,
+                env: env.clone().into_iter().collect(),
+                // We do not want to escape arguments if we are using CMD as our shell.
+                // If we do we end up with too many quotes/escaped quotes for CMD to handle.
                 #[cfg(windows)]
-                shell_program,
-                activation_script: activation_script.clone(),
-                template: CopyTemplate {
-                    shell,
-                    env,
-                    cursor_shape,
-                    alternate_scroll,
-                    max_scroll_history_lines,
-                    window_id,
-                },
-                child_exited: None,
-            };
+                escape_args: shell_kind != util::shell::ShellKind::Cmd,
+            }
+        };
 
-            if !activation_script.is_empty() && no_task {
-                for activation_script in activation_script {
-                    terminal.write_to_pty(activation_script.into_bytes());
-                    // Simulate enter key press
-                    // NOTE(PowerShell): using `\r\n` will put PowerShell in a continuation mode (infamous >> character)
-                    // and generally mess up the rendering.
-                    terminal.write_to_pty(b"\x0d");
-                }
-                // In order to clear the screen at this point, we have two options:
-                // 1. We can send a shell-specific command such as "clear" or "cls"
-                // 2. We can "echo" a marker message that we will then catch when handling a Wakeup event
-                //    and clear the screen using `terminal.clear()` method
-                // We cannot issue a `terminal.clear()` command at this point as alacritty is evented
-                // and while we have sent the activation script to the pty, it will be executed asynchronously.
-                // Therefore, we somehow need to wait for the activation script to finish executing before we
-                // can proceed with clearing the screen.
-                terminal.write_to_pty(shell_kind.clear_screen_command().as_bytes());
+        let default_cursor_style = AlacCursorStyle::from(cursor_shape);
+        let scrolling_history = if task.is_some() {
+            // Tasks like `cargo build --all` may produce a lot of output, ergo allow maximum scrolling.
+            // After the task finishes, we do not allow appending to that terminal, so small tasks output should not
+            // cause excessive memory usage over time.
+            MAX_SCROLL_HISTORY_LINES
+        } else {
+            max_scroll_history_lines
+                .unwrap_or(DEFAULT_SCROLL_HISTORY_LINES)
+                .min(MAX_SCROLL_HISTORY_LINES)
+        };
+        let config = Config {
+            scrolling_history,
+            default_cursor_style,
+            ..Config::default()
+        };
+
+        //Spawn a task so the Alacritty EventLoop can communicate with us
+        //TODO: Remove with a bounded sender which can be dispatched on &self
+        let (events_tx, events_rx) = unbounded();
+        //Set up the terminal...
+        let mut term = Term::new(
+            config.clone(),
+            &TerminalBounds::default(),
+            ZedListener(events_tx.clone()),
+        );
+
+        //Alacritty defaults to alternate scrolling being on, so we just need to turn it off.
+        if let AlternateScroll::Off = alternate_scroll {
+            term.unset_private_mode(PrivateMode::Named(NamedPrivateMode::AlternateScroll));
+        }
+
+        let term = Arc::new(FairMutex::new(term));
+
+        //Setup the pty...
+        let pty = match tty::new(&pty_options, TerminalBounds::default().into(), window_id) {
+            Ok(pty) => pty,
+            Err(error) => {
+                bail!(TerminalError {
+                    directory: working_directory,
+                    program: shell_params.as_ref().map(|params| params.program.clone()),
+                    args: shell_params.as_ref().and_then(|params| params.args.clone()),
+                    title_override: terminal_title_override,
+                    source: error,
+                });
+            }
+        };
+
+        let pty_info = PtyProcessInfo::new(&pty);
+
+        //And connect them together
+        let event_loop = EventLoop::new(
+            term.clone(),
+            ZedListener(events_tx),
+            pty,
+            pty_options.drain_on_exit,
+            false,
+        )
+        .context("failed to create event loop")?;
+
+        //Kick things off
+        let pty_tx = event_loop.channel();
+        let _io_thread = event_loop.spawn(); // DANGER
+
+        let no_task = task.is_none();
+
+        let terminal = Terminal {
+            task,
+            terminal_type: TerminalType::Pty {
+                pty_tx: Notifier(pty_tx),
+                info: pty_info,
+            },
+            completion_tx,
+            term,
+            term_config: config,
+            title_override: terminal_title_override,
+            events: VecDeque::with_capacity(10), //Should never get this high.
+            last_content: Default::default(),
+            last_mouse: None,
+            matches: Vec::new(),
+            selection_head: None,
+            breadcrumb_text: String::new(),
+            scroll_px: px(0.),
+            next_link_id: 0,
+            selection_phase: SelectionPhase::Ended,
+            hyperlink_regex_searches: RegexSearches::new(),
+            vi_mode_enabled: false,
+            is_ssh_terminal,
+            last_mouse_move_time: Instant::now(),
+            last_hyperlink_search_position: None,
+            #[cfg(windows)]
+            shell_program,
+            activation_script: activation_script.clone(),
+            template: CopyTemplate {
+                shell,
+                env,
+                cursor_shape,
+                alternate_scroll,
+                max_scroll_history_lines,
+                window_id,
+            },
+            child_exited: None,
+        };
+
+        if !activation_script.is_empty() && no_task {
+            for activation_script in activation_script {
+                terminal.write_to_pty(activation_script.into_bytes());
                 // Simulate enter key press
+                // NOTE(PowerShell): using `\r\n` will put PowerShell in a continuation mode (infamous >> character)
+                // and generally mess up the rendering.
                 terminal.write_to_pty(b"\x0d");
             }
+            // In order to clear the screen at this point, we have two options:
+            // 1. We can send a shell-specific command such as "clear" or "cls"
+            // 2. We can "echo" a marker message that we will then catch when handling a Wakeup event
+            //    and clear the screen using `terminal.clear()` method
+            // We cannot issue a `terminal.clear()` command at this point as alacritty is evented
+            // and while we have sent the activation script to the pty, it will be executed asynchronously.
+            // Therefore, we somehow need to wait for the activation script to finish executing before we
+            // can proceed with clearing the screen.
+            terminal.write_to_pty(shell_kind.clear_screen_command().as_bytes());
+            // Simulate enter key press
+            terminal.write_to_pty(b"\x0d");
+        }
 
-            Ok(TerminalBuilder {
-                terminal,
-                events_rx,
-            })
+        Ok(TerminalBuilder {
+            terminal,
+            events_rx,
         })
     }
 
@@ -2154,7 +2153,7 @@ impl Terminal {
         self.vi_mode_enabled
     }
 
-    pub fn clone_builder(&self, cx: &App, cwd: Option<PathBuf>) -> Task<Result<TerminalBuilder>> {
+    pub fn clone_builder(&self, cx: &App, cwd: Option<PathBuf>) -> Result<TerminalBuilder> {
         let working_directory = self.working_directory().or_else(|| cwd);
         TerminalBuilder::new(
             working_directory,
@@ -2390,30 +2389,28 @@ mod tests {
         let (completion_tx, completion_rx) = smol::channel::unbounded();
         let (program, args) = ShellBuilder::new(&Shell::System, false)
             .build(Some("echo".to_owned()), &["hello".to_owned()]);
-        let builder = cx
-            .update(|cx| {
-                TerminalBuilder::new(
-                    None,
-                    None,
-                    task::Shell::WithArguments {
-                        program,
-                        args,
-                        title_override: None,
-                    },
-                    HashMap::default(),
-                    CursorShape::default(),
-                    AlternateScroll::On,
-                    None,
-                    false,
-                    0,
-                    Some(completion_tx),
-                    cx,
-                    vec![],
-                )
-            })
-            .await
-            .unwrap();
-        let terminal = cx.new(|cx| builder.subscribe(cx));
+        let terminal = cx.new(|cx| {
+            TerminalBuilder::new(
+                None,
+                None,
+                task::Shell::WithArguments {
+                    program,
+                    args,
+                    title_override: None,
+                },
+                HashMap::default(),
+                CursorShape::default(),
+                AlternateScroll::On,
+                None,
+                false,
+                0,
+                Some(completion_tx),
+                cx,
+                vec![],
+            )
+            .unwrap()
+            .subscribe(cx)
+        });
         assert_eq!(
             completion_rx.recv().await.unwrap(),
             Some(ExitStatus::default())
@@ -2442,27 +2439,25 @@ mod tests {
         cx.executor().allow_parking();
 
         let (completion_tx, completion_rx) = smol::channel::unbounded();
-        let builder = cx
-            .update(|cx| {
-                TerminalBuilder::new(
-                    None,
-                    None,
-                    task::Shell::System,
-                    HashMap::default(),
-                    CursorShape::default(),
-                    AlternateScroll::On,
-                    None,
-                    false,
-                    0,
-                    Some(completion_tx),
-                    cx,
-                    Vec::new(),
-                )
-            })
-            .await
-            .unwrap();
         // Build an empty command, which will result in a tty shell spawned.
-        let terminal = cx.new(|cx| builder.subscribe(cx));
+        let terminal = cx.new(|cx| {
+            TerminalBuilder::new(
+                None,
+                None,
+                task::Shell::System,
+                HashMap::default(),
+                CursorShape::default(),
+                AlternateScroll::On,
+                None,
+                false,
+                0,
+                Some(completion_tx),
+                cx,
+                Vec::new(),
+            )
+            .unwrap()
+            .subscribe(cx)
+        });
 
         let (event_tx, event_rx) = smol::channel::unbounded::<Event>();
         cx.update(|cx| {
@@ -2513,30 +2508,28 @@ mod tests {
         let (completion_tx, completion_rx) = smol::channel::unbounded();
         let (program, args) = ShellBuilder::new(&Shell::System, false)
             .build(Some("asdasdasdasd".to_owned()), &["@@@@@".to_owned()]);
-        let builder = cx
-            .update(|cx| {
-                TerminalBuilder::new(
-                    None,
-                    None,
-                    task::Shell::WithArguments {
-                        program,
-                        args,
-                        title_override: None,
-                    },
-                    HashMap::default(),
-                    CursorShape::default(),
-                    AlternateScroll::On,
-                    None,
-                    false,
-                    0,
-                    Some(completion_tx),
-                    cx,
-                    Vec::new(),
-                )
-            })
-            .await
-            .unwrap();
-        let terminal = cx.new(|cx| builder.subscribe(cx));
+        let terminal = cx.new(|cx| {
+            TerminalBuilder::new(
+                None,
+                None,
+                task::Shell::WithArguments {
+                    program,
+                    args,
+                    title_override: None,
+                },
+                HashMap::default(),
+                CursorShape::default(),
+                AlternateScroll::On,
+                None,
+                false,
+                0,
+                Some(completion_tx),
+                cx,
+                Vec::new(),
+            )
+            .unwrap()
+            .subscribe(cx)
+        });
 
         let (event_tx, event_rx) = smol::channel::unbounded::<Event>();
         cx.update(|cx| {

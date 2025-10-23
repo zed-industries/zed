@@ -1,7 +1,5 @@
 #![allow(unused, dead_code)]
-use gpui::{
-    AnyElement, App, Entity, EventEmitter, FocusHandle, Focusable, Hsla, Task, actions, hsla,
-};
+use gpui::{AnyElement, App, Entity, EventEmitter, FocusHandle, Focusable, Hsla, actions, hsla};
 use strum::IntoEnumIterator;
 use theme::all_theme_colors;
 use ui::{
@@ -102,11 +100,11 @@ impl Item for ThemePreview {
         _workspace_id: Option<crate::WorkspaceId>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Task<Option<Entity<Self>>>
+    ) -> Option<Entity<Self>>
     where
         Self: Sized,
     {
-        Task::ready(Some(cx.new(|cx| Self::new(window, cx))))
+        Some(cx.new(|cx| Self::new(window, cx)))
     }
 }
 
