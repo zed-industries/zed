@@ -2800,47 +2800,29 @@ impl SettingsWindow {
                     .ok();
             }
             SettingsUiFile::Project((worktree_id, path)) => {
-                let mut corresponding_workspace: Option<(
-                    WindowHandle<Workspace>,
-                    Option<Task<_>>,
-                )> = None;
                 let settings_path = path.join(paths::local_settings_file_relative_path());
                 let Some(app_state) = workspace::AppState::global(cx).upgrade() else {
                     return;
                 };
 
-                for workspace in app_state.workspace_store.read(cx).workspaces().clone() {
-                    let Some(worktree) = workspace
-                        .read_with(cx, |workspace, cx| {
-                            workspace
-                                .project()
-                                .read(cx)
-                                .worktree_for_id(*worktree_id, cx)
-                        })
-                        .ok()
-                        .flatten()
-                    else {
-                        continue;
-                    };
-
-                    let task = if worktree.read(cx).entry_for_path(&settings_path).is_some() {
-                        None
-                    } else {
-                        Some(worktree.update(cx, |tree, cx| {
-                            tree.create_entry(
-                                settings_path.clone(),
-                                false,
-                                Some("{\n\n}".as_bytes().to_vec()),
-                                cx,
-                            )
-                        }))
-                    };
-
-                    corresponding_workspace = Some((workspace, task));
-                    break;
-                }
-
-                let Some((corresponding_workspace, create_task)) = corresponding_workspace else {
+                let Some((worktree, corresponding_workspace)) = app_state
+                    .workspace_store
+                    .read(cx)
+                    .workspaces()
+                    .iter()
+                    .find_map(|workspace| {
+                        workspace
+                            .read_with(cx, |workspace, cx| {
+                                workspace
+                                    .project()
+                                    .read(cx)
+                                    .worktree_for_id(*worktree_id, cx)
+                            })
+                            .ok()
+                            .flatten()
+                            .zip(Some(workspace.clone()))
+                    })
+                else {
                     log::error!(
                         "No corresponding workspace contains worktree id: {}",
                         worktree_id
@@ -2849,10 +2831,23 @@ impl SettingsWindow {
                     return;
                 };
 
-                // TODO: move zed::open_local_file() APIs to this crate, and
-                // re-implement the "initial_contents" behavior
+                let create_task = if worktree.read(cx).entry_for_path(&settings_path).is_some() {
+                    None
+                } else {
+                    Some(worktree.update(cx, |tree, cx| {
+                        tree.create_entry(
+                            settings_path.clone(),
+                            false,
+                            Some("{\n\n}".as_bytes().to_vec()),
+                            cx,
+                        )
+                    }))
+                };
+
                 let worktree_id = *worktree_id;
 
+                // TODO: move zed::open_local_file() APIs to this crate, and
+                // re-implement the "initial_contents" behavior
                 corresponding_workspace
                     .update(cx, |_, window, cx| {
                         cx.spawn_in(window, async move |workspace, cx| {
