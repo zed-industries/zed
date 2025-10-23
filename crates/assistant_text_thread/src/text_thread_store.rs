@@ -1,6 +1,6 @@
 use crate::{
-    ContextVersion, SavedTextThread, SavedTextThreadMetadata, TextThread, TextThreadEvent,
-    TextThreadId, TextThreadOperation,
+    SavedTextThread, SavedTextThreadMetadata, TextThread, TextThreadEvent, TextThreadId,
+    TextThreadOperation, TextThreadVersion,
 };
 use anyhow::{Context as _, Result};
 use assistant_slash_command::{SlashCommandId, SlashCommandWorkingSet};
@@ -196,7 +196,7 @@ impl TextThreadStore {
             anyhow::Ok(
                 text_thread
                     .read(cx)
-                    .serialize_ops(&ContextVersion::default(), cx),
+                    .serialize_ops(&TextThreadVersion::default(), cx),
             )
         })??;
         let operations = operations.await;
@@ -223,7 +223,7 @@ impl TextThreadStore {
                 context_id,
                 text_thread
                     .read(cx)
-                    .serialize_ops(&ContextVersion::default(), cx),
+                    .serialize_ops(&TextThreadVersion::default(), cx),
             ))
         })??;
         let operations = operations.await;
@@ -262,7 +262,7 @@ impl TextThreadStore {
 
             let mut local_versions = Vec::new();
             for remote_version_proto in envelope.payload.contexts {
-                let remote_version = ContextVersion::from_proto(&remote_version_proto);
+                let remote_version = TextThreadVersion::from_proto(&remote_version_proto);
                 let context_id = TextThreadId::from_proto(remote_version_proto.context_id);
                 if let Some(text_thread) = this.loaded_text_thread_for_id(&context_id, cx) {
                     let text_thread = text_thread.read(cx);
@@ -718,11 +718,12 @@ impl TextThreadStore {
             let mut operations = Vec::new();
             this.read_with(cx, |this, cx| {
                 for context_version_proto in response.contexts {
-                    let context_version = ContextVersion::from_proto(&context_version_proto);
+                    let text_thread_version = TextThreadVersion::from_proto(&context_version_proto);
                     let text_thread_id = TextThreadId::from_proto(context_version_proto.context_id);
                     if let Some(text_thread) = this.loaded_text_thread_for_id(&text_thread_id, cx) {
                         text_thread_ids.push(text_thread_id);
-                        operations.push(text_thread.read(cx).serialize_ops(&context_version, cx));
+                        operations
+                            .push(text_thread.read(cx).serialize_ops(&text_thread_version, cx));
                     }
                 }
             })?;

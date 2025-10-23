@@ -132,7 +132,7 @@ pub enum TextThreadOperation {
         version: clock::Global,
     },
     UpdateSummary {
-        summary: ContextSummaryContent,
+        summary: TextThreadSummaryContent,
         version: clock::Global,
     },
     SlashCommandStarted {
@@ -202,7 +202,7 @@ impl TextThreadOperation {
                 version: language::proto::deserialize_version(&update.version),
             }),
             proto::context_operation::Variant::UpdateSummary(update) => Ok(Self::UpdateSummary {
-                summary: ContextSummaryContent {
+                summary: TextThreadSummaryContent {
                     text: update.summary,
                     done: update.done,
                     timestamp: language::proto::deserialize_timestamp(
@@ -470,20 +470,20 @@ pub enum TextThreadEvent {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum ContextSummary {
+pub enum TextThreadSummary {
     Pending,
-    Content(ContextSummaryContent),
+    Content(TextThreadSummaryContent),
     Error,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ContextSummaryContent {
+pub struct TextThreadSummaryContent {
     pub text: String,
     pub done: bool,
     pub timestamp: clock::Lamport,
 }
 
-impl ContextSummary {
+impl TextThreadSummary {
     pub const DEFAULT: &str = "New Text Thread";
 
     pub fn or_default(&self) -> SharedString {
@@ -495,48 +495,48 @@ impl ContextSummary {
             .map_or_else(|| message.into(), |content| content.text.clone().into())
     }
 
-    pub fn content(&self) -> Option<&ContextSummaryContent> {
+    pub fn content(&self) -> Option<&TextThreadSummaryContent> {
         match self {
-            ContextSummary::Content(content) => Some(content),
-            ContextSummary::Pending | ContextSummary::Error => None,
+            TextThreadSummary::Content(content) => Some(content),
+            TextThreadSummary::Pending | TextThreadSummary::Error => None,
         }
     }
 
-    fn content_as_mut(&mut self) -> Option<&mut ContextSummaryContent> {
+    fn content_as_mut(&mut self) -> Option<&mut TextThreadSummaryContent> {
         match self {
-            ContextSummary::Content(content) => Some(content),
-            ContextSummary::Pending | ContextSummary::Error => None,
+            TextThreadSummary::Content(content) => Some(content),
+            TextThreadSummary::Pending | TextThreadSummary::Error => None,
         }
     }
 
-    fn content_or_set_empty(&mut self) -> &mut ContextSummaryContent {
+    fn content_or_set_empty(&mut self) -> &mut TextThreadSummaryContent {
         match self {
-            ContextSummary::Content(content) => content,
-            ContextSummary::Pending | ContextSummary::Error => {
-                let content = ContextSummaryContent {
+            TextThreadSummary::Content(content) => content,
+            TextThreadSummary::Pending | TextThreadSummary::Error => {
+                let content = TextThreadSummaryContent {
                     text: "".to_string(),
                     done: false,
                     timestamp: clock::Lamport::MIN,
                 };
-                *self = ContextSummary::Content(content);
+                *self = TextThreadSummary::Content(content);
                 self.content_as_mut().unwrap()
             }
         }
     }
 
     pub fn is_pending(&self) -> bool {
-        matches!(self, ContextSummary::Pending)
+        matches!(self, TextThreadSummary::Pending)
     }
 
     fn timestamp(&self) -> Option<clock::Lamport> {
         match self {
-            ContextSummary::Content(content) => Some(content.timestamp),
-            ContextSummary::Pending | ContextSummary::Error => None,
+            TextThreadSummary::Content(content) => Some(content.timestamp),
+            TextThreadSummary::Pending | TextThreadSummary::Error => None,
         }
     }
 }
 
-impl PartialOrd for ContextSummary {
+impl PartialOrd for TextThreadSummary {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         self.timestamp().partial_cmp(&other.timestamp())
     }
@@ -674,7 +674,7 @@ pub struct TextThread {
     pub(crate) message_anchors: Vec<MessageAnchor>,
     contents: Vec<Content>,
     pub(crate) messages_metadata: HashMap<MessageId, MessageMetadata>,
-    summary: ContextSummary,
+    summary: TextThreadSummary,
     summary_task: Task<Option<()>>,
     completion_count: usize,
     pending_completions: Vec<PendingCompletion>,
@@ -770,7 +770,7 @@ impl TextThread {
             slash_command_output_sections: Vec::new(),
             thought_process_output_sections: Vec::new(),
             edits_since_last_parse: edits_since_last_slash_command_parse,
-            summary: ContextSummary::Pending,
+            summary: TextThreadSummary::Pending,
             summary_task: Task::ready(None),
             completion_count: Default::default(),
             pending_completions: Default::default(),
@@ -904,8 +904,8 @@ impl TextThread {
         self.timestamp.replica_id
     }
 
-    pub fn version(&self, cx: &App) -> ContextVersion {
-        ContextVersion {
+    pub fn version(&self, cx: &App) -> TextThreadVersion {
+        TextThreadVersion {
             text_thread: self.version.clone(),
             buffer: self.buffer.read(cx).version(),
         }
@@ -928,7 +928,7 @@ impl TextThread {
 
     pub fn serialize_ops(
         &self,
-        since: &ContextVersion,
+        since: &TextThreadVersion,
         cx: &App,
     ) -> Task<Vec<proto::ContextOperation>> {
         let buffer_ops = self
@@ -1021,7 +1021,7 @@ impl TextThread {
                         .timestamp()
                         .is_none_or(|current_timestamp| new_summary.timestamp > current_timestamp)
                     {
-                        self.summary = ContextSummary::Content(new_summary);
+                        self.summary = TextThreadSummary::Content(new_summary);
                         summary_generated = true;
                     }
                 }
@@ -1179,7 +1179,7 @@ impl TextThread {
         self.path.as_ref()
     }
 
-    pub fn summary(&self) -> &ContextSummary {
+    pub fn summary(&self) -> &TextThreadSummary {
         &self.summary
     }
 
@@ -2682,15 +2682,15 @@ impl TextThread {
             // If there is no summary, it is set with `done: false` so that "Loading Summary…" can
             // be displayed.
             match self.summary {
-                ContextSummary::Pending | ContextSummary::Error => {
-                    self.summary = ContextSummary::Content(ContextSummaryContent {
+                TextThreadSummary::Pending | TextThreadSummary::Error => {
+                    self.summary = TextThreadSummary::Content(TextThreadSummaryContent {
                         text: "".to_string(),
                         done: false,
                         timestamp: clock::Lamport::MIN,
                     });
                     replace_old = true;
                 }
-                ContextSummary::Content(_) => {}
+                TextThreadSummary::Content(_) => {}
             }
 
             self.summary_task = cx.spawn(async move |this, cx| {
@@ -2758,7 +2758,7 @@ impl TextThread {
 
                 if let Err(err) = result {
                     this.update(cx, |this, cx| {
-                        this.summary = ContextSummary::Error;
+                        this.summary = TextThreadSummary::Error;
                         cx.emit(TextThreadEvent::SummaryChanged);
                     })
                     .log_err();
@@ -2969,12 +2969,12 @@ impl TextThread {
 }
 
 #[derive(Debug, Default)]
-pub struct ContextVersion {
+pub struct TextThreadVersion {
     text_thread: clock::Global,
     buffer: clock::Global,
 }
 
-impl ContextVersion {
+impl TextThreadVersion {
     pub fn from_proto(proto: &proto::ContextVersion) -> Self {
         Self {
             text_thread: language::proto::deserialize_version(&proto.context_version),
@@ -3181,7 +3181,7 @@ impl SavedTextThread {
 
         let timestamp = next_timestamp.tick();
         operations.push(TextThreadOperation::UpdateSummary {
-            summary: ContextSummaryContent {
+            summary: TextThreadSummaryContent {
                 text: self.summary,
                 done: true,
                 timestamp,

@@ -353,15 +353,15 @@ impl ContextStore {
                     );
                 };
             }
-            // SuggestedContext::Thread { thread, name: _ } => {
-            //     if let Some(thread) = thread.upgrade() {
-            //         let context_id = self.next_context_id.post_inc();
-            //         self.insert_context(
-            //             AgentContextHandle::Thread(ThreadContextHandle { thread, context_id }),
-            //             cx,
-            //         );
-            //     }
-            // }
+            SuggestedContext::Thread { thread, name: _ } => {
+                if let Some(thread) = thread.upgrade() {
+                    let context_id = self.next_context_id.post_inc();
+                    self.insert_context(
+                        AgentContextHandle::Thread(ThreadContextHandle { thread, context_id }),
+                        cx,
+                    );
+                }
+            }
             SuggestedContext::TextThread {
                 text_thread,
                 name: _,
@@ -541,10 +541,10 @@ pub enum SuggestedContext {
         icon_path: Option<SharedString>,
         buffer: WeakEntity<Buffer>,
     },
-    // Thread {
-    //     name: SharedString,
-    //     thread: WeakEntity<Thread>,
-    // },
+    Thread {
+        name: SharedString,
+        thread: WeakEntity<Thread>,
+    },
     TextThread {
         name: SharedString,
         text_thread: WeakEntity<TextThread>,
@@ -555,7 +555,7 @@ impl SuggestedContext {
     pub fn name(&self) -> &SharedString {
         match self {
             Self::File { name, .. } => name,
-            // Self::Thread { name, .. } => name,
+            Self::Thread { name, .. } => name,
             Self::TextThread { name, .. } => name,
         }
     }
@@ -563,7 +563,7 @@ impl SuggestedContext {
     pub fn icon_path(&self) -> Option<SharedString> {
         match self {
             Self::File { icon_path, .. } => icon_path.clone(),
-            // Self::Thread { .. } => None,
+            Self::Thread { .. } => None,
             Self::TextThread { .. } => None,
         }
     }
@@ -571,7 +571,7 @@ impl SuggestedContext {
     pub fn kind(&self) -> ContextKind {
         match self {
             Self::File { .. } => ContextKind::File,
-            // Self::Thread { .. } => ContextKind::Thread,
+            Self::Thread { .. } => ContextKind::Thread,
             Self::TextThread { .. } => ContextKind::TextThread,
         }
     }
