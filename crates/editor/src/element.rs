@@ -3146,7 +3146,7 @@ impl EditorElement {
 
     fn calculate_relative_line_numbers(
         &self,
-        snapshot: &EditorSnapshot,
+        buffer_rows: &[RowInfo],
         rows: &Range<DisplayRow>,
         relative_to: Option<DisplayRow>,
         use_display_offset: bool,
@@ -3157,13 +3157,6 @@ impl EditorElement {
         };
 
         let start = rows.start.min(relative_to);
-        let end = rows.end.max(relative_to);
-
-        // todo!() can we pass this in?
-        let buffer_rows = snapshot
-            .row_infos(start)
-            .take(1 + end.minus(start) as usize)
-            .collect::<Vec<_>>();
 
         let head_idx = relative_to.minus(start);
         let mut delta = 1;
@@ -3249,8 +3242,12 @@ impl EditorElement {
         } else {
             None
         };
-        let relative_rows =
-            self.calculate_relative_line_numbers(snapshot, &rows, relative_to, relative.wrapped());
+        let relative_rows = self.calculate_relative_line_numbers(
+            &buffer_rows,
+            &rows,
+            relative_to,
+            relative.wrapped(),
+        );
         let mut line_number = String::new();
         let segments = buffer_rows.iter().enumerate().flat_map(|(ix, row_info)| {
             let display_row = DisplayRow(rows.start.0 + ix as u32);
@@ -10891,11 +10888,18 @@ mod tests {
             .unwrap();
         assert_eq!(layouts.len(), 6);
 
+        let get_row_infos = |snapshot: &EditorSnapshot| {
+            snapshot
+                .row_infos(DisplayRow(0))
+                .take(6)
+                .collect::<Vec<RowInfo>>()
+        };
+
         let relative_rows = window
             .update(cx, |editor, window, cx| {
                 let snapshot = editor.snapshot(window, cx);
                 element.calculate_relative_line_numbers(
-                    &snapshot,
+                    &get_row_infos(&snapshot),
                     &(DisplayRow(0)..DisplayRow(6)),
                     Some(DisplayRow(3)),
                     false,
@@ -10914,7 +10918,7 @@ mod tests {
             .update(cx, |editor, window, cx| {
                 let snapshot = editor.snapshot(window, cx);
                 element.calculate_relative_line_numbers(
-                    &snapshot,
+                    &get_row_infos(&snapshot),
                     &(DisplayRow(3)..DisplayRow(6)),
                     Some(DisplayRow(1)),
                     false,
@@ -10931,7 +10935,7 @@ mod tests {
             .update(cx, |editor, window, cx| {
                 let snapshot = editor.snapshot(window, cx);
                 element.calculate_relative_line_numbers(
-                    &snapshot,
+                    &get_row_infos(&snapshot),
                     &(DisplayRow(0)..DisplayRow(3)),
                     Some(DisplayRow(6)),
                     false,
@@ -11002,8 +11006,15 @@ mod tests {
         let relative_rows = window
             .update(cx, |editor, window, cx| {
                 let snapshot = editor.snapshot(window, cx);
+                let start_row = DisplayRow(0);
+                let end_row = DisplayRow(6);
+                let row_infos = snapshot
+                    .row_infos(start_row)
+                    .take((start_row..end_row).len())
+                    .collect::<Vec<RowInfo>>();
+
                 element.calculate_relative_line_numbers(
-                    &snapshot,
+                    &row_infos,
                     &(DisplayRow(0)..DisplayRow(6)),
                     Some(DisplayRow(3)),
                     true,
