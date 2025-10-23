@@ -7452,7 +7452,7 @@ pub fn open_paths(
                                                     distro_name: distro.clone(),
                                                 user: None,
                                             },
-                                            paths: Some(settings::SshProject{paths: vec![path.to_string_lossy().to_string()]}),
+                                            paths: vec![path.clone()],
                                         }), cx)
                                 })
                         })

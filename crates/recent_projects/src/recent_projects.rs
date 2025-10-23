@@ -106,7 +106,6 @@ pub fn init(cx: &mut App) {
     cx.on_action(|open_wsl: &remote::OpenWslPath, cx| {
         let open_wsl = open_wsl.clone();
         with_active_or_new_workspace(cx, move |workspace, window, cx| {
-            let handle = cx.entity().downgrade();
             let fs = workspace.project().read(cx).fs().clone();
             add_wsl_distro(fs, &open_wsl.distro, cx);
             let open_options = OpenOptions {
@@ -119,13 +118,14 @@ pub fn init(cx: &mut App) {
             cx.spawn_in(window, async move |_, cx| {
                 open_remote_project(
                     RemoteConnectionOptions::Wsl(open_wsl.distro.clone()),
-                    open_wsl.paths.clone(),
+                    open_wsl.paths,
                     app_state,
                     open_options,
                     cx,
                 )
                 .await
-            });
+            })
+            .detach();
         });
     });
 

@@ -32,9 +32,8 @@ use rpc::{
     proto::{self, Envelope, EnvelopedMessage, PeerId, RequestMessage, build_typed_envelope},
 };
 use serde::Deserialize;
-use settings::SshProject;
 use std::{
-    collections::{VecDeque},
+    collections::VecDeque,
     fmt,
     ops::ControlFlow,
     path::PathBuf,
@@ -1091,7 +1090,6 @@ impl From<WslConnectionOptions> for RemoteConnectionOptions {
         RemoteConnectionOptions::Wsl(opts)
     }
 }
-
 
 #[cfg(target_os = "windows")]
 /// Open a wsl path (\\wsl.localhost\<distro>\path)
