@@ -142,6 +142,8 @@ pub struct LibManifestEntry {
 
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
 pub struct AgentServerManifestEntry {
+    /// Display name for the agent (shown in menus).
+    pub name: String,
     /// How to install and launch the agent server.
     pub launcher: AgentServerLauncher,
     /// Environment variables to set when launching the agent server.
@@ -169,23 +171,6 @@ pub enum AgentServerLauncher {
         repo: String,
         /// Exact tag/release to download (e.g., "v1.2.3")
         tag: String,
-        /// Pattern to match release assets. Supports template variables and wildcards.
-        ///
-        /// Template variables (replaced before matching):
-        /// - {arch}: "x86_64" or "aarch64"
-        /// - {platform}: "apple-darwin", "pc-windows-msvc", or "unknown-linux-gnu"
-        /// - {ext}: "zip" on Windows, "tar.gz" elsewhere
-        ///
-        /// After template substitution, "*" is converted to ".*" for regex matching.
-        ///
-        /// Examples:
-        /// - "my-agent-*-{arch}-{platform}.{ext}" → matches platform-specific assets
-        /// - "*.tar.gz" → matches any .tar.gz file
-        /// - "agent-{arch}-*.zip" → matches agent-x86_64-*.zip or agent-aarch64-*.zip
-        asset_pattern: String,
-        /// Name of the binary executable to run after extraction.
-        /// Example: "my-agent-server", "agent"
-        binary_name: String,
     },
     Binary {
         binary_name: String,
