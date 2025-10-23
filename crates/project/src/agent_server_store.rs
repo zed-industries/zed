@@ -319,8 +319,8 @@ mod ext_agent_tests_additional {
         // Additionally, ensure the launcher data is present and well-formed.
         let entry = manifest.agent_servers.get("AgentName").unwrap();
         match &entry.launcher {
-            extension::AgentServerLauncher::Binary { bin_name } => {
-                assert_eq!(bin_name, "mybin");
+            extension::AgentServerLauncher::Binary { binary_name } => {
+                assert_eq!(binary_name, "mybin");
             }
             _ => panic!("expected Binary launcher"),
         }
@@ -497,12 +497,12 @@ impl AgentServerStore {
                         let display = SharedString::from(agent_name.to_string());
 
                         match &agent_entry.launcher {
-                            extension::AgentServerLauncher::Binary { bin_name } => {
+                            extension::AgentServerLauncher::Binary { binary_name } => {
                                 self.external_agents.insert(
                                     ExternalAgentServerName(display),
                                     Box::new(LocalExtensionBinaryAgent {
                                         project_environment: project_environment.clone(),
-                                        bin_name: SharedString::from(bin_name.clone()),
+                                        bin_name: SharedString::from(binary_name.clone()),
                                         args: agent_entry.args.clone(),
                                         env: agent_entry.env.clone(),
                                     })
@@ -551,7 +551,7 @@ impl AgentServerStore {
                                         repo: repo.clone(),
                                         tag: tag.clone(),
                                         asset_pattern: asset_pattern.clone(),
-                                        binary_name: Some(binary_name.clone()),
+                                        binary_name: binary_name.clone(),
                                         args: agent_entry.args.clone(),
                                         env: agent_entry.env.clone(),
                                         ignore_system_version: agent_entry
@@ -1720,7 +1720,7 @@ struct LocalExtensionGithubReleaseAgent {
     repo: String,
     tag: String,
     asset_pattern: String,
-    binary_name: Option<String>,
+    binary_name: String,
     args: Vec<String>,
     env: HashMap<String, String>,
     ignore_system_version: bool,
@@ -1944,13 +1944,7 @@ impl ExternalAgentServer for LocalExtensionGithubReleaseAgent {
             env.extend(base_env);
             env.extend(extra_env);
 
-            let bin_name = binary_name.clone().unwrap_or_else(|| {
-                if cfg!(windows) {
-                    format!("{}.exe", agent_id)
-                } else {
-                    agent_id.to_string()
-                }
-            });
+            let bin_name = binary_name.clone();
 
             if !ignore_system_version {
                 if let Some(bin) = find_bin_in_path(
@@ -2309,7 +2303,7 @@ mod npm_launcher_tests {
 
         let _entry = AgentServerManifestEntry {
             launcher: AgentServerLauncher::Binary {
-                bin_name: "my-binary".into(),
+                binary_name: "my-binary".into(),
             },
             env,
             args: vec!["--custom-arg".into()],
@@ -2441,7 +2435,7 @@ mod npm_launcher_tests {
             repo: "owner/repo".into(),
             tag: "v1.0.0".into(),
             asset_pattern: "*.tar.gz".into(),
-            binary_name: None,
+            binary_name: "my-server".into(),
             args: vec!["--serve".into()],
             env: {
                 let mut map = HashMap::default();

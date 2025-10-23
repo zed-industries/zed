@@ -184,12 +184,11 @@ pub enum AgentServerLauncher {
         /// - "agent-{arch}-*.zip" → matches agent-x86_64-*.zip or agent-aarch64-*.zip
         asset_pattern: String,
         /// Name of the binary executable to run after extraction.
-        /// If not specified, defaults to the agent_id (with .exe on Windows).
         /// Example: "my-agent-server", "agent"
         binary_name: String,
     },
     Binary {
-        bin_name: String,
+        binary_name: String,
     },
 }
 
