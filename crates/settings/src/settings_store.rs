@@ -147,7 +147,7 @@ pub struct SettingsStore {
     _setting_file_updates: Task<()>,
     setting_file_updates_tx:
         mpsc::UnboundedSender<Box<dyn FnOnce(AsyncApp) -> LocalBoxFuture<'static, Result<()>>>>,
-    file_errors: BTreeMap<SettingsFile, String>,
+    file_errors: BTreeMap<SettingsFile, SettingsParseResult>,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -635,15 +635,24 @@ impl SettingsStore {
     ) -> Result<R> {
         if let Err(err) = result.as_ref() {
             let message = err.to_string();
-            self.file_errors.insert(file, message);
+            self.file_errors.insert(
+                file,
+                SettingsParseResult {
+                    migration_result: Ok(false),
+                    parse_result: Err(message),
+                },
+            );
         } else {
             self.file_errors.remove(&file);
         }
         return result;
     }
 
-    pub fn error_for_file(&self, file: SettingsFile) -> Option<String> {
-        self.file_errors.get(&file).cloned()
+    pub fn error_for_file(&self, file: SettingsFile) -> Option<SettingsParseResult> {
+        self.file_errors
+            .get(&file)
+            .filter(|parse_result| parse_result.was_imperfect())
+            .cloned()
     }
 }
 
@@ -731,24 +740,30 @@ impl SettingsStore {
             };
             let parse_result = self
                 .handle_potential_file_error(SettingsFile::User, parse_json_with_comments(content));
-            migration_result = migration_res.map(|migrated| migrated.is_some());
+            migration_result = migration_res
+                .map(|migrated| migrated.is_some())
+                .map_err(|err| err.to_string());
             match parse_result {
                 Ok(settings) => settings,
                 Err(err) => {
-                    return SettingsParseResult {
+                    let result = SettingsParseResult {
                         migration_result,
-                        parse_result: Err(err),
+                        parse_result: Err(err.to_string()),
                     };
+                    self.file_errors.insert(SettingsFile::User, result.clone());
+                    return result;
                 }
             }
         };
 
         self.user_settings = Some(settings);
         self.recompute_values(None, cx);
-        SettingsParseResult {
+        let result = SettingsParseResult {
             migration_result,
             parse_result: Ok(()),
-        }
+        };
+        self.file_errors.insert(SettingsFile::User, result.clone());
+        return result;
     }
 
     /// Sets the global settings via a JSON string.
@@ -772,13 +787,15 @@ impl SettingsStore {
                 SettingsFile::Global,
                 parse_json_with_comments(content),
             );
-            migration_result = migration_res.map(|migrated| migrated.is_some());
+            migration_result = migration_res
+                .map(|migrated| migrated.is_some())
+                .map_err(|err| err.to_string());
             match parse_result {
                 Ok(settings) => settings,
                 Err(err) => {
                     return SettingsParseResult {
                         migration_result,
-                        parse_result: Err(err),
+                        parse_result: Err(err.to_string()),
                     };
                 }
             }
@@ -1147,14 +1164,24 @@ impl SettingsStore {
 // was the migration successful?
 // was settings parsing successful?
 // todo! can this type be improved?
+#[derive(Clone)]
 pub struct SettingsParseResult {
     /// Ok(false) -> no migration was performed
     ///
     /// Ok(true) -> migration was performed
     ///
     /// Err(_) -> migration was attempted but failed
-    pub migration_result: Result<bool>,
-    pub parse_result: Result<()>,
+    pub migration_result: Result<bool, String>,
+    pub parse_result: Result<(), String>,
+}
+
+impl Default for SettingsParseResult {
+    fn default() -> Self {
+        Self {
+            migration_result: Ok(false),
+            parse_result: Ok(()),
+        }
+    }
 }
 
 impl SettingsParseResult {
@@ -1168,8 +1195,12 @@ impl SettingsParseResult {
 
     pub fn _result(self) -> Result<bool> {
         match (
-            self.migration_result.context("Failed to migrate settings"),
-            self.parse_result.context("Failed to parse settings"),
+            self.migration_result
+                .map_err(|err| anyhow::format_err!(err))
+                .context("Failed to migrate settings"),
+            self.parse_result
+                .map_err(|err| anyhow::format_err!(err))
+                .context("Failed to parse settings"),
         ) {
             (migration_result @ Ok(_), Ok(_)) => migration_result,
             (Err(migration_err), Err(parse_err)) => {
@@ -1178,6 +1209,19 @@ impl SettingsParseResult {
             (Err(migration_err), Ok(_)) => Err(migration_err),
             (Ok(_), Err(parse_err)) => Err(parse_err),
         }
+    }
+
+    // todo! rename
+    pub fn was_imperfect(&self) -> bool {
+        let tried_to_migrate = *self.migration_result.as_ref().unwrap_or(&true);
+        let failed_to_parse = self.parse_result.is_err();
+        tried_to_migrate || failed_to_parse
+    }
+
+    pub fn migrated(&self) -> bool {
+        self.migration_result
+            .as_ref()
+            .is_ok_and(|&migrated| migrated)
     }
 
     pub fn ok(self) -> Option<bool> {

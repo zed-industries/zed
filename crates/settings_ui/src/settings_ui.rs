@@ -2679,35 +2679,50 @@ impl SettingsWindow {
         if let Some(error) =
             SettingsStore::global(cx).error_for_file(self.current_file.to_settings())
         {
-            if self.shown_errors.insert(error.clone()) {
-                telemetry::event!("Settings Error Shown", error = &error);
+            fn banner(
+                label: &'static str,
+                error: String,
+                shown_errors: &mut HashSet<String>,
+                cx: &mut Context<SettingsWindow>,
+            ) -> impl IntoElement {
+                if shown_errors.insert(error.clone()) {
+                    telemetry::event!("Settings Error Shown", label = label, error = &error);
+                }
+                Banner::new()
+                    .severity(Severity::Warning)
+                    .child(Label::new(label).size(LabelSize::Large))
+                    .child(Label::new(error).size(LabelSize::Small).color(Color::Muted))
+                    .action_slot(
+                        Button::new("fix-in-json", "Fix in settings.json")
+                            .tab_index(0_isize)
+                            .style(ButtonStyle::OutlinedGhost)
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.open_current_settings_file(cx);
+                            })),
+                    )
             }
-
             warning_banner = v_flex()
                 .pb_4()
-                .child(
-                    Banner::new()
-                        .severity(Severity::Warning)
-                        .child(
-                            v_flex()
-                                .my_0p5()
-                                .gap_0p5()
-                                .child(Label::new("Your settings file is in an invalid state."))
-                                .child(
-                                    Label::new(error).size(LabelSize::Small).color(Color::Muted),
-                                ),
-                        )
-                        .action_slot(
-                            div().pr_1().child(
-                                Button::new("fix-in-json", "Fix in settings.json")
-                                    .tab_index(0_isize)
-                                    .style(ButtonStyle::Tinted(ui::TintColor::Warning))
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.open_current_settings_file(cx);
-                                    })),
-                            ),
-                        ),
-                )
+                .when_some(error.parse_result.err(), |this, err| {
+                    this.child(
+                        banner("Your Settings File Is In An Invalid State. Setting Values May Be Incorrect, And Changes May Be Lost", err, &mut self.shown_errors, cx)
+                    )
+                })
+                .map(|this| {
+                    match error.migration_result {
+                        Ok(true) => {
+                            this.child(
+                                banner("Your Settings File Is Out Of Date, And Needs To Be Updated", "It May Be Possible To Automatically Migrate Your Settings File".to_string(), &mut self.shown_errors, cx)
+                            )
+                        },
+                        Err(err) => {
+                            this.child(
+                                banner("Your Settings File Is Out Of Date, Automatic Migration Failed", err, &mut self.shown_errors, cx)
+                            )
+                        }
+                        _ => this
+                    }
+                })
                 .into_any_element()
         }
 

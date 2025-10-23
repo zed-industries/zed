@@ -1339,7 +1339,13 @@ pub fn handle_settings_file_changes(
             log::error!("Failed to load {} settings: {err}", settings_type);
         }
 
-        settings_changed(result.parse_result.err(), cx);
+        settings_changed(
+            result
+                .parse_result
+                .err()
+                .map(|err| anyhow::format_err!(err)),
+            cx,
+        );
 
         content_migrated
     };
