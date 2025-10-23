@@ -642,7 +642,6 @@ pub struct SettingsWindow {
     title_bar: Option<Entity<PlatformTitleBar>>,
     original_window: Option<WindowHandle<Workspace>>,
     files: Vec<(SettingsUiFile, FocusHandle)>,
-    drop_down_file: Option<usize>,
     worktree_root_dirs: HashMap<WorktreeId, String>,
     current_file: SettingsUiFile,
     pages: Vec<SettingsPage>,
@@ -1235,7 +1234,7 @@ impl SettingsWindow {
 
             worktree_root_dirs: HashMap::default(),
             files: vec![],
-            drop_down_file: None,
+
             current_file: current_file,
             pages: vec![],
             navbar_entries: vec![],
@@ -1291,12 +1290,6 @@ impl SettingsWindow {
             project::Event::WorktreeRemoved(_) | project::Event::WorktreeAdded(_) => {
                 cx.defer_in(window, |this, window, cx| {
                     this.fetch_files(window, cx);
-                    dbg!(
-                        this.files
-                            .iter()
-                            .map(|file| this.display_name(&file.0))
-                            .collect::<Vec<_>>()
-                    );
                 });
             }
             _ => {}
@@ -1743,7 +1736,7 @@ impl SettingsWindow {
             .iter()
             .any(|(file, _)| file == &self.current_file);
         if !current_file_still_exists {
-            self.change_file(0, false, window, cx);
+            self.change_file(0, window, cx);
         }
     }
 
@@ -1773,20 +1766,11 @@ impl SettingsWindow {
         self.open_navbar_entry_page(first_navbar_entry_index);
     }
 
-    fn change_file(
-        &mut self,
-        ix: usize,
-        drop_down_file: bool,
-        window: &mut Window,
-        cx: &mut Context<SettingsWindow>,
-    ) {
+    fn change_file(&mut self, ix: usize, window: &mut Window, cx: &mut Context<SettingsWindow>) {
         if ix >= self.files.len() {
             self.current_file = SettingsUiFile::User;
             self.build_ui(window, cx);
             return;
-        }
-        if drop_down_file {
-            self.drop_down_file = Some(ix);
         }
 
         if self.files[ix].0 == self.current_file {
@@ -1811,7 +1795,7 @@ impl SettingsWindow {
         window: &mut Window,
         cx: &mut Context<SettingsWindow>,
     ) -> impl IntoElement {
-        const OVERFLOW_LIMIT: usize = 1;
+        static OVERFLOW_LIMIT: usize = 1;
 
         let file_button =
             |ix, file: &SettingsUiFile, focus_handle, cx: &mut Context<SettingsWindow>| {
@@ -1826,7 +1810,7 @@ impl SettingsWindow {
                 .on_click(cx.listener({
                     let focus_handle = focus_handle.clone();
                     move |this, _: &gpui::ClickEvent, window, cx| {
-                        this.change_file(ix, false, window, cx);
+                        this.change_file(ix, window, cx);
                         focus_handle.focus(window);
                     }
                 }))
@@ -1851,25 +1835,24 @@ impl SettingsWindow {
                         ),
                     )
                     .when(self.files.len() > OVERFLOW_LIMIT, |div| {
-                        div.children(
-                            self.files
-                                .iter()
-                                .enumerate()
-                                .skip(OVERFLOW_LIMIT)
-                                .find(|(_, (file, _))| file == &self.current_file)
-                                .map(|(ix, (file, focus_handle))| {
-                                    file_button(ix, file, focus_handle, cx)
-                                })
-                                .or_else(|| {
-                                    let ix = self.drop_down_file.unwrap_or(OVERFLOW_LIMIT);
-                                    self.files.get(ix).map(|(file, focus_handle)| {
-                                        file_button(ix, file, focus_handle, cx)
-                                    })
-                                }),
-                        )
-                        .when(
-                            self.files.len() > OVERFLOW_LIMIT + 1,
-                            |div| {
+                        let selected_file_ix = self
+                            .files
+                            .iter()
+                            .enumerate()
+                            .skip(OVERFLOW_LIMIT)
+                            .find_map(|(ix, (file, _))| {
+                                if file == &self.current_file {
+                                    Some(ix)
+                                } else {
+                                    None
+                                }
+                            })
+                            .unwrap_or(OVERFLOW_LIMIT);
+
+                        let (file, focus_handle) = &self.files[selected_file_ix];
+
+                        div.child(file_button(selected_file_ix, file, focus_handle, cx))
+                            .when(self.files.len() > OVERFLOW_LIMIT + 1, |div| {
                                 div.child(
                                     DropdownMenu::new(
                                         "more-files",
@@ -1881,18 +1864,19 @@ impl SettingsWindow {
                                                 .enumerate()
                                                 .skip(OVERFLOW_LIMIT + 1)
                                             {
-                                                let (display_name, focus_handle) = if self
-                                                    .drop_down_file
-                                                    .is_some_and(|drop_down_ix| drop_down_ix == ix)
-                                                {
-                                                    ix = OVERFLOW_LIMIT;
-                                                    (
-                                                        self.display_name(&self.files[ix].0),
-                                                        self.files[ix].1.clone(),
-                                                    )
-                                                } else {
-                                                    (self.display_name(&file), focus_handle.clone())
-                                                };
+                                                let (display_name, focus_handle) =
+                                                    if selected_file_ix == ix {
+                                                        ix = OVERFLOW_LIMIT;
+                                                        (
+                                                            self.display_name(&self.files[ix].0),
+                                                            self.files[ix].1.clone(),
+                                                        )
+                                                    } else {
+                                                        (
+                                                            self.display_name(&file),
+                                                            focus_handle.clone(),
+                                                        )
+                                                    };
 
                                                 menu = menu.entry(
                                                     display_name
@@ -1902,9 +1886,7 @@ impl SettingsWindow {
                                                         let this = this.clone();
                                                         move |window, cx| {
                                                             this.update(cx, |this, cx| {
-                                                                this.change_file(
-                                                                    ix, true, window, cx,
-                                                                );
+                                                                this.change_file(ix, window, cx);
                                                             });
                                                             focus_handle.focus(window);
                                                         }
@@ -1925,8 +1907,7 @@ impl SettingsWindow {
                                     })
                                     .tab_index(0),
                                 )
-                            },
-                        )
+                            })
                     }),
             )
             .child(
@@ -3440,7 +3421,6 @@ pub mod test {
             worktree_root_dirs: HashMap::default(),
             files: Vec::default(),
             current_file: crate::SettingsUiFile::User,
-            drop_down_file: None,
             pages,
             search_bar: cx.new(|cx| Editor::single_line(window, cx)),
             navbar_entry: selected_idx.expect("Must have a selected navbar entry"),
