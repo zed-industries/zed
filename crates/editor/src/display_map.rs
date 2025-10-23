@@ -1884,10 +1884,10 @@ impl<'a> SemanticTokenStylizer<'a> {
         &self,
         token_type: u32,
         modifiers: u32,
-        theme: &SyntaxTheme,
+        theme: Option<&SyntaxTheme>,
         buffer: &text::BufferSnapshot,
         range: Range<usize>,
-        cache: &Arc<crate::rainbow::VariableColorCache>,
+        variable_color_cache: Option<&Arc<crate::rainbow::VariableColorCache>>,
     ) -> Option<HighlightStyle> {
         let token_type_name = self.token_type(token_type)?;
         let has_modifier = |modifier| self.has_modifier(modifiers, modifier);
@@ -1899,10 +1899,18 @@ impl<'a> SemanticTokenStylizer<'a> {
             return None;
         }
 
+        let cache = variable_color_cache?;
+        let theme = theme?;
+
         let identifier: String = buffer.text_for_range(range).collect();
         let validated = crate::rainbow::validate_identifier_for_rainbow(&identifier)?;
 
-        Some(cache.get_or_insert(validated, theme))
+        let style = cache.get_or_insert(validated, theme);
+        if style.color.is_some() {
+            Some(style)
+        } else {
+            None
+        }
     }
 
     pub fn convert(
@@ -1915,17 +1923,15 @@ impl<'a> SemanticTokenStylizer<'a> {
         variable_color_cache: Option<&Arc<crate::rainbow::VariableColorCache>>,
         _highlights_config: Option<&language::HighlightsConfig>,
     ) -> Option<HighlightStyle> {
-        if let Some((cache, theme)) = variable_color_cache.zip(theme) {
-            if let Some(rainbow_style) = self.apply_rainbow_if_variable(
-                token_type,
-                modifiers,
-                theme,
-                buffer,
-                range.clone(),
-                cache,
-            ) {
-                return Some(rainbow_style);
-            }
+        if let Some(rainbow_style) = self.apply_rainbow_if_variable(
+            token_type,
+            modifiers,
+            theme,
+            buffer,
+            range.clone(),
+            variable_color_cache,
+        ) {
+            return Some(rainbow_style);
         }
         let token_type_name = self.token_type(token_type)?;
         let has_modifier = |modifier| self.has_modifier(modifiers, modifier);
