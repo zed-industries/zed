@@ -1,3 +1,4 @@
+#[cfg(not(target_os = "macos"))]
 use chrono::{DateTime, Local, Utc};
 use time::{OffsetDateTime, UtcOffset};
 
