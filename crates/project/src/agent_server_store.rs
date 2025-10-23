@@ -271,38 +271,6 @@ mod ext_agent_tests {
 
 impl AgentServerStore {
     /// Synchronizes extension-provided agent servers with the store.
-    ///
-    /// This method should be called by higher-level code (e.g., Workspace) when extensions
-    /// are installed, uninstalled, or updated. It:
-    /// 1. Removes all previously registered extension-provided agents (identified by ": " in their name)
-    /// 2. Registers new agents from the provided manifests based on their launcher type
-    /// 3. Emits an `AgentServersUpdated` event
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// // In workspace initialization or extension event handler:
-    /// if let Some(extension_store) = ExtensionStore::try_global(cx) {
-    ///     let project = workspace.project();
-    ///     project.update(cx, |project, cx| {
-    ///         let agent_store = project.agent_server_store();
-    ///         agent_store.update(cx, |store, cx| {
-    ///             let installed = extension_store.read(cx).installed_extensions();
-    ///             let manifests: Vec<_> = installed
-    ///                 .iter()
-    ///                 .map(|(id, entry)| (id.as_ref(), entry.manifest.as_ref()))
-    ///                 .collect();
-    ///             store.sync_extension_agents(manifests, cx);
-    ///         });
-    ///     });
-    /// }
-    /// ```
-    ///
-    /// # Supported Launchers
-    ///
-    /// - **Binary**: Searches for an executable in PATH
-    /// - **Npm**: Installs and manages an npm package-based agent
-    /// - **GithubRelease**: Downloads and caches a binary from GitHub releases
     pub fn sync_extension_agents<'a, I>(&mut self, manifests: I, cx: &mut Context<Self>)
     where
         I: IntoIterator<Item = (&'a str, &'a extension::ExtensionManifest)>,
