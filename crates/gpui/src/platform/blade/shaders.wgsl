@@ -28,6 +28,9 @@ fn heat_map_color(value: f32, minValue: f32, maxValue: f32, position: vec2<f32>)
 
 */
 
+// Contrast and gamma correction adapted from https://github.com/microsoft/terminal/blob/1283c0f5b99a2961673249fa77c6b986efb5086c/src/renderer/atlas/dwrite.hlsl
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT license.
 fn color_brightness(color: vec3<f32>) -> f32 {
     // REC. 601 luminance coefficients for perceived brightness
     return dot(color, vec3<f32>(0.30, 0.59, 0.11));
