@@ -1,6 +1,6 @@
 use crate::{
-    CacheStatus, ContextSummary, InvokedSlashCommandId, MessageCacheMetadata, MessageId,
-    MessageStatus, TextThread, TextThreadEvent, TextThreadId, TextThreadOperation,
+    CacheStatus, InvokedSlashCommandId, MessageCacheMetadata, MessageId, MessageStatus, TextThread,
+    TextThreadEvent, TextThreadId, TextThreadOperation, TextThreadSummary,
 };
 use anyhow::Result;
 use assistant_slash_command::{
@@ -1203,8 +1203,11 @@ async fn test_summarization(cx: &mut TestAppContext) {
 
     // Initial state should be pending
     text_thread.read_with(cx, |text_thread, _| {
-        assert!(matches!(text_thread.summary(), ContextSummary::Pending));
-        assert_eq!(text_thread.summary().or_default(), ContextSummary::DEFAULT);
+        assert!(matches!(text_thread.summary(), TextThreadSummary::Pending));
+        assert_eq!(
+            text_thread.summary().or_default(),
+            TextThreadSummary::DEFAULT
+        );
     });
 
     let message_1 = text_thread.read_with(cx, |text_thread, _cx| {
@@ -1280,7 +1283,7 @@ async fn test_thread_summary_error_retry(cx: &mut TestAppContext) {
 
     text_thread.read_with(cx, |text_thread, _| {
         // State is still Error, not Generating
-        assert!(matches!(text_thread.summary(), ContextSummary::Error));
+        assert!(matches!(text_thread.summary(), TextThreadSummary::Error));
     });
 
     // But the summarize request can be invoked manually
@@ -1334,8 +1337,11 @@ fn test_summarize_error(
 
     // State is set to Error and default message
     text_thread.read_with(cx, |text_thread, _| {
-        assert_eq!(*text_thread.summary(), ContextSummary::Error);
-        assert_eq!(text_thread.summary().or_default(), ContextSummary::DEFAULT);
+        assert_eq!(*text_thread.summary(), TextThreadSummary::Error);
+        assert_eq!(
+            text_thread.summary().or_default(),
+            TextThreadSummary::DEFAULT
+        );
     });
 }
 

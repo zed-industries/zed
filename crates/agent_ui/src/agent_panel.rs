@@ -37,7 +37,7 @@ use agent_settings::AgentSettings;
 use ai_onboarding::AgentPanelOnboarding;
 use anyhow::{Result, anyhow};
 use assistant_slash_command::SlashCommandWorkingSet;
-use assistant_text_thread::{ContextSummary, TextThread, TextThreadEvent};
+use assistant_text_thread::{TextThread, TextThreadEvent, TextThreadSummary};
 use client::{UserStore, zed_urls};
 use cloud_llm_client::{Plan, PlanV1, PlanV2, UsageLimit};
 use editor::{Anchor, AnchorRangeExt as _, Editor, EditorEvent, MultiBuffer};
@@ -1519,11 +1519,11 @@ impl AgentPanel {
                 let summary = text_thread_editor.read(cx).text_thread().read(cx).summary();
 
                 match summary {
-                    ContextSummary::Pending => Label::new(ContextSummary::DEFAULT)
+                    TextThreadSummary::Pending => Label::new(TextThreadSummary::DEFAULT)
                         .color(Color::Muted)
                         .truncate()
                         .into_any_element(),
-                    ContextSummary::Content(summary) => {
+                    TextThreadSummary::Content(summary) => {
                         if summary.done {
                             div()
                                 .w_full()
@@ -1536,7 +1536,7 @@ impl AgentPanel {
                                 .into_any_element()
                         }
                     }
-                    ContextSummary::Error => h_flex()
+                    TextThreadSummary::Error => h_flex()
                         .w_full()
                         .child(title_editor.clone())
                         .child(
