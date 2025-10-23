@@ -127,6 +127,8 @@ impl<'a> MarkdownParser<'a> {
             | Event::Html(_)
             | Event::InlineHtml(_)
             | Event::FootnoteReference(_)
+            | Event::InlineMath(_)  // ← ADD THIS
+            | Event::DisplayMath(_) // ← ADD THIS
             | Event::Start(Tag::Link { .. })
             | Event::Start(Tag::Emphasis)
             | Event::Start(Tag::Strong)
@@ -359,6 +361,35 @@ impl<'a> MarkdownParser<'a> {
                         code: true,
                         link: link.clone(),
                     });
+                }
+                Event::InlineMath(math) => {
+                    // Convert LaTeX to Unicode
+                    let converted = latex_to_unicode(math);
+                    text.push_str(&converted);
+                    region_ranges.push(prev_len..text.len());
+
+                    // Add math highlighting
+                    highlights.push((
+                        prev_len..text.len(),
+                        MarkdownHighlight::Style(MarkdownHighlightStyle {
+                            ..Default::default()
+                        }),
+                    ));
+                }
+
+                Event::DisplayMath(math) => {
+                    // Convert LaTeX to Unicode
+                    let converted = latex_to_unicode(math);
+                    text.push_str(&converted);
+                    region_ranges.push(prev_len..text.len());
+
+                    // Add math highlighting (maybe different style for display math)
+                    highlights.push((
+                        prev_len..text.len(),
+                        MarkdownHighlight::Style(MarkdownHighlightStyle {
+                            ..Default::default()
+                        }),
+                    ));
                 }
                 Event::Start(tag) => match tag {
                     Tag::Emphasis => italic_depth += 1,
@@ -2448,4 +2479,145 @@ fn main() {
             self.source_range == other.source_range && self.contents == other.contents
         }
     }
+}
+
+fn latex_to_unicode(latex: &str) -> String {
+    let mut out = String::new();
+    let mut chars = latex.chars().peekable();
+
+    while let Some(c) = chars.next() {
+        match c {
+            '\\' => {
+                let mut cmd = String::new();
+                while let Some(&ch) = chars.peek() {
+                    if ch.is_alphabetic() {
+                        cmd.push(ch);
+                        chars.next();
+                    } else {
+                        break;
+                    }
+                }
+
+                match cmd.as_str() {
+                    "sqrt" => {
+                        out.push('√');
+                        // อ่าน {content}
+                        if chars.peek() == Some(&'{') {
+                            chars.next();
+                            let mut inner = String::new();
+                            let mut depth = 1;
+                            while let Some(ch) = chars.next() {
+                                match ch {
+                                    '{' => depth += 1,
+                                    '}' => {
+                                        depth -= 1;
+                                        if depth == 0 {
+                                            break;
+                                        }
+                                    }
+                                    _ => inner.push(ch),
+                                }
+                            }
+                            out.push('(');
+                            out.push_str(&latex_to_unicode(&inner));
+                            out.push(')');
+                        }
+                    }
+                    "frac" => {
+                        if chars.peek() == Some(&'{') {
+                            chars.next();
+                            let mut num = String::new();
+                            let mut depth = 1;
+                            while let Some(ch) = chars.next() {
+                                match ch {
+                                    '{' => depth += 1,
+                                    '}' => {
+                                        depth -= 1;
+                                        if depth == 0 {
+                                            break;
+                                        }
+                                    }
+                                    _ => num.push(ch),
+                                }
+                            }
+
+                            // denominator
+                            if chars.peek() == Some(&'{') {
+                                chars.next();
+                                let mut den = String::new();
+                                let mut depth = 1;
+                                while let Some(ch) = chars.next() {
+                                    match ch {
+                                        '{' => depth += 1,
+                                        '}' => {
+                                            depth -= 1;
+                                            if depth == 0 {
+                                                break;
+                                            }
+                                        }
+                                        _ => den.push(ch),
+                                    }
+                                }
+                                out.push('(');
+                                out.push_str(&latex_to_unicode(&num));
+                                out.push('⁄');
+                                out.push_str(&latex_to_unicode(&den));
+                                out.push(')');
+                            }
+                        }
+                    }
+                    "pi" => out.push('π'),
+                    "times" => out.push('×'),
+                    "div" => out.push('÷'),
+                    "sum" => out.push('∑'),
+                    _ => out.push_str(&format!("\\{}", cmd)),
+                }
+            }
+            '^' => {
+                let mut sup = String::new();
+                if chars.peek() == Some(&'{') {
+                    chars.next();
+                    let mut depth = 1;
+                    while let Some(ch) = chars.next() {
+                        match ch {
+                            '{' => depth += 1,
+                            '}' => {
+                                depth -= 1;
+                                if depth == 0 {
+                                    break;
+                                }
+                            }
+                            _ => sup.push(ch),
+                        }
+                    }
+                } else if let Some(ch) = chars.next() {
+                    sup.push(ch);
+                }
+
+                for ch in sup.chars() {
+                    out.push(match ch {
+                        '0' => '⁰',
+                        '1' => '¹',
+                        '2' => '²',
+                        '3' => '³',
+                        '4' => '⁴',
+                        '5' => '⁵',
+                        '6' => '⁶',
+                        '7' => '⁷',
+                        '8' => '⁸',
+                        '9' => '⁹',
+                        '+' => '⁺',
+                        '-' => '⁻',
+                        'n' => 'ⁿ',
+                        _ => ch,
+                    });
+                }
+            }
+            '+' => out.push('＋'),
+            '-' => out.push('−'),
+            _ => out.push(c),
+        }
+    }
+
+    out
 }
