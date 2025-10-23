@@ -1376,6 +1376,7 @@ impl Render for RulesLibrary {
                             if self.store.read(cx).prompt_count() == 0 {
                                 el.child(
                                     v_flex()
+                                        .h_full()
                                         .flex_1()
                                         .items_center()
                                         .justify_center()
