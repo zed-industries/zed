@@ -2690,46 +2690,61 @@ impl SettingsWindow {
                 }
                 Banner::new()
                     .severity(Severity::Warning)
-                    .child(Label::new(label).size(LabelSize::Large))
-                    .child(Label::new(error).size(LabelSize::Small).color(Color::Muted))
+                    .child(
+                        v_flex()
+                            .my_0p5()
+                            .gap_0p5()
+                            .child(Label::new(label))
+                            .child(Label::new(error).size(LabelSize::Small).color(Color::Muted)),
+                    )
                     .action_slot(
-                        Button::new("fix-in-json", "Fix in settings.json")
-                            .tab_index(0_isize)
-                            .style(ButtonStyle::OutlinedGhost)
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.open_current_settings_file(cx);
-                            })),
+                        div().pr_1().child(
+                            Button::new("fix-in-json", "Fix in settings.json")
+                                .tab_index(0_isize)
+                                .style(ButtonStyle::Tinted(ui::TintColor::Warning))
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.open_current_settings_file(cx);
+                                })),
+                        ),
                     )
             }
             let parse_error = error.parse_error();
             let parse_failed = parse_error.is_some();
             warning_banner = v_flex()
+                .gap_2()
                 .pb_4()
                 .when_some(parse_error, |this, err| {
-                    this.child(
-                        banner("Your Settings File Is In An Invalid State. Setting Values May Be Incorrect, And Changes May Be Lost", err, &mut self.shown_errors, cx)
-                    )
+                    this.child(banner(
+                        "Failed to load your settings. Some values may be incorrect and changes may be lost.",
+                        err,
+                        &mut self.shown_errors,
+                        cx,
+                    ))
                 })
-                .map(|this| {
-                    match &error.migration_status {
-                        settings::MigrationStatus::Succeeded => {
-                            this.child(
-                                banner("Your Settings File Is Out Of Date, And Needs To Be Updated", "It May Be Possible To Automatically Migrate Your Settings File".to_string(), &mut self.shown_errors, cx)
-                            )
-                        },
-                        settings::MigrationStatus::Failed { error: err } if !parse_failed => {
-                            this.child(
-                                banner("Your Settings File Is Out Of Date, Automatic Migration Failed", err, &mut self.shown_errors, cx)
-                            )
-                        }
-                        _ => this
-                    }
+                .map(|this| match &error.migration_status {
+                    settings::MigrationStatus::Succeeded => this.child(banner(
+                        "Your settings are out of date, and need to be updated.",
+                        match &self.current_file {
+                            SettingsUiFile::User => "They can be automatically migrated to the latest version.",
+                            SettingsUiFile::Server(_) | SettingsUiFile::Project(_)  => "They must be manually migrated to the latest version."
+                        }.to_string(),
+                        &mut self.shown_errors,
+                        cx,
+                    )),
+                    settings::MigrationStatus::Failed { error: err } if !parse_failed => this
+                        .child(banner(
+                            "Your settings file is out of date, automatic migration failed",
+                            err.clone(),
+                            &mut self.shown_errors,
+                            cx,
+                        )),
+                    _ => this,
                 })
                 .into_any_element()
         }
 
         return v_flex()
-            .id("Settings-ui-page")
+            .id("settings-ui-page")
             .on_action(cx.listener(|this, _: &menu::SelectNext, window, cx| {
                 if !sub_page_stack().is_empty() {
                     window.focus_next();
@@ -2800,8 +2815,8 @@ impl SettingsWindow {
             .pt_6()
             .px_8()
             .bg(cx.theme().colors().editor_background)
-            .child(warning_banner)
             .child(page_header)
+            .child(warning_banner)
             .child(
                 div()
                     .size_full()
