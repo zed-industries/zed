@@ -1,7 +1,6 @@
 use std::{
     collections::hash_map,
     ops::{ControlFlow, Range},
-    sync::Arc,
     time::Duration,
 };
 
@@ -15,7 +14,6 @@ use language::{
 };
 use lsp::LanguageServerId;
 use multi_buffer::{Anchor, ExcerptId, MultiBufferSnapshot};
-use parking_lot::Mutex;
 use project::{
     HoverBlock, HoverBlockKind, InlayHintLabel, InlayHintLabelPartTooltip, InlayHintTooltip,
     InvalidationStrategy, ResolveState,
@@ -53,6 +51,7 @@ pub struct LspInlayHintData {
     append_debounce: Option<Duration>,
     hint_refresh_tasks: HashMap<BufferId, HashMap<Vec<Range<BufferRow>>, Vec<Task<()>>>>,
     hint_chunk_fetched: HashMap<BufferId, (Global, HashSet<Range<BufferRow>>)>,
+    invalidate_hints_for_buffers: HashSet<BufferId>,
     pub added_hints: HashMap<InlayId, Option<InlayHintKind>>,
 }
 
@@ -65,6 +64,7 @@ impl LspInlayHintData {
             hint_refresh_tasks: HashMap::default(),
             added_hints: HashMap::default(),
             hint_chunk_fetched: HashMap::default(),
+            invalidate_hints_for_buffers: HashSet::default(),
             invalidate_debounce: debounce_value(settings.edit_debounce_ms),
             append_debounce: debounce_value(settings.scroll_debounce_ms),
             allowed_hint_kinds: settings.enabled_inlay_hint_kinds(),
@@ -101,6 +101,7 @@ impl LspInlayHintData {
         self.hint_refresh_tasks.clear();
         self.hint_chunk_fetched.clear();
         self.added_hints.clear();
+        self.invalidate_hints_for_buffers.clear();
     }
 
     /// Checks inlay hint settings for enabled hint kinds and general enabled state.
@@ -289,19 +290,14 @@ impl Editor {
         };
 
         let mut visible_excerpts = self.visible_excerpts(cx);
-        let mut all_affected_buffers = HashSet::default();
+        let mut invalidate_hints_for_buffers = HashSet::default();
         let ignore_previous_fetches = match reason {
             InlayHintRefreshReason::ModifiersChanged(_)
             | InlayHintRefreshReason::Toggle(_)
             | InlayHintRefreshReason::SettingsChange(_) => true,
-            InlayHintRefreshReason::NewLinesShown | InlayHintRefreshReason::ExcerptsRemoved(_) => {
-                false
-            }
-            InlayHintRefreshReason::RefreshRequested(server_id) => {
-                //
-                //
-                false
-            }
+            InlayHintRefreshReason::NewLinesShown
+            | InlayHintRefreshReason::RefreshRequested(_)
+            | InlayHintRefreshReason::ExcerptsRemoved(_) => false,
             InlayHintRefreshReason::BufferEdited(buffer_id) => {
                 let Some(affected_language) = self
                     .buffer()
@@ -312,7 +308,7 @@ impl Editor {
                     return;
                 };
 
-                all_affected_buffers.extend(
+                invalidate_hints_for_buffers.extend(
                     self.buffer()
                         .read(cx)
                         .all_buffers()
@@ -327,7 +323,7 @@ impl Editor {
                         }),
                 );
 
-                semantics_provider.invalidate_inlay_hints(&all_affected_buffers, cx);
+                semantics_provider.invalidate_inlay_hints(&invalidate_hints_for_buffers, cx);
                 visible_excerpts.retain(|_, (visible_buffer, _, _)| {
                     visible_buffer.read(cx).language() == Some(&affected_language)
                 });
@@ -343,6 +339,9 @@ impl Editor {
         if invalidate_cache.should_invalidate() {
             inlay_hints.clear();
         }
+        inlay_hints
+            .invalidate_hints_for_buffers
+            .extend(invalidate_hints_for_buffers);
 
         let mut buffers_to_query = HashMap::default();
         for (excerpt_id, (buffer, buffer_version, visible_range)) in visible_excerpts {
@@ -369,23 +368,15 @@ impl Editor {
             visible_excerpts.ranges.push(buffer_anchor_range);
         }
 
-        dbg!((&all_affected_buffers, invalidate_cache));
-        let all_affected_buffers = Arc::new(Mutex::new(all_affected_buffers));
         for (buffer_id, visible_excerpts) in buffers_to_query {
             let Some(buffer) = multi_buffer.read(cx).buffer(buffer_id) else {
                 continue;
             };
-            dbg!((
-                buffer.read(cx).file().map(|f| f.path()),
-                invalidate_cache,
-                debounce,
-            ));
             let fetched_tasks = inlay_hints.hint_chunk_fetched.entry(buffer_id).or_default();
             if visible_excerpts
                 .buffer_version
                 .changed_since(&fetched_tasks.0)
             {
-                dbg!("BBBBBBBBBBBBBBuffer version changed");
                 fetched_tasks.1.clear();
                 fetched_tasks.0 = visible_excerpts.buffer_version.clone();
                 inlay_hints.hint_refresh_tasks.remove(&buffer_id);
@@ -401,14 +392,13 @@ impl Editor {
                 .entry(applicable_chunks)
             {
                 hash_map::Entry::Occupied(mut o) => {
-                    if dbg!(invalidate_cache.should_invalidate()) || dbg!(ignore_previous_fetches) {
+                    if invalidate_cache.should_invalidate() || ignore_previous_fetches {
                         o.get_mut().push(spawn_editor_hints_refresh(
                             buffer_id,
                             invalidate_cache,
                             ignore_previous_fetches,
                             debounce,
                             visible_excerpts,
-                            all_affected_buffers.clone(),
                             cx,
                         ));
                     }
@@ -420,7 +410,6 @@ impl Editor {
                         ignore_previous_fetches,
                         debounce,
                         visible_excerpts,
-                        all_affected_buffers.clone(),
                         cx,
                     ));
                 }
@@ -777,7 +766,6 @@ impl Editor {
         query_version: Global,
         invalidate_cache: InvalidationStrategy,
         new_hints: Vec<(Range<BufferRow>, anyhow::Result<CacheInlayHints>)>,
-        all_affected_buffers: Arc<Mutex<HashSet<BufferId>>>,
         cx: &mut Context<Self>,
     ) {
         let visible_inlay_hint_ids = self
@@ -841,41 +829,21 @@ impl Editor {
             })
             .collect::<Vec<_>>();
 
-        // We need to invalidate excerpts all buffers with the same language, do that once only, after first new data chunk is inserted.
-        let all_other_affected_buffers = all_affected_buffers
-            .lock()
-            .drain()
-            .filter(|id| buffer_id != *id)
-            .collect::<HashSet<_>>();
-        dbg!((&all_other_affected_buffers, invalidate_cache));
-        if !all_other_affected_buffers.is_empty() {
+        let invalidate_hints_for_buffers =
+            std::mem::take(&mut inlay_hints.invalidate_hints_for_buffers);
+        if !invalidate_hints_for_buffers.is_empty() {
             hints_to_remove.extend(
                 self.visible_inlay_hints(cx)
                     .iter()
                     .filter(|inlay| {
-                        inlay
-                            .position
-                            .buffer_id
-                            .is_none_or(|buffer_id| all_other_affected_buffers.contains(&buffer_id))
+                        inlay.position.buffer_id.is_none_or(|buffer_id| {
+                            invalidate_hints_for_buffers.contains(&buffer_id)
+                        })
                     })
                     .map(|inlay| inlay.id),
             );
         }
 
-        dbg!((
-            "splice_inlays",
-            invalidate_cache,
-            self.buffer
-                .read(cx)
-                .buffer(buffer_id)
-                .and_then(|buffer| buffer.read(cx).file())
-                .map(|f| f.path()),
-            hints_to_remove.len(),
-            hints_to_insert
-                .iter()
-                .map(|inlay| inlay.text().to_string())
-                .collect::<Vec<_>>(),
-        ));
         self.splice_inlays(&hints_to_remove, hints_to_insert, cx);
     }
 }
@@ -894,27 +862,10 @@ fn spawn_editor_hints_refresh(
     ignore_previous_fetches: bool,
     debounce: Option<Duration>,
     buffer_excerpts: VisibleExcerpts,
-    all_affected_buffers: Arc<Mutex<HashSet<BufferId>>>,
     cx: &mut Context<'_, Editor>,
 ) -> Task<()> {
     cx.spawn(async move |editor, cx| {
         if let Some(debounce) = debounce {
-            let f = editor
-                .update(cx, |editor, cx| {
-                    Some(
-                        editor
-                            .buffer
-                            .read(cx)
-                            .buffer(buffer_id)?
-                            .read(cx)
-                            .file()?
-                            .path()
-                            .clone(),
-                    )
-                })
-                .ok()
-                .flatten();
-            dbg!((f, invalidate_cache));
             cx.background_executor().timer(debounce).await;
         }
 
@@ -944,7 +895,6 @@ fn spawn_editor_hints_refresh(
                     query_version,
                     invalidate_cache,
                     new_hints,
-                    all_affected_buffers,
                     cx,
                 );
             })
@@ -3777,6 +3727,8 @@ let c = 3;"#
         let language = rust_lang();
         language_registry.add(language);
 
+        let requests_count = Arc::new(AtomicUsize::new(0));
+        let closure_requests_count = requests_count.clone();
         let mut fake_servers = language_registry.register_fake_lsp(
             "Rust",
             FakeLspAdapter {
@@ -3785,60 +3737,65 @@ let c = 3;"#
                     ..lsp::ServerCapabilities::default()
                 },
                 initializer: Some(Box::new(move |fake_server| {
+                    let requests_count = closure_requests_count.clone();
                     fake_server.set_request_handler::<lsp::request::InlayHintRequest, _, _>(
-                        move |params, _| async move {
-                            if params.text_document.uri
-                                == lsp::Uri::from_file_path(path!("/a/main.rs")).unwrap()
-                            {
-                                Ok(Some(vec![
-                                    lsp::InlayHint {
-                                        position: lsp::Position::new(1, 9),
-                                        label: lsp::InlayHintLabel::String(format!(": i32")),
-                                        kind: Some(lsp::InlayHintKind::TYPE),
-                                        text_edits: None,
-                                        tooltip: None,
-                                        padding_left: None,
-                                        padding_right: None,
-                                        data: None,
-                                    },
-                                    lsp::InlayHint {
-                                        position: lsp::Position::new(19, 9),
-                                        label: lsp::InlayHintLabel::String(format!(": i33")),
-                                        kind: Some(lsp::InlayHintKind::TYPE),
-                                        text_edits: None,
-                                        tooltip: None,
-                                        padding_left: None,
-                                        padding_right: None,
-                                        data: None,
-                                    },
-                                ]))
-                            } else if params.text_document.uri
-                                == lsp::Uri::from_file_path(path!("/a/lib.rs")).unwrap()
-                            {
-                                Ok(Some(vec![
-                                    lsp::InlayHint {
-                                        position: lsp::Position::new(1, 10),
-                                        label: lsp::InlayHintLabel::String(format!(": i34")),
-                                        kind: Some(lsp::InlayHintKind::TYPE),
-                                        text_edits: None,
-                                        tooltip: None,
-                                        padding_left: None,
-                                        padding_right: None,
-                                        data: None,
-                                    },
-                                    lsp::InlayHint {
-                                        position: lsp::Position::new(29, 10),
-                                        label: lsp::InlayHintLabel::String(format!(": i35")),
-                                        kind: Some(lsp::InlayHintKind::TYPE),
-                                        text_edits: None,
-                                        tooltip: None,
-                                        padding_left: None,
-                                        padding_right: None,
-                                        data: None,
-                                    },
-                                ]))
-                            } else {
-                                panic!("Unexpected file path {:?}", params.text_document.uri);
+                        move |params, _| {
+                            let requests_count = requests_count.clone();
+                            async move {
+                                requests_count.fetch_add(1, Ordering::Release);
+                                if params.text_document.uri
+                                    == lsp::Uri::from_file_path(path!("/a/main.rs")).unwrap()
+                                {
+                                    Ok(Some(vec![
+                                        lsp::InlayHint {
+                                            position: lsp::Position::new(1, 9),
+                                            label: lsp::InlayHintLabel::String(": i32".to_owned()),
+                                            kind: Some(lsp::InlayHintKind::TYPE),
+                                            text_edits: None,
+                                            tooltip: None,
+                                            padding_left: None,
+                                            padding_right: None,
+                                            data: None,
+                                        },
+                                        lsp::InlayHint {
+                                            position: lsp::Position::new(19, 9),
+                                            label: lsp::InlayHintLabel::String(": i33".to_owned()),
+                                            kind: Some(lsp::InlayHintKind::TYPE),
+                                            text_edits: None,
+                                            tooltip: None,
+                                            padding_left: None,
+                                            padding_right: None,
+                                            data: None,
+                                        },
+                                    ]))
+                                } else if params.text_document.uri
+                                    == lsp::Uri::from_file_path(path!("/a/lib.rs")).unwrap()
+                                {
+                                    Ok(Some(vec![
+                                        lsp::InlayHint {
+                                            position: lsp::Position::new(1, 10),
+                                            label: lsp::InlayHintLabel::String(": i34".to_owned()),
+                                            kind: Some(lsp::InlayHintKind::TYPE),
+                                            text_edits: None,
+                                            tooltip: None,
+                                            padding_left: None,
+                                            padding_right: None,
+                                            data: None,
+                                        },
+                                        lsp::InlayHint {
+                                            position: lsp::Position::new(29, 10),
+                                            label: lsp::InlayHintLabel::String(": i35".to_owned()),
+                                            kind: Some(lsp::InlayHintKind::TYPE),
+                                            text_edits: None,
+                                            tooltip: None,
+                                            padding_left: None,
+                                            padding_right: None,
+                                            data: None,
+                                        },
+                                    ]))
+                                } else {
+                                    panic!("Unexpected file path {:?}", params.text_document.uri);
+                                }
                             }
                         },
                     );
@@ -3916,8 +3873,12 @@ let c = 3;"#
                 );
             })
             .unwrap();
+        assert_eq!(
+            requests_count.load(Ordering::Acquire),
+            2,
+            "Should have queried hints once per each file"
+        );
 
-        dbg!("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
         // Scroll all the way down so the 1st buffer is out of sight.
         // The selection is on the 1st buffer still.
         editor
@@ -3974,6 +3935,11 @@ let c = 3;"#
                 );
             })
             .unwrap();
+        assert_eq!(
+            requests_count.load(Ordering::Acquire),
+            4,
+            "Should have queried hints once more per each file, after editing the file once"
+        );
     }
 
     pub(crate) fn init_test(cx: &mut TestAppContext, f: impl Fn(&mut AllLanguageSettingsContent)) {
