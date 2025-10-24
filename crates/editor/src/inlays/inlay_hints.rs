@@ -294,9 +294,14 @@ impl Editor {
             InlayHintRefreshReason::ModifiersChanged(_)
             | InlayHintRefreshReason::Toggle(_)
             | InlayHintRefreshReason::SettingsChange(_) => true,
-            InlayHintRefreshReason::NewLinesShown
-            | InlayHintRefreshReason::RefreshRequested(_)
-            | InlayHintRefreshReason::ExcerptsRemoved(_) => false,
+            InlayHintRefreshReason::NewLinesShown | InlayHintRefreshReason::ExcerptsRemoved(_) => {
+                false
+            }
+            InlayHintRefreshReason::RefreshRequested(server_id) => {
+                //
+                //
+                false
+            }
             InlayHintRefreshReason::BufferEdited(buffer_id) => {
                 let Some(affected_language) = self
                     .buffer()
@@ -364,16 +369,23 @@ impl Editor {
             visible_excerpts.ranges.push(buffer_anchor_range);
         }
 
+        dbg!((&all_affected_buffers, invalidate_cache));
         let all_affected_buffers = Arc::new(Mutex::new(all_affected_buffers));
         for (buffer_id, visible_excerpts) in buffers_to_query {
             let Some(buffer) = multi_buffer.read(cx).buffer(buffer_id) else {
                 continue;
             };
+            dbg!((
+                buffer.read(cx).file().map(|f| f.path()),
+                invalidate_cache,
+                debounce,
+            ));
             let fetched_tasks = inlay_hints.hint_chunk_fetched.entry(buffer_id).or_default();
             if visible_excerpts
                 .buffer_version
                 .changed_since(&fetched_tasks.0)
             {
+                dbg!("BBBBBBBBBBBBBBuffer version changed");
                 fetched_tasks.1.clear();
                 fetched_tasks.0 = visible_excerpts.buffer_version.clone();
                 inlay_hints.hint_refresh_tasks.remove(&buffer_id);
@@ -389,7 +401,7 @@ impl Editor {
                 .entry(applicable_chunks)
             {
                 hash_map::Entry::Occupied(mut o) => {
-                    if invalidate_cache.should_invalidate() || ignore_previous_fetches {
+                    if dbg!(invalidate_cache.should_invalidate()) || dbg!(ignore_previous_fetches) {
                         o.get_mut().push(spawn_editor_hints_refresh(
                             buffer_id,
                             invalidate_cache,
@@ -835,6 +847,7 @@ impl Editor {
             .drain()
             .filter(|id| buffer_id != *id)
             .collect::<HashSet<_>>();
+        dbg!((&all_other_affected_buffers, invalidate_cache));
         if !all_other_affected_buffers.is_empty() {
             hints_to_remove.extend(
                 self.visible_inlay_hints(cx)
@@ -849,6 +862,20 @@ impl Editor {
             );
         }
 
+        dbg!((
+            "splice_inlays",
+            invalidate_cache,
+            self.buffer
+                .read(cx)
+                .buffer(buffer_id)
+                .and_then(|buffer| buffer.read(cx).file())
+                .map(|f| f.path()),
+            hints_to_remove.len(),
+            hints_to_insert
+                .iter()
+                .map(|inlay| inlay.text().to_string())
+                .collect::<Vec<_>>(),
+        ));
         self.splice_inlays(&hints_to_remove, hints_to_insert, cx);
     }
 }
@@ -872,6 +899,22 @@ fn spawn_editor_hints_refresh(
 ) -> Task<()> {
     cx.spawn(async move |editor, cx| {
         if let Some(debounce) = debounce {
+            let f = editor
+                .update(cx, |editor, cx| {
+                    Some(
+                        editor
+                            .buffer
+                            .read(cx)
+                            .buffer(buffer_id)?
+                            .read(cx)
+                            .file()?
+                            .path()
+                            .clone(),
+                    )
+                })
+                .ok()
+                .flatten();
+            dbg!((f, invalidate_cache));
             cx.background_executor().timer(debounce).await;
         }
 
@@ -3654,6 +3697,281 @@ let c = 3;"#
                     "Editor inlay hints should repeat server's order when placed at the same spot"
                 );
                 assert_eq!(expected_hints, visible_hint_labels(editor, cx));
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    async fn test_invalidation_and_addition_race(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |settings| {
+            settings.defaults.inlay_hints = Some(InlayHintSettingsContent {
+                enabled: Some(true),
+                ..InlayHintSettingsContent::default()
+            })
+        });
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/a"),
+            json!({
+                "main.rs": r#"fn main() {
+                    let x = 1;
+                    ////
+                    ////
+                    ////
+                    ////
+                    ////
+                    ////
+                    ////
+                    ////
+                    ////
+                    ////
+                    ////
+                    ////
+                    ////
+                    ////
+                    ////
+                    ////
+                    ////
+                    let x = "2";
+                }
+"#,
+                "lib.rs": r#"fn aaa() {
+                    let aa = 22;
+                }
+                //
+                //
+                //
+                //
+                //
+                //
+                //
+                //
+                //
+                //
+                //
+                //
+                //
+                //
+                //
+                //
+                //
+                //
+                //
+                //
+                //
+                //
+                //
+                //
+
+                fn bb() {
+                    let bb = 33;
+                }
+"#
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
+        let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+        let language = rust_lang();
+        language_registry.add(language);
+
+        let mut fake_servers = language_registry.register_fake_lsp(
+            "Rust",
+            FakeLspAdapter {
+                capabilities: lsp::ServerCapabilities {
+                    inlay_hint_provider: Some(lsp::OneOf::Left(true)),
+                    ..lsp::ServerCapabilities::default()
+                },
+                initializer: Some(Box::new(move |fake_server| {
+                    fake_server.set_request_handler::<lsp::request::InlayHintRequest, _, _>(
+                        move |params, _| async move {
+                            if params.text_document.uri
+                                == lsp::Uri::from_file_path(path!("/a/main.rs")).unwrap()
+                            {
+                                Ok(Some(vec![
+                                    lsp::InlayHint {
+                                        position: lsp::Position::new(1, 9),
+                                        label: lsp::InlayHintLabel::String(format!(": i32")),
+                                        kind: Some(lsp::InlayHintKind::TYPE),
+                                        text_edits: None,
+                                        tooltip: None,
+                                        padding_left: None,
+                                        padding_right: None,
+                                        data: None,
+                                    },
+                                    lsp::InlayHint {
+                                        position: lsp::Position::new(19, 9),
+                                        label: lsp::InlayHintLabel::String(format!(": i33")),
+                                        kind: Some(lsp::InlayHintKind::TYPE),
+                                        text_edits: None,
+                                        tooltip: None,
+                                        padding_left: None,
+                                        padding_right: None,
+                                        data: None,
+                                    },
+                                ]))
+                            } else if params.text_document.uri
+                                == lsp::Uri::from_file_path(path!("/a/lib.rs")).unwrap()
+                            {
+                                Ok(Some(vec![
+                                    lsp::InlayHint {
+                                        position: lsp::Position::new(1, 10),
+                                        label: lsp::InlayHintLabel::String(format!(": i34")),
+                                        kind: Some(lsp::InlayHintKind::TYPE),
+                                        text_edits: None,
+                                        tooltip: None,
+                                        padding_left: None,
+                                        padding_right: None,
+                                        data: None,
+                                    },
+                                    lsp::InlayHint {
+                                        position: lsp::Position::new(29, 10),
+                                        label: lsp::InlayHintLabel::String(format!(": i35")),
+                                        kind: Some(lsp::InlayHintKind::TYPE),
+                                        text_edits: None,
+                                        tooltip: None,
+                                        padding_left: None,
+                                        padding_right: None,
+                                        data: None,
+                                    },
+                                ]))
+                            } else {
+                                panic!("Unexpected file path {:?}", params.text_document.uri);
+                            }
+                        },
+                    );
+                })),
+                ..FakeLspAdapter::default()
+            },
+        );
+
+        let (buffer_1, _handle_1) = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer_with_lsp(path!("/a/main.rs"), cx)
+            })
+            .await
+            .unwrap();
+        let (buffer_2, _handle_2) = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer_with_lsp(path!("/a/lib.rs"), cx)
+            })
+            .await
+            .unwrap();
+        let multi_buffer = cx.new(|cx| {
+            let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);
+            multibuffer.push_excerpts(
+                buffer_2.clone(),
+                [
+                    ExcerptRange::new(Point::new(0, 0)..Point::new(10, 0)),
+                    ExcerptRange::new(Point::new(23, 0)..Point::new(34, 0)),
+                ],
+                cx,
+            );
+            multibuffer.push_excerpts(
+                buffer_1.clone(),
+                [
+                    ExcerptRange::new(Point::new(0, 0)..Point::new(10, 0)),
+                    ExcerptRange::new(Point::new(13, 0)..Point::new(23, 0)),
+                ],
+                cx,
+            );
+            multibuffer
+        });
+
+        let editor = cx.add_window(|window, cx| {
+            let mut editor =
+                Editor::for_multibuffer(multi_buffer, Some(project.clone()), window, cx);
+            editor.change_selections(SelectionEffects::default(), window, cx, |s| {
+                s.select_ranges([Point::new(3, 3)..Point::new(3, 3)])
+            });
+            editor
+        });
+
+        let fake_server = fake_servers.next().await.unwrap();
+        cx.executor().advance_clock(Duration::from_millis(100));
+        cx.executor().run_until_parked();
+
+        editor
+            .update(cx, |editor, _window, cx| {
+                assert_eq!(
+                    vec![
+                        ": i32".to_string(),
+                        ": i33".to_string(),
+                        ": i34".to_string(),
+                        ": i35".to_string(),
+                    ],
+                    sorted_cached_hint_labels(editor, cx),
+                );
+                assert_eq!(
+                    vec![
+                        ": i34".to_string(),
+                        ": i35".to_string(),
+                        ": i32".to_string(),
+                        ": i33".to_string(),
+                    ],
+                    visible_hint_labels(editor, cx),
+                    "lib.rs is added before main.rs , so its excerpts should be visible first"
+                );
+            })
+            .unwrap();
+
+        dbg!("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
+        // Scroll all the way down so the 1st buffer is out of sight.
+        // The selection is on the 1st buffer still.
+        editor
+            .update(cx, |editor, window, cx| {
+                editor.scroll_screen(&ScrollAmount::Line(88.0), window, cx);
+            })
+            .unwrap();
+        // Emulate a language server refresh request, coming in the background..
+        editor
+            .update(cx, |editor, _, cx| {
+                editor.refresh_inlay_hints(
+                    InlayHintRefreshReason::RefreshRequested(fake_server.server.server_id()),
+                    cx,
+                );
+            })
+            .unwrap();
+        // Edit the 1st buffer while scrolled down and not seeing that.
+        // The edit will auto scroll to the edit (1st buffer).
+        editor
+            .update(cx, |editor, window, cx| {
+                editor.handle_input("a", window, cx);
+            })
+            .unwrap();
+        // Add more racy additive hint tasks.
+        editor
+            .update(cx, |editor, window, cx| {
+                editor.scroll_screen(&ScrollAmount::Line(0.2), window, cx);
+            })
+            .unwrap();
+
+        cx.executor().advance_clock(Duration::from_millis(1000));
+        cx.executor().run_until_parked();
+        editor
+            .update(cx, |editor, _window, cx| {
+                assert_eq!(
+                    vec![
+                        ": i32".to_string(),
+                        ": i33".to_string(),
+                        ": i34".to_string(),
+                        ": i35".to_string(),
+                    ],
+                    sorted_cached_hint_labels(editor, cx),
+                    "No hint changes/duplicates should occur in the cache",
+                );
+                assert_eq!(
+                    vec![
+                        ": i34".to_string(),
+                        ": i35".to_string(),
+                        ": i32".to_string(),
+                        ": i33".to_string(),
+                    ],
+                    visible_hint_labels(editor, cx),
+                    "No hint changes/duplicates should occur in the editor excerpts",
+                );
             })
             .unwrap();
     }
