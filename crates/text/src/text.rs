@@ -12,7 +12,7 @@ mod undo_map;
 
 pub use anchor::*;
 use anyhow::{Context as _, Result};
-use clock::LOCAL_BRANCH_REPLICA_ID;
+use clock::Lamport;
 pub use clock::ReplicaId;
 use collections::{HashMap, HashSet};
 use locator::Locator;
@@ -20,11 +20,9 @@ use operation_queue::OperationQueue;
 pub use patch::Patch;
 use postage::{oneshot, prelude::*};
 
-use regex::Regex;
 pub use rope::*;
 pub use selection::*;
 use std::{
-    borrow::Cow,
     cmp::{self, Ordering, Reverse},
     fmt::Display,
     future::Future,
@@ -32,7 +30,7 @@ use std::{
     num::NonZeroU64,
     ops::{self, Deref, Range, Sub},
     str,
-    sync::{Arc, LazyLock},
+    sync::Arc,
     time::{Duration, Instant},
 };
 pub use subscription::*;
@@ -42,9 +40,6 @@ use undo_map::UndoMap;
 
 #[cfg(any(test, feature = "test-support"))]
 use util::RandomCharIter;
-
-static LINE_SEPARATORS_REGEX: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\r\n|\r").expect("Failed to create LINE_SEPARATORS_REGEX"));
 
 pub type TransactionId = clock::Lamport;
 
@@ -573,7 +568,7 @@ struct InsertionFragment {
     fragment_id: Locator,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 struct InsertionFragmentKey {
     timestamp: clock::Lamport,
     split_offset: usize,
@@ -709,7 +704,7 @@ impl FromIterator<char> for LineIndent {
 }
 
 impl Buffer {
-    pub fn new(replica_id: u16, remote_id: BufferId, base_text: impl Into<String>) -> Buffer {
+    pub fn new(replica_id: ReplicaId, remote_id: BufferId, base_text: impl Into<String>) -> Buffer {
         let mut base_text = base_text.into();
         let line_ending = LineEnding::detect(&base_text);
         LineEnding::normalize(&mut base_text);
@@ -717,7 +712,7 @@ impl Buffer {
     }
 
     pub fn new_normalized(
-        replica_id: u16,
+        replica_id: ReplicaId,
         remote_id: BufferId,
         line_ending: LineEnding,
         normalized: Rope,
@@ -731,10 +726,7 @@ impl Buffer {
 
         let visible_text = history.base_text.clone();
         if !visible_text.is_empty() {
-            let insertion_timestamp = clock::Lamport {
-                replica_id: 0,
-                value: 1,
-            };
+            let insertion_timestamp = clock::Lamport::new(ReplicaId::LOCAL);
             lamport_clock.observe(insertion_timestamp);
             version.observe(insertion_timestamp);
             let fragment_id = Locator::between(&Locator::min(), &Locator::max());
@@ -788,7 +780,7 @@ impl Buffer {
             history: History::new(self.base_text().clone()),
             deferred_ops: OperationQueue::new(),
             deferred_replicas: HashSet::default(),
-            lamport_clock: clock::Lamport::new(LOCAL_BRANCH_REPLICA_ID),
+            lamport_clock: clock::Lamport::new(ReplicaId::LOCAL_BRANCH),
             subscriptions: Default::default(),
             edit_id_resolvers: Default::default(),
             wait_for_version_txs: Default::default(),
@@ -1254,7 +1246,7 @@ impl Buffer {
         for edit_id in edit_ids {
             let insertion_slice = InsertionSlice {
                 edit_id: *edit_id,
-                insertion_id: clock::Lamport::default(),
+                insertion_id: clock::Lamport::MIN,
                 range: 0..0,
             };
             let slices = self
@@ -1858,7 +1850,7 @@ impl Buffer {
         T: rand::Rng,
     {
         let mut edits = self.get_random_edits(rng, edit_count);
-        log::info!("mutating buffer {} with {:?}", self.replica_id, edits);
+        log::info!("mutating buffer {:?} with {:?}", self.replica_id, edits);
 
         let op = self.edit(edits.iter().cloned());
         if let Operation::Edit(edit) = &op {
@@ -1881,7 +1873,7 @@ impl Buffer {
             if let Some(entry) = self.history.undo_stack.choose(rng) {
                 let transaction = entry.transaction.clone();
                 log::info!(
-                    "undoing buffer {} transaction {:?}",
+                    "undoing buffer {:?} transaction {:?}",
                     self.replica_id,
                     transaction
                 );
@@ -2022,8 +2014,22 @@ impl BufferSnapshot {
         start..position
     }
 
+    /// Returns the buffer's text as a String.
+    ///
+    /// Note: This always uses `\n` as the line separator, regardless of the buffer's
+    /// actual line ending setting. For LSP communication or other cases where you need
+    /// to preserve the original line endings, use [`Self::text_with_original_line_endings`] instead.
     pub fn text(&self) -> String {
         self.visible_text.to_string()
+    }
+
+    /// Returns the buffer's text with line same endings as in buffer's file.
+    ///
+    /// Unlike [`Self::text`] which always uses `\n`, this method formats the text using
+    /// the buffer's actual line ending setting (Unix `\n` or Windows `\r\n`).
+    pub fn text_with_original_line_endings(&self) -> String {
+        self.visible_text
+            .to_string_with_line_ending(self.line_ending)
     }
 
     pub fn line_ending(&self) -> LineEnding {
@@ -2052,6 +2058,14 @@ impl BufferSnapshot {
 
     pub fn point_to_offset(&self, point: Point) -> usize {
         self.visible_text.point_to_offset(point)
+    }
+
+    pub fn point_to_offset_utf16(&self, point: Point) -> OffsetUtf16 {
+        self.visible_text.point_to_offset_utf16(point)
+    }
+
+    pub fn point_utf16_to_offset_utf16(&self, point: PointUtf16) -> OffsetUtf16 {
+        self.visible_text.point_utf16_to_offset_utf16(point)
     }
 
     pub fn point_utf16_to_offset(&self, point: PointUtf16) -> usize {
@@ -2086,6 +2100,10 @@ impl BufferSnapshot {
         self.visible_text.point_to_point_utf16(point)
     }
 
+    pub fn point_utf16_to_point(&self, point: PointUtf16) -> Point {
+        self.visible_text.point_utf16_to_point(point)
+    }
+
     pub fn version(&self) -> &clock::Global {
         &self.version
     }
@@ -2117,6 +2135,10 @@ impl BufferSnapshot {
         self.visible_text.reversed_bytes_in_range(start..end)
     }
 
+    /// Returns the text in the given range.
+    ///
+    /// Note: This always uses `\n` as the line separator, regardless of the buffer's
+    /// actual line ending setting.
     pub fn text_for_range<T: ToOffset>(&self, range: Range<T>) -> Chunks<'_> {
         let start = range.start.to_offset(self);
         let end = range.end.to_offset(self);
@@ -2326,12 +2348,15 @@ impl BufferSnapshot {
                 );
             };
 
-            let mut fragment_cursor = self
+            let (start, _, item) = self
                 .fragments
-                .cursor::<Dimensions<Option<&Locator>, usize>>(&None);
-            fragment_cursor.seek(&Some(&insertion.fragment_id), Bias::Left);
-            let fragment = fragment_cursor.item().unwrap();
-            let mut fragment_offset = fragment_cursor.start().1;
+                .find::<Dimensions<Option<&Locator>, usize>, _>(
+                    &None,
+                    &Some(&insertion.fragment_id),
+                    Bias::Left,
+                );
+            let fragment = item.unwrap();
+            let mut fragment_offset = start.1;
             if fragment.visible {
                 fragment_offset += anchor.offset - insertion.split_offset;
             }
@@ -2402,21 +2427,11 @@ impl BufferSnapshot {
         } else {
             if offset > self.visible_text.len() {
                 panic!("offset {} is out of bounds", offset)
-            } else if !self.visible_text.is_char_boundary(offset) {
-                // find the character
-                let char_start = self.visible_text.floor_char_boundary(offset);
-                // `char_start` must be less than len and a char boundary
-                let ch = self.visible_text.chars_at(char_start).next().unwrap();
-                let char_range = char_start..char_start + ch.len_utf8();
-                panic!(
-                    "byte index {} is not a char boundary; it is inside {:?} (bytes {:?})",
-                    offset, ch, char_range,
-                );
             }
-            let mut fragment_cursor = self.fragments.cursor::<usize>(&None);
-            fragment_cursor.seek(&offset, bias);
-            let fragment = fragment_cursor.item().unwrap();
-            let overshoot = offset - *fragment_cursor.start();
+            self.visible_text.assert_char_boundary(offset);
+            let (start, _, item) = self.fragments.find::<usize, _>(&None, &offset, bias);
+            let fragment = item.unwrap();
+            let overshoot = offset - start;
             Anchor {
                 timestamp: fragment.timestamp,
                 offset: fragment.insertion_offset + overshoot,
@@ -2497,15 +2512,17 @@ impl BufferSnapshot {
             cursor.next();
             Some(cursor)
         };
-        let mut cursor = self
-            .fragments
-            .cursor::<Dimensions<Option<&Locator>, FragmentTextSummary>>(&None);
-
         let start_fragment_id = self.fragment_id_for_anchor(&range.start);
-        cursor.seek(&Some(start_fragment_id), Bias::Left);
-        let mut visible_start = cursor.start().1.visible;
-        let mut deleted_start = cursor.start().1.deleted;
-        if let Some(fragment) = cursor.item() {
+        let (start, _, item) = self
+            .fragments
+            .find::<Dimensions<Option<&Locator>, FragmentTextSummary>, _>(
+                &None,
+                &Some(start_fragment_id),
+                Bias::Left,
+            );
+        let mut visible_start = start.1.visible;
+        let mut deleted_start = start.1.deleted;
+        if let Some(fragment) = item {
             let overshoot = range.start.offset - fragment.insertion_offset;
             if fragment.visible {
                 visible_start += overshoot;
@@ -2918,7 +2935,10 @@ impl InsertionFragment {
 
 impl sum_tree::ContextLessSummary for InsertionFragmentKey {
     fn zero() -> Self {
-        Default::default()
+        InsertionFragmentKey {
+            timestamp: Lamport::MIN,
+            split_offset: 0,
+        }
     }
 
     fn add_summary(&mut self, summary: &Self) {
@@ -3236,70 +3256,6 @@ impl FromAnchor for PointUtf16 {
 impl FromAnchor for usize {
     fn from_anchor(anchor: &Anchor, snapshot: &BufferSnapshot) -> Self {
         snapshot.summary_for_anchor(anchor)
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum LineEnding {
-    Unix,
-    Windows,
-}
-
-impl Default for LineEnding {
-    fn default() -> Self {
-        #[cfg(unix)]
-        return Self::Unix;
-
-        #[cfg(not(unix))]
-        return Self::Windows;
-    }
-}
-
-impl LineEnding {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            LineEnding::Unix => "\n",
-            LineEnding::Windows => "\r\n",
-        }
-    }
-
-    pub fn detect(text: &str) -> Self {
-        let mut max_ix = cmp::min(text.len(), 1000);
-        while !text.is_char_boundary(max_ix) {
-            max_ix -= 1;
-        }
-
-        if let Some(ix) = text[..max_ix].find(['\n']) {
-            if ix > 0 && text.as_bytes()[ix - 1] == b'\r' {
-                Self::Windows
-            } else {
-                Self::Unix
-            }
-        } else {
-            Self::default()
-        }
-    }
-
-    pub fn normalize(text: &mut String) {
-        if let Cow::Owned(replaced) = LINE_SEPARATORS_REGEX.replace_all(text, "\n") {
-            *text = replaced;
-        }
-    }
-
-    pub fn normalize_arc(text: Arc<str>) -> Arc<str> {
-        if let Cow::Owned(replaced) = LINE_SEPARATORS_REGEX.replace_all(&text, "\n") {
-            replaced.into()
-        } else {
-            text
-        }
-    }
-
-    pub fn normalize_cow(text: Cow<str>) -> Cow<str> {
-        if let Cow::Owned(replaced) = LINE_SEPARATORS_REGEX.replace_all(&text, "\n") {
-            replaced.into()
-        } else {
-            text
-        }
     }
 }
 

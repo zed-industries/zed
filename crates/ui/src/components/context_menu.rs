@@ -206,39 +206,46 @@ impl EventEmitter<DismissEvent> for ContextMenu {}
 impl FluentBuilder for ContextMenu {}
 
 impl ContextMenu {
+    pub fn new(
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        f: impl FnOnce(Self, &mut Window, &mut Context<Self>) -> Self,
+    ) -> Self {
+        let focus_handle = cx.focus_handle();
+        let _on_blur_subscription = cx.on_blur(
+            &focus_handle,
+            window,
+            |this: &mut ContextMenu, window, cx| this.cancel(&menu::Cancel, window, cx),
+        );
+        window.refresh();
+
+        f(
+            Self {
+                builder: None,
+                items: Default::default(),
+                focus_handle,
+                action_context: None,
+                selected_index: None,
+                delayed: false,
+                clicked: false,
+                key_context: "menu".into(),
+                _on_blur_subscription,
+                keep_open_on_confirm: false,
+                documentation_aside: None,
+                fixed_width: None,
+                end_slot_action: None,
+            },
+            window,
+            cx,
+        )
+    }
+
     pub fn build(
         window: &mut Window,
         cx: &mut App,
         f: impl FnOnce(Self, &mut Window, &mut Context<Self>) -> Self,
     ) -> Entity<Self> {
-        cx.new(|cx| {
-            let focus_handle = cx.focus_handle();
-            let _on_blur_subscription = cx.on_blur(
-                &focus_handle,
-                window,
-                |this: &mut ContextMenu, window, cx| this.cancel(&menu::Cancel, window, cx),
-            );
-            window.refresh();
-            f(
-                Self {
-                    builder: None,
-                    items: Default::default(),
-                    focus_handle,
-                    action_context: None,
-                    selected_index: None,
-                    delayed: false,
-                    clicked: false,
-                    key_context: "menu".into(),
-                    _on_blur_subscription,
-                    keep_open_on_confirm: false,
-                    documentation_aside: None,
-                    fixed_width: None,
-                    end_slot_action: None,
-                },
-                window,
-                cx,
-            )
-        })
+        cx.new(|cx| Self::new(window, cx, f))
     }
 
     /// Builds a [`ContextMenu`] that will stay open when making changes instead of closing after each confirmation.
@@ -834,9 +841,9 @@ impl ContextMenu {
                 .disabled(true)
                 .child(Label::new(label.clone()))
                 .into_any_element(),
-            ContextMenuItem::Entry(entry) => self
-                .render_menu_entry(ix, entry, window, cx)
-                .into_any_element(),
+            ContextMenuItem::Entry(entry) => {
+                self.render_menu_entry(ix, entry, cx).into_any_element()
+            }
             ContextMenuItem::CustomEntry {
                 entry_render,
                 handler,
@@ -883,7 +890,6 @@ impl ContextMenu {
         &self,
         ix: usize,
         entry: &ContextMenuEntry,
-        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let ContextMenuEntry {
@@ -980,18 +986,18 @@ impl ContextMenu {
                             .justify_between()
                             .child(label_element)
                             .debug_selector(|| format!("MENU_ITEM-{}", label))
-                            .children(action.as_ref().and_then(|action| {
-                                self.action_context
+                            .children(action.as_ref().map(|action| {
+                                let binding = self
+                                    .action_context
                                     .as_ref()
-                                    .and_then(|focus| {
-                                        KeyBinding::for_action_in(&**action, focus, window, cx)
-                                    })
-                                    .or_else(|| KeyBinding::for_action(&**action, window, cx))
-                                    .map(|binding| {
-                                        div().ml_4().child(binding.disabled(*disabled)).when(
-                                            *disabled && documentation_aside.is_some(),
-                                            |parent| parent.invisible(),
-                                        )
+                                    .map(|focus| KeyBinding::for_action_in(&**action, focus, cx))
+                                    .unwrap_or_else(|| KeyBinding::for_action(&**action, cx));
+
+                                div()
+                                    .ml_4()
+                                    .child(binding.disabled(*disabled))
+                                    .when(*disabled && documentation_aside.is_some(), |parent| {
+                                        parent.invisible()
                                     })
                             }))
                             .when(*disabled && documentation_aside.is_some(), |parent| {
@@ -1016,7 +1022,7 @@ impl ContextMenu {
                                         let action_context = self.action_context.clone();
                                         let title = title.clone();
                                         let action = action.boxed_clone();
-                                        move |window, cx| {
+                                        move |_window, cx| {
                                             action_context
                                                 .as_ref()
                                                 .map(|focus| {
@@ -1024,17 +1030,11 @@ impl ContextMenu {
                                                         title.clone(),
                                                         &*action,
                                                         focus,
-                                                        window,
                                                         cx,
                                                     )
                                                 })
                                                 .unwrap_or_else(|| {
-                                                    Tooltip::for_action(
-                                                        title.clone(),
-                                                        &*action,
-                                                        window,
-                                                        cx,
-                                                    )
+                                                    Tooltip::for_action(title.clone(), &*action, cx)
                                                 })
                                         }
                                     })

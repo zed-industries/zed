@@ -343,7 +343,7 @@ impl Element for UniformList {
         };
         let content_size = Size {
             width: content_width,
-            height: longest_item_size.height * self.item_count + padding.top + padding.bottom,
+            height: longest_item_size.height * self.item_count,
         };
 
         let shared_scroll_offset = self.interactivity.scroll_offset.clone().unwrap();
@@ -364,17 +364,7 @@ impl Element for UniformList {
             content_size,
             window,
             cx,
-            |style, mut scroll_offset, hitbox, window, cx| {
-                let border = style.border_widths.to_pixels(window.rem_size());
-                let padding = style
-                    .padding
-                    .to_pixels(bounds.size.into(), window.rem_size());
-
-                let padded_bounds = Bounds::from_corners(
-                    bounds.origin + point(border.left + padding.left, border.top),
-                    bounds.bottom_right() - point(border.right + padding.right, border.bottom),
-                );
-
+            |_style, mut scroll_offset, hitbox, window, cx| {
                 let y_flipped = if let Some(scroll_handle) = &self.scroll_handle {
                     let scroll_state = scroll_handle.0.borrow();
                     scroll_state.y_flipped
@@ -383,13 +373,14 @@ impl Element for UniformList {
                 };
 
                 if self.item_count > 0 {
-                    let content_height =
-                        item_height * self.item_count + padding.top + padding.bottom;
+                    let content_height = item_height * self.item_count;
+
                     let is_scrolled_vertically = !scroll_offset.y.is_zero();
-                    let min_vertical_scroll_offset = padded_bounds.size.height - content_height;
-                    if is_scrolled_vertically && scroll_offset.y < min_vertical_scroll_offset {
-                        shared_scroll_offset.borrow_mut().y = min_vertical_scroll_offset;
-                        scroll_offset.y = min_vertical_scroll_offset;
+                    let max_scroll_offset = padded_bounds.size.height - content_height;
+
+                    if is_scrolled_vertically && scroll_offset.y < max_scroll_offset {
+                        shared_scroll_offset.borrow_mut().y = max_scroll_offset;
+                        scroll_offset.y = max_scroll_offset;
                     }
 
                     let content_width = content_size.width + padding.left + padding.right;
@@ -407,18 +398,19 @@ impl Element for UniformList {
                         }
                         let list_height = padded_bounds.size.height;
                         let mut updated_scroll_offset = shared_scroll_offset.borrow_mut();
-                        let item_top = item_height * ix + padding.top;
+                        let item_top = item_height * ix;
                         let item_bottom = item_top + item_height;
                         let scroll_top = -updated_scroll_offset.y;
                         let offset_pixels = item_height * deferred_scroll.offset;
                         let mut scrolled_to_top = false;
 
-                        if item_top < scroll_top + padding.top + offset_pixels {
+                        if item_top < scroll_top + offset_pixels {
                             scrolled_to_top = true;
-                            updated_scroll_offset.y = -(item_top) + padding.top + offset_pixels;
-                        } else if item_bottom > scroll_top + list_height - padding.bottom {
+                            // todo: using the padding here is wrong - this only works well for few scenarios
+                            updated_scroll_offset.y = -item_top + padding.top + offset_pixels;
+                        } else if item_bottom > scroll_top + list_height {
                             scrolled_to_top = true;
-                            updated_scroll_offset.y = -(item_bottom - list_height) - padding.bottom;
+                            updated_scroll_offset.y = -(item_bottom - list_height);
                         }
 
                         if deferred_scroll.scroll_strict
@@ -480,14 +472,9 @@ impl Element for UniformList {
                     window.with_content_mask(Some(content_mask), |window| {
                         for (mut item, ix) in items.into_iter().zip(visible_range.clone()) {
                             let item_origin = padded_bounds.origin
-                                + point(
-                                    if can_scroll_horizontally {
-                                        scroll_offset.x + padding.left
-                                    } else {
-                                        scroll_offset.x
-                                    },
-                                    item_height * ix + scroll_offset.y + padding.top,
-                                );
+                                + scroll_offset
+                                + point(Pixels::ZERO, item_height * ix);
+
                             let available_width = if can_scroll_horizontally {
                                 padded_bounds.size.width + scroll_offset.x.abs()
                             } else {
@@ -502,18 +489,8 @@ impl Element for UniformList {
                             frame_state.items.push(item);
                         }
 
-                        let bounds = Bounds::new(
-                            padded_bounds.origin
-                                + point(
-                                    if can_scroll_horizontally {
-                                        scroll_offset.x + padding.left
-                                    } else {
-                                        scroll_offset.x
-                                    },
-                                    scroll_offset.y + padding.top,
-                                ),
-                            padded_bounds.size,
-                        );
+                        let bounds =
+                            Bounds::new(padded_bounds.origin + scroll_offset, padded_bounds.size);
                         for decoration in &self.decorations {
                             let mut decoration = decoration.as_ref().compute(
                                 visible_range.clone(),

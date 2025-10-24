@@ -1,4 +1,5 @@
-use futures::{FutureExt, future::Shared};
+use anyhow::{Context as _, bail};
+use futures::{FutureExt, StreamExt as _, channel::mpsc, future::Shared};
 use language::Buffer;
 use remote::RemoteClient;
 use rpc::proto::{self, REMOTE_SERVER_PROJECT_ID};
@@ -20,7 +21,9 @@ pub struct ProjectEnvironment {
     cli_environment: Option<HashMap<String, String>>,
     local_environments: HashMap<(Shell, Arc<Path>), Shared<Task<Option<HashMap<String, String>>>>>,
     remote_environments: HashMap<(Shell, Arc<Path>), Shared<Task<Option<HashMap<String, String>>>>>,
-    environment_error_messages: VecDeque<EnvironmentErrorMessage>,
+    environment_error_messages: VecDeque<String>,
+    environment_error_messages_tx: mpsc::UnboundedSender<String>,
+    _tasks: Vec<Task<()>>,
 }
 
 pub enum ProjectEnvironmentEvent {
@@ -30,12 +33,24 @@ pub enum ProjectEnvironmentEvent {
 impl EventEmitter<ProjectEnvironmentEvent> for ProjectEnvironment {}
 
 impl ProjectEnvironment {
-    pub fn new(cli_environment: Option<HashMap<String, String>>) -> Self {
+    pub fn new(cli_environment: Option<HashMap<String, String>>, cx: &mut Context<Self>) -> Self {
+        let (tx, mut rx) = mpsc::unbounded();
+        let task = cx.spawn(async move |this, cx| {
+            while let Some(message) = rx.next().await {
+                this.update(cx, |this, cx| {
+                    this.environment_error_messages.push_back(message);
+                    cx.emit(ProjectEnvironmentEvent::ErrorsUpdated);
+                })
+                .ok();
+            }
+        });
         Self {
             cli_environment,
             local_environments: Default::default(),
             remote_environments: Default::default(),
             environment_error_messages: Default::default(),
+            environment_error_messages_tx: tx,
+            _tasks: vec![task],
         }
     }
 
@@ -128,7 +143,37 @@ impl ProjectEnvironment {
         self.local_environments
             .entry((shell.clone(), abs_path.clone()))
             .or_insert_with(|| {
-                get_local_directory_environment_impl(shell, abs_path.clone(), cx).shared()
+                let load_direnv = ProjectSettings::get_global(cx).load_direnv.clone();
+                let shell = shell.clone();
+                let tx = self.environment_error_messages_tx.clone();
+                cx.spawn(async move |_, cx| {
+                    let mut shell_env = cx
+                        .background_spawn(load_directory_shell_environment(
+                            shell,
+                            abs_path.clone(),
+                            load_direnv,
+                            tx,
+                        ))
+                        .await
+                        .log_err();
+
+                    if let Some(shell_env) = shell_env.as_mut() {
+                        let path = shell_env
+                            .get("PATH")
+                            .map(|path| path.as_str())
+                            .unwrap_or_default();
+                        log::debug!(
+                            "using project environment variables shell launched in {:?}. PATH={:?}",
+                            abs_path,
+                            path
+                        );
+
+                        set_origin_marker(shell_env, EnvironmentOrigin::WorktreeShell);
+                    }
+
+                    shell_env
+                })
+                .shared()
             })
             .clone()
     }
@@ -165,11 +210,11 @@ impl ProjectEnvironment {
             .clone()
     }
 
-    pub fn peek_environment_error(&self) -> Option<&EnvironmentErrorMessage> {
+    pub fn peek_environment_error(&self) -> Option<&String> {
         self.environment_error_messages.front()
     }
 
-    pub fn pop_environment_error(&mut self) -> Option<EnvironmentErrorMessage> {
+    pub fn pop_environment_error(&mut self) -> Option<String> {
         self.environment_error_messages.pop_front()
     }
 }
@@ -194,120 +239,72 @@ impl From<EnvironmentOrigin> for String {
     }
 }
 
-#[derive(Debug)]
-pub struct EnvironmentErrorMessage(pub String);
-
-impl std::fmt::Display for EnvironmentErrorMessage {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
-impl EnvironmentErrorMessage {
-    #[allow(dead_code)]
-    fn from_str(s: &str) -> Self {
-        Self(String::from(s))
-    }
-}
-
 async fn load_directory_shell_environment(
-    shell: &Shell,
-    abs_path: &Path,
-    load_direnv: &DirenvSettings,
-) -> (
-    Option<HashMap<String, String>>,
-    Option<EnvironmentErrorMessage>,
-) {
-    match smol::fs::metadata(abs_path).await {
-        Ok(meta) => {
-            let dir = if meta.is_dir() {
-                abs_path
-            } else if let Some(parent) = abs_path.parent() {
-                parent
-            } else {
-                return (
-                    None,
-                    Some(EnvironmentErrorMessage(format!(
-                        "Failed to load shell environment in {}: not a directory",
-                        abs_path.display()
-                    ))),
-                );
-            };
+    shell: Shell,
+    abs_path: Arc<Path>,
+    load_direnv: DirenvSettings,
+    tx: mpsc::UnboundedSender<String>,
+) -> anyhow::Result<HashMap<String, String>> {
+    let meta = smol::fs::metadata(&abs_path).await.with_context(|| {
+        tx.unbounded_send(format!("Failed to open {}", abs_path.display()))
+            .ok();
+        format!("stat {abs_path:?}")
+    })?;
 
-            load_shell_environment(shell, dir, load_direnv).await
-        }
-        Err(err) => (
-            None,
-            Some(EnvironmentErrorMessage(format!(
-                "Failed to load shell environment in {}: {}",
-                abs_path.display(),
-                err
-            ))),
-        ),
-    }
-}
+    let dir = if meta.is_dir() {
+        abs_path.clone()
+    } else {
+        abs_path
+            .parent()
+            .with_context(|| {
+                tx.unbounded_send(format!("Failed to open {}", abs_path.display()))
+                    .ok();
+                format!("getting parent of {abs_path:?}")
+            })?
+            .into()
+    };
 
-async fn load_shell_environment(
-    shell: &Shell,
-    dir: &Path,
-    load_direnv: &DirenvSettings,
-) -> (
-    Option<HashMap<String, String>>,
-    Option<EnvironmentErrorMessage>,
-) {
-    use crate::direnv::load_direnv_environment;
-    use util::shell_env;
-
-    if cfg!(any(test, feature = "test-support")) {
-        let fake_env = [("ZED_FAKE_TEST_ENV".into(), "true".into())]
-            .into_iter()
-            .collect();
-        (Some(fake_env), None)
-    } else if cfg!(target_os = "windows") {
-        let (shell, args) = shell.program_and_args();
-        let envs = match shell_env::capture(shell, args, dir).await {
-            Ok(envs) => envs,
-            Err(err) => {
-                util::log_err(&err);
-                return (
-                    None,
-                    Some(EnvironmentErrorMessage(format!(
-                        "Failed to load environment variables: {}",
-                        err
-                    ))),
-                );
-            }
-        };
-
+    if cfg!(target_os = "windows") {
         // Note: direnv is not available on Windows, so we skip direnv processing
         // and just return the shell environment
-        (Some(envs), None)
-    } else {
-        let dir_ = dir.to_owned();
         let (shell, args) = shell.program_and_args();
-        let mut envs = match shell_env::capture(shell, args, &dir_).await {
-            Ok(envs) => envs,
-            Err(err) => {
-                util::log_err(&err);
-                return (
-                    None,
-                    Some(EnvironmentErrorMessage::from_str(
-                        "Failed to load environment variables. See log for details",
-                    )),
-                );
-            }
-        };
+        let mut envs = util::shell_env::capture(shell.clone(), args, abs_path)
+            .await
+            .with_context(|| {
+                tx.unbounded_send("Failed to load environment variables".into())
+                    .ok();
+                format!("capturing shell environment with {shell:?}")
+            })?;
+        if let Some(path) = envs.remove("Path") {
+            // windows env vars are case-insensitive, so normalize the path var
+            // so we can just assume `PATH` in other places
+            envs.insert("PATH".into(), path);
+        }
+        Ok(envs)
+    } else {
+        let (shell, args) = shell.program_and_args();
+        let mut envs = util::shell_env::capture(shell.clone(), args, abs_path)
+            .await
+            .with_context(|| {
+                tx.unbounded_send("Failed to load environment variables".into())
+                    .ok();
+                format!("capturing shell environment with {shell:?}")
+            })?;
 
         // If the user selects `Direct` for direnv, it would set an environment
         // variable that later uses to know that it should not run the hook.
         // We would include in `.envs` call so it is okay to run the hook
         // even if direnv direct mode is enabled.
-        let (direnv_environment, direnv_error) = match load_direnv {
-            DirenvSettings::ShellHook => (None, None),
-            DirenvSettings::Direct => match load_direnv_environment(&envs, dir).await {
-                Ok(env) => (Some(env), None),
-                Err(err) => (None, err.into()),
-            },
+        let direnv_environment = match load_direnv {
+            DirenvSettings::ShellHook => None,
+            DirenvSettings::Direct => load_direnv_environment(&envs, &dir)
+                .await
+                .with_context(|| {
+                    tx.unbounded_send("Failed to load direnv environment".into())
+                        .ok();
+                    "load direnv environment"
+                })
+                .log_err(),
         };
         if let Some(direnv_environment) = direnv_environment {
             for (key, value) in direnv_environment {
@@ -319,51 +316,41 @@ async fn load_shell_environment(
             }
         }
 
-        (Some(envs), direnv_error)
+        Ok(envs)
     }
 }
 
-fn get_local_directory_environment_impl(
-    shell: &Shell,
-    abs_path: Arc<Path>,
-    cx: &Context<ProjectEnvironment>,
-) -> Task<Option<HashMap<String, String>>> {
-    let load_direnv = ProjectSettings::get_global(cx).load_direnv.clone();
+async fn load_direnv_environment(
+    env: &HashMap<String, String>,
+    dir: &Path,
+) -> anyhow::Result<HashMap<String, Option<String>>> {
+    let Some(direnv_path) = which::which("direnv").ok() else {
+        return Ok(HashMap::default());
+    };
 
-    let shell = shell.clone();
-    cx.spawn(async move |this, cx| {
-        let (mut shell_env, error_message) = cx
-            .background_spawn({
-                let abs_path = abs_path.clone();
-                async move {
-                    load_directory_shell_environment(&shell, &abs_path, &load_direnv).await
-                }
-            })
-            .await;
+    let args = &["export", "json"];
+    let direnv_output = smol::process::Command::new(&direnv_path)
+        .args(args)
+        .envs(env)
+        .env("TERM", "dumb")
+        .current_dir(dir)
+        .output()
+        .await
+        .context("running direnv")?;
 
-        if let Some(shell_env) = shell_env.as_mut() {
-            let path = shell_env
-                .get("PATH")
-                .map(|path| path.as_str())
-                .unwrap_or_default();
-            log::info!(
-                "using project environment variables shell launched in {:?}. PATH={:?}",
-                abs_path,
-                path
-            );
+    if !direnv_output.status.success() {
+        bail!(
+            "Loading direnv environment failed ({}), stderr: {}",
+            direnv_output.status,
+            String::from_utf8_lossy(&direnv_output.stderr)
+        );
+    }
 
-            set_origin_marker(shell_env, EnvironmentOrigin::WorktreeShell);
-        }
+    let output = String::from_utf8_lossy(&direnv_output.stdout);
+    if output.is_empty() {
+        // direnv outputs nothing when it has no changes to apply to environment variables
+        return Ok(HashMap::default());
+    }
 
-        if let Some(error) = error_message {
-            this.update(cx, |this, cx| {
-                log::error!("{error}");
-                this.environment_error_messages.push_back(error);
-                cx.emit(ProjectEnvironmentEvent::ErrorsUpdated)
-            })
-            .log_err();
-        }
-
-        shell_env
-    })
+    serde_json::from_str(&output).context("parsing direnv json")
 }

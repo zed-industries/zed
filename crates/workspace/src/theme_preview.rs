@@ -317,13 +317,7 @@ impl ThemePreview {
                                 .style(ButtonStyle::Transparent)
                                 .tooltip(move |window, cx| {
                                     let name = name.clone();
-                                    Tooltip::with_meta(
-                                        name,
-                                        None,
-                                        format!("{:?}", color),
-                                        window,
-                                        cx,
-                                    )
+                                    Tooltip::with_meta(name, None, format!("{:?}", color), cx)
                                 }),
                         )
                     })),

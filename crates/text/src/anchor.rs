@@ -6,7 +6,7 @@ use std::{cmp::Ordering, fmt::Debug, ops::Range};
 use sum_tree::{Bias, Dimensions};
 
 /// A timestamped position in a buffer
-#[derive(Copy, Clone, Eq, PartialEq, Debug, Hash, Default)]
+#[derive(Copy, Clone, Eq, PartialEq, Debug, Hash)]
 pub struct Anchor {
     pub timestamp: clock::Lamport,
     /// The byte offset in the buffer
@@ -99,13 +99,14 @@ impl Anchor {
             let Some(fragment_id) = buffer.try_fragment_id_for_anchor(self) else {
                 return false;
             };
-            let mut fragment_cursor = buffer
+            let (.., item) = buffer
                 .fragments
-                .cursor::<Dimensions<Option<&Locator>, usize>>(&None);
-            fragment_cursor.seek(&Some(fragment_id), Bias::Left);
-            fragment_cursor
-                .item()
-                .is_some_and(|fragment| fragment.visible)
+                .find::<Dimensions<Option<&Locator>, usize>, _>(
+                    &None,
+                    &Some(fragment_id),
+                    Bias::Left,
+                );
+            item.is_some_and(|fragment| fragment.visible)
         }
     }
 }

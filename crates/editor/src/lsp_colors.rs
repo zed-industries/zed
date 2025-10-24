@@ -6,15 +6,15 @@ use gpui::{Hsla, Rgba, Task};
 use itertools::Itertools;
 use language::point_from_lsp;
 use multi_buffer::Anchor;
-use project::DocumentColor;
+use project::{DocumentColor, InlayId};
 use settings::Settings as _;
 use text::{Bias, BufferId, OffsetRangeExt as _};
 use ui::{App, Context, Window};
 use util::post_inc;
 
 use crate::{
-    DisplayPoint, Editor, EditorSettings, EditorSnapshot, FETCH_COLORS_DEBOUNCE_TIMEOUT, InlayId,
-    InlaySplice, RangeToAnchorExt, display_map::Inlay, editor_settings::DocumentColorsRenderMode,
+    DisplayPoint, Editor, EditorSettings, EditorSnapshot, FETCH_COLORS_DEBOUNCE_TIMEOUT,
+    InlaySplice, RangeToAnchorExt, editor_settings::DocumentColorsRenderMode, inlays::Inlay,
 };
 
 #[derive(Debug)]
@@ -164,7 +164,7 @@ impl Editor {
         }
 
         let visible_buffers = self
-            .visible_excerpts(None, cx)
+            .visible_excerpts(cx)
             .into_values()
             .map(|(buffer, ..)| buffer)
             .filter(|editor_buffer| {
@@ -400,8 +400,7 @@ impl Editor {
                     }
 
                     if colors.render_mode == DocumentColorsRenderMode::Inlay
-                        && (!colors_splice.to_insert.is_empty()
-                            || !colors_splice.to_remove.is_empty())
+                        && !colors_splice.is_empty()
                     {
                         editor.splice_inlays(&colors_splice.to_remove, colors_splice.to_insert, cx);
                         updated = true;

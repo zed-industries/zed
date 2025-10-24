@@ -50,7 +50,7 @@ impl Settings for WorktreeSettings {
             .collect();
 
         Self {
-            project_name: worktree.project_name.filter(|p| !p.is_empty()),
+            project_name: worktree.project_name.into_inner(),
             file_scan_exclusions: path_matchers(file_scan_exclusions, "file_scan_exclusions")
                 .log_err()
                 .unwrap_or_default(),

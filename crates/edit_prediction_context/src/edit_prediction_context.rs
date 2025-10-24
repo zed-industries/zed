@@ -27,9 +27,9 @@ pub use predict_edits_v3::Line;
 #[derive(Clone, Debug, PartialEq)]
 pub struct EditPredictionContextOptions {
     pub use_imports: bool,
-    pub use_references: bool,
     pub excerpt: EditPredictionExcerptOptions,
     pub score: EditPredictionScoreOptions,
+    pub max_retrieved_declarations: u8,
 }
 
 #[derive(Clone, Debug)]
@@ -118,7 +118,7 @@ impl EditPredictionContext {
         )?;
         let excerpt_text = excerpt.text(buffer);
 
-        let declarations = if options.use_references
+        let declarations = if options.max_retrieved_declarations > 0
             && let Some(index_state) = index_state
         {
             let excerpt_occurrences =
@@ -136,7 +136,7 @@ impl EditPredictionContext {
 
             let references = get_references(&excerpt, &excerpt_text, buffer);
 
-            scored_declarations(
+            let mut declarations = scored_declarations(
                 &options.score,
                 &index_state,
                 &excerpt,
@@ -146,7 +146,10 @@ impl EditPredictionContext {
                 references,
                 cursor_offset_in_file,
                 buffer,
-            )
+            );
+            // TODO [zeta2] if we need this when we ship, we should probably do it in a smarter way
+            declarations.truncate(options.max_retrieved_declarations as usize);
+            declarations
         } else {
             vec![]
         };
@@ -200,7 +203,6 @@ mod tests {
                     buffer_snapshot,
                     EditPredictionContextOptions {
                         use_imports: true,
-                        use_references: true,
                         excerpt: EditPredictionExcerptOptions {
                             max_bytes: 60,
                             min_bytes: 10,
@@ -209,6 +211,7 @@ mod tests {
                         score: EditPredictionScoreOptions {
                             omit_excerpt_overlaps: true,
                         },
+                        max_retrieved_declarations: u8::MAX,
                     },
                     Some(index.clone()),
                     cx,

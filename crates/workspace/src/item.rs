@@ -1,7 +1,7 @@
 use crate::{
     CollaboratorId, DelayedDebouncedEditAction, FollowableViewRegistry, ItemNavHistory,
     SerializableItemRegistry, ToolbarItemLocation, ViewId, Workspace, WorkspaceId,
-    invalid_buffer_view::InvalidBufferView,
+    invalid_item_view::InvalidItemView,
     pane::{self, Pane},
     persistence::model::ItemId,
     searchable::SearchableItemHandle,
@@ -811,7 +811,7 @@ impl<T: Item> ItemHandle for Entity<T> {
                             let autosave = item.workspace_settings(cx).autosave;
 
                             if let AutosaveSetting::AfterDelay { milliseconds } = autosave {
-                                let delay = Duration::from_millis(milliseconds);
+                                let delay = Duration::from_millis(milliseconds.0);
                                 let item = item.clone();
                                 pending_autosave.fire_new(
                                     delay,
@@ -1058,7 +1058,7 @@ pub trait ProjectItem: Item {
         _e: &anyhow::Error,
         _window: &mut Window,
         _cx: &mut App,
-    ) -> Option<InvalidBufferView>
+    ) -> Option<InvalidItemView>
     where
         Self: Sized,
     {

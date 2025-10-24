@@ -458,6 +458,8 @@ actions!(
         /// Expands all diff hunks in the editor.
         #[action(deprecated_aliases = ["editor::ExpandAllHunkDiffs"])]
         ExpandAllDiffHunks,
+        /// Collapses all diff hunks in the editor.
+        CollapseAllDiffHunks,
         /// Expands macros recursively at cursor position.
         ExpandMacroRecursively,
         /// Finds all references to the symbol at cursor.
