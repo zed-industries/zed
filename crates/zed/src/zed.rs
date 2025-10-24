@@ -5066,4 +5066,65 @@ mod tests {
             "BUG FOUND: Project settings were overwritten when opening via command - original custom content was lost"
         );
     }
+
+    #[gpui::test]
+    async fn test_prefer_focused_window(cx: &mut gpui::TestAppContext) {
+        let app_state = init_test(cx);
+        let paths = [PathBuf::from(path!("/dir/document.txt"))];
+
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                path!("/dir"),
+                json!({
+                    "document.txt": "Some of the documentation's content."
+                }),
+            )
+            .await;
+
+        let project_a = Project::test(app_state.fs.clone(), [Path::new("/dir")], cx).await;
+        let window_a =
+            cx.add_window(|window, cx| Workspace::test_new(project_a.clone(), window, cx));
+
+        let project_b = Project::test(app_state.fs.clone(), [Path::new("/dir")], cx).await;
+        let window_b =
+            cx.add_window(|window, cx| Workspace::test_new(project_b.clone(), window, cx));
+
+        let project_c = Project::test(app_state.fs.clone(), [Path::new("/dir")], cx).await;
+        let window_c =
+            cx.add_window(|window, cx| Workspace::test_new(project_c.clone(), window, cx));
+
+        for window in [window_a, window_b, window_c] {
+            let _ = cx.update_window(*window, |_, window, _| {
+                window.activate_window();
+            });
+
+            cx.update(|cx| {
+                let open_options = OpenOptions {
+                    prefer_focused_window: true,
+                    ..Default::default()
+                };
+
+                workspace::open_paths(&paths, app_state.clone(), open_options, cx)
+            })
+            .await
+            .unwrap();
+
+            cx.update_window(*window, |_, window, _| assert!(window.is_window_active()))
+                .unwrap();
+
+            let _ = window.read_with(cx, |workspace, cx| {
+                let pane = workspace.active_pane().read(cx);
+                let project_path = pane.active_item().unwrap().project_path(cx).unwrap();
+
+                assert!(
+                    project_path
+                        .path
+                        .as_ref()
+                        .ends_with(rel_path("document.txt"))
+                )
+            });
+        }
+    }
 }
