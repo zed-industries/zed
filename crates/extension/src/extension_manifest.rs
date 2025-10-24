@@ -151,25 +151,6 @@ pub struct AgentServerManifestEntry {
     /// Should be a small SVG icon for display in menus.
     #[serde(default)]
     pub icon: Option<String>,
-    /// Whether to skip checking for system-installed versions of this agent.
-    /// When true, always uses the extension-installed version.
-    #[serde(default)]
-    pub ignore_system_version: Option<bool>,
-    /// NPM package configuration (if using NPM launcher)
-    #[serde(default)]
-    pub package: Option<String>,
-    /// NPM package version (if using NPM launcher)
-    #[serde(default)]
-    pub version: Option<String>,
-    /// NPM entrypoint (if using NPM launcher)
-    #[serde(default)]
-    pub entrypoint: Option<String>,
-    /// Command-line arguments for NPM launcher
-    #[serde(default)]
-    pub args: Option<Vec<String>>,
-    /// Command for binary launcher (if using binary launcher)
-    #[serde(default)]
-    pub cmd: Option<String>,
     /// Per-target configuration for archive-based installation.
     /// The key format is "{os}-{arch}" where:
     /// - os: "darwin" (macOS), "linux", "windows"
@@ -183,7 +164,6 @@ pub struct AgentServerManifestEntry {
     /// args = ["--serve"]
     /// sha256 = "abc123..."  # optional
     /// ```
-    #[serde(default)]
     pub targets: HashMap<String, TargetConfig>,
 }
 
@@ -471,7 +451,7 @@ mod tests {
         assert!(manifest.allow_exec("docker", &["ps"]).is_err()); // wrong first arg
     }
     #[test]
-    fn parse_manifest_with_agent_server_npm_launcher() {
+    fn parse_manifest_with_agent_server_archive_launcher() {
         let toml_src = r#"
 id = "example.agent-server-ext"
 name = "Agent Server Example"
@@ -480,22 +460,21 @@ schema_version = 0
 
 [agent_servers.foo]
 name = "Foo Agent"
-package = "@example/agent-server"
-entrypoint = "node_modules/@example/agent-server/dist/index.js"
-version = "1.0.0"
-args = []
+
+[agent_servers.foo.targets.linux-x86_64]
+archive = "https://example.com/agent-linux-x64.tar.gz"
+cmd = "./agent"
+args = ["--serve"]
 "#;
 
         let manifest: ExtensionManifest = toml::from_str(toml_src).expect("manifest should parse");
         assert_eq!(manifest.id.as_ref(), "example.agent-server-ext");
         assert!(manifest.agent_servers.contains_key("foo"));
         let entry = manifest.agent_servers.get("foo").unwrap();
-        assert_eq!(entry.package.as_deref(), Some("@example/agent-server"));
-        assert_eq!(
-            entry.entrypoint.as_deref(),
-            Some("node_modules/@example/agent-server/dist/index.js")
-        );
-        assert_eq!(entry.version.as_deref(), Some("1.0.0"));
-        assert_eq!(entry.args.as_ref().map(|v| v.len()), Some(0));
+        assert!(entry.targets.contains_key("linux-x86_64"));
+        let target = entry.targets.get("linux-x86_64").unwrap();
+        assert_eq!(target.archive, "https://example.com/agent-linux-x64.tar.gz");
+        assert_eq!(target.cmd, "./agent");
+        assert_eq!(target.args, vec!["--serve"]);
     }
 }

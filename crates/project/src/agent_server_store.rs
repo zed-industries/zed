@@ -229,46 +229,6 @@ mod ext_agent_tests {
             .collect();
         assert_eq!(remaining, vec!["custom".to_string()]);
     }
-
-    #[cfg(unix)]
-    #[gpui::test]
-    async fn local_extension_binary_agent_get_command_resolves_path(cx: &mut gpui::TestAppContext) {
-        use std::fs;
-        use std::os::unix::fs::PermissionsExt;
-
-        // Create a temporary directory with a dummy executable
-        let tmp_dir = tempfile::tempdir().expect("tempdir");
-        let bin_path = tmp_dir.path().join("mybin");
-
-        // Write a minimal shell script and make it executable
-        fs::write(&bin_path, b"#!/bin/sh\nexit 0\n").expect("write bin");
-        let mut perms = fs::metadata(&bin_path).expect("metadata").permissions();
-        perms.set_mode(0o755);
-        fs::set_permissions(&bin_path, perms).expect("chmod");
-
-        // Create a project environment entity
-        let project_environment = cx.new(|cx| crate::ProjectEnvironment::new(None, cx));
-
-        // Construct a LocalExtensionBinaryAgent pointing to our dummy binary name
-        let mut agent = super::LocalExtensionBinaryAgent {
-            project_environment,
-            bin_name: gpui::SharedString::from("mybin"),
-            args: vec!["--foo".into()],
-            env: super::HashMap::default(),
-        };
-
-        // Ensure PATH contains our temp directory so which::which_in can find it
-        let mut extra_env = super::HashMap::default();
-        extra_env.insert("PATH".into(), tmp_dir.path().to_string_lossy().into_owned());
-
-        // Resolve the command
-        let task = agent.get_command(None, extra_env, None, None, &mut cx.to_async());
-        let (cmd, _root, _empty_auth_map) = task.await.expect("command resolved");
-
-        assert_eq!(cmd.path, bin_path);
-        assert_eq!(cmd.args, vec!["--foo"]);
-        assert!(cmd.env.is_some());
-    }
 }
 
 impl AgentServerStore {
@@ -308,7 +268,6 @@ impl AgentServerStore {
         match &self.state {
             AgentServerStoreState::Local {
                 project_environment,
-                node_runtime,
                 fs,
                 http_client,
                 ..
@@ -332,60 +291,19 @@ impl AgentServerStore {
                             );
                         }
 
-                        // Detect launcher type based on fields present
-                        if let (Some(package), Some(version), Some(entrypoint)) = (
-                            &agent_entry.package,
-                            &agent_entry.version,
-                            &agent_entry.entrypoint,
-                        ) {
-                            // NPM launcher
-                            self.external_agents.insert(
-                                ExternalAgentServerName(display),
-                                Box::new(LocalExtensionNpmAgent {
-                                    fs: fs.clone(),
-                                    node_runtime: node_runtime.clone(),
-                                    project_environment: project_environment.clone(),
-                                    extension_id: Arc::from(ext_id),
-                                    agent_id: agent_name.clone(),
-                                    package_name: SharedString::from(package.clone()),
-                                    entrypoint: entrypoint.clone(),
-                                    version: version.clone(),
-                                    args: agent_entry.args.clone().unwrap_or_default(),
-                                    env: agent_entry.env.clone(),
-                                    ignore_system_version: agent_entry
-                                        .ignore_system_version
-                                        .unwrap_or(false),
-                                }) as Box<dyn ExternalAgentServer>,
-                            );
-                        } else if !agent_entry.targets.is_empty() {
-                            // Archive-based launcher (formerly GithubRelease)
-                            self.external_agents.insert(
-                                ExternalAgentServerName(display),
-                                Box::new(LocalExtensionArchiveAgent {
-                                    fs: fs.clone(),
-                                    http_client: http_client.clone(),
-                                    project_environment: project_environment.clone(),
-                                    extension_id: Arc::from(ext_id),
-                                    agent_id: agent_name.clone(),
-                                    targets: agent_entry.targets.clone(),
-                                    env: agent_entry.env.clone(),
-                                    ignore_system_version: agent_entry
-                                        .ignore_system_version
-                                        .unwrap_or(false),
-                                }) as Box<dyn ExternalAgentServer>,
-                            );
-                        } else if let Some(cmd) = &agent_entry.cmd {
-                            // Binary launcher
-                            self.external_agents.insert(
-                                ExternalAgentServerName(display),
-                                Box::new(LocalExtensionBinaryAgent {
-                                    project_environment: project_environment.clone(),
-                                    bin_name: SharedString::from(cmd.clone()),
-                                    args: agent_entry.args.clone().unwrap_or_default(),
-                                    env: agent_entry.env.clone(),
-                                }) as Box<dyn ExternalAgentServer>,
-                            );
-                        }
+                        // Archive-based launcher (download from URL)
+                        self.external_agents.insert(
+                            ExternalAgentServerName(display),
+                            Box::new(LocalExtensionArchiveAgent {
+                                fs: fs.clone(),
+                                http_client: http_client.clone(),
+                                project_environment: project_environment.clone(),
+                                extension_id: Arc::from(ext_id),
+                                agent_id: agent_name.clone(),
+                                targets: agent_entry.targets.clone(),
+                                env: agent_entry.env.clone(),
+                            }) as Box<dyn ExternalAgentServer>,
+                        );
                     }
                 }
             }
@@ -974,70 +892,6 @@ fn get_or_npm_install_builtin_agent(
     })
 }
 
-/// Install an npm agent with an exact version (for extension agents).
-/// No auto-updates or version checking - just installs the specified version if not already present.
-fn install_npm_agent_exact_version(
-    cache_key: SharedString,
-    package_name: SharedString,
-    entrypoint_path: PathBuf,
-    exact_version: semver::Version,
-    status_tx: Option<watch::Sender<SharedString>>,
-    fs: Arc<dyn Fs>,
-    node_runtime: NodeRuntime,
-    cx: &mut AsyncApp,
-) -> Task<std::result::Result<AgentServerCommand, anyhow::Error>> {
-    cx.spawn(async move |cx| {
-        let node_path = node_runtime.binary_path().await?;
-        let dir = paths::data_dir()
-            .join("external_agents")
-            .join(cache_key.as_str());
-        fs.create_dir(&dir).await?;
-
-        let version_str = exact_version.to_string();
-        let version_dir = dir.join(&version_str);
-        let agent_server_path = version_dir.join(&entrypoint_path);
-
-        // If the exact version is already installed, use it
-        if fs.is_file(&agent_server_path).await {
-            return Ok(AgentServerCommand {
-                path: node_path,
-                args: vec![agent_server_path.to_string_lossy().into_owned()],
-                env: None,
-            });
-        }
-
-        // Install the exact version
-        if let Some(mut status_tx) = status_tx {
-            status_tx.send("Installing…".into()).ok();
-        }
-
-        cx.background_spawn(async move {
-            node_runtime
-                .npm_install_packages(
-                    &dir,
-                    &[(package_name.as_ref(), exact_version.to_string().as_str())],
-                )
-                .await
-                .with_context(|| format!("failed to install {package_name}@{exact_version}"))?;
-
-            anyhow::Ok(())
-        })
-        .await?;
-
-        anyhow::ensure!(
-            fs.is_file(&agent_server_path).await,
-            "Missing entrypoint path {} after installation",
-            agent_server_path.to_string_lossy()
-        );
-
-        Ok(AgentServerCommand {
-            path: node_path,
-            args: vec![agent_server_path.to_string_lossy().into_owned()],
-            env: None,
-        })
-    })
-}
-
 fn find_bin_in_path(
     bin_name: SharedString,
     root_dir: PathBuf,
@@ -1502,27 +1356,6 @@ fn asset_name(version: &str) -> Option<String> {
     Some(format!("codex-acp-{version}-{arch}-{platform}.{ext}"))
 }
 
-struct LocalExtensionBinaryAgent {
-    project_environment: Entity<ProjectEnvironment>,
-    bin_name: SharedString,
-    args: Vec<String>,
-    env: HashMap<String, String>,
-}
-
-struct LocalExtensionNpmAgent {
-    fs: Arc<dyn Fs>,
-    node_runtime: NodeRuntime,
-    project_environment: Entity<ProjectEnvironment>,
-    extension_id: Arc<str>,
-    agent_id: Arc<str>,
-    package_name: SharedString,
-    entrypoint: String,
-    version: String,
-    args: Vec<String>,
-    env: HashMap<String, String>,
-    ignore_system_version: bool,
-}
-
 struct LocalExtensionArchiveAgent {
     fs: Arc<dyn Fs>,
     http_client: Arc<dyn HttpClient>,
@@ -1531,181 +1364,11 @@ struct LocalExtensionArchiveAgent {
     agent_id: Arc<str>,
     targets: HashMap<String, extension::TargetConfig>,
     env: HashMap<String, String>,
-    ignore_system_version: bool,
 }
 
 struct LocalCustomAgent {
     project_environment: Entity<ProjectEnvironment>,
     command: AgentServerCommand,
-}
-
-impl ExternalAgentServer for LocalExtensionBinaryAgent {
-    fn get_command(
-        &mut self,
-        root_dir: Option<&str>,
-        extra_env: HashMap<String, String>,
-        _status_tx: Option<watch::Sender<SharedString>>,
-        _new_version_available_tx: Option<watch::Sender<Option<String>>>,
-        cx: &mut AsyncApp,
-    ) -> Task<Result<(AgentServerCommand, String, Option<task::SpawnInTerminal>)>> {
-        let bin_name = self.bin_name.clone();
-        let args = self.args.clone();
-        let mut base_env = self.env.clone();
-        base_env.extend(extra_env);
-        let project_environment = self.project_environment.downgrade();
-
-        let root_dir: Arc<Path> = root_dir
-            .map(|root_dir| Path::new(root_dir))
-            .unwrap_or(paths::home_dir())
-            .into();
-
-        cx.spawn(async move |cx| {
-            // Resolve environment and PATH for the provided root_dir
-            let env = project_environment
-                .update(cx, |project_environment, cx| {
-                    project_environment.get_local_directory_environment(
-                        &Shell::System,
-                        root_dir.clone(),
-                        cx,
-                    )
-                })?
-                .await
-                .unwrap_or_default();
-
-            let mut merged_env = env;
-            merged_env.extend(base_env);
-
-            let bin = find_bin_in_path(
-                bin_name.clone(),
-                root_dir.as_ref().to_path_buf(),
-                merged_env.clone(),
-                cx,
-            )
-            .await
-            .ok_or_else(|| anyhow::anyhow!(format!("Binary '{}' not found in PATH", bin_name)))?;
-
-            let command = AgentServerCommand {
-                path: bin,
-                args,
-                env: Some(merged_env),
-            };
-
-            Ok((command, root_dir.to_string_lossy().into_owned(), None))
-        })
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn Any {
-        self
-    }
-}
-
-impl ExternalAgentServer for LocalExtensionNpmAgent {
-    fn get_command(
-        &mut self,
-        root_dir: Option<&str>,
-        extra_env: HashMap<String, String>,
-        status_tx: Option<watch::Sender<SharedString>>,
-        _new_version_available_tx: Option<watch::Sender<Option<String>>>,
-        cx: &mut AsyncApp,
-    ) -> Task<Result<(AgentServerCommand, String, Option<task::SpawnInTerminal>)>> {
-        let fs = self.fs.clone();
-        let node_runtime = self.node_runtime.clone();
-        let project_environment = self.project_environment.downgrade();
-        let extension_id = self.extension_id.clone();
-        let agent_id = self.agent_id.clone();
-        let package_name = self.package_name.clone();
-        let entrypoint = self.entrypoint.clone();
-        let version = self.version.clone();
-        let args = self.args.clone();
-        let base_env = self.env.clone();
-        let ignore_system_version = self.ignore_system_version;
-
-        let root_dir: Arc<Path> = root_dir
-            .map(|root_dir| Path::new(root_dir))
-            .unwrap_or(paths::home_dir())
-            .into();
-
-        cx.spawn(async move |cx| {
-            // Get project environment
-            let mut env = project_environment
-                .update(cx, |project_environment, cx| {
-                    project_environment.get_local_directory_environment(
-                        &Shell::System,
-                        root_dir.clone(),
-                        cx,
-                    )
-                })?
-                .await
-                .unwrap_or_default();
-
-            // Merge manifest env and extra env
-            env.extend(base_env);
-            env.extend(extra_env);
-
-            let mut command = if !ignore_system_version {
-                let bin_name = package_name
-                    .rsplit_once('/')
-                    .map(|(_, name)| name.to_string())
-                    .unwrap_or_else(|| package_name.to_string());
-
-                if let Some(bin) = find_bin_in_path(
-                    bin_name.into(),
-                    root_dir.as_ref().to_path_buf(),
-                    env.clone(),
-                    cx,
-                )
-                .await
-                {
-                    AgentServerCommand {
-                        path: bin,
-                        args: Vec::new(),
-                        env: Some(env.clone()),
-                    }
-                } else {
-                    let cache_key = format!("{}/{}", extension_id, agent_id);
-                    let exact_semver = semver::Version::parse(&version)
-                        .with_context(|| format!("invalid version: {}", version))?;
-
-                    install_npm_agent_exact_version(
-                        cache_key.into(),
-                        package_name.clone(),
-                        PathBuf::from(&entrypoint),
-                        exact_semver,
-                        None,
-                        fs,
-                        node_runtime,
-                        cx,
-                    )
-                    .await?
-                }
-            } else {
-                let cache_key = format!("{}/{}", extension_id, agent_id);
-                let exact_semver = semver::Version::parse(&version)
-                    .with_context(|| format!("invalid version: {}", version))?;
-
-                install_npm_agent_exact_version(
-                    cache_key.into(),
-                    package_name.clone(),
-                    PathBuf::from(&entrypoint),
-                    exact_semver,
-                    status_tx,
-                    fs,
-                    node_runtime,
-                    cx,
-                )
-                .await?
-            };
-
-            command.args.extend(args);
-            command.env = Some(env);
-
-            Ok((command, root_dir.to_string_lossy().into_owned(), None))
-        })
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn Any {
-        self
-    }
 }
 
 impl ExternalAgentServer for LocalExtensionArchiveAgent {
@@ -1724,7 +1387,6 @@ impl ExternalAgentServer for LocalExtensionArchiveAgent {
         let agent_id = self.agent_id.clone();
         let targets = self.targets.clone();
         let base_env = self.env.clone();
-        let _ignore_system_version = self.ignore_system_version;
 
         let root_dir: Arc<Path> = root_dir
             .map(|root_dir| Path::new(root_dir))
@@ -2032,103 +1694,13 @@ impl settings::Settings for AllAgentServersSettings {
 }
 
 #[cfg(test)]
-mod npm_launcher_tests {
+mod extension_agent_tests {
     use super::*;
     use gpui::TestAppContext;
     use std::sync::Arc;
 
-    #[gpui::test]
-    async fn npm_agent_uses_extension_and_agent_id_for_cache_key(cx: &mut TestAppContext) {
-        let fs = fs::FakeFs::new(cx.background_executor.clone());
-        let node_runtime = NodeRuntime::unavailable();
-        let project_environment = cx.new(|cx| crate::ProjectEnvironment::new(None, cx));
-
-        let agent = LocalExtensionNpmAgent {
-            fs,
-            node_runtime,
-            project_environment,
-            extension_id: Arc::from("my-extension"),
-            agent_id: Arc::from("my-agent"),
-            package_name: SharedString::from("@test/package"),
-            entrypoint: "dist/index.js".into(),
-            version: "1.0.0".to_string(),
-            args: vec!["--flag".into()],
-            env: {
-                let mut map = HashMap::default();
-                map.insert("FOO".into(), "bar".into());
-                map
-            },
-            ignore_system_version: false,
-        };
-
-        // The cache key should be "my-extension/my-agent"
-        // We can't easily test the full flow without mocking npm install,
-        // but we can verify the agent is properly constructed
-        assert_eq!(agent.extension_id.as_ref(), "my-extension");
-        assert_eq!(agent.agent_id.as_ref(), "my-agent");
-        assert_eq!(agent.package_name.as_ref(), "@test/package");
-        assert_eq!(agent.entrypoint, "dist/index.js");
-        assert_eq!(agent.version, "1.0.0");
-        assert_eq!(agent.args, vec!["--flag"]);
-        assert_eq!(agent.env.get("FOO"), Some(&"bar".to_string()));
-    }
-
     #[test]
-    fn sync_extension_agents_registers_npm_launcher() {
-        use extension::AgentServerManifestEntry;
-
-        // For this test, we just verify the display name is constructed
-        // In a real Local store, the agent would be registered
-        let expected_name = ExternalAgentServerName(SharedString::from("TestExt: test-agent"));
-
-        // Verify the display name format matches what sync_extension_agents creates
-        assert_eq!(expected_name.0, "TestExt: test-agent");
-
-        // Verify the manifest entry structure
-        let mut env = HashMap::default();
-        env.insert("KEY".into(), "value".into());
-
-        let _entry = AgentServerManifestEntry {
-            name: "Test NPM Agent".into(),
-            package: Some("@example/test-pkg".into()),
-            version: Some("1.0.0".into()),
-            entrypoint: Some("lib/server.js".into()),
-            args: Some(vec!["--flag".into()]),
-            cmd: None,
-            targets: HashMap::default(),
-            env,
-            icon: None,
-            ignore_system_version: None,
-        };
-    }
-
-    #[test]
-    fn sync_extension_agents_registers_binary_launcher() {
-        use extension::AgentServerManifestEntry;
-
-        let expected_name = ExternalAgentServerName(SharedString::from("BinExt: bin-agent"));
-        assert_eq!(expected_name.0, "BinExt: bin-agent");
-
-        // Verify the manifest entry structure
-        let mut env = HashMap::default();
-        env.insert("PATH_VAR".into(), "/custom/path".into());
-
-        let _entry = AgentServerManifestEntry {
-            name: "Binary Agent".into(),
-            package: None,
-            version: None,
-            entrypoint: None,
-            cmd: Some("my-binary".into()),
-            args: Some(vec!["--custom-arg".into()]),
-            targets: HashMap::default(),
-            env,
-            icon: None,
-            ignore_system_version: None,
-        };
-    }
-
-    #[test]
-    fn npm_launcher_constructs_proper_display_names() {
+    fn extension_agent_constructs_proper_display_names() {
         // Verify the display name format for extension-provided agents
         let name1 = ExternalAgentServerName(SharedString::from("Extension: Agent"));
         assert!(name1.0.contains(": "));
@@ -2212,7 +1784,7 @@ mod npm_launcher_tests {
     }
 
     #[test]
-    fn github_release_launcher_constructs_with_all_fields() {
+    fn archive_launcher_constructs_with_all_fields() {
         use extension::AgentServerManifestEntry;
 
         let mut env = HashMap::default();
@@ -2233,15 +1805,9 @@ mod npm_launcher_tests {
 
         let _entry = AgentServerManifestEntry {
             name: "GitHub Agent".into(),
-            package: None,
-            version: None,
-            entrypoint: None,
-            cmd: None,
-            args: None,
             targets,
             env,
             icon: None,
-            ignore_system_version: None,
         };
 
         // Verify display name construction
@@ -2250,9 +1816,7 @@ mod npm_launcher_tests {
     }
 
     #[gpui::test]
-    async fn github_release_agent_uses_extension_and_agent_id_for_cache_key(
-        cx: &mut TestAppContext,
-    ) {
+    async fn archive_agent_uses_extension_and_agent_id_for_cache_key(cx: &mut TestAppContext) {
         let fs = fs::FakeFs::new(cx.background_executor.clone());
         let http_client = http_client::FakeHttpClient::with_404_response();
         let project_environment = cx.new(|cx| crate::ProjectEnvironment::new(None, cx));
@@ -2281,7 +1845,6 @@ mod npm_launcher_tests {
                 map.insert("PORT".into(), "8080".into());
                 map
             },
-            ignore_system_version: false,
         };
 
         // Verify agent is properly constructed
@@ -2292,18 +1855,15 @@ mod npm_launcher_tests {
     }
 
     #[test]
-    fn sync_extension_agents_registers_github_release_launcher() {
+    fn sync_extension_agents_registers_archive_launcher() {
         use extension::AgentServerManifestEntry;
 
         let expected_name = ExternalAgentServerName(SharedString::from("Release Agent"));
         assert_eq!(expected_name.0, "Release Agent");
 
-        // Verify the manifest entry structure for GitHub release
+        // Verify the manifest entry structure for archive-based installation
         let mut env = HashMap::default();
         env.insert("API_KEY".into(), "secret".into());
-
-        let mut assets: HashMap<String, String> = HashMap::default();
-        assets.insert("darwin-aarch64".into(), "agent-macos-arm64.zip".into());
 
         let mut targets = HashMap::default();
         targets.insert(
@@ -2318,82 +1878,14 @@ mod npm_launcher_tests {
 
         let manifest_entry = AgentServerManifestEntry {
             name: "Release Agent".into(),
-            package: None,
-            version: None,
-            entrypoint: None,
-            cmd: None,
-            args: None,
             targets: targets.clone(),
             env,
             icon: None,
-            ignore_system_version: None,
         };
 
         // Verify target config is present
         assert!(manifest_entry.targets.contains_key("linux-x86_64"));
         let target = manifest_entry.targets.get("linux-x86_64").unwrap();
         assert_eq!(target.cmd, "./release-agent");
-    }
-
-    #[test]
-    fn test_extension_agent_with_custom_env() {
-        use extension::AgentServerManifestEntry;
-
-        let mut env = HashMap::default();
-        env.insert("CUSTOM_VAR".into(), "custom_value".into());
-
-        // manifest_entry is used to test that it can be constructed; the fields match the above test
-        let manifest_entry = AgentServerManifestEntry {
-            name: "Example Agent".into(),
-            package: Some("@example/agent".into()),
-            version: Some("1.0.0".into()),
-            entrypoint: Some("dist/index.js".into()),
-            args: Some(vec!["--experimental-acp".into()]),
-            cmd: None,
-            targets: HashMap::default(),
-            env,
-            icon: None,
-            ignore_system_version: None,
-        };
-
-        assert_eq!(
-            manifest_entry.args.as_ref().unwrap(),
-            &vec!["--experimental-acp"]
-        );
-        // Verify custom env is present
-        assert_eq!(
-            manifest_entry.env.get("CUSTOM_VAR"),
-            Some(&"custom_value".to_string())
-        );
-    }
-
-    #[test]
-    fn test_binary_launcher_with_env() {
-        use extension::AgentServerManifestEntry;
-
-        let mut env = HashMap::default();
-        env.insert("API_ENDPOINT".into(), "https://api.example.com".into());
-        env.insert("CLIENT_ID".into(), "my-client-id".into());
-
-        let manifest_entry = AgentServerManifestEntry {
-            name: "My Agent".into(),
-            package: None,
-            version: None,
-            entrypoint: None,
-            cmd: Some("my-agent".into()),
-            args: Some(vec!["--flag".into()]),
-            targets: HashMap::default(),
-            env: env.clone(),
-            icon: None,
-            ignore_system_version: Some(true),
-        };
-
-        assert_eq!(manifest_entry.args.as_ref().unwrap(), &vec!["--flag"]);
-        assert_eq!(manifest_entry.env.len(), 2);
-        assert_eq!(
-            manifest_entry.env.get("API_ENDPOINT"),
-            Some(&"https://api.example.com".to_string())
-        );
-        assert_eq!(manifest_entry.ignore_system_version, Some(true));
     }
 }
