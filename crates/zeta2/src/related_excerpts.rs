@@ -3,17 +3,24 @@ use std::{fmt::Write, ops::Range, sync::Arc};
 use anyhow::{Context as _, Result, anyhow};
 use edit_prediction_context::{EditPredictionExcerpt, EditPredictionExcerptOptions};
 use futures::StreamExt;
-use gpui::{App, Entity, Task};
+use gpui::{App, AsyncApp, Entity, Task};
 use indoc::indoc;
-use language::{Anchor, Rope, ToPoint as _};
+use language::{Anchor, OffsetRangeExt, Rope, ToPoint as _};
 use language_model::{
     LanguageModelCompletionEvent, LanguageModelId, LanguageModelRegistry, LanguageModelRequest,
     LanguageModelRequestMessage, LanguageModelRequestTool, Role,
 };
-use project::{Project, WorktreeId};
+use project::{
+    Project, WorktreeId, WorktreeSettings,
+    search::{SearchQuery, SearchResult},
+};
 use schemars::JsonSchema;
 use serde::Deserialize;
-use util::rel_path::RelPath;
+use util::{
+    paths::{PathMatcher, PathStyle},
+    rel_path::RelPath,
+};
+use workspace::item::Settings as _;
 
 pub(crate) enum RelatedExcerpt {
     Buffer {
@@ -70,7 +77,7 @@ const SEARCH_TOOL_NAME: &str = "search";
 struct SearchToolInput {
     /// An array of queries to run for gathering context relevant to the next prediction
     #[schemars(length(max = 5))]
-    queries: Vec<SearchToolQuery>,
+    queries: Box<[SearchToolQuery]>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -79,12 +86,15 @@ struct SearchToolQuery {
     glob: String,
     /// A regular expression to match content within the files matched by the glob pattern
     regex: String,
+    /// Whether the regex is case-sensitive. Defaults to false (case-insensitive).
+    #[serde(default)]
+    case_sensitive: bool,
 }
 
 pub fn find_related_excerpts<'a>(
     buffer: Entity<language::Buffer>,
     cursor_position: Anchor,
-    _project: &Entity<Project>,
+    project: &Entity<Project>,
     events: impl Iterator<Item = &'a crate::Event>,
     excerpt_options: &EditPredictionExcerptOptions,
     cx: &App,
@@ -155,8 +165,28 @@ pub fn find_related_excerpts<'a>(
         ..Default::default()
     };
 
+    let path_style = project.read(cx).path_style(cx);
+
+    let exclude_matcher = {
+        let global_settings = WorktreeSettings::get_global(cx);
+        let exclude_patterns = global_settings
+            .file_scan_exclusions
+            .sources()
+            .iter()
+            .chain(global_settings.private_files.sources().iter());
+
+        match PathMatcher::new(exclude_patterns, path_style) {
+            Ok(matcher) => matcher,
+            Err(err) => {
+                return Task::ready(Err(anyhow!(err)));
+            }
+        }
+    };
+
+    let project = project.clone();
     cx.spawn(async move |cx| {
         let mut stream = model.stream_completion(request, cx).await?;
+        let mut queries = Vec::new();
 
         while let Some(event) = stream.next().await {
             match event? {
@@ -166,14 +196,10 @@ pub fn find_related_excerpts<'a>(
                     }
 
                     if tool_use.name.as_ref() == SEARCH_TOOL_NAME {
-                        // todo! handle streaming
                         let input: SearchToolInput = serde_json::from_value(tool_use.input)
                             .with_context(|| tool_use.raw_input.to_string())?;
 
-                        println!("\n\nSearch tool invocation:");
-                        for query in input.queries {
-                            println!(r#"glob: "{}", regex: "{}""#, query.glob, query.regex);
-                        }
+                        queries.extend(input.queries);
                     } else {
                         log::warn!(
                             "context gathering model tried to use unknown tool: {}",
@@ -182,25 +208,105 @@ pub fn find_related_excerpts<'a>(
                     }
                 }
                 LanguageModelCompletionEvent::Text(txt) => {
+                    // todo!
                     eprint!("{txt}");
                 }
-                LanguageModelCompletionEvent::Stop(reason) => {
-                    eprintln!("\nStopped {reason:?}")
-                }
-                LanguageModelCompletionEvent::Thinking { .. } => {}
                 LanguageModelCompletionEvent::StatusUpdate(_)
+                | LanguageModelCompletionEvent::Stop(_)
+                | LanguageModelCompletionEvent::Thinking { .. }
                 | LanguageModelCompletionEvent::RedactedThinking { .. }
                 | LanguageModelCompletionEvent::ToolUseJsonParseError { .. }
                 | LanguageModelCompletionEvent::StartMessage { .. }
                 | LanguageModelCompletionEvent::UsageUpdate(..) => {}
             }
         }
-        println!();
 
-        // todo! fail if no queries were run
+        if queries.is_empty() {
+            return anyhow::Ok(Vec::new());
+        }
 
-        let excerpts = Vec::new();
+        let mut excerpts = Vec::new();
 
-        anyhow::Ok(excerpts)
+        // todo! parallelize?
+        for query in queries {
+            run_query(
+                query,
+                &mut excerpts,
+                path_style,
+                exclude_matcher.clone(),
+                &project,
+                cx,
+            )
+            .await?;
+        }
+
+        anyhow::Ok(vec![])
     })
+}
+
+async fn run_query(
+    args: SearchToolQuery,
+    excerpts: &mut Vec<EditPredictionExcerpt>,
+    path_style: PathStyle,
+    exclude_matcher: PathMatcher,
+    project: &Entity<Project>,
+    cx: &mut AsyncApp,
+) -> Result<()> {
+    let include_matcher = PathMatcher::new(vec![args.glob], path_style)?;
+
+    let query = SearchQuery::regex(
+        &args.regex,
+        false,
+        args.case_sensitive,
+        false,
+        true,
+        include_matcher,
+        exclude_matcher,
+        true,
+        None,
+    )?;
+
+    let results = project.update(cx, |project, cx| project.search(query, cx))?;
+    futures::pin_mut!(results);
+
+    let mut total_bytes = 0;
+
+    while let Some(SearchResult::Buffer { buffer, ranges }) = results.next().await {
+        if ranges.is_empty() {
+            continue;
+        }
+
+        let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot())?;
+
+        for range in ranges {
+            let offset_range = range.to_offset(&snapshot);
+            let query_point = (offset_range.start + offset_range.len() / 2).to_point(&snapshot);
+
+            const MIN_EXCERPT_LEN: usize = 16;
+            const MAX_EXCERPT_LEN: usize = 768;
+            const MAX_RESULT_BYTES_PER_QUERY: usize = MAX_EXCERPT_LEN * 5;
+
+            if total_bytes + MIN_EXCERPT_LEN >= MAX_RESULT_BYTES_PER_QUERY {
+                break;
+            }
+
+            let excerpt = EditPredictionExcerpt::select_from_buffer(
+                query_point,
+                &snapshot,
+                &EditPredictionExcerptOptions {
+                    max_bytes: MAX_EXCERPT_LEN.min(MAX_RESULT_BYTES_PER_QUERY - total_bytes),
+                    min_bytes: MIN_EXCERPT_LEN,
+                    target_before_cursor_over_total_bytes: 0.5,
+                },
+                None,
+            );
+
+            if let Some(excerpt) = excerpt {
+                total_bytes += excerpt.range.len();
+                excerpts.push(excerpt);
+            }
+        }
+    }
+
+    anyhow::Ok(())
 }
