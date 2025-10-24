@@ -780,13 +780,7 @@ impl LanguageServer {
                         }),
                         insert_text_mode: Some(InsertTextMode::ADJUST_INDENTATION),
                         completion_list: Some(CompletionListCapability {
-                            item_defaults: Some(vec![
-                                "commitCharacters".to_owned(),
-                                "editRange".to_owned(),
-                                "insertTextMode".to_owned(),
-                                "insertTextFormat".to_owned(),
-                                "data".to_owned(),
-                            ]),
+                            item_defaults: None,
                         }),
                         context_support: Some(true),
                         dynamic_registration: Some(true),
