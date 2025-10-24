@@ -16,3 +16,4 @@ clap = { workspace = true, features = ["derive"] }
 toml.workspace = true
 indoc.workspace = true
 toml_edit.workspace = true
+gh-workflow.workspace = true
