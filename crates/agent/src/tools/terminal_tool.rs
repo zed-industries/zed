@@ -247,10 +247,7 @@ mod tests {
             let title = format_initial_title(Ok(input));
 
             if cmd.contains("rm -rf") {
-                assert!(
-                    title.contains("rm -rf"),
-                    "Dangerous rm -rf must be visible"
-                );
+                assert!(title.contains("rm -rf"), "Dangerous rm -rf must be visible");
             }
             if cmd.contains("sudo") {
                 assert!(title.contains("sudo"), "sudo command must be visible");

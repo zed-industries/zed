@@ -24,10 +24,9 @@ use futures::FutureExt as _;
 use gpui::{
     Action, Animation, AnimationExt, AnyView, App, BorderStyle, ClickEvent, ClipboardItem,
     CursorStyle, EdgesRefinement, ElementId, Empty, Entity, FocusHandle, Focusable, Hsla, Length,
-    ListOffset, ListState, PlatformDisplay, SharedString, StyleRefinement,
-    Subscription, Task, TextStyle, TextStyleRefinement, UnderlineStyle, WeakEntity, Window,
-    WindowHandle, div, ease_in_out, linear_color_stop, linear_gradient, list, point,
-    pulsating_between,
+    ListOffset, ListState, PlatformDisplay, SharedString, StyleRefinement, Subscription, Task,
+    TextStyle, TextStyleRefinement, UnderlineStyle, WeakEntity, Window, WindowHandle, div,
+    ease_in_out, linear_color_stop, linear_gradient, list, point, pulsating_between,
 };
 use language::Buffer;
 
@@ -1724,7 +1723,7 @@ impl AcpThreadView {
     }
 
     fn render_entry(
-        &mut self,
+        &self,
         entry_ix: usize,
         total_entries: usize,
         entry: &AgentThreadEntry,
@@ -2106,10 +2105,10 @@ impl AcpThreadView {
     }
 
     fn render_tool_call(
-        &mut self,
+        &self,
         entry_ix: usize,
         tool_call: &ToolCall,
-        window: &mut Window,
+        window: &Window,
         cx: &Context<Self>,
     ) -> Div {
         let has_location = tool_call.locations.len() == 1;
@@ -2219,83 +2218,13 @@ impl AcpThreadView {
             .mr_5()
             .map(|this| {
                 if is_terminal_tool {
-                    let header_bg = self.tool_card_header_bg(cx);
-
-                    // Check if this tool call is expanded
                     let is_expanded = self.expanded_tool_calls.contains(&tool_call.id);
 
                     this.child(
-                        v_flex()
-                            .id("terminal-command-confirmation")
-                            .p_1p5()
-                            .gap_0p5()
-                            .text_ui_sm(cx)
-                            .bg(header_bg)
-                            .child(
-                                h_flex()
-                                    .group(&card_header_id)
-                                    .justify_between()
-                                    .child(
-                                        Label::new("Run Command")
-                                            .buffer_font(cx)
-                                            .size(LabelSize::XSmall)
-                                            .color(Color::Muted),
-                                    )
-                                    .child(
-                                        Disclosure::new(("terminal-expand", entry_ix), is_expanded)
-                                            .opened_icon(IconName::ChevronUp)
-                                            .closed_icon(IconName::ChevronDown)
-                                            .visible_on_hover(&card_header_id)
-                                            .on_click(cx.listener({
-                                                let tool_call_id = tool_call.id.clone();
-                                                move |this, _event, _window, cx| {
-                                                    if is_expanded {
-                                                        this.expanded_tool_calls.remove(&tool_call_id);
-                                                    } else {
-                                                        this.expanded_tool_calls.insert(tool_call_id.clone());
-                                                    }
-                                                    cx.notify();
-                                                }
-                                            }))
-                                    )
-                            )
-                            .child(
-                                div()
-                                    .relative()
-                                    .when(!is_expanded, |this| {
-                                        this.max_h(rems(12.0)).overflow_hidden()
-                                    })
-                                    .child(
-                                        MarkdownElement::new(
-                                            tool_call.label.clone(),
-                                            terminal_command_markdown_style(window, cx),
-                                        )
-                                        .code_block_renderer(markdown::CodeBlockRenderer::Default {
-                                            copy_button: false,
-                                            copy_button_on_hover: false,
-                                            border: false,
-                                        })
-                                    )
-                                    .when(!is_expanded, |this| {
-                                        // Add fade gradient overlay
-                                        this.child(
-                                            div()
-                                                .absolute()
-                                                .bottom_0()
-                                                .left_0()
-                                                .right_0()
-                                                .h(rems(3.0))
-                                                .bg(linear_gradient(
-                                                    180.,
-                                                    linear_color_stop(header_bg.alpha(0.0), 0.),
-                                                    linear_color_stop(header_bg, 1.),
-                                                ))
-                                        )
-                                    })
-                            )
+                        self.render_terminal_command_preview(is_expanded, tool_call, window, cx)
                     )
                 } else {
-                   this.child(
+                    this.child(
                         h_flex()
                             .group(&card_header_id)
                             .relative()
@@ -2758,6 +2687,82 @@ impl AcpThreadView {
                 },
             )
             .into_any()
+    }
+
+    fn render_terminal_command_preview(
+        &self,
+        expanded: bool,
+        tool_call: &ToolCall,
+        window: &Window,
+        cx: &Context<Self>,
+    ) -> Div {
+        let header_bg = self.tool_card_header_bg(cx);
+        let icon = if expanded {
+            IconName::ChevronUp
+        } else {
+            IconName::ChevronDown
+        };
+
+        v_flex()
+            .relative()
+            .bg(header_bg)
+            .when(!expanded, |this| this.max_h(rems(12.0)).overflow_hidden())
+            .child(
+                v_flex()
+                    .p_1p5()
+                    .gap_0p5()
+                    .text_ui_sm(cx)
+                    .child(
+                        Label::new("Run Command")
+                            .buffer_font(cx)
+                            .size(LabelSize::XSmall)
+                            .color(Color::Muted),
+                    )
+                    .child(
+                        MarkdownElement::new(
+                            tool_call.label.clone(),
+                            terminal_command_markdown_style(window, cx),
+                        )
+                        .code_block_renderer(
+                            markdown::CodeBlockRenderer::Default {
+                                copy_button: false,
+                                copy_button_on_hover: false,
+                                border: false,
+                            },
+                        ),
+                    ),
+            )
+            .child(
+                h_flex()
+                    .id("expand-command-btn")
+                    .cursor_pointer()
+                    .when(!expanded, |this| {
+                        this.absolute().left_0().bottom_0().bg(cx
+                            .theme()
+                            .colors()
+                            .element_active
+                            .opacity(0.2))
+                    })
+                    .w_full()
+                    .py_0p5()
+                    .justify_center()
+                    .border_t_1()
+                    .border_color(cx.theme().colors().border)
+                    .rounded_b_sm()
+                    .hover(|s| s.bg(cx.theme().colors().element_hover))
+                    .child(Icon::new(icon).size(IconSize::Small))
+                    .on_click(cx.listener({
+                        let tool_call_id = tool_call.id.clone();
+                        move |this, _event, _window, cx| {
+                            if expanded {
+                                this.expanded_tool_calls.remove(&tool_call_id);
+                            } else {
+                                this.expanded_tool_calls.insert(tool_call_id.clone());
+                            }
+                            cx.notify();
+                        }
+                    })),
+            )
     }
 
     fn render_terminal_tool_call(
