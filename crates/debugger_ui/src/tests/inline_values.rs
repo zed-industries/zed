@@ -2352,7 +2352,7 @@ function calculate() {
     const x: 10 = 10;
     const y: 20 = 20;
     const sum: 30 = x: 10 + y: 20;
-    const message = "Hello";
+    const message: Hello = "Hello";
     console.log(message, "Sum:", sum);
 }
 "#
@@ -2392,10 +2392,10 @@ function processData(count: number, name: string): number {
     .unindent();
 
     let after = r#"
-function processData(count: 42: number, name: Alice: string): number {
+function processData(count: number, name: string): number {
     let result: 84 = count: 42 * 2;
     for (let i: 3 = 0; i: 3 < 5; i: 3++) {
-        console.log(i: 3);
+        console.log(i);
     }
     return result: 84;
 }
@@ -2436,11 +2436,11 @@ const Counter = () => {
     let after = r#"
 const Counter = () => {
     const count: 5 = 5;
-    const message = "Hello React";
+    const message: Hello React = "Hello React";
     return (
         <div>
-            <p>{message}</p>
-            <span>{count: 5}</span>
+            <p>{message: Hello React}</p>
+            <span>{count}</span>
         </div>
     );
 };
@@ -2473,7 +2473,7 @@ const double = (x) => {
     .unindent();
 
     let after = r#"
-const double = (x: 42) => {
+const double = (x) => {
     const result: 84 = x: 42 * 2;
     return result: 84;
 };
@@ -2510,8 +2510,8 @@ function iterate() {
     let after = r#"
 function iterate() {
     const obj: {name: 'test'} = {name: 'test'};
-    for (const key: name in obj: {name: 'test'}) {
-        console.log(key: name);
+    for (const key: name in obj) {
+        console.log(key);
     }
 }
 "#
