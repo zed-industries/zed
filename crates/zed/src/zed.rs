@@ -870,6 +870,24 @@ fn register_actions(
                 }
             }
         })
+        .register_action({
+            let fs = app_state.fs.clone();
+            move |_, action: &zed_actions::ResetAllZoom, _window, cx| {
+                if action.persist {
+                    update_settings_file(fs.clone(), cx, move |settings, _| {
+                        settings.theme.ui_font_size = None;
+                        settings.theme.buffer_font_size = None;
+                        settings.theme.agent_ui_font_size = None;
+                        settings.theme.agent_buffer_font_size = None;
+                    });
+                } else {
+                    theme::reset_ui_font_size(cx);
+                    theme::reset_buffer_font_size(cx);
+                    theme::reset_agent_ui_font_size(cx);
+                    theme::reset_agent_buffer_font_size(cx);
+                }
+            }
+        })
         .register_action(|_, _: &install_cli::RegisterZedScheme, window, cx| {
             cx.spawn_in(window, async move |workspace, cx| {
                 install_cli::register_zed_scheme(cx).await?;

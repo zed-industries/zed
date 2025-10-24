@@ -20,6 +20,10 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
             "Reset Zoom",
             zed_actions::ResetBufferFontSize { persist: false },
         ),
+        MenuItem::action(
+            "Reset All Zoom",
+            zed_actions::ResetAllZoom { persist: false },
+        ),
         MenuItem::separator(),
         MenuItem::action("Toggle Left Dock", workspace::ToggleLeftDock),
         MenuItem::action("Toggle Right Dock", workspace::ToggleRightDock),
