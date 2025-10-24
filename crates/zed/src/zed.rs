@@ -5083,15 +5083,15 @@ mod tests {
             )
             .await;
 
-        let project_a = Project::test(app_state.fs.clone(), [Path::new("/dir")], cx).await;
+        let project_a = Project::test(app_state.fs.clone(), [path!("/dir").as_ref()], cx).await;
         let window_a =
             cx.add_window(|window, cx| Workspace::test_new(project_a.clone(), window, cx));
 
-        let project_b = Project::test(app_state.fs.clone(), [Path::new("/dir")], cx).await;
+        let project_b = Project::test(app_state.fs.clone(), [path!("/dir").as_ref()], cx).await;
         let window_b =
             cx.add_window(|window, cx| Workspace::test_new(project_b.clone(), window, cx));
 
-        let project_c = Project::test(app_state.fs.clone(), [Path::new("/dir")], cx).await;
+        let project_c = Project::test(app_state.fs.clone(), [path!("/dir").as_ref()], cx).await;
         let window_c =
             cx.add_window(|window, cx| Workspace::test_new(project_c.clone(), window, cx));
 
@@ -5118,11 +5118,9 @@ mod tests {
                 let pane = workspace.active_pane().read(cx);
                 let project_path = pane.active_item().unwrap().project_path(cx).unwrap();
 
-                assert!(
-                    project_path
-                        .path
-                        .as_ref()
-                        .ends_with(rel_path("document.txt"))
+                assert_eq!(
+                    project_path.path.as_ref().as_std_path().to_str().unwrap(),
+                    path!("document.txt")
                 )
             });
         }
