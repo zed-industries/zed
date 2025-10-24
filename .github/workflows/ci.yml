@@ -341,6 +341,9 @@ jobs:
         run: |
           cargo build -p zed
 
+      - name: cargo clippy
+        run: ./script/clippy
+
   doctests:
     # Nextest currently doesn't support doctests, so run them separately and in parallel.
     timeout-minutes: 60
