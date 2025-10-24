@@ -32,10 +32,11 @@ use language::Buffer;
 
 use language_model::LanguageModelRegistry;
 use markdown::{HeadingLevelStyles, Markdown, MarkdownElement, MarkdownStyle};
-use project::{Project, ProjectEntryId};
+use project::{DirectoryLister, Project, ProjectEntryId};
 use prompt_store::{PromptId, PromptStore};
 use rope::Point;
 use settings::{NotifyWhenAgentWaiting, Settings as _, SettingsStore};
+use std::borrow::Cow;
 use std::cell::RefCell;
 use std::path::Path;
 use std::sync::Arc;
@@ -46,7 +47,7 @@ use text::Anchor;
 use theme::{AgentFontSize, ThemeSettings};
 use ui::{
     Callout, CommonAnimationExt, Disclosure, Divider, DividerColor, ElevationIndex, KeyBinding,
-    PopoverMenuHandle, SpinnerLabel, TintColor, Tooltip, WithScrollbar, prelude::*,
+    PopoverMenuHandle, SpinnerLabel, TintColor, Tooltip, VisibleOnHover, WithScrollbar, prelude::*,
 };
 use util::{ResultExt, size::format_file_size, time::duration_alt_display};
 use workspace::{CollaboratorId, Workspace};
@@ -1722,6 +1723,55 @@ impl AcpThreadView {
             .detach_and_log_err(cx);
     }
 
+    fn save_assistant_message_to_file(
+        &mut self,
+        message: &AssistantMessage,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(workspace) = self.workspace.upgrade() else {
+            return;
+        };
+
+        let markdown_content = message.to_markdown_without_thoughts(cx);
+
+        let path_receiver = workspace.update(cx, |workspace, cx| {
+            let lister = if workspace.project().read(cx).is_local() {
+                DirectoryLister::Local(
+                    workspace.project().clone(),
+                    workspace.app_state().fs.clone(),
+                )
+            } else {
+                DirectoryLister::Project(workspace.project().clone())
+            };
+            workspace.prompt_for_new_path(lister, Some("assistant_response.md".to_string()), window, cx)
+        });
+
+        cx.spawn_in(window, async move |_view, cx| {
+            let paths = path_receiver.await.ok().flatten();
+
+            if let Some(paths) = paths
+                && let Some(path) = paths.first()
+            {
+                let final_path = if path.extension().is_none() {
+                    Cow::Owned(path.with_extension("md"))
+                } else {
+                    Cow::Borrowed(path)
+                };
+
+                let fs = workspace.update(cx, |workspace, _cx| {
+                    workspace.app_state().fs.clone()
+                })?;
+
+                fs.write(final_path.as_path(), markdown_content.as_bytes())
+                    .await
+                    .log_err();
+            }
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
+    }
+
     fn render_entry(
         &self,
         entry_ix: usize,
@@ -1889,7 +1939,7 @@ impl AcpThreadView {
                     )
                     .into_any()
             }
-            AgentThreadEntry::AssistantMessage(AssistantMessage { chunks }) => {
+            AgentThreadEntry::AssistantMessage(message @ AssistantMessage { chunks }) => {
                 let is_last = entry_ix + 1 == total_entries;
 
                 let style = default_markdown_style(false, false, window, cx);
@@ -1920,13 +1970,32 @@ impl AcpThreadView {
                     ))
                     .into_any();
 
+                let message_clone = message.clone();
+                let group_name = format!("assistant-message-{}", entry_ix);
+                let save_button = div()
+                    .flex()
+                    .justify_end()
+                    .pt_1()
+                    .child(
+                        IconButton::new(("save-assistant-message", entry_ix), IconName::Download)
+                            .icon_size(IconSize::Small)
+                            .icon_color(Color::Muted)
+                            .tooltip(Tooltip::text("Save to Markdown"))
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.save_assistant_message_to_file(&message_clone, window, cx);
+                            }))
+                    )
+                    .visible_on_hover(group_name.clone());
+
                 v_flex()
                     .px_5()
                     .py_1p5()
                     .when(is_last, |this| this.pb_4())
                     .w_full()
                     .text_ui(cx)
+                    .group(group_name)
                     .child(message_body)
+                    .child(save_button)
                     .into_any()
             }
             AgentThreadEntry::ToolCall(tool_call) => {
