@@ -2461,14 +2461,48 @@ async fn test_autoscroll(cx: &mut TestAppContext) {
         );
     });
 
-    // Add a cursor below the visible area. Since both cursors cannot fit
-    // on screen, the editor autoscrolls to reveal the newest cursor, and
-    // allows the vertical scroll margin below that cursor.
+    // Add cursor inside the already visible area, both cursors are already on screen
+    // hence, editor should not scroll
     cx.update_editor(|editor, window, cx| {
         editor.change_selections(Default::default(), window, cx, |selections| {
             selections.select_ranges([
                 Point::new(0, 0)..Point::new(0, 0),
-                Point::new(6, 0)..Point::new(6, 0),
+                Point::new(4, 0)..Point::new(4, 0),
+            ]);
+        })
+    });
+    cx.update_editor(|editor, window, cx| {
+        assert_eq!(
+            editor.snapshot(window, cx).scroll_position(),
+            gpui::Point::new(0., 0.0)
+        );
+    });
+
+    // Add a cursor below the visible area. Since both cursors cannot fit
+    // on screen, the editor should not scroll.
+    cx.update_editor(|editor, window, cx| {
+        editor.change_selections(Default::default(), window, cx, |selections| {
+            selections.select_ranges([
+                Point::new(0, 0)..Point::new(0, 0),
+                Point::new(8, 0)..Point::new(8, 0),
+            ]);
+        })
+    });
+    cx.update_editor(|editor, window, cx| {
+        assert_eq!(
+            editor.snapshot(window, cx).scroll_position(),
+            gpui::Point::new(0., 0.0)
+        );
+    });
+
+    // Add a cursor inside visible area and another outside, such that
+    // they both can be visible on screen if scrolled.
+    // And in such case, the editor should scroll to show both cursors.
+    cx.update_editor(|editor, window, cx| {
+        editor.change_selections(Default::default(), window, cx, |selections| {
+            selections.select_ranges([
+                Point::new(3, 0)..Point::new(3, 0),
+                Point::new(8, 0)..Point::new(8, 0),
             ]);
         })
     });
@@ -2476,17 +2510,6 @@ async fn test_autoscroll(cx: &mut TestAppContext) {
         assert_eq!(
             editor.snapshot(window, cx).scroll_position(),
             gpui::Point::new(0., 3.0)
-        );
-    });
-
-    // Move down. The editor cursor scrolls down to track the newest cursor.
-    cx.update_editor(|editor, window, cx| {
-        editor.move_down(&Default::default(), window, cx);
-    });
-    cx.update_editor(|editor, window, cx| {
-        assert_eq!(
-            editor.snapshot(window, cx).scroll_position(),
-            gpui::Point::new(0., 4.0)
         );
     });
 

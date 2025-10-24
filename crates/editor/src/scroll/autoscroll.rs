@@ -147,6 +147,20 @@ impl Editor {
         {
             target_top = first_highlighted_row.as_f64();
             target_bottom = target_top + 1.;
+        } else if matches!(
+            autoscroll,
+            Autoscroll::Strategy(AutoscrollStrategy::Newest, _)
+        ) {
+            let newest_selection_top = self
+                .selections
+                .newest::<Point>(cx)
+                .head()
+                .to_display_point(&display_map)
+                .row()
+                .as_f64();
+
+            target_top = newest_selection_top;
+            target_bottom = newest_selection_top + 1.;
         } else {
             let selections = self.selections.all::<Point>(&display_map);
 
@@ -165,31 +179,14 @@ impl Editor {
                 .row()
                 .next_row()
                 .as_f64();
-
-            let selections_fit = target_bottom - target_top <= visible_lines;
-            if matches!(
-                autoscroll,
-                Autoscroll::Strategy(AutoscrollStrategy::Newest, _)
-            ) || (matches!(autoscroll, Autoscroll::Strategy(AutoscrollStrategy::Fit, _))
-                && !selections_fit)
-            {
-                let newest_selection_top = selections
-                    .iter()
-                    .max_by_key(|s| s.id)
-                    .unwrap()
-                    .head()
-                    .to_display_point(&display_map)
-                    .row()
-                    .as_f64();
-                target_top = newest_selection_top;
-                target_bottom = newest_selection_top + 1.;
-            }
         }
 
         let margin = if matches!(self.mode, EditorMode::AutoHeight { .. }) {
             0.
         } else {
-            ((visible_lines - (target_bottom - target_top)) / 2.0).floor()
+            ((visible_lines - (target_bottom - target_top)) / 2.0)
+                .floor()
+                .max(0.0)
         };
 
         let strategy = match autoscroll {
@@ -232,7 +229,9 @@ impl Editor {
                     scroll_position.y = target_bottom - visible_lines;
                 }
 
-                if needs_scroll_up ^ needs_scroll_down {
+                let selections_fit = !matches!(strategy, AutoscrollStrategy::Fit)
+                    || target_bottom - target_top <= visible_lines;
+                if (needs_scroll_up ^ needs_scroll_down) && selections_fit {
                     self.set_scroll_position_internal(scroll_position, local, true, window, cx)
                 } else {
                     WasScrolled(false)
