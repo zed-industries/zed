@@ -78,8 +78,6 @@ impl Focusable for InvalidItemView {
 impl Render for InvalidItemView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl gpui::IntoElement {
         let abs_path = self.abs_path.clone();
-        let path0 = self.abs_path.clone();
-        let path1 = self.abs_path.clone();
 
         v_flex()
             .size_full()
@@ -103,63 +101,20 @@ impl Render for InvalidItemView {
                             ),
                         )
                         .when(self.is_local, |contents| {
-                            contents
-                                .child(
-                                    h_flex().justify_center().child(
-                                        Button::new("open-with-system", "Open in Default App")
-                                            .on_click(move |_, _, cx| {
-                                                cx.open_with_system(&abs_path);
-                                            })
-                                            .style(ButtonStyle::Outlined)
-                                            .key_binding(KeyBinding::for_action(
-                                                &OpenWithSystem,
-                                                window,
-                                                cx,
-                                            )),
-                                    ),
-                                )
-                                .child(
-                                    h_flex()
-                                        .justify_center()
-                                        .child(
-                                            Button::new(
-                                                "open-with-encoding",
-                                                "Open With a Different Encoding",
-                                            )
-                                            .style(ButtonStyle::Outlined)
-                                            .on_click(
-                                                move |_, window, cx| {
-                                                    window.dispatch_action(
-                                                        Box::new(
-                                                            zed_actions::encodings_ui::Toggle(
-                                                                path0.clone(),
-                                                            ),
-                                                        ),
-                                                        cx,
-                                                    )
-                                                },
-                                            ),
-                                        )
-                                        .child(
-                                            Button::new(
-                                                "accept-risk-and-open",
-                                                "Accept the Risk and Open",
-                                            )
-                                            .style(ButtonStyle::Tinted(TintColor::Warning))
-                                            .on_click(
-                                                move |_, window, cx| {
-                                                    window.dispatch_action(
-                                                        Box::new(
-                                                            zed_actions::encodings_ui::ForceOpen(
-                                                                path1.clone(),
-                                                            ),
-                                                        ),
-                                                        cx,
-                                                    );
-                                                },
-                                            ),
-                                        ),
-                                )
+                            contents.child(
+                                h_flex().justify_center().child(
+                                    Button::new("open-with-system", "Open in Default App")
+                                        .on_click(move |_, _, cx| {
+                                            cx.open_with_system(&abs_path);
+                                        })
+                                        .style(ButtonStyle::Outlined)
+                                        .key_binding(KeyBinding::for_action(
+                                            &OpenWithSystem,
+                                            window,
+                                            cx,
+                                        )),
+                                ),
+                            )
                         }),
                 ),
             )
