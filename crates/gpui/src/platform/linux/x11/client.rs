@@ -1566,6 +1566,21 @@ impl LinuxClient for X11Client {
         state.clipboard_item.replace(item);
     }
 
+    fn write_file_to_clipboard(&self, item: crate::ClipboardItem) {
+        let mut state = self.0.borrow_mut();
+        let file_path = format!("file://{}", item.text().unwrap_or_default());
+        state
+            .clipboard
+            .set_file(
+                std::borrow::Cow::Owned(file_path),
+                clipboard::ClipboardKind::Clipboard,
+                clipboard::WaitConfig::None,
+            )
+            .context("X11: Failed to write to clipboard (clipboard)")
+            .log_with_level(log::Level::Debug);
+        state.clipboard_item.replace(item);
+    }
+
     fn read_from_primary(&self) -> Option<crate::ClipboardItem> {
         let state = self.0.borrow_mut();
         state
