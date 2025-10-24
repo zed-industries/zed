@@ -47,7 +47,10 @@ pub enum OpenRequestKind {
     AgentPanel,
     DockMenuAction { index: usize },
     BuiltinJsonSchema { schema_path: String },
-    Setting { setting_path: String },
+    Setting { 
+        // None just opens settings without navigating to a specific path
+        setting_path: Option<String> ,
+    },
 }
 
 impl OpenRequest {
@@ -94,9 +97,14 @@ impl OpenRequest {
                 this.kind = Some(OpenRequestKind::BuiltinJsonSchema {
                     schema_path: schema_path.to_string(),
                 });
-            } else if let Some(setting_path) = url.strip_prefix("zed://settings/") {
+            } else if url == "zed://settings" || url == "zed://settings/"  {
                 this.kind = Some(OpenRequestKind::Setting {
-                    setting_path: setting_path.to_string(),
+                    setting_path: None
+                });
+            }
+            else if let Some(setting_path) = url.strip_prefix("zed://settings/") {
+                this.kind = Some(OpenRequestKind::Setting {
+                    setting_path: Some(setting_path.to_string()),
                 });
             } else if url.starts_with("ssh://") {
                 this.parse_ssh_file_path(&url, cx)?
