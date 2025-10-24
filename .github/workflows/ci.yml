@@ -309,8 +309,10 @@ jobs:
       - name: Configure Go and Rust cache
         uses: namespacelabs/nscloud-cache-action@v1
         with:
-          cache: |
-            rust
+          path: |
+            /home/runner/.cargo
+            /home/runner/.rustup
+            ./target
 
       - name: Configure CI
         run: |
