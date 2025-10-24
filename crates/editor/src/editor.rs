@@ -16894,6 +16894,13 @@ impl Editor {
                 return Ok(());
             };
 
+            if locations.is_empty() {
+                // totally normal - the cursor may be on something which is not
+                // a symbol (e.g. a keyword)
+                log::info!("no references found under cursor");
+                return Ok(());
+            }
+
             let multi_buffer_snapshot =
                 editor.read_with(cx, |editor, cx| editor.buffer().read(cx).snapshot(cx))?;
             let Some((excerpt_id, _, buffer_snapshot)) = multi_buffer_snapshot.as_singleton()
@@ -16912,8 +16919,10 @@ impl Editor {
             });
 
             let Some(current_location_index) = current_location_index else {
+                // This indicates something has gone wrong, because we already
+                // handle the "no references" case above
                 log::error!(
-                    "failed to find any reference under the cursor. Locations count: {}",
+                    "failed to find current reference under cursor. Total references: {}",
                     locations.len()
                 );
                 return Ok(());
@@ -16947,7 +16956,7 @@ impl Editor {
             };
 
             editor.update_in(cx, |editor, window, cx| {
-                let effects = SelectionEffects::scroll(Autoscroll::center());
+                let effects = SelectionEffects::default();
 
                 editor.unfold_ranges(&[start..end], false, false, cx);
                 editor.change_selections(effects, window, cx, |s| {
