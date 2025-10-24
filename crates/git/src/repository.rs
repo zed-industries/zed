@@ -80,7 +80,7 @@ pub struct Worktree {
 }
 
 impl Worktree {
-    pub fn name(&self) -> &str {
+    pub fn branch(&self) -> &str {
         self.ref_name
             .as_ref()
             .strip_prefix("refs/heads/")
