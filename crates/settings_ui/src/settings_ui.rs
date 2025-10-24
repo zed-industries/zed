@@ -590,7 +590,7 @@ pub fn open_settings_editor(
         cx.open_window(
             WindowOptions {
                 titlebar: Some(TitlebarOptions {
-                    title: Some("Settings Window".into()),
+                    title: Some("Zed — Settings".into()),
                     appears_transparent: true,
                     traffic_light_position: Some(point(px(12.0), px(12.0))),
                 }),
@@ -3068,6 +3068,9 @@ impl Render for SettingsWindow {
                         .font(ui_font)
                         .bg(cx.theme().colors().background)
                         .text_color(cx.theme().colors().text)
+                        .when(!cfg!(target_os = "macos"), |this| {
+                            this.border_t_1().border_color(cx.theme().colors().border)
+                        })
                         .child(self.render_nav(window, cx))
                         .child(self.render_page(window, cx)),
                 ),
