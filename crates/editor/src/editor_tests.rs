@@ -5720,6 +5720,120 @@ fn test_duplicate_line(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn test_rotate(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    // Rotate text selections (horizontal)
+    let (text, selection_ranges) = marked_text_ranges("x=«1ˇ», y=«2ˇ», z=«3ˇ»", true);
+    _ = cx.add_window(|window, cx| {
+        let buffer = MultiBuffer::build_simple(&text, cx);
+        let mut editor = build_editor(buffer, window, cx);
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_ranges(selection_ranges)
+        });
+        editor.rotate_forward(&RotateForward, window, cx);
+        assert_eq!(editor.display_text(cx), "x=3, y=1, z=2");
+        assert_eq!(
+            editor.selections.display_ranges(cx),
+            vec![
+                DisplayPoint::new(DisplayRow(0), 2)..DisplayPoint::new(DisplayRow(0), 3),
+                DisplayPoint::new(DisplayRow(0), 7)..DisplayPoint::new(DisplayRow(0), 8),
+                DisplayPoint::new(DisplayRow(0), 12)..DisplayPoint::new(DisplayRow(0), 13),
+            ]
+        );
+
+        editor.rotate_backward(&RotateBackward, window, cx);
+        assert_eq!(editor.display_text(cx), "x=1, y=2, z=3");
+
+        editor
+    });
+
+    // Rotate text selections (vertical)
+    let (text, selection_ranges) = marked_text_ranges("x=«1ˇ»\ny=«2ˇ»\nz=«3ˇ»\n", true);
+    _ = cx.add_window(|window, cx| {
+        let buffer = MultiBuffer::build_simple(&text, cx);
+        let mut editor = build_editor(buffer, window, cx);
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_ranges(selection_ranges)
+        });
+        editor.rotate_forward(&RotateForward, window, cx);
+        assert_eq!(editor.display_text(cx), "x=3\ny=1\nz=2\n");
+        assert_eq!(
+            editor.selections.display_ranges(cx),
+            vec![
+                DisplayPoint::new(DisplayRow(0), 2)..DisplayPoint::new(DisplayRow(0), 3),
+                DisplayPoint::new(DisplayRow(1), 2)..DisplayPoint::new(DisplayRow(1), 3),
+                DisplayPoint::new(DisplayRow(2), 2)..DisplayPoint::new(DisplayRow(2), 3),
+            ]
+        );
+
+        editor.rotate_backward(&RotateBackward, window, cx);
+        assert_eq!(editor.display_text(cx), "x=1\ny=2\nz=3\n");
+
+        editor
+    });
+
+    // Rotate text selections (vertical, different lengths)
+    let (text, selection_ranges) = marked_text_ranges("x=\"«ˇ»\"\ny=\"«aˇ»\"\nz=\"«aaˇ»\"\n", true);
+    _ = cx.add_window(|window, cx| {
+        let buffer = MultiBuffer::build_simple(&text, cx);
+        let mut editor = build_editor(buffer, window, cx);
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_ranges(selection_ranges)
+        });
+        editor.rotate_forward(&RotateForward, window, cx);
+        assert_eq!(editor.display_text(cx), "x=\"aa\"\ny=\"\"\nz=\"a\"\n");
+        assert_eq!(
+            editor.selections.display_ranges(cx),
+            vec![
+                DisplayPoint::new(DisplayRow(0), 3)..DisplayPoint::new(DisplayRow(0), 5),
+                DisplayPoint::new(DisplayRow(1), 3)..DisplayPoint::new(DisplayRow(1), 3),
+                DisplayPoint::new(DisplayRow(2), 3)..DisplayPoint::new(DisplayRow(2), 4),
+            ]
+        );
+
+        editor.rotate_backward(&RotateBackward, window, cx);
+        assert_eq!(editor.display_text(cx), "x=\"\"\ny=\"a\"\nz=\"aa\"\n");
+
+        editor
+    });
+
+    // Rotate whole lines
+    let (text, selection_ranges) = marked_text_ranges("ˇline1\nˇline2\nˇline3\n", true);
+    _ = cx.add_window(|window, cx| {
+        let buffer = MultiBuffer::build_simple(&text, cx);
+        let mut editor = build_editor(buffer, window, cx);
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_ranges(selection_ranges)
+        });
+        editor.rotate_forward(&RotateForward, window, cx);
+        assert_eq!(editor.display_text(cx), "line3\nline1\nline2\n");
+
+        editor.rotate_backward(&RotateBackward, window, cx);
+        assert_eq!(editor.display_text(cx), "line1\nline2\nline3\n");
+
+        editor
+    });
+
+    // Rotate whole lines, multiple cursors per line
+    let (text, selection_ranges) = marked_text_ranges("ˇlinˇe1\nˇline2\nˇline3\n", true);
+    _ = cx.add_window(|window, cx| {
+        let buffer = MultiBuffer::build_simple(&text, cx);
+        let mut editor = build_editor(buffer, window, cx);
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_ranges(selection_ranges)
+        });
+        editor.rotate_forward(&RotateForward, window, cx);
+        assert_eq!(editor.display_text(cx), "line3\nline1\nline2\n");
+
+        editor.rotate_backward(&RotateBackward, window, cx);
+        assert_eq!(editor.display_text(cx), "line1\nline2\nline3\n");
+
+        editor
+    });
+}
+
+#[gpui::test]
 fn test_move_line_up_down(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
