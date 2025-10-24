@@ -299,7 +299,9 @@ jobs:
       - namespace-profile-ubuntu22-x86-16x32-custom
     steps:
       - name: Add Rust to the PATH
-        run: echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+        run: |
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          echo "$HOME/.cargo-nextest/bin" >> "$GITHUB_PATH"
 
       - name: Checkout repo
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
@@ -310,7 +312,7 @@ jobs:
         uses: namespacelabs/nscloud-cache-action@v1
         with:
           path: |
-            /home/runner/.cargo
+            /home/runner/.cargo-nextest
             /home/runner/.rustup
             ./target
 
@@ -319,25 +321,25 @@ jobs:
           mkdir -p ./../.cargo
           cp ./.cargo/ci-config.toml ./../.cargo/config.toml
 
-      - name: cargo clippy
-        run: ./script/clippy
+      - name: Install cargo nextest
+        shell: bash -euxo pipefail {0}
+        run: |
+          cargo install cargo-nextest --locked --root ~/.cargo-nextest
+
+      - name: Limit target directory size
+        env:
+          MAX_SIZE: ${{ runner.os == 'macOS' && 300 || 100 }}
+        shell: bash -euxo pipefail {0}
+        # Use the variable in the run command
+        run: script/clear-target-dir-if-larger-than ${{ env.MAX_SIZE }}
 
       - name: Run tests
-        uses: ./.github/actions/run_tests
+        shell: bash -euxo pipefail {0}
+        run: cargo nextest run --workspace --no-fail-fast --failure-output immediate-final
 
       - name: Build other binaries and features
         run: |
           cargo build -p zed
-          cargo check -p workspace
-          cargo check -p gpui --examples
-
-      # Even the Linux runner is not stateful, in theory there is no need to do this cleanup.
-      # But, to avoid potential issues in the future if we choose to use a stateful Linux runner and forget to add code
-      # to clean up the config file, I’ve included the cleanup code here as a precaution.
-      # While it’s not strictly necessary at this moment, I believe it’s better to err on the side of caution.
-      - name: Clean CI config file
-        if: always()
-        run: rm -rf ./../.cargo
 
   doctests:
     # Nextest currently doesn't support doctests, so run them separately and in parallel.
