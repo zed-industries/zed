@@ -4380,7 +4380,7 @@ impl LspStore {
         cx: &App,
     ) -> bool
     where
-        F: Fn(&lsp::ServerCapabilities) -> bool,
+        F: FnMut(&lsp::ServerCapabilities) -> bool,
     {
         let Some(language) = buffer.read(cx).language().cloned() else {
             return false;
@@ -6460,12 +6460,30 @@ impl LspStore {
         let buffer_id = buffer.read(cx).remote_id();
 
         if let Some((client, upstream_project_id)) = self.upstream_client() {
+            let mut suitable_capabilities = None;
+            // Are we capable for proto request?
+            let any_server_has_diagnostics_provider = self.check_if_capable_for_proto_request(
+                &buffer,
+                |capabilities| {
+                    if let Some(caps) = &capabilities.diagnostic_provider {
+                        suitable_capabilities = Some(caps.clone());
+                        true
+                    } else {
+                        false
+                    }
+                },
+                cx,
+            );
+            // We don't really care which caps are passed into the request, as they're ignored by RPC anyways.
+            let Some(dynamic_caps) = suitable_capabilities else {
+                return Task::ready(Ok(None));
+            };
+            assert!(any_server_has_diagnostics_provider);
+
             let request = GetDocumentDiagnostics {
                 previous_result_id: None,
+                dynamic_caps, // todo!
             };
-            if !self.is_capable_for_proto_request(&buffer, &request, cx) {
-                return Task::ready(Ok(None));
-            }
             let request_task = client.request_lsp(
                 upstream_project_id,
                 None,
@@ -6486,18 +6504,39 @@ impl LspStore {
                     .map(|(_, server)| server.server_id())
                     .collect::<Vec<_>>()
             });
+
             let pull_diagnostics = server_ids
                 .into_iter()
-                .map(|server_id| {
-                    let result_id = self.result_id(server_id, buffer_id, cx);
-                    self.request_lsp(
-                        buffer.clone(),
-                        LanguageServerToQuery::Other(server_id),
-                        GetDocumentDiagnostics {
-                            previous_result_id: result_id,
-                        },
-                        cx,
-                    )
+                .flat_map(|server_id| {
+                    let result = maybe!({
+                        let local = self.as_local()?;
+                        let providers_with_identifiers = local
+                            .language_server_dynamic_registrations
+                            .get(&server_id)?
+                            .diagnostics
+                            .values()
+                            .cloned()
+                            .collect::<Vec<_>>();
+                        Some(
+                            providers_with_identifiers
+                                .into_iter()
+                                .map(|dynamic_caps| {
+                                    let result_id = self.result_id(server_id, buffer_id, cx);
+                                    self.request_lsp(
+                                        buffer.clone(),
+                                        LanguageServerToQuery::Other(server_id),
+                                        GetDocumentDiagnostics {
+                                            previous_result_id: result_id,
+                                            dynamic_caps,
+                                        },
+                                        cx,
+                                    )
+                                })
+                                .collect::<Vec<_>>(),
+                        )
+                    });
+
+                    result.unwrap_or_default()
                 })
                 .collect::<Vec<_>>();
 
@@ -10805,7 +10844,8 @@ impl LspStore {
             .diagnostic_provider
             .clone()
             .and_then(|provider| {
-                lsp_workspace_diagnostics_refresh(provider, language_server.clone(), cx)
+                lsp_workspace_diagnostics_refresh(None, provider, language_server.clone(), cx)
+                    .map(|task| (None, task))
             })
             .into_iter()
             .collect();
@@ -11888,17 +11928,23 @@ impl LspStore {
                             .language_server_dynamic_registrations
                             .get_mut(&server_id)
                             .and_then(|registrations| {
-                                registrations.diagnostics.insert(reg.id, caps.clone())
+                                registrations
+                                    .diagnostics
+                                    .insert(reg.id.clone(), caps.clone())
                             });
 
                         if let LanguageServerState::Running {
                             workspace_diagnostics_refresh_tasks,
                             ..
                         } = state
-                            && let Some((identifier, task)) =
-                                lsp_workspace_diagnostics_refresh(caps, server.clone(), cx)
+                            && let Some(task) = lsp_workspace_diagnostics_refresh(
+                                Some(reg.id.clone()),
+                                caps,
+                                server.clone(),
+                                cx,
+                            )
                         {
-                            workspace_diagnostics_refresh_tasks.insert(identifier, task);
+                            workspace_diagnostics_refresh_tasks.insert(Some(reg.id), task);
                         }
 
                         notify_server_capabilities_updated(&server, cx);
@@ -12074,8 +12120,10 @@ impl LspStore {
                         .context("Could not obtain Language Servers state")?;
                     let options = local
                         .language_server_dynamic_registrations
-                        .get_mut(&server_id).with_context(|| format!("Expected dynamic registration to exist for server {server_id}"))?
-                        .diagnostics
+                        .get_mut(&server_id)
+                        .with_context(|| {
+                            format!("Expected dynamic registration to exist for server {server_id}")
+                        })?.diagnostics
                         .remove(&unreg.id)
                         .with_context(|| format!(
                             "Attempted to unregister non-existent diagnostic registration with ID {}",
@@ -12378,13 +12426,13 @@ fn subscribe_to_binary_statuses(
 }
 
 fn lsp_workspace_diagnostics_refresh(
+    registration_id: Option<String>,
     options: DiagnosticServerCapabilities,
     server: Arc<LanguageServer>,
     cx: &mut Context<'_, LspStore>,
-) -> Option<(Option<String>, WorkspaceRefreshTask)> {
+) -> Option<WorkspaceRefreshTask> {
     let identifier = diagnostic_identifier(&options)?;
 
-    let id = identifier.clone();
     let (progress_tx, mut progress_rx) = mpsc::channel(1);
     let (mut refresh_tx, mut refresh_rx) = mpsc::channel(1);
     refresh_tx.try_send(()).ok();
@@ -12429,15 +12477,13 @@ fn lsp_workspace_diagnostics_refresh(
                     return;
                 };
 
-                let token = if let Some(identifier) = &identifier {
+                let token = if let Some(identifier) = &registration_id {
                     format!(
-                        "workspace/diagnostic/{}/{}/id:{}",
+                        "workspace/diagnostic/{}/{requests}/id:{identifier}",
                         server.server_id(),
-                        requests,
-                        identifier,
                     )
                 } else {
-                    format!("workspace/diagnostic/{}/{}", server.server_id(), requests)
+                    format!("workspace/diagnostic/{}/{requests}", server.server_id())
                 };
 
                 progress_rx.try_recv().ok();
@@ -12497,14 +12543,11 @@ fn lsp_workspace_diagnostics_refresh(
         }
     });
 
-    Some((
-        id,
-        WorkspaceRefreshTask {
-            refresh_tx,
-            progress_tx,
-            task: workspace_query_language_server,
-        },
-    ))
+    Some(WorkspaceRefreshTask {
+        refresh_tx,
+        progress_tx,
+        task: workspace_query_language_server,
+    })
 }
 
 fn diagnostic_identifier(options: &DiagnosticServerCapabilities) -> Option<Option<String>> {
