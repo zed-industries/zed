@@ -16855,68 +16855,35 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let selection = self.selections.newest_anchor().clone();
-        let Some((_, position)) = self
-            .buffer
-            .read(cx)
-            .text_anchor_for_position(selection.head(), cx)
-        else {
-            return;
+        let task = self.go_to_reference_before_or_after_position(Direction::Next, window, cx);
+        if let Some(task) = task {
+            task.detach();
         };
-        let snapshot = self.buffer().read(cx).snapshot(cx);
-        self.go_to_reference_before_or_after_position(
-            snapshot,
-            position,
-            Direction::Next,
-            window,
-            cx,
-        );
     }
 
     fn go_to_prev_reference(
         &mut self,
-        _: &GoToNextReference,
+        _: &GoToPreviousReference,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let selection = self.selections.newest_anchor().clone();
-        let Some((_, position)) = self
-            .buffer
-            .read(cx)
-            .text_anchor_for_position(selection.head(), cx)
-        else {
-            return;
+        let task = self.go_to_reference_before_or_after_position(Direction::Prev, window, cx);
+        if let Some(task) = task {
+            task.detach();
         };
-        let snapshot = self.buffer().read(cx).snapshot(cx);
-        self.go_to_reference_before_or_after_position(
-            &snapshot,
-            position,
-            Direction::Prev,
-            window,
-            cx,
-        );
     }
+
     pub fn go_to_reference_before_or_after_position(
         &mut self,
-        snapshot: &BufferSnapshot,
-        position: Point,
         direction: Direction,
         window: &mut Window,
-        cx: &mut Context<Editor>,
+        cx: &mut Context<Self>,
     ) -> Option<Task<Result<()>>> {
         let selection = self.selections.newest::<usize>(&self.display_snapshot(cx));
-        let multi_buffer = self.buffer.read(cx);
         let head = selection.head();
 
-        let multi_buffer_snapshot = multi_buffer.snapshot(cx);
-        let head_anchor = multi_buffer_snapshot.anchor_at(
-            head,
-            if head < selection.tail() {
-                Bias::Right
-            } else {
-                Bias::Left
-            },
-        );
+        let multi_buffer = self.buffer.read(cx);
+        multi_buffer.snapshot(cx).as_singleton()?;
 
         let (buffer, head) = multi_buffer.text_anchor_for_position(head, cx)?;
         let workspace = self.workspace()?;
@@ -16927,31 +16894,66 @@ impl Editor {
                 return Ok(());
             };
 
-            // TODO(cameron): comparing an `Entity<Buffer>` with an `Entity<MultiBuffer>`?
-            locations.retain(|loc| loc.buffer == buffer);
-            locations.sort_unstable_by_key(|loc| loc.range.start.offset); // TODO(cameron): needed?
-
-            let iter = locations.iter().map(|loc| loc.range);
-
-            let destination = match direction {
-                Direction::Next => iter
-                    .skip_while(|range| range.start.offset < head)
-                    .chain(locations.first().map(|loc| loc.range))
-                    .next(),
-                Direction::Prev => iter
-                    .skip_while(|range| range.end.offset > head)
-                    .chain(locations.first().map(|loc| loc.range))
-                    .next(),
+            let multi_buffer_snapshot =
+                editor.read_with(cx, |editor, cx| editor.buffer().read(cx).snapshot(cx))?;
+            let Some((excerpt_id, _, buffer_snapshot)) = multi_buffer_snapshot.as_singleton()
+            else {
+                return Ok(());
             };
 
-            if let Some(destination) = destination {
-                let autoscroll = Autoscroll::center();
+            // There is an O(n) implementation, but given this list will be
+            // small (usually <100 items), the extra O(log(n)) factor isn't
+            // worth the (surprisingly large amount of) extra complexity.
+            locations.retain(|loc| loc.buffer == buffer);
+            locations.sort_unstable_by(|l, r| l.range.start.cmp(&r.range.start, &buffer_snapshot));
 
-                self.unfold_ranges(&[destination], false, false, cx);
-                self.change_selections(SelectionEffects::scroll(autoscroll), window, cx, |s| {
-                    s.select_ranges([destination..destination]);
-                });
+            let current_location_index = locations.iter().position(|loc| {
+                loc.range.start.offset <= head.offset && loc.range.end.offset >= head.offset
+            });
+
+            let Some(current_location_index) = current_location_index else {
+                log::error!(
+                    "failed to find any reference under the cursor. Locations count: {}",
+                    locations.len()
+                );
+                return Ok(());
+            };
+
+            let destination_location_index = match direction {
+                Direction::Next => (current_location_index + 1) % locations.len(),
+                Direction::Prev => {
+                    if current_location_index == 0 {
+                        locations.len() - 1
+                    } else {
+                        current_location_index - 1
+                    }
+                }
+            };
+
+            // TODO(cameron): is this needed?
+            // the thinking is to avoid "jumping to the current location" (avoid
+            // polluting "jumplist" in vim terms)
+            if current_location_index == destination_location_index {
+                return Ok(());
             }
+
+            let Range { start, end } = locations[destination_location_index].range;
+
+            let start = multi_buffer_snapshot.anchor_in_excerpt(*excerpt_id, start);
+            let end = multi_buffer_snapshot.anchor_in_excerpt(*excerpt_id, end);
+
+            let (Some(start), Some(end)) = (start, end) else {
+                return Ok(());
+            };
+
+            editor.update_in(cx, |editor, window, cx| {
+                let effects = SelectionEffects::scroll(Autoscroll::center());
+
+                editor.unfold_ranges(&[start..end], false, false, cx);
+                editor.change_selections(effects, window, cx, |s| {
+                    s.select_ranges([start..start]);
+                });
+            })?;
 
             Ok(())
         }))
