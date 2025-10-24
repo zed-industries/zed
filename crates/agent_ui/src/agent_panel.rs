@@ -1059,13 +1059,21 @@ impl AgentPanel {
                     update_settings_file(self.fs.clone(), cx, move |settings, cx| {
                         let agent_ui_font_size =
                             ThemeSettings::get_global(cx).agent_ui_font_size(cx) + delta;
+                        let agent_buffer_font_size =
+                            ThemeSettings::get_global(cx).agent_buffer_font_size(cx) + delta;
+
                         let _ = settings
                             .theme
                             .agent_ui_font_size
                             .insert(theme::clamp_font_size(agent_ui_font_size).into());
+                        let _ = settings
+                            .theme
+                            .agent_buffer_font_size
+                            .insert(theme::clamp_font_size(agent_buffer_font_size).into());
                     });
                 } else {
                     theme::adjust_agent_ui_font_size(cx, |size| size + delta);
+                    theme::adjust_agent_buffer_font_size(cx, |size| size + delta);
                 }
             }
             WhichFontSize::BufferFont => {
