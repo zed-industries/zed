@@ -1094,9 +1094,11 @@ impl AgentPanel {
         if action.persist {
             update_settings_file(self.fs.clone(), cx, move |settings, _| {
                 settings.theme.agent_ui_font_size = None;
+                settings.theme.agent_buffer_font_size = None;
             });
         } else {
             theme::reset_agent_ui_font_size(cx);
+            theme::reset_agent_buffer_font_size(cx);
         }
     }
 
