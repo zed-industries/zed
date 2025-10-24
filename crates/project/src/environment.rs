@@ -4,7 +4,7 @@ use language::Buffer;
 use remote::RemoteClient;
 use rpc::proto::{self, REMOTE_SERVER_PROJECT_ID};
 use std::{collections::VecDeque, path::Path, sync::Arc};
-use task::Shell;
+use task::{Shell, shell_to_proto};
 use util::ResultExt;
 use worktree::Worktree;
 
@@ -198,7 +198,7 @@ impl ProjectEnvironment {
                         .proto_client()
                         .request(proto::GetDirectoryEnvironment {
                             project_id: REMOTE_SERVER_PROJECT_ID,
-                            shell: Some(shell.clone().to_proto()),
+                            shell: Some(shell_to_proto(shell.clone())),
                             directory: abs_path.to_string_lossy().to_string(),
                         });
                 cx.spawn(async move |_, _| {
