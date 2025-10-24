@@ -3068,6 +3068,9 @@ impl Render for SettingsWindow {
                         .font(ui_font)
                         .bg(cx.theme().colors().background)
                         .text_color(cx.theme().colors().text)
+                        .when(!cfg!(target_os = "macos"), |this| {
+                            this.border_t_1().border_color(cx.theme().colors().border)
+                        })
                         .child(self.render_nav(window, cx))
                         .child(self.render_page(window, cx)),
                 ),
