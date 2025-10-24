@@ -1454,42 +1454,43 @@ mod tests {
         const MULTIPLE_SAME_LINE_REGEX: &str = r#"(?<path>🦀 multiple_same_line 🦀):"#;
         // Matches MSBuild diagnostic suffixes for path parsing in PathWithPosition
         // https://learn.microsoft.com/en-us/visualstudio/msbuild/msbuild-diagnostic-format-for-tasks
-        const DEFAULT_REGEXES_MSBUILD: [&str; 4] = [
-            r#"(?<path>[^ \t]+?:?\([0-9]+[,:][0-9]+\))"#,
-            r#"(?<path>[^ \t]+?:?\([0-9]+[,:][0-9]+\)):[^ \t0-9]+"#,
-            r#"(?<path>[^ \t]+?:?\([0-9]+\)):[^ \t0-9]+"#,
-            r#"(?<path>[^ \t]+?:?\([0-9]+\))"#,
+        const DEFAULT_REGEXES_MSBUILD: &[&str] = &[
+            r#"["'`\[({<]*(?<path>[^ \t]+?:?\([0-9]+[,:][0-9]+\))[:.,'"`\])}>]*([ \t]+|$)"#,
+            r#"["'`\[({<]*(?<path>[^ \t]+?:?\([0-9]+\))[:.,'"`\])}>]*([ \t]+|$)"#,
         ];
-        const DEFAULT_REGEXES_LINUX: [&str; 4] = [
-            r#"(?<path>[^ \t]+:[0-9]+:[0-9]+)"#,
-            r#"(?<path>[^ \t]+:[0-9]+:[0-9]+):[^ \t0-9]+"#,
-            r#"(?<path>[^ \t]+:[0-9]+):[^ \t0-9]+"#,
-            r#"(?<path>[^ \t]+:[0-9]+)"#,
+        const DEFAULT_REGEXES_MSBUILD_DESC: &[&str] = &[
+            r#"["'`\[({<]*(?<path>[^ \t]+?:?\([0-9]+[,:][0-9]+\)):[^ \t0-9]"#,
+            r#"["'`\[({<]*(?<path>[^ \t]+?:?\([0-9]+\)):[^ \t0-9]"#,
         ];
-        const DEFAULT_REGEXES: [&str; 1] = [r#"(?<path>[^ \t]+?)"#];
+        const DEFAULT_REGEXES_LINUX: &[&str] = &[
+            r#"["'`\[({<]*(?<path>[^ \t]+:[0-9]+:[0-9]+)[:.,'"`\])}>]*([ \t]+|$)"#,
+            r#"["'`\[({<]*(?<path>[^ \t]+:[0-9]+)[:.,'"`\])}>]*([ \t]+|$)"#,
+        ];
+        const DEFAULT_REGEXES_LINUX_DESC: &[&str] = &[
+            r#"["'`\[({<]*(?<path>[^ \t]+:[0-9]+:[0-9]+):[^ \t0-9]"#,
+            r#"["'`\[({<]*(?<path>[^ \t]+:[0-9]+):[^ \t0-9]"#,
+        ];
+        const DEFAULT_REGEXES: &str = r#"["'`\[({<]*(?<path>[^ \t]+?)[:.,'"`\])}>]*([ \t]+|$)"#;
 
-        macro_rules! format_default_regexes {
-            ($($regexes:ident),+) => {
-                [$($regexes.to_vec()),+].into_iter().flatten()
-                    .map(|case| format!(r#"["'`\[({{<]*{case}[:.,'"`\])}}>]*([ \t]+|$)"#)).collect()
-            };
-        }
         const PATH_HYPERLINK_TIMEOUT_MS: u64 = 1000;
 
         thread_local! {
             static TEST_REGEX_SEARCHES: RefCell<RegexSearches> =
                 RefCell::new({
                     let regexes: Vec<_> = vec![
-                        vec![
+                        [
                             PYTHON_FILE_LINE_REGEX,
                             RUST_DIAGNOSTIC_REGEX,
                             CARGO_DIR_REGEX,
                             ISSUE_12338_REGEX,
                             MULTIPLE_SAME_LINE_REGEX,
-                        ].into_iter().map(str::to_string).collect::<Vec<_>>(),
-                        format_default_regexes!(
-                             DEFAULT_REGEXES_LINUX, DEFAULT_REGEXES_MSBUILD, DEFAULT_REGEXES),
-                    ].into_iter().flatten().collect();
+                        ].as_slice(),
+                        DEFAULT_REGEXES_LINUX,
+                        DEFAULT_REGEXES_LINUX_DESC,
+                        DEFAULT_REGEXES_MSBUILD,
+                        DEFAULT_REGEXES_MSBUILD_DESC,
+                        [ DEFAULT_REGEXES ].as_slice(),
+                    ].into_iter().flatten().copied().map(str::to_string).collect();
 
                     RegexSearches::new(&regexes, PATH_HYPERLINK_TIMEOUT_MS)
                 });
