@@ -24,7 +24,7 @@ pub struct ZetaEditPredictionProvider {
     last_request_timestamp: Instant,
     project: Entity<Project>,
     context: Option<CursorContext>,
-    refresh_context_task: Option<Task<anyhow::Result<()>>>,
+    refresh_context_task: Option<Task<Option<()>>>,
 }
 
 struct CursorContext {
@@ -236,8 +236,10 @@ impl EditPredictionProvider for ZetaEditPredictionProvider {
                             &zeta.options().context.excerpt,
                             cx,
                         )
-                    })?
-                    .await?;
+                    })
+                    .ok()?
+                    .await
+                    .log_err()?;
 
                 this.update(cx, |this, _cx| {
                     this.context = Some(CursorContext {
@@ -246,6 +248,7 @@ impl EditPredictionProvider for ZetaEditPredictionProvider {
                     });
                     this.refresh_context_task.take();
                 })
+                .ok()
             })
         });
 
