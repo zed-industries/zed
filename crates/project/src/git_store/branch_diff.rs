@@ -360,9 +360,6 @@ impl BranchDiff {
     }
 }
 
-// HEAD and working tree are the same
-// but merge base and HEAD diff
-// todo!() is this right...?
 fn diff_status_to_file_status(branch_diff: &git::status::TreeDiffStatus) -> FileStatus {
     let file_status = match branch_diff {
         git::status::TreeDiffStatus::Added { .. } => FileStatus::Tracked(TrackedStatus {

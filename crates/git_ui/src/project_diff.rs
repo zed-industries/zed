@@ -101,9 +101,17 @@ impl ProjectDiff {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
+        telemetry::event!("Git Branch Diff Opened");
         let project = workspace.project().clone();
+
+        let existing = workspace
+            .items_of_type::<Self>(cx)
+            .find(|item| matches!(item.read(cx).diff_base(cx), DiffBase::Merge { .. }));
+        if let Some(existing) = existing {
+            workspace.activate_item(&existing, true, true, window, cx);
+            return;
+        }
         let workspace = cx.entity();
-        // todo!() only open one at a time
         window
             .spawn(cx, async move |cx| {
                 let this = cx
@@ -135,8 +143,10 @@ impl ProjectDiff {
                 "Action"
             }
         );
-        // todo!() don't de-dupe with the branch diff
-        let project_diff = if let Some(existing) = workspace.item_of_type::<Self>(cx) {
+        let existing = workspace
+            .items_of_type::<Self>(cx)
+            .find(|item| matches!(item.read(cx).diff_base(cx), DiffBase::Head));
+        let project_diff = if let Some(existing) = existing {
             workspace.activate_item(&existing, true, true, window, cx);
             existing
         } else {
