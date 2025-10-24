@@ -11933,18 +11933,30 @@ impl LspStore {
                                     .insert(reg.id.clone(), caps.clone())
                             });
 
+                        let mut can_now_provide_diagnostics = false;
                         if let LanguageServerState::Running {
                             workspace_diagnostics_refresh_tasks,
                             ..
                         } = state
                             && let Some(task) = lsp_workspace_diagnostics_refresh(
                                 Some(reg.id.clone()),
-                                caps,
+                                caps.clone(),
                                 server.clone(),
                                 cx,
                             )
                         {
                             workspace_diagnostics_refresh_tasks.insert(Some(reg.id), task);
+                            can_now_provide_diagnostics = true;
+                        }
+
+                        // We don't actually care about capabilities.diagnostic_provider, but it IS relevant for the remote peer
+                        // to know that there's at least one provider. Otherwise, it will never ask us to issue documentdiagnostic calls on their behalf,
+                        // as it'll think that they're not supported.
+                        if can_now_provide_diagnostics {
+                            server.update_capabilities(|capabilities| {
+                                debug_assert!(capabilities.diagnostic_provider.is_none());
+                                capabilities.diagnostic_provider = Some(caps);
+                            });
                         }
 
                         notify_server_capabilities_updated(&server, cx);
@@ -12107,9 +12119,6 @@ impl LspStore {
                     notify_server_capabilities_updated(&server, cx);
                 }
                 "textDocument/diagnostic" => {
-                    server.update_capabilities(|capabilities| {
-                        capabilities.diagnostic_provider = None;
-                    });
                     let local = self
                         .as_local_mut()
                         .context("Expected LSP Store to be local")?;
@@ -12130,6 +12139,7 @@ impl LspStore {
                             unreg.id)
                         )?;
 
+                    let mut has_any_diagnostic_providers_still = true;
                     if let Some(identifier) = diagnostic_identifier(&options)
                         && let LanguageServerState::Running {
                             workspace_diagnostics_refresh_tasks,
@@ -12137,7 +12147,17 @@ impl LspStore {
                         } = state
                     {
                         workspace_diagnostics_refresh_tasks.remove(&identifier);
+                        has_any_diagnostic_providers_still =
+                            !workspace_diagnostics_refresh_tasks.is_empty();
                     }
+
+                    if !has_any_diagnostic_providers_still {
+                        server.update_capabilities(|capabilities| {
+                            debug_assert!(capabilities.diagnostic_provider.is_some());
+                            capabilities.diagnostic_provider = None;
+                        });
+                    }
+
                     notify_server_capabilities_updated(&server, cx);
                 }
                 "textDocument/documentColor" => {

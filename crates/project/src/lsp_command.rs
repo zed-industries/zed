@@ -262,6 +262,8 @@ pub(crate) struct LinkedEditingRange {
 
 #[derive(Clone, Debug)]
 pub(crate) struct GetDocumentDiagnostics {
+    /// We cannot blindly rely on server's capabilities.diagnostic_provider, as they're a singular field, whereas
+    /// a server can register multiple diagnostic providers post-mortem.
     pub dynamic_caps: DiagnosticServerCapabilities,
     pub previous_result_id: Option<String>,
 }
