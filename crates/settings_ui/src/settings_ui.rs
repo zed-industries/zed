@@ -590,7 +590,7 @@ pub fn open_settings_editor(
         cx.open_window(
             WindowOptions {
                 titlebar: Some(TitlebarOptions {
-                    title: Some("Settings Window".into()),
+                    title: Some("Zed — Settings".into()),
                     appears_transparent: true,
                     traffic_light_position: Some(point(px(12.0), px(12.0))),
                 }),
