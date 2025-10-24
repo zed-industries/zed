@@ -467,7 +467,7 @@ impl PickerDelegate for CommandPaletteDelegate {
                             command.name.clone(),
                             matching_command.positions.clone(),
                         ))
-                        .child(div().when_else(
+                        .when_else(
                             keybind.has_binding(window),
                             |this| {
                                 this.child(
@@ -506,7 +506,7 @@ impl PickerDelegate for CommandPaletteDelegate {
                                         .into_any_element(),
                                 )
                             },
-                        )),
+                        ),
                 ),
         )
     }
