@@ -241,7 +241,6 @@ impl SnippetProvider {
         language: SnippetKind,
         path: PathBuf,
         snippet: Vec<Arc<Snippet>>,
-        cx: &mut Context<Self>,
     ) {
         self.snippets
             .entry(language)

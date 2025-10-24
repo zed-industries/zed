@@ -670,7 +670,7 @@ impl ConsoleQueryBarCompletionProvider {
                         ),
                         new_text: string_match.string.clone(),
                         label: CodeLabel::plain(string_match.string.clone(), None),
-                        buffer_match: None,
+                        match_start: None,
                         icon_path: None,
                         documentation: Some(CompletionDocumentation::MultiLineMarkdown(
                             variable_value.into(),
@@ -784,7 +784,7 @@ impl ConsoleQueryBarCompletionProvider {
                         documentation: completion.detail.map(|detail| {
                             CompletionDocumentation::MultiLineMarkdown(detail.into())
                         }),
-                        buffer_match: None,
+                        match_start: None,
                         confirm: None,
                         source: project::CompletionSource::Dap { sort_text },
                         insert_text_mode: None,

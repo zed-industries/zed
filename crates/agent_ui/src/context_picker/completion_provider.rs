@@ -278,7 +278,7 @@ impl ContextPickerCompletionProvider {
                 icon_path: Some(mode.icon().path().into()),
                 documentation: None,
                 source: project::CompletionSource::Custom,
-                buffer_match: None,
+                match_start: None,
                 insert_text_mode: None,
                 // This ensures that when a user accepts this completion, the
                 // completion menu will still be shown after "@category " is
@@ -387,7 +387,7 @@ impl ContextPickerCompletionProvider {
                     icon_path: Some(action.icon().path().into()),
                     documentation: None,
                     source: project::CompletionSource::Custom,
-                    buffer_match: None,
+                    match_start: None,
                     insert_text_mode: None,
                     // This ensures that when a user accepts this completion, the
                     // completion menu will still be shown after "@category " is
@@ -419,7 +419,7 @@ impl ContextPickerCompletionProvider {
             replace_range: source_range.clone(),
             new_text,
             label: CodeLabel::plain(thread_entry.title().to_string(), None),
-            buffer_match: None,
+            match_start: None,
             documentation: None,
             insert_text_mode: None,
             source: project::CompletionSource::Custom,
@@ -487,7 +487,7 @@ impl ContextPickerCompletionProvider {
             replace_range: source_range.clone(),
             new_text,
             label: CodeLabel::plain(rules.title.to_string(), None),
-            buffer_match: None,
+            match_start: None,
             documentation: None,
             insert_text_mode: None,
             source: project::CompletionSource::Custom,
@@ -528,7 +528,7 @@ impl ContextPickerCompletionProvider {
             documentation: None,
             source: project::CompletionSource::Custom,
             icon_path: Some(IconName::ToolWeb.path().into()),
-            buffer_match: None,
+            match_start: None,
             insert_text_mode: None,
             confirm: Some(confirm_completion_callback(
                 IconName::ToolWeb.path().into(),
@@ -617,7 +617,7 @@ impl ContextPickerCompletionProvider {
             documentation: None,
             source: project::CompletionSource::Custom,
             icon_path: Some(completion_icon_path),
-            buffer_match: None,
+            match_start: None,
             insert_text_mode: None,
             confirm: Some(confirm_completion_callback(
                 crease_icon_path,
@@ -696,7 +696,7 @@ impl ContextPickerCompletionProvider {
             documentation: None,
             source: project::CompletionSource::Custom,
             icon_path: Some(IconName::Code.path().into()),
-            buffer_match: None,
+            match_start: None,
             insert_text_mode: None,
             confirm: Some(confirm_completion_callback(
                 IconName::Code.path().into(),

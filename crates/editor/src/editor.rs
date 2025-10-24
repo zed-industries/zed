@@ -4937,7 +4937,6 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        dbg!(&text);
         let completions_source = self
             .context_menu
             .borrow()
@@ -4976,9 +4975,6 @@ impl Editor {
                     window,
                     cx,
                 );
-            }
-            _ => {
-                self.hide_context_menu(window, cx);
             }
         }
     }
@@ -5379,7 +5375,14 @@ impl Editor {
 
         if let Some(CodeContextMenu::Completions(menu)) = self.context_menu.borrow_mut().as_mut() {
             if filter_completions {
-                menu.filter(query.clone(), provider.clone(), window, cx);
+                menu.filter(
+                    query.clone().unwrap_or_default(),
+                    buffer_position.text_anchor,
+                    &buffer,
+                    provider.clone(),
+                    window,
+                    cx,
+                );
             }
             // When `is_incomplete` is false, no need to re-query completions when the current query
             // is a suffix of the initial query.
@@ -5572,7 +5575,7 @@ impl Editor {
                 replace_range: word_replace_range.clone(),
                 new_text: word.clone(),
                 label: CodeLabel::plain(word, None),
-                buffer_match: None,
+                match_start: None,
                 icon_path: None,
                 documentation: None,
                 source: CompletionSource::BufferWord {
@@ -5610,11 +5613,12 @@ impl Editor {
                     );
 
                     let query = if filter_completions { query } else { None };
-                    let matches_task = if let Some(query) = query {
-                        menu.do_async_filtering(query, cx)
-                    } else {
-                        Task::ready(menu.unfiltered_matches())
-                    };
+                    let matches_task = menu.do_async_filtering(
+                        query.unwrap_or_default(),
+                        buffer_position,
+                        &buffer,
+                        cx,
+                    );
                     (menu, matches_task)
                 }) else {
                     return;
@@ -22871,7 +22875,7 @@ fn snippet_completions(
             let buffer_windows = snippet_candidate_suffixes(&max_buffer_window)
                 .take(
                     sorted_snippet_candidates
-                        .last()
+                        .first()
                         .map(|(_, _, word_count)| *word_count)
                         .unwrap_or_default(),
                 )
@@ -22901,7 +22905,7 @@ fn snippet_completions(
 
                 let candidates = snippet_candidates_at_word_len
                     .iter()
-                    .map(|(snippet_ix, prefix, snippet_word_count)| prefix)
+                    .map(|(_snippet_ix, prefix, _snippet_word_count)| prefix)
                     .enumerate() // index in `sorted_snippet_candidates`
                     // First char must match
                     .filter(|(_ix, prefix)| {
@@ -22960,7 +22964,7 @@ fn snippet_completions(
                 matches
                     .iter()
                     .filter_map(|(string_match, buffer_window_len)| {
-                        let (snippet_index, matching_prefix) =
+                        let (snippet_index, matching_prefix, _snippet_word_count) =
                             sorted_snippet_candidates[string_match.candidate_id];
                         let snippet = &snippets[snippet_index];
                         let start = buffer_offset - buffer_window_len;
@@ -23018,7 +23022,7 @@ fn snippet_completions(
                             ),
                             insert_text_mode: None,
                             confirm: None,
-                            buffer_match: Some(string_match.clone()),
+                            match_start: Some(start),
                         })
                     }),
             );
@@ -24281,19 +24285,22 @@ pub(crate) fn split_words(text: &str) -> impl std::iter::Iterator<Item = &str> +
 /// strings a snippet could match to. More precisely: returns an iterator over
 /// suffixes of `text` created by splitting at word boundaries (for a particular
 /// definition of "word").
+///
+/// Shorter suffixes are returned first.
 pub(crate) fn snippet_candidate_suffixes(text: &str) -> impl std::iter::Iterator<Item = &str> {
-    let mut prev_index = 0;
-    let mut prev_codepoint: Option<char> = None;
+    let mut prev_index = text.len();
+    let mut prev_codepoint = None;
     let is_word_char = |c: char| c.is_alphanumeric() || c == '_';
     text.char_indices()
-        .chain([(text.len(), '\0')])
+        .rev()
+        .chain([(0, '\0')])
         .filter_map(move |(index, codepoint)| {
+            let prev_index = std::mem::replace(&mut prev_index, index);
             let prev_codepoint = prev_codepoint.replace(codepoint)?;
             if is_word_char(prev_codepoint) && is_word_char(codepoint) {
                 None
             } else {
                 let chunk = &text[prev_index..]; // go to end of string
-                prev_index = index;
                 Some(chunk)
             }
         })

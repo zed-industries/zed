@@ -217,10 +217,8 @@ pub struct CompletionsMenu {
     pub is_incomplete: bool,
     pub buffer: Entity<Buffer>,
     pub completions: Rc<RefCell<Box<[Completion]>>>,
-    /// Match candidates for completions that have `buffer_match = None`
-    match_candidates: Arc<[StringMatchCandidate]>,
-    /// Precomputed `buffer_match` for candidates that have it
-    precomputed_entries: Arc<[StringMatch]>,
+    /// String match candidate for each completion, grouped by `match_start`.
+    match_candidates: Arc<[(Option<text::Anchor>, Vec<StringMatchCandidate>)]>,
     pub entries: Rc<RefCell<Box<[StringMatch]>>>,
     pub selected_item: usize,
     filter_task: Task<()>,
@@ -284,17 +282,10 @@ impl CompletionsMenu {
         let match_candidates = completions
             .iter()
             .enumerate()
-            .filter(|(_id, completion)| completion.buffer_match.is_none())
             .map(|(id, completion)| StringMatchCandidate::new(id, completion.label.filter_text()))
-            .collect();
-        let precomputed_entries = completions
-            .iter()
-            .enumerate()
-            .filter_map(|(id, completion)| {
-                let mut m = completion.buffer_match.clone()?;
-                m.candidate_id = id;
-                Some(m)
-            })
+            .into_group_map_by(|candidate| completions[candidate.id].match_start)
+            .into_iter()
+            .map(|(k, v)| (k, v))
             .collect();
 
         let completions_menu = Self {
@@ -308,7 +299,6 @@ impl CompletionsMenu {
             show_completion_documentation,
             completions: RefCell::new(completions).into(),
             match_candidates,
-            precomputed_entries,
             entries: Rc::new(RefCell::new(Box::new([]))),
             selected_item: 0,
             filter_task: Task::ready(()),
@@ -343,7 +333,7 @@ impl CompletionsMenu {
                 replace_range: selection.start.text_anchor..selection.end.text_anchor,
                 new_text: choice.to_string(),
                 label: CodeLabel::plain(choice.to_string(), None),
-                buffer_match: None,
+                match_start: None,
                 icon_path: None,
                 documentation: None,
                 confirm: None,
@@ -352,11 +342,14 @@ impl CompletionsMenu {
             })
             .collect();
 
-        let match_candidates = choices
-            .iter()
-            .enumerate()
-            .map(|(id, completion)| StringMatchCandidate::new(id, completion))
-            .collect();
+        let match_candidates = Arc::new([(
+            None,
+            choices
+                .iter()
+                .enumerate()
+                .map(|(id, completion)| StringMatchCandidate::new(id, completion))
+                .collect(),
+        )]);
         let entries = choices
             .iter()
             .enumerate()
@@ -376,7 +369,6 @@ impl CompletionsMenu {
             is_incomplete: false,
             buffer,
             completions: RefCell::new(completions).into(),
-            precomputed_entries: Arc::new([]),
             match_candidates,
             entries: RefCell::new(entries).into(),
             selected_item: 0,
@@ -1006,60 +998,74 @@ impl CompletionsMenu {
 
     pub fn filter(
         &mut self,
-        query: Option<Arc<String>>,
+        query: Arc<String>,
+        query_end: text::Anchor,
+        buffer: &Entity<Buffer>,
         provider: Option<Rc<dyn CompletionProvider>>,
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) {
         self.cancel_filter.store(true, Ordering::Relaxed);
-        if let Some(query) = query {
-            self.cancel_filter = Arc::new(AtomicBool::new(false));
-            let matches = self.do_async_filtering(query, cx);
-            let id = self.id;
-            self.filter_task = cx.spawn_in(window, async move |editor, cx| {
-                let matches = matches.await;
-                editor
-                    .update_in(cx, |editor, window, cx| {
-                        editor.with_completions_menu_matching_id(id, |this| {
-                            if let Some(this) = this {
-                                this.set_filter_results(matches, provider, window, cx);
-                            }
-                        });
-                    })
-                    .ok();
-            });
-        } else {
-            self.filter_task = Task::ready(());
-            let matches = self.unfiltered_matches();
-            self.set_filter_results(matches, provider, window, cx);
-        }
+        self.cancel_filter = Arc::new(AtomicBool::new(false));
+        let matches = self.do_async_filtering(query, query_end, buffer, cx);
+        let id = self.id;
+        self.filter_task = cx.spawn_in(window, async move |editor, cx| {
+            let matches = matches.await;
+            editor
+                .update_in(cx, |editor, window, cx| {
+                    editor.with_completions_menu_matching_id(id, |this| {
+                        if let Some(this) = this {
+                            this.set_filter_results(matches, provider, window, cx);
+                        }
+                    });
+                })
+                .ok();
+        });
     }
 
     pub fn do_async_filtering(
         &self,
         query: Arc<String>,
+        query_end: text::Anchor,
+        buffer: &Entity<Buffer>,
         cx: &Context<Editor>,
     ) -> Task<Vec<StringMatch>> {
-        let matches_task = cx.background_spawn({
-            let query = query.clone();
-            let match_candidates = self.match_candidates.clone();
-            let precomputed_entries = self.precomputed_entries.clone();
-            let cancel_filter = self.cancel_filter.clone();
-            let background_executor = cx.background_executor().clone();
-            async move {
-                let mut matches = fuzzy::match_strings(
-                    &match_candidates,
-                    &query,
-                    query.chars().any(|c| c.is_uppercase()),
-                    false,
-                    1000,
-                    &cancel_filter,
-                    background_executor,
-                )
-                .await;
-                matches.extend(precomputed_entries.iter().cloned());
-                matches
+        let buffer_snapshot = buffer.read(cx).snapshot();
+        let background_executor = cx.background_executor().clone();
+        let match_candidates = self.match_candidates.clone();
+        let cancel_filter = self.cancel_filter.clone();
+        let default_query = query.clone();
+
+        let matches_task = cx.background_spawn(async move {
+            let queries_and_candidates = match_candidates
+                .iter()
+                .map(|(query_start, candidates)| {
+                    let query_for_batch = match query_start {
+                        Some(start) => {
+                            Arc::new(buffer_snapshot.text_for_range(*start..query_end).collect())
+                        }
+                        None => default_query.clone(),
+                    };
+                    (query_for_batch, candidates)
+                })
+                .collect_vec();
+
+            let mut results = vec![];
+            for (query, match_candidates) in queries_and_candidates {
+                results.extend(
+                    fuzzy::match_strings(
+                        &match_candidates,
+                        &query,
+                        query.chars().any(|c| c.is_uppercase()),
+                        false,
+                        1000,
+                        &cancel_filter,
+                        background_executor.clone(),
+                    )
+                    .await,
+                );
             }
+            results
         });
 
         let completions = self.completions.clone();
@@ -1071,7 +1077,7 @@ impl CompletionsMenu {
             if sort_completions {
                 matches = Self::sort_string_matches(
                     matches,
-                    Some(&query),
+                    Some(&query), // used for non-snippets only
                     snippet_sort_order,
                     completions.borrow().as_ref(),
                 );
@@ -1079,33 +1085,6 @@ impl CompletionsMenu {
 
             matches
         })
-    }
-
-    /// Like `do_async_filtering` but there is no filter query, so no need to spawn tasks.
-    pub fn unfiltered_matches(&self) -> Vec<StringMatch> {
-        let mut matches = self
-            .match_candidates
-            .iter()
-            .enumerate()
-            .map(|(candidate_id, candidate)| StringMatch {
-                candidate_id,
-                score: Default::default(),
-                positions: Default::default(),
-                string: candidate.string.clone(),
-            })
-            .chain(self.precomputed_entries.iter().cloned())
-            .collect();
-
-        if self.sort_completions {
-            matches = Self::sort_string_matches(
-                matches,
-                None,
-                self.snippet_sort_order,
-                self.completions.borrow().as_ref(),
-            );
-        }
-
-        matches
     }
 
     pub fn set_filter_results(
@@ -1150,7 +1129,8 @@ impl CompletionsMenu {
             .and_then(|c| c.to_lowercase().next());
 
         if snippet_sort_order == SnippetSortOrder::None {
-            matches.retain(|string_match| !completions[string_match.candidate_id].is_snippet());
+            matches
+                .retain(|string_match| !completions[string_match.candidate_id].is_snippet_kind());
         }
 
         matches.sort_unstable_by_key(|string_match| {
@@ -1168,7 +1148,7 @@ impl CompletionsMenu {
             let sort_score = Reverse(OrderedFloat(score));
 
             // Snippets do their own first-letter matching logic elsewhere.
-            let is_snippet = completion.is_snippet();
+            let is_snippet = completion.is_snippet_kind();
             let query_start_doesnt_match_split_words = !is_snippet
                 && query_start_lower
                     .map(|query_char| {
@@ -1189,6 +1169,7 @@ impl CompletionsMenu {
                     SnippetSortOrder::None => Reverse(0),
                 };
                 let sort_positions = string_match.positions.clone();
+                // This exact matching won't work for multi-word snippets, but it's fine
                 let sort_exact = Reverse(if Some(completion.label.filter_text()) == query {
                     1
                 } else {

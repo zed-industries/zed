@@ -60,7 +60,7 @@ impl EditorTestContext {
             .unwrap();
 
         let language = project
-            .read_with(cx, |project, cx| {
+            .read_with(cx, |project, _cx| {
                 project.languages().language_for_name("Plain Text")
             })
             .await

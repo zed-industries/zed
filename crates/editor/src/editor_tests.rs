@@ -11196,7 +11196,7 @@ async fn test_snippet_with_multi_word_prefix(cx: &mut TestAppContext) {
     let mut cx = EditorTestContext::new(cx).await;
     cx.update_editor(|editor, _, cx| {
         editor.project().unwrap().update(cx, |project, cx| {
-            project.snippets().update(cx, |snippets, cx| {
+            project.snippets().update(cx, |snippets, _cx| {
                 let snippet = project::snippet_provider::Snippet {
                     prefix: vec!["multi word".to_string()],
                     body: "this is many words".to_string(),
@@ -11207,34 +11207,33 @@ async fn test_snippet_with_multi_word_prefix(cx: &mut TestAppContext) {
                     None,
                     PathBuf::from("test_snippets.json"),
                     vec![Arc::new(snippet)],
-                    cx,
                 );
             });
         })
     });
 
-    cx.set_state("ˇ");
-    // cx.simulate_input("m");
-    // cx.simulate_input("m ");
-    // cx.simulate_input("m w");
-    // cx.simulate_input("aa m w");
-    cx.simulate_input("aa m g"); // fails correctly
+    for (input_to_simulate, should_match_snippet) in [
+        ("m", true),
+        ("m ", true),
+        ("m w", true),
+        ("aa m w", true),
+        ("aa m g", false),
+    ] {
+        cx.set_state("ˇ");
+        cx.simulate_input(input_to_simulate); // fails correctly
 
-    cx.update_editor(|editor, _, _| {
-        let Some(CodeContextMenu::Completions(context_menu)) = &*editor.context_menu.borrow()
-        else {
-            panic!("expected completion menu");
-        };
-        assert!(context_menu.visible());
-        let completions = context_menu.completions.borrow();
+        cx.update_editor(|editor, _, _| {
+            let Some(CodeContextMenu::Completions(context_menu)) = &*editor.context_menu.borrow()
+            else {
+                assert!(!should_match_snippet); // no completions! don't even show the menu
+                return;
+            };
+            assert!(context_menu.visible());
+            let completions = context_menu.completions.borrow();
 
-        assert!(
-            completions
-                .iter()
-                .any(|c| c.new_text == "this is many words"),
-            "Expected to find 'multi word' snippet in completions"
-        );
-    });
+            assert_eq!(!completions.is_empty(), should_match_snippet);
+        });
+    }
 }
 
 #[gpui::test]
@@ -17255,23 +17254,24 @@ fn test_split_words_for_snippet_prefix() {
     assert_eq!(
         split("this@is!@#$^many   . symbols"),
         &[
-            "this@is!@#$^many   . symbols",
-            "@is!@#$^many   . symbols",
-            "is!@#$^many   . symbols",
-            "!@#$^many   . symbols",
-            "@#$^many   . symbols",
-            "#$^many   . symbols",
-            "$^many   . symbols",
-            "^many   . symbols",
-            "many   . symbols",
-            "   . symbols",
-            "  . symbols",
-            " . symbols",
-            ". symbols",
+            "symbols",
             " symbols",
-            "symbols"
+            ". symbols",
+            " . symbols",
+            "  . symbols",
+            "   . symbols",
+            "many   . symbols",
+            "^many   . symbols",
+            "$^many   . symbols",
+            "#$^many   . symbols",
+            "@#$^many   . symbols",
+            "!@#$^many   . symbols",
+            "is!@#$^many   . symbols",
+            "@is!@#$^many   . symbols",
+            "this@is!@#$^many   . symbols",
         ],
     );
+    assert_eq!(split("a.s"), &["s", ".s", "a.s"]);
 }
 
 #[gpui::test]

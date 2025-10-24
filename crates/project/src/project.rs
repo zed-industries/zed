@@ -26,8 +26,7 @@ mod project_tests;
 mod environment;
 use buffer_diff::BufferDiff;
 use context_server_store::ContextServerStore;
-pub use environment::{EnvironmentErrorMessage, ProjectEnvironmentEvent};
-use fuzzy::StringMatch;
+pub use environment::ProjectEnvironmentEvent;
 use git::repository::get_git_committer;
 use git_store::{Repository, RepositoryId};
 pub mod search_history;
@@ -477,8 +476,10 @@ pub struct Completion {
     pub source: CompletionSource,
     /// A path to an icon for this completion that is shown in the menu.
     pub icon_path: Option<SharedString>,
-    /// String match against part of the buffer contents (typically the last word).
-    pub buffer_match: Option<StringMatch>,
+    /// Text starting here and ending at the cursor will be used as the query for filtering this completion.
+    ///
+    /// If None, the start of the surrounding word is used.
+    pub match_start: Option<text::Anchor>,
     /// Whether to adjust indentation (the default) or not.
     pub insert_text_mode: Option<InsertTextMode>,
     /// An optional callback to invoke when this completion is confirmed.
@@ -5638,6 +5639,15 @@ impl Completion {
     }
 
     /// Whether this completion is a snippet.
+    pub fn is_snippet_kind(&self) -> bool {
+        matches!(
+            &self.source,
+            CompletionSource::Lsp { lsp_completion, .. }
+            if lsp_completion.kind == Some(CompletionItemKind::SNIPPET)
+        )
+    }
+
+    /// Whether this completion is a snippet or snippet-style LSP completion.
     pub fn is_snippet(&self) -> bool {
         self.source
             // `lsp::CompletionListItemDefaults` has `insert_text_format` field

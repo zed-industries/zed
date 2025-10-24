@@ -665,7 +665,7 @@ impl CompletionProvider for RustStyleCompletionProvider {
                     replace_range: replace_range.clone(),
                     new_text: format!(".{}()", method.name),
                     label: CodeLabel::plain(method.name.to_string(), None),
-                    buffer_match: None,
+                    match_start: None,
                     icon_path: None,
                     documentation: method.documentation.map(|documentation| {
                         CompletionDocumentation::MultiLineMarkdown(documentation.into())
