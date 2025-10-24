@@ -6482,7 +6482,7 @@ impl LspStore {
 
             let request = GetDocumentDiagnostics {
                 previous_result_id: None,
-                dynamic_caps, // todo!
+                dynamic_caps,
             };
             let request_task = client.request_lsp(
                 upstream_project_id,
