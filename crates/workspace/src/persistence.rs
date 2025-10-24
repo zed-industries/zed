@@ -1351,7 +1351,7 @@ impl WorkspaceDb {
                 paths
                     .paths()
                     .iter()
-                    .any(|path| util::paths::get_wsl_distro(path).is_some())
+                    .any(|path| util::paths::WslPath::from_path(path).is_some())
             } else {
                 false
             };

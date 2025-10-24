@@ -7329,7 +7329,8 @@ pub fn open_paths(
     #[cfg(target_os = "windows")]
     let wsl_path = abs_paths
         .iter()
-        .find_map(|p| Some((p.clone(), util::paths::get_wsl_distro(p)?)));
+        .find_map(|p| Some(util::paths::WslPath::from_path(p)?));
+    dbg!(&wsl_path);
 
     cx.spawn(async move |cx| {
         if open_options.open_new_workspace != Some(true) {
@@ -7433,7 +7434,7 @@ pub fn open_paths(
         };
 
         #[cfg(target_os = "windows")]
-        if let Some((path, distro)) = wsl_path
+        if let Some(util::paths::WslPath{distro, path}) = wsl_path
             && let Ok((workspace, _)) = &result
         {
             workspace
@@ -7444,7 +7445,7 @@ pub fn open_paths(
                         let msg = format!("{display_path} is inside a WSL filesystem, some features may not work unless you open it with WSL remote");
                         cx.new(move |cx| {
                             MessageNotification::new(msg, cx)
-                                .primary_message("Open WSL Path")
+                                .primary_message("Open in WSL")
                                 .primary_icon(IconName::FolderOpen)
                                 .primary_on_click(move |window, cx| {
                                     window.dispatch_action(Box::new(remote::OpenWslPath {
@@ -7452,7 +7453,7 @@ pub fn open_paths(
                                                     distro_name: distro.clone(),
                                                 user: None,
                                             },
-                                            paths: vec![path.clone()],
+                                            paths: vec![path.clone().into()],
                                         }), cx)
                                 })
                         })

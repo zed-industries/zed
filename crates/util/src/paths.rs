@@ -1097,29 +1097,64 @@ pub fn compare_paths(
     }
 }
 
-pub fn get_wsl_distro<P: AsRef<Path>>(path: &P) -> Option<String> {
-    if cfg!(not(target_os = "windows")) {
-        return None;
-    }
-    use std::path::{Component, Prefix};
+#[cfg(target_os = "windows")]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WslPath {
+    pub distro: String,
+    pub path: std::ffi::OsString,
+}
 
-    path.as_ref()
-        .components()
-        .next()
-        .and_then(|component| match component {
-            Component::Prefix(prefix) => Some(prefix),
-            _ => None,
-        })
-        .and_then(|prefix| match prefix.kind() {
-            Prefix::UNC(server, distro) => Some((server, distro)),
-            Prefix::VerbatimUNC(server, distro) => Some((server, distro)),
-            _ => None,
-        })
-        .and_then(|(server, distro)| {
-            let server_str = server.to_string_lossy();
-            (server_str == "wsl.localhost" || server_str == "wsl$")
-                .then(|| distro.to_string_lossy().to_string())
-        })
+#[cfg(target_os = "windows")]
+impl WslPath {
+    pub fn from_path<P: AsRef<Path>>(path: P) -> Option<WslPath> {
+        if cfg!(not(target_os = "windows")) {
+            return None;
+        }
+        use std::{
+            ffi::OsString,
+            path::{Component, Prefix},
+        };
+
+        let mut components = path.as_ref().components();
+        let Some(Component::Prefix(prefix)) = components.next() else {
+            return None;
+        };
+        let (server, distro) = match prefix.kind() {
+            Prefix::UNC(server, distro) => (server, distro),
+            Prefix::VerbatimUNC(server, distro) => (server, distro),
+            _ => return None,
+        };
+        let Some(Component::RootDir) = components.next() else {
+            return None;
+        };
+
+        let server_str = server.to_string_lossy();
+        if server_str == "wsl.localhost" || server_str == "wsl$" {
+            let mut result = OsString::from("");
+            for c in components {
+                use Component::*;
+                match c {
+                    Prefix(p) => unreachable!("got {p:?}, but already stripped prefix"),
+                    RootDir => unreachable!("got root dir, but already stripped root"),
+                    CurDir => continue,
+                    ParentDir => result.push("/.."),
+                    Normal(s) => {
+                        result.push("/");
+                        result.push(s);
+                    }
+                }
+            }
+            if result.is_empty() {
+                result.push("/");
+            }
+            Some(WslPath {
+                distro: distro.to_string_lossy().to_string(),
+                path: result,
+            })
+        } else {
+            None
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1960,22 +1995,43 @@ mod tests {
     #[cfg(target_os = "windows")]
     #[test]
     fn test_wsl_path() {
+        use super::WslPath;
         let path = "/a/b/c";
-        assert_eq!(get_wsl_distro(&path), None);
+        assert_eq!(WslPath::from_path(&path), None);
 
         let path = r"\\wsl.localhost";
-        assert_eq!(get_wsl_distro(&path), None);
+        assert_eq!(WslPath::from_path(&path), None);
 
         let path = r"\\wsl.localhost\Distro";
-        assert_eq!(get_wsl_distro(&path), Some("Distro".to_owned()));
+        assert_eq!(
+            WslPath::from_path(&path),
+            Some(WslPath {
+                distro: "Distro".to_owned(),
+                path: "/".into(),
+            })
+        );
 
-        let path = r"\\wsl.localhost\Distro\foo";
-        assert_eq!(get_wsl_distro(&path), Some("Distro".to_owned()));
+        let path = r"\\wsl.localhost\Distro\blue";
+        assert_eq!(
+            WslPath::from_path(&path),
+            Some(WslPath {
+                distro: "Distro".to_owned(),
+                path: "/blue".into()
+            })
+        );
 
-        let path = r"\\wsl$\archlinux\foo";
-        assert_eq!(get_wsl_distro(&path), Some("archlinux".to_owned()));
+        let path = r"\\wsl$\archlinux\tomato\.\paprika\..\aubergine.txt";
+        assert_eq!(
+            WslPath::from_path(&path),
+            Some(WslPath {
+                distro: "archlinux".to_owned(),
+                path: "/tomato/paprika/../aubergine.txt".into()
+            })
+        );
 
         let path = r"\\windows.localhost\Distro\foo";
-        assert_eq!(get_wsl_distro(&path), None);
+        assert_eq!(WslPath::from_path(&path), None);
+
+        // TODO: fix
     }
 }
