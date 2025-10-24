@@ -25,8 +25,8 @@ pub use serde_helper::*;
 pub use settings_file::*;
 pub use settings_json::*;
 pub use settings_store::{
-    InvalidSettingsError, LocalSettingsKind, Settings, SettingsFile, SettingsJsonSchemaParams,
-    SettingsKey, SettingsLocation, SettingsStore,
+    InvalidSettingsError, LocalSettingsKind, MigrationStatus, ParseStatus, Settings, SettingsFile,
+    SettingsJsonSchemaParams, SettingsKey, SettingsLocation, SettingsStore,
 };
 
 pub use vscode_import::{VsCodeSettings, VsCodeSettingsSource};

@@ -728,7 +728,7 @@ impl SettingsObserver {
         cx.update_global(|settings_store: &mut SettingsStore, cx| {
             settings_store
                 .set_user_settings(&envelope.payload.contents, cx)
-                ._result()
+                .result()
                 .context("setting new user settings")?;
             anyhow::Ok(())
         })??;

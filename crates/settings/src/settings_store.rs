@@ -629,12 +629,12 @@ impl SettingsStore {
     }
 
     #[inline(always)]
-    fn parse_zed_settings<SettingsContentType: serde::de::DeserializeOwned>(
+    fn parse_and_migrate_zed_settings<SettingsContentType: serde::de::DeserializeOwned>(
         &mut self,
         user_settings_content: &str,
         file: SettingsFile,
     ) -> (Option<SettingsContentType>, SettingsParseResult) {
-        let mut migration_result = Ok(false);
+        let mut migration_status = MigrationStatus::NotNeeded;
         let settings: SettingsContentType = if user_settings_content.is_empty() {
             parse_json_with_comments("{}").expect("Empty settings should always be valid")
         } else {
@@ -645,15 +645,21 @@ impl SettingsStore {
                 Err(_) => user_settings_content,
             };
             let parse_result = parse_json_with_comments(content);
-            migration_result = migration_res
-                .map(|migrated| migrated.is_some())
-                .map_err(|err| err.to_string());
+            migration_status = match migration_res {
+                Ok(Some(_)) => MigrationStatus::Succeeded,
+                Ok(None) => MigrationStatus::NotNeeded,
+                Err(err) => MigrationStatus::Failed {
+                    error: err.to_string(),
+                },
+            };
             match parse_result {
                 Ok(settings) => settings,
                 Err(err) => {
                     let result = SettingsParseResult {
-                        migration_result,
-                        parse_result: Err(err.to_string()),
+                        parse_status: ParseStatus::Failed {
+                            error: err.to_string(),
+                        },
+                        migration_status,
                     };
                     self.file_errors.insert(file, result.clone());
                     return (None, result);
@@ -662,8 +668,8 @@ impl SettingsStore {
         };
 
         let result = SettingsParseResult {
-            migration_result,
-            parse_result: Ok(()),
+            parse_status: ParseStatus::Success,
+            migration_status,
         };
         self.file_errors.insert(file, result.clone());
         return (Some(settings), result);
@@ -679,8 +685,8 @@ impl SettingsStore {
             self.file_errors.insert(
                 file,
                 SettingsParseResult {
-                    migration_result: Ok(false),
-                    parse_result: Err(message),
+                    parse_status: ParseStatus::Failed { error: message },
+                    migration_status: MigrationStatus::NotNeeded,
                 },
             );
         } else {
@@ -692,7 +698,7 @@ impl SettingsStore {
     pub fn error_for_file(&self, file: SettingsFile) -> Option<SettingsParseResult> {
         self.file_errors
             .get(&file)
-            .filter(|parse_result| parse_result.was_imperfect())
+            .filter(|parse_result| parse_result.requires_user_action())
             .cloned()
     }
 }
@@ -769,8 +775,10 @@ impl SettingsStore {
         user_settings_content: &str,
         cx: &mut App,
     ) -> SettingsParseResult {
-        let (settings, parse_result) = self
-            .parse_zed_settings::<UserSettingsContent>(user_settings_content, SettingsFile::User);
+        let (settings, parse_result) = self.parse_and_migrate_zed_settings::<UserSettingsContent>(
+            user_settings_content,
+            SettingsFile::User,
+        );
 
         if let Some(settings) = settings {
             self.user_settings = Some(settings);
@@ -786,8 +794,10 @@ impl SettingsStore {
         global_settings_content: &str,
         cx: &mut App,
     ) -> SettingsParseResult {
-        let (settings, parse_result) = self
-            .parse_zed_settings::<SettingsContent>(global_settings_content, SettingsFile::Global);
+        let (settings, parse_result) = self.parse_and_migrate_zed_settings::<SettingsContent>(
+            global_settings_content,
+            SettingsFile::Global,
+        );
 
         if let Some(settings) = settings {
             self.global_settings = Some(Box::new(settings));
@@ -804,10 +814,7 @@ impl SettingsStore {
         let settings: Option<SettingsContent> = if server_settings_content.is_empty() {
             None
         } else {
-            self.handle_potential_file_error(
-                SettingsFile::Server,
-                parse_json_with_comments(server_settings_content),
-            )?
+            parse_json_with_comments(server_settings_content)?
         };
 
         // Rewrite the server settings into a content type
@@ -866,16 +873,17 @@ impl SettingsStore {
             }
             (LocalSettingsKind::Settings, Some(settings_contents)) => {
                 let (new_settings, parse_result) = self
-                    .parse_zed_settings::<ProjectSettingsContent>(
+                    .parse_and_migrate_zed_settings::<ProjectSettingsContent>(
                         settings_contents,
                         SettingsFile::Project((root_id, directory_path.clone())),
                     );
-                parse_result
-                    .parse_result
-                    .map_err(|e| InvalidSettingsError::LocalSettings {
+                match parse_result.parse_status {
+                    ParseStatus::Success => Ok(()),
+                    ParseStatus::Failed { error } => Err(InvalidSettingsError::LocalSettings {
                         path: directory_path.join(local_settings_file_relative_path()),
-                        message: e.to_string(),
-                    })?;
+                        message: error,
+                    }),
+                }?;
                 if let Some(new_settings) = new_settings {
                     match self.local_settings.entry((root_id, directory_path.clone())) {
                         btree_map::Entry::Vacant(v) => {
@@ -1155,68 +1163,93 @@ impl SettingsStore {
 // was the migration successful?
 // was settings parsing successful?
 // todo! can this type be improved?
-#[derive(Clone)]
+/// The result of parsing settings, including any migration attempts
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SettingsParseResult {
-    /// Ok(false) -> no migration was performed
-    ///
-    /// Ok(true) -> migration was performed
-    ///
-    /// Err(_) -> migration was attempted but failed
-    pub migration_result: Result<bool, String>,
-    pub parse_result: Result<(), String>,
+    /// The result of parsing the settings file (possibly after migration)
+    pub parse_status: ParseStatus,
+    /// The result of attempting to migrate the settings file
+    pub migration_status: MigrationStatus,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ParseStatus {
+    /// Settings were parsed successfully
+    Success,
+    /// Settings failed to parse
+    Failed { error: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MigrationStatus {
+    /// No migration was needed - settings are up to date
+    NotNeeded,
+    /// Settings were automatically migrated in memory, but the file needs to be updated
+    Succeeded,
+    /// Migration was attempted but failed. Original settings were parsed instead.
+    Failed { error: String },
 }
 
 impl Default for SettingsParseResult {
     fn default() -> Self {
         Self {
-            migration_result: Ok(false),
-            parse_result: Ok(()),
+            parse_status: ParseStatus::Success,
+            migration_status: MigrationStatus::NotNeeded,
         }
     }
 }
 
 impl SettingsParseResult {
     pub fn unwrap(self) -> bool {
-        self._result().unwrap()
+        self.result().unwrap()
     }
 
     pub fn expect(self, message: &str) -> bool {
-        self._result().expect(message)
+        self.result().expect(message)
     }
 
-    pub fn _result(self) -> Result<bool> {
-        match (
-            self.migration_result
-                .map_err(|err| anyhow::format_err!(err))
-                .context("Failed to migrate settings"),
-            self.parse_result
-                .map_err(|err| anyhow::format_err!(err))
-                .context("Failed to parse settings"),
-        ) {
-            (migration_result @ Ok(_), Ok(_)) => migration_result,
-            (Err(migration_err), Err(parse_err)) => {
-                Err(anyhow::anyhow!("{} and {}", migration_err, parse_err))
+    /// Formats the ParseResult as a Result type. This is a lossy conversion
+    pub fn result(self) -> Result<bool> {
+        let migration_result = match self.migration_status {
+            MigrationStatus::NotNeeded => Ok(false),
+            MigrationStatus::Succeeded => Ok(true),
+            MigrationStatus::Failed { error } => {
+                Err(anyhow::format_err!(error)).context("Failed to migrate settings")
             }
-            (Err(migration_err), Ok(_)) => Err(migration_err),
-            (Ok(_), Err(parse_err)) => Err(parse_err),
+        };
+
+        let parse_result = match self.parse_status {
+            ParseStatus::Success => Ok(()),
+            ParseStatus::Failed { error } => {
+                Err(anyhow::format_err!(error)).context("Failed to parse settings")
+            }
+        };
+
+        match (migration_result, parse_result) {
+            (migration_result @ Ok(_), Ok(())) => migration_result,
+            (Err(migration_err), Ok(())) => Err(migration_err),
+            (_, Err(parse_err)) => Err(parse_err),
         }
     }
 
-    // todo! rename
-    pub fn was_imperfect(&self) -> bool {
-        let tried_to_migrate = *self.migration_result.as_ref().unwrap_or(&true);
-        let failed_to_parse = self.parse_result.is_err();
-        tried_to_migrate || failed_to_parse
-    }
-
-    pub fn migrated(&self) -> bool {
-        self.migration_result
-            .as_ref()
-            .is_ok_and(|&migrated| migrated)
+    /// Returns true if there parsing or migration failed, as well as if migration was required
+    pub fn requires_user_action(&self) -> bool {
+        matches!(self.parse_status, ParseStatus::Failed { .. })
+            || matches!(
+                self.migration_status,
+                MigrationStatus::Succeeded | MigrationStatus::Failed { .. }
+            )
     }
 
     pub fn ok(self) -> Option<bool> {
-        self._result().ok()
+        self.result().ok()
+    }
+
+    pub fn parse_error(&self) -> Option<String> {
+        match &self.parse_status {
+            ParseStatus::Failed { error } => Some(error.clone()),
+            ParseStatus::Success => None,
+        }
     }
 }
 

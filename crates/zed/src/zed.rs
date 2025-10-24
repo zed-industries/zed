@@ -1306,12 +1306,16 @@ pub fn handle_settings_file_changes(
 
         let id = NotificationId::Named("failed-to-migrate-settings".into());
         // Apply migrations to both user and global settings
-        let content_migrated = match result.migration_result {
-            Ok(migrated) => {
+        let content_migrated = match result.migration_status {
+            settings::MigrationStatus::Succeeded => {
                 dismiss_app_notification(&id, cx);
-                migrated
+                true
             }
-            Err(err) => {
+            settings::MigrationStatus::NotNeeded => {
+                dismiss_app_notification(&id, cx);
+                false
+            }
+            settings::MigrationStatus::Failed { error: err } => {
                 show_app_notification(id, cx, move |cx| {
                     cx.new(|cx| {
                         MessageNotification::new(
@@ -1334,16 +1338,16 @@ pub fn handle_settings_file_changes(
             }
         };
 
-        if let Err(err) = &result.parse_result {
+        if let settings::ParseStatus::Failed { error: err } = &result.parse_status {
             let settings_type = if is_user { "user" } else { "global" };
             log::error!("Failed to load {} settings: {err}", settings_type);
         }
 
         settings_changed(
-            result
-                .parse_result
-                .err()
-                .map(|err| anyhow::format_err!(err)),
+            match result.parse_status {
+                settings::ParseStatus::Failed { error } => Some(anyhow::format_err!(error)),
+                settings::ParseStatus::Success => None,
+            },
             cx,
         );
 
