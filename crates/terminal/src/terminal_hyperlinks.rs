@@ -1,8 +1,7 @@
 use alacritty_terminal::{
     Term,
     event::EventListener,
-    grid::Dimensions,
-    index::{Boundary, Column, Direction as AlacDirection, Line, Point as AlacPoint},
+    index::{Boundary, Column, Direction as AlacDirection, Point as AlacPoint},
     term::{
         cell::Flags,
         search::{Match, RegexIter, RegexSearch},
@@ -34,15 +33,15 @@ impl Default for RegexSearches {
     }
 }
 impl RegexSearches {
-    pub(super) fn new<'a>(
-        path_hyperlink_regexes: impl IntoIterator<Item = &'a String>,
+    pub(super) fn new(
+        path_hyperlink_regexes: impl IntoIterator<Item: AsRef<str>>,
         path_hyperlink_timeout_ms: u64,
     ) -> Self {
         fn load_regex<R, E: Error>(
             new_fn: impl Fn(&str) -> Result<R, E>,
-            regex: &str,
+            regex: impl AsRef<str>,
         ) -> Option<R> {
-            new_fn(regex)
+            new_fn(regex.as_ref())
                 .inspect_err(|error| {
                     warn!(
                         concat!(
@@ -168,28 +167,22 @@ impl RegexSearches {
                 };
 
                 for captures in regex.captures_iter(&input) {
-                    let Some(found) = found_from_captures(captures) else {
-                        if let Some((timed_out_ms, timeout_ms)) = timed_out() {
-                            warn!(
-                                "Timed out processing path hyperlink regexes after {timed_out_ms}ms"
-                            );
-                            info!(
-                                "{timeout_ms}ms time out specified in `terminal.path_hyperlink_timeout_ms`"
-                            );
-                            return None;
+                    if let Some(found) = found_from_captures(captures) {
+                        match_found = true;
+                        if found.1.contains(&hovered) {
+                            return Some(found);
                         }
-                        continue;
-                    };
-
-                    if found.1.contains(&hovered) {
-                        return Some(found);
                     }
-
-                    match_found = true;
                 }
             }
 
             if match_found {
+                return None;
+            }
+
+            if let Some((timed_out_ms, timeout_ms)) = timed_out() {
+                warn!("Timed out processing path hyperlink regexes after {timed_out_ms}ms");
+                info!("{timeout_ms}ms time out specified in `terminal.path_hyperlink_timeout_ms`");
                 return None;
             }
         }
@@ -312,30 +305,9 @@ fn sanitize_url_punctuation<T: EventListener>(
     }
 }
 
-/// Based on alacritty/src/display/hint.rs > regex_match_at
-/// Retrieve the match, if the specified point is inside the content matching the regex.
 fn regex_match_at<T>(term: &Term<T>, point: AlacPoint, regex: &mut RegexSearch) -> Option<Match> {
-    visible_regex_match_iter(term, regex).find(|rm| rm.contains(&point))
-}
-
-/// Copied from alacritty/src/display/hint.rs:
-/// Iterate over all visible regex matches.
-fn visible_regex_match_iter<'a, T>(
-    term: &'a Term<T>,
-    regex: &'a mut RegexSearch,
-) -> impl Iterator<Item = Match> + 'a {
-    const MAX_SEARCH_LINES: usize = 100;
-
-    let viewport_start = Line(-(term.grid().display_offset() as i32));
-    let viewport_end = viewport_start + term.bottommost_line();
-    let mut start = term.line_search_left(AlacPoint::new(viewport_start, Column(0)));
-    let mut end = term.line_search_right(AlacPoint::new(viewport_end, Column(0)));
-    start.line = start.line.max(viewport_start - MAX_SEARCH_LINES);
-    end.line = end.line.min(viewport_end + MAX_SEARCH_LINES);
-
-    RegexIter::new(start, end, AlacDirection::Right, term, regex)
-        .skip_while(move |rm| rm.end().line < viewport_start)
-        .take_while(move |rm| rm.start().line <= viewport_end)
+    let (start, end) = (term.line_search_left(point), term.line_search_right(point));
+    RegexIter::new(start, end, AlacDirection::Right, term, regex).find(|rm| rm.contains(&point))
 }
 
 #[cfg(test)]
@@ -343,7 +315,8 @@ mod tests {
     use super::*;
     use alacritty_terminal::{
         event::VoidListener,
-        index::{Boundary, Point as AlacPoint},
+        grid::Dimensions,
+        index::{Boundary, Column, Line, Point as AlacPoint},
         term::{Config, cell::Flags, test::TermSize},
         vte::ansi::Handler,
     };
