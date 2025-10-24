@@ -10842,7 +10842,6 @@ impl LspStore {
         let workspace_diagnostics_refresh_tasks = language_server
             .capabilities()
             .diagnostic_provider
-            .clone()
             .and_then(|provider| {
                 lsp_workspace_diagnostics_refresh(None, provider, language_server.clone(), cx)
                     .map(|task| (None, task))
