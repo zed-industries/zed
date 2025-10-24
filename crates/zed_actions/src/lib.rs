@@ -245,7 +245,7 @@ pub mod feedback {
 }
 
 pub mod theme_selector {
-    use gpui::Action;
+    use gpui::{Action, actions};
     use schemars::JsonSchema;
     use serde::Deserialize;
 
@@ -257,6 +257,16 @@ pub mod theme_selector {
         /// A list of theme names to filter the theme selector down to.
         pub themes_filter: Option<Vec<String>>,
     }
+
+    actions!(
+        theme_selector,
+        [
+            /// Switches between light and dark mode.
+            ///
+            /// TODO(connor) figure out a better name and describe the edge cases.
+            SwitchMode
+        ]
+    );
 }
 
 pub mod icon_theme_selector {
