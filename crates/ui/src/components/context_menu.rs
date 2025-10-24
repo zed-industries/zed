@@ -47,6 +47,7 @@ pub struct ContextMenuEntry {
     toggle: Option<(IconPosition, bool)>,
     label: SharedString,
     icon: Option<IconName>,
+    custom_icon_path: Option<SharedString>,
     icon_position: IconPosition,
     icon_size: IconSize,
     icon_color: Option<Color>,
@@ -66,6 +67,7 @@ impl ContextMenuEntry {
             toggle: None,
             label: label.into(),
             icon: None,
+            custom_icon_path: None,
             icon_position: IconPosition::Start,
             icon_size: IconSize::Small,
             icon_color: None,
@@ -87,6 +89,12 @@ impl ContextMenuEntry {
 
     pub fn icon(mut self, icon: IconName) -> Self {
         self.icon = Some(icon);
+        self
+    }
+
+    pub fn custom_icon_path(mut self, path: impl Into<SharedString>) -> Self {
+        self.custom_icon_path = Some(path.into());
+        self.icon = None; // Clear IconName if custom path is set
         self
     }
 
@@ -387,6 +395,7 @@ impl ContextMenu {
             label: label.into(),
             handler: Rc::new(move |_, window, cx| handler(window, cx)),
             icon: None,
+            custom_icon_path: None,
             icon_position: IconPosition::End,
             icon_size: IconSize::Small,
             icon_color: None,
@@ -415,6 +424,7 @@ impl ContextMenu {
             label: label.into(),
             handler: Rc::new(move |_, window, cx| handler(window, cx)),
             icon: None,
+            custom_icon_path: None,
             icon_position: IconPosition::End,
             icon_size: IconSize::Small,
             icon_color: None,
@@ -443,6 +453,7 @@ impl ContextMenu {
             label: label.into(),
             handler: Rc::new(move |_, window, cx| handler(window, cx)),
             icon: None,
+            custom_icon_path: None,
             icon_position: IconPosition::End,
             icon_size: IconSize::Small,
             icon_color: None,
@@ -470,6 +481,7 @@ impl ContextMenu {
             label: label.into(),
             handler: Rc::new(move |_, window, cx| handler(window, cx)),
             icon: None,
+            custom_icon_path: None,
             icon_position: position,
             icon_size: IconSize::Small,
             icon_color: None,
@@ -528,6 +540,7 @@ impl ContextMenu {
                 window.dispatch_action(action.boxed_clone(), cx);
             }),
             icon: None,
+            custom_icon_path: None,
             icon_position: IconPosition::End,
             icon_size: IconSize::Small,
             icon_color: None,
@@ -558,6 +571,7 @@ impl ContextMenu {
                 window.dispatch_action(action.boxed_clone(), cx);
             }),
             icon: None,
+            custom_icon_path: None,
             icon_size: IconSize::Small,
             icon_position: IconPosition::End,
             icon_color: None,
@@ -578,6 +592,7 @@ impl ContextMenu {
             action: Some(action.boxed_clone()),
             handler: Rc::new(move |_, window, cx| window.dispatch_action(action.boxed_clone(), cx)),
             icon: Some(IconName::ArrowUpRight),
+            custom_icon_path: None,
             icon_size: IconSize::XSmall,
             icon_position: IconPosition::End,
             icon_color: None,
@@ -897,6 +912,7 @@ impl ContextMenu {
             label,
             handler,
             icon,
+            custom_icon_path,
             icon_position,
             icon_size,
             icon_color,
@@ -927,7 +943,29 @@ impl ContextMenu {
             Color::Default
         };
 
-        let label_element = if let Some(icon_name) = icon {
+        let label_element = if let Some(custom_path) = custom_icon_path {
+            h_flex()
+                .gap_1p5()
+                .when(
+                    *icon_position == IconPosition::Start && toggle.is_none(),
+                    |flex| {
+                        flex.child(
+                            Icon::from_path(custom_path.clone())
+                                .size(*icon_size)
+                                .color(icon_color),
+                        )
+                    },
+                )
+                .child(Label::new(label.clone()).color(label_color).truncate())
+                .when(*icon_position == IconPosition::End, |flex| {
+                    flex.child(
+                        Icon::from_path(custom_path.clone())
+                            .size(*icon_size)
+                            .color(icon_color),
+                    )
+                })
+                .into_any_element()
+        } else if let Some(icon_name) = icon {
             h_flex()
                 .gap_1p5()
                 .when(
