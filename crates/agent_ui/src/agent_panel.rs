@@ -72,7 +72,9 @@ use workspace::{
 };
 use zed_actions::{
     DecreaseBufferFontSize, IncreaseBufferFontSize, ResetBufferFontSize,
-    agent::{OpenAcpOnboardingModal, OpenOnboardingModal, OpenSettings, ResetOnboarding},
+    agent::{
+        OpenAcpOnboardingModal, OpenOnboardingModal, OpenSettings, ResetAgentZoom, ResetOnboarding,
+    },
     assistant::{OpenRulesLibrary, ToggleFocus},
 };
 
@@ -193,6 +195,13 @@ pub fn init(cx: &mut App) {
                 })
                 .register_action(|_workspace, _: &ResetTrialEndUpsell, _window, cx| {
                     TrialEndUpsell::set_dismissed(false, cx);
+                })
+                .register_action(|workspace, _: &ResetAgentZoom, window, cx| {
+                    if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
+                        panel.update(cx, |panel, cx| {
+                            panel.reset_agent_zoom(window, cx);
+                        });
+                    }
                 });
         },
     )
@@ -1100,6 +1109,11 @@ impl AgentPanel {
             theme::reset_agent_ui_font_size(cx);
             theme::reset_agent_buffer_font_size(cx);
         }
+    }
+
+    pub fn reset_agent_zoom(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        theme::reset_agent_ui_font_size(cx);
+        theme::reset_agent_buffer_font_size(cx);
     }
 
     pub fn toggle_zoom(&mut self, _: &ToggleZoom, window: &mut Window, cx: &mut Context<Self>) {
