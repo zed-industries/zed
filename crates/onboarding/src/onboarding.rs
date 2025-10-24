@@ -383,14 +383,14 @@ impl Item for Onboarding {
         _workspace_id: Option<WorkspaceId>,
         _: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Task<Option<Entity<Self>>> {
-        Task::ready(Some(cx.new(|cx| Onboarding {
+    ) -> Option<Entity<Self>> {
+        Some(cx.new(|cx| Onboarding {
             workspace: self.workspace.clone(),
             user_store: self.user_store.clone(),
             scroll_handle: ScrollHandle::new(),
             focus_handle: cx.focus_handle(),
             _settings_subscription: cx.observe_global::<SettingsStore>(move |_, cx| cx.notify()),
-        })))
+        }))
     }
 
     fn to_item_events(event: &Self::Event, mut f: impl FnMut(workspace::item::ItemEvent)) {

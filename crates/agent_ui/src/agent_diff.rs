@@ -581,13 +581,11 @@ impl Item for AgentDiffPane {
         _workspace_id: Option<workspace::WorkspaceId>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Task<Option<Entity<Self>>>
+    ) -> Option<Entity<Self>>
     where
         Self: Sized,
     {
-        Task::ready(Some(cx.new(|cx| {
-            Self::new(self.thread.clone(), self.workspace.clone(), window, cx)
-        })))
+        Some(cx.new(|cx| Self::new(self.thread.clone(), self.workspace.clone(), window, cx)))
     }
 
     fn is_dirty(&self, cx: &App) -> bool {

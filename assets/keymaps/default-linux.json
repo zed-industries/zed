@@ -366,7 +366,7 @@
     }
   },
   {
-    "context": "PromptLibrary",
+    "context": "RulesLibrary",
     "bindings": {
       "new": "rules_library::NewRule",
       "ctrl-n": "rules_library::NewRule",

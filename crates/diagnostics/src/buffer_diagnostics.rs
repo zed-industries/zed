@@ -693,11 +693,11 @@ impl Item for BufferDiagnosticsEditor {
         _workspace_id: Option<workspace::WorkspaceId>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Task<Option<Entity<Self>>>
+    ) -> Option<Entity<Self>>
     where
         Self: Sized,
     {
-        Task::ready(Some(cx.new(|cx| {
+        Some(cx.new(|cx| {
             BufferDiagnosticsEditor::new(
                 self.project_path.clone(),
                 self.project.clone(),
@@ -706,7 +706,7 @@ impl Item for BufferDiagnosticsEditor {
                 window,
                 cx,
             )
-        })))
+        }))
     }
 
     fn deactivated(&mut self, window: &mut Window, cx: &mut Context<Self>) {

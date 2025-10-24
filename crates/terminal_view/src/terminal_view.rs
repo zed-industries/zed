@@ -1218,31 +1218,28 @@ impl Item for TerminalView {
         workspace_id: Option<WorkspaceId>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Task<Option<Entity<Self>>> {
-        let Ok(terminal) = self.project.update(cx, |project, cx| {
-            let cwd = project
-                .active_project_directory(cx)
-                .map(|it| it.to_path_buf());
-            project.clone_terminal(self.terminal(), cx, cwd)
-        }) else {
-            return Task::ready(None);
-        };
-        cx.spawn_in(window, async move |this, cx| {
-            let terminal = terminal.await.log_err()?;
-            this.update_in(cx, |this, window, cx| {
-                cx.new(|cx| {
-                    TerminalView::new(
-                        terminal,
-                        this.workspace.clone(),
-                        workspace_id,
-                        this.project.clone(),
-                        window,
-                        cx,
-                    )
-                })
+    ) -> Option<Entity<Self>> {
+        let terminal = self
+            .project
+            .update(cx, |project, cx| {
+                let cwd = project
+                    .active_project_directory(cx)
+                    .map(|it| it.to_path_buf());
+                project.clone_terminal(self.terminal(), cx, cwd)
             })
-            .ok()
-        })
+            .ok()?
+            .log_err()?;
+
+        Some(cx.new(|cx| {
+            TerminalView::new(
+                terminal,
+                self.workspace.clone(),
+                workspace_id,
+                self.project.clone(),
+                window,
+                cx,
+            )
+        }))
     }
 
     fn is_dirty(&self, cx: &gpui::App) -> bool {

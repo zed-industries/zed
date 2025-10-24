@@ -1752,6 +1752,26 @@ impl FakeFs {
         .unwrap();
     }
 
+    pub fn set_merge_base_content_for_repo(
+        &self,
+        dot_git: &Path,
+        contents_by_path: &[(&str, String)],
+    ) {
+        self.with_git_state(dot_git, true, |state| {
+            use git::Oid;
+
+            state.merge_base_contents.clear();
+            let oids = (1..)
+                .map(|n| n.to_string())
+                .map(|n| Oid::from_bytes(n.repeat(20).as_bytes()).unwrap());
+            for ((path, content), oid) in contents_by_path.iter().zip(oids) {
+                state.merge_base_contents.insert(repo_path(path), oid);
+                state.oids.insert(oid, content.clone());
+            }
+        })
+        .unwrap();
+    }
+
     pub fn set_blame_for_repo(&self, dot_git: &Path, blames: Vec<(RepoPath, git::blame::Blame)>) {
         self.with_git_state(dot_git, true, |state| {
             state.blames.clear();
