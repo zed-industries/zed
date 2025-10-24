@@ -369,7 +369,6 @@ impl<T: NumberFieldType> RenderOnce for NumberField<T> {
                                 let new_value = value.saturating_sub(step);
                                 let new_value = if new_value < min { min } else { new_value };
                                 on_change(&new_value, window, cx);
-                                window.focus_prev();
                             }
                         };
 
