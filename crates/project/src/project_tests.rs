@@ -4256,10 +4256,10 @@ async fn test_save_as_existing_file(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
     let fs = FakeFs::new(cx.executor());
-    let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
 
     fs.insert_tree(
-        "/dir",
+        path!("/dir"),
         json!({
                 "data_a.txt": "data about a"
         }),
@@ -4268,7 +4268,7 @@ async fn test_save_as_existing_file(cx: &mut gpui::TestAppContext) {
 
     let buffer = project
         .update(cx, |project, cx| {
-            project.open_local_buffer("/dir/data_a.txt", cx)
+            project.open_local_buffer(path!("/dir/data_a.txt"), cx)
         })
         .await
         .unwrap();
@@ -4304,7 +4304,7 @@ async fn test_save_as_existing_file(cx: &mut gpui::TestAppContext) {
     // unchanged and the resulting buffer's associated file is `data_a.txt`.
     let original_buffer = project
         .update(cx, |project, cx| {
-            project.open_local_buffer("/dir/data_a.txt", cx)
+            project.open_local_buffer(path!("/dir/data_a.txt"), cx)
         })
         .await
         .unwrap();
