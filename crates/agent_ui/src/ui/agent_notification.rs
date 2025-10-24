@@ -1,3 +1,4 @@
+use agent_client_protocol::{self as acp};
 use gpui::{
     App, Context, EventEmitter, IntoElement, PlatformDisplay, Size, Window,
     WindowBackgroundAppearance, WindowBounds, WindowDecorations, WindowKind, WindowOptions,
@@ -13,6 +14,7 @@ pub struct AgentNotification {
     caption: SharedString,
     icon: IconName,
     project_name: Option<SharedString>,
+    session_id: Option<acp::SessionId>,
 }
 
 impl AgentNotification {
@@ -21,12 +23,14 @@ impl AgentNotification {
         caption: impl Into<SharedString>,
         icon: IconName,
         project_name: Option<impl Into<SharedString>>,
+        session_id: Option<acp::SessionId>,
     ) -> Self {
         Self {
             title: title.into(),
             caption: caption.into(),
             icon,
             project_name: project_name.map(|name| name.into()),
+            session_id,
         }
     }
 
@@ -69,7 +73,10 @@ impl AgentNotification {
 }
 
 pub enum AgentNotificationEvent {
-    Accepted,
+    Accepted {
+        #[allow(dead_code)]
+        session_id: Option<acp::SessionId>,
+    },
     Dismissed,
 }
 
@@ -106,8 +113,10 @@ impl Render for AgentNotification {
             .font(ui_font)
             .border_color(cx.theme().colors().border)
             .rounded_xl()
-            .on_click(cx.listener(|_, _, _, cx| {
-                cx.emit(AgentNotificationEvent::Accepted);
+            .on_click(cx.listener(|this, _, _, cx| {
+                cx.emit(AgentNotificationEvent::Accepted {
+                    session_id: this.session_id.clone(),
+                });
             }))
             .child(
                 h_flex()
@@ -177,8 +186,10 @@ impl Render for AgentNotification {
                             .style(ButtonStyle::Tinted(ui::TintColor::Accent))
                             .full_width()
                             .on_click({
-                                cx.listener(move |_this, _event, _, cx| {
-                                    cx.emit(AgentNotificationEvent::Accepted);
+                                cx.listener(move |this, _event, _, cx| {
+                                    cx.emit(AgentNotificationEvent::Accepted {
+                                        session_id: this.session_id.clone(),
+                                    });
                                 })
                             }),
                     )

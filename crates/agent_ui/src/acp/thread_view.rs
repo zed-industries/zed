@@ -4617,10 +4617,21 @@ impl AcpThreadView {
                 .map(|worktree| worktree.read(cx).root_name_str().to_string())
         });
 
+        let session_id = match &self.thread_state {
+            ThreadState::Ready { thread, .. } => Some(thread.read(cx).session_id().clone()),
+            _ => None,
+        };
+
         if let Some(screen_window) = cx
             .open_window(options, |_, cx| {
                 cx.new(|_| {
-                    AgentNotification::new(title.clone(), caption.clone(), icon, project_name)
+                    AgentNotification::new(
+                        title.clone(),
+                        caption.clone(),
+                        icon,
+                        project_name,
+                        session_id,
+                    )
                 })
             })
             .log_err()
@@ -4631,11 +4642,13 @@ impl AcpThreadView {
                 .or_insert_with(Vec::new)
                 .push(cx.subscribe_in(&pop_up, window, {
                     |this, _, event, window, cx| match event {
-                        AgentNotificationEvent::Accepted => {
+                        AgentNotificationEvent::Accepted { session_id } => {
                             let handle = window.window_handle();
                             cx.activate(true);
 
-                            let workspace_handle = this.workspace.clone();
+                            let workspace = this.workspace.clone();
+                            let history_store = this.history_store.clone();
+                            let session_id = session_id.clone();
 
                             // If there are multiple Zed windows, activate the correct one.
                             cx.defer(move |cx| {
@@ -4643,9 +4656,26 @@ impl AcpThreadView {
                                     .update(cx, |_view, window, _cx| {
                                         window.activate_window();
 
-                                        if let Some(workspace) = workspace_handle.upgrade() {
+                                        if let Some(workspace) = workspace.upgrade() {
                                             workspace.update(_cx, |workspace, cx| {
                                                 workspace.focus_panel::<AgentPanel>(window, cx);
+
+                                                if let Some(session_id) = session_id
+                                                    && let Some(thread_metadata) = history_store
+                                                        .read(cx)
+                                                        .thread_from_session_id(&session_id)
+                                                        .cloned()
+                                                    && let Some(panel) =
+                                                        workspace.panel::<AgentPanel>(cx)
+                                                {
+                                                    panel.update(cx, |panel, cx| {
+                                                        panel.load_agent_thread(
+                                                            thread_metadata,
+                                                            window,
+                                                            cx,
+                                                        );
+                                                    });
+                                                }
                                             });
                                         }
                                     })
