@@ -1686,9 +1686,7 @@ impl EditorElement {
                                         len,
                                         font,
                                         color,
-                                        background_color: None,
-                                        strikethrough: None,
-                                        underline: None,
+                                        ..Default::default()
                                     }],
                                     None,
                                 )
@@ -3546,9 +3544,7 @@ impl EditorElement {
                         len: line.len(),
                         font: style.text.font(),
                         color: placeholder_color,
-                        background_color: None,
-                        underline: None,
-                        strikethrough: None,
+                        ..Default::default()
                     };
                     let line = window.text_system().shape_line(
                         line.to_string().into(),
@@ -7374,9 +7370,7 @@ impl EditorElement {
                 len: column,
                 font: style.text.font(),
                 color: Hsla::default(),
-                background_color: None,
-                underline: None,
-                strikethrough: None,
+                ..Default::default()
             }],
             None,
         );
@@ -7399,9 +7393,7 @@ impl EditorElement {
             len: text.len(),
             font: self.style.text.font(),
             color,
-            background_color: None,
-            underline: None,
-            strikethrough: None,
+            ..Default::default()
         };
         window.text_system().shape_line(
             text,
@@ -9485,9 +9477,7 @@ impl Element for EditorElement {
                             len: tab_len,
                             font: self.style.text.font(),
                             color: cx.theme().colors().editor_invisible,
-                            background_color: None,
-                            underline: None,
-                            strikethrough: None,
+                            ..Default::default()
                         }],
                         None,
                     );
@@ -9501,9 +9491,7 @@ impl Element for EditorElement {
                             len: space_len,
                             font: self.style.text.font(),
                             color: cx.theme().colors().editor_invisible,
-                            background_color: None,
-                            underline: None,
-                            strikethrough: None,
+                            ..Default::default()
                         }],
                         None,
                     );
@@ -11400,11 +11388,8 @@ mod tests {
     fn generate_test_run(len: usize, color: Hsla) -> TextRun {
         TextRun {
             len,
-            font: gpui::font(".SystemUIFont"),
             color,
-            background_color: None,
-            underline: None,
-            strikethrough: None,
+            ..Default::default()
         }
     }
 
