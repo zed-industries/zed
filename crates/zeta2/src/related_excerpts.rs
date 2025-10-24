@@ -28,6 +28,8 @@ pub(crate) enum RelatedExcerpt {
 }
 
 const PROMPT: &str = indoc! {r#"
+    ## Task
+
     You are a part of an edit prediction system in a code editor.
 
     Given a sequence of edits by the user, the system predicts the next edits that the user will make.
@@ -38,7 +40,9 @@ const PROMPT: &str = indoc! {r#"
     Your task is to determine which queries should be run on the user's machine to
     find those locations in the codebase.
 
-    You must output a JSON array matching the following schema:
+    ## Output Format
+
+    You MUST output one JSON array (within a markdown codeblock) matching the following schema:
     <schema>
     {
         "$schema": "http://json-schema.org/draft-07/schema#",
@@ -136,9 +140,83 @@ pub fn find_related_excerpts<'a>(
     cx.spawn(async move |cx| {
         let stream = model.stream_completion_text(request, cx).await?;
         let text: String = stream.stream.try_collect().await?;
+
+        let (explanation, json) = extract_explanation_and_json(&text);
+
         eprintln!("query JSON:\n{text}");
         let excerpts = Vec::new();
 
         anyhow::Ok(excerpts)
     })
+}
+
+fn extract_explanation_and_json(input: &str) -> (&str, &str) {
+    let json;
+    let explanation;
+    if let Some(parts) = input.split_once("```") {
+        explanation = parts.0.trim();
+        json = parts
+            .1
+            .trim_end_matches("```")
+            .split_once('\n')
+            .map(|(_, json)| json)
+            .unwrap_or(parts.1);
+    } else {
+        explanation = "";
+        json = input;
+    }
+    (explanation, json)
+}
+
+#[test]
+fn test_extract_explanation_and_json() {
+    use pretty_assertions::assert_eq;
+
+    let table = [
+        // Explanation and JSON code block
+        (
+            indoc! {"
+                I need to find usages of the User struct.
+                ```json
+                [{}]
+                ```
+            "},
+            "I need to find usages of the User struct.",
+            "[{}]",
+        ),
+        // Only JSON code block
+        (
+            indoc! {"
+                ```json
+                [{}]
+                ```
+            "},
+            "",
+            "[{}]",
+        ),
+        // code block with no language header
+        (
+            indoc! {"
+                ```
+                [{}]
+                ```
+            "},
+            "",
+            "[{}]",
+        ),
+        // raw JSON
+        (
+            indoc! {"
+                [{}]
+            "},
+            "",
+            "[{}]",
+        ),
+    ];
+
+    for (input, explanation, json) in table {
+        let (got_explanation, got_json) = extract_explanation_and_json(input);
+        assert_eq!(explanation, got_explanation, "Expected for:\n\n{input}");
+        assert_eq!(json, got_json, "Expected for:\n\n{input}");
+    }
 }
