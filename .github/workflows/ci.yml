@@ -306,11 +306,11 @@ jobs:
         with:
           clean: false
 
-      - name: Cache dependencies
-        uses: swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+      - name: Configure Go and Rust cache
+        uses: namespacelabs/nscloud-cache-action@v1
         with:
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-          # cache-provider: "buildjet"
+          cache: |
+            rust
 
       - name: Configure CI
         run: |
