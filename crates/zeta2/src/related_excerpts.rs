@@ -2,7 +2,7 @@ use std::{fmt::Write, ops::Range, sync::Arc};
 
 use anyhow::{Context as _, Result, anyhow};
 use edit_prediction_context::{EditPredictionExcerpt, EditPredictionExcerptOptions};
-use futures::{StreamExt, TryStreamExt as _};
+use futures::StreamExt;
 use gpui::{App, Entity, Task};
 use indoc::indoc;
 use language::{Anchor, Rope, ToPoint as _};
@@ -124,15 +124,14 @@ pub fn find_related_excerpts<'a>(
         return Task::ready(Ok(Vec::new()));
     };
 
+    let current_file_path = snapshot
+        .file()
+        .map(|f| f.full_path(cx).display().to_string())
+        .unwrap_or_else(|| "untitled".to_string());
+
     let prompt = PROMPT
         .replace("{edits}", &edits_string)
-        .replace(
-            "{current_file_path}",
-            snapshot
-                .file()
-                .map(|f| f.path().as_unix_str())
-                .unwrap_or("untitled"),
-        )
+        .replace("{current_file_path}", &current_file_path)
         .replace("{cursor_excerpt}", &cursor_excerpt.text(&snapshot).body);
     eprintln!("\n\n{prompt}");
 
@@ -162,6 +161,10 @@ pub fn find_related_excerpts<'a>(
         while let Some(event) = stream.next().await {
             match event? {
                 LanguageModelCompletionEvent::ToolUse(tool_use) => {
+                    if !tool_use.is_input_complete {
+                        continue;
+                    }
+
                     if tool_use.name.as_ref() == SEARCH_TOOL_NAME {
                         // todo! handle streaming
                         let input: SearchToolInput = serde_json::from_value(tool_use.input)
