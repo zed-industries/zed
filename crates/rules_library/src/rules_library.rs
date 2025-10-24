@@ -1390,6 +1390,9 @@ impl Render for RulesLibrary {
                 .child(
                     h_flex()
                         .flex_1()
+                        .when(!cfg!(target_os = "macos"), |this| {
+                            this.border_t_1().border_color(cx.theme().colors().border)
+                        })
                         .child(self.render_rule_list(cx))
                         .map(|el| {
                             if self.store.read(cx).prompt_count() == 0 {
