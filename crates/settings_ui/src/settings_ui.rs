@@ -1731,7 +1731,10 @@ impl SettingsWindow {
         let prev_files = self.files.clone();
         let settings_store = cx.global::<SettingsStore>();
         let mut ui_files = vec![];
-        let all_files = settings_store.get_all_files();
+        let mut all_files = settings_store.get_all_files();
+        if !all_files.contains(&settings::SettingsFile::User) {
+            all_files.push(settings::SettingsFile::User);
+        }
         for file in all_files {
             let Some(settings_ui_file) = SettingsUiFile::from_settings(file) else {
                 continue;
