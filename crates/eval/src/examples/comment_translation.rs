@@ -1,7 +1,7 @@
 use crate::example::{Example, ExampleContext, ExampleMetadata, JudgeAssertion};
+use agent::{EditFileMode, EditFileToolInput};
 use agent_settings::AgentProfileId;
 use anyhow::Result;
-use assistant_tools::{EditFileMode, EditFileToolInput};
 use async_trait::async_trait;
 
 pub struct CommentTranslation;
@@ -22,30 +22,26 @@ impl Example for CommentTranslation {
     }
 
     async fn conversation(&self, cx: &mut ExampleContext) -> Result<()> {
-        cx.push_user_message(r#"
-            Edit the following files and translate all their comments to italian, in this exact order:
+        let response = cx.prompt(
+            r#"
+                Edit the following files and translate all their comments to italian, in this exact order:
 
-            - font-kit/src/family.rs
-            - font-kit/src/canvas.rs
-            - font-kit/src/error.rs
-        "#);
-        cx.run_to_end().await?;
+                - font-kit/src/family.rs
+                - font-kit/src/canvas.rs
+                - font-kit/src/error.rs
+            "#
+        ).await?;
 
         let mut create_or_overwrite_count = 0;
-        cx.agent_thread().read_with(cx, |thread, cx| {
-            for message in thread.messages() {
-                for tool_use in thread.tool_uses_for_message(message.id, cx) {
-                    if tool_use.name == "edit_file" {
-                        let input: EditFileToolInput = serde_json::from_value(tool_use.input)?;
-                        if !matches!(input.mode, EditFileMode::Edit) {
-                            create_or_overwrite_count += 1;
-                        }
-                    }
+        for tool_call in response.tool_calls() {
+            if tool_call.name == "edit_file" {
+                let input = tool_call.parse_input::<EditFileToolInput>()?;
+                if !matches!(input.mode, EditFileMode::Edit) {
+                    create_or_overwrite_count += 1;
                 }
             }
+        }
 
-            anyhow::Ok(())
-        })??;
         cx.assert_eq(create_or_overwrite_count, 0, "no_creation_or_overwrite")?;
 
         Ok(())

@@ -58,7 +58,7 @@ impl Vim {
             let mut new_anchors = Vec::new();
 
             let snapshot = editor.buffer().read(cx).snapshot(cx);
-            for selection in editor.selections.all_adjusted(cx) {
+            for selection in editor.selections.all_adjusted(&editor.display_snapshot(cx)) {
                 if !selection.is_empty()
                     && (vim.mode != Mode::VisualBlock || new_anchors.is_empty())
                 {

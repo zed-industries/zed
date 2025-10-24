@@ -42,7 +42,7 @@ use ui::{IconDecorationKind, prelude::*};
 use util::{ResultExt, TryFutureExt, paths::PathExt};
 use workspace::{
     CollaboratorId, ItemId, ItemNavHistory, ToolbarItemLocation, ViewId, Workspace, WorkspaceId,
-    invalid_buffer_view::InvalidBufferView,
+    invalid_item_view::InvalidItemView,
     item::{FollowableItem, Item, ItemBufferKind, ItemEvent, ProjectItem, SaveOptions},
     searchable::{
         Direction, FilteredSearchRange, SearchEvent, SearchableItem, SearchableItemHandle,
@@ -226,7 +226,7 @@ impl FollowableItem for Editor {
 
         Some(proto::view::Variant::Editor(proto::view::Editor {
             singleton: buffer.is_singleton(),
-            title: (!buffer.is_singleton()).then(|| buffer.title(cx).into()),
+            title: buffer.explicit_title().map(ToOwned::to_owned),
             excerpts,
             scroll_top_anchor: Some(serialize_anchor(&scroll_anchor.anchor, &snapshot)),
             scroll_x: scroll_anchor.offset.x,
@@ -364,10 +364,9 @@ impl FollowableItem for Editor {
     ) {
         let buffer = self.buffer.read(cx);
         let buffer = buffer.read(cx);
-        let Some((excerpt_id, _, _)) = buffer.as_singleton() else {
+        let Some(position) = buffer.as_singleton_anchor(location) else {
             return;
         };
-        let position = buffer.anchor_in_excerpt(*excerpt_id, location).unwrap();
         let selection = Selection {
             id: 0,
             reversed: false,
@@ -595,7 +594,7 @@ impl Item for Editor {
         cx: &mut Context<Self>,
     ) -> bool {
         if let Ok(data) = data.downcast::<NavigationData>() {
-            let newest_selection = self.selections.newest::<Point>(cx);
+            let newest_selection = self.selections.newest::<Point>(&self.display_snapshot(cx));
             let buffer = self.buffer.read(cx).read(cx);
             let offset = if buffer.can_resolve(&data.cursor_anchor) {
                 data.cursor_anchor.to_point(&buffer)
@@ -939,8 +938,9 @@ impl Item for Editor {
     fn breadcrumbs(&self, variant: &Theme, cx: &App) -> Option<Vec<BreadcrumbText>> {
         let cursor = self.selections.newest_anchor().head();
         let multibuffer = &self.buffer().read(cx);
-        let (buffer_id, symbols) =
-            multibuffer.symbols_containing(cursor, Some(variant.syntax()), cx)?;
+        let (buffer_id, symbols) = multibuffer
+            .read(cx)
+            .symbols_containing(cursor, Some(variant.syntax()))?;
         let buffer = multibuffer.buffer(buffer_id)?;
 
         let buffer = buffer.read(cx);
@@ -1080,12 +1080,17 @@ impl SerializableItem for Editor {
                 }
             }
             Ok(None) => {
-                return Task::ready(Err(anyhow!("No path or contents found for buffer")));
+                return Task::ready(Err(anyhow!(
+                    "Unable to deserialize editor: No entry in database for item_id: {item_id} and workspace_id {workspace_id:?}"
+                )));
             }
             Err(error) => {
                 return Task::ready(Err(error));
             }
         };
+        log::debug!(
+            "Deserialized editor {item_id:?} in workspace {workspace_id:?}, {serialized_editor:?}"
+        );
 
         match serialized_editor {
             SerializedEditor {
@@ -1113,7 +1118,8 @@ impl SerializableItem for Editor {
                     // First create the empty buffer
                     let buffer = project
                         .update(cx, |project, cx| project.create_buffer(true, cx))?
-                        .await?;
+                        .await
+                        .context("Failed to create buffer while deserializing editor")?;
 
                     // Then set the text so that the dirty bit is set correctly
                     buffer.update(cx, |buffer, cx| {
@@ -1155,7 +1161,9 @@ impl SerializableItem for Editor {
                 match opened_buffer {
                     Some(opened_buffer) => {
                         window.spawn(cx, async move |cx| {
-                            let (_, buffer) = opened_buffer.await?;
+                            let (_, buffer) = opened_buffer
+                                .await
+                                .context("Failed to open path in project")?;
 
                             // This is a bit wasteful: we're loading the whole buffer from
                             // disk and then overwrite the content.
@@ -1221,7 +1229,8 @@ impl SerializableItem for Editor {
             } => window.spawn(cx, async move |cx| {
                 let buffer = project
                     .update(cx, |project, cx| project.create_buffer(true, cx))?
-                    .await?;
+                    .await
+                    .context("Failed to create buffer")?;
 
                 cx.update(|window, cx| {
                     cx.new(|cx| {
@@ -1384,8 +1393,8 @@ impl ProjectItem for Editor {
         e: &anyhow::Error,
         window: &mut Window,
         cx: &mut App,
-    ) -> Option<InvalidBufferView> {
-        Some(InvalidBufferView::new(abs_path, is_local, e, window, cx))
+    ) -> Option<InvalidItemView> {
+        Some(InvalidItemView::new(abs_path, is_local, e, window, cx))
     }
 }
 
@@ -1540,13 +1549,13 @@ impl SearchableItem for Editor {
     fn query_suggestion(&mut self, window: &mut Window, cx: &mut Context<Self>) -> String {
         let setting = EditorSettings::get_global(cx).seed_search_query_from_cursor;
         let snapshot = self.snapshot(window, cx);
-        let snapshot = snapshot.buffer_snapshot();
-        let selection = self.selections.newest_adjusted(cx);
+        let selection = self.selections.newest_adjusted(&snapshot.display_snapshot);
+        let buffer_snapshot = snapshot.buffer_snapshot();
 
         match setting {
             SeedQuerySetting::Never => String::new(),
             SeedQuerySetting::Selection | SeedQuerySetting::Always if !selection.is_empty() => {
-                let text: String = snapshot
+                let text: String = buffer_snapshot
                     .text_for_range(selection.start..selection.end)
                     .collect();
                 if text.contains('\n') {
@@ -1557,10 +1566,10 @@ impl SearchableItem for Editor {
             }
             SeedQuerySetting::Selection => String::new(),
             SeedQuerySetting::Always => {
-                let (range, kind) =
-                    snapshot.surrounding_word(selection.start, Some(CharScopeContext::Completion));
+                let (range, kind) = buffer_snapshot
+                    .surrounding_word(selection.start, Some(CharScopeContext::Completion));
                 if kind == Some(CharKind::Word) {
-                    let text: String = snapshot.text_for_range(range).collect();
+                    let text: String = buffer_snapshot.text_for_range(range).collect();
                     if !text.trim().is_empty() {
                         return text;
                     }

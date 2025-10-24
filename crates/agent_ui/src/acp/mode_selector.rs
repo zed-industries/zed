@@ -174,11 +174,16 @@ impl Render for ModeSelector {
 
         let this = cx.entity();
 
+        let icon = if self.menu_handle.is_deployed() {
+            IconName::ChevronUp
+        } else {
+            IconName::ChevronDown
+        };
+
         let trigger_button = Button::new("mode-selector-trigger", current_mode_name)
             .label_size(LabelSize::Small)
-            .style(ButtonStyle::Subtle)
             .color(Color::Muted)
-            .icon(IconName::ChevronDown)
+            .icon(icon)
             .icon_size(IconSize::XSmall)
             .icon_position(IconPosition::End)
             .icon_color(Color::Muted)
@@ -189,7 +194,7 @@ impl Render for ModeSelector {
                 trigger_button,
                 Tooltip::element({
                     let focus_handle = self.focus_handle.clone();
-                    move |window, cx| {
+                    move |_window, cx| {
                         v_flex()
                             .gap_1()
                             .child(
@@ -200,10 +205,9 @@ impl Render for ModeSelector {
                                     .border_b_1()
                                     .border_color(cx.theme().colors().border_variant)
                                     .child(Label::new("Cycle Through Modes"))
-                                    .children(KeyBinding::for_action_in(
+                                    .child(KeyBinding::for_action_in(
                                         &CycleModeSelector,
                                         &focus_handle,
-                                        window,
                                         cx,
                                     )),
                             )
@@ -212,10 +216,9 @@ impl Render for ModeSelector {
                                     .gap_2()
                                     .justify_between()
                                     .child(Label::new("Toggle Mode Menu"))
-                                    .children(KeyBinding::for_action_in(
+                                    .child(KeyBinding::for_action_in(
                                         &ToggleProfileSelector,
                                         &focus_handle,
-                                        window,
                                         cx,
                                     )),
                             )

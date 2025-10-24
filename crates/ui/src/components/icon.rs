@@ -279,7 +279,7 @@ impl Component for Icon {
         )
     }
 
-    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
+    fn preview(_window: &mut Window, cx: &mut App) -> Option<AnyElement> {
         Some(
             v_flex()
                 .gap_6()
@@ -313,6 +313,30 @@ impl Component for Icon {
                                     .into_any_element(),
                             ),
                         ],
+                    ),
+                    example_group_with_title(
+                        "All Icons",
+                        vec![single_example(
+                            "All Icons",
+                            h_flex()
+                                .image_cache(gpui::retain_all("all icons"))
+                                .flex_wrap()
+                                .gap_2()
+                                .children(<IconName as strum::IntoEnumIterator>::iter().map(
+                                    |icon_name| {
+                                        h_flex()
+                                            .gap_1()
+                                            .border_1()
+                                            .rounded_md()
+                                            .px_2()
+                                            .py_1()
+                                            .border_color(Color::Muted.color(cx))
+                                            .child(SharedString::new_static(icon_name.into()))
+                                            .child(Icon::new(icon_name).into_any_element())
+                                    },
+                                ))
+                                .into_any_element(),
+                        )],
                     ),
                 ])
                 .into_any_element(),

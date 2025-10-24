@@ -951,17 +951,30 @@ fn file_save_dialog(
 ) -> Result<Option<PathBuf>> {
     let dialog: IFileSaveDialog = unsafe { CoCreateInstance(&FileSaveDialog, None, CLSCTX_ALL)? };
     if !directory.to_string_lossy().is_empty()
-        && let Some(full_path) = directory.canonicalize().log_err()
+        && let Some(full_path) = directory
+            .canonicalize()
+            .context("failed to canonicalize directory")
+            .log_err()
     {
         let full_path = SanitizedPath::new(&full_path);
         let full_path_string = full_path.to_string();
         let path_item: IShellItem =
             unsafe { SHCreateItemFromParsingName(&HSTRING::from(full_path_string), None)? };
-        unsafe { dialog.SetFolder(&path_item).log_err() };
+        unsafe {
+            dialog
+                .SetFolder(&path_item)
+                .context("failed to set dialog folder")
+                .log_err()
+        };
     }
 
     if let Some(suggested_name) = suggested_name {
-        unsafe { dialog.SetFileName(&HSTRING::from(suggested_name)).log_err() };
+        unsafe {
+            dialog
+                .SetFileName(&HSTRING::from(suggested_name))
+                .context("failed to set file name")
+                .log_err()
+        };
     }
 
     unsafe {

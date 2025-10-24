@@ -3099,7 +3099,10 @@ impl OutlinePanel {
         cx: &mut Context<Self>,
     ) -> Option<PanelEntry> {
         let selection = editor.update(cx, |editor, cx| {
-            editor.selections.newest::<language::Point>(cx).head()
+            editor
+                .selections
+                .newest::<language::Point>(&editor.display_snapshot(cx))
+                .head()
         });
         let editor_snapshot = editor.update(cx, |editor, cx| editor.snapshot(window, cx));
         let multi_buffer = editor.read(cx).buffer();
@@ -3192,13 +3195,13 @@ impl OutlinePanel {
             .into_iter()
             .flat_map(|excerpt| excerpt.iter_outlines())
             .flat_map(|outline| {
-                let start = multi_buffer_snapshot
-                    .anchor_in_excerpt(excerpt_id, outline.range.start)?
-                    .to_display_point(&editor_snapshot);
-                let end = multi_buffer_snapshot
-                    .anchor_in_excerpt(excerpt_id, outline.range.end)?
-                    .to_display_point(&editor_snapshot);
-                Some((start..end, outline))
+                let range = multi_buffer_snapshot
+                    .anchor_range_in_excerpt(excerpt_id, outline.range.clone())?;
+                Some((
+                    range.start.to_display_point(&editor_snapshot)
+                        ..range.end.to_display_point(&editor_snapshot),
+                    outline,
+                ))
             })
             .collect::<Vec<_>>();
 
@@ -4833,6 +4836,10 @@ fn file_name(path: &Path) -> String {
 impl Panel for OutlinePanel {
     fn persistent_name() -> &'static str {
         "Outline Panel"
+    }
+
+    fn panel_key() -> &'static str {
+        OUTLINE_PANEL_KEY
     }
 
     fn position(&self, _: &Window, cx: &App) -> DockPosition {
@@ -6957,13 +6964,13 @@ outline: struct OutlineEntryExcerpt
 
     fn selected_row_text(editor: &Entity<Editor>, cx: &mut App) -> String {
         editor.update(cx, |editor, cx| {
-                let selections = editor.selections.all::<language::Point>(cx);
-                assert_eq!(selections.len(), 1, "Active editor should have exactly one selection after any outline panel interactions");
-                let selection = selections.first().unwrap();
-                let multi_buffer_snapshot = editor.buffer().read(cx).snapshot(cx);
-                let line_start = language::Point::new(selection.start.row, 0);
-                let line_end = multi_buffer_snapshot.clip_point(language::Point::new(selection.end.row, u32::MAX), language::Bias::Right);
-                multi_buffer_snapshot.text_for_range(line_start..line_end).collect::<String>().trim().to_owned()
+            let selections = editor.selections.all::<language::Point>(&editor.display_snapshot(cx));
+            assert_eq!(selections.len(), 1, "Active editor should have exactly one selection after any outline panel interactions");
+            let selection = selections.first().unwrap();
+            let multi_buffer_snapshot = editor.buffer().read(cx).snapshot(cx);
+            let line_start = language::Point::new(selection.start.row, 0);
+            let line_end = multi_buffer_snapshot.clip_point(language::Point::new(selection.end.row, u32::MAX), language::Bias::Right);
+            multi_buffer_snapshot.text_for_range(line_start..line_end).collect::<String>().trim().to_owned()
         })
     }
 

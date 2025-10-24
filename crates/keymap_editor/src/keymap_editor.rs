@@ -1,6 +1,7 @@
 use std::{
     cmp::{self},
     ops::{Not as _, Range},
+    rc::Rc,
     sync::Arc,
     time::Duration,
 };
@@ -23,14 +24,16 @@ use gpui::{
 use language::{Language, LanguageConfig, ToOffset as _};
 use notifications::status_toast::{StatusToast, ToastIcon};
 use project::{CompletionDisplayOptions, Project};
-use settings::{BaseKeymap, KeybindSource, KeymapFile, Settings as _, SettingsAssets};
+use settings::{
+    BaseKeymap, KeybindSource, KeymapFile, Settings as _, SettingsAssets, infer_json_indent_size,
+};
 use ui::{
     ActiveTheme as _, App, Banner, BorrowAppContext, ContextMenu, IconButtonShape, Indicator,
     Modal, ModalFooter, ModalHeader, ParentElement as _, PopoverMenu, Render, Section,
     SharedString, Styled as _, Table, TableColumnWidths, TableInteractionState,
     TableResizeBehavior, Tooltip, Window, prelude::*,
 };
-use ui_input::SingleLineInput;
+use ui_input::InputField;
 use util::ResultExt;
 use workspace::{
     Item, ModalView, SerializableItem, Workspace, notifications::NotifyTaskExt as _,
@@ -171,7 +174,7 @@ impl FilterState {
 
 #[derive(Debug, Default, PartialEq, Eq, Clone, Hash)]
 struct ActionMapping {
-    keystrokes: Vec<KeybindingKeystroke>,
+    keystrokes: Rc<[KeybindingKeystroke]>,
     context: Option<SharedString>,
 }
 
@@ -233,7 +236,7 @@ struct ConflictState {
 }
 
 type ConflictKeybindMapping = HashMap<
-    Vec<KeybindingKeystroke>,
+    Rc<[KeybindingKeystroke]>,
     Vec<(
         Option<gpui::KeyBindingContextPredicate>,
         Vec<ConflictOrigin>,
@@ -255,7 +258,7 @@ impl ConflictState {
                 .context
                 .and_then(|ctx| gpui::KeyBindingContextPredicate::parse(&ctx).ok());
             let entry = action_keybind_mapping
-                .entry(mapping.keystrokes)
+                .entry(mapping.keystrokes.clone())
                 .or_default();
             let origin = ConflictOrigin::new(binding.source, index);
             if let Some((_, origins)) =
@@ -683,8 +686,7 @@ impl KeymapEditor {
                 .unwrap_or(KeybindSource::Unknown);
 
             let keystroke_text = ui::text_for_keybinding_keystrokes(key_binding.keystrokes(), cx);
-            let ui_key_binding = ui::KeyBinding::new_from_gpui(key_binding.clone(), cx)
-                .vim_mode(source == KeybindSource::Vim);
+            let binding = KeyBinding::new(key_binding, source);
 
             let context = key_binding
                 .predicate()
@@ -715,7 +717,7 @@ impl KeymapEditor {
                 StringMatchCandidate::new(index, &action_information.humanized_name);
             processed_bindings.push(ProcessedBinding::new_mapped(
                 keystroke_text,
-                ui_key_binding,
+                binding,
                 context,
                 source,
                 action_information,
@@ -973,12 +975,11 @@ impl KeymapEditor {
             if conflict.is_user_keybind_conflict() {
                 base_button_style(index, IconName::Warning)
                     .icon_color(Color::Warning)
-                    .tooltip(|window, cx| {
+                    .tooltip(|_window, cx| {
                         Tooltip::with_meta(
                             "View conflicts",
                             Some(&ToggleConflictFilter),
                             "Use alt+click to show all conflicts",
-                            window,
                             cx,
                         )
                     })
@@ -993,12 +994,11 @@ impl KeymapEditor {
                     }))
             } else if self.search_mode.exact_match() {
                 base_button_style(index, IconName::Info)
-                    .tooltip(|window, cx| {
+                    .tooltip(|_window, cx| {
                         Tooltip::with_meta(
                             "Edit this binding",
                             Some(&ShowMatchingKeybinds),
                             "This binding is overridden by other bindings.",
-                            window,
                             cx,
                         )
                     })
@@ -1009,12 +1009,11 @@ impl KeymapEditor {
                     }))
             } else {
                 base_button_style(index, IconName::Info)
-                    .tooltip(|window, cx| {
+                    .tooltip(|_window, cx|  {
                         Tooltip::with_meta(
                             "Show matching keybinds",
                             Some(&ShowMatchingKeybinds),
                             "This binding is overridden by other bindings.\nUse alt+click to edit this binding",
-                            window,
                             cx,
                         )
                     })
@@ -1198,13 +1197,12 @@ impl KeymapEditor {
         else {
             return;
         };
-        let tab_size = cx.global::<settings::SettingsStore>().json_tab_size();
         self.previous_edit = Some(PreviousEdit::ScrollBarOffset(
             self.table_interaction_state.read(cx).scroll_offset(),
         ));
         let keyboard_mapper = cx.keyboard_mapper().clone();
         cx.spawn(async move |_, _| {
-            remove_keybinding(to_remove, &fs, tab_size, keyboard_mapper.as_ref()).await
+            remove_keybinding(to_remove, &fs, keyboard_mapper.as_ref()).await
         })
         .detach_and_notify_err(window, cx);
     }
@@ -1348,9 +1346,24 @@ impl HumanizedActionNameCache {
 }
 
 #[derive(Clone)]
+struct KeyBinding {
+    keystrokes: Rc<[KeybindingKeystroke]>,
+    source: KeybindSource,
+}
+
+impl KeyBinding {
+    fn new(binding: &gpui::KeyBinding, source: KeybindSource) -> Self {
+        Self {
+            keystrokes: Rc::from(binding.keystrokes()),
+            source,
+        }
+    }
+}
+
+#[derive(Clone)]
 struct KeybindInformation {
     keystroke_text: SharedString,
-    ui_binding: ui::KeyBinding,
+    binding: KeyBinding,
     context: KeybindContextString,
     source: KeybindSource,
 }
@@ -1358,7 +1371,7 @@ struct KeybindInformation {
 impl KeybindInformation {
     fn get_action_mapping(&self) -> ActionMapping {
         ActionMapping {
-            keystrokes: self.ui_binding.keystrokes.clone(),
+            keystrokes: self.binding.keystrokes.clone(),
             context: self.context.local().cloned(),
         }
     }
@@ -1400,7 +1413,7 @@ enum ProcessedBinding {
 impl ProcessedBinding {
     fn new_mapped(
         keystroke_text: impl Into<SharedString>,
-        ui_key_binding: ui::KeyBinding,
+        binding: KeyBinding,
         context: KeybindContextString,
         source: KeybindSource,
         action_information: ActionInformation,
@@ -1408,7 +1421,7 @@ impl ProcessedBinding {
         Self::Mapped(
             KeybindInformation {
                 keystroke_text: keystroke_text.into(),
-                ui_binding: ui_key_binding,
+                binding,
                 context,
                 source,
             },
@@ -1426,8 +1439,8 @@ impl ProcessedBinding {
     }
 
     fn keystrokes(&self) -> Option<&[KeybindingKeystroke]> {
-        self.ui_key_binding()
-            .map(|binding| binding.keystrokes.as_slice())
+        self.key_binding()
+            .map(|binding| binding.keystrokes.as_ref())
     }
 
     fn keybind_information(&self) -> Option<&KeybindInformation> {
@@ -1445,9 +1458,8 @@ impl ProcessedBinding {
         self.keybind_information().map(|keybind| &keybind.context)
     }
 
-    fn ui_key_binding(&self) -> Option<&ui::KeyBinding> {
-        self.keybind_information()
-            .map(|keybind| &keybind.ui_binding)
+    fn key_binding(&self) -> Option<&KeyBinding> {
+        self.keybind_information().map(|keybind| &keybind.binding)
     }
 
     fn keystroke_text(&self) -> Option<&SharedString> {
@@ -1598,12 +1610,11 @@ impl Render for KeymapEditor {
                                         .tooltip({
                                             let focus_handle = focus_handle.clone();
 
-                                            move |window, cx| {
+                                            move |_window, cx| {
                                                 Tooltip::for_action_in(
                                                     "Search by Keystroke",
                                                     &ToggleKeystrokeSearch,
                                                     &focus_handle.clone(),
-                                                    window,
                                                     cx,
                                                 )
                                             }
@@ -1635,7 +1646,7 @@ impl Render for KeymapEditor {
                                                 let filter_state = self.filter_state;
                                                 let focus_handle = focus_handle.clone();
 
-                                                move |window, cx| {
+                                                move |_window, cx| {
                                                     Tooltip::for_action_in(
                                                         match filter_state {
                                                             FilterState::All => "Show Conflicts",
@@ -1645,7 +1656,6 @@ impl Render for KeymapEditor {
                                                         },
                                                         &ToggleConflictFilter,
                                                         &focus_handle.clone(),
-                                                        window,
                                                         cx,
                                                     )
                                                 }
@@ -1697,12 +1707,11 @@ impl Render for KeymapEditor {
                                                         .icon_size(IconSize::Small),
                                                         {
                                                             let focus_handle = focus_handle.clone();
-                                                            move |window, cx| {
+                                                            move |_window, cx| {
                                                                 Tooltip::for_action_in(
                                                                     "View Default...",
                                                                     &zed_actions::OpenKeymapFile,
                                                                     &focus_handle,
-                                                                    window,
                                                                     cx,
                                                                 )
                                                             }
@@ -1744,12 +1753,11 @@ impl Render for KeymapEditor {
                                                     let keystroke_focus_handle =
                                                         self.keystroke_editor.read(cx).focus_handle(cx);
 
-                                                    move |window, cx| {
+                                                    move |_window, cx| {
                                                         Tooltip::for_action_in(
                                                             "Toggle Exact Match Mode",
                                                             &ToggleExactKeystrokeMatching,
                                                             &keystroke_focus_handle,
-                                                            window,
                                                             cx,
                                                         )
                                                     }
@@ -1855,13 +1863,13 @@ impl Render for KeymapEditor {
                                         )
                                         .into_any_element();
 
-                                    let keystrokes = binding.ui_key_binding().cloned().map_or(
+                                    let keystrokes = binding.key_binding().map_or(
                                         binding
                                             .keystroke_text()
                                             .cloned()
                                             .unwrap_or_default()
                                             .into_any_element(),
-                                        IntoElement::into_any_element,
+                                        |binding| ui::KeyBinding::from_keystrokes(binding.keystrokes.clone(), binding.source).into_any_element()
                                     );
 
                                     let action_arguments = match binding.action().arguments.clone()
@@ -2113,7 +2121,7 @@ struct KeybindingEditorModal {
     editing_keybind: ProcessedBinding,
     editing_keybind_idx: usize,
     keybind_editor: Entity<KeystrokeInput>,
-    context_editor: Entity<SingleLineInput>,
+    context_editor: Entity<InputField>,
     action_arguments_editor: Option<Entity<ActionArgumentsEditor>>,
     fs: Arc<dyn Fs>,
     error: Option<InputError>,
@@ -2147,8 +2155,8 @@ impl KeybindingEditorModal {
         let keybind_editor = cx
             .new(|cx| KeystrokeInput::new(editing_keybind.keystrokes().map(Vec::from), window, cx));
 
-        let context_editor: Entity<SingleLineInput> = cx.new(|cx| {
-            let input = SingleLineInput::new(window, cx, "Keybinding Context")
+        let context_editor: Entity<InputField> = cx.new(|cx| {
+            let input = InputField::new(window, cx, "Keybinding Context")
                 .label("Edit Context")
                 .label_size(LabelSize::Default);
 
@@ -2288,7 +2296,6 @@ impl KeybindingEditorModal {
     fn save(&mut self, cx: &mut Context<Self>) -> Result<(), InputError> {
         let existing_keybind = self.editing_keybind.clone();
         let fs = self.fs.clone();
-        let tab_size = cx.global::<settings::SettingsStore>().json_tab_size();
 
         let mut new_keystrokes = self.validate_keystrokes(cx).map_err(InputError::error)?;
         new_keystrokes
@@ -2301,7 +2308,7 @@ impl KeybindingEditorModal {
             .map_err(InputError::error)?;
 
         let action_mapping = ActionMapping {
-            keystrokes: new_keystrokes,
+            keystrokes: Rc::from(new_keystrokes.as_slice()),
             context: new_context.map(SharedString::from),
         };
 
@@ -2367,7 +2374,6 @@ impl KeybindingEditorModal {
                 &action_mapping,
                 new_action_args.as_deref(),
                 &fs,
-                tab_size,
                 keyboard_mapper.as_ref(),
             )
             .await
@@ -3019,12 +3025,13 @@ async fn save_keybinding_update(
     action_mapping: &ActionMapping,
     new_args: Option<&str>,
     fs: &Arc<dyn Fs>,
-    tab_size: usize,
     keyboard_mapper: &dyn PlatformKeyboardMapper,
 ) -> anyhow::Result<()> {
     let keymap_contents = settings::KeymapFile::load_keymap_file(fs)
         .await
         .context("Failed to load keymap file")?;
+
+    let tab_size = infer_json_indent_size(&keymap_contents);
 
     let existing_keystrokes = existing.keystrokes().unwrap_or_default();
     let existing_context = existing.context().and_then(KeybindContextString::local_str);
@@ -3089,7 +3096,6 @@ async fn save_keybinding_update(
 async fn remove_keybinding(
     existing: ProcessedBinding,
     fs: &Arc<dyn Fs>,
-    tab_size: usize,
     keyboard_mapper: &dyn PlatformKeyboardMapper,
 ) -> anyhow::Result<()> {
     let Some(keystrokes) = existing.keystrokes() else {
@@ -3098,6 +3104,7 @@ async fn remove_keybinding(
     let keymap_contents = settings::KeymapFile::load_keymap_file(fs)
         .await
         .context("Failed to load keymap file")?;
+    let tab_size = infer_json_indent_size(&keymap_contents);
 
     let operation = settings::KeybindUpdateOperation::Remove {
         target: settings::KeybindUpdateTarget {

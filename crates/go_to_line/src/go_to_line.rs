@@ -74,7 +74,9 @@ impl GoToLine {
     ) -> Self {
         let (user_caret, last_line, scroll_position) = active_editor.update(cx, |editor, cx| {
             let user_caret = UserCaretPosition::at_selection_end(
-                &editor.selections.last::<Point>(cx),
+                &editor
+                    .selections
+                    .last::<Point>(&editor.display_snapshot(cx)),
                 &editor.buffer().read(cx).snapshot(cx),
             );
 
@@ -739,7 +741,7 @@ mod tests {
         let selections = editor.update(cx, |editor, cx| {
             editor
                 .selections
-                .all::<rope::Point>(cx)
+                .all::<rope::Point>(&editor.display_snapshot(cx))
                 .into_iter()
                 .map(|s| s.start..s.end)
                 .collect::<Vec<_>>()

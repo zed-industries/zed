@@ -41,6 +41,7 @@ pub struct TerminalSettingsContent {
     ///
     /// If this option is not included,
     /// the terminal will default to matching the buffer's font size.
+    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
     pub font_size: Option<f32>,
     /// Sets the terminal's font family.
     ///
@@ -61,6 +62,7 @@ pub struct TerminalSettingsContent {
     pub line_height: Option<TerminalLineHeight>,
     pub font_features: Option<FontFeatures>,
     /// Sets the terminal's font weight in CSS weight units 0-900.
+    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
     pub font_weight: Option<f32>,
     /// Default cursor shape for the terminal.
     /// Can be "bar", "block", "underline", or "hollow".
@@ -99,10 +101,12 @@ pub struct TerminalSettingsContent {
     /// Default width when the terminal is docked to the left or right.
     ///
     /// Default: 640
+    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
     pub default_width: Option<f32>,
     /// Default height when the terminal is docked to the bottom.
     ///
     /// Default: 320
+    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
     pub default_height: Option<f32>,
     /// The maximum number of lines to keep in the scrollback history.
     /// Maximum allowed value is 100_000, all values above that will be treated as 100_000.
@@ -130,11 +134,24 @@ pub struct TerminalSettingsContent {
     /// - 90: Preferred for body text
     ///
     /// Default: 45
+    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
     pub minimum_contrast: Option<f32>,
 }
 
 /// Shell configuration to open the terminal with.
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom)]
+#[derive(
+    Clone,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    JsonSchema,
+    MergeFrom,
+    strum::EnumDiscriminants,
+)]
+#[strum_discriminants(derive(strum::VariantArray, strum::VariantNames, strum::FromRepr))]
 #[serde(rename_all = "snake_case")]
 pub enum Shell {
     /// Use the system's default terminal configuration in /etc/passwd
@@ -153,7 +170,18 @@ pub enum Shell {
     },
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom)]
+#[derive(
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    JsonSchema,
+    MergeFrom,
+    strum::EnumDiscriminants,
+)]
+#[strum_discriminants(derive(strum::VariantArray, strum::VariantNames, strum::FromRepr))]
 #[serde(rename_all = "snake_case")]
 pub enum WorkingDirectory {
     /// Use the current file's project directory.  Will Fallback to the
@@ -190,7 +218,7 @@ pub enum TerminalLineHeight {
     /// particularly if they use box characters
     Standard,
     /// Use a custom line height.
-    Custom(f32),
+    Custom(#[serde(serialize_with = "crate::serialize_f32_with_two_decimal_places")] f32),
 }
 
 impl TerminalLineHeight {

@@ -1,5 +1,6 @@
 pub mod copilot_chat;
 mod copilot_completion_provider;
+pub mod copilot_responses;
 pub mod request;
 mod sign_in;
 

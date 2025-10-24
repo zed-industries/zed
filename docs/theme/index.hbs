@@ -311,7 +311,23 @@
           })();
         </script>
 
-
+        <!-- Amplitude Analytics -->
+        <script>
+          (function() {
+            var amplitudeKey = '#amplitude_key#';
+            if (amplitudeKey && amplitudeKey.indexOf('#') === -1) {
+              var script = document.createElement('script');
+              script.src = 'https://cdn.amplitude.com/script/' + amplitudeKey + '.js';
+              script.onload = function() {
+                window.amplitude.init(amplitudeKey, {
+                  fetchRemoteConfig: true,
+                  autocapture: true
+                });
+              };
+              document.head.appendChild(script);
+            }
+          })();
+        </script>
     </div>
     </body>
 </html>

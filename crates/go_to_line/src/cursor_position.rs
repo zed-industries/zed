@@ -1,5 +1,5 @@
 use editor::{Editor, MultiBufferSnapshot};
-use gpui::{App, Entity, FocusHandle, Focusable, Subscription, Task, WeakEntity};
+use gpui::{App, Entity, FocusHandle, Focusable, Styled, Subscription, Task, WeakEntity};
 use settings::Settings;
 use std::{fmt::Write, num::NonZeroU32, time::Duration};
 use text::{Point, Selection};
@@ -208,7 +208,7 @@ impl CursorPosition {
 impl Render for CursorPosition {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if !StatusBarSettings::get_global(cx).cursor_position_button {
-            return div();
+            return div().hidden();
         }
 
         div().when_some(self.position, |el, position| {
@@ -238,18 +238,16 @@ impl Render for CursorPosition {
                             });
                         }
                     }))
-                    .tooltip(move |window, cx| match context.as_ref() {
+                    .tooltip(move |_window, cx| match context.as_ref() {
                         Some(context) => Tooltip::for_action_in(
                             "Go to Line/Column",
                             &editor::actions::ToggleGoToLine,
                             context,
-                            window,
                             cx,
                         ),
                         None => Tooltip::for_action(
                             "Go to Line/Column",
                             &editor::actions::ToggleGoToLine,
-                            window,
                             cx,
                         ),
                     }),

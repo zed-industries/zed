@@ -54,7 +54,8 @@ impl QuickActionBar {
                     .count()
                     .ne(&0)
                     .then(|| {
-                        let latest = this.selections.newest_display(cx);
+                        let snapshot = this.display_snapshot(cx);
+                        let latest = this.selections.newest_display(&snapshot);
                         !latest.is_empty()
                     })
                     .unwrap_or_default()

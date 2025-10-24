@@ -15,7 +15,7 @@ use std::{
     sync::LazyLock,
 };
 
-use crate::rel_path::RelPath;
+use crate::{rel_path::RelPath, shell::ShellKind};
 
 static HOME_DIR: OnceLock<PathBuf> = OnceLock::new();
 
@@ -84,9 +84,7 @@ pub trait PathExt {
     fn multiple_extensions(&self) -> Option<String>;
 
     /// Try to make a shell-safe representation of the path.
-    ///
-    /// For Unix, the path is escaped to be safe for POSIX shells
-    fn try_shell_safe(&self) -> anyhow::Result<String>;
+    fn try_shell_safe(&self, shell_kind: ShellKind) -> anyhow::Result<String>;
 }
 
 impl<T: AsRef<Path>> PathExt for T {
@@ -164,24 +162,16 @@ impl<T: AsRef<Path>> PathExt for T {
         Some(parts.into_iter().join("."))
     }
 
-    fn try_shell_safe(&self) -> anyhow::Result<String> {
-        #[cfg(target_os = "windows")]
-        {
-            Ok(self.as_ref().to_string_lossy().to_string())
-        }
-
-        #[cfg(not(target_os = "windows"))]
-        {
-            let path_str = self
-                .as_ref()
-                .to_str()
-                .with_context(|| "Path contains invalid UTF-8")?;
-
-            // As of writing, this can only be fail if the path contains a null byte, which shouldn't be possible
-            // but shlex has annotated the error as #[non_exhaustive] so we can't make it a compile error if other
-            // errors are introduced in the future :(
-            Ok(shlex::try_quote(path_str)?.into_owned())
-        }
+    fn try_shell_safe(&self, shell_kind: ShellKind) -> anyhow::Result<String> {
+        let path_str = self
+            .as_ref()
+            .to_str()
+            .with_context(|| "Path contains invalid UTF-8")?;
+        shell_kind
+            .try_quote(path_str)
+            .as_deref()
+            .map(ToOwned::to_owned)
+            .context("Failed to quote path")
     }
 }
 
@@ -558,7 +548,7 @@ impl PathWithPosition {
     /// # Examples
     ///
     /// ```
-    /// # use zed_util::paths::PathWithPosition;
+    /// # use util::paths::PathWithPosition;
     /// # use std::path::PathBuf;
     /// assert_eq!(PathWithPosition::parse_str("test_file"), PathWithPosition {
     ///     path: PathBuf::from("test_file"),
@@ -589,7 +579,7 @@ impl PathWithPosition {
     ///
     /// # Expected parsing results when encounter ill-formatted inputs.
     /// ```
-    /// # use zed_util::paths::PathWithPosition;
+    /// # use util::paths::PathWithPosition;
     /// # use std::path::PathBuf;
     /// assert_eq!(PathWithPosition::parse_str("test_file.rs:a"), PathWithPosition {
     ///     path: PathBuf::from("test_file.rs:a"),
@@ -934,7 +924,7 @@ where
 /// 2. When encountering digits, treating consecutive digits as a single number
 /// 3. Comparing numbers by their numeric value rather than lexicographically
 /// 4. For non-numeric characters, using case-sensitive comparison with lowercase priority
-fn natural_sort(a: &str, b: &str) -> Ordering {
+pub fn natural_sort(a: &str, b: &str) -> Ordering {
     let mut a_iter = a.chars().peekable();
     let mut b_iter = b.chars().peekable();
 

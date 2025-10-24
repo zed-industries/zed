@@ -1051,7 +1051,7 @@ impl ExtensionImports for WasmState {
             anyhow::ensure!(
                 response.status().is_success(),
                 "download failed with status {}",
-                response.status().to_string()
+                response.status()
             );
             let body = BufReader::new(response.body_mut());
 

@@ -30,10 +30,7 @@ use gpui::{
     Subscription, WeakEntity, Window, actions, div,
 };
 use onboarding_banner::OnboardingBanner;
-use project::{
-    Project, WorktreeSettings,
-    git_store::{GitStoreEvent, RepositoryEvent},
-};
+use project::{Project, WorktreeSettings, git_store::GitStoreEvent};
 use remote::RemoteConnectionOptions;
 use settings::{Settings, SettingsLocation};
 use std::sync::Arc;
@@ -189,10 +186,18 @@ impl Render for TitleBar {
         let status = &*status.borrow();
         let user = self.user_store.read(cx).current_user();
 
+        let signed_in = user.is_some();
+
         children.push(
             h_flex()
+                .map(|this| {
+                    if signed_in {
+                        this.pr_1p5()
+                    } else {
+                        this.pr_1()
+                    }
+                })
                 .gap_1()
-                .pr_1()
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .children(self.render_call_controls(window, cx))
                 .children(self.render_connection_status(status, cx))
@@ -279,9 +284,7 @@ impl TitleBar {
         subscriptions.push(
             cx.subscribe(&git_store, move |_, _, event, cx| match event {
                 GitStoreEvent::ActiveRepositoryChanged(_)
-                | GitStoreEvent::RepositoryUpdated(_, RepositoryEvent::Updated { .. }, _)
-                | GitStoreEvent::RepositoryAdded(_)
-                | GitStoreEvent::RepositoryRemoved(_) => {
+                | GitStoreEvent::RepositoryUpdated(_, _, true) => {
                     cx.notify();
                 }
                 _ => {}
@@ -371,7 +374,7 @@ impl TitleBar {
                         )
                         .child(Label::new(nickname).size(LabelSize::Small).truncate()),
                 )
-                .tooltip(move |window, cx| {
+                .tooltip(move |_window, cx| {
                     Tooltip::with_meta(
                         "Remote Project",
                         Some(&OpenRemote {
@@ -379,7 +382,6 @@ impl TitleBar {
                             create_new_window: false,
                         }),
                         meta.clone(),
-                        window,
                         cx,
                     )
                 })
@@ -473,13 +475,12 @@ impl TitleBar {
             .when(!is_project_selected, |b| b.color(Color::Muted))
             .style(ButtonStyle::Subtle)
             .label_size(LabelSize::Small)
-            .tooltip(move |window, cx| {
+            .tooltip(move |_window, cx| {
                 Tooltip::for_action(
                     "Recent Projects",
                     &zed_actions::OpenRecent {
                         create_new_window: false,
                     },
-                    window,
                     cx,
                 )
             })
@@ -519,12 +520,11 @@ impl TitleBar {
                 .color(Color::Muted)
                 .style(ButtonStyle::Subtle)
                 .label_size(LabelSize::Small)
-                .tooltip(move |window, cx| {
+                .tooltip(move |_window, cx| {
                     Tooltip::with_meta(
                         "Recent Branches",
                         Some(&zed_actions::git::Branch),
                         "Local branches only",
-                        window,
                         cx,
                     )
                 })
@@ -753,26 +753,10 @@ impl TitleBar {
                 .into()
             })
             .map(|this| {
-                if is_signed_in {
+                if is_signed_in && TitleBarSettings::get_global(cx).show_user_picture {
                     this.trigger_with_tooltip(
                         ButtonLike::new("user-menu")
-                            .child(
-                                h_flex()
-                                    .gap_0p5()
-                                    .children(
-                                        TitleBarSettings::get_global(cx)
-                                            .show_user_picture
-                                            .then(|| user_avatar.clone())
-                                            .flatten()
-                                            .map(|avatar| Avatar::new(avatar)),
-                                    )
-                                    .child(
-                                        Icon::new(IconName::ChevronDown)
-                                            .size(IconSize::Small)
-                                            .color(Color::Muted),
-                                    ),
-                            )
-                            .style(ButtonStyle::Subtle),
+                            .children(user_avatar.clone().map(|avatar| Avatar::new(avatar))),
                         Tooltip::text("Toggle User Menu"),
                     )
                 } else {

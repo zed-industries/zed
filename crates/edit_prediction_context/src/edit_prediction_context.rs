@@ -8,6 +8,7 @@ mod similar_snippets;
 mod syntax_index;
 pub mod text_similarity;
 
+use cloud_llm_client::predict_edits_v3;
 use collections::HashMap;
 use gpui::{App, AppContext as _, Entity, Task};
 use language::BufferSnapshot;
@@ -23,19 +24,22 @@ pub use similar_snippets::*;
 pub use syntax_index::*;
 pub use text_similarity::*;
 
+pub use predict_edits_v3::Line;
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct EditPredictionContextOptions {
     pub use_imports: bool,
     pub excerpt: EditPredictionExcerptOptions,
     pub score: EditPredictionScoreOptions,
     pub similar_snippets: SimilarSnippetOptions,
+    pub max_retrieved_declarations: u8,
 }
 
 #[derive(Clone, Debug)]
 pub struct EditPredictionContext {
     pub excerpt: EditPredictionExcerpt,
     pub excerpt_text: EditPredictionExcerptText,
-    pub cursor_offset_in_excerpt: usize,
+    pub cursor_point: Point,
     pub declarations: Vec<ScoredDeclaration>,
     pub similar_snippets: Vec<SimilarSnippet>,
 }
@@ -117,27 +121,25 @@ impl EditPredictionContext {
             index_state,
         )?;
         let excerpt_text = excerpt.text(buffer);
-        let excerpt_occurrences =
-            Occurrences::new(IdentifierParts::occurrences_in_str(&excerpt_text.body));
-        let excerpt_trigram_occurrences: Occurrences<NGram<3, CodeParts>> =
-            Occurrences::new(NGram::occurrences_in_str(&excerpt_text.body));
 
-        let adjacent_start = Point::new(cursor_point.row.saturating_sub(2), 0);
-        let adjacent_end = Point::new(cursor_point.row + 1, 0);
-        let adjacent_occurrences = Occurrences::new(IdentifierParts::occurrences_in_str(
-            &buffer
-                .text_for_range(adjacent_start..adjacent_end)
-                .collect::<String>(),
-        ));
+        let declarations = if options.max_retrieved_declarations > 0
+            && let Some(index_state) = index_state
+        {
+            let excerpt_occurrences =
+                Occurrences::new(IdentifierParts::occurrences_in_str(&excerpt_text.body));
+            let adjacent_start = Point::new(cursor_point.row.saturating_sub(2), 0);
+            let adjacent_end = Point::new(cursor_point.row + 1, 0);
+            let adjacent_occurrences = Occurrences::new(IdentifierParts::occurrences_in_str(
+                &buffer
+                    .text_for_range(adjacent_start..adjacent_end)
+                    .collect::<String>(),
+            ));
 
-        let cursor_offset_in_file = cursor_point.to_offset(buffer);
-        // TODO fix this to not need saturating_sub
-        let cursor_offset_in_excerpt = cursor_offset_in_file.saturating_sub(excerpt.range.start);
+            let cursor_offset_in_file = cursor_point.to_offset(buffer);
 
-        let declarations = if let Some(index_state) = index_state {
             let references = get_references(&excerpt, &excerpt_text, buffer);
 
-            scored_declarations(
+            let mut declarations = scored_declarations(
                 &options.score,
                 &index_state,
                 &excerpt,
@@ -147,19 +149,29 @@ impl EditPredictionContext {
                 references,
                 cursor_offset_in_file,
                 buffer,
-            )
+            );
+            // TODO [zeta2] if we need this when we ship, we should probably do it in a smarter way
+            declarations.truncate(options.max_retrieved_declarations as usize);
+            declarations
         } else {
             vec![]
         };
 
-        let before = Instant::now();
-        let similar_snippets = similar_snippets(
-            &excerpt_trigram_occurrences,
-            excerpt.range.clone(),
-            buffer,
-            &options.similar_snippets,
-        );
-        dbg!(before.elapsed());
+        let similar_snippets = if options.similar_snippets.max_result_count > 0 {
+            let before = Instant::now();
+            let excerpt_trigram_occurrences: Occurrences<NGram<3, CodeParts>> =
+                Occurrences::new(NGram::occurrences_in_str(&excerpt_text.body));
+            let similar_snippets = similar_snippets(
+                &excerpt_trigram_occurrences,
+                excerpt.range.clone(),
+                buffer,
+                &options.similar_snippets,
+            );
+            dbg!(before.elapsed());
+            similar_snippets
+        } else {
+            Vec::new()
+        };
 
         // buffer.debug(&excerpt.range, "excerpt");
 
@@ -174,7 +186,7 @@ impl EditPredictionContext {
         Some(Self {
             excerpt,
             excerpt_text,
-            cursor_offset_in_excerpt,
+            cursor_point,
             declarations,
             similar_snippets,
         })
@@ -230,6 +242,7 @@ mod tests {
                             omit_excerpt_overlaps: true,
                         },
                         similar_snippets: SimilarSnippetOptions::default(),
+                        max_retrieved_declarations: u8::MAX,
                     },
                     Some(index.clone()),
                     cx,

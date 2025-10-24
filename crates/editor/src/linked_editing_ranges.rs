@@ -48,7 +48,7 @@ pub(super) fn refresh_linked_ranges(
     window: &mut Window,
     cx: &mut Context<Editor>,
 ) -> Option<()> {
-    if editor.pending_rename.is_some() {
+    if editor.ignore_lsp_data() || editor.pending_rename.is_some() {
         return None;
     }
     let project = editor.project()?.downgrade();
@@ -59,7 +59,7 @@ pub(super) fn refresh_linked_ranges(
         let mut applicable_selections = Vec::new();
         editor
             .update(cx, |editor, cx| {
-                let selections = editor.selections.all::<usize>(cx);
+                let selections = editor.selections.all::<usize>(&editor.display_snapshot(cx));
                 let snapshot = editor.buffer.read(cx).snapshot(cx);
                 let buffer = editor.buffer.read(cx);
                 for selection in selections {

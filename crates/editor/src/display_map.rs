@@ -27,7 +27,7 @@ mod tab_map;
 mod wrap_map;
 
 use crate::{
-    EditorStyle, InlayId, RowExt, hover_links::InlayHighlight, movement::TextLayoutDetails,
+    EditorStyle, RowExt, hover_links::InlayHighlight, inlays::Inlay, movement::TextLayoutDetails,
 };
 pub use block_map::{
     Block, BlockChunks as DisplayChunks, BlockContext, BlockId, BlockMap, BlockPlacement,
@@ -42,7 +42,6 @@ pub use fold_map::{
     ChunkRenderer, ChunkRendererContext, ChunkRendererId, Fold, FoldId, FoldPlaceholder, FoldPoint,
 };
 use gpui::{App, Context, Entity, Font, HighlightStyle, LineLayout, Pixels, UnderlineStyle};
-pub use inlay_map::Inlay;
 use inlay_map::InlaySnapshot;
 pub use inlay_map::{InlayOffset, InlayPoint};
 pub use invisibles::{is_invisible, replacement};
@@ -50,9 +49,10 @@ use language::{
     OffsetUtf16, Point, Subscription as BufferSubscription, language_settings::language_settings,
 };
 use multi_buffer::{
-    Anchor, AnchorRangeExt, ExcerptId, MultiBuffer, MultiBufferPoint, MultiBufferRow,
-    MultiBufferSnapshot, RowInfo, ToOffset, ToPoint,
+    Anchor, AnchorRangeExt, MultiBuffer, MultiBufferPoint, MultiBufferRow, MultiBufferSnapshot,
+    RowInfo, ToOffset, ToPoint,
 };
+use project::InlayId;
 use project::project_settings::DiagnosticSeverity;
 use serde::Deserialize;
 
@@ -592,21 +592,6 @@ impl DisplayMap {
             .wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
         self.block_map.read(snapshot, edits);
-    }
-
-    pub fn remove_inlays_for_excerpts(&mut self, excerpts_removed: &[ExcerptId]) {
-        let to_remove = self
-            .inlay_map
-            .current_inlays()
-            .filter_map(|inlay| {
-                if excerpts_removed.contains(&inlay.position.excerpt_id) {
-                    Some(inlay.id)
-                } else {
-                    None
-                }
-            })
-            .collect::<Vec<_>>();
-        self.inlay_map.splice(&to_remove, Vec::new());
     }
 
     fn tab_size(buffer: &Entity<MultiBuffer>, cx: &App) -> NonZeroU32 {
@@ -1400,6 +1385,26 @@ impl DisplaySnapshot {
 
     pub fn excerpt_header_height(&self) -> u32 {
         self.block_snapshot.excerpt_header_height
+    }
+
+    /// Given a `DisplayPoint`, returns another `DisplayPoint` corresponding to
+    /// the start of the buffer row that is a given number of buffer rows away
+    /// from the provided point.
+    ///
+    /// This moves by buffer rows instead of display rows, a distinction that is
+    /// important when soft wrapping is enabled.
+    pub fn start_of_relative_buffer_row(&self, point: DisplayPoint, times: isize) -> DisplayPoint {
+        let start = self.display_point_to_fold_point(point, Bias::Left);
+        let target = start.row() as isize + times;
+        let new_row = (target.max(0) as u32).min(self.fold_snapshot().max_point().row());
+
+        self.clip_point(
+            self.fold_point_to_display_point(
+                self.fold_snapshot()
+                    .clip_point(FoldPoint::new(new_row, 0), Bias::Right),
+            ),
+            Bias::Right,
+        )
     }
 }
 
