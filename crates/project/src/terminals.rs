@@ -120,7 +120,6 @@ impl Project {
             .map(|p| self.active_toolchain(p, LanguageName::new("Python"), cx))
             .collect::<Vec<_>>();
         let lang_registry = self.languages.clone();
-        let fs = self.fs.clone();
         cx.spawn(async move |project, cx| {
             let shell_kind = ShellKind::new(&shell, is_windows);
             let activation_script = maybe!(async {
@@ -133,11 +132,7 @@ impl Project {
                         .await
                         .ok();
                     let lister = language?.toolchain_lister();
-                    return Some(
-                        lister?
-                            .activation_script(&toolchain, shell_kind, fs.as_ref())
-                            .await,
-                    );
+                    return Some(lister?.activation_script(&toolchain, shell_kind));
                 }
                 None
             })
@@ -342,7 +337,6 @@ impl Project {
         let shell_kind = ShellKind::new(&shell, self.path_style(cx).is_windows());
 
         let lang_registry = self.languages.clone();
-        let fs = self.fs.clone();
         cx.spawn(async move |project, cx| {
             let activation_script = maybe!(async {
                 for toolchain in toolchains {
@@ -354,11 +348,7 @@ impl Project {
                         .await
                         .ok();
                     let lister = language?.toolchain_lister();
-                    return Some(
-                        lister?
-                            .activation_script(&toolchain, shell_kind, fs.as_ref())
-                            .await,
-                    );
+                    return Some(lister?.activation_script(&toolchain, shell_kind));
                 }
                 None
             })

@@ -14,7 +14,7 @@ use open_ai::{ResponseStreamEvent, stream_completion};
 use settings::{Settings, SettingsStore};
 use std::sync::Arc;
 use ui::{ElevationIndex, Tooltip, prelude::*};
-use ui_input::SingleLineInput;
+use ui_input::InputField;
 use util::{ResultExt, truncate_and_trailoff};
 use zed_env_vars::EnvVar;
 
@@ -340,7 +340,7 @@ impl LanguageModel for OpenAiCompatibleLanguageModel {
 }
 
 struct ConfigurationView {
-    api_key_editor: Entity<SingleLineInput>,
+    api_key_editor: Entity<InputField>,
     state: Entity<State>,
     load_credentials_task: Option<Task<()>>,
 }
@@ -348,7 +348,7 @@ struct ConfigurationView {
 impl ConfigurationView {
     fn new(state: Entity<State>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let api_key_editor = cx.new(|cx| {
-            SingleLineInput::new(
+            InputField::new(
                 window,
                 cx,
                 "000000000000000000000000000000000000000000000000000",

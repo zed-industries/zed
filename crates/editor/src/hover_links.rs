@@ -1,19 +1,14 @@
 use crate::{
     Anchor, Editor, EditorSettings, EditorSnapshot, FindAllReferences, GoToDefinition,
-    GoToDefinitionSplit, GoToTypeDefinition, GoToTypeDefinitionSplit, GotoDefinitionKind, InlayId,
-    Navigated, PointForPosition, SelectPhase,
-    editor_settings::GoToDefinitionFallback,
-    hover_popover::{self, InlayHover},
+    GoToDefinitionSplit, GoToTypeDefinition, GoToTypeDefinitionSplit, GotoDefinitionKind,
+    Navigated, PointForPosition, SelectPhase, editor_settings::GoToDefinitionFallback,
     scroll::ScrollAmount,
 };
 use gpui::{App, AsyncWindowContext, Context, Entity, Modifiers, Task, Window, px};
 use language::{Bias, ToOffset};
 use linkify::{LinkFinder, LinkKind};
 use lsp::LanguageServerId;
-use project::{
-    HoverBlock, HoverBlockKind, InlayHintLabelPartTooltip, InlayHintTooltip, LocationLink, Project,
-    ResolveState, ResolvedPath,
-};
+use project::{InlayId, LocationLink, Project, ResolvedPath};
 use settings::Settings;
 use std::ops::Range;
 use theme::ActiveTheme as _;
@@ -138,10 +133,9 @@ impl Editor {
                 show_link_definition(modifiers.shift, self, trigger_point, snapshot, window, cx);
             }
             None => {
-                update_inlay_link_and_hover_points(
+                self.update_inlay_link_and_hover_points(
                     snapshot,
                     point_for_position,
-                    self,
                     hovered_link_modifier,
                     modifiers.shift,
                     window,
@@ -280,182 +274,6 @@ impl Editor {
         };
         self.select(SelectPhase::End, window, cx);
         navigate_task
-    }
-}
-
-pub fn update_inlay_link_and_hover_points(
-    snapshot: &EditorSnapshot,
-    point_for_position: PointForPosition,
-    editor: &mut Editor,
-    secondary_held: bool,
-    shift_held: bool,
-    window: &mut Window,
-    cx: &mut Context<Editor>,
-) {
-    let hovered_offset = if point_for_position.column_overshoot_after_line_end == 0 {
-        Some(snapshot.display_point_to_inlay_offset(point_for_position.exact_unclipped, Bias::Left))
-    } else {
-        None
-    };
-    let mut go_to_definition_updated = false;
-    let mut hover_updated = false;
-    if let Some(hovered_offset) = hovered_offset {
-        let buffer_snapshot = editor.buffer().read(cx).snapshot(cx);
-        let previous_valid_anchor =
-            buffer_snapshot.anchor_before(point_for_position.previous_valid.to_point(snapshot));
-        let next_valid_anchor =
-            buffer_snapshot.anchor_after(point_for_position.next_valid.to_point(snapshot));
-        if let Some(hovered_hint) = editor
-            .visible_inlay_hints(cx)
-            .skip_while(|hint| {
-                hint.position
-                    .cmp(&previous_valid_anchor, &buffer_snapshot)
-                    .is_lt()
-            })
-            .take_while(|hint| {
-                hint.position
-                    .cmp(&next_valid_anchor, &buffer_snapshot)
-                    .is_le()
-            })
-            .max_by_key(|hint| hint.id)
-        {
-            let inlay_hint_cache = editor.inlay_hint_cache();
-            let excerpt_id = previous_valid_anchor.excerpt_id;
-            if let Some(cached_hint) = inlay_hint_cache.hint_by_id(excerpt_id, hovered_hint.id) {
-                match cached_hint.resolve_state {
-                    ResolveState::CanResolve(_, _) => {
-                        if let Some(buffer_id) = snapshot
-                            .buffer_snapshot()
-                            .buffer_id_for_anchor(previous_valid_anchor)
-                        {
-                            inlay_hint_cache.spawn_hint_resolve(
-                                buffer_id,
-                                excerpt_id,
-                                hovered_hint.id,
-                                window,
-                                cx,
-                            );
-                        }
-                    }
-                    ResolveState::Resolved => {
-                        let mut extra_shift_left = 0;
-                        let mut extra_shift_right = 0;
-                        if cached_hint.padding_left {
-                            extra_shift_left += 1;
-                            extra_shift_right += 1;
-                        }
-                        if cached_hint.padding_right {
-                            extra_shift_right += 1;
-                        }
-                        match cached_hint.label {
-                            project::InlayHintLabel::String(_) => {
-                                if let Some(tooltip) = cached_hint.tooltip {
-                                    hover_popover::hover_at_inlay(
-                                        editor,
-                                        InlayHover {
-                                            tooltip: match tooltip {
-                                                InlayHintTooltip::String(text) => HoverBlock {
-                                                    text,
-                                                    kind: HoverBlockKind::PlainText,
-                                                },
-                                                InlayHintTooltip::MarkupContent(content) => {
-                                                    HoverBlock {
-                                                        text: content.value,
-                                                        kind: content.kind,
-                                                    }
-                                                }
-                                            },
-                                            range: InlayHighlight {
-                                                inlay: hovered_hint.id,
-                                                inlay_position: hovered_hint.position,
-                                                range: extra_shift_left
-                                                    ..hovered_hint.text().len() + extra_shift_right,
-                                            },
-                                        },
-                                        window,
-                                        cx,
-                                    );
-                                    hover_updated = true;
-                                }
-                            }
-                            project::InlayHintLabel::LabelParts(label_parts) => {
-                                let hint_start =
-                                    snapshot.anchor_to_inlay_offset(hovered_hint.position);
-                                if let Some((hovered_hint_part, part_range)) =
-                                    hover_popover::find_hovered_hint_part(
-                                        label_parts,
-                                        hint_start,
-                                        hovered_offset,
-                                    )
-                                {
-                                    let highlight_start =
-                                        (part_range.start - hint_start).0 + extra_shift_left;
-                                    let highlight_end =
-                                        (part_range.end - hint_start).0 + extra_shift_right;
-                                    let highlight = InlayHighlight {
-                                        inlay: hovered_hint.id,
-                                        inlay_position: hovered_hint.position,
-                                        range: highlight_start..highlight_end,
-                                    };
-                                    if let Some(tooltip) = hovered_hint_part.tooltip {
-                                        hover_popover::hover_at_inlay(
-                                            editor,
-                                            InlayHover {
-                                                tooltip: match tooltip {
-                                                    InlayHintLabelPartTooltip::String(text) => {
-                                                        HoverBlock {
-                                                            text,
-                                                            kind: HoverBlockKind::PlainText,
-                                                        }
-                                                    }
-                                                    InlayHintLabelPartTooltip::MarkupContent(
-                                                        content,
-                                                    ) => HoverBlock {
-                                                        text: content.value,
-                                                        kind: content.kind,
-                                                    },
-                                                },
-                                                range: highlight.clone(),
-                                            },
-                                            window,
-                                            cx,
-                                        );
-                                        hover_updated = true;
-                                    }
-                                    if let Some((language_server_id, location)) =
-                                        hovered_hint_part.location
-                                        && secondary_held
-                                        && !editor.has_pending_nonempty_selection()
-                                    {
-                                        go_to_definition_updated = true;
-                                        show_link_definition(
-                                            shift_held,
-                                            editor,
-                                            TriggerPoint::InlayHint(
-                                                highlight,
-                                                location,
-                                                language_server_id,
-                                            ),
-                                            snapshot,
-                                            window,
-                                            cx,
-                                        );
-                                    }
-                                }
-                            }
-                        };
-                    }
-                    ResolveState::Resolving => {}
-                }
-            }
-        }
-    }
-
-    if !go_to_definition_updated {
-        editor.hide_hovered_link(cx)
-    }
-    if !hover_updated {
-        hover_popover::hover_at(editor, None, window, cx);
     }
 }
 
@@ -912,7 +730,7 @@ mod tests {
         DisplayPoint,
         display_map::ToDisplayPoint,
         editor_tests::init_test,
-        inlay_hint_cache::tests::{cached_hint_labels, visible_hint_labels},
+        inlays::inlay_hints::tests::{cached_hint_labels, visible_hint_labels},
         test::editor_lsp_test_context::EditorLspTestContext,
     };
     use futures::StreamExt;
@@ -1343,7 +1161,7 @@ mod tests {
         cx.background_executor.run_until_parked();
         cx.update_editor(|editor, _window, cx| {
             let expected_layers = vec![hint_label.to_string()];
-            assert_eq!(expected_layers, cached_hint_labels(editor));
+            assert_eq!(expected_layers, cached_hint_labels(editor, cx));
             assert_eq!(expected_layers, visible_hint_labels(editor, cx));
         });
 

@@ -85,7 +85,7 @@ struct PendingHunk {
     new_status: DiffHunkSecondaryStatus,
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Clone)]
 pub struct DiffHunkSummary {
     buffer_range: Range<Anchor>,
 }
@@ -114,7 +114,9 @@ impl sum_tree::Summary for DiffHunkSummary {
     type Context<'a> = &'a text::BufferSnapshot;
 
     fn zero(_cx: Self::Context<'_>) -> Self {
-        Default::default()
+        DiffHunkSummary {
+            buffer_range: Anchor::MIN..Anchor::MIN,
+        }
     }
 
     fn add_summary(&mut self, other: &Self, buffer: Self::Context<'_>) {
@@ -937,7 +939,9 @@ impl BufferDiff {
 
     pub fn clear_pending_hunks(&mut self, cx: &mut Context<Self>) {
         if self.secondary_diff.is_some() {
-            self.inner.pending_hunks = SumTree::from_summary(DiffHunkSummary::default());
+            self.inner.pending_hunks = SumTree::from_summary(DiffHunkSummary {
+                buffer_range: Anchor::MIN..Anchor::MIN,
+            });
             cx.emit(BufferDiffEvent::DiffChanged {
                 changed_range: Some(Anchor::MIN..Anchor::MAX),
             });
@@ -1158,34 +1162,22 @@ impl BufferDiff {
         self.hunks_intersecting_range(start..end, buffer, cx)
     }
 
-    pub fn set_base_text_buffer(
-        &mut self,
-        base_buffer: Entity<language::Buffer>,
-        buffer: text::BufferSnapshot,
-        cx: &mut Context<Self>,
-    ) -> oneshot::Receiver<()> {
-        let base_buffer = base_buffer.read(cx);
-        let language_registry = base_buffer.language_registry();
-        let base_buffer = base_buffer.snapshot();
-        self.set_base_text(base_buffer, language_registry, buffer, cx)
-    }
-
     /// Used in cases where the change set isn't derived from git.
     pub fn set_base_text(
         &mut self,
-        base_buffer: language::BufferSnapshot,
+        base_text: Option<Arc<String>>,
+        language: Option<Arc<Language>>,
         language_registry: Option<Arc<LanguageRegistry>>,
         buffer: text::BufferSnapshot,
         cx: &mut Context<Self>,
     ) -> oneshot::Receiver<()> {
         let (tx, rx) = oneshot::channel();
         let this = cx.weak_entity();
-        let base_text = Arc::new(base_buffer.text());
 
         let snapshot = BufferDiffSnapshot::new_with_base_text(
             buffer.clone(),
-            Some(base_text),
-            base_buffer.language().cloned(),
+            base_text,
+            language,
             language_registry,
             cx,
         );
@@ -1368,7 +1360,7 @@ mod tests {
     use gpui::TestAppContext;
     use pretty_assertions::{assert_eq, assert_ne};
     use rand::{Rng as _, rngs::StdRng};
-    use text::{Buffer, BufferId, Rope};
+    use text::{Buffer, BufferId, ReplicaId, Rope};
     use unindent::Unindent as _;
     use util::test::marked_text_ranges;
 
@@ -1393,7 +1385,7 @@ mod tests {
         "
         .unindent();
 
-        let mut buffer = Buffer::new(0, BufferId::new(1).unwrap(), buffer_text);
+        let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), buffer_text);
         let mut diff = BufferDiffSnapshot::new_sync(buffer.clone(), diff_base.clone(), cx);
         assert_hunks(
             diff.hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &buffer),
@@ -1467,7 +1459,7 @@ mod tests {
         "
         .unindent();
 
-        let buffer = Buffer::new(0, BufferId::new(1).unwrap(), buffer_text);
+        let buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), buffer_text);
         let unstaged_diff = BufferDiffSnapshot::new_sync(buffer.clone(), index_text, cx);
         let mut uncommitted_diff =
             BufferDiffSnapshot::new_sync(buffer.clone(), head_text.clone(), cx);
@@ -1536,7 +1528,7 @@ mod tests {
         "
         .unindent();
 
-        let buffer = Buffer::new(0, BufferId::new(1).unwrap(), buffer_text);
+        let buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), buffer_text);
         let diff = cx
             .update(|cx| {
                 BufferDiffSnapshot::new_with_base_text(
@@ -1799,7 +1791,7 @@ mod tests {
 
         for example in table {
             let (buffer_text, ranges) = marked_text_ranges(&example.buffer_marked_text, false);
-            let buffer = Buffer::new(0, BufferId::new(1).unwrap(), buffer_text);
+            let buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), buffer_text);
             let hunk_range =
                 buffer.anchor_before(ranges[0].start)..buffer.anchor_before(ranges[0].end);
 
@@ -1872,7 +1864,11 @@ mod tests {
         "
         .unindent();
 
-        let buffer = Buffer::new(0, BufferId::new(1).unwrap(), buffer_text.clone());
+        let buffer = Buffer::new(
+            ReplicaId::LOCAL,
+            BufferId::new(1).unwrap(),
+            buffer_text.clone(),
+        );
         let unstaged = BufferDiffSnapshot::new_sync(buffer.clone(), index_text, cx);
         let uncommitted = BufferDiffSnapshot::new_sync(buffer.clone(), head_text.clone(), cx);
         let unstaged_diff = cx.new(|cx| {
@@ -1945,7 +1941,7 @@ mod tests {
         "
         .unindent();
 
-        let mut buffer = Buffer::new(0, BufferId::new(1).unwrap(), buffer_text_1);
+        let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), buffer_text_1);
 
         let empty_diff = cx.update(|cx| BufferDiffSnapshot::empty(&buffer, cx));
         let diff_1 = BufferDiffSnapshot::new_sync(buffer.clone(), base_text.clone(), cx);

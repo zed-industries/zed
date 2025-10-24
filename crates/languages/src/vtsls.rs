@@ -12,7 +12,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use util::{ResultExt, maybe, merge_json_value_into, rel_path::RelPath};
+use util::{ResultExt, maybe, merge_json_value_into};
 
 fn typescript_server_binary_arguments(server_path: &Path) -> Vec<OsString> {
     vec![server_path.into(), "--stdio".into()]
@@ -29,19 +29,19 @@ impl VtslsLspAdapter {
 
     const TYPESCRIPT_PACKAGE_NAME: &'static str = "typescript";
     const TYPESCRIPT_TSDK_PATH: &'static str = "node_modules/typescript/lib";
+    const TYPESCRIPT_YARN_TSDK_PATH: &'static str = ".yarn/sdks/typescript/lib";
 
     pub fn new(node: NodeRuntime, fs: Arc<dyn Fs>) -> Self {
         VtslsLspAdapter { node, fs }
     }
 
     async fn tsdk_path(&self, adapter: &Arc<dyn LspAdapterDelegate>) -> Option<&'static str> {
-        let is_yarn = adapter
-            .read_text_file(RelPath::unix(".yarn/sdks/typescript/lib/typescript.js").unwrap())
-            .await
-            .is_ok();
+        let yarn_sdk = adapter
+            .worktree_root_path()
+            .join(Self::TYPESCRIPT_YARN_TSDK_PATH);
 
-        let tsdk_path = if is_yarn {
-            ".yarn/sdks/typescript/lib"
+        let tsdk_path = if self.fs.is_dir(&yarn_sdk).await {
+            Self::TYPESCRIPT_YARN_TSDK_PATH
         } else {
             Self::TYPESCRIPT_TSDK_PATH
         };
