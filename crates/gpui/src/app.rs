@@ -1044,7 +1044,7 @@ impl App {
 
     /// Writes file to the platform clipboard.
     #[cfg(feature = "x11")]
-    pub fn write_file_to_clipboard(&self, item: ClipboardItem) {
+    pub fn write_file_to_clipboard(&self, item: Vec<ClipboardItem>) {
         self.platform.write_file_to_clipboard(item);
     }
 

@@ -1566,19 +1566,25 @@ impl LinuxClient for X11Client {
         state.clipboard_item.replace(item);
     }
 
-    fn write_file_to_clipboard(&self, item: crate::ClipboardItem) {
+    fn write_file_to_clipboard(&self, item: Vec<crate::ClipboardItem>) {
         let mut state = self.0.borrow_mut();
-        let file_path = format!("file://{}", item.text().unwrap_or_default());
+        let abs_item_paths = item
+            .iter()
+            .map(|item| {
+                format!("file://{}", item.text().unwrap_or_default())
+            })
+            .collect::<Vec<String>>()
+            .join("\n");
         state
             .clipboard
             .set_file(
-                std::borrow::Cow::Owned(file_path),
+                std::borrow::Cow::Owned(abs_item_paths),
                 clipboard::ClipboardKind::Clipboard,
                 clipboard::WaitConfig::None,
             )
             .context("X11: Failed to write to clipboard (clipboard)")
             .log_with_level(log::Level::Debug);
-        state.clipboard_item.replace(item);
+        state.clipboard_item.replace(item.first().unwrap().clone());
     }
 
     fn read_from_primary(&self) -> Option<crate::ClipboardItem> {

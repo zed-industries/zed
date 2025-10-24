@@ -69,7 +69,7 @@ pub trait LinuxClient {
     fn write_to_primary(&self, item: ClipboardItem);
     fn write_to_clipboard(&self, item: ClipboardItem);
     #[cfg(feature = "x11")]
-    fn write_file_to_clipboard(&self, item: ClipboardItem);
+    fn write_file_to_clipboard(&self, item: Vec<ClipboardItem>);
     fn read_from_primary(&self) -> Option<ClipboardItem>;
     fn read_from_clipboard(&self) -> Option<ClipboardItem>;
     fn active_window(&self) -> Option<AnyWindowHandle>;
@@ -584,7 +584,7 @@ impl<P: LinuxClient + 'static> Platform for P {
     }
 
     #[cfg(feature = "x11")]
-    fn write_file_to_clipboard(&self, item: ClipboardItem) {
+    fn write_file_to_clipboard(&self, item: Vec<ClipboardItem>) {
         self.write_file_to_clipboard(item)
     }
 
