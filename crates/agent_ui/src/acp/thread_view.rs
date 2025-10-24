@@ -4646,9 +4646,15 @@ impl AcpThreadView {
                             let handle = window.window_handle();
                             cx.activate(true);
 
-                            let workspace = this.workspace.clone();
-                            let history_store = this.history_store.clone();
-                            let session_id = session_id.clone();
+                            let workspace_handle = this.workspace.clone();
+                            let thread_metadata = match session_id {
+                                Some(session_id) => this
+                                    .history_store
+                                    .read(cx)
+                                    .thread_from_session_id(&session_id)
+                                    .cloned(),
+                                None => None,
+                            };
 
                             // If there are multiple Zed windows, activate the correct one.
                             cx.defer(move |cx| {
@@ -4656,15 +4662,11 @@ impl AcpThreadView {
                                     .update(cx, |_view, window, _cx| {
                                         window.activate_window();
 
-                                        if let Some(workspace) = workspace.upgrade() {
+                                        if let Some(workspace) = workspace_handle.upgrade() {
                                             workspace.update(_cx, |workspace, cx| {
                                                 workspace.focus_panel::<AgentPanel>(window, cx);
 
-                                                if let Some(session_id) = session_id
-                                                    && let Some(thread_metadata) = history_store
-                                                        .read(cx)
-                                                        .thread_from_session_id(&session_id)
-                                                        .cloned()
+                                                if let Some(thread_metadata) = thread_metadata
                                                     && let Some(panel) =
                                                         workspace.panel::<AgentPanel>(cx)
                                                 {

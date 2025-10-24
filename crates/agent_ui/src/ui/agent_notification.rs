@@ -182,7 +182,7 @@ impl Render for AgentNotification {
                     .gap_1()
                     .items_center()
                     .child(
-                        Button::new("open", "View Panel")
+                        Button::new("open", "View Thread")
                             .style(ButtonStyle::Tinted(ui::TintColor::Accent))
                             .full_width()
                             .on_click({
