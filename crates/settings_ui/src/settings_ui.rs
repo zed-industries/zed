@@ -6,8 +6,8 @@ use editor::{Editor, EditorEvent};
 use feature_flags::FeatureFlag;
 use fuzzy::StringMatchCandidate;
 use gpui::{
-    Action, AnimationExt, App, DEFAULT_ADDITIONAL_WINDOW_SIZE, Div, Entity, FocusHandle, Focusable,
-    Global, ListState, ReadGlobal as _, ScrollHandle, Stateful, Subscription, Task,
+    Action, App, ClipboardItem, DEFAULT_ADDITIONAL_WINDOW_SIZE, Div, Entity, FocusHandle,
+    Focusable, Global, ListState, ReadGlobal as _, ScrollHandle, Stateful, Subscription, Task,
     TitlebarOptions, UniformListScrollHandle, Window, WindowBounds, WindowHandle, WindowOptions,
     actions, div, list, point, prelude::*, px, uniform_list,
 };
@@ -901,17 +901,48 @@ fn render_settings_item(
     let (found_in_file, _) = setting_item.field.file_set_in(file.clone(), cx);
     let file_set_in = SettingsUiFile::from_settings(found_in_file.clone());
 
+    let clipboard_has_link = cx
+        .read_from_clipboard()
+        .and_then(|entry| entry.text())
+        .map_or(false, |maybe_url| {
+            maybe_url.strip_prefix("zed://settings/") == setting_item.field.json_path()
+        });
+    let (link_icon, link_icon_color) = if clipboard_has_link {
+        (IconName::Check, Color::Success)
+    } else {
+        (IconName::Hash, Color::Muted)
+    };
+
     h_flex()
         .id(setting_item.title)
+
+        .relative()
         .min_w_0()
         .justify_between()
         .child(
             v_flex()
                 .w_1_2()
+                .group("setting-item")
                 .child(
                     h_flex()
                         .w_full()
                         .gap_1()
+                        .ml_neg_8()
+                        // .group_hover("setting-item", |s| s.gap_10())
+                        .child(
+                            IconButton::new("copy-link-btn", link_icon)
+                                .icon_color(link_icon_color)
+                                .icon_size(IconSize::Small)
+                                .shape(IconButtonShape::Square)
+                                .tooltip(Tooltip::text("Copy Link"))
+                                .when_some(setting_item.field.json_path(), |this, path| {
+                                    this.on_click(cx.listener(move |_, _, _, cx| {
+                                        let link = format!("zed://settings/{}", path);
+                                        cx.write_to_clipboard(ClipboardItem::new_string(link));
+                                        cx.notify();
+                                    }))
+                                })
+)
                         .child(Label::new(SharedString::new_static(setting_item.title)))
                         .when_some(
                             setting_item
@@ -954,6 +985,38 @@ fn render_settings_item(
                 ),
         )
         .child(control)
+    // .when(sub_page_stack().is_empty(), |this| {
+    //     this.child(
+    //         div()
+    //             .visible_on_hover("setting-item")
+    //             .absolute()
+    //             .top_0()
+    //             .left_neg_5(
+    //             )
+    //             .child({
+    //                 IconButton::new("copy-link-btn", link_icon)
+    //                     .icon_color(link_icon_color)
+    //                     .icon_size(IconSize::Small)
+    //                     .shape(IconButtonShape::Square)
+    //                     .tooltip(Tooltip::text("Copy Link"))
+    //                     .when_some(
+    //                         setting_item.field.json_path(),
+    //                         |this, path| {
+    //                             this.on_click(cx.listener(
+    //                                 move |_, _, _, cx| {
+    //                                     let link =
+    //                                         format!("zed://settings/{}", path);
+    //                                     cx.write_to_clipboard(
+    //                                         ClipboardItem::new_string(link),
+    //                                     );
+    //                                     cx.notify();
+    //                                 },
+    //                             ))
+    //                         },
+    //                     )
+    //             }),
+    //     )
+    // })
 }
 
 struct SettingItem {
@@ -2750,12 +2813,14 @@ impl SettingsWindow {
             .track_focus(&self.content_focus_handle.focus_handle(cx))
             .flex_1()
             .pt_6()
-            .px_8()
+            // .px_8()
             .bg(cx.theme().colors().editor_background)
             .child(warning_banner)
             .child(page_header)
             .child(
                 div()
+                    .px_8()
+                    // .debug_bg_red()
                     .size_full()
                     .tab_group()
                     .tab_index(CONTENT_GROUP_TAB_INDEX)
