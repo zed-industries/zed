@@ -1483,11 +1483,11 @@ impl EditAgentTest {
         fs.insert_tree("/root", json!({})).await;
         let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
         let agent_model = SelectedModel::from_str(
-            &std::env::var("ZED_AGENT_MODEL").unwrap_or("anthropic/claude-4-sonnet-latest".into()),
+            &std::env::var("ZED_AGENT_MODEL").unwrap_or("anthropic/claude-sonnet-4-latest".into()),
         )
         .unwrap();
         let judge_model = SelectedModel::from_str(
-            &std::env::var("ZED_JUDGE_MODEL").unwrap_or("anthropic/claude-4-sonnet-latest".into()),
+            &std::env::var("ZED_JUDGE_MODEL").unwrap_or("anthropic/claude-sonnet-4-latest".into()),
         )
         .unwrap();
 
@@ -1547,7 +1547,7 @@ impl EditAgentTest {
                     model.provider_id() == selected_model.provider
                         && model.id() == selected_model.model
                 })
-                .expect("Model not found");
+                .unwrap_or_else(|| panic!("Model {} not found", selected_model.model.0));
             model
         })
     }
