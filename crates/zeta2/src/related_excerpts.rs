@@ -274,6 +274,10 @@ pub fn find_related_excerpts<'a>(
     })
 }
 
+const MIN_EXCERPT_LEN: usize = 16;
+const MAX_EXCERPT_LEN: usize = 768;
+const MAX_RESULT_BYTES_PER_QUERY: usize = MAX_EXCERPT_LEN * 5;
+
 async fn run_query(
     args: SearchToolQuery,
     excerpts_by_buffer: &mut HashMap<Entity<Buffer>, Vec<Range<Line>>>,
@@ -305,6 +309,9 @@ async fn run_query(
         if ranges.is_empty() {
             continue;
         }
+        if total_bytes + MIN_EXCERPT_LEN >= MAX_RESULT_BYTES_PER_QUERY {
+            break;
+        }
 
         let excerpts_for_buffer = excerpts_by_buffer
             .entry(buffer.clone())
@@ -315,10 +322,6 @@ async fn run_query(
         for range in ranges {
             let offset_range = range.to_offset(&snapshot);
             let query_point = (offset_range.start + offset_range.len() / 2).to_point(&snapshot);
-
-            const MIN_EXCERPT_LEN: usize = 16;
-            const MAX_EXCERPT_LEN: usize = 768;
-            const MAX_RESULT_BYTES_PER_QUERY: usize = MAX_EXCERPT_LEN * 5;
 
             if total_bytes + MIN_EXCERPT_LEN >= MAX_RESULT_BYTES_PER_QUERY {
                 break;
