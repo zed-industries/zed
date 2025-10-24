@@ -22959,9 +22959,6 @@ fn snippet_completions(
                 is_incomplete = true;
             }
 
-            // TODO! ok to match the same snippet multiple times with different prefixes? (probably yes)
-            // TODO! ok to match the same prefix multiple times with different start points? (probably no)
-
             completions.extend(
                 matches
                     .iter()
