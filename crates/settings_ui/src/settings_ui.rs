@@ -3195,7 +3195,8 @@ fn render_toggle_button<B: Into<bool> + From<bool> + Copy>(
     };
 
     Switch::new("toggle_button", toggle_state)
-        .color(ui::SwitchColor::Accent)
+        .tab_index(0_isize)
+        .color(SwitchColor::Accent)
         .on_click({
             move |state, _window, cx| {
                 let state = *state == ui::ToggleState::Selected;
@@ -3205,8 +3206,6 @@ fn render_toggle_button<B: Into<bool> + From<bool> + Copy>(
                 .log_err(); // todo(settings_ui) don't log err
             }
         })
-        .tab_index(0_isize)
-        .color(SwitchColor::Accent)
         .into_any_element()
 }
 
@@ -3290,13 +3289,13 @@ where
             })
         }),
     )
+    .tab_index(0)
     .trigger_size(ButtonSize::Medium)
     .style(DropdownStyle::Outlined)
     .offset(gpui::Point {
         x: px(0.0),
         y: px(2.0),
     })
-    .tab_index(0)
     .into_any_element()
 }
 
