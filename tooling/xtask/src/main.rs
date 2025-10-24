@@ -20,6 +20,7 @@ enum CliCommand {
     PackageConformity(tasks::package_conformity::PackageConformityArgs),
     /// Publishes GPUI and its dependencies to crates.io.
     PublishGpui(tasks::publish_gpui::PublishGpuiArgs),
+    GenerateWorkflow(tasks::generate_workflow::GenerateWorkflowArgs),
 }
 
 fn main() -> Result<()> {
@@ -32,5 +33,6 @@ fn main() -> Result<()> {
             tasks::package_conformity::run_package_conformity(args)
         }
         CliCommand::PublishGpui(args) => tasks::publish_gpui::run_publish_gpui(args),
+        CliCommand::GenerateWorkflow(args) => tasks::generate_workflow::run_generate_workflow(args),
     }
 }
