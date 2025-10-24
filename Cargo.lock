@@ -21516,6 +21516,7 @@ dependencies = [
  "clock",
  "cloud_llm_client",
  "cloud_zeta2_prompt",
+ "collections",
  "edit_prediction",
  "edit_prediction_context",
  "feature_flags",

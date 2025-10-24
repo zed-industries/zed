@@ -1,11 +1,14 @@
-use std::{fmt::Write, ops::Range, sync::Arc};
+mod merge_excerpts;
+
+use std::{cmp::Reverse, fmt::Write, ops::Range, sync::Arc};
 
 use anyhow::{Context as _, Result, anyhow};
-use edit_prediction_context::{EditPredictionExcerpt, EditPredictionExcerptOptions};
+use collections::HashMap;
+use edit_prediction_context::{EditPredictionExcerpt, EditPredictionExcerptOptions, Line};
 use futures::StreamExt;
 use gpui::{App, AsyncApp, Entity, Task};
 use indoc::indoc;
-use language::{Anchor, OffsetRangeExt, Rope, ToPoint as _};
+use language::{Anchor, Buffer, OffsetRangeExt, Rope, ToPoint as _};
 use language_model::{
     LanguageModelCompletionEvent, LanguageModelId, LanguageModelRegistry, LanguageModelRequest,
     LanguageModelRequestMessage, LanguageModelRequestTool, Role,
@@ -21,6 +24,8 @@ use util::{
     rel_path::RelPath,
 };
 use workspace::item::Settings as _;
+
+use crate::related_excerpts::merge_excerpts::write_merged_excerpts;
 
 pub(crate) enum RelatedExcerpt {
     Buffer {
@@ -225,13 +230,13 @@ pub fn find_related_excerpts<'a>(
             return anyhow::Ok(Vec::new());
         }
 
-        let mut excerpts = Vec::new();
+        let mut excerpts_by_buffer = HashMap::default();
 
         // todo! parallelize?
         for query in queries {
             run_query(
                 query,
-                &mut excerpts,
+                &mut excerpts_by_buffer,
                 path_style,
                 exclude_matcher.clone(),
                 &project,
@@ -240,13 +245,38 @@ pub fn find_related_excerpts<'a>(
             .await?;
         }
 
+        let mut merged = String::new();
+
+        for (buffer, mut excerpts_for_buffer) in excerpts_by_buffer {
+            excerpts_for_buffer.sort_unstable_by_key(|range| (range.start, Reverse(range.end)));
+
+            buffer
+                .read_with(cx, |buffer, cx| {
+                    let Some(file) = buffer.file() else {
+                        return;
+                    };
+
+                    writeln!(
+                        &mut merged,
+                        "`````filename={}",
+                        file.full_path(cx).display()
+                    )
+                    .unwrap();
+
+                    write_merged_excerpts(&buffer.snapshot(), excerpts_for_buffer, &mut merged);
+
+                    merged.push_str("`````\n\n");
+                })
+                .ok();
+        }
+
         anyhow::Ok(vec![])
     })
 }
 
 async fn run_query(
     args: SearchToolQuery,
-    excerpts: &mut Vec<EditPredictionExcerpt>,
+    excerpts_by_buffer: &mut HashMap<Entity<Buffer>, Vec<Range<Line>>>,
     path_style: PathStyle,
     exclude_matcher: PathMatcher,
     project: &Entity<Project>,
@@ -276,6 +306,10 @@ async fn run_query(
             continue;
         }
 
+        let excerpts_for_buffer = excerpts_by_buffer
+            .entry(buffer.clone())
+            .or_insert_with(|| Vec::with_capacity(ranges.len()));
+
         let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot())?;
 
         for range in ranges {
@@ -303,7 +337,7 @@ async fn run_query(
 
             if let Some(excerpt) = excerpt {
                 total_bytes += excerpt.range.len();
-                excerpts.push(excerpt);
+                excerpts_for_buffer.push(excerpt.line_range);
             }
         }
     }
