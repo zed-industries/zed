@@ -239,7 +239,8 @@ impl EditPredictionProvider for ZetaEditPredictionProvider {
                     })
                     .ok()?
                     .await
-                    .log_err()?;
+                    .log_err()
+                    .unwrap_or_default();
 
                 this.update(cx, |this, _cx| {
                     this.context = Some(CursorContext {
