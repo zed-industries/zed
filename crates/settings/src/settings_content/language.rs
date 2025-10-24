@@ -144,7 +144,7 @@ pub struct CodestralSettingsContent {
     pub max_tokens: Option<u32>,
     /// Api URL to use for completions.
     ///
-    /// Default: "https://codestral.codestral.com"
+    /// Default: "https://codestral.mistral.ai"
     #[serde(default)]
     pub api_url: Option<String>,
 }
