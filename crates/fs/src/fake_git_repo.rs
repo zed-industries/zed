@@ -9,7 +9,10 @@ use git::{
         AskPassDelegate, Branch, CommitDetails, CommitOptions, FetchOptions, GitRepository,
         GitRepositoryCheckpoint, PushOptions, Remote, RepoPath, ResetMode,
     },
-    status::{FileStatus, GitStatus, StatusCode, TrackedStatus, UnmergedStatus},
+    status::{
+        DiffTreeType, FileStatus, GitStatus, StatusCode, TrackedStatus, TreeDiff, TreeDiffStatus,
+        UnmergedStatus,
+    },
 };
 use gpui::{AsyncApp, BackgroundExecutor, SharedString, Task, TaskLabel};
 use ignore::gitignore::GitignoreBuilder;
@@ -41,6 +44,9 @@ pub struct FakeGitRepositoryState {
     pub unmerged_paths: HashMap<RepoPath, UnmergedStatus>,
     pub head_contents: HashMap<RepoPath, String>,
     pub index_contents: HashMap<RepoPath, String>,
+    // everything in commit contents is in oids
+    pub merge_base_contents: HashMap<RepoPath, Oid>,
+    pub oids: HashMap<Oid, String>,
     pub blames: HashMap<RepoPath, Blame>,
     pub current_branch_name: Option<String>,
     pub branches: HashSet<String>,
@@ -60,6 +66,8 @@ impl FakeGitRepositoryState {
             branches: Default::default(),
             simulated_index_write_error_message: Default::default(),
             refs: HashMap::from_iter([("HEAD".into(), "abc".into())]),
+            merge_base_contents: Default::default(),
+            oids: Default::default(),
         }
     }
 }
@@ -110,6 +118,13 @@ impl GitRepository for FakeGitRepository {
             .boxed()
     }
 
+    fn load_blob_content(&self, oid: git::Oid) -> BoxFuture<'_, Result<String>> {
+        self.with_state_async(false, move |state| {
+            state.oids.get(&oid).cloned().context("oid does not exist")
+        })
+        .boxed()
+    }
+
     fn load_commit(
         &self,
         _commit: String,
@@ -138,6 +153,34 @@ impl GitRepository for FakeGitRepository {
 
     fn remote_url(&self, _name: &str) -> Option<String> {
         None
+    }
+
+    fn diff_tree(&self, _request: DiffTreeType) -> BoxFuture<'_, Result<TreeDiff>> {
+        let mut entries = HashMap::default();
+        self.with_state_async(false, |state| {
+            for (path, content) in &state.head_contents {
+                let status = if let Some((oid, original)) = state
+                    .merge_base_contents
+                    .get(path)
+                    .map(|oid| (oid, &state.oids[oid]))
+                {
+                    if original == content {
+                        continue;
+                    }
+                    TreeDiffStatus::Modified { old: *oid }
+                } else {
+                    TreeDiffStatus::Added
+                };
+                entries.insert(path.clone(), status);
+            }
+            for (path, oid) in &state.merge_base_contents {
+                if !entries.contains_key(path) {
+                    entries.insert(path.clone(), TreeDiffStatus::Deleted { old: *oid });
+                }
+            }
+            Ok(TreeDiff { entries })
+        })
+        .boxed()
     }
 
     fn revparse_batch(&self, revs: Vec<String>) -> BoxFuture<'_, Result<Vec<Option<String>>>> {
@@ -523,7 +566,7 @@ impl GitRepository for FakeGitRepository {
         let repository_dir_path = self.repository_dir_path.parent().unwrap().to_path_buf();
         async move {
             executor.simulate_random_delay().await;
-            let oid = Oid::random(&mut executor.rng());
+            let oid = git::Oid::random(&mut executor.rng());
             let entry = fs.entry(&repository_dir_path)?;
             checkpoints.lock().insert(oid, entry);
             Ok(GitRepositoryCheckpoint { commit_sha: oid })
@@ -579,7 +622,7 @@ impl GitRepository for FakeGitRepository {
     }
 
     fn default_branch(&self) -> BoxFuture<'_, Result<Option<SharedString>>> {
-        unimplemented!()
+        async { Ok(Some("main".into())) }.boxed()
     }
 }
 

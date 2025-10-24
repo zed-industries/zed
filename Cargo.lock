@@ -7071,7 +7071,6 @@ dependencies = [
  "notifications",
  "panel",
  "picker",
- "postage",
  "pretty_assertions",
  "project",
  "schemars 1.0.4",
