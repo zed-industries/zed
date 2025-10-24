@@ -27,6 +27,13 @@ pub struct OpenZedUrl {
     pub url: String,
 }
 
+/// Opens the keymap editor.
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
+#[action(namespace = zed)]
+pub struct OpenKeymapWithFilter {
+    pub filter: String,
+}
+
 actions!(
     zed,
     [

@@ -22,7 +22,9 @@ use persistence::COMMAND_PALETTE_HISTORY;
 use picker::{Picker, PickerDelegate};
 use postage::{sink::Sink, stream::Stream};
 use settings::Settings;
-use ui::{HighlightedLabel, KeyBinding, ListItem, ListItemSpacing, h_flex, prelude::*, v_flex};
+use ui::{
+    ButtonLike, HighlightedLabel, KeyBinding, ListItem, ListItemSpacing, h_flex, prelude::*, v_flex,
+};
 use util::ResultExt;
 use workspace::{ModalView, Workspace, WorkspaceSettings};
 use zed_actions::{OpenZedUrl, command_palette::Toggle};
@@ -443,11 +445,14 @@ impl PickerDelegate for CommandPaletteDelegate {
         &self,
         ix: usize,
         selected: bool,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let matching_command = self.matches.get(ix)?;
         let command = self.commands.get(matching_command.candidate_id)?;
+        let name = command.action.name();
+        let keybind = KeyBinding::for_action_in(&*command.action, &self.previous_focus_handle, cx);
+
         Some(
             ListItem::new(ix)
                 .inset(true)
@@ -462,10 +467,45 @@ impl PickerDelegate for CommandPaletteDelegate {
                             command.name.clone(),
                             matching_command.positions.clone(),
                         ))
-                        .child(KeyBinding::for_action_in(
-                            &*command.action,
-                            &self.previous_focus_handle,
-                            cx,
+                        .child(div().when_else(
+                            keybind.has_binding(window),
+                            |this| {
+                                this.child(
+                                    ButtonLike::new(name)
+                                        .style(ButtonStyle::Transparent)
+                                        .child(keybind)
+                                        .tooltip(ui::Tooltip::text("Change key binding…"))
+                                        .on_click(|_, window, cx| {
+                                            window.dispatch_action(
+                                                zed_actions::OpenKeymapWithFilter {
+                                                    filter: name.to_string(),
+                                                }
+                                                .boxed_clone(),
+                                                cx,
+                                            );
+                                        })
+                                        .into_any_element(),
+                                )
+                            },
+                            |this| {
+                                this.child(
+                                    IconButton::new(command.action.name(), IconName::Keyboard)
+                                        .style(ButtonStyle::Transparent)
+                                        .alpha(0.8)
+                                        .icon_size(IconSize::XSmall)
+                                        .tooltip(ui::Tooltip::text("Add key binding…"))
+                                        .on_click(|_, window, cx| {
+                                            window.dispatch_action(
+                                                zed_actions::OpenKeymapWithFilter {
+                                                    filter: name.to_string(),
+                                                }
+                                                .boxed_clone(),
+                                                cx,
+                                            );
+                                        })
+                                        .into_any_element(),
+                                )
+                            },
                         )),
                 ),
         )
