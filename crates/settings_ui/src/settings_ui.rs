@@ -18,13 +18,13 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use settings::{Settings, SettingsContent, SettingsStore};
 use std::{
-    any::{Any, TypeId, type_name},
+    any::{type_name, Any, TypeId},
     cell::RefCell,
     collections::HashMap,
     num::{NonZero, NonZeroU32},
     ops::Range,
     rc::Rc,
-    sync::{Arc, LazyLock, RwLock},
+    sync::{atomic::AtomicI32, Arc, LazyLock, RwLock},
 };
 use title_bar::platform_title_bar::PlatformTitleBar;
 use ui::{
@@ -915,7 +915,6 @@ fn render_settings_item(
 
     h_flex()
         .id(setting_item.title)
-
         .relative()
         .min_w_0()
         .justify_between()
