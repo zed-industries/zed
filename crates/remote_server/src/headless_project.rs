@@ -774,7 +774,7 @@ impl HeadlessProject {
         envelope: TypedEnvelope<proto::GetDirectoryEnvironment>,
         mut cx: AsyncApp,
     ) -> Result<proto::DirectoryEnvironment> {
-        let shell = task::Shell::from_proto(envelope.payload.shell.context("missing shell")?)?;
+        let shell = task::shell_from_proto(envelope.payload.shell.context("missing shell")?)?;
         let directory = PathBuf::from(envelope.payload.directory);
         let environment = this
             .update(&mut cx, |this, cx| {
