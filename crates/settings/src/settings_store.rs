@@ -865,30 +865,34 @@ impl SettingsStore {
                     .remove(&(root_id, directory_path.clone()));
             }
             (LocalSettingsKind::Settings, Some(settings_contents)) => {
-                let new_settings = self
-                    .handle_potential_file_error(
+                let (new_settings, parse_result) = self
+                    .parse_zed_settings::<ProjectSettingsContent>(
+                        settings_contents,
                         SettingsFile::Project((root_id, directory_path.clone())),
-                        parse_json_with_comments::<ProjectSettingsContent>(settings_contents),
-                    )
+                    );
+                parse_result
+                    .parse_result
                     .map_err(|e| InvalidSettingsError::LocalSettings {
                         path: directory_path.join(local_settings_file_relative_path()),
                         message: e.to_string(),
                     })?;
-                match self.local_settings.entry((root_id, directory_path.clone())) {
-                    btree_map::Entry::Vacant(v) => {
-                        v.insert(SettingsContent {
-                            project: new_settings,
-                            ..Default::default()
-                        });
-                        zed_settings_changed = true;
-                    }
-                    btree_map::Entry::Occupied(mut o) => {
-                        if &o.get().project != &new_settings {
-                            o.insert(SettingsContent {
+                if let Some(new_settings) = new_settings {
+                    match self.local_settings.entry((root_id, directory_path.clone())) {
+                        btree_map::Entry::Vacant(v) => {
+                            v.insert(SettingsContent {
                                 project: new_settings,
                                 ..Default::default()
                             });
                             zed_settings_changed = true;
+                        }
+                        btree_map::Entry::Occupied(mut o) => {
+                            if &o.get().project != &new_settings {
+                                o.insert(SettingsContent {
+                                    project: new_settings,
+                                    ..Default::default()
+                                });
+                                zed_settings_changed = true;
+                            }
                         }
                     }
                 }
