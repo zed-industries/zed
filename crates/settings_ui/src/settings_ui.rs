@@ -6,10 +6,10 @@ use editor::{Editor, EditorEvent};
 use feature_flags::FeatureFlag;
 use fuzzy::StringMatchCandidate;
 use gpui::{
-    Action, App, DEFAULT_ADDITIONAL_WINDOW_SIZE, Div, Entity, FocusHandle, Focusable, Global,
-    ListState, ReadGlobal as _, ScrollHandle, Stateful, Subscription, Task, TitlebarOptions,
-    UniformListScrollHandle, Window, WindowBounds, WindowHandle, WindowOptions, actions, div, list,
-    point, prelude::*, px, uniform_list,
+    Action, AnimationExt, App, DEFAULT_ADDITIONAL_WINDOW_SIZE, Div, Entity, FocusHandle, Focusable,
+    Global, ListState, ReadGlobal as _, ScrollHandle, Stateful, Subscription, Task,
+    TitlebarOptions, UniformListScrollHandle, Window, WindowBounds, WindowHandle, WindowOptions,
+    actions, div, list, point, prelude::*, px, uniform_list,
 };
 use heck::ToTitleCase as _;
 use project::{Project, WorktreeId};
@@ -512,43 +512,10 @@ pub fn open_settings_editor(
             return;
         }
 
-        settings_window.current_file = SettingsUiFile::User;
-        settings_window.build_ui(window, cx);
-
-        let mut item_info = None;
-        'search: for (nav_entry_index, entry) in settings_window.navbar_entries.iter().enumerate() {
-            if entry.is_root {
-                continue;
-            }
-            let page_index = entry.page_index;
-            let header_index = entry
-                .item_index
-                .expect("non-root entries should have an item index");
-            for item_index in header_index + 1..settings_window.pages[page_index].items.len() {
-                let item = &settings_window.pages[page_index].items[item_index];
-                if let SettingsPageItem::SectionHeader(_) = item {
-                    break;
-                }
-                if let SettingsPageItem::SettingItem(item) = item {
-                    if item.field.json_path() == Some(path) {
-                        if !item.files.contains(USER) {
-                            log::error!("Found item {}, but it is not a user setting", path);
-                            return;
-                        }
-                        item_info = Some((item_index, nav_entry_index));
-                        break 'search;
-                    }
-                }
-            }
-        }
-        let Some((item_index, navbar_entry_index)) = item_info else {
-            log::error!("Failed to find item for {}", path);
-            return;
-        };
-
-        settings_window.open_navbar_entry_page(navbar_entry_index);
-        window.focus(&settings_window.focus_handle_for_content_element(item_index, cx));
-        settings_window.scroll_to_content_item(item_index, window, cx);
+        settings_window.search_bar.update(cx, |editor, cx| {
+            editor.set_text(format!("#{path}"), window, cx);
+        });
+        settings_window.update_matches(cx);
     }
 
     let existing_window = cx
@@ -673,13 +640,14 @@ pub struct SettingsWindow {
 struct SearchIndex {
     bm25_engine: bm25::SearchEngine<usize>,
     fuzzy_match_candidates: Vec<StringMatchCandidate>,
-    key_lut: Vec<SearchItemKey>,
+    key_lut: Vec<SearchKeyLUTEntry>,
 }
 
-struct SearchItemKey {
+struct SearchKeyLUTEntry {
     page_index: usize,
     header_index: usize,
     item_index: usize,
+    json_path: Option<&'static str>,
 }
 
 struct SubPage {
@@ -1462,7 +1430,7 @@ impl SettingsWindow {
 
     fn update_matches(&mut self, cx: &mut Context<SettingsWindow>) {
         self.search_task.take();
-        let query = self.search_bar.read(cx).text(cx);
+        let mut query = self.search_bar.read(cx).text(cx);
         if query.is_empty() || self.search_index.is_none() {
             for page in &mut self.filter_table {
                 page.fill(true);
@@ -1472,6 +1440,14 @@ impl SettingsWindow {
             self.reset_list_state();
             cx.notify();
             return;
+        }
+
+        let is_json_link_query;
+        if query.starts_with("#") {
+            query.remove(0);
+            is_json_link_query = true;
+        } else {
+            is_json_link_query = false;
         }
 
         let search_index = self.search_index.as_ref().unwrap().clone();
@@ -1487,10 +1463,11 @@ impl SettingsWindow {
             }
 
             for match_index in match_indices {
-                let SearchItemKey {
+                let SearchKeyLUTEntry {
                     page_index,
                     header_index,
                     item_index,
+                    ..
                 } = search_index.key_lut[match_index];
                 let page = &mut this.filter_table[page_index];
                 page[header_index] = true;
@@ -1504,6 +1481,29 @@ impl SettingsWindow {
         }
 
         self.search_task = Some(cx.spawn(async move |this, cx| {
+            if is_json_link_query {
+                let mut indices = vec![];
+                for (index, SearchKeyLUTEntry { json_path, .. }) in
+                    search_index.key_lut.iter().enumerate()
+                {
+                    let Some(json_path) = json_path else {
+                        continue;
+                    };
+
+                    if let Some(post) = query.strip_prefix(json_path)
+                        && (post.is_empty() || post.starts_with('.'))
+                    {
+                        indices.push(index);
+                    }
+                }
+                if !indices.is_empty() {
+                    this.update(cx, |this, cx| {
+                        update_matches_inner(this, search_index.as_ref(), indices.into_iter(), cx);
+                    })
+                    .ok();
+                    return;
+                }
+            }
             let bm25_task = cx.background_spawn({
                 let search_index = search_index.clone();
                 let max_results = search_index.key_lut.len();
@@ -1591,7 +1591,7 @@ impl SettingsWindow {
     }
 
     fn build_search_index(&mut self) {
-        let mut key_lut: Vec<SearchItemKey> = vec![];
+        let mut key_lut: Vec<SearchKeyLUTEntry> = vec![];
         let mut documents = Vec::default();
         let mut fuzzy_match_candidates = Vec::default();
 
@@ -1613,11 +1613,16 @@ impl SettingsWindow {
             let mut header_str = "";
             for (item_index, item) in page.items.iter().enumerate() {
                 let key_index = key_lut.len();
+                let mut json_path = None;
                 match item {
                     SettingsPageItem::DynamicItem(DynamicItem {
                         discriminant: item, ..
                     })
                     | SettingsPageItem::SettingItem(item) => {
+                        json_path = item
+                            .field
+                            .json_path()
+                            .map(|path| path.trim_end_matches('$'));
                         documents.push(bm25::Document {
                             id: key_index,
                             contents: [page.title, header_str, item.title, item.description]
@@ -1651,10 +1656,11 @@ impl SettingsWindow {
                 push_candidates(&mut fuzzy_match_candidates, key_index, page.title);
                 push_candidates(&mut fuzzy_match_candidates, key_index, header_str);
 
-                key_lut.push(SearchItemKey {
+                key_lut.push(SearchKeyLUTEntry {
                     page_index,
                     header_index,
                     item_index,
+                    json_path,
                 });
             }
         }

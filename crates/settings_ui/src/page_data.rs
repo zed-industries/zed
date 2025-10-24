@@ -4500,7 +4500,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                     title: "Program",
                                     description: "The shell program to use.",
                                     field: Box::new(SettingField {
-                                        json_path: Some("terminal.shell.program"),
+                                        json_path: Some("terminal.shell"),  
                                         pick: |settings_content| {
                                             match settings_content.terminal.as_ref()?.project.shell.as_ref() {
                                                 Some(settings::Shell::Program(program)) => Some(program),
