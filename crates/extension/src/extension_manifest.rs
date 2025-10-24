@@ -144,8 +144,6 @@ pub struct LibManifestEntry {
 pub struct AgentServerManifestEntry {
     /// Display name for the agent (shown in menus).
     pub name: String,
-    /// How to install and launch the agent server.
-    pub launcher: AgentServerLauncher,
     /// Environment variables to set when launching the agent server.
     #[serde(default)]
     pub env: HashMap<String, String>,
@@ -157,56 +155,51 @@ pub struct AgentServerManifestEntry {
     /// When true, always uses the extension-installed version.
     #[serde(default)]
     pub ignore_system_version: Option<bool>,
+    /// NPM package configuration (if using NPM launcher)
+    #[serde(default)]
+    pub package: Option<String>,
+    /// NPM package version (if using NPM launcher)
+    #[serde(default)]
+    pub version: Option<String>,
+    /// NPM entrypoint (if using NPM launcher)
+    #[serde(default)]
+    pub entrypoint: Option<String>,
+    /// Command-line arguments for NPM launcher
+    #[serde(default)]
+    pub args: Option<Vec<String>>,
+    /// Command for binary launcher (if using binary launcher)
+    #[serde(default)]
+    pub cmd: Option<String>,
+    /// Per-target configuration for archive-based installation.
+    /// The key format is "{os}-{arch}" where:
+    /// - os: "darwin" (macOS), "linux", "windows"
+    /// - arch: "aarch64" (arm64), "x86_64"
+    ///
+    /// Example:
+    /// ```toml
+    /// [agent_servers.myagent.targets.darwin-aarch64]
+    /// archive = "https://example.com/myagent-darwin-arm64.zip"
+    /// cmd = "./myagent"
+    /// args = ["--serve"]
+    /// sha256 = "abc123..."  # optional
+    /// ```
+    #[serde(default)]
+    pub targets: HashMap<String, TargetConfig>,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
 pub struct TargetConfig {
-    /// Archive filename for this target (e.g., "myagent-darwin-arm64.zip")
+    /// URL to download the archive from (e.g., "https://github.com/owner/repo/releases/download/v1.0.0/myagent-darwin-arm64.zip")
     pub archive: String,
     /// Command to run (e.g., "./myagent" or "./myagent.exe")
     pub cmd: String,
     /// Command-line arguments to pass to the agent server.
     #[serde(default)]
     pub args: Vec<String>,
-}
-
-#[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
-#[serde(untagged)]
-pub enum AgentServerLauncher {
-    Npm {
-        package: String,
-        /// Exact version to install (e.g., "1.2.3")
-        version: String,
-        entrypoint: String,
-        /// Command-line arguments to pass to the agent server.
-        #[serde(default)]
-        args: Vec<String>,
-    },
-    GithubRelease {
-        repo: String,
-        /// Exact tag/release to download (e.g., "v1.2.3")
-        tag: String,
-        /// Per-target configuration for each platform/architecture combination.
-        /// The key format is "{os}-{arch}" where:
-        /// - os: "darwin" (macOS), "linux", "windows"
-        /// - arch: "aarch64" (arm64), "x86_64"
-        ///
-        /// Example:
-        /// ```toml
-        /// [agent_servers.myagent.launcher.targets.darwin-aarch64]
-        /// archive = "myagent-darwin-arm64.zip"
-        /// cmd = "./myagent"
-        /// args = ["--serve"]
-        /// ```
-        targets: HashMap<String, TargetConfig>,
-    },
-    Binary {
-        /// Command to run (e.g., "my-agent")
-        cmd: String,
-        /// Command-line arguments to pass to the agent server.
-        #[serde(default)]
-        args: Vec<String>,
-    },
+    /// Optional SHA-256 hash of the archive for verification.
+    /// If not provided and the URL is a GitHub release, we'll attempt to fetch it from GitHub.
+    #[serde(default)]
+    pub sha256: Option<String>,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
@@ -487,7 +480,6 @@ schema_version = 0
 
 [agent_servers.foo]
 name = "Foo Agent"
-[agent_servers.foo.launcher]
 package = "@example/agent-server"
 entrypoint = "node_modules/@example/agent-server/dist/index.js"
 version = "1.0.0"
@@ -498,22 +490,12 @@ args = []
         assert_eq!(manifest.id.as_ref(), "example.agent-server-ext");
         assert!(manifest.agent_servers.contains_key("foo"));
         let entry = manifest.agent_servers.get("foo").unwrap();
-        match &entry.launcher {
-            AgentServerLauncher::Npm {
-                package,
-                version,
-                entrypoint,
-                args,
-            } => {
-                assert_eq!(package, "@example/agent-server");
-                assert_eq!(
-                    entrypoint,
-                    "node_modules/@example/agent-server/dist/index.js"
-                );
-                assert_eq!(version, "1.0.0");
-                assert!(args.is_empty());
-            }
-            _ => panic!("expected Npm launcher"),
-        }
+        assert_eq!(entry.package.as_deref(), Some("@example/agent-server"));
+        assert_eq!(
+            entry.entrypoint.as_deref(),
+            Some("node_modules/@example/agent-server/dist/index.js")
+        );
+        assert_eq!(entry.version.as_deref(), Some("1.0.0"));
+        assert_eq!(entry.args.as_ref().map(|v| v.len()), Some(0));
     }
 }

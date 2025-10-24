@@ -332,69 +332,59 @@ impl AgentServerStore {
                             );
                         }
 
-                        match &agent_entry.launcher {
-                            extension::AgentServerLauncher::Binary { cmd, args } => {
-                                self.external_agents.insert(
-                                    ExternalAgentServerName(display),
-                                    Box::new(LocalExtensionBinaryAgent {
-                                        project_environment: project_environment.clone(),
-                                        bin_name: SharedString::from(cmd.clone()),
-                                        args: args.clone(),
-                                        env: agent_entry.env.clone(),
-                                    })
-                                        as Box<dyn ExternalAgentServer>,
-                                );
-                            }
-                            extension::AgentServerLauncher::Npm {
-                                package,
-                                version,
-                                entrypoint,
-                                args,
-                            } => {
-                                self.external_agents.insert(
-                                    ExternalAgentServerName(display),
-                                    Box::new(LocalExtensionNpmAgent {
-                                        fs: fs.clone(),
-                                        node_runtime: node_runtime.clone(),
-                                        project_environment: project_environment.clone(),
-                                        extension_id: Arc::from(ext_id),
-                                        agent_id: agent_name.clone(),
-                                        package_name: SharedString::from(package.clone()),
-                                        entrypoint: entrypoint.clone(),
-                                        version: version.clone(),
-                                        args: args.clone(),
-                                        env: agent_entry.env.clone(),
-                                        ignore_system_version: agent_entry
-                                            .ignore_system_version
-                                            .unwrap_or(false),
-                                    })
-                                        as Box<dyn ExternalAgentServer>,
-                                );
-                            }
-                            extension::AgentServerLauncher::GithubRelease {
-                                repo,
-                                tag,
-                                targets,
-                            } => {
-                                self.external_agents.insert(
-                                    ExternalAgentServerName(display),
-                                    Box::new(LocalExtensionGithubReleaseAgent {
-                                        fs: fs.clone(),
-                                        http_client: http_client.clone(),
-                                        project_environment: project_environment.clone(),
-                                        extension_id: Arc::from(ext_id),
-                                        agent_id: agent_name.clone(),
-                                        repo: repo.clone(),
-                                        tag: tag.clone(),
-                                        targets: targets.clone(),
-                                        env: agent_entry.env.clone(),
-                                        ignore_system_version: agent_entry
-                                            .ignore_system_version
-                                            .unwrap_or(false),
-                                    })
-                                        as Box<dyn ExternalAgentServer>,
-                                );
-                            }
+                        // Detect launcher type based on fields present
+                        if let (Some(package), Some(version), Some(entrypoint)) = (
+                            &agent_entry.package,
+                            &agent_entry.version,
+                            &agent_entry.entrypoint,
+                        ) {
+                            // NPM launcher
+                            self.external_agents.insert(
+                                ExternalAgentServerName(display),
+                                Box::new(LocalExtensionNpmAgent {
+                                    fs: fs.clone(),
+                                    node_runtime: node_runtime.clone(),
+                                    project_environment: project_environment.clone(),
+                                    extension_id: Arc::from(ext_id),
+                                    agent_id: agent_name.clone(),
+                                    package_name: SharedString::from(package.clone()),
+                                    entrypoint: entrypoint.clone(),
+                                    version: version.clone(),
+                                    args: agent_entry.args.clone().unwrap_or_default(),
+                                    env: agent_entry.env.clone(),
+                                    ignore_system_version: agent_entry
+                                        .ignore_system_version
+                                        .unwrap_or(false),
+                                }) as Box<dyn ExternalAgentServer>,
+                            );
+                        } else if !agent_entry.targets.is_empty() {
+                            // Archive-based launcher (formerly GithubRelease)
+                            self.external_agents.insert(
+                                ExternalAgentServerName(display),
+                                Box::new(LocalExtensionArchiveAgent {
+                                    fs: fs.clone(),
+                                    http_client: http_client.clone(),
+                                    project_environment: project_environment.clone(),
+                                    extension_id: Arc::from(ext_id),
+                                    agent_id: agent_name.clone(),
+                                    targets: agent_entry.targets.clone(),
+                                    env: agent_entry.env.clone(),
+                                    ignore_system_version: agent_entry
+                                        .ignore_system_version
+                                        .unwrap_or(false),
+                                }) as Box<dyn ExternalAgentServer>,
+                            );
+                        } else if let Some(cmd) = &agent_entry.cmd {
+                            // Binary launcher
+                            self.external_agents.insert(
+                                ExternalAgentServerName(display),
+                                Box::new(LocalExtensionBinaryAgent {
+                                    project_environment: project_environment.clone(),
+                                    bin_name: SharedString::from(cmd.clone()),
+                                    args: agent_entry.args.clone().unwrap_or_default(),
+                                    env: agent_entry.env.clone(),
+                                }) as Box<dyn ExternalAgentServer>,
+                            );
                         }
                     }
                 }
@@ -1533,14 +1523,12 @@ struct LocalExtensionNpmAgent {
     ignore_system_version: bool,
 }
 
-struct LocalExtensionGithubReleaseAgent {
+struct LocalExtensionArchiveAgent {
     fs: Arc<dyn Fs>,
     http_client: Arc<dyn HttpClient>,
     project_environment: Entity<ProjectEnvironment>,
     extension_id: Arc<str>,
     agent_id: Arc<str>,
-    repo: String,
-    tag: String,
     targets: HashMap<String, extension::TargetConfig>,
     env: HashMap<String, String>,
     ignore_system_version: bool,
@@ -1720,7 +1708,7 @@ impl ExternalAgentServer for LocalExtensionNpmAgent {
     }
 }
 
-impl ExternalAgentServer for LocalExtensionGithubReleaseAgent {
+impl ExternalAgentServer for LocalExtensionArchiveAgent {
     fn get_command(
         &mut self,
         root_dir: Option<&str>,
@@ -1734,8 +1722,6 @@ impl ExternalAgentServer for LocalExtensionGithubReleaseAgent {
         let project_environment = self.project_environment.downgrade();
         let extension_id = self.extension_id.clone();
         let agent_id = self.agent_id.clone();
-        let repo = self.repo.clone();
-        let tag = self.tag.clone();
         let targets = self.targets.clone();
         let base_env = self.env.clone();
         let _ignore_system_version = self.ignore_system_version;
@@ -1766,89 +1752,7 @@ impl ExternalAgentServer for LocalExtensionGithubReleaseAgent {
             let dir = paths::data_dir().join("external_agents").join(&cache_key);
             fs.create_dir(&dir).await?;
 
-            // Find or install the exact GitHub release tag
-            let release =
-                ::http_client::github::get_release_by_tag_name(&repo, &tag, http_client.clone())
-                    .await
-                    .with_context(|| format!("fetching release {} for {}", tag, repo))?;
-
-            let version_dir = dir.join(&tag);
-            if !fs.is_dir(&version_dir).await {
-                // Determine the platform key for looking up the asset name
-                let os = if cfg!(target_os = "macos") {
-                    "darwin"
-                } else if cfg!(target_os = "linux") {
-                    "linux"
-                } else if cfg!(target_os = "windows") {
-                    "windows"
-                } else {
-                    anyhow::bail!("unsupported OS");
-                };
-
-                let arch = if cfg!(target_arch = "aarch64") {
-                    "aarch64"
-                } else if cfg!(target_arch = "x86_64") {
-                    "x86_64"
-                } else {
-                    anyhow::bail!("unsupported architecture");
-                };
-
-                let platform_key = format!("{}-{}", os, arch);
-                let target_config = targets.get(&platform_key).with_context(|| {
-                    format!(
-                        "no target specified for platform '{}'. Available platforms: {}",
-                        platform_key,
-                        targets
-                            .keys()
-                            .map(|k| k.as_str())
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    )
-                })?;
-                let asset_name = &target_config.archive;
-
-                // Find the asset in the release
-                let available_assets: Vec<String> =
-                    release.assets.iter().map(|a| a.name.clone()).collect();
-                let asset = release
-                    .assets
-                    .into_iter()
-                    .find(|asset| &asset.name == asset_name)
-                    .with_context(|| {
-                        format!(
-                            "asset '{}' not found in release. Available assets: {}",
-                            asset_name,
-                            available_assets.join(", ")
-                        )
-                    })?;
-
-                // Determine archive type from asset name
-                let asset_kind = if asset.name.ends_with(".zip") {
-                    AssetKind::Zip
-                } else if asset.name.ends_with(".tar.gz") || asset.name.ends_with(".tgz") {
-                    AssetKind::TarGz
-                } else {
-                    anyhow::bail!("unsupported asset type: {}", asset.name);
-                };
-
-                // Strip "sha256:" prefix from digest if present (GitHub API format)
-                let digest = asset
-                    .digest
-                    .as_deref()
-                    .and_then(|d| d.strip_prefix("sha256:").or(Some(d)));
-
-                // Download and extract - reuses existing LSP download code
-                ::http_client::github_download::download_server_binary(
-                    &*http_client,
-                    &asset.browser_download_url,
-                    digest,
-                    &version_dir,
-                    asset_kind,
-                )
-                .await?;
-            }
-
-            // Get platform-specific config
+            // Determine platform key
             let os = if cfg!(target_os = "macos") {
                 "darwin"
             } else if cfg!(target_os = "linux") {
@@ -1869,8 +1773,97 @@ impl ExternalAgentServer for LocalExtensionGithubReleaseAgent {
 
             let platform_key = format!("{}-{}", os, arch);
             let target_config = targets.get(&platform_key).with_context(|| {
-                format!("no target config found for platform '{}'", platform_key)
+                format!(
+                    "no target specified for platform '{}'. Available platforms: {}",
+                    platform_key,
+                    targets
+                        .keys()
+                        .map(|k| k.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
             })?;
+
+            let archive_url = &target_config.archive;
+
+            // Use URL as version identifier for caching
+            // Hash the URL to get a stable directory name
+            use std::collections::hash_map::DefaultHasher;
+            use std::hash::{Hash, Hasher};
+            let mut hasher = DefaultHasher::new();
+            archive_url.hash(&mut hasher);
+            let url_hash = hasher.finish();
+            let version_dir = dir.join(format!("v_{:x}", url_hash));
+
+            if !fs.is_dir(&version_dir).await {
+                // Determine SHA256 for verification
+                let sha256 = if let Some(provided_sha) = &target_config.sha256 {
+                    // Use provided SHA256
+                    Some(provided_sha.clone())
+                } else if archive_url.starts_with("https://github.com/") {
+                    // Try to fetch SHA256 from GitHub API
+                    // Parse URL to extract repo and tag/file info
+                    // Format: https://github.com/owner/repo/releases/download/tag/file.zip
+                    if let Some(caps) = archive_url.strip_prefix("https://github.com/") {
+                        let parts: Vec<&str> = caps.split('/').collect();
+                        if parts.len() >= 6 && parts[2] == "releases" && parts[3] == "download" {
+                            let repo = format!("{}/{}", parts[0], parts[1]);
+                            let tag = parts[4];
+                            let filename = parts[5..].join("/");
+
+                            // Try to get release info from GitHub
+                            if let Ok(release) = ::http_client::github::get_release_by_tag_name(
+                                &repo,
+                                tag,
+                                http_client.clone(),
+                            )
+                            .await
+                            {
+                                // Find matching asset
+                                if let Some(asset) =
+                                    release.assets.iter().find(|a| a.name == filename)
+                                {
+                                    // Strip "sha256:" prefix if present
+                                    asset.digest.as_ref().and_then(|d| {
+                                        d.strip_prefix("sha256:")
+                                            .map(|s| s.to_string())
+                                            .or_else(|| Some(d.clone()))
+                                    })
+                                } else {
+                                    None
+                                }
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+
+                // Determine archive type from URL
+                let asset_kind = if archive_url.ends_with(".zip") {
+                    AssetKind::Zip
+                } else if archive_url.ends_with(".tar.gz") || archive_url.ends_with(".tgz") {
+                    AssetKind::TarGz
+                } else {
+                    anyhow::bail!("unsupported archive type in URL: {}", archive_url);
+                };
+
+                // Download and extract
+                ::http_client::github_download::download_server_binary(
+                    &*http_client,
+                    archive_url,
+                    sha256.as_deref(),
+                    &version_dir,
+                    asset_kind,
+                )
+                .await?;
+            }
 
             // Validate and resolve cmd path
             let cmd = &target_config.cmd;
@@ -2082,7 +2075,7 @@ mod npm_launcher_tests {
 
     #[test]
     fn sync_extension_agents_registers_npm_launcher() {
-        use extension::{AgentServerLauncher, AgentServerManifestEntry};
+        use extension::AgentServerManifestEntry;
 
         // For this test, we just verify the display name is constructed
         // In a real Local store, the agent would be registered
@@ -2097,12 +2090,12 @@ mod npm_launcher_tests {
 
         let _entry = AgentServerManifestEntry {
             name: "Test NPM Agent".into(),
-            launcher: AgentServerLauncher::Npm {
-                package: "@example/test-pkg".into(),
-                version: "1.0.0".into(),
-                entrypoint: "lib/server.js".into(),
-                args: vec!["--flag".into()],
-            },
+            package: Some("@example/test-pkg".into()),
+            version: Some("1.0.0".into()),
+            entrypoint: Some("lib/server.js".into()),
+            args: Some(vec!["--flag".into()]),
+            cmd: None,
+            targets: HashMap::default(),
             env,
             icon: None,
             ignore_system_version: None,
@@ -2111,7 +2104,7 @@ mod npm_launcher_tests {
 
     #[test]
     fn sync_extension_agents_registers_binary_launcher() {
-        use extension::{AgentServerLauncher, AgentServerManifestEntry};
+        use extension::AgentServerManifestEntry;
 
         let expected_name = ExternalAgentServerName(SharedString::from("BinExt: bin-agent"));
         assert_eq!(expected_name.0, "BinExt: bin-agent");
@@ -2122,10 +2115,12 @@ mod npm_launcher_tests {
 
         let _entry = AgentServerManifestEntry {
             name: "Binary Agent".into(),
-            launcher: AgentServerLauncher::Binary {
-                cmd: "my-binary".into(),
-                args: vec!["--custom-arg".into()],
-            },
+            package: None,
+            version: None,
+            entrypoint: None,
+            cmd: Some("my-binary".into()),
+            args: Some(vec!["--custom-arg".into()]),
+            targets: HashMap::default(),
             env,
             icon: None,
             ignore_system_version: None,
@@ -2218,29 +2213,32 @@ mod npm_launcher_tests {
 
     #[test]
     fn github_release_launcher_constructs_with_all_fields() {
-        use extension::{AgentServerLauncher, AgentServerManifestEntry};
+        use extension::AgentServerManifestEntry;
 
         let mut env = HashMap::default();
         env.insert("GITHUB_TOKEN".into(), "secret".into());
 
+        let mut targets = HashMap::default();
+        targets.insert(
+            "darwin-aarch64".to_string(),
+            extension::TargetConfig {
+                archive:
+                    "https://github.com/owner/repo/releases/download/v1.0.0/agent-darwin-arm64.zip"
+                        .into(),
+                cmd: "./agent".into(),
+                args: vec![],
+                sha256: None,
+            },
+        );
+
         let _entry = AgentServerManifestEntry {
             name: "GitHub Agent".into(),
-            launcher: AgentServerLauncher::GithubRelease {
-                repo: "owner/repo".into(),
-                tag: "v1.0.0".into(),
-                targets: {
-                    let mut map = HashMap::default();
-                    map.insert(
-                        "darwin-aarch64".to_string(),
-                        extension::TargetConfig {
-                            archive: "agent-darwin-arm64.zip".into(),
-                            cmd: "./agent".into(),
-                            args: vec![],
-                        },
-                    );
-                    map
-                },
-            },
+            package: None,
+            version: None,
+            entrypoint: None,
+            cmd: None,
+            args: None,
+            targets,
             env,
             icon: None,
             ignore_system_version: None,
@@ -2259,22 +2257,21 @@ mod npm_launcher_tests {
         let http_client = http_client::FakeHttpClient::with_404_response();
         let project_environment = cx.new(|cx| crate::ProjectEnvironment::new(None, cx));
 
-        let agent = LocalExtensionGithubReleaseAgent {
+        let agent = LocalExtensionArchiveAgent {
             fs,
             http_client,
             project_environment,
             extension_id: Arc::from("my-extension"),
             agent_id: Arc::from("my-agent"),
-            repo: "owner/repo".into(),
-            tag: "v1.0.0".into(),
             targets: {
                 let mut map = HashMap::default();
                 map.insert(
                     "darwin-aarch64".to_string(),
                     extension::TargetConfig {
-                        archive: "my-agent-darwin-arm64.zip".into(),
+                        archive: "https://example.com/my-agent-darwin-arm64.zip".into(),
                         cmd: "./my-agent".into(),
                         args: vec!["--serve".into()],
+                        sha256: None,
                     },
                 );
                 map
@@ -2290,15 +2287,13 @@ mod npm_launcher_tests {
         // Verify agent is properly constructed
         assert_eq!(agent.extension_id.as_ref(), "my-extension");
         assert_eq!(agent.agent_id.as_ref(), "my-agent");
-        assert_eq!(agent.repo, "owner/repo");
-        assert_eq!(agent.tag, "v1.0.0");
         assert_eq!(agent.env.get("PORT"), Some(&"8080".to_string()));
         assert!(agent.targets.contains_key("darwin-aarch64"));
     }
 
     #[test]
     fn sync_extension_agents_registers_github_release_launcher() {
-        use extension::{AgentServerLauncher, AgentServerManifestEntry};
+        use extension::AgentServerManifestEntry;
 
         let expected_name = ExternalAgentServerName(SharedString::from("Release Agent"));
         assert_eq!(expected_name.0, "Release Agent");
@@ -2310,40 +2305,39 @@ mod npm_launcher_tests {
         let mut assets: HashMap<String, String> = HashMap::default();
         assets.insert("darwin-aarch64".into(), "agent-macos-arm64.zip".into());
 
+        let mut targets = HashMap::default();
+        targets.insert(
+            "linux-x86_64".to_string(),
+            extension::TargetConfig {
+                archive: "https://github.com/org/project/releases/download/v2.1.0/release-agent-linux-x64.tar.gz".into(),
+                cmd: "./release-agent".into(),
+                args: vec!["serve".into()],
+                sha256: None,
+            },
+        );
+
         let manifest_entry = AgentServerManifestEntry {
             name: "Release Agent".into(),
-            launcher: AgentServerLauncher::GithubRelease {
-                repo: "org/project".into(),
-                tag: "v2.1.0".into(),
-                targets: {
-                    let mut map = HashMap::default();
-                    map.insert(
-                        "linux-x86_64".to_string(),
-                        extension::TargetConfig {
-                            archive: "release-agent-linux-x64.tar.gz".into(),
-                            cmd: "./release-agent".into(),
-                            args: vec!["serve".into()],
-                        },
-                    );
-                    map
-                },
-            },
+            package: None,
+            version: None,
+            entrypoint: None,
+            cmd: None,
+            args: None,
+            targets: targets.clone(),
             env,
             icon: None,
             ignore_system_version: None,
         };
 
         // Verify target config is present
-        if let AgentServerLauncher::GithubRelease { targets, .. } = &manifest_entry.launcher {
-            assert!(targets.contains_key("linux-x86_64"));
-            let target = targets.get("linux-x86_64").unwrap();
-            assert_eq!(target.args, vec!["serve"]);
-        }
+        assert!(manifest_entry.targets.contains_key("linux-x86_64"));
+        let target = manifest_entry.targets.get("linux-x86_64").unwrap();
+        assert_eq!(target.cmd, "./release-agent");
     }
 
     #[test]
     fn test_extension_agent_with_custom_env() {
-        use extension::{AgentServerLauncher, AgentServerManifestEntry};
+        use extension::AgentServerManifestEntry;
 
         let mut env = HashMap::default();
         env.insert("CUSTOM_VAR".into(), "custom_value".into());
@@ -2351,20 +2345,21 @@ mod npm_launcher_tests {
         // manifest_entry is used to test that it can be constructed; the fields match the above test
         let manifest_entry = AgentServerManifestEntry {
             name: "Example Agent".into(),
-            launcher: AgentServerLauncher::Npm {
-                package: "@example/agent".into(),
-                version: "1.0.0".into(),
-                entrypoint: "dist/index.js".into(),
-                args: vec!["--experimental-acp".into()],
-            },
+            package: Some("@example/agent".into()),
+            version: Some("1.0.0".into()),
+            entrypoint: Some("dist/index.js".into()),
+            args: Some(vec!["--experimental-acp".into()]),
+            cmd: None,
+            targets: HashMap::default(),
             env,
             icon: None,
             ignore_system_version: None,
         };
 
-        if let AgentServerLauncher::Npm { args, .. } = &manifest_entry.launcher {
-            assert_eq!(args, &vec!["--experimental-acp"]);
-        }
+        assert_eq!(
+            manifest_entry.args.as_ref().unwrap(),
+            &vec!["--experimental-acp"]
+        );
         // Verify custom env is present
         assert_eq!(
             manifest_entry.env.get("CUSTOM_VAR"),
@@ -2374,7 +2369,7 @@ mod npm_launcher_tests {
 
     #[test]
     fn test_binary_launcher_with_env() {
-        use extension::{AgentServerLauncher, AgentServerManifestEntry};
+        use extension::AgentServerManifestEntry;
 
         let mut env = HashMap::default();
         env.insert("API_ENDPOINT".into(), "https://api.example.com".into());
@@ -2382,18 +2377,18 @@ mod npm_launcher_tests {
 
         let manifest_entry = AgentServerManifestEntry {
             name: "My Agent".into(),
-            launcher: AgentServerLauncher::Binary {
-                cmd: "my-agent".into(),
-                args: vec!["--flag".into()],
-            },
+            package: None,
+            version: None,
+            entrypoint: None,
+            cmd: Some("my-agent".into()),
+            args: Some(vec!["--flag".into()]),
+            targets: HashMap::default(),
             env: env.clone(),
             icon: None,
             ignore_system_version: Some(true),
         };
 
-        if let AgentServerLauncher::Binary { args, .. } = &manifest_entry.launcher {
-            assert_eq!(args, &vec!["--flag"]);
-        }
+        assert_eq!(manifest_entry.args.as_ref().unwrap(), &vec!["--flag"]);
         assert_eq!(manifest_entry.env.len(), 2);
         assert_eq!(
             manifest_entry.env.get("API_ENDPOINT"),
