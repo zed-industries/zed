@@ -7329,8 +7329,7 @@ pub fn open_paths(
     #[cfg(target_os = "windows")]
     let wsl_path = abs_paths
         .iter()
-        .find_map(|p| Some(util::paths::WslPath::from_path(p)?));
-    dbg!(&wsl_path);
+        .find_map(|p| util::paths::WslPath::from_path(p));
 
     cx.spawn(async move |cx| {
         if open_options.open_new_workspace != Some(true) {
