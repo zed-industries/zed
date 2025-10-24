@@ -2016,9 +2016,9 @@ mod tests {
                 &r#"{
                     "code_actions_on_format": {
                         "foo": true
-                    }
-                }
-                "#
+                    },
+                    "formatter": []
+                }"#
                 .unindent(),
             ),
         );
@@ -2053,6 +2053,7 @@ mod tests {
             .unindent(),
             Some(
                 &r#"{
+                    "formatter": [],
                     "code_actions_on_format": {
                         "foo": true,
                         "bar": true,
@@ -2080,6 +2081,7 @@ mod tests {
             .unindent(),
             Some(
                 &r#"{
+                    "formatter": [],
                     "code_actions_on_format": {
                         "foo": true,
                         "qux": true,
@@ -2089,6 +2091,21 @@ mod tests {
                 }"#
                 .unindent(),
             ),
+        );
+
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2025_10_16::restore_code_actions_on_format,
+            )],
+            &r#"{
+                "formatter": [],
+                "code_actions_on_format": {
+                    "bar": true,
+                    "baz": false
+                }
+            }"#
+            .unindent(),
+            None,
         );
     }
 

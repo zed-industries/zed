@@ -391,7 +391,7 @@ pub enum ViewEvent {
 impl EventEmitter<ViewEvent> for ProjectSearchView {}
 
 impl Render for ProjectSearchView {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if self.has_matches() {
             div()
                 .flex_1()
@@ -426,7 +426,7 @@ impl Render for ProjectSearchView {
                     None
                 }
             } else {
-                Some(self.landing_text_minor(window, cx).into_any_element())
+                Some(self.landing_text_minor(cx).into_any_element())
             };
 
             let page_content = page_content.map(|text| div().child(text));
@@ -572,14 +572,12 @@ impl Item for ProjectSearchView {
         _workspace_id: Option<WorkspaceId>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Task<Option<Entity<Self>>>
+    ) -> Option<Entity<Self>>
     where
         Self: Sized,
     {
         let model = self.entity.update(cx, |model, cx| model.clone(cx));
-        Task::ready(Some(cx.new(|cx| {
-            Self::new(self.workspace.clone(), model, window, cx, None)
-        })))
+        Some(cx.new(|cx| Self::new(self.workspace.clone(), model, window, cx, None)))
     }
 
     fn added_to_workspace(
@@ -1446,7 +1444,7 @@ impl ProjectSearchView {
         self.active_match_index.is_some()
     }
 
-    fn landing_text_minor(&self, window: &mut Window, cx: &App) -> impl IntoElement {
+    fn landing_text_minor(&self, cx: &App) -> impl IntoElement {
         let focus_handle = self.focus_handle.clone();
         v_flex()
             .gap_1()
@@ -1460,12 +1458,7 @@ impl ProjectSearchView {
                     .icon(IconName::Filter)
                     .icon_position(IconPosition::Start)
                     .icon_size(IconSize::Small)
-                    .key_binding(KeyBinding::for_action_in(
-                        &ToggleFilters,
-                        &focus_handle,
-                        window,
-                        cx,
-                    ))
+                    .key_binding(KeyBinding::for_action_in(&ToggleFilters, &focus_handle, cx))
                     .on_click(|_event, window, cx| {
                         window.dispatch_action(ToggleFilters.boxed_clone(), cx)
                     }),
@@ -1475,12 +1468,7 @@ impl ProjectSearchView {
                     .icon(IconName::Replace)
                     .icon_position(IconPosition::Start)
                     .icon_size(IconSize::Small)
-                    .key_binding(KeyBinding::for_action_in(
-                        &ToggleReplace,
-                        &focus_handle,
-                        window,
-                        cx,
-                    ))
+                    .key_binding(KeyBinding::for_action_in(&ToggleReplace, &focus_handle, cx))
                     .on_click(|_event, window, cx| {
                         window.dispatch_action(ToggleReplace.boxed_clone(), cx)
                     }),
@@ -1490,12 +1478,7 @@ impl ProjectSearchView {
                     .icon(IconName::Regex)
                     .icon_position(IconPosition::Start)
                     .icon_size(IconSize::Small)
-                    .key_binding(KeyBinding::for_action_in(
-                        &ToggleRegex,
-                        &focus_handle,
-                        window,
-                        cx,
-                    ))
+                    .key_binding(KeyBinding::for_action_in(&ToggleRegex, &focus_handle, cx))
                     .on_click(|_event, window, cx| {
                         window.dispatch_action(ToggleRegex.boxed_clone(), cx)
                     }),
@@ -1508,7 +1491,6 @@ impl ProjectSearchView {
                     .key_binding(KeyBinding::for_action_in(
                         &ToggleCaseSensitive,
                         &focus_handle,
-                        window,
                         cx,
                     ))
                     .on_click(|_event, window, cx| {
@@ -1523,7 +1505,6 @@ impl ProjectSearchView {
                     .key_binding(KeyBinding::for_action_in(
                         &ToggleWholeWord,
                         &focus_handle,
-                        window,
                         cx,
                     ))
                     .on_click(|_event, window, cx| {
@@ -2049,8 +2030,8 @@ impl Render for ProjectSearchBar {
             .child(
                 IconButton::new("project-search-filter-button", IconName::Filter)
                     .shape(IconButtonShape::Square)
-                    .tooltip(|window, cx| {
-                        Tooltip::for_action("Toggle Filters", &ToggleFilters, window, cx)
+                    .tooltip(|_window, cx| {
+                        Tooltip::for_action("Toggle Filters", &ToggleFilters, cx)
                     })
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.toggle_filters(window, cx);
@@ -2063,12 +2044,11 @@ impl Render for ProjectSearchBar {
                     )
                     .tooltip({
                         let focus_handle = focus_handle.clone();
-                        move |window, cx| {
+                        move |_window, cx| {
                             Tooltip::for_action_in(
                                 "Toggle Filters",
                                 &ToggleFilters,
                                 &focus_handle,
-                                window,
                                 cx,
                             )
                         }
@@ -2357,9 +2337,10 @@ pub mod tests {
     use super::*;
     use editor::{DisplayPoint, display_map::DisplayRow};
     use gpui::{Action, TestAppContext, VisualTestContext, WindowHandle};
+    use language::{FakeLspAdapter, rust_lang};
     use project::FakeFs;
     use serde_json::json;
-    use settings::SettingsStore;
+    use settings::{InlayHintSettingsContent, SettingsStore};
     use util::{path, paths::PathStyle, rel_path::rel_path};
     use util_macros::perf;
     use workspace::DeploySearch;
@@ -3696,7 +3677,6 @@ pub mod tests {
                 )
             })
             .unwrap()
-            .await
             .unwrap();
         assert_eq!(cx.update(|cx| second_pane.read(cx).items_len()), 1);
 
@@ -3892,7 +3872,6 @@ pub mod tests {
                 )
             })
             .unwrap()
-            .await
             .unwrap();
         assert_eq!(cx.update(|cx| second_pane.read(cx).items_len()), 1);
         assert!(
@@ -4222,6 +4201,101 @@ pub mod tests {
         window
             .update(cx, |workspace, window, cx| {
                 assert!(!workspace.has_active_modal(window, cx));
+            })
+            .unwrap();
+    }
+
+    #[perf]
+    #[gpui::test]
+    async fn test_search_with_inlays(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.project.all_languages.defaults.inlay_hints =
+                        Some(InlayHintSettingsContent {
+                            enabled: Some(true),
+                            ..InlayHintSettingsContent::default()
+                        })
+                });
+            });
+        });
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/dir"),
+            // `\n` , a trailing line on the end, is important for the test case
+            json!({
+                "main.rs": "fn main() { let a = 2; }\n",
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+        let language = rust_lang();
+        language_registry.add(language);
+        let mut fake_servers = language_registry.register_fake_lsp(
+            "Rust",
+            FakeLspAdapter {
+                capabilities: lsp::ServerCapabilities {
+                    inlay_hint_provider: Some(lsp::OneOf::Left(true)),
+                    ..lsp::ServerCapabilities::default()
+                },
+                initializer: Some(Box::new(|fake_server| {
+                    fake_server.set_request_handler::<lsp::request::InlayHintRequest, _, _>(
+                        move |_, _| async move {
+                            Ok(Some(vec![lsp::InlayHint {
+                                position: lsp::Position::new(0, 17),
+                                label: lsp::InlayHintLabel::String(": i32".to_owned()),
+                                kind: Some(lsp::InlayHintKind::TYPE),
+                                text_edits: None,
+                                tooltip: None,
+                                padding_left: None,
+                                padding_right: None,
+                                data: None,
+                            }]))
+                        },
+                    );
+                })),
+                ..FakeLspAdapter::default()
+            },
+        );
+
+        let window = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let workspace = window.root(cx).unwrap();
+        let search = cx.new(|cx| ProjectSearch::new(project.clone(), cx));
+        let search_view = cx.add_window(|window, cx| {
+            ProjectSearchView::new(workspace.downgrade(), search.clone(), window, cx, None)
+        });
+
+        perform_search(search_view, "let ", cx);
+        let _fake_server = fake_servers.next().await.unwrap();
+        cx.executor().advance_clock(Duration::from_secs(1));
+        cx.executor().run_until_parked();
+        search_view
+            .update(cx, |search_view, _, cx| {
+                assert_eq!(
+                    search_view
+                        .results_editor
+                        .update(cx, |editor, cx| editor.display_text(cx)),
+                    "\n\nfn main() { let a: i32 = 2; }\n"
+                );
+            })
+            .unwrap();
+
+        // Can do the 2nd search without any panics
+        perform_search(search_view, "let ", cx);
+        cx.executor().advance_clock(Duration::from_millis(100));
+        cx.executor().run_until_parked();
+        search_view
+            .update(cx, |search_view, _, cx| {
+                assert_eq!(
+                    search_view
+                        .results_editor
+                        .update(cx, |editor, cx| editor.display_text(cx)),
+                    "\n\nfn main() { let a: i32 = 2; }\n"
+                );
             })
             .unwrap();
     }

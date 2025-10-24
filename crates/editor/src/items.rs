@@ -762,11 +762,11 @@ impl Item for Editor {
         _workspace_id: Option<WorkspaceId>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Task<Option<Entity<Editor>>>
+    ) -> Option<Entity<Editor>>
     where
         Self: Sized,
     {
-        Task::ready(Some(cx.new(|cx| self.clone(window, cx))))
+        Some(cx.new(|cx| self.clone(window, cx)))
     }
 
     fn set_nav_history(
@@ -938,8 +938,9 @@ impl Item for Editor {
     fn breadcrumbs(&self, variant: &Theme, cx: &App) -> Option<Vec<BreadcrumbText>> {
         let cursor = self.selections.newest_anchor().head();
         let multibuffer = &self.buffer().read(cx);
-        let (buffer_id, symbols) =
-            multibuffer.symbols_containing(cursor, Some(variant.syntax()), cx)?;
+        let (buffer_id, symbols) = multibuffer
+            .read(cx)
+            .symbols_containing(cursor, Some(variant.syntax()))?;
         let buffer = multibuffer.buffer(buffer_id)?;
 
         let buffer = buffer.read(cx);

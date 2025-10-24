@@ -1834,8 +1834,9 @@ async fn test_agent_connection(cx: &mut TestAppContext) {
     fake_fs.insert_tree(path!("/test"), json!({})).await;
     let project = Project::test(fake_fs.clone(), [Path::new("/test")], cx).await;
     let cwd = Path::new("/test");
-    let context_store = cx.new(|cx| assistant_context::ContextStore::fake(project.clone(), cx));
-    let history_store = cx.new(|cx| HistoryStore::new(context_store, cx));
+    let text_thread_store =
+        cx.new(|cx| assistant_text_thread::TextThreadStore::fake(project.clone(), cx));
+    let history_store = cx.new(|cx| HistoryStore::new(text_thread_store, cx));
 
     // Create agent and connection
     let agent = NativeAgent::new(
@@ -1995,7 +1996,7 @@ async fn test_tool_updates_to_completion(cx: &mut TestAppContext) {
             locations: vec![],
             raw_input: Some(json!({})),
             raw_output: None,
-            meta: None,
+            meta: Some(json!({ "tool_name": "thinking" })),
         }
     );
     let update = expect_tool_call_update_fields(&mut events).await;

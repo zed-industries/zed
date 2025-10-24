@@ -234,7 +234,7 @@ pub(crate) struct OnTypeFormatting {
     pub push_to_history: bool,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub(crate) struct InlayHints {
     pub range: Range<Anchor>,
 }

@@ -210,11 +210,10 @@ impl TerminalPanel {
                             .on_click(cx.listener(|pane, _, window, cx| {
                                 pane.toggle_zoom(&workspace::ToggleZoom, window, cx);
                             }))
-                            .tooltip(move |window, cx| {
+                            .tooltip(move |_window, cx| {
                                 Tooltip::for_action(
                                     if zoomed { "Zoom Out" } else { "Zoom In" },
                                     &ToggleZoom,
-                                    window,
                                     cx,
                                 )
                             })
@@ -462,11 +461,11 @@ impl TerminalPanel {
         cx.spawn_in(window, async move |panel, cx| {
             let terminal = project
                 .update(cx, |project, cx| match terminal_view {
-                    Some(view) => project.clone_terminal(
+                    Some(view) => Task::ready(project.clone_terminal(
                         &view.read(cx).terminal.clone(),
                         cx,
                         working_directory,
-                    ),
+                    )),
                     None => project.create_terminal_shell(working_directory, cx),
                 })
                 .ok()?
@@ -1739,14 +1738,8 @@ impl Render for InlineAssistTabBarButton {
             .on_click(cx.listener(|_, _, window, cx| {
                 window.dispatch_action(InlineAssist::default().boxed_clone(), cx);
             }))
-            .tooltip(move |window, cx| {
-                Tooltip::for_action_in(
-                    "Inline Assist",
-                    &InlineAssist::default(),
-                    &focus_handle,
-                    window,
-                    cx,
-                )
+            .tooltip(move |_window, cx| {
+                Tooltip::for_action_in("Inline Assist", &InlineAssist::default(), &focus_handle, cx)
             })
     }
 }

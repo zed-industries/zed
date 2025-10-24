@@ -948,8 +948,8 @@ impl Render for PanelButtons {
                                     }
                                 })
                                 .when(!is_active, |this| {
-                                    this.tooltip(move |window, cx| {
-                                        Tooltip::for_action(tooltip.clone(), &*action, window, cx)
+                                    this.tooltip(move |_window, cx| {
+                                        Tooltip::for_action(tooltip.clone(), &*action, cx)
                                     })
                                 })
                         }),

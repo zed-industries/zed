@@ -5,7 +5,7 @@ use strum::IntoDiscriminant as _;
 use ui::{IntoElement, SharedString};
 
 use crate::{
-    DynamicItem, LOCAL, SettingField, SettingItem, SettingsFieldMetadata, SettingsPage,
+    DynamicItem, PROJECT, SettingField, SettingItem, SettingsFieldMetadata, SettingsPage,
     SettingsPageItem, SubPageLink, USER, all_language_names, sub_page_stack,
 };
 
@@ -26,7 +26,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
             items: vec![
                 SettingsPageItem::SectionHeader("General Settings"),
                 SettingsPageItem::SettingItem(SettingItem {
-                    files: LOCAL,
+                    files: PROJECT,
                     title: "Project Name",
                     description: "The displayed name of this project. If left empty, the root directory name will be displayed.",
                     field: Box::new(
@@ -796,7 +796,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                 SettingsPageItem::SettingItem(SettingItem {
                     files: USER,
                     title: "Font Features",
-                    description: "The Opentype features to enable for rendering in UI elements.",
+                    description: "The OpenType features to enable for rendering in UI elements.",
                     field: Box::new(
                         SettingField {
                             json_path: Some("ui_font_features"),
@@ -1022,7 +1022,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
-                    files: USER | LOCAL,
+                    files: USER | PROJECT,
                 }),
                 // todo(settings_ui): This needs a custom component
                 SettingsPageItem::SettingItem(SettingItem {
@@ -1046,7 +1046,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         .unimplemented(),
                     ),
                     metadata: None,
-                    files: USER | LOCAL,
+                    files: USER | PROJECT,
                 }),
             ],
         },
@@ -2117,7 +2117,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             .unimplemented(),
                         ),
                         metadata: None,
-                        files: USER | LOCAL,
+                        files: USER | PROJECT,
                     }),
                 ]);
 
@@ -2314,7 +2314,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                 items.extend(all_language_names(cx).into_iter().map(|language_name| {
                     SettingsPageItem::SubPageLink(SubPageLink {
                         title: language_name,
-                        files: USER | LOCAL,
+                        files: USER | PROJECT,
                         render: Arc::new(|this, window, cx| {
                             this.render_sub_page_items(
                                 language_settings_data()
@@ -4432,7 +4432,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                 SettingsPageItem::SectionHeader("Environment"),
                 SettingsPageItem::DynamicItem(DynamicItem {
                     discriminant: SettingItem {
-                        files: USER | LOCAL,
+                        files: USER | PROJECT,
                         title: "Shell",
                         description: "What shell to use when opening a terminal.",
                         field: Box::new(SettingField {
@@ -4496,7 +4496,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             settings::ShellDiscriminants::System => vec![],
                             settings::ShellDiscriminants::Program => vec![
                                 SettingItem {
-                                    files: USER | LOCAL,
+                                    files: USER | PROJECT,
                                     title: "Program",
                                     description: "The shell program to use.",
                                     field: Box::new(SettingField {
@@ -4526,7 +4526,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             ],
                             settings::ShellDiscriminants::WithArguments => vec![
                                 SettingItem {
-                                    files: USER | LOCAL,
+                                    files: USER | PROJECT,
                                     title: "Program",
                                     description: "The shell program to run.",
                                     field: Box::new(SettingField {
@@ -4554,7 +4554,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                     metadata: None,
                                 },
                                 SettingItem {
-                                    files: USER | LOCAL,
+                                    files: USER | PROJECT,
                                     title: "Arguments",
                                     description: "The arguments to pass to the shell program.",
                                     field: Box::new(
@@ -4585,7 +4585,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                     metadata: None,
                                 },
                                 SettingItem {
-                                    files: USER | LOCAL,
+                                    files: USER | PROJECT,
                                     title: "Title Override",
                                     description: "An optional string to override the title of the terminal tab.",
                                     field: Box::new(SettingField {
@@ -4615,7 +4615,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::DynamicItem(DynamicItem {
                     discriminant: SettingItem {
-                        files: USER | LOCAL,
+                        files: USER | PROJECT,
                         title: "Working Directory",
                         description: "What working directory to use when launching the terminal.",
                         field: Box::new(SettingField {
@@ -4672,7 +4672,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                             settings::WorkingDirectoryDiscriminants::AlwaysHome => vec![],
                             settings::WorkingDirectoryDiscriminants::Always => vec![
                                 SettingItem {
-                                    files: USER | LOCAL,
+                                    files: USER | PROJECT,
                                     title: "Directory",
                                     description: "The directory path to use (will be shell expanded).",
                                     field: Box::new(SettingField {
@@ -4721,7 +4721,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         .unimplemented(),
                     ),
                     metadata: None,
-                    files: USER | LOCAL,
+                    files: USER | PROJECT,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Detect Virtual Environment",
@@ -4748,7 +4748,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         .unimplemented(),
                     ),
                     metadata: None,
-                    files: USER | LOCAL,
+                    files: USER | PROJECT,
                 }),
                 SettingsPageItem::SectionHeader("Font"),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -5813,7 +5813,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Hard Tabs",
@@ -5832,7 +5832,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Auto Indent",
@@ -5851,7 +5851,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Auto Indent On Paste",
@@ -5870,7 +5870,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SectionHeader("Wrapping"),
         SettingsPageItem::SettingItem(SettingItem {
@@ -5890,7 +5890,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Show Wrap Guides",
@@ -5909,7 +5909,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Preferred Line Length",
@@ -5928,7 +5928,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Wrap Guides",
@@ -5950,7 +5950,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 .unimplemented(),
             ),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Allow Rewrap",
@@ -5969,7 +5969,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SectionHeader("Indent Guides"),
         SettingsPageItem::SettingItem(SettingItem {
@@ -5992,7 +5992,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Line Width",
@@ -6014,7 +6014,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Active Line Width",
@@ -6039,7 +6039,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Coloring",
@@ -6061,7 +6061,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Background Coloring",
@@ -6086,7 +6086,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SectionHeader("Formatting"),
         SettingsPageItem::SettingItem(SettingItem {
@@ -6109,7 +6109,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             ),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Remove Trailing Whitespace On Save",
@@ -6128,7 +6128,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Ensure Final Newline On Save",
@@ -6147,7 +6147,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Formatter",
@@ -6169,7 +6169,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 .unimplemented(),
             ),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Use On Type Format",
@@ -6188,7 +6188,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Code Actions On Format",
@@ -6210,7 +6210,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 .unimplemented(),
             ),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SectionHeader("Autoclose"),
         SettingsPageItem::SettingItem(SettingItem {
@@ -6230,7 +6230,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Use Auto Surround",
@@ -6249,7 +6249,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Always Treat Brackets As Autoclosed",
@@ -6268,7 +6268,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Jsx Tag Auto Close",
@@ -6288,7 +6288,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SectionHeader("Edit Predictions"),
         SettingsPageItem::SettingItem(SettingItem {
@@ -6308,7 +6308,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Edit Predictions Disabled In",
@@ -6330,7 +6330,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 .unimplemented(),
             ),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SectionHeader("Whitespace"),
         SettingsPageItem::SettingItem(SettingItem {
@@ -6350,7 +6350,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Space Whitespace Indicator",
@@ -6372,7 +6372,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 .unimplemented(),
             ),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Tab Whitespace Indicator",
@@ -6394,7 +6394,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 .unimplemented(),
             ),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SectionHeader("Completions"),
         SettingsPageItem::SettingItem(SettingItem {
@@ -6414,7 +6414,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Show Completion Documentation",
@@ -6433,7 +6433,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Words",
@@ -6452,7 +6452,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Words Min Length",
@@ -6474,7 +6474,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SectionHeader("Inlay Hints"),
         SettingsPageItem::SettingItem(SettingItem {
@@ -6494,7 +6494,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Show Value Hints",
@@ -6516,7 +6516,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Show Type Hints",
@@ -6535,7 +6535,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Show Parameter Hints",
@@ -6557,7 +6557,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Show Other Hints",
@@ -6579,7 +6579,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Show Background",
@@ -6598,7 +6598,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Edit Debounce Ms",
@@ -6620,7 +6620,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Scroll Debounce Ms",
@@ -6642,7 +6642,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Toggle On Modifiers Press",
@@ -6671,7 +6671,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 .unimplemented(),
             ),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
     ];
     if current_language().is_none() {
@@ -6709,7 +6709,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Variables",
@@ -6732,7 +6732,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 .unimplemented(),
             ),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Prefer LSP",
@@ -6752,7 +6752,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SectionHeader("Miscellaneous"),
         SettingsPageItem::SettingItem(SettingItem {
@@ -6774,7 +6774,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 .unimplemented(),
             ),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Middle Click Paste",
@@ -6805,7 +6805,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
     ]);
 
@@ -6886,7 +6886,7 @@ fn non_editor_language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Language Servers",
@@ -6908,7 +6908,7 @@ fn non_editor_language_settings_data() -> Vec<SettingsPageItem> {
                 .unimplemented(),
             ),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Linked Edits",
@@ -6927,7 +6927,7 @@ fn non_editor_language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Go To Definition Fallback",
@@ -6960,7 +6960,7 @@ fn non_editor_language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Fetch Timeout (milliseconds)",
@@ -6982,7 +6982,7 @@ fn non_editor_language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Insert Mode",
@@ -7001,7 +7001,7 @@ fn non_editor_language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SectionHeader("Debuggers"),
         SettingsPageItem::SettingItem(SettingItem {
@@ -7024,7 +7024,7 @@ fn non_editor_language_settings_data() -> Vec<SettingsPageItem> {
                 .unimplemented(),
             ),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SectionHeader("Prettier"),
         SettingsPageItem::SettingItem(SettingItem {
@@ -7044,7 +7044,7 @@ fn non_editor_language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Parser",
@@ -7063,7 +7063,7 @@ fn non_editor_language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Plugins",
@@ -7085,7 +7085,7 @@ fn non_editor_language_settings_data() -> Vec<SettingsPageItem> {
                 .unimplemented(),
             ),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Options",
@@ -7107,7 +7107,7 @@ fn non_editor_language_settings_data() -> Vec<SettingsPageItem> {
                 .unimplemented(),
             ),
             metadata: None,
-            files: USER | LOCAL,
+            files: USER | PROJECT,
         }),
     ]
 }

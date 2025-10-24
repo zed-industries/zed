@@ -324,8 +324,8 @@ impl AcpThreadHistory {
             HistoryEntry::AcpThread(thread) => self
                 .history_store
                 .update(cx, |this, cx| this.delete_thread(thread.id.clone(), cx)),
-            HistoryEntry::TextThread(context) => self.history_store.update(cx, |this, cx| {
-                this.delete_text_thread(context.path.clone(), cx)
+            HistoryEntry::TextThread(text_thread) => self.history_store.update(cx, |this, cx| {
+                this.delete_text_thread(text_thread.path.clone(), cx)
             }),
         };
         task.detach_and_log_err(cx);
@@ -423,8 +423,8 @@ impl AcpThreadHistory {
                                 .shape(IconButtonShape::Square)
                                 .icon_size(IconSize::XSmall)
                                 .icon_color(Color::Muted)
-                                .tooltip(move |window, cx| {
-                                    Tooltip::for_action("Delete", &RemoveSelectedThread, window, cx)
+                                .tooltip(move |_window, cx| {
+                                    Tooltip::for_action("Delete", &RemoveSelectedThread, cx)
                                 })
                                 .on_click(
                                     cx.listener(move |this, _, _, cx| this.remove_thread(ix, cx)),
@@ -595,8 +595,8 @@ impl RenderOnce for AcpHistoryEntryElement {
                         .shape(IconButtonShape::Square)
                         .icon_size(IconSize::XSmall)
                         .icon_color(Color::Muted)
-                        .tooltip(move |window, cx| {
-                            Tooltip::for_action("Delete", &RemoveSelectedThread, window, cx)
+                        .tooltip(move |_window, cx| {
+                            Tooltip::for_action("Delete", &RemoveSelectedThread, cx)
                         })
                         .on_click({
                             let thread_view = self.thread_view.clone();
@@ -635,12 +635,12 @@ impl RenderOnce for AcpHistoryEntryElement {
                                     });
                                 }
                             }
-                            HistoryEntry::TextThread(context) => {
+                            HistoryEntry::TextThread(text_thread) => {
                                 if let Some(panel) = workspace.read(cx).panel::<AgentPanel>(cx) {
                                     panel.update(cx, |panel, cx| {
                                         panel
                                             .open_saved_text_thread(
-                                                context.path.clone(),
+                                                text_thread.path.clone(),
                                                 window,
                                                 cx,
                                             )

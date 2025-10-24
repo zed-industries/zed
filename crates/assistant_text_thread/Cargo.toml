@@ -1,5 +1,5 @@
 [package]
-name = "assistant_context"
+name = "assistant_text_thread"
 version = "0.1.0"
 edition.workspace = true
 publish.workspace = true
@@ -9,7 +9,7 @@ license = "GPL-3.0-or-later"
 workspace = true
 
 [lib]
-path = "src/assistant_context.rs"
+path = "src/assistant_text_thread.rs"
 
 [features]
 test-support = []

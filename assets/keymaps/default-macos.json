@@ -423,7 +423,7 @@
     }
   },
   {
-    "context": "PromptLibrary",
+    "context": "RulesLibrary",
     "use_key_equivalents": true,
     "bindings": {
       "cmd-n": "rules_library::NewRule",

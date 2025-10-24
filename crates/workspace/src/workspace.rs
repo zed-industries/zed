@@ -1458,7 +1458,7 @@ impl Workspace {
             }),
             cx.on_release(move |this, cx| {
                 this.app_state.workspace_store.update(cx, move |store, _| {
-                    store.workspaces.remove(&window_handle.clone());
+                    store.workspaces.remove(&window_handle);
                 })
             }),
         ];
@@ -3627,8 +3627,7 @@ impl Workspace {
         if let Some(pane) = panes.get(action.0).map(|p| (*p).clone()) {
             window.focus(&pane.focus_handle(cx));
         } else {
-            self.split_and_clone(self.active_pane.clone(), SplitDirection::Right, window, cx)
-                .detach();
+            self.split_and_clone(self.active_pane.clone(), SplitDirection::Right, window, cx);
         }
     }
 
@@ -3995,8 +3994,7 @@ impl Workspace {
                 clone_active_item,
             } => {
                 if *clone_active_item {
-                    self.split_and_clone(pane.clone(), *direction, window, cx)
-                        .detach();
+                    self.split_and_clone(pane.clone(), *direction, window, cx);
                 } else {
                     self.split_and_move(pane.clone(), *direction, window, cx);
                 }
@@ -4137,27 +4135,21 @@ impl Workspace {
         direction: SplitDirection,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Task<Option<Entity<Pane>>> {
-        let Some(item) = pane.read(cx).active_item() else {
-            return Task::ready(None);
-        };
-        let task = item.clone_on_split(self.database_id(), window, cx);
-        cx.spawn_in(window, async move |this, cx| {
-            if let Some(clone) = task.await {
-                this.update_in(cx, |this, window, cx| {
-                    let new_pane = this.add_pane(window, cx);
-                    new_pane.update(cx, |pane, cx| {
-                        pane.add_item(clone, true, true, None, window, cx)
-                    });
-                    this.center.split(&pane, &new_pane, direction).unwrap();
-                    cx.notify();
-                    new_pane
-                })
-                .ok()
+    ) -> Option<Entity<Pane>> {
+        let item = pane.read(cx).active_item()?;
+        let maybe_pane_handle =
+            if let Some(clone) = item.clone_on_split(self.database_id(), window, cx) {
+                let new_pane = self.add_pane(window, cx);
+                new_pane.update(cx, |pane, cx| {
+                    pane.add_item(clone, true, true, None, window, cx)
+                });
+                self.center.split(&pane, &new_pane, direction).unwrap();
+                cx.notify();
+                Some(new_pane)
             } else {
                 None
-            }
-        })
+            };
+        maybe_pane_handle
     }
 
     pub fn join_all_panes(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -8191,27 +8183,19 @@ pub fn clone_active_item(
     let Some(active_item) = source.read(cx).active_item() else {
         return;
     };
-    let destination = destination.downgrade();
-    let task = active_item.clone_on_split(workspace_id, window, cx);
-    window
-        .spawn(cx, async move |cx| {
-            let Some(clone) = task.await else {
-                return;
-            };
-            destination
-                .update_in(cx, |target_pane, window, cx| {
-                    target_pane.add_item(
-                        clone,
-                        focus_destination,
-                        focus_destination,
-                        Some(target_pane.items_len()),
-                        window,
-                        cx,
-                    );
-                })
-                .log_err();
-        })
-        .detach();
+    destination.update(cx, |target_pane, cx| {
+        let Some(clone) = active_item.clone_on_split(workspace_id, window, cx) else {
+            return;
+        };
+        target_pane.add_item(
+            clone,
+            focus_destination,
+            focus_destination,
+            Some(target_pane.items_len()),
+            window,
+            cx,
+        );
+    });
 }
 
 #[derive(Debug)]
@@ -8718,24 +8702,25 @@ mod tests {
                 cx,
             );
 
-            let right_pane =
-                workspace.split_and_clone(left_pane.clone(), SplitDirection::Right, window, cx);
+            let right_pane = workspace
+                .split_and_clone(left_pane.clone(), SplitDirection::Right, window, cx)
+                .unwrap();
 
-            let boxed_clone = single_entry_items[1].boxed_clone();
-            let right_pane = window.spawn(cx, async move |cx| {
-                right_pane.await.inspect(|right_pane| {
-                    right_pane
-                        .update_in(cx, |pane, window, cx| {
-                            pane.add_item(boxed_clone, true, true, None, window, cx);
-                            pane.add_item(Box::new(item_3_4.clone()), true, true, None, window, cx);
-                        })
-                        .unwrap();
-                })
+            right_pane.update(cx, |pane, cx| {
+                pane.add_item(
+                    single_entry_items[1].boxed_clone(),
+                    true,
+                    true,
+                    None,
+                    window,
+                    cx,
+                );
+                pane.add_item(Box::new(item_3_4.clone()), true, true, None, window, cx);
             });
 
             (left_pane, right_pane)
         });
-        let right_pane = right_pane.await.unwrap();
+
         cx.focus(&right_pane);
 
         let mut close = right_pane.update_in(cx, |pane, window, cx| {
@@ -10552,10 +10537,7 @@ mod tests {
                 window,
                 cx,
             );
-        });
-        cx.run_until_parked();
 
-        workspace.update(cx, |workspace, cx| {
             assert_eq!(workspace.panes.len(), 3, "Two new panes were created");
             for pane in workspace.panes() {
                 assert_eq!(

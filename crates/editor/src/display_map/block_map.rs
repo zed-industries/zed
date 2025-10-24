@@ -1186,18 +1186,14 @@ impl BlockMapWriter<'_> {
         self.0.sync(wrap_snapshot, edits);
     }
 
-    pub fn remove_intersecting_replace_blocks<T>(
+    pub fn remove_intersecting_replace_blocks(
         &mut self,
-        ranges: impl IntoIterator<Item = Range<T>>,
+        ranges: impl IntoIterator<Item = Range<usize>>,
         inclusive: bool,
-    ) where
-        T: ToOffset,
-    {
+    ) {
         let wrap_snapshot = self.0.wrap_snapshot.borrow();
         let mut blocks_to_remove = HashSet::default();
         for range in ranges {
-            let range = range.start.to_offset(wrap_snapshot.buffer_snapshot())
-                ..range.end.to_offset(wrap_snapshot.buffer_snapshot());
             for block in self.blocks_intersecting_buffer_range(range, inclusive) {
                 if matches!(block.placement, BlockPlacement::Replace(_)) {
                     blocks_to_remove.insert(block.id);
@@ -3570,8 +3566,12 @@ mod tests {
 
         let mut writer = block_map.write(wraps_snapshot.clone(), Default::default());
         writer.remove_intersecting_replace_blocks(
-            [buffer_snapshot.anchor_after(Point::new(1, 0))
-                ..buffer_snapshot.anchor_after(Point::new(1, 0))],
+            [buffer_snapshot
+                .anchor_after(Point::new(1, 0))
+                .to_offset(&buffer_snapshot)
+                ..buffer_snapshot
+                    .anchor_after(Point::new(1, 0))
+                    .to_offset(&buffer_snapshot)],
             false,
         );
         let blocks_snapshot = block_map.read(wraps_snapshot, Default::default());

@@ -1162,34 +1162,22 @@ impl BufferDiff {
         self.hunks_intersecting_range(start..end, buffer, cx)
     }
 
-    pub fn set_base_text_buffer(
-        &mut self,
-        base_buffer: Entity<language::Buffer>,
-        buffer: text::BufferSnapshot,
-        cx: &mut Context<Self>,
-    ) -> oneshot::Receiver<()> {
-        let base_buffer = base_buffer.read(cx);
-        let language_registry = base_buffer.language_registry();
-        let base_buffer = base_buffer.snapshot();
-        self.set_base_text(base_buffer, language_registry, buffer, cx)
-    }
-
     /// Used in cases where the change set isn't derived from git.
     pub fn set_base_text(
         &mut self,
-        base_buffer: language::BufferSnapshot,
+        base_text: Option<Arc<String>>,
+        language: Option<Arc<Language>>,
         language_registry: Option<Arc<LanguageRegistry>>,
         buffer: text::BufferSnapshot,
         cx: &mut Context<Self>,
     ) -> oneshot::Receiver<()> {
         let (tx, rx) = oneshot::channel();
         let this = cx.weak_entity();
-        let base_text = Arc::new(base_buffer.text());
 
         let snapshot = BufferDiffSnapshot::new_with_base_text(
             buffer.clone(),
-            Some(base_text),
-            base_buffer.language().cloned(),
+            base_text,
+            language,
             language_registry,
             cx,
         );

@@ -1797,6 +1797,9 @@
       "allow_rewrap": "anywhere"
     },
     "Python": {
+      "code_actions_on_format": {
+        "source.organizeImports.ruff": true
+      },
       "formatter": {
         "language_server": {
           "name": "ruff"

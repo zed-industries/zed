@@ -1,7 +1,3 @@
-#[cfg(test)]
-mod assistant_context_tests;
-mod context_store;
-
 use agent_settings::{AgentSettings, SUMMARIZE_THREAD_PROMPT};
 use anyhow::{Context as _, Result, bail};
 use assistant_slash_command::{
@@ -9,7 +5,7 @@ use assistant_slash_command::{
     SlashCommandResult, SlashCommandWorkingSet,
 };
 use assistant_slash_commands::FileCommandMetadata;
-use client::{self, Client, ModelRequestUsage, RequestUsage, proto, telemetry::Telemetry};
+use client::{self, ModelRequestUsage, RequestUsage, proto, telemetry::Telemetry};
 use clock::ReplicaId;
 use cloud_llm_client::{CompletionIntent, CompletionRequestStatus, UsageLimit};
 use collections::{HashMap, HashSet};
@@ -27,7 +23,7 @@ use language_model::{
     report_assistant_event,
 };
 use open_ai::Model as OpenAiModel;
-use paths::contexts_dir;
+use paths::text_threads_dir;
 use project::Project;
 use prompt_store::PromptBuilder;
 use serde::{Deserialize, Serialize};
@@ -48,16 +44,10 @@ use ui::IconName;
 use util::{ResultExt, TryFutureExt, post_inc};
 use uuid::Uuid;
 
-pub use crate::context_store::*;
-
-pub fn init(client: Arc<Client>, _: &mut App) {
-    context_store::init(&client.into());
-}
-
 #[derive(Clone, Debug, Eq, PartialEq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
-pub struct ContextId(String);
+pub struct TextThreadId(String);
 
-impl ContextId {
+impl TextThreadId {
     pub fn new() -> Self {
         Self(Uuid::new_v4().to_string())
     }
@@ -130,7 +120,7 @@ impl MessageStatus {
 }
 
 #[derive(Clone, Debug)]
-pub enum ContextOperation {
+pub enum TextThreadOperation {
     InsertMessage {
         anchor: MessageAnchor,
         metadata: MessageMetadata,
@@ -142,7 +132,7 @@ pub enum ContextOperation {
         version: clock::Global,
     },
     UpdateSummary {
-        summary: ContextSummaryContent,
+        summary: TextThreadSummaryContent,
         version: clock::Global,
     },
     SlashCommandStarted {
@@ -170,7 +160,7 @@ pub enum ContextOperation {
     BufferOperation(language::Operation),
 }
 
-impl ContextOperation {
+impl TextThreadOperation {
     pub fn from_proto(op: proto::ContextOperation) -> Result<Self> {
         match op.variant.context("invalid variant")? {
             proto::context_operation::Variant::InsertMessage(insert) => {
@@ -212,7 +202,7 @@ impl ContextOperation {
                 version: language::proto::deserialize_version(&update.version),
             }),
             proto::context_operation::Variant::UpdateSummary(update) => Ok(Self::UpdateSummary {
-                summary: ContextSummaryContent {
+                summary: TextThreadSummaryContent {
                     text: update.summary,
                     done: update.done,
                     timestamp: language::proto::deserialize_timestamp(
@@ -453,7 +443,7 @@ impl ContextOperation {
 }
 
 #[derive(Debug, Clone)]
-pub enum ContextEvent {
+pub enum TextThreadEvent {
     ShowAssistError(SharedString),
     ShowPaymentRequiredError,
     MessagesEdited,
@@ -476,24 +466,24 @@ pub enum ContextEvent {
     SlashCommandOutputSectionAdded {
         section: SlashCommandOutputSection<language::Anchor>,
     },
-    Operation(ContextOperation),
+    Operation(TextThreadOperation),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum ContextSummary {
+pub enum TextThreadSummary {
     Pending,
-    Content(ContextSummaryContent),
+    Content(TextThreadSummaryContent),
     Error,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ContextSummaryContent {
+pub struct TextThreadSummaryContent {
     pub text: String,
     pub done: bool,
     pub timestamp: clock::Lamport,
 }
 
-impl ContextSummary {
+impl TextThreadSummary {
     pub const DEFAULT: &str = "New Text Thread";
 
     pub fn or_default(&self) -> SharedString {
@@ -505,48 +495,48 @@ impl ContextSummary {
             .map_or_else(|| message.into(), |content| content.text.clone().into())
     }
 
-    pub fn content(&self) -> Option<&ContextSummaryContent> {
+    pub fn content(&self) -> Option<&TextThreadSummaryContent> {
         match self {
-            ContextSummary::Content(content) => Some(content),
-            ContextSummary::Pending | ContextSummary::Error => None,
+            TextThreadSummary::Content(content) => Some(content),
+            TextThreadSummary::Pending | TextThreadSummary::Error => None,
         }
     }
 
-    fn content_as_mut(&mut self) -> Option<&mut ContextSummaryContent> {
+    fn content_as_mut(&mut self) -> Option<&mut TextThreadSummaryContent> {
         match self {
-            ContextSummary::Content(content) => Some(content),
-            ContextSummary::Pending | ContextSummary::Error => None,
+            TextThreadSummary::Content(content) => Some(content),
+            TextThreadSummary::Pending | TextThreadSummary::Error => None,
         }
     }
 
-    fn content_or_set_empty(&mut self) -> &mut ContextSummaryContent {
+    fn content_or_set_empty(&mut self) -> &mut TextThreadSummaryContent {
         match self {
-            ContextSummary::Content(content) => content,
-            ContextSummary::Pending | ContextSummary::Error => {
-                let content = ContextSummaryContent {
+            TextThreadSummary::Content(content) => content,
+            TextThreadSummary::Pending | TextThreadSummary::Error => {
+                let content = TextThreadSummaryContent {
                     text: "".to_string(),
                     done: false,
                     timestamp: clock::Lamport::MIN,
                 };
-                *self = ContextSummary::Content(content);
+                *self = TextThreadSummary::Content(content);
                 self.content_as_mut().unwrap()
             }
         }
     }
 
     pub fn is_pending(&self) -> bool {
-        matches!(self, ContextSummary::Pending)
+        matches!(self, TextThreadSummary::Pending)
     }
 
     fn timestamp(&self) -> Option<clock::Lamport> {
         match self {
-            ContextSummary::Content(content) => Some(content.timestamp),
-            ContextSummary::Pending | ContextSummary::Error => None,
+            TextThreadSummary::Content(content) => Some(content.timestamp),
+            TextThreadSummary::Pending | TextThreadSummary::Error => None,
         }
     }
 }
 
-impl PartialOrd for ContextSummary {
+impl PartialOrd for TextThreadSummary {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         self.timestamp().partial_cmp(&other.timestamp())
     }
@@ -668,27 +658,27 @@ struct PendingCompletion {
 #[derive(Copy, Clone, Debug, Hash, Eq, PartialEq)]
 pub struct InvokedSlashCommandId(clock::Lamport);
 
-pub struct AssistantContext {
-    id: ContextId,
+pub struct TextThread {
+    id: TextThreadId,
     timestamp: clock::Lamport,
     version: clock::Global,
-    pending_ops: Vec<ContextOperation>,
-    operations: Vec<ContextOperation>,
+    pub(crate) pending_ops: Vec<TextThreadOperation>,
+    operations: Vec<TextThreadOperation>,
     buffer: Entity<Buffer>,
-    parsed_slash_commands: Vec<ParsedSlashCommand>,
+    pub(crate) parsed_slash_commands: Vec<ParsedSlashCommand>,
     invoked_slash_commands: HashMap<InvokedSlashCommandId, InvokedSlashCommand>,
     edits_since_last_parse: language::Subscription,
     slash_commands: Arc<SlashCommandWorkingSet>,
-    slash_command_output_sections: Vec<SlashCommandOutputSection<language::Anchor>>,
+    pub(crate) slash_command_output_sections: Vec<SlashCommandOutputSection<language::Anchor>>,
     thought_process_output_sections: Vec<ThoughtProcessOutputSection<language::Anchor>>,
-    message_anchors: Vec<MessageAnchor>,
+    pub(crate) message_anchors: Vec<MessageAnchor>,
     contents: Vec<Content>,
-    messages_metadata: HashMap<MessageId, MessageMetadata>,
-    summary: ContextSummary,
+    pub(crate) messages_metadata: HashMap<MessageId, MessageMetadata>,
+    summary: TextThreadSummary,
     summary_task: Task<Option<()>>,
     completion_count: usize,
     pending_completions: Vec<PendingCompletion>,
-    token_count: Option<u64>,
+    pub(crate) token_count: Option<u64>,
     pending_token_count: Task<Option<()>>,
     pending_save: Task<Result<()>>,
     pending_cache_warming_task: Task<Option<()>>,
@@ -711,9 +701,9 @@ impl ContextAnnotation for ParsedSlashCommand {
     }
 }
 
-impl EventEmitter<ContextEvent> for AssistantContext {}
+impl EventEmitter<TextThreadEvent> for TextThread {}
 
-impl AssistantContext {
+impl TextThread {
     pub fn local(
         language_registry: Arc<LanguageRegistry>,
         project: Option<Entity<Project>>,
@@ -723,7 +713,7 @@ impl AssistantContext {
         cx: &mut Context<Self>,
     ) -> Self {
         Self::new(
-            ContextId::new(),
+            TextThreadId::new(),
             ReplicaId::default(),
             language::Capability::ReadWrite,
             language_registry,
@@ -744,7 +734,7 @@ impl AssistantContext {
     }
 
     pub fn new(
-        id: ContextId,
+        id: TextThreadId,
         replica_id: ReplicaId,
         capability: language::Capability,
         language_registry: Arc<LanguageRegistry>,
@@ -780,7 +770,7 @@ impl AssistantContext {
             slash_command_output_sections: Vec::new(),
             thought_process_output_sections: Vec::new(),
             edits_since_last_parse: edits_since_last_slash_command_parse,
-            summary: ContextSummary::Pending,
+            summary: TextThreadSummary::Pending,
             summary_task: Task::ready(None),
             completion_count: Default::default(),
             pending_completions: Default::default(),
@@ -823,12 +813,12 @@ impl AssistantContext {
         this
     }
 
-    pub(crate) fn serialize(&self, cx: &App) -> SavedContext {
+    pub(crate) fn serialize(&self, cx: &App) -> SavedTextThread {
         let buffer = self.buffer.read(cx);
-        SavedContext {
+        SavedTextThread {
             id: Some(self.id.clone()),
             zed: "context".into(),
-            version: SavedContext::VERSION.into(),
+            version: SavedTextThread::VERSION.into(),
             text: buffer.text(),
             messages: self
                 .messages(cx)
@@ -876,7 +866,7 @@ impl AssistantContext {
     }
 
     pub fn deserialize(
-        saved_context: SavedContext,
+        saved_context: SavedTextThread,
         path: Arc<Path>,
         language_registry: Arc<LanguageRegistry>,
         prompt_builder: Arc<PromptBuilder>,
@@ -885,7 +875,7 @@ impl AssistantContext {
         telemetry: Option<Arc<Telemetry>>,
         cx: &mut Context<Self>,
     ) -> Self {
-        let id = saved_context.id.clone().unwrap_or_else(ContextId::new);
+        let id = saved_context.id.clone().unwrap_or_else(TextThreadId::new);
         let mut this = Self::new(
             id,
             ReplicaId::default(),
@@ -906,7 +896,7 @@ impl AssistantContext {
         this
     }
 
-    pub fn id(&self) -> &ContextId {
+    pub fn id(&self) -> &TextThreadId {
         &self.id
     }
 
@@ -914,9 +904,9 @@ impl AssistantContext {
         self.timestamp.replica_id
     }
 
-    pub fn version(&self, cx: &App) -> ContextVersion {
-        ContextVersion {
-            context: self.version.clone(),
+    pub fn version(&self, cx: &App) -> TextThreadVersion {
+        TextThreadVersion {
+            text_thread: self.version.clone(),
             buffer: self.buffer.read(cx).version(),
         }
     }
@@ -938,7 +928,7 @@ impl AssistantContext {
 
     pub fn serialize_ops(
         &self,
-        since: &ContextVersion,
+        since: &TextThreadVersion,
         cx: &App,
     ) -> Task<Vec<proto::ContextOperation>> {
         let buffer_ops = self
@@ -949,7 +939,7 @@ impl AssistantContext {
         let mut context_ops = self
             .operations
             .iter()
-            .filter(|op| !since.context.observed(op.timestamp()))
+            .filter(|op| !since.text_thread.observed(op.timestamp()))
             .cloned()
             .collect::<Vec<_>>();
         context_ops.extend(self.pending_ops.iter().cloned());
@@ -973,13 +963,13 @@ impl AssistantContext {
 
     pub fn apply_ops(
         &mut self,
-        ops: impl IntoIterator<Item = ContextOperation>,
+        ops: impl IntoIterator<Item = TextThreadOperation>,
         cx: &mut Context<Self>,
     ) {
         let mut buffer_ops = Vec::new();
         for op in ops {
             match op {
-                ContextOperation::BufferOperation(buffer_op) => buffer_ops.push(buffer_op),
+                TextThreadOperation::BufferOperation(buffer_op) => buffer_ops.push(buffer_op),
                 op @ _ => self.pending_ops.push(op),
             }
         }
@@ -988,7 +978,7 @@ impl AssistantContext {
         self.flush_ops(cx);
     }
 
-    fn flush_ops(&mut self, cx: &mut Context<AssistantContext>) {
+    fn flush_ops(&mut self, cx: &mut Context<TextThread>) {
         let mut changed_messages = HashSet::default();
         let mut summary_generated = false;
 
@@ -1001,7 +991,7 @@ impl AssistantContext {
 
             let timestamp = op.timestamp();
             match op.clone() {
-                ContextOperation::InsertMessage {
+                TextThreadOperation::InsertMessage {
                     anchor, metadata, ..
                 } => {
                     if self.messages_metadata.contains_key(&anchor.id) {
@@ -1011,7 +1001,7 @@ impl AssistantContext {
                         self.insert_message(anchor, metadata, cx);
                     }
                 }
-                ContextOperation::UpdateMessage {
+                TextThreadOperation::UpdateMessage {
                     message_id,
                     metadata: new_metadata,
                     ..
@@ -1022,7 +1012,7 @@ impl AssistantContext {
                         changed_messages.insert(message_id);
                     }
                 }
-                ContextOperation::UpdateSummary {
+                TextThreadOperation::UpdateSummary {
                     summary: new_summary,
                     ..
                 } => {
@@ -1031,11 +1021,11 @@ impl AssistantContext {
                         .timestamp()
                         .is_none_or(|current_timestamp| new_summary.timestamp > current_timestamp)
                     {
-                        self.summary = ContextSummary::Content(new_summary);
+                        self.summary = TextThreadSummary::Content(new_summary);
                         summary_generated = true;
                     }
                 }
-                ContextOperation::SlashCommandStarted {
+                TextThreadOperation::SlashCommandStarted {
                     id,
                     output_range,
                     name,
@@ -1052,9 +1042,9 @@ impl AssistantContext {
                             timestamp: id.0,
                         },
                     );
-                    cx.emit(ContextEvent::InvokedSlashCommandChanged { command_id: id });
+                    cx.emit(TextThreadEvent::InvokedSlashCommandChanged { command_id: id });
                 }
-                ContextOperation::SlashCommandOutputSectionAdded { section, .. } => {
+                TextThreadOperation::SlashCommandOutputSectionAdded { section, .. } => {
                     let buffer = self.buffer.read(cx);
                     if let Err(ix) = self
                         .slash_command_output_sections
@@ -1062,10 +1052,10 @@ impl AssistantContext {
                     {
                         self.slash_command_output_sections
                             .insert(ix, section.clone());
-                        cx.emit(ContextEvent::SlashCommandOutputSectionAdded { section });
+                        cx.emit(TextThreadEvent::SlashCommandOutputSectionAdded { section });
                     }
                 }
-                ContextOperation::ThoughtProcessOutputSectionAdded { section, .. } => {
+                TextThreadOperation::ThoughtProcessOutputSectionAdded { section, .. } => {
                     let buffer = self.buffer.read(cx);
                     if let Err(ix) = self
                         .thought_process_output_sections
@@ -1075,7 +1065,7 @@ impl AssistantContext {
                             .insert(ix, section.clone());
                     }
                 }
-                ContextOperation::SlashCommandFinished {
+                TextThreadOperation::SlashCommandFinished {
                     id,
                     error_message,
                     timestamp,
@@ -1094,10 +1084,10 @@ impl AssistantContext {
                                 slash_command.status = InvokedSlashCommandStatus::Finished;
                             }
                         }
-                        cx.emit(ContextEvent::InvokedSlashCommandChanged { command_id: id });
+                        cx.emit(TextThreadEvent::InvokedSlashCommandChanged { command_id: id });
                     }
                 }
-                ContextOperation::BufferOperation(_) => unreachable!(),
+                TextThreadOperation::BufferOperation(_) => unreachable!(),
             }
 
             self.version.observe(timestamp);
@@ -1107,43 +1097,43 @@ impl AssistantContext {
 
         if !changed_messages.is_empty() {
             self.message_roles_updated(changed_messages, cx);
-            cx.emit(ContextEvent::MessagesEdited);
+            cx.emit(TextThreadEvent::MessagesEdited);
             cx.notify();
         }
 
         if summary_generated {
-            cx.emit(ContextEvent::SummaryChanged);
-            cx.emit(ContextEvent::SummaryGenerated);
+            cx.emit(TextThreadEvent::SummaryChanged);
+            cx.emit(TextThreadEvent::SummaryGenerated);
             cx.notify();
         }
     }
 
-    fn can_apply_op(&self, op: &ContextOperation, cx: &App) -> bool {
+    fn can_apply_op(&self, op: &TextThreadOperation, cx: &App) -> bool {
         if !self.version.observed_all(op.version()) {
             return false;
         }
 
         match op {
-            ContextOperation::InsertMessage { anchor, .. } => self
+            TextThreadOperation::InsertMessage { anchor, .. } => self
                 .buffer
                 .read(cx)
                 .version
                 .observed(anchor.start.timestamp),
-            ContextOperation::UpdateMessage { message_id, .. } => {
+            TextThreadOperation::UpdateMessage { message_id, .. } => {
                 self.messages_metadata.contains_key(message_id)
             }
-            ContextOperation::UpdateSummary { .. } => true,
-            ContextOperation::SlashCommandStarted { output_range, .. } => {
+            TextThreadOperation::UpdateSummary { .. } => true,
+            TextThreadOperation::SlashCommandStarted { output_range, .. } => {
                 self.has_received_operations_for_anchor_range(output_range.clone(), cx)
             }
-            ContextOperation::SlashCommandOutputSectionAdded { section, .. } => {
+            TextThreadOperation::SlashCommandOutputSectionAdded { section, .. } => {
                 self.has_received_operations_for_anchor_range(section.range.clone(), cx)
             }
-            ContextOperation::ThoughtProcessOutputSectionAdded { section, .. } => {
+            TextThreadOperation::ThoughtProcessOutputSectionAdded { section, .. } => {
                 self.has_received_operations_for_anchor_range(section.range.clone(), cx)
             }
-            ContextOperation::SlashCommandFinished { .. } => true,
-            ContextOperation::BufferOperation(_) => {
+            TextThreadOperation::SlashCommandFinished { .. } => true,
+            TextThreadOperation::BufferOperation(_) => {
                 panic!("buffer operations should always be applied")
             }
         }
@@ -1164,9 +1154,9 @@ impl AssistantContext {
         observed_start && observed_end
     }
 
-    fn push_op(&mut self, op: ContextOperation, cx: &mut Context<Self>) {
+    fn push_op(&mut self, op: TextThreadOperation, cx: &mut Context<Self>) {
         self.operations.push(op.clone());
-        cx.emit(ContextEvent::Operation(op));
+        cx.emit(TextThreadEvent::Operation(op));
     }
 
     pub fn buffer(&self) -> &Entity<Buffer> {
@@ -1189,7 +1179,7 @@ impl AssistantContext {
         self.path.as_ref()
     }
 
-    pub fn summary(&self) -> &ContextSummary {
+    pub fn summary(&self) -> &TextThreadSummary {
         &self.summary
     }
 
@@ -1250,13 +1240,13 @@ impl AssistantContext {
             language::BufferEvent::Operation {
                 operation,
                 is_local: true,
-            } => cx.emit(ContextEvent::Operation(ContextOperation::BufferOperation(
-                operation.clone(),
-            ))),
+            } => cx.emit(TextThreadEvent::Operation(
+                TextThreadOperation::BufferOperation(operation.clone()),
+            )),
             language::BufferEvent::Edited => {
                 self.count_remaining_tokens(cx);
                 self.reparse(cx);
-                cx.emit(ContextEvent::MessagesEdited);
+                cx.emit(TextThreadEvent::MessagesEdited);
             }
             _ => {}
         }
@@ -1522,7 +1512,7 @@ impl AssistantContext {
         if !updated_parsed_slash_commands.is_empty()
             || !removed_parsed_slash_command_ranges.is_empty()
         {
-            cx.emit(ContextEvent::ParsedSlashCommandsUpdated {
+            cx.emit(TextThreadEvent::ParsedSlashCommandsUpdated {
                 removed: removed_parsed_slash_command_ranges,
                 updated: updated_parsed_slash_commands,
             });
@@ -1596,7 +1586,7 @@ impl AssistantContext {
                 && (!command.range.start.is_valid(buffer) || !command.range.end.is_valid(buffer))
             {
                 command.status = InvokedSlashCommandStatus::Finished;
-                cx.emit(ContextEvent::InvokedSlashCommandChanged { command_id });
+                cx.emit(TextThreadEvent::InvokedSlashCommandChanged { command_id });
                 invalidated_command_ids.push(command_id);
             }
         }
@@ -1605,7 +1595,7 @@ impl AssistantContext {
             let version = self.version.clone();
             let timestamp = self.next_timestamp();
             self.push_op(
-                ContextOperation::SlashCommandFinished {
+                TextThreadOperation::SlashCommandFinished {
                     id: command_id,
                     timestamp,
                     error_message: None,
@@ -1910,9 +1900,9 @@ impl AssistantContext {
                     }
                 }
 
-                cx.emit(ContextEvent::InvokedSlashCommandChanged { command_id });
+                cx.emit(TextThreadEvent::InvokedSlashCommandChanged { command_id });
                 this.push_op(
-                    ContextOperation::SlashCommandFinished {
+                    TextThreadOperation::SlashCommandFinished {
                         id: command_id,
                         timestamp,
                         error_message,
@@ -1935,9 +1925,9 @@ impl AssistantContext {
                 timestamp: command_id.0,
             },
         );
-        cx.emit(ContextEvent::InvokedSlashCommandChanged { command_id });
+        cx.emit(TextThreadEvent::InvokedSlashCommandChanged { command_id });
         self.push_op(
-            ContextOperation::SlashCommandStarted {
+            TextThreadOperation::SlashCommandStarted {
                 id: command_id,
                 output_range: command_range,
                 name: name.to_string(),
@@ -1961,13 +1951,13 @@ impl AssistantContext {
         };
         self.slash_command_output_sections
             .insert(insertion_ix, section.clone());
-        cx.emit(ContextEvent::SlashCommandOutputSectionAdded {
+        cx.emit(TextThreadEvent::SlashCommandOutputSectionAdded {
             section: section.clone(),
         });
         let version = self.version.clone();
         let timestamp = self.next_timestamp();
         self.push_op(
-            ContextOperation::SlashCommandOutputSectionAdded {
+            TextThreadOperation::SlashCommandOutputSectionAdded {
                 timestamp,
                 section,
                 version,
@@ -1996,7 +1986,7 @@ impl AssistantContext {
         let version = self.version.clone();
         let timestamp = self.next_timestamp();
         self.push_op(
-            ContextOperation::ThoughtProcessOutputSectionAdded {
+            TextThreadOperation::ThoughtProcessOutputSectionAdded {
                 timestamp,
                 section,
                 version,
@@ -2115,7 +2105,7 @@ impl AssistantContext {
                                             let end = buffer
                                                 .anchor_before(message_old_end_offset + chunk_len);
                                             context_event = Some(
-                                                ContextEvent::StartedThoughtProcess(start..end),
+                                                TextThreadEvent::StartedThoughtProcess(start..end),
                                             );
                                         } else {
                                             // This ensures that all the thinking chunks are inserted inside the thinking tag
@@ -2133,7 +2123,7 @@ impl AssistantContext {
                                         if let Some(start) = thought_process_stack.pop() {
                                             let end = buffer.anchor_before(message_old_end_offset);
                                             context_event =
-                                                Some(ContextEvent::EndedThoughtProcess(end));
+                                                Some(TextThreadEvent::EndedThoughtProcess(end));
                                             thought_process_output_section =
                                                 Some(ThoughtProcessOutputSection {
                                                     range: start..end,
@@ -2163,7 +2153,7 @@ impl AssistantContext {
                                 cx.emit(context_event);
                             }
 
-                            cx.emit(ContextEvent::StreamedCompletion);
+                            cx.emit(TextThreadEvent::StreamedCompletion);
 
                             Some(())
                         })?;
@@ -2184,7 +2174,7 @@ impl AssistantContext {
                 this.update(cx, |this, cx| {
                     let error_message = if let Some(error) = result.as_ref().err() {
                         if error.is::<PaymentRequiredError>() {
-                            cx.emit(ContextEvent::ShowPaymentRequiredError);
+                            cx.emit(TextThreadEvent::ShowPaymentRequiredError);
                             this.update_metadata(assistant_message_id, cx, |metadata| {
                                 metadata.status = MessageStatus::Canceled;
                             });
@@ -2195,7 +2185,7 @@ impl AssistantContext {
                                 .map(|err| err.to_string())
                                 .collect::<Vec<_>>()
                                 .join("\n");
-                            cx.emit(ContextEvent::ShowAssistError(SharedString::from(
+                            cx.emit(TextThreadEvent::ShowAssistError(SharedString::from(
                                 error_message.clone(),
                             )));
                             this.update_metadata(assistant_message_id, cx, |metadata| {
@@ -2412,13 +2402,13 @@ impl AssistantContext {
         if let Some(metadata) = self.messages_metadata.get_mut(&id) {
             f(metadata);
             metadata.timestamp = timestamp;
-            let operation = ContextOperation::UpdateMessage {
+            let operation = TextThreadOperation::UpdateMessage {
                 message_id: id,
                 metadata: metadata.clone(),
                 version,
             };
             self.push_op(operation, cx);
-            cx.emit(ContextEvent::MessagesEdited);
+            cx.emit(TextThreadEvent::MessagesEdited);
             cx.notify();
         }
     }
@@ -2482,7 +2472,7 @@ impl AssistantContext {
         };
         self.insert_message(anchor.clone(), metadata.clone(), cx);
         self.push_op(
-            ContextOperation::InsertMessage {
+            TextThreadOperation::InsertMessage {
                 anchor: anchor.clone(),
                 metadata,
                 version,
@@ -2505,7 +2495,7 @@ impl AssistantContext {
             Err(ix) => ix,
         };
         self.contents.insert(insertion_ix, content);
-        cx.emit(ContextEvent::MessagesEdited);
+        cx.emit(TextThreadEvent::MessagesEdited);
     }
 
     pub fn contents<'a>(&'a self, cx: &'a App) -> impl 'a + Iterator<Item = Content> {
@@ -2580,7 +2570,7 @@ impl AssistantContext {
             };
             self.insert_message(suffix.clone(), suffix_metadata.clone(), cx);
             self.push_op(
-                ContextOperation::InsertMessage {
+                TextThreadOperation::InsertMessage {
                     anchor: suffix.clone(),
                     metadata: suffix_metadata,
                     version,
@@ -2630,7 +2620,7 @@ impl AssistantContext {
                     };
                     self.insert_message(selection.clone(), selection_metadata.clone(), cx);
                     self.push_op(
-                        ContextOperation::InsertMessage {
+                        TextThreadOperation::InsertMessage {
                             anchor: selection.clone(),
                             metadata: selection_metadata,
                             version,
@@ -2642,7 +2632,7 @@ impl AssistantContext {
                 };
 
             if !edited_buffer {
-                cx.emit(ContextEvent::MessagesEdited);
+                cx.emit(TextThreadEvent::MessagesEdited);
             }
             new_messages
         } else {
@@ -2656,7 +2646,7 @@ impl AssistantContext {
         new_metadata: MessageMetadata,
         cx: &mut Context<Self>,
     ) {
-        cx.emit(ContextEvent::MessagesEdited);
+        cx.emit(TextThreadEvent::MessagesEdited);
 
         self.messages_metadata.insert(new_anchor.id, new_metadata);
 
@@ -2692,15 +2682,15 @@ impl AssistantContext {
             // If there is no summary, it is set with `done: false` so that "Loading Summary…" can
             // be displayed.
             match self.summary {
-                ContextSummary::Pending | ContextSummary::Error => {
-                    self.summary = ContextSummary::Content(ContextSummaryContent {
+                TextThreadSummary::Pending | TextThreadSummary::Error => {
+                    self.summary = TextThreadSummary::Content(TextThreadSummaryContent {
                         text: "".to_string(),
                         done: false,
                         timestamp: clock::Lamport::MIN,
                     });
                     replace_old = true;
                 }
-                ContextSummary::Content(_) => {}
+                TextThreadSummary::Content(_) => {}
             }
 
             self.summary_task = cx.spawn(async move |this, cx| {
@@ -2722,13 +2712,13 @@ impl AssistantContext {
                             }
                             summary.text.extend(lines.next());
                             summary.timestamp = timestamp;
-                            let operation = ContextOperation::UpdateSummary {
+                            let operation = TextThreadOperation::UpdateSummary {
                                 summary: summary.clone(),
                                 version,
                             };
                             this.push_op(operation, cx);
-                            cx.emit(ContextEvent::SummaryChanged);
-                            cx.emit(ContextEvent::SummaryGenerated);
+                            cx.emit(TextThreadEvent::SummaryChanged);
+                            cx.emit(TextThreadEvent::SummaryGenerated);
                         })?;
 
                         // Stop if the LLM generated multiple lines.
@@ -2752,13 +2742,13 @@ impl AssistantContext {
                         if let Some(summary) = this.summary.content_as_mut() {
                             summary.done = true;
                             summary.timestamp = timestamp;
-                            let operation = ContextOperation::UpdateSummary {
+                            let operation = TextThreadOperation::UpdateSummary {
                                 summary: summary.clone(),
                                 version,
                             };
                             this.push_op(operation, cx);
-                            cx.emit(ContextEvent::SummaryChanged);
-                            cx.emit(ContextEvent::SummaryGenerated);
+                            cx.emit(TextThreadEvent::SummaryChanged);
+                            cx.emit(TextThreadEvent::SummaryGenerated);
                         }
                     })?;
 
@@ -2768,8 +2758,8 @@ impl AssistantContext {
 
                 if let Err(err) = result {
                     this.update(cx, |this, cx| {
-                        this.summary = ContextSummary::Error;
-                        cx.emit(ContextEvent::SummaryChanged);
+                        this.summary = TextThreadSummary::Error;
+                        cx.emit(TextThreadEvent::SummaryChanged);
                     })
                     .log_err();
                     log::error!("Error generating context summary: {}", err);
@@ -2875,7 +2865,7 @@ impl AssistantContext {
         &mut self,
         debounce: Option<Duration>,
         fs: Arc<dyn Fs>,
-        cx: &mut Context<AssistantContext>,
+        cx: &mut Context<TextThread>,
     ) {
         if self.replica_id() != ReplicaId::default() {
             // Prevent saving a remote context for now.
@@ -2906,7 +2896,7 @@ impl AssistantContext {
                 let mut discriminant = 1;
                 let mut new_path;
                 loop {
-                    new_path = contexts_dir().join(&format!(
+                    new_path = text_threads_dir().join(&format!(
                         "{} - {}.zed.json",
                         summary.trim(),
                         discriminant
@@ -2918,7 +2908,7 @@ impl AssistantContext {
                     }
                 }
 
-                fs.create_dir(contexts_dir().as_ref()).await?;
+                fs.create_dir(text_threads_dir().as_ref()).await?;
 
                 // rename before write ensures that only one file exists
                 if let Some(old_path) = old_path.as_ref()
@@ -2940,7 +2930,7 @@ impl AssistantContext {
                     let new_path: Arc<Path> = new_path.clone().into();
                     move |this, cx| {
                         this.path = Some(new_path.clone());
-                        cx.emit(ContextEvent::PathChanged { old_path, new_path });
+                        cx.emit(TextThreadEvent::PathChanged { old_path, new_path });
                     }
                 })
                 .ok();
@@ -2959,7 +2949,7 @@ impl AssistantContext {
         summary.timestamp = timestamp;
         summary.done = true;
         summary.text = custom_summary;
-        cx.emit(ContextEvent::SummaryChanged);
+        cx.emit(TextThreadEvent::SummaryChanged);
     }
 
     fn update_model_request_usage(&self, amount: u32, limit: UsageLimit, cx: &mut App) {
@@ -2979,23 +2969,23 @@ impl AssistantContext {
 }
 
 #[derive(Debug, Default)]
-pub struct ContextVersion {
-    context: clock::Global,
+pub struct TextThreadVersion {
+    text_thread: clock::Global,
     buffer: clock::Global,
 }
 
-impl ContextVersion {
+impl TextThreadVersion {
     pub fn from_proto(proto: &proto::ContextVersion) -> Self {
         Self {
-            context: language::proto::deserialize_version(&proto.context_version),
+            text_thread: language::proto::deserialize_version(&proto.context_version),
             buffer: language::proto::deserialize_version(&proto.buffer_version),
         }
     }
 
-    pub fn to_proto(&self, context_id: ContextId) -> proto::ContextVersion {
+    pub fn to_proto(&self, context_id: TextThreadId) -> proto::ContextVersion {
         proto::ContextVersion {
             context_id: context_id.to_proto(),
-            context_version: language::proto::serialize_version(&self.context),
+            context_version: language::proto::serialize_version(&self.text_thread),
             buffer_version: language::proto::serialize_version(&self.buffer),
         }
     }
@@ -3063,8 +3053,8 @@ pub struct SavedMessage {
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct SavedContext {
-    pub id: Option<ContextId>,
+pub struct SavedTextThread {
+    pub id: Option<TextThreadId>,
     pub zed: String,
     pub version: String,
     pub text: String,
@@ -3076,7 +3066,7 @@ pub struct SavedContext {
     pub thought_process_output_sections: Vec<ThoughtProcessOutputSection<usize>>,
 }
 
-impl SavedContext {
+impl SavedTextThread {
     pub const VERSION: &'static str = "0.4.0";
 
     pub fn from_json(json: &str) -> Result<Self> {
@@ -3086,9 +3076,9 @@ impl SavedContext {
             .context("version not found")?
         {
             serde_json::Value::String(version) => match version.as_str() {
-                SavedContext::VERSION => {
-                    Ok(serde_json::from_value::<SavedContext>(saved_context_json)?)
-                }
+                SavedTextThread::VERSION => Ok(serde_json::from_value::<SavedTextThread>(
+                    saved_context_json,
+                )?),
                 SavedContextV0_3_0::VERSION => {
                     let saved_context =
                         serde_json::from_value::<SavedContextV0_3_0>(saved_context_json)?;
@@ -3113,8 +3103,8 @@ impl SavedContext {
     fn into_ops(
         self,
         buffer: &Entity<Buffer>,
-        cx: &mut Context<AssistantContext>,
-    ) -> Vec<ContextOperation> {
+        cx: &mut Context<TextThread>,
+    ) -> Vec<TextThreadOperation> {
         let mut operations = Vec::new();
         let mut version = clock::Global::new();
         let mut next_timestamp = clock::Lamport::new(ReplicaId::default());
@@ -3124,7 +3114,7 @@ impl SavedContext {
             if message.id == MessageId(clock::Lamport::MIN) {
                 first_message_metadata = Some(message.metadata);
             } else {
-                operations.push(ContextOperation::InsertMessage {
+                operations.push(TextThreadOperation::InsertMessage {
                     anchor: MessageAnchor {
                         id: message.id,
                         start: buffer.read(cx).anchor_before(message.start),
@@ -3144,7 +3134,7 @@ impl SavedContext {
 
         if let Some(metadata) = first_message_metadata {
             let timestamp = next_timestamp.tick();
-            operations.push(ContextOperation::UpdateMessage {
+            operations.push(TextThreadOperation::UpdateMessage {
                 message_id: MessageId(clock::Lamport::MIN),
                 metadata: MessageMetadata {
                     role: metadata.role,
@@ -3160,7 +3150,7 @@ impl SavedContext {
         let buffer = buffer.read(cx);
         for section in self.slash_command_output_sections {
             let timestamp = next_timestamp.tick();
-            operations.push(ContextOperation::SlashCommandOutputSectionAdded {
+            operations.push(TextThreadOperation::SlashCommandOutputSectionAdded {
                 timestamp,
                 section: SlashCommandOutputSection {
                     range: buffer.anchor_after(section.range.start)
@@ -3177,7 +3167,7 @@ impl SavedContext {
 
         for section in self.thought_process_output_sections {
             let timestamp = next_timestamp.tick();
-            operations.push(ContextOperation::ThoughtProcessOutputSectionAdded {
+            operations.push(TextThreadOperation::ThoughtProcessOutputSectionAdded {
                 timestamp,
                 section: ThoughtProcessOutputSection {
                     range: buffer.anchor_after(section.range.start)
@@ -3190,8 +3180,8 @@ impl SavedContext {
         }
 
         let timestamp = next_timestamp.tick();
-        operations.push(ContextOperation::UpdateSummary {
-            summary: ContextSummaryContent {
+        operations.push(TextThreadOperation::UpdateSummary {
+            summary: TextThreadSummaryContent {
                 text: self.summary,
                 done: true,
                 timestamp,
@@ -3221,7 +3211,7 @@ struct SavedMessageMetadataPreV0_4_0 {
 
 #[derive(Serialize, Deserialize)]
 struct SavedContextV0_3_0 {
-    id: Option<ContextId>,
+    id: Option<TextThreadId>,
     zed: String,
     version: String,
     text: String,
@@ -3234,11 +3224,11 @@ struct SavedContextV0_3_0 {
 impl SavedContextV0_3_0 {
     const VERSION: &'static str = "0.3.0";
 
-    fn upgrade(self) -> SavedContext {
-        SavedContext {
+    fn upgrade(self) -> SavedTextThread {
+        SavedTextThread {
             id: self.id,
             zed: self.zed,
-            version: SavedContext::VERSION.into(),
+            version: SavedTextThread::VERSION.into(),
             text: self.text,
             messages: self
                 .messages
@@ -3270,7 +3260,7 @@ impl SavedContextV0_3_0 {
 
 #[derive(Serialize, Deserialize)]
 struct SavedContextV0_2_0 {
-    id: Option<ContextId>,
+    id: Option<TextThreadId>,
     zed: String,
     version: String,
     text: String,
@@ -3282,7 +3272,7 @@ struct SavedContextV0_2_0 {
 impl SavedContextV0_2_0 {
     const VERSION: &'static str = "0.2.0";
 
-    fn upgrade(self) -> SavedContext {
+    fn upgrade(self) -> SavedTextThread {
         SavedContextV0_3_0 {
             id: self.id,
             zed: self.zed,
@@ -3299,7 +3289,7 @@ impl SavedContextV0_2_0 {
 
 #[derive(Serialize, Deserialize)]
 struct SavedContextV0_1_0 {
-    id: Option<ContextId>,
+    id: Option<TextThreadId>,
     zed: String,
     version: String,
     text: String,
@@ -3313,7 +3303,7 @@ struct SavedContextV0_1_0 {
 impl SavedContextV0_1_0 {
     const VERSION: &'static str = "0.1.0";
 
-    fn upgrade(self) -> SavedContext {
+    fn upgrade(self) -> SavedTextThread {
         SavedContextV0_2_0 {
             id: self.id,
             zed: self.zed,
@@ -3328,7 +3318,7 @@ impl SavedContextV0_1_0 {
 }
 
 #[derive(Debug, Clone)]
-pub struct SavedContextMetadata {
+pub struct SavedTextThreadMetadata {
     pub title: SharedString,
     pub path: Arc<Path>,
     pub mtime: chrono::DateTime<chrono::Local>,

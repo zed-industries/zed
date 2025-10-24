@@ -1,7 +1,11 @@
 # Edit Prediction
 
-Edit Prediction is Zed's native mechanism for predicting the code you want to write through AI.
-Each keystroke sends a new request to our [open source, open dataset Zeta model](https://huggingface.co/zed-industries/zeta) and it returns with individual or multi-line suggestions that can be quickly accepted by pressing `tab`.
+Edit Prediction is Zed's mechanism for predicting the code you want to write through AI.
+Each keystroke sends a new request to the edit prediction provider, which returns individual or multi-line suggestions that can be quickly accepted by pressing `tab`.
+
+The default provider is [Zeta, a proprietary open source and open dataset model](https://huggingface.co/zed-industries/zeta), which [requires being signed into Zed](../accounts.md#what-features-require-signing-in).
+
+Alternatively, you can use other providers like [GitHub Copilot](#github-copilot) (or [Enterprise](#github-copilot-enterprise)) or [Supermaven](#supermaven).
 
 ## Configuring Zeta
 

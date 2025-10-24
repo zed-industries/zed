@@ -337,10 +337,9 @@ impl Render for Onboarding {
                                                 KeyBinding::for_action_in(
                                                     &Finish,
                                                     &self.focus_handle,
-                                                    window,
                                                     cx,
                                                 )
-                                                .map(|kb| kb.size(rems_from_px(12.))),
+                                                .size(rems_from_px(12.)),
                                             )
                                             .on_click(|_, window, cx| {
                                                 window.dispatch_action(Finish.boxed_clone(), cx);
@@ -384,14 +383,14 @@ impl Item for Onboarding {
         _workspace_id: Option<WorkspaceId>,
         _: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Task<Option<Entity<Self>>> {
-        Task::ready(Some(cx.new(|cx| Onboarding {
+    ) -> Option<Entity<Self>> {
+        Some(cx.new(|cx| Onboarding {
             workspace: self.workspace.clone(),
             user_store: self.user_store.clone(),
             scroll_handle: ScrollHandle::new(),
             focus_handle: cx.focus_handle(),
             _settings_subscription: cx.observe_global::<SettingsStore>(move |_, cx| cx.notify()),
-        })))
+        }))
     }
 
     fn to_item_events(event: &Self::Event, mut f: impl FnMut(workspace::item::ItemEvent)) {
