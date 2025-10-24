@@ -648,10 +648,10 @@ impl MarkdownElement {
                 }
 
                 if markdown.selection.pending {
-                    let source_index = match rendered_text.source_index_for_position(event.position)
-                    {
-                        Ok(ix) | Err(ix) => ix,
-                    };
+                    let source_index =
+                        match rendered_text.closest_source_index_for_position(event.position) {
+                            Ok(ix) | Err(ix) => ix,
+                        };
                     markdown.selection.set_head(source_index);
                     markdown.autoscroll_request = Some(source_index);
                     cx.notify();
@@ -1661,9 +1661,26 @@ impl RenderedLine {
     }
 
     fn source_index_for_position(&self, position: Point<Pixels>) -> Result<usize, usize> {
+        self._source_index_for_position(position, false)
+    }
+
+    fn closest_source_index_for_position(&self, position: Point<Pixels>) -> Result<usize, usize> {
+        self._source_index_for_position(position, true)
+    }
+
+    fn _source_index_for_position(
+        &self,
+        position: Point<Pixels>,
+        closest: bool,
+    ) -> Result<usize, usize> {
         let line_rendered_index;
         let out_of_bounds;
-        match self.layout.index_for_position(position) {
+        let index_for_position = if closest {
+            self.layout.closest_index_for_position(position)
+        } else {
+            self.layout.index_for_position(position)
+        };
+        match index_for_position {
             Ok(ix) => {
                 line_rendered_index = ix;
                 out_of_bounds = false;
@@ -1707,6 +1724,18 @@ struct RenderedLink {
 
 impl RenderedText {
     fn source_index_for_position(&self, position: Point<Pixels>) -> Result<usize, usize> {
+        self._source_index_for_position(position, false)
+    }
+
+    fn closest_source_index_for_position(&self, position: Point<Pixels>) -> Result<usize, usize> {
+        self._source_index_for_position(position, true)
+    }
+
+    fn _source_index_for_position(
+        &self,
+        position: Point<Pixels>,
+        closest: bool,
+    ) -> Result<usize, usize> {
         let mut lines = self.lines.iter().peekable();
 
         while let Some(line) = lines.next() {
@@ -1721,7 +1750,11 @@ impl RenderedText {
                 continue;
             }
 
-            return line.source_index_for_position(position);
+            return if closest {
+                line.closest_source_index_for_position(position)
+            } else {
+                line.source_index_for_position(position)
+            };
         }
 
         Err(self.lines.last().map_or(0, |line| line.source_end))
