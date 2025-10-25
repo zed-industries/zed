@@ -1097,14 +1097,16 @@ pub fn compare_paths(
     }
 }
 
-#[cfg(target_os = "windows")]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WslPath {
     pub distro: String,
+
+    // the reason this is an OsString and not any of the path types is that it needs to
+    // represent a unix path (with '/' separators) on windows. `from_path` does this by
+    // manually constructing it from the path components of a given windows path.
     pub path: std::ffi::OsString,
 }
 
-#[cfg(target_os = "windows")]
 impl WslPath {
     pub fn from_path<P: AsRef<Path>>(path: P) -> Option<WslPath> {
         if cfg!(not(target_os = "windows")) {
