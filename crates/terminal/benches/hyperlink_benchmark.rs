@@ -10,7 +10,7 @@ use std::hint::black_box;
 use terminal::bench::find_from_grid_point_bench;
 
 fn build_test_term(line: &str) -> (Term<VoidListener>, AlacPoint) {
-    let content = line.repeat(4000);
+    let content = line.repeat(500);
     let term = mock_term(&content);
     let point = AlacPoint::new(
         term.grid().bottommost_line() - 1,
