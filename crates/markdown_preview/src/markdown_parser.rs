@@ -466,7 +466,10 @@ impl<'a> MarkdownParser<'a> {
         let mut body = vec![];
         let mut row_columns = vec![];
         let mut in_header = true;
-        let column_alignments = alignment.iter().map(Self::convert_alignment).collect();
+        let column_alignments = alignment
+            .iter()
+            .map(Self::convert_alignment)
+            .collect::<Vec<_>>();
 
         loop {
             if self.eof() {
@@ -489,6 +492,10 @@ impl<'a> MarkdownParser<'a> {
                         row_span: 1,
                         is_header: in_header,
                         children: cell_contents,
+                        alignment: column_alignments
+                            .get(row_columns.len())
+                            .copied()
+                            .unwrap_or_default(),
                     });
                 }
                 Event::End(TagEnd::TableHead) | Event::End(TagEnd::TableRow) => {
@@ -515,7 +522,6 @@ impl<'a> MarkdownParser<'a> {
             source_range,
             header,
             body,
-            column_alignments,
         }
     }
 
@@ -988,6 +994,8 @@ impl<'a> MarkdownParser<'a> {
                 let mut children = MarkdownParagraph::new();
                 self.consume_paragraph(source_range, node, &mut children);
 
+                let is_header = matches!(name.local, local_name!("th"));
+
                 Some(ParsedMarkdownTableColumn {
                     col_span: std::cmp::max(
                         Self::attr_value(attrs, local_name!("colspan"))
@@ -1001,8 +1009,22 @@ impl<'a> MarkdownParser<'a> {
                             .unwrap_or(1),
                         1,
                     ),
-                    is_header: matches!(name.local, local_name!("th")),
+                    is_header,
                     children,
+                    alignment: Self::attr_value(attrs, local_name!("align"))
+                        .and_then(|align| match align.as_str() {
+                            "left" => Some(ParsedMarkdownTableAlignment::Left),
+                            "center" => Some(ParsedMarkdownTableAlignment::Center),
+                            "right" => Some(ParsedMarkdownTableAlignment::Right),
+                            _ => None,
+                        })
+                        .unwrap_or_else(|| {
+                            if is_header {
+                                ParsedMarkdownTableAlignment::Center
+                            } else {
+                                ParsedMarkdownTableAlignment::default()
+                            }
+                        }),
                 })
             }
             _ => None,
@@ -1155,7 +1177,6 @@ impl<'a> MarkdownParser<'a> {
             Some(ParsedMarkdownTable {
                 source_range,
                 body: body_rows,
-                column_alignments: Vec::default(),
                 header: header_rows,
             })
         } else {
@@ -1653,17 +1674,53 @@ mod tests {
                 children: vec![ParsedMarkdownElement::Table(table(
                     0..366,
                     vec![row(vec![
-                        column(1, 1, true, text("Id", 0..366)),
-                        column(1, 1, true, text("Name ", 0..366))
+                        column(
+                            1,
+                            1,
+                            true,
+                            text("Id", 0..366),
+                            ParsedMarkdownTableAlignment::Center
+                        ),
+                        column(
+                            1,
+                            1,
+                            true,
+                            text("Name ", 0..366),
+                            ParsedMarkdownTableAlignment::Center
+                        )
                     ])],
                     vec![
                         row(vec![
-                            column(1, 1, false, text("1", 0..366)),
-                            column(1, 1, false, text("Chris", 0..366))
+                            column(
+                                1,
+                                1,
+                                false,
+                                text("1", 0..366),
+                                ParsedMarkdownTableAlignment::None
+                            ),
+                            column(
+                                1,
+                                1,
+                                false,
+                                text("Chris", 0..366),
+                                ParsedMarkdownTableAlignment::None
+                            )
                         ]),
                         row(vec![
-                            column(1, 1, false, text("2", 0..366)),
-                            column(1, 1, false, text("Dennis", 0..366))
+                            column(
+                                1,
+                                1,
+                                false,
+                                text("2", 0..366),
+                                ParsedMarkdownTableAlignment::None
+                            ),
+                            column(
+                                1,
+                                1,
+                                false,
+                                text("Dennis", 0..366),
+                                ParsedMarkdownTableAlignment::None
+                            )
                         ]),
                     ],
                 ))],
@@ -1697,12 +1754,36 @@ mod tests {
                     vec![],
                     vec![
                         row(vec![
-                            column(1, 1, false, text("1", 0..240)),
-                            column(1, 1, false, text("Chris", 0..240))
+                            column(
+                                1,
+                                1,
+                                false,
+                                text("1", 0..240),
+                                ParsedMarkdownTableAlignment::None
+                            ),
+                            column(
+                                1,
+                                1,
+                                false,
+                                text("Chris", 0..240),
+                                ParsedMarkdownTableAlignment::None
+                            )
                         ]),
                         row(vec![
-                            column(1, 1, false, text("2", 0..240)),
-                            column(1, 1, false, text("Dennis", 0..240))
+                            column(
+                                1,
+                                1,
+                                false,
+                                text("2", 0..240),
+                                ParsedMarkdownTableAlignment::None
+                            ),
+                            column(
+                                1,
+                                1,
+                                false,
+                                text("Dennis", 0..240),
+                                ParsedMarkdownTableAlignment::None
+                            )
                         ]),
                     ],
                 ))],
@@ -1730,8 +1811,20 @@ mod tests {
                 children: vec![ParsedMarkdownElement::Table(table(
                     0..150,
                     vec![row(vec![
-                        column(1, 1, true, text("Id", 0..150)),
-                        column(1, 1, true, text("Name", 0..150))
+                        column(
+                            1,
+                            1,
+                            true,
+                            text("Id", 0..150),
+                            ParsedMarkdownTableAlignment::Center
+                        ),
+                        column(
+                            1,
+                            1,
+                            true,
+                            text("Name", 0..150),
+                            ParsedMarkdownTableAlignment::Center
+                        )
                     ])],
                     vec![],
                 ))],
@@ -1915,8 +2008,20 @@ Some other content
         let expected_table = table(
             0..48,
             vec![row(vec![
-                column(1, 1, true, text("Header 1", 1..11)),
-                column(1, 1, true, text("Header 2", 12..22)),
+                column(
+                    1,
+                    1,
+                    true,
+                    text("Header 1", 1..11),
+                    ParsedMarkdownTableAlignment::None,
+                ),
+                column(
+                    1,
+                    1,
+                    true,
+                    text("Header 2", 12..22),
+                    ParsedMarkdownTableAlignment::None,
+                ),
             ])],
             vec![],
         );
@@ -1938,17 +2043,53 @@ Some other content
         let expected_table = table(
             0..95,
             vec![row(vec![
-                column(1, 1, true, text("Header 1", 1..11)),
-                column(1, 1, true, text("Header 2", 12..22)),
+                column(
+                    1,
+                    1,
+                    true,
+                    text("Header 1", 1..11),
+                    ParsedMarkdownTableAlignment::None,
+                ),
+                column(
+                    1,
+                    1,
+                    true,
+                    text("Header 2", 12..22),
+                    ParsedMarkdownTableAlignment::None,
+                ),
             ])],
             vec![
                 row(vec![
-                    column(1, 1, false, text("Cell 1", 49..59)),
-                    column(1, 1, false, text("Cell 2", 60..70)),
+                    column(
+                        1,
+                        1,
+                        false,
+                        text("Cell 1", 49..59),
+                        ParsedMarkdownTableAlignment::None,
+                    ),
+                    column(
+                        1,
+                        1,
+                        false,
+                        text("Cell 2", 60..70),
+                        ParsedMarkdownTableAlignment::None,
+                    ),
                 ]),
                 row(vec![
-                    column(1, 1, false, text("Cell 3", 73..83)),
-                    column(1, 1, false, text("Cell 4", 84..94)),
+                    column(
+                        1,
+                        1,
+                        false,
+                        text("Cell 3", 73..83),
+                        ParsedMarkdownTableAlignment::None,
+                    ),
+                    column(
+                        1,
+                        1,
+                        false,
+                        text("Cell 4", 84..94),
+                        ParsedMarkdownTableAlignment::None,
+                    ),
                 ]),
             ],
         );
@@ -2410,7 +2551,6 @@ fn main() {
         body: Vec<ParsedMarkdownTableRow>,
     ) -> ParsedMarkdownTable {
         ParsedMarkdownTable {
-            column_alignments: Vec::new(),
             source_range,
             header,
             body,
@@ -2426,12 +2566,14 @@ fn main() {
         row_span: usize,
         is_header: bool,
         children: MarkdownParagraph,
+        alignment: ParsedMarkdownTableAlignment,
     ) -> ParsedMarkdownTableColumn {
         ParsedMarkdownTableColumn {
             col_span,
             row_span,
             is_header,
             children,
+            alignment,
         }
     }
 
