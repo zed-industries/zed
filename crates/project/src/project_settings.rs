@@ -123,6 +123,17 @@ pub struct GlobalLspSettings {
     ///
     /// Default: `true`
     pub button: bool,
+    pub notifications: LspNotificationSettings,
+}
+
+#[derive(Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema, Debug)]
+#[serde(tag = "source", rename_all = "snake_case")]
+pub struct LspNotificationSettings {
+    /// Timeout in milliseconds for automatically dismissing language server notifications.
+    /// Set to 0 to disable auto-dismiss.
+    ///
+    /// Default: 5000
+    pub dismiss_timeout_ms: Option<u64>,
 }
 
 #[derive(Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema, Debug)]
@@ -614,6 +625,16 @@ impl Settings for ProjectSettings {
                     .unwrap()
                     .button
                     .unwrap(),
+                notifications: LspNotificationSettings {
+                    dismiss_timeout_ms: content
+                        .global_lsp_settings
+                        .as_ref()
+                        .unwrap()
+                        .notifications
+                        .as_ref()
+                        .unwrap()
+                        .dismiss_timeout_ms,
+                },
             },
             dap: project
                 .dap
