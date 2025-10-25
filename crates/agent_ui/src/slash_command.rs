@@ -127,6 +127,7 @@ impl SlashCommandCompletionProvider {
                             new_text,
                             label: command.label(cx),
                             icon_path: None,
+                            match_start: None,
                             insert_text_mode: None,
                             confirm,
                             source: CompletionSource::Custom,
@@ -232,6 +233,7 @@ impl SlashCommandCompletionProvider {
                             icon_path: None,
                             new_text,
                             documentation: None,
+                            match_start: None,
                             confirm,
                             insert_text_mode: None,
                             source: CompletionSource::Custom,
@@ -263,6 +265,7 @@ impl CompletionProvider for SlashCommandCompletionProvider {
         buffer: &Entity<Buffer>,
         buffer_position: Anchor,
         _: editor::CompletionContext,
+        _snippets_only: bool,
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) -> Task<Result<Vec<project::CompletionResponse>>> {

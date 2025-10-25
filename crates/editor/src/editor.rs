@@ -116,7 +116,7 @@ use inlays::{InlaySplice, inlay_hints::InlayHintRefreshReason};
 use itertools::{Either, Itertools};
 use language::{
     AutoindentMode, BlockCommentConfig, BracketMatch, BracketPair, Buffer, BufferRow,
-    BufferSnapshot, Capability, CharClassifier, CharKind, CharScopeContext, CodeLabel, CursorShape,
+    BufferSnapshot, Capability, CharKind, CharScopeContext, CodeLabel, CursorShape,
     DiagnosticEntryRef, DiffOptions, EditPredictionsMode, EditPreview, HighlightedText, IndentKind,
     IndentSize, Language, OffsetRangeExt, Point, Runnable, RunnableRange, Selection, SelectionGoal,
     TextObject, TransactionId, TreeSitterOptions, WordsQuery,
@@ -3118,7 +3118,14 @@ impl Editor {
                 };
 
                 if continue_showing {
-                    self.show_completions(&ShowCompletions { trigger: None }, window, cx);
+                    self.show_completions(
+                        &ShowCompletions {
+                            trigger: None,
+                            snippets_only: false,
+                        },
+                        window,
+                        cx,
+                    );
                 } else {
                     self.hide_context_menu(window, cx);
                 }
@@ -4947,30 +4954,28 @@ impl Editor {
                         ignore_threshold: false,
                     }),
                     None,
+                    false,
                     window,
                     cx,
                 );
             }
             Some(CompletionsMenuSource::Normal)
             | Some(CompletionsMenuSource::SnippetChoices)
-            | None
-                if self.is_completion_trigger(
+            | None => {
+                let snippets_only = !self.is_completion_trigger(
                     text,
                     trigger_in_words,
                     completions_source.is_some(),
                     cx,
-                ) =>
-            {
+                );
                 self.show_completions(
                     &ShowCompletions {
                         trigger: Some(text.to_owned()).filter(|x| !x.is_empty()),
+                        snippets_only,
                     },
                     window,
                     cx,
-                )
-            }
-            _ => {
-                self.hide_context_menu(window, cx);
+                );
             }
         }
     }
@@ -5275,6 +5280,7 @@ impl Editor {
                 ignore_threshold: true,
             }),
             None,
+            false,
             window,
             cx,
         );
@@ -5286,13 +5292,20 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.open_or_update_completions_menu(None, options.trigger.as_deref(), window, cx);
+        self.open_or_update_completions_menu(
+            None,
+            options.trigger.as_deref(),
+            options.snippets_only,
+            window,
+            cx,
+        );
     }
 
     fn open_or_update_completions_menu(
         &mut self,
         requested_source: Option<CompletionsMenuSource>,
         trigger: Option<&str>,
+        snippets_only: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -5363,7 +5376,14 @@ impl Editor {
 
         if let Some(CodeContextMenu::Completions(menu)) = self.context_menu.borrow_mut().as_mut() {
             if filter_completions {
-                menu.filter(query.clone(), provider.clone(), window, cx);
+                menu.filter(
+                    query.clone().unwrap_or_default(),
+                    buffer_position.text_anchor,
+                    &buffer,
+                    provider.clone(),
+                    window,
+                    cx,
+                );
             }
             // When `is_incomplete` is false, no need to re-query completions when the current query
             // is a suffix of the initial query.
@@ -5474,6 +5494,7 @@ impl Editor {
                     &buffer,
                     buffer_position,
                     completion_context,
+                    snippets_only,
                     window,
                     cx,
                 );
@@ -5555,6 +5576,7 @@ impl Editor {
                 replace_range: word_replace_range.clone(),
                 new_text: word.clone(),
                 label: CodeLabel::plain(word, None),
+                match_start: None,
                 icon_path: None,
                 documentation: None,
                 source: CompletionSource::BufferWord {
@@ -5592,11 +5614,12 @@ impl Editor {
                     );
 
                     let query = if filter_completions { query } else { None };
-                    let matches_task = if let Some(query) = query {
-                        menu.do_async_filtering(query, cx)
-                    } else {
-                        Task::ready(menu.unfiltered_matches())
-                    };
+                    let matches_task = menu.do_async_filtering(
+                        query.unwrap_or_default(),
+                        buffer_position,
+                        &buffer,
+                        cx,
+                    );
                     (menu, matches_task)
                 }) else {
                     return;
@@ -5906,7 +5929,14 @@ impl Editor {
             .as_ref()
             .is_some_and(|confirm| confirm(intent, window, cx));
         if show_new_completions_on_confirm {
-            self.show_completions(&ShowCompletions { trigger: None }, window, cx);
+            self.show_completions(
+                &ShowCompletions {
+                    trigger: None,
+                    snippets_only: false,
+                },
+                window,
+                cx,
+            );
         }
 
         let provider = self.completion_provider.as_ref()?;
@@ -22653,6 +22683,7 @@ pub trait CompletionProvider {
         buffer: &Entity<Buffer>,
         buffer_position: text::Anchor,
         trigger: CompletionContext,
+        snippets_only: bool,
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) -> Task<Result<Vec<CompletionResponse>>>;
@@ -22771,10 +22802,10 @@ impl CodeActionProvider for Entity<Project> {
 fn snippet_completions(
     project: &Project,
     buffer: &Entity<Buffer>,
-    buffer_position: text::Anchor,
+    buffer_anchor: text::Anchor,
     cx: &mut App,
 ) -> Task<Result<CompletionResponse>> {
-    let languages = buffer.read(cx).languages_at(buffer_position);
+    let languages = buffer.read(cx).languages_at(buffer_anchor);
     let snippet_store = project.snippets().read(cx);
 
     let scopes: Vec<_> = languages
@@ -22805,137 +22836,195 @@ fn snippet_completions(
     cx.background_spawn(async move {
         let mut is_incomplete = false;
         let mut completions: Vec<Completion> = Vec::new();
-        for (scope, snippets) in scopes.into_iter() {
-            let classifier =
-                CharClassifier::new(Some(scope)).scope_context(Some(CharScopeContext::Completion));
 
-            const MAX_WORD_PREFIX_LEN: usize = 128;
-            let last_word: String = snapshot
-                .reversed_chars_for_range(text::Anchor::MIN..buffer_position)
-                .take(MAX_WORD_PREFIX_LEN)
-                .take_while(|c| classifier.is_word(*c))
-                .collect::<String>()
-                .chars()
-                .rev()
-                .collect();
+        const MAX_PREFIX_LEN: usize = 128;
+        let buffer_offset = text::ToOffset::to_offset(&buffer_anchor, &snapshot);
+        let window_start = buffer_offset.saturating_sub(MAX_PREFIX_LEN);
+        let window_start = snapshot.clip_offset(window_start, Bias::Left);
 
-            if last_word.is_empty() {
-                return Ok(CompletionResponse {
-                    completions: vec![],
-                    display_options: CompletionDisplayOptions::default(),
-                    is_incomplete: true,
-                });
+        let max_buffer_window: String = snapshot
+            .text_for_range(window_start..buffer_offset)
+            .collect();
+
+        if max_buffer_window.is_empty() {
+            return Ok(CompletionResponse {
+                completions: vec![],
+                display_options: CompletionDisplayOptions::default(),
+                is_incomplete: true,
+            });
+        }
+
+        for (_scope, snippets) in scopes.into_iter() {
+            // Sort snippets by word count to match longer snippet prefixes first.
+            let mut sorted_snippet_candidates = snippets
+                .iter()
+                .enumerate()
+                .flat_map(|(snippet_ix, snippet)| {
+                    snippet.prefix.iter().map(move |prefix| {
+                        (
+                            snippet_ix,
+                            prefix,
+                            snippet_candidate_suffixes(prefix).count(),
+                        )
+                    })
+                })
+                .collect_vec();
+            sorted_snippet_candidates
+                .sort_unstable_by_key(|(_, _, word_count)| Reverse(*word_count));
+            // One snippet may be matched multiple times, but each prefix may only be matched once.
+            let mut sorted_snippet_candidates_seen = HashSet::<usize>::default();
+
+            let buffer_windows = snippet_candidate_suffixes(&max_buffer_window)
+                .take(
+                    sorted_snippet_candidates
+                        .first()
+                        .map(|(_, _, word_count)| *word_count)
+                        .unwrap_or_default(),
+                )
+                .collect_vec();
+
+            const MAX_RESULTS: usize = 100;
+            // Each match also remembers how many characters from the buffer it consumed
+            let mut matches: Vec<(StringMatch, usize)> = vec![];
+
+            let mut snippet_list_cutoff_index = 0;
+            for (word_count, buffer_window) in (1..=buffer_windows.len()).rev().zip(buffer_windows)
+            {
+                // Increase `snippet_list_cutoff_index` until we have all of the
+                // snippets with sufficiently many words.
+                while sorted_snippet_candidates
+                    .get(snippet_list_cutoff_index)
+                    .is_some_and(|(_ix, _prefix, snippet_word_count)| {
+                        *snippet_word_count >= word_count
+                    })
+                {
+                    snippet_list_cutoff_index += 1;
+                }
+
+                // Take only the candidates with at least `word_count` many words
+                let snippet_candidates_at_word_len =
+                    &sorted_snippet_candidates[..snippet_list_cutoff_index];
+
+                let candidates = snippet_candidates_at_word_len
+                    .iter()
+                    .map(|(_snippet_ix, prefix, _snippet_word_count)| prefix)
+                    .enumerate() // index in `sorted_snippet_candidates`
+                    // First char must match
+                    .filter(|(_ix, prefix)| {
+                        itertools::equal(
+                            prefix
+                                .chars()
+                                .next()
+                                .into_iter()
+                                .flat_map(|c| c.to_lowercase()),
+                            buffer_window
+                                .chars()
+                                .next()
+                                .into_iter()
+                                .flat_map(|c| c.to_lowercase()),
+                        )
+                    })
+                    // Match each prefix only once
+                    .filter(|(ix, _prefix)| sorted_snippet_candidates_seen.insert(*ix))
+                    .map(|(ix, prefix)| StringMatchCandidate::new(ix, prefix))
+                    .collect::<Vec<StringMatchCandidate>>();
+
+                matches.extend(
+                    fuzzy::match_strings(
+                        &candidates,
+                        &buffer_window,
+                        buffer_window.chars().any(|c| c.is_uppercase()),
+                        true,
+                        MAX_RESULTS - matches.len(), // always prioritize longer snippets
+                        &Default::default(),
+                        executor.clone(),
+                    )
+                    .await
+                    .into_iter()
+                    .map(|string_match| (string_match, buffer_window.len())),
+                );
+
+                if matches.len() >= MAX_RESULTS {
+                    break;
+                }
             }
 
-            let as_offset = text::ToOffset::to_offset(&buffer_position, &snapshot);
             let to_lsp = |point: &text::Anchor| {
                 let end = text::ToPointUtf16::to_point_utf16(point, &snapshot);
                 point_to_lsp(end)
             };
-            let lsp_end = to_lsp(&buffer_position);
-
-            let candidates = snippets
-                .iter()
-                .enumerate()
-                .flat_map(|(ix, snippet)| {
-                    snippet
-                        .prefix
-                        .iter()
-                        .map(move |prefix| StringMatchCandidate::new(ix, prefix))
-                })
-                .collect::<Vec<StringMatchCandidate>>();
-
-            const MAX_RESULTS: usize = 100;
-            let mut matches = fuzzy::match_strings(
-                &candidates,
-                &last_word,
-                last_word.chars().any(|c| c.is_uppercase()),
-                true,
-                MAX_RESULTS,
-                &Default::default(),
-                executor.clone(),
-            )
-            .await;
+            let lsp_end = to_lsp(&buffer_anchor);
 
             if matches.len() >= MAX_RESULTS {
                 is_incomplete = true;
             }
 
-            // Remove all candidates where the query's start does not match the start of any word in the candidate
-            if let Some(query_start) = last_word.chars().next() {
-                matches.retain(|string_match| {
-                    split_words(&string_match.string).any(|word| {
-                        // Check that the first codepoint of the word as lowercase matches the first
-                        // codepoint of the query as lowercase
-                        word.chars()
-                            .flat_map(|codepoint| codepoint.to_lowercase())
-                            .zip(query_start.to_lowercase())
-                            .all(|(word_cp, query_cp)| word_cp == query_cp)
-                    })
-                });
-            }
-
-            let matched_strings = matches
-                .into_iter()
-                .map(|m| m.string)
-                .collect::<HashSet<_>>();
-
-            completions.extend(snippets.iter().filter_map(|snippet| {
-                let matching_prefix = snippet
-                    .prefix
+            completions.extend(
+                matches
                     .iter()
-                    .find(|prefix| matched_strings.contains(*prefix))?;
-                let start = as_offset - last_word.len();
-                let start = snapshot.anchor_before(start);
-                let range = start..buffer_position;
-                let lsp_start = to_lsp(&start);
-                let lsp_range = lsp::Range {
-                    start: lsp_start,
-                    end: lsp_end,
-                };
-                Some(Completion {
-                    replace_range: range,
-                    new_text: snippet.body.clone(),
-                    source: CompletionSource::Lsp {
-                        insert_range: None,
-                        server_id: LanguageServerId(usize::MAX),
-                        resolved: true,
-                        lsp_completion: Box::new(lsp::CompletionItem {
-                            label: snippet.prefix.first().unwrap().clone(),
-                            kind: Some(CompletionItemKind::SNIPPET),
-                            label_details: snippet.description.as_ref().map(|description| {
-                                lsp::CompletionItemLabelDetails {
-                                    detail: Some(description.clone()),
-                                    description: None,
-                                }
-                            }),
-                            insert_text_format: Some(InsertTextFormat::SNIPPET),
-                            text_edit: Some(lsp::CompletionTextEdit::InsertAndReplace(
-                                lsp::InsertReplaceEdit {
-                                    new_text: snippet.body.clone(),
-                                    insert: lsp_range,
-                                    replace: lsp_range,
+                    .filter_map(|(string_match, buffer_window_len)| {
+                        let (snippet_index, matching_prefix, _snippet_word_count) =
+                            sorted_snippet_candidates[string_match.candidate_id];
+                        let snippet = &snippets[snippet_index];
+                        let start = buffer_offset - buffer_window_len;
+                        let start = snapshot.anchor_before(start);
+                        let range = start..buffer_anchor;
+                        let lsp_start = to_lsp(&start);
+                        let lsp_range = lsp::Range {
+                            start: lsp_start,
+                            end: lsp_end,
+                        };
+                        Some(Completion {
+                            replace_range: range,
+                            new_text: snippet.body.clone(),
+                            source: CompletionSource::Lsp {
+                                insert_range: None,
+                                server_id: LanguageServerId(usize::MAX),
+                                resolved: true,
+                                lsp_completion: Box::new(lsp::CompletionItem {
+                                    label: snippet.prefix.first().unwrap().clone(),
+                                    kind: Some(CompletionItemKind::SNIPPET),
+                                    label_details: snippet.description.as_ref().map(
+                                        |description| lsp::CompletionItemLabelDetails {
+                                            detail: Some(description.clone()),
+                                            description: None,
+                                        },
+                                    ),
+                                    insert_text_format: Some(InsertTextFormat::SNIPPET),
+                                    text_edit: Some(lsp::CompletionTextEdit::InsertAndReplace(
+                                        lsp::InsertReplaceEdit {
+                                            new_text: snippet.body.clone(),
+                                            insert: lsp_range,
+                                            replace: lsp_range,
+                                        },
+                                    )),
+                                    filter_text: Some(snippet.body.clone()),
+                                    sort_text: Some(char::MAX.to_string()),
+                                    ..lsp::CompletionItem::default()
+                                }),
+                                lsp_defaults: None,
+                            },
+                            label: CodeLabel {
+                                text: matching_prefix.clone(),
+                                runs: Vec::new(),
+                                filter_range: 0..matching_prefix.len(),
+                            },
+                            icon_path: None,
+                            documentation: Some(
+                                CompletionDocumentation::SingleLineAndMultiLinePlainText {
+                                    single_line: snippet.name.clone().into(),
+                                    plain_text: snippet
+                                        .description
+                                        .clone()
+                                        .map(|description| description.into()),
                                 },
-                            )),
-                            filter_text: Some(snippet.body.clone()),
-                            sort_text: Some(char::MAX.to_string()),
-                            ..lsp::CompletionItem::default()
-                        }),
-                        lsp_defaults: None,
-                    },
-                    label: CodeLabel::plain(matching_prefix.clone(), None),
-                    icon_path: None,
-                    documentation: Some(CompletionDocumentation::SingleLineAndMultiLinePlainText {
-                        single_line: snippet.name.clone().into(),
-                        plain_text: snippet
-                            .description
-                            .clone()
-                            .map(|description| description.into()),
+                            ),
+                            insert_text_mode: None,
+                            confirm: None,
+                            match_start: Some(start),
+                        })
                     }),
-                    insert_text_mode: None,
-                    confirm: None,
-                })
-            }))
+            );
         }
 
         Ok(CompletionResponse {
@@ -22953,6 +23042,7 @@ impl CompletionProvider for Entity<Project> {
         buffer: &Entity<Buffer>,
         buffer_position: text::Anchor,
         options: CompletionContext,
+        snippets_only: bool,
         _window: &mut Window,
         cx: &mut Context<Editor>,
     ) -> Task<Result<Vec<CompletionResponse>>> {
@@ -22960,7 +23050,11 @@ impl CompletionProvider for Entity<Project> {
             let snippets = snippet_completions(project, buffer, buffer_position, cx);
             let project_completions = project.completions(buffer, buffer_position, options, cx);
             cx.background_spawn(async move {
-                let mut responses = project_completions.await?;
+                let mut responses = if snippets_only {
+                    Vec::new()
+                } else {
+                    project_completions.await?
+                };
                 let snippets = snippets.await?;
                 if !snippets.completions.is_empty() {
                     responses.push(snippets);
@@ -24182,6 +24276,31 @@ pub(crate) fn split_words(text: &str) -> impl std::iter::Iterator<Item = &str> +
                 Some(chunk)
             } else {
                 None
+            }
+        })
+}
+
+/// Given a string of text immediately before the cursor, iterates over possible
+/// strings a snippet could match to. More precisely: returns an iterator over
+/// suffixes of `text` created by splitting at word boundaries (for a particular
+/// definition of "word").
+///
+/// Shorter suffixes are returned first.
+pub(crate) fn snippet_candidate_suffixes(text: &str) -> impl std::iter::Iterator<Item = &str> {
+    let mut prev_index = text.len();
+    let mut prev_codepoint = None;
+    let is_word_char = |c: char| c.is_alphanumeric() || c == '_';
+    text.char_indices()
+        .rev()
+        .chain([(0, '\0')])
+        .filter_map(move |(index, codepoint)| {
+            let prev_index = std::mem::replace(&mut prev_index, index);
+            let prev_codepoint = prev_codepoint.replace(codepoint)?;
+            if is_word_char(prev_codepoint) && is_word_char(codepoint) {
+                None
+            } else {
+                let chunk = &text[prev_index..]; // go to end of string
+                Some(chunk)
             }
         })
 }

@@ -520,6 +520,7 @@ impl CompletionProvider for ConsoleQueryBarCompletionProvider {
         buffer: &Entity<Buffer>,
         buffer_position: language::Anchor,
         _trigger: editor::CompletionContext,
+        _snippets_only: bool,
         _window: &mut Window,
         cx: &mut Context<Editor>,
     ) -> Task<Result<Vec<CompletionResponse>>> {
@@ -669,6 +670,7 @@ impl ConsoleQueryBarCompletionProvider {
                         ),
                         new_text: string_match.string.clone(),
                         label: CodeLabel::plain(string_match.string.clone(), None),
+                        match_start: None,
                         icon_path: None,
                         documentation: Some(CompletionDocumentation::MultiLineMarkdown(
                             variable_value.into(),
@@ -782,6 +784,7 @@ impl ConsoleQueryBarCompletionProvider {
                         documentation: completion.detail.map(|detail| {
                             CompletionDocumentation::MultiLineMarkdown(detail.into())
                         }),
+                        match_start: None,
                         confirm: None,
                         source: project::CompletionSource::Dap { sort_text },
                         insert_text_mode: None,

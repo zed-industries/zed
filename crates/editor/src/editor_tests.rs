@@ -11190,6 +11190,53 @@ async fn test_snippet_indentation(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_snippet_with_multi_word_prefix(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.update_editor(|editor, _, cx| {
+        editor.project().unwrap().update(cx, |project, cx| {
+            project.snippets().update(cx, |snippets, _cx| {
+                let snippet = project::snippet_provider::Snippet {
+                    prefix: vec!["multi word".to_string()],
+                    body: "this is many words".to_string(),
+                    description: Some("description".to_string()),
+                    name: "multi-word snippet test".to_string(),
+                };
+                snippets.add_snippet_for_test(
+                    None,
+                    PathBuf::from("test_snippets.json"),
+                    vec![Arc::new(snippet)],
+                );
+            });
+        })
+    });
+
+    for (input_to_simulate, should_match_snippet) in [
+        ("m", true),
+        ("m ", true),
+        ("m w", true),
+        ("aa m w", true),
+        ("aa m g", false),
+    ] {
+        cx.set_state("ˇ");
+        cx.simulate_input(input_to_simulate); // fails correctly
+
+        cx.update_editor(|editor, _, _| {
+            let Some(CodeContextMenu::Completions(context_menu)) = &*editor.context_menu.borrow()
+            else {
+                assert!(!should_match_snippet); // no completions! don't even show the menu
+                return;
+            };
+            assert!(context_menu.visible());
+            let completions = context_menu.completions.borrow();
+
+            assert_eq!(!completions.is_empty(), should_match_snippet);
+        });
+    }
+}
+
+#[gpui::test]
 async fn test_document_format_during_save(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -13695,7 +13742,14 @@ async fn test_completion_mode(cx: &mut TestAppContext) {
 
             cx.set_state(&run.initial_state);
             cx.update_editor(|editor, window, cx| {
-                editor.show_completions(&ShowCompletions { trigger: None }, window, cx);
+                editor.show_completions(
+                    &ShowCompletions {
+                        trigger: None,
+                        snippets_only: false,
+                    },
+                    window,
+                    cx,
+                );
             });
 
             let counter = Arc::new(AtomicUsize::new(0));
@@ -13755,7 +13809,14 @@ async fn test_completion_with_mode_specified_by_action(cx: &mut TestAppContext) 
 
     cx.set_state(initial_state);
     cx.update_editor(|editor, window, cx| {
-        editor.show_completions(&ShowCompletions { trigger: None }, window, cx);
+        editor.show_completions(
+            &ShowCompletions {
+                trigger: None,
+                snippets_only: false,
+            },
+            window,
+            cx,
+        );
     });
 
     let counter = Arc::new(AtomicUsize::new(0));
@@ -13791,7 +13852,14 @@ async fn test_completion_with_mode_specified_by_action(cx: &mut TestAppContext) 
 
     cx.set_state(initial_state);
     cx.update_editor(|editor, window, cx| {
-        editor.show_completions(&ShowCompletions { trigger: None }, window, cx);
+        editor.show_completions(
+            &ShowCompletions {
+                trigger: None,
+                snippets_only: false,
+            },
+            window,
+            cx,
+        );
     });
     handle_completion_request_with_insert_and_replace(
         &mut cx,
@@ -13878,7 +13946,14 @@ async fn test_completion_replacing_surrounding_text_with_multicursors(cx: &mut T
     "};
     cx.set_state(initial_state);
     cx.update_editor(|editor, window, cx| {
-        editor.show_completions(&ShowCompletions { trigger: None }, window, cx);
+        editor.show_completions(
+            &ShowCompletions {
+                trigger: None,
+                snippets_only: false,
+            },
+            window,
+            cx,
+        );
     });
     handle_completion_request_with_insert_and_replace(
         &mut cx,
@@ -13932,7 +14007,14 @@ async fn test_completion_replacing_surrounding_text_with_multicursors(cx: &mut T
     "};
     cx.set_state(initial_state);
     cx.update_editor(|editor, window, cx| {
-        editor.show_completions(&ShowCompletions { trigger: None }, window, cx);
+        editor.show_completions(
+            &ShowCompletions {
+                trigger: None,
+                snippets_only: false,
+            },
+            window,
+            cx,
+        );
     });
     handle_completion_request_with_insert_and_replace(
         &mut cx,
@@ -13981,7 +14063,14 @@ async fn test_completion_replacing_surrounding_text_with_multicursors(cx: &mut T
     "};
     cx.set_state(initial_state);
     cx.update_editor(|editor, window, cx| {
-        editor.show_completions(&ShowCompletions { trigger: None }, window, cx);
+        editor.show_completions(
+            &ShowCompletions {
+                trigger: None,
+                snippets_only: false,
+            },
+            window,
+            cx,
+        );
     });
     handle_completion_request_with_insert_and_replace(
         &mut cx,
@@ -14132,7 +14221,14 @@ async fn test_completion_in_multibuffer_with_replace_range(cx: &mut TestAppConte
     });
 
     editor.update_in(cx, |editor, window, cx| {
-        editor.show_completions(&ShowCompletions { trigger: None }, window, cx);
+        editor.show_completions(
+            &ShowCompletions {
+                trigger: None,
+                snippets_only: false,
+            },
+            window,
+            cx,
+        );
     });
 
     fake_server
@@ -14371,7 +14467,14 @@ async fn test_completion(cx: &mut TestAppContext) {
     cx.assert_editor_state("editor.cloˇ");
     assert!(cx.editor(|e, _, _| e.context_menu.borrow_mut().is_none()));
     cx.update_editor(|editor, window, cx| {
-        editor.show_completions(&ShowCompletions { trigger: None }, window, cx);
+        editor.show_completions(
+            &ShowCompletions {
+                trigger: None,
+                snippets_only: false,
+            },
+            window,
+            cx,
+        );
     });
     handle_completion_request(
         "editor.<clo|>",
@@ -15223,6 +15326,7 @@ async fn test_as_is_completions(cx: &mut TestAppContext) {
         editor.show_completions(
             &ShowCompletions {
                 trigger: Some("\n".into()),
+                snippets_only: false,
             },
             window,
             cx,
@@ -15324,7 +15428,14 @@ int fn_branch(bool do_branch1, bool do_branch2);
             })))
         });
     cx.update_editor(|editor, window, cx| {
-        editor.show_completions(&ShowCompletions { trigger: None }, window, cx);
+        editor.show_completions(
+            &ShowCompletions {
+                trigger: None,
+                snippets_only: false,
+            },
+            window,
+            cx,
+        );
     });
     cx.executor().run_until_parked();
     cx.update_editor(|editor, window, cx| {
@@ -15373,7 +15484,14 @@ int fn_branch(bool do_branch1, bool do_branch2);
             })))
         });
     cx.update_editor(|editor, window, cx| {
-        editor.show_completions(&ShowCompletions { trigger: None }, window, cx);
+        editor.show_completions(
+            &ShowCompletions {
+                trigger: None,
+                snippets_only: false,
+            },
+            window,
+            cx,
+        );
     });
     cx.executor().run_until_parked();
     cx.update_editor(|editor, window, cx| {
@@ -17127,6 +17245,41 @@ fn test_split_words() {
     assert_eq!(split(":do_the_thing"), &[":", "do_", "the_", "thing"]);
 }
 
+#[test]
+fn test_split_words_for_snippet_prefix() {
+    fn split(text: &str) -> Vec<&str> {
+        snippet_candidate_suffixes(text).collect()
+    }
+
+    assert_eq!(split("HelloWorld"), &["HelloWorld"]);
+    assert_eq!(split("hello_world"), &["hello_world"]);
+    assert_eq!(split("_hello_world_"), &["_hello_world_"]);
+    assert_eq!(split("Hello_World"), &["Hello_World"]);
+    assert_eq!(split("helloWOrld"), &["helloWOrld"]);
+    assert_eq!(split("helloworld"), &["helloworld"]);
+    assert_eq!(
+        split("this@is!@#$^many   . symbols"),
+        &[
+            "symbols",
+            " symbols",
+            ". symbols",
+            " . symbols",
+            "  . symbols",
+            "   . symbols",
+            "many   . symbols",
+            "^many   . symbols",
+            "$^many   . symbols",
+            "#$^many   . symbols",
+            "@#$^many   . symbols",
+            "!@#$^many   . symbols",
+            "is!@#$^many   . symbols",
+            "@is!@#$^many   . symbols",
+            "this@is!@#$^many   . symbols",
+        ],
+    );
+    assert_eq!(split("a.s"), &["s", ".s", "a.s"]);
+}
+
 #[gpui::test]
 async fn test_move_to_enclosing_bracket(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
@@ -17863,7 +18016,14 @@ async fn test_context_menus_hide_hover_popover(cx: &mut gpui::TestAppContext) {
             }
         });
     cx.update_editor(|editor, window, cx| {
-        editor.show_completions(&ShowCompletions { trigger: None }, window, cx);
+        editor.show_completions(
+            &ShowCompletions {
+                trigger: None,
+                snippets_only: false,
+            },
+            window,
+            cx,
+        );
     });
     completion_requests.next().await;
     cx.condition(|editor, _| editor.context_menu_visible())
@@ -24259,7 +24419,14 @@ async fn test_html_linked_edits_on_completion(cx: &mut TestAppContext) {
             ])))
         });
     editor.update_in(cx, |editor, window, cx| {
-        editor.show_completions(&ShowCompletions { trigger: None }, window, cx);
+        editor.show_completions(
+            &ShowCompletions {
+                trigger: None,
+                snippets_only: false,
+            },
+            window,
+            cx,
+        );
     });
     cx.run_until_parked();
     completion_handle.next().await.unwrap();
