@@ -6955,19 +6955,44 @@ dependencies = [
 [[package]]
 name = "gh-workflow"
 version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1fffeec7bd9dfa73ffe1db38979cca5716ec6ffd944f03fae65fee81f16082ae"
 dependencies = [
  "async-trait",
  "derive_more 2.0.1",
  "derive_setters",
- "gh-workflow-macros",
+ "gh-workflow-macros 0.8.0",
  "indexmap 2.11.4",
  "merge",
  "serde",
  "serde_json",
  "serde_yaml",
  "strum_macros 0.27.2",
+]
+
+[[package]]
+name = "gh-workflow"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1fffeec7bd9dfa73ffe1db38979cca5716ec6ffd944f03fae65fee81f16082ae"
+dependencies = [
+ "async-trait",
+ "derive_more 2.0.1",
+ "derive_setters",
+ "gh-workflow-macros 0.8.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "indexmap 2.11.4",
+ "merge",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "strum_macros 0.27.2",
+]
+
+[[package]]
+name = "gh-workflow-macros"
+version = "0.8.0"
+dependencies = [
+ "heck 0.5.0",
+ "quote",
+ "syn 2.0.106",
 ]
 
 [[package]]
@@ -20904,11 +20929,13 @@ name = "xtask"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "backtrace",
  "cargo_metadata",
  "cargo_toml",
  "clap",
- "gh-workflow",
+ "gh-workflow 0.8.0",
  "indoc",
+ "serde_json",
  "toml 0.8.23",
  "toml_edit 0.22.27",
 ]
@@ -21139,7 +21166,7 @@ dependencies = [
  "file_finder",
  "fs",
  "futures 0.3.31",
- "gh-workflow",
+ "gh-workflow 0.8.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "git",
  "git_hosting_providers",
  "git_ui",

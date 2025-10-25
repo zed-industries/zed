@@ -1,41 +1,32 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::Parser;
+use std::fs;
+use std::path::Path;
 
-use gh_workflow::*;
+mod runners;
+mod steps;
+mod workflows;
+
+use workflows::*;
 
 #[derive(Parser)]
 pub struct GenerateWorkflowArgs {}
 
-pub fn run_generate_workflow(_args: GenerateWorkflowArgs) -> Result<()> {
-    // Create the "Run tests" composite action workflow
-    let workflow = Workflow::default().name("Run tests").add_job(
-        "run_tests",
-        Job::default()
-            .add_step(Step::new("Install Rust").run("cargo install cargo-nextest --locked"))
-            .add_step(
-                Step::new("Install Node")
-                    .uses(
-                        "actions",
-                        "setup-node",
-                        "49933ea5288caeca8642d1e84afbd3f7d6820020",
-                    )
-                    .add_with(("node-version", "18")),
-            )
-            .add_step(
-                Step::new("Limit target directory size")
-                    .run("script/clear-target-dir-if-larger-than ${{ env.MAX_SIZE }}")
-                    .env(("MAX_SIZE", "${{ runner.os == 'macOS' && 300 || 100 }}")),
-            )
-            .add_step(Step::new("Run tests").run(
-                "cargo nextest run --workspace --no-fail-fast --failure-output immediate-final",
-            )),
-    );
+pub fn run_generate_workflow(_: GenerateWorkflowArgs) -> Result<()> {
+    let dir = Path::new(".github/workflows");
 
-    // Generate and print the workflow YAML
-    let yaml = workflow
-        .to_string()
-        .map_err(|e| anyhow::anyhow!("{:?}", e))?;
-    println!("{}", yaml);
+    let workflows = vec![("danger.yml", danger())];
+    fs::create_dir_all(dir)
+        .with_context(|| format!("Failed to create directory: {}", dir.display()))?;
+
+    for (filename, workflow) in workflows {
+        let content = workflow
+            .to_string()
+            .map_err(|e| anyhow::anyhow!("{}: {:?}", filename, e))?;
+        let content = format!("# generated `cargo xtask workflows`. Do not edit.\n{content}");
+        let file_path = dir.join(filename);
+        fs::write(&file_path, content)?;
+    }
 
     Ok(())
 }
