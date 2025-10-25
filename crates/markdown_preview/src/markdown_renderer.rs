@@ -497,7 +497,7 @@ fn render_markdown_table(parsed: &ParsedMarkdownTable, cx: &mut RenderContext) -
     for (row_idx, row) in parsed.header.iter().chain(parsed.body.iter()).enumerate() {
         let mut col_idx = 0;
 
-        for (cell_idx, cell) in row.columns.iter().enumerate() {
+        for cell in row.columns.iter() {
             // Skip columns occupied by row-spanning cells from previous rows
             while col_idx < max_column_count && grid_occupied[row_idx][col_idx] {
                 col_idx += 1;
@@ -507,19 +507,7 @@ fn render_markdown_table(parsed: &ParsedMarkdownTable, cx: &mut RenderContext) -
                 break;
             }
 
-            let alignment = parsed
-                .column_alignments
-                .get(cell_idx)
-                .copied()
-                .unwrap_or_else(|| {
-                    if cell.is_header {
-                        ParsedMarkdownTableAlignment::Center
-                    } else {
-                        ParsedMarkdownTableAlignment::None
-                    }
-                });
-
-            let container = match alignment {
+            let container = match cell.alignment {
                 ParsedMarkdownTableAlignment::Left | ParsedMarkdownTableAlignment::None => div(),
                 ParsedMarkdownTableAlignment::Center => v_flex().items_center(),
                 ParsedMarkdownTableAlignment::Right => v_flex().items_end(),
@@ -900,6 +888,7 @@ mod tests {
             row_span,
             is_header: false,
             children,
+            alignment: ParsedMarkdownTableAlignment::None,
         }
     }
 
@@ -913,6 +902,7 @@ mod tests {
             row_span,
             is_header: false,
             children,
+            alignment: ParsedMarkdownTableAlignment::None,
         }
     }
 
