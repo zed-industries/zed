@@ -6,10 +6,10 @@ use crate::markdown_elements::{
 };
 use fs::normalize_path;
 use gpui::{
-    AbsoluteLength, AnyElement, App, AppContext as _, ClipboardItem, Context, DefiniteLength, Div,
-    Element, ElementId, Entity, HighlightStyle, Hsla, ImageSource, InteractiveText, IntoElement,
-    Keystroke, Length, Modifiers, ParentElement, Render, Resource, SharedString, Styled,
-    StyledText, TextStyle, WeakEntity, Window, div, img, rems,
+    AbsoluteLength, AnyElement, App, AppContext as _, ClipboardItem, Context, Div, Element,
+    ElementId, Entity, HighlightStyle, Hsla, ImageSource, InteractiveText, IntoElement, Keystroke,
+    Modifiers, ParentElement, Render, Resource, SharedString, Styled, StyledText, TextStyle,
+    WeakEntity, Window, div, img, rems,
 };
 use settings::Settings;
 use std::{
