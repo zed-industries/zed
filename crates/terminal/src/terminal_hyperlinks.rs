@@ -1431,45 +1431,26 @@ mod tests {
         const MULTIPLE_SAME_LINE_REGEX: &str = r#"(?<path>🦀 multiple_same_line 🦀):"#;
         // Matches MSBuild diagnostic suffixes for path parsing in PathWithPosition
         // https://learn.microsoft.com/en-us/visualstudio/msbuild/msbuild-diagnostic-format-for-tasks
-        const DEFAULT_REGEXES_MSBUILD: &[&str] = &[
-            r#"["'`\[({<]*(?<path>[^ \t]+?:?\([0-9]+[,:][0-9]+\))[:.,'"`\])}>]*([ \t]+|$)"#,
-            r#"["'`\[({<]*(?<path>[^ \t]+?:?\([0-9]+\))[:.,'"`\])}>]*([ \t]+|$)"#,
-        ];
-        const DEFAULT_REGEXES_MSBUILD_DESC: &[&str] = &[
-            r#"["'`\[({<]*(?<path>[^ \t]+?:?\([0-9]+[,:][0-9]+\)):[^ \t0-9]"#,
-            r#"["'`\[({<]*(?<path>[^ \t]+?:?\([0-9]+\)):[^ \t0-9]"#,
-        ];
-        const DEFAULT_REGEXES_LINUX: &[&str] = &[
-            r#"["'`\[({<]*(?<path>[^ \t]+:[0-9]+:[0-9]+)[:.,'"`\])}>]*([ \t]+|$)"#,
-            r#"["'`\[({<]*(?<path>[^ \t]+:[0-9]+)[:.,'"`\])}>]*([ \t]+|$)"#,
-        ];
-        const DEFAULT_REGEXES_LINUX_DESC: &[&str] = &[
-            r#"["'`\[({<]*(?<path>[^ \t]+:[0-9]+:[0-9]+):[^ \t0-9]"#,
-            r#"["'`\[({<]*(?<path>[^ \t]+:[0-9]+):[^ \t0-9]"#,
-        ];
+        const DEFAULT_REGEXES_MSBUILD: &str = r#"["'`\[({<]*(?<path>[^ \t]+?:?\([0-9]+([,:][0-9]+)?\))(:[^ \t0-9]|[:.,'"`\])}>]*([ \t]+|$))"#;
+        const DEFAULT_REGEXES_LINUX: &str =
+            r#"["'`\[({<]*(?<path>[^ \t]+:[0-9]+(:[0-9]+)?)(:[^ \t0-9]|[:.,'"`\])}>]*([ \t]+|$))"#;
         const DEFAULT_REGEXES: &str = r#"["'`\[({<]*(?<path>[^ \t]+?)[:.,'"`\])}>]*([ \t]+|$)"#;
-
         const PATH_HYPERLINK_TIMEOUT_MS: u64 = 1000;
 
         thread_local! {
             static TEST_REGEX_SEARCHES: RefCell<RegexSearches> =
                 RefCell::new({
-                    let regexes: Vec<_> = vec![
-                        [
-                            PYTHON_FILE_LINE_REGEX,
-                            RUST_DIAGNOSTIC_REGEX,
-                            CARGO_DIR_REGEX,
-                            ISSUE_12338_REGEX,
-                            MULTIPLE_SAME_LINE_REGEX,
-                        ].as_slice(),
+                    RegexSearches::new(&[
+                        PYTHON_FILE_LINE_REGEX,
+                        RUST_DIAGNOSTIC_REGEX,
+                        CARGO_DIR_REGEX,
+                        ISSUE_12338_REGEX,
+                        MULTIPLE_SAME_LINE_REGEX,
                         DEFAULT_REGEXES_MSBUILD,
                         DEFAULT_REGEXES_LINUX,
-                        DEFAULT_REGEXES_MSBUILD_DESC,
-                        DEFAULT_REGEXES_LINUX_DESC,
-                        [ DEFAULT_REGEXES ].as_slice(),
-                    ].into_iter().flatten().copied().map(str::to_string).collect();
-
-                    RegexSearches::new(&regexes, PATH_HYPERLINK_TIMEOUT_MS)
+                        DEFAULT_REGEXES,
+                    ],
+                    PATH_HYPERLINK_TIMEOUT_MS)
                 });
         }
 
