@@ -632,17 +632,16 @@ impl LspLogView {
                     .or_else(move || {
                         let capabilities =
                             lsp_store.lsp_server_capabilities.get(&server_id)?.clone();
-                        let name = lsp_store
-                            .language_server_statuses
-                            .get(&server_id)
-                            .map(|status| status.name.clone())?;
+                        let status =
+                            lsp_store.language_server_statuses.get(&server_id)?;
+                        let name = status.name.clone();
                         Some(ServerInfo {
                             id: server_id,
                             capabilities,
-                            binary: None,
+                            binary: status.binary.clone(),
                             name,
-                            workspace_folders: Vec::new(),
-                            configuration: None,
+                            workspace_folders: status.workspace_folders.clone(),
+                            configuration: status.configuration.clone(),
                         })
                     })
             })
