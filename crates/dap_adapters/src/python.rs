@@ -765,20 +765,22 @@ impl DebugAdapter for PythonDebugAdapter {
                 .await;
         }
 
-        let base_path = config
-            .config
-            .get("cwd")
-            .and_then(|cwd| {
-                RelPath::new(
-                    cwd.as_str()
-                        .map(Path::new)?
-                        .strip_prefix(delegate.worktree_root_path())
-                        .ok()?,
-                    PathStyle::local(),
-                )
-                .ok()
+        let base_path = ["cwd", "program", "module"]
+            .into_iter()
+            .find_map(|key| {
+                config.config.get(key).and_then(|cwd| {
+                    RelPath::new(
+                        cwd.as_str()
+                            .map(Path::new)?
+                            .strip_prefix(delegate.worktree_root_path())
+                            .ok()?,
+                        PathStyle::local(),
+                    )
+                    .ok()
+                })
             })
             .unwrap_or_else(|| RelPath::empty().into());
+
         let toolchain = delegate
             .toolchain_store()
             .active_toolchain(
