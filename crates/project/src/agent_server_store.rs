@@ -1213,7 +1213,7 @@ impl ExternalAgentServer for LocalCodex {
         root_dir: Option<&str>,
         extra_env: HashMap<String, String>,
         status_tx: Option<watch::Sender<SharedString>>,
-        new_version_available_tx: Option<watch::Sender<Option<String>>>,
+        _new_version_available_tx: Option<watch::Sender<Option<String>>>,
         cx: &mut AsyncApp,
     ) -> Task<Result<(AgentServerCommand, String, Option<task::SpawnInTerminal>)>> {
         let fs = self.fs.clone();
@@ -1294,12 +1294,6 @@ impl ExternalAgentServer for LocalCodex {
 
                     // remove older versions
                     util::fs::remove_matching(&dir, |entry| entry != version_dir).await;
-
-                    if let Some(mut new_version_available) = new_version_available_tx {
-                        new_version_available
-                            .send(Some(tag.trim_start_matches("v").to_string()))
-                            .ok();
-                    }
                 }
 
                 let bin_name = if cfg!(windows) {
