@@ -15338,6 +15338,7 @@ dependencies = [
  "session",
  "settings",
  "strum 0.27.2",
+ "telemetry",
  "theme",
  "title_bar",
  "ui",
