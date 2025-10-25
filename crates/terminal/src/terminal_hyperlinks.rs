@@ -512,6 +512,10 @@ mod tests {
             test_path!("‹«/test/cool.rs»:«4»:«👉2»›:");
             test_path!("‹«/👉test/cool.rs»(«4»,«2»)›:");
             test_path!("‹«/test/cool.rs»(«4»,«2»👉)›:");
+            test_path!("‹«/👉test/cool.rs»:(«4»,«2»)›:");
+            test_path!("‹«/test/cool.rs»:(«4»,«2»👉)›:");
+            test_path!("‹«/👉test/cool.rs»:(«4»:«2»)›:");
+            test_path!("‹«/test/cool.rs»:(«4»:«2»👉)›:");
             test_path!("/test/cool.rs:4:2👉:", "What is this?");
             test_path!("/test/cool.rs(4,2)👉:", "What is this?");
 
@@ -1458,10 +1462,10 @@ mod tests {
                             ISSUE_12338_REGEX,
                             MULTIPLE_SAME_LINE_REGEX,
                         ].as_slice(),
-                        DEFAULT_REGEXES_LINUX,
-                        DEFAULT_REGEXES_LINUX_DESC,
                         DEFAULT_REGEXES_MSBUILD,
+                        DEFAULT_REGEXES_LINUX,
                         DEFAULT_REGEXES_MSBUILD_DESC,
+                        DEFAULT_REGEXES_LINUX_DESC,
                         [ DEFAULT_REGEXES ].as_slice(),
                     ].into_iter().flatten().copied().map(str::to_string).collect();
 
