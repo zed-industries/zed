@@ -35,10 +35,8 @@ body:
     attributes:
       label: If applicable, attach your `Zed.log` file to this issue.
       description: |
-        macOS: `~/Library/Logs/Zed/Zed.log`
-        Windows: `C:\Users\YOU\AppData\Local\Zed\logs\Zed.log`
-        Linux: `~/.local/share/zed/logs/Zed.log` or $XDG_DATA_HOME
-        If you only need the most recent lines, you can run the `zed: open log` command palette action to see the last 1000.
+        From the command palette, run `zed: open log` to see the last 1000 lines.
+        Or run `zed: reveal log in file manager` to reveal the log file itself.
       value: |
         <details><summary>Zed.log</summary>
 
