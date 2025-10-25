@@ -2211,7 +2211,7 @@ impl GitPanel {
         .detach();
     }
 
-    pub(crate) fn pull(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn pull(&mut self, rebase: bool, window: &mut Window, cx: &mut Context<Self>) {
         if !self.can_push_and_pull(cx) {
             return;
         }
@@ -2246,6 +2246,7 @@ impl GitPanel {
                 repo.pull(
                     branch.name().to_owned().into(),
                     remote.name.clone(),
+                    rebase,
                     askpass,
                     cx,
                 )
