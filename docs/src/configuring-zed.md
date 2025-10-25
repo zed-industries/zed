@@ -4,7 +4,16 @@ Zed is designed to be configured: we want to fit your workflow and preferences e
 
 In addition to the settings described here, you may also want to change your [theme](./themes.md), configure your [key bindings](./key-bindings.md), set up [tasks](./tasks.md) or install [extensions](https://github.com/zed-industries/extensions).
 
-## Settings files
+## User Settings
+
+These are your personal settings that will apply to any Zed instance you open, and they'll apply to every instance of Zed you open.
+
+You can access user settings via:
+
+- Command Palette {#kb zed::OpenSettings}
+- Shortcut `cmd-,`
+
+You can also edit settings directly in the JSON via {#kb zed::OpenSettingsFile} or with `opt+cmd-,`.
 
 <!--
 TBD: Settings files. Rewrite with "remote settings" in mind (e.g. `local settings` on the remote host).
@@ -13,27 +22,28 @@ Consider renaming `zed: Open Local Settings` to `zed: Open Project Settings`.
 TBD: Add settings documentation about how settings are merged as overlays. E.g. project>local>default. Note how settings that are maps are merged, but settings that are arrays are replaced and must include the defaults.
 -->
 
-Your settings file can be opened with {#kb zed::OpenSettings}. By default it is located at `~/.config/zed/settings.json`, though if you have XDG_CONFIG_HOME in your environment on Linux it will be at `$XDG_CONFIG_HOME/zed/settings.json` instead.
+## Project Settings
 
-This configuration is merged with any local configuration inside your projects. You can open the project settings by running {#action zed::OpenProjectSettings} from the command palette. This will create a `.zed` directory containing`.zed/settings.json`.
+Project settings will override your user settings, and apply specifically to one project. Project settings can be viewed in the Settings Editor next to the user settings.
 
 Although most projects will only need one settings file at the root, you can add more local settings files for subdirectories as needed. Not all settings can be set in local files, just those that impact the behavior of the editor and language tooling. For example you can set `tab_size`, `formatter` etc. but not `theme`, `vim_mode` and similar.
-
-The syntax for configuration files is a super-set of JSON that allows `//` comments.
-
-## Default settings
-
-You can find the default settings for your current Zed by running {#action zed::OpenDefaultSettings} from the command palette.
-
-Extensions that provide language servers may also provide default settings for those language servers.
 
 # Settings
 
 ## Active Pane Modifiers
 
-- Description: Styling settings applied to the active pane.
-- Setting: `active_pane_modifiers`
-- Default:
+This setting applies stying to the active pane in your editor.
+
+- Border size: Size of the border surrounding the active pane. When set to 0, the active pane doesn't have any border. The border is drawn inset.
+  - Default: 0.0
+- Inactive opacity: Opacity of inactive panels. When set to 1.0, the inactive panes have the same opacity as the active one. If set to 0, the inactive panes content will not be visible at all. Values are clamped to the [0.0, 1.0] range.
+  - Default: 1.0
+
+**How to change:**
+
+Settings Editor (`cmd-,`) > Appearance & Behavior > Window.
+
+**Sample JSON**
 
 ```json [settings]
 {
@@ -44,35 +54,16 @@ Extensions that provide language servers may also provide default settings for t
 }
 ```
 
-### Border size
-
-- Description: Size of the border surrounding the active pane. When set to 0, the active pane doesn't have any border. The border is drawn inset.
-- Setting: `border_size`
-- Default: `0.0`
-
-**Options**
-
-Non-negative `float` values
-
-### Inactive Opacity
-
-- Description: Opacity of inactive panels. When set to 1.0, the inactive panes have the same opacity as the active one. If set to 0, the inactive panes content will not be visible at all. Values are clamped to the [0.0, 1.0] range.
-- Setting: `inactive_opacity`
-- Default: `1.0`
-
-**Options**
-
-`float` values
-
 ## Bottom Dock Layout
 
-- Description: Control the layout of the bottom dock, relative to the left and right docks.
-- Setting: `bottom_dock_layout`
-- Default: `"contained"`
+Controls the layout of the bottom dock, relative to the left and right docks. The dock can be contained, full, left aligned, or right aligned.
+By default, the bottom dock is contained, giving the full height of the window to the left and right docks.
 
-**Options**
+**How to change:**
 
-1. Contain the bottom dock, giving the full height of the window to the left and right docks.
+Settings Editor (`cmd-,`) > Appearance & Behavior > Layout.
+
+**Sample JSON**
 
 ```json [settings]
 {
@@ -80,49 +71,17 @@ Non-negative `float` values
 }
 ```
 
-2. Give the bottom dock the full width of the window, truncating the left and right docks.
-
-```json [settings]
-{
-  "bottom_dock_layout": "full"
-}
-```
-
-3. Left align the bottom dock, truncating the left dock and giving the right dock the full height of the window.
-
-```json [settings]
-{
-  "bottom_dock_layout": "left_aligned"
-}
-```
-
-4. Right align the bottom dock, giving the left dock the full height of the window and truncating the right dock.
-
-```json [settings]
-{
-  "bottom_dock_layout": "right_aligned"
-}
-```
-
 ## Agent Font Size
 
-- Description: The font size for text in the agent panel. Inherits the UI font size if unset.
-- Setting: `agent_font_size`
-- Default: `null`
-
-**Options**
-
-`integer` values from `6` to `100` pixels (inclusive)
+Controls the font size for text in the agent panel. By default, it inherits the UI font size.
 
 ## Allow Rewrap
 
-- Description: Controls where the {#action editor::Rewrap} action is allowed in the current language scope
-- Setting: `allow_rewrap`
-- Default: `"in_comments"`
+Controls where the {#action editor::Rewrap} action is allowed in the current language scope. It can be allowed in comments, selections, or anywhere. By default, it is allowed in comments only.
 
-**Options**
+Note: This setting has no effect in Vim mode, as rewrap is already allowed everywhere.
 
-1. Allow rewrap in comments only:
+**Sample JSON**
 
 ```json [settings]
 {
@@ -130,49 +89,17 @@ Non-negative `float` values
 }
 ```
 
-2. Allow rewrap in selections only:
-
-```json [settings]
-{
-  "allow_rewrap": "in_selections"
-}
-```
-
-3. Allow rewrap anywhere:
-
-```json [settings]
-{
-  "allow_rewrap": "anywhere"
-}
-```
-
-Note: This setting has no effect in Vim mode, as rewrap is already allowed everywhere.
-
 ## Auto Indent
 
-- Description: Whether indentation should be adjusted based on the context whilst typing. This can be specified on a per-language basis.
-- Setting: `auto_indent`
-- Default: `true`
-
-**Options**
-
-`boolean` values
+Manages whether indentation should be adjusted based on the context whilst typing. This can be specified on a per-language basis. By default, it's enabled.
 
 ## Auto Indent On Paste
 
-- Description: Whether indentation of pasted content should be adjusted based on the context
-- Setting: `auto_indent_on_paste`
-- Default: `true`
-
-**Options**
-
-`boolean` values
+Manages whether indentation of pasted content should be adjusted based on the context. By default, it's enabled.
 
 ## Auto Install extensions
 
-- Description: Define extensions to be autoinstalled or never be installed.
-- Setting: `auto_install_extension`
-- Default: `{ "html": true }`
+Define extensions to be autoinstalled or never be installed. By default, HTML is auto-installed.
 
 **Options**
 
@@ -204,37 +131,16 @@ Define extensions which should be installed (`true`) or never installed (`false`
 
 ## Autosave
 
-- Description: When to automatically save edited buffers.
-- Setting: `autosave`
-- Default: `off`
+Determines when to automatically save edited buffers. Autosave is off by default.
 
 **Options**
 
-1. To disable autosave, set it to `off`:
+- Off
+- On focus change
+- On window change
+- After a period of inactivity (Note that a save will be triggered when an unsaved tab is closed, even if this is earlier than the configured inactivity period.)
 
-```json [settings]
-{
-  "autosave": "off"
-}
-```
-
-2. To autosave when focus changes, use `on_focus_change`:
-
-```json [settings]
-{
-  "autosave": "on_focus_change"
-}
-```
-
-3. To autosave when the active window changes, use `on_window_change`:
-
-```json [settings]
-{
-  "autosave": "on_window_change"
-}
-```
-
-4. To autosave after an inactivity period, use `after_delay`:
+**Sample JSON**
 
 ```json [settings]
 {
@@ -246,122 +152,40 @@ Define extensions which should be installed (`true`) or never installed (`false`
 }
 ```
 
-Note that a save will be triggered when an unsaved tab is closed, even if this is earlier than the configured inactivity period.
-
 ## Autoscroll on Clicks
 
-- Description: Whether to scroll when clicking near the edge of the visible text area.
-- Setting: `autoscroll_on_clicks`
-- Default: `false`
-
-**Options**
-
-`boolean` values
+Whether to scroll when clicking near the edge of the visible text area. By default, it's disabled.
 
 ## Auto Signature Help
 
-- Description: Show method signatures in the editor, when inside parentheses
-- Setting: `auto_signature_help`
-- Default: `false`
-
-**Options**
-
-`boolean` values
+Shows method signatures in the editor, when inside parentheses. By default, it's disabled.
 
 ### Show Signature Help After Edits
 
-- Description: Whether to show the signature help after completion or a bracket pair inserted. If `auto_signature_help` is enabled, this setting will be treated as enabled also.
-- Setting: `show_signature_help_after_edits`
-- Default: `false`
-
-**Options**
-
-`boolean` values
+Determines whether to show the signature help after completion or a bracket pair inserted. If `auto_signature_help` is enabled, this setting will be treated as enabled also. By default, this setting is disabled.
 
 ## Auto Update
 
-- Description: Whether or not to automatically check for updates.
-- Setting: `auto_update`
-- Default: `true`
-
-**Options**
-
-`boolean` values
+Determines whether or not to automatically check for updates. By default, it's enabled.
 
 ## Base Keymap
 
-- Description: Base key bindings scheme. Base keymaps can be overridden with user keymaps.
-- Setting: `base_keymap`
-- Default: `VSCode`
+Base key bindings scheme. Base keymaps can be overridden with user keymaps. The default is VS Code.
 
 **Options**
 
-1. VS Code
-
-```json [settings]
-{
-  "base_keymap": "VSCode"
-}
-```
-
-2. Atom
-
-```json [settings]
-{
-  "base_keymap": "Atom"
-}
-```
-
-3. JetBrains
-
-```json [settings]
-{
-  "base_keymap": "JetBrains"
-}
-```
-
-4. None
-
-```json [settings]
-{
-  "base_keymap": "None"
-}
-```
-
-5. Sublime Text
-
-```json [settings]
-{
-  "base_keymap": "SublimeText"
-}
-```
-
-6. TextMate
-
-```json [settings]
-{
-  "base_keymap": "TextMate"
-}
-```
+- VS Code
+- Atom
+- JetBrains
+- SublimeText
+- TextMate
+- None
 
 ## Buffer Font Family
 
-- Description: The name of a font to use for rendering text in the editor.
-- Setting: `buffer_font_family`
-- Default: `.ZedMono`. This currently aliases to [Lilex](https://lilex.myrt.co).
-
-**Options**
-
-The name of any font family installed on the user's system, or `".ZedMono"`.
+The name of a font to use for rendering text in the editor. The default is ZedMono, but it can be updated to any font family installed on the user's system.
 
 ## Buffer Font Features
-
-- Description: The OpenType features to enable for text in the editor.
-- Setting: `buffer_font_features`
-- Default: `null`
-- Platform: macOS and Windows.
-
-**Options**
 
 Zed supports all OpenType features that can be enabled or disabled for a given buffer or terminal font, as well as setting values for font features.
 
@@ -387,14 +211,9 @@ You can also set other OpenType features, like setting `cv01` to `7`:
 
 ## Buffer Font Fallbacks
 
-- Description: Set the buffer text's font fallbacks, this will be merged with the platform's default fallbacks.
-- Setting: `buffer_font_fallbacks`
-- Default: `null`
-- Platform: macOS and Windows.
+Set the buffer text's font fallbacks, which will be merged with the platform's default fallbacks. This is not set by default.
 
-**Options**
-
-For example, to use `Nerd Font` as a fallback, add the following to your settings:
+**Sample JSON**
 
 ```json [settings]
 {
@@ -404,61 +223,23 @@ For example, to use `Nerd Font` as a fallback, add the following to your setting
 
 ## Buffer Font Size
 
-- Description: The default font size for text in the editor.
-- Setting: `buffer_font_size`
-- Default: `15`
-
-**Options**
-
-A font size from `6` to `100` pixels (inclusive)
+The default font size for text in the editor. A font size can range from `6` to `100` pixels (inclusive), and the default size is 15.
 
 ## Buffer Font Weight
 
-- Description: The default font weight for text in the editor.
-- Setting: `buffer_font_weight`
-- Default: `400`
-
-**Options**
-
-`integer` values between `100` and `900`
+The default font weight for text in the editor. The weight can range between `100` adn `900`, and the default is `400`.
 
 ## Buffer Line Height
 
-- Description: The default line height for text in the editor.
-- Setting: `buffer_line_height`
-- Default: `"comfortable"`
-
-**Options**
-
-`"standard"`, `"comfortable"` or `{ "custom": float }` (`1` is compact, `2` is loose)
+The default line height for text in the editor. The default is Comfortable, though it can be updated to standard, or a custom value.
 
 ## Centered Layout
 
-- Description: Configuration for the centered layout mode.
-- Setting: `centered_layout`
-- Default:
-
-```json [settings]
-"centered_layout": {
-  "left_padding": 0.2,
-  "right_padding": 0.2,
-}
-```
-
-**Options**
-
-The `left_padding` and `right_padding` options define the relative width of the
-left and right padding of the central pane from the workspace when the centered layout mode is activated. Valid values range is from `0` to `0.4`.
+Congiuure the padding for when the editor is in centered layout mode.
 
 ## Close on File Delete
 
-- Description: Whether to automatically close editor tabs when their corresponding files are deleted from disk.
-- Setting: `close_on_file_delete`
-- Default: `false`
-
-**Options**
-
-`boolean` values
+Determines whether to automatically close editor tabs when their corresponding files are deleted from disk. By default, it's disabled.
 
 When enabled, this setting will automatically close tabs for files that have been deleted from the file system. This is particularly useful for workflows involving temporary or scratch files that are frequently created and deleted. When disabled (default), deleted files remain open with a strikethrough through their tab title.
 
@@ -466,79 +247,29 @@ Note: Dirty files (files with unsaved changes) will not be automatically closed 
 
 ## Confirm Quit
 
-- Description: Whether or not to prompt the user to confirm before closing the application.
-- Setting: `confirm_quit`
-- Default: `false`
-
-**Options**
-
-`boolean` values
+Whether or not to prompt the user to confirm before closing the application. By default, it's disabled.
 
 ## Diagnostics Max Severity
 
-- Description: Which level to use to filter out diagnostics displayed in the editor
-- Setting: `diagnostics_max_severity`
-- Default: `null`
+Controls which level to use to filter out diagnostics displayed in the editor.
 
 **Options**
 
-1. Allow all diagnostics (default):
-
-```json [settings]
-{
-  "diagnostics_max_severity": "all"
-}
-```
-
-2. Show only errors:
-
-```json [settings]
-{
-  "diagnostics_max_severity": "error"
-}
-```
-
-3. Show errors and warnings:
-
-```json [settings]
-{
-  "diagnostics_max_severity": "warning"
-}
-```
-
-4. Show errors, warnings, and information:
-
-```json [settings]
-{
-  "diagnostics_max_severity": "info"
-}
-```
-
-5. Show all including hints:
-
-```json [settings]
-{
-  "diagnostics_max_severity": "hint"
-}
-```
+1. Allow all diagnostics (default)
+2. Show only errors
+3. Show errors and warnings
+4. Show errors, warnings, and information
+5. Show all, including hints
 
 ## Disable AI
 
-- Description: Whether to disable all AI features in Zed
-- Setting: `disable_ai`
-- Default: `false`
-
-**Options**
-
-`boolean` values
+Controls whether to disable all AI features in Zed. By default, it's disabled.
 
 ## Direnv Integration
 
-- Description: Settings for [direnv](https://direnv.net/) integration. Requires `direnv` to be installed.
-  `direnv` integration make it possible to use the environment variables set by a `direnv` configuration to detect some language servers in `$PATH` instead of installing them.
-  It also allows for those environment variables to be used in tasks.
-- Setting: `load_direnv`
-- Default: `"direct"`
+Settings for [direnv](https://direnv.net/) integration. Requires `direnv` to be installed. By default, it uses loads `"direct"`.
+`direnv` integration make it possible to use the environment variables set by a `direnv` configuration to detect some language servers in `$PATH` instead of installing them.
+It also allows for those environment variables to be used in tasks.
 
 **Options**
 
@@ -549,45 +280,24 @@ There are two options to choose from:
 
 ## Double Click In Multibuffer
 
-- Description: What to do when multibuffer is double clicked in some of its excerpts (parts of singleton buffers)
-- Setting: `double_click_in_multibuffer`
-- Default: `"select"`
+What to do when multibuffer is double clicked in some of its excerpts (parts of singleton buffers). By default, it behaves as a regular buffer and selects the whole word.
 
 **Options**
 
 1. Behave as a regular buffer and select the whole word (default):
-
-```json [settings]
-{
-  "double_click_in_multibuffer": "select"
-}
-```
-
 2. Open the excerpt clicked as a new buffer in the new tab:
-
-```json [settings]
-{
-  "double_click_in_multibuffer": "open"
-}
-```
 
 For the case of "open", regular selection behavior can be achieved by holding `alt` when double clicking.
 
 ## Drop Target Size
 
-- Description: Relative size of the drop target in the editor that will open dropped file as a split pane (0-0.5). For example, 0.25 means if you drop onto the top/bottom quarter of the pane a new vertical split will be used, if you drop onto the left/right quarter of the pane a new horizontal split will be used.
-- Setting: `drop_target_size`
-- Default: `0.2`
-
-**Options**
-
-`float` values between `0` and `0.5`
+Controls the relative size of the drop target in the editor that will open dropped files as a split pane (0-0.5). For example, 0.25 means if you drop onto the top/bottom quarter of the pane a new vertical split will be used, if you drop onto the left/right quarter of the pane a new horizontal split will be used. By default, the size is `0.2`, but can be customized between `0` and `0.5`.
 
 ## Edit Predictions
 
-- Description: Settings for edit predictions.
-- Setting: `edit_predictions`
-- Default:
+Specific settings for edit predictions.
+
+Default JSON:
 
 ```json [settings]
   "edit_predictions": {
@@ -607,8 +317,7 @@ For the case of "open", regular selection behavior can be achieved by holding `a
 
 ### Disabled Globs
 
-- Description: A list of globs for which edit predictions should be disabled for. This list adds to a pre-existing, sensible default set of globs. Any additional ones you add are combined with them.
-- Setting: `disabled_globs`
+- Description: A list of globs where edit predictions should be disabled. This list adds to a pre-existing, sensible default set of globs. Any additional ones you add are combined with them.
 - Default: `["**/.env*", "**/*.pem", "**/*.key", "**/*.cert", "**/*.crt", "**/.dev.vars", "**/secrets.yml"]`
 
 **Options**
@@ -617,8 +326,8 @@ List of `string` values.
 
 ## Edit Predictions Disabled in
 
-- Description: A list of language scopes in which edit predictions should be disabled.
-- Setting: `edit_predictions_disabled_in`
+A list of language scopes in which edit predictions should be disabled.
+
 - Default: `[]`
 
 **Options**
@@ -651,95 +360,51 @@ List of `string` values
 
 ## Current Line Highlight
 
-- Description: How to highlight the current line in the editor.
-- Setting: `current_line_highlight`
-- Default: `all`
+Determines how to highlight the current line in the editor. By default, the full line is highlighted.
 
 **Options**
 
-1. Don't highlight the current line:
-
-```json [settings]
-"current_line_highlight": "none"
-```
-
-2. Highlight the gutter area:
-
-```json [settings]
-"current_line_highlight": "gutter"
-```
-
-3. Highlight the editor area:
-
-```json [settings]
-"current_line_highlight": "line"
-```
-
-4. Highlight the full line:
-
-```json [settings]
-"current_line_highlight": "all"
-```
+1. None: Don't highlight the current line
+2. Gutter: Highlight the gutter area
+3. Line: Highlight the editor area
+4. All: Highlight the full line (Default)
 
 ## Selection Highlight
 
-- Description: Whether to highlight all occurrences of the selected text in an editor.
-- Setting: `selection_highlight`
-- Default: `true`
+Determines Whether to highlight all occurrences of the selected text in an editor. By default, it's enabled.
 
 ## Rounded Selection
 
-- Description: Whether the text selection should have rounded corners.
-- Setting: `rounded_selection`
-- Default: `true`
+Controls whether the text selection should have rounded corners. By default, it's enabled.
 
 ## Cursor Blink
 
-- Description: Whether or not the cursor blinks.
-- Setting: `cursor_blink`
-- Default: `true`
-
-**Options**
-
-`boolean` values
+Controls whether or not the cursor blinks. By default, it's enabled.
 
 ## Cursor Shape
 
-- Description: Cursor shape for the default editor.
-- Setting: `cursor_shape`
-- Default: `bar`
+Controls the cursor shape for the default editor. By default, it's shown as a bar.
 
 **Options**
 
-1. A vertical bar:
-
-```json [settings]
-"cursor_shape": "bar"
-```
-
-2. A block that surrounds the following character:
-
-```json [settings]
-"cursor_shape": "block"
-```
-
-3. An underline / underscore that runs along the following character:
-
-```json [settings]
-"cursor_shape": "underline"
-```
-
-4. An box drawn around the following character:
-
-```json [settings]
-"cursor_shape": "hollow"
-```
+1. Bar: A vertical bar
+2. Block: A block that surrounds the following character:
+3. Underline: An underline / underscore that runs along the following character:
+4. Hollow: A box drawn around the following character
 
 ## Gutter
 
-- Description: Settings for the editor gutter
-- Setting: `gutter`
-- Default:
+Control the settings for the editor gutter, including its breakpoints, folds, and line numbers.
+
+**Options**
+
+- `line_numbers`: Whether to show line numbers in the gutter
+- `runnables`: Whether to show runnable buttons in the gutter
+- `breakpoints`: Whether to show breakpoints in the gutter
+- `folds`: Whether to show fold buttons in the gutter
+- `min_line_number_digits`: Minimum number of characters to reserve space for in the gutter
+
+**Sample JSON**
 
 ```json [settings]
 {
@@ -753,77 +418,44 @@ List of `string` values
 }
 ```
 
-**Options**
-
-- `line_numbers`: Whether to show line numbers in the gutter
-- `runnables`: Whether to show runnable buttons in the gutter
-- `breakpoints`: Whether to show breakpoints in the gutter
-- `folds`: Whether to show fold buttons in the gutter
-- `min_line_number_digits`: Minimum number of characters to reserve space for in the gutter
-
 ## Hide Mouse
 
-- Description: Determines when the mouse cursor should be hidden in an editor or input box.
-- Setting: `hide_mouse`
-- Default: `on_typing_and_movement`
+Determines when the mouse cursor should be hidden in an editor or input box. By default, it hides when typing or during cursor movement.
 
 **Options**
 
-1. Never hide the mouse cursor:
-
-```json [settings]
-"hide_mouse": "never"
-```
-
-2. Hide only when typing:
-
-```json [settings]
-"hide_mouse": "on_typing"
-```
-
-3. Hide on both typing and cursor movement:
-
-```json [settings]
-"hide_mouse": "on_typing_and_movement"
-```
+1. Never hide the mouse cursor
+2. Hide only when typing
+3. Hide on both typing and cursor movement (default)
 
 ## Snippet Sort Order
 
-- Description: Determines how snippets are sorted relative to other completion items.
-- Setting: `snippet_sort_order`
-- Default: `inline`
+Determines how snippets are sorted relative to other completion items. By default, they are sorted inline.
 
 **Options**
 
-1. Place snippets at the top of the completion list:
-
-```json [settings]
-"snippet_sort_order": "top"
-```
-
-2. Place snippets normally without any preference:
-
-```json [settings]
-"snippet_sort_order": "inline"
-```
-
-3. Place snippets at the bottom of the completion list:
-
-```json [settings]
-"snippet_sort_order": "bottom"
-```
-
-4. Do not show snippets in the completion list at all:
-
-```json [settings]
-"snippet_sort_order": "none"
-```
+1. Top: Place snippets at the top of the completion list
+2. Inline: Place snippets normally without any preference (default)
+3. Bottom: Place snippets at the bottom of the completion list
+4. None: Do not show snippets in the completion list at all:
 
 ## Editor Scrollbar
 
-- Description: Whether or not to show the editor scrollbar and various elements in it.
-- Setting: `scrollbar`
-- Default:
+Determines whether or not to show the editor scrollbar and various elements in it. The scrollbar shows automatically by default, though this can be configured.
+
+By default, the scrollbar will show:
+
+- Cursor position
+- Git diff indicators
+- Buffer search results
+- Selected text
+- Selected symbols
+- Diagnostics
+- Horizontal and vertical axes
+
+All these options are configurable.
+
+**Sample JSON**
 
 ```json [settings]
 "scrollbar": {
@@ -843,182 +475,38 @@ List of `string` values
 
 ### Show Mode
 
-- Description: When to show the editor scrollbar.
-- Setting: `show`
-- Default: `auto`
+When to show the editor scrollbar.
 
 **Options**
 
-1. Show the scrollbar if there's important information or follow the system's configured behavior:
-
-```json [settings]
-"scrollbar": {
-  "show": "auto"
-}
-```
-
-2. Match the system's configured behavior:
-
-```json [settings]
-"scrollbar": {
-  "show": "system"
-}
-```
-
-3. Always show the scrollbar:
-
-```json [settings]
-"scrollbar": {
-  "show": "always"
-}
-```
-
-4. Never show the scrollbar:
-
-```json [settings]
-"scrollbar": {
-  "show": "never"
-}
-```
-
-### Cursor Indicators
-
-- Description: Whether to show cursor positions in the scrollbar.
-- Setting: `cursors`
-- Default: `true`
-
-**Options**
-
-`boolean` values
-
-### Git Diff Indicators
-
-- Description: Whether to show git diff indicators in the scrollbar.
-- Setting: `git_diff`
-- Default: `true`
-
-**Options**
-
-`boolean` values
-
-### Search Results Indicators
-
-- Description: Whether to show buffer search results in the scrollbar.
-- Setting: `search_results`
-- Default: `true`
-
-**Options**
-
-`boolean` values
-
-### Selected Text Indicators
-
-- Description: Whether to show selected text occurrences in the scrollbar.
-- Setting: `selected_text`
-- Default: `true`
-
-**Options**
-
-`boolean` values
-
-### Selected Symbols Indicators
-
-- Description: Whether to show selected symbol occurrences in the scrollbar.
-- Setting: `selected_symbol`
-- Default: `true`
-
-**Options**
-
-`boolean` values
+1. Auto: Show the scrollbar if there's important information or follow the system's configured behavior
+2. System: Match the system's configured behavior
+3. Always: Always show the scrollbar
+4. Never: Never show the scrollbar
 
 ### Diagnostics
 
-- Description: Which diagnostic indicators to show in the scrollbar.
-- Setting: `diagnostics`
-- Default: `all`
+Which diagnostic indicators to show in the scrollbar.
 
 **Options**
 
-1. Show all diagnostics:
-
-```json [settings]
-{
-  "show_diagnostics": "all"
-}
-```
-
-2. Do not show any diagnostics:
-
-```json [settings]
-{
-  "show_diagnostics": "off"
-}
-```
-
-3. Show only errors:
-
-```json [settings]
-{
-  "show_diagnostics": "error"
-}
-```
-
-4. Show only errors and warnings:
-
-```json [settings]
-{
-  "show_diagnostics": "warning"
-}
-```
-
-5. Show only errors, warnings, and information:
-
-```json [settings]
-{
-  "show_diagnostics": "info"
-}
-```
-
-### Axes
-
-- Description: Forcefully enable or disable the scrollbar for each axis
-- Setting: `axes`
-- Default:
-
-```json [settings]
-"scrollbar": {
-  "axes": {
-    "horizontal": true,
-    "vertical": true,
-  },
-}
-```
-
-#### Horizontal
-
-- Description: When false, forcefully disables the horizontal scrollbar. Otherwise, obey other settings.
-- Setting: `horizontal`
-- Default: `true`
-
-**Options**
-
-`boolean` values
-
-#### Vertical
-
-- Description: When false, forcefully disables the vertical scrollbar. Otherwise, obey other settings.
-- Setting: `vertical`
-- Default: `true`
-
-**Options**
-
-`boolean` values
+1. All: Show all diagnostics
+2. Off: Do not show any diagnostics
+3. Error: Show only errors
+4. Warning: Show only errors and warnings
+5. Info: Show only errors, warnings, and information
 
 ## Minimap
 
-- Description: Settings related to the editor's minimap, which provides an overview of your document.
-- Setting: `minimap`
-- Default:
+Configure how the minimap, which provides an overview of your document, shows in your editor. By default, the minimap does not show.
+
+When it does show:
+
+- The thumb always shows
+- A border shows on all sides except the left
+- Minimap inherits the editor's current line highlight setting
+
+**Sample JSON**
 
 ```json [settings]
 {
@@ -1031,167 +519,15 @@ List of `string` values
 }
 ```
 
-### Show Mode
+### Show Mode Details
 
-- Description: When to show the minimap in the editor.
-- Setting: `show`
-- Default: `never`
+When to show the minimap in the editor.
 
 **Options**
 
-1. Always show the minimap:
-
-```json [settings]
-{
-  "show": "always"
-}
-```
-
-2. Show the minimap if the editor's scrollbars are visible:
-
-```json [settings]
-{
-  "show": "auto"
-}
-```
-
-3. Never show the minimap:
-
-```json [settings]
-{
-  "show": "never"
-}
-```
-
-### Thumb Display
-
-- Description: When to show the minimap thumb (the visible editor area) in the minimap.
-- Setting: `thumb`
-- Default: `always`
-
-**Options**
-
-1. Show the minimap thumb when hovering over the minimap:
-
-```json [settings]
-{
-  "thumb": "hover"
-}
-```
-
-2. Always show the minimap thumb:
-
-```json [settings]
-{
-  "thumb": "always"
-}
-```
-
-### Thumb Border
-
-- Description: How the minimap thumb border should look.
-- Setting: `thumb_border`
-- Default: `left_open`
-
-**Options**
-
-1. Display a border on all sides of the thumb:
-
-```json [settings]
-{
-  "thumb_border": "full"
-}
-```
-
-2. Display a border on all sides except the left side:
-
-```json [settings]
-{
-  "thumb_border": "left_open"
-}
-```
-
-3. Display a border on all sides except the right side:
-
-```json [settings]
-{
-  "thumb_border": "right_open"
-}
-```
-
-4. Display a border only on the left side:
-
-```json [settings]
-{
-  "thumb_border": "left_only"
-}
-```
-
-5. Display the thumb without any border:
-
-```json [settings]
-{
-  "thumb_border": "none"
-}
-```
-
-### Current Line Highlight
-
-- Description: How to highlight the current line in the minimap.
-- Setting: `current_line_highlight`
-- Default: `null`
-
-**Options**
-
-1. Inherit the editor's current line highlight setting:
-
-```json [settings]
-{
-  "minimap": {
-    "current_line_highlight": null
-  }
-}
-```
-
-2. Highlight the current line in the minimap:
-
-```json [settings]
-{
-  "minimap": {
-    "current_line_highlight": "line"
-  }
-}
-```
-
-or
-
-```json [settings]
-{
-  "minimap": {
-    "current_line_highlight": "all"
-  }
-}
-```
-
-3. Do not highlight the current line in the minimap:
-
-```json [settings]
-{
-  "minimap": {
-    "current_line_highlight": "gutter"
-  }
-}
-```
-
-or
-
-```json [settings]
-{
-  "minimap": {
-    "current_line_highlight": "none"
-  }
-}
-```
+1. Always: Always show the minimap
+2. Auto: Show the minimap if the editor's scrollbars are visible
+3. Never: Never show the minimap
 
 ## Editor Tab Bar
 
