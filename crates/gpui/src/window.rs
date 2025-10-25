@@ -4364,11 +4364,15 @@ impl Window {
     ///
     /// This is a fairly low-level method, so prefer using action handlers on elements unless you have
     /// a specific need to register a global listener.
+    ///
+    /// This method should only be called as part of the paint phase of element drawing.
     pub fn on_action(
         &mut self,
         action_type: TypeId,
         listener: impl Fn(&dyn Any, DispatchPhase, &mut Window, &mut App) + 'static,
     ) {
+        self.invalidator.debug_assert_paint();
+
         self.next_frame
             .dispatch_tree
             .on_action(action_type, Rc::new(listener));
@@ -4380,12 +4384,16 @@ impl Window {
     ///
     /// This is a fairly low-level method, so prefer using action handlers on elements unless you have
     /// a specific need to register a global listener.
+    ///
+    /// This method should only be called as part of the paint phase of element drawing.
     pub fn on_action_when(
         &mut self,
         condition: bool,
         action_type: TypeId,
         listener: impl Fn(&dyn Any, DispatchPhase, &mut Window, &mut App) + 'static,
     ) {
+        self.invalidator.debug_assert_paint();
+
         if condition {
             self.next_frame
                 .dispatch_tree

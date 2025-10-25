@@ -330,7 +330,7 @@ impl Default for NavigationDirection {
     }
 }
 
-/// A mouse move event from the platform
+/// A mouse move event from the platform.
 #[derive(Clone, Debug, Default)]
 pub struct MouseMoveEvent {
     /// The position of the mouse on the window.
@@ -358,7 +358,7 @@ impl MouseMoveEvent {
     }
 }
 
-/// A mouse wheel event from the platform
+/// A mouse wheel event from the platform.
 #[derive(Clone, Debug, Default)]
 pub struct ScrollWheelEvent {
     /// The position of the mouse on the window.
