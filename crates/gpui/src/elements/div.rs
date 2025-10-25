@@ -22,8 +22,8 @@ use crate::{
     KeyDownEvent, KeyUpEvent, KeyboardButton, KeyboardClickEvent, LayoutId, ModifiersChangedEvent,
     MouseButton, MouseClickEvent, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Overflow,
     ParentElement, Pixels, Point, Render, ScrollWheelEvent, SharedString, Size, Style,
-    StyleRefinement, Styled, Task, TooltipId, Visibility, Window, WindowControlArea, point, px,
-    size,
+    StyleRefinement, Styled, Task, TooltipId, Visibility, Window, WindowControlArea, ZoomEvent,
+    point, px, size,
 };
 use collections::HashMap;
 use refineable::Refineable;
@@ -321,6 +321,19 @@ impl Interactivity {
             }));
     }
 
+    /// Bind the given callback to zoom events (e.g. from pinch-to-zoom) during the bubble phase.
+    /// The imperative API equivalent to [`InteractiveElement::on_scroll_wheel`].
+    ///
+    /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
+    pub fn on_zoom(&mut self, listener: impl Fn(&ZoomEvent, &mut Window, &mut App) + 'static) {
+        self.zoom_listeners
+            .push(Box::new(move |event, phase, hitbox, window, cx| {
+                if phase == DispatchPhase::Bubble && hitbox.should_handle_scroll(window) {
+                    (listener)(event, window, cx);
+                }
+            }));
+    }
+
     /// Bind the given callback to an action dispatch during the capture phase
     /// The imperative API equivalent to [`InteractiveElement::capture_action`]
     ///
@@ -582,8 +595,8 @@ impl Interactivity {
         self.window_control = Some(area);
     }
 
-    /// Block non-scroll mouse interactions with elements behind this element's hitbox. See
-    /// [`Hitbox::is_hovered`] for details.
+    /// Block all mouse interactions with elements behind this element's hitbox except for scrolling
+    /// and zooming (e.g. pinch-to-zoom). See [`Hitbox::is_hovered`] for details.
     ///
     /// The imperative API equivalent to [`InteractiveElement::block_mouse_except_scroll`]
     pub fn block_mouse_except_scroll(&mut self) {
@@ -835,6 +848,15 @@ pub trait InteractiveElement: Sized {
         self
     }
 
+    /// Bind the given callback to zoom events (e.g. from pinch-to-zoom) during the bubble phase.
+    /// The fluent API equivalent to [`Interactivity::on_scroll_wheel`].
+    ///
+    /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
+    fn on_zoom(mut self, listener: impl Fn(&ZoomEvent, &mut Window, &mut App) + 'static) -> Self {
+        self.interactivity().on_zoom(listener);
+        self
+    }
+
     /// Capture the given action, before normal action dispatch can fire
     /// The fluent API equivalent to [`Interactivity::on_scroll_wheel`]
     ///
@@ -1006,8 +1028,8 @@ pub trait InteractiveElement: Sized {
         self
     }
 
-    /// Block non-scroll mouse interactions with elements behind this element's hitbox. See
-    /// [`Hitbox::is_hovered`] for details.
+    /// Block all mouse interactions with elements behind this element's hitbox except for scrolling
+    /// and zooming (e.g. pinch-to-zoom). See [`Hitbox::is_hovered`] for details.
     ///
     /// The fluent API equivalent to [`Interactivity::block_mouse_except_scroll`]
     fn block_mouse_except_scroll(mut self) -> Self {
@@ -1203,6 +1225,9 @@ pub(crate) type MouseMoveListener =
 
 pub(crate) type ScrollWheelListener =
     Box<dyn Fn(&ScrollWheelEvent, DispatchPhase, &Hitbox, &mut Window, &mut App) + 'static>;
+
+pub(crate) type ZoomListener =
+    Box<dyn Fn(&ZoomEvent, DispatchPhase, &Hitbox, &mut Window, &mut App) + 'static>;
 
 pub(crate) type ClickListener = Rc<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>;
 
@@ -1523,6 +1548,7 @@ pub struct Interactivity {
     pub(crate) mouse_up_listeners: Vec<MouseUpListener>,
     pub(crate) mouse_move_listeners: Vec<MouseMoveListener>,
     pub(crate) scroll_wheel_listeners: Vec<ScrollWheelListener>,
+    pub(crate) zoom_listeners: Vec<ZoomListener>,
     pub(crate) key_down_listeners: Vec<KeyDownListener>,
     pub(crate) key_up_listeners: Vec<KeyUpListener>,
     pub(crate) modifiers_changed_listeners: Vec<ModifiersChangedListener>,
@@ -1718,6 +1744,7 @@ impl Interactivity {
             || !self.mouse_move_listeners.is_empty()
             || !self.click_listeners.is_empty()
             || !self.scroll_wheel_listeners.is_empty()
+            || !self.zoom_listeners.is_empty()
             || self.drag_listener.is_some()
             || !self.drop_listeners.is_empty()
             || self.tooltip_builder.is_some()
@@ -2074,6 +2101,13 @@ impl Interactivity {
         for listener in self.scroll_wheel_listeners.drain(..) {
             let hitbox = hitbox.clone();
             window.on_mouse_event(move |event: &ScrollWheelEvent, phase, window, cx| {
+                listener(event, phase, &hitbox, window, cx);
+            })
+        }
+
+        for listener in self.zoom_listeners.drain(..) {
+            let hitbox = hitbox.clone();
+            window.on_mouse_event(move |event: &ZoomEvent, phase, window, cx| {
                 listener(event, phase, &hitbox, window, cx);
             })
         }
