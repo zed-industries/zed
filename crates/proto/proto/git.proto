@@ -506,3 +506,26 @@ message GetBlobContent {
 message GetBlobContentResponse {
     string content = 1;
 }
+
+message GitGetWorktrees {
+    uint64 project_id = 1;
+    uint64 repository_id = 2;
+}
+
+message GitWorktreesResponse {
+    repeated Worktree worktrees = 1;
+}
+
+message Worktree {
+    string path = 1;
+    string ref_name = 2;
+    string sha = 3;
+}
+
+message GitCreateWorktree {
+    uint64 project_id = 1;
+    uint64 repository_id = 2;
+    string name = 3;
+    string directory = 4;
+    optional string commit = 5;
+}
