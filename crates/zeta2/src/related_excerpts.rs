@@ -110,7 +110,7 @@ pub fn find_related_excerpts<'a>(
         .available_models(cx)
         .find(|model| {
             model.provider_id() == language_model::ANTHROPIC_PROVIDER_ID
-                && model.id() == LanguageModelId("claude-sonnet-4-5-latest".into())
+                && model.id() == LanguageModelId("claude-haiku-4-5-latest".into())
         })
     else {
         return Task::ready(Err(anyhow!("could not find claude model")));
