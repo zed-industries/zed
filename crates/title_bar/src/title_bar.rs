@@ -30,10 +30,7 @@ use gpui::{
     Subscription, WeakEntity, Window, actions, div,
 };
 use onboarding_banner::OnboardingBanner;
-use project::{
-    Project, WorktreeSettings,
-    git_store::{GitStoreEvent, RepositoryEvent},
-};
+use project::{Project, WorktreeSettings, git_store::GitStoreEvent};
 use remote::RemoteConnectionOptions;
 use settings::{Settings, SettingsLocation};
 use std::sync::Arc;
@@ -287,9 +284,7 @@ impl TitleBar {
         subscriptions.push(
             cx.subscribe(&git_store, move |_, _, event, cx| match event {
                 GitStoreEvent::ActiveRepositoryChanged(_)
-                | GitStoreEvent::RepositoryUpdated(_, RepositoryEvent::Updated { .. }, _)
-                | GitStoreEvent::RepositoryAdded(_)
-                | GitStoreEvent::RepositoryRemoved(_) => {
+                | GitStoreEvent::RepositoryUpdated(_, _, true) => {
                     cx.notify();
                 }
                 _ => {}

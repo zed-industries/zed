@@ -467,6 +467,7 @@ CREATE TABLE extension_versions (
     provides_grammars BOOLEAN NOT NULL DEFAULT FALSE,
     provides_language_servers BOOLEAN NOT NULL DEFAULT FALSE,
     provides_context_servers BOOLEAN NOT NULL DEFAULT FALSE,
+    provides_agent_servers BOOLEAN NOT NULL DEFAULT FALSE,
     provides_slash_commands BOOLEAN NOT NULL DEFAULT FALSE,
     provides_indexed_docs_providers BOOLEAN NOT NULL DEFAULT FALSE,
     provides_snippets BOOLEAN NOT NULL DEFAULT FALSE,

@@ -737,12 +737,11 @@ impl SshRemoteConnection {
         let dst_path = shell_kind.try_quote(&dst_path).context("shell quoting")?;
         let script = if let Some(tmp_path) = orig_tmp_path.strip_suffix(".gz") {
             format!(
-                "gunzip -f {orig_tmp_path} && chmod {server_mode} {tmp_path} && mv {tmp_path} {dst_path}"
+                "gunzip -f {orig_tmp_path} && chmod {server_mode} {tmp_path} && mv {tmp_path} {dst_path}",
             )
         } else {
-            format!("chmod {server_mode} {orig_tmp_path} && mv {orig_tmp_path} {dst_path}")
+            format!("chmod {server_mode} {orig_tmp_path} && mv {orig_tmp_path} {dst_path}",)
         };
-        let script = shell_kind.try_quote(&script).context("shell quoting")?;
         let args = shell_kind.args_for_shell(false, script.to_string());
         self.socket.run_command("sh", &args).await?;
         Ok(())
@@ -1280,11 +1279,8 @@ fn build_command(
                 .context("shell quoting")?
         )?;
         for arg in input_args {
-            write!(
-                exec,
-                " {}",
-                shell_kind.try_quote(&arg).context("shell quoting")?
-            )?;
+            let arg = shell_kind.try_quote(&arg).context("shell quoting")?;
+            write!(exec, " {}", &arg)?;
         }
     } else {
         write!(exec, "{ssh_shell} -l")?;

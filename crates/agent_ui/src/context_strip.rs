@@ -132,19 +132,19 @@ impl ContextStrip {
         let workspace = self.workspace.upgrade()?;
         let panel = workspace.read(cx).panel::<AgentPanel>(cx)?.read(cx);
 
-        if let Some(active_context_editor) = panel.active_context_editor() {
-            let context = active_context_editor.read(cx).context();
-            let weak_context = context.downgrade();
-            let context = context.read(cx);
-            let path = context.path()?;
+        if let Some(active_text_thread_editor) = panel.active_text_thread_editor() {
+            let text_thread = active_text_thread_editor.read(cx).text_thread();
+            let weak_text_thread = text_thread.downgrade();
+            let text_thread = text_thread.read(cx);
+            let path = text_thread.path()?;
 
             if self.context_store.read(cx).includes_text_thread(path) {
                 return None;
             }
 
             Some(SuggestedContext::TextThread {
-                name: context.summary().or_default(),
-                context: weak_context,
+                name: text_thread.summary().or_default(),
+                text_thread: weak_text_thread,
             })
         } else {
             None
@@ -332,7 +332,7 @@ impl ContextStrip {
             AgentContextHandle::TextThread(text_thread_context) => {
                 workspace.update(cx, |workspace, cx| {
                     if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
-                        let context = text_thread_context.context.clone();
+                        let context = text_thread_context.text_thread.clone();
                         window.defer(cx, move |window, cx| {
                             panel.update(cx, |panel, cx| {
                                 panel.open_text_thread(context, window, cx)

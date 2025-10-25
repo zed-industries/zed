@@ -732,11 +732,11 @@ impl Item for ProjectDiagnosticsEditor {
         _workspace_id: Option<workspace::WorkspaceId>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Task<Option<Entity<Self>>>
+    ) -> Option<Entity<Self>>
     where
         Self: Sized,
     {
-        Task::ready(Some(cx.new(|cx| {
+        Some(cx.new(|cx| {
             ProjectDiagnosticsEditor::new(
                 self.include_warnings,
                 self.project.clone(),
@@ -744,7 +744,7 @@ impl Item for ProjectDiagnosticsEditor {
                 window,
                 cx,
             )
-        })))
+        }))
     }
 
     fn is_dirty(&self, cx: &App) -> bool {

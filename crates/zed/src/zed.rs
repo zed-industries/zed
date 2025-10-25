@@ -18,7 +18,6 @@ use breadcrumbs::Breadcrumbs;
 use client::zed_urls;
 use collections::VecDeque;
 use debugger_ui::debugger_panel::DebugPanel;
-use editor::ProposedChangesEditorToolbar;
 use editor::{Editor, MultiBuffer};
 use extension_host::ExtensionStore;
 use feature_flags::{FeatureFlagAppExt, PanicFeatureFlag};
@@ -871,6 +870,24 @@ fn register_actions(
                 }
             }
         })
+        .register_action({
+            let fs = app_state.fs.clone();
+            move |_, action: &zed_actions::ResetAllZoom, _window, cx| {
+                if action.persist {
+                    update_settings_file(fs.clone(), cx, move |settings, _| {
+                        settings.theme.ui_font_size = None;
+                        settings.theme.buffer_font_size = None;
+                        settings.theme.agent_ui_font_size = None;
+                        settings.theme.agent_buffer_font_size = None;
+                    });
+                } else {
+                    theme::reset_ui_font_size(cx);
+                    theme::reset_buffer_font_size(cx);
+                    theme::reset_agent_ui_font_size(cx);
+                    theme::reset_agent_buffer_font_size(cx);
+                }
+            }
+        })
         .register_action(|_, _: &install_cli::RegisterZedScheme, window, cx| {
             cx.spawn_in(window, async move |workspace, cx| {
                 install_cli::register_zed_scheme(cx).await?;
@@ -1035,8 +1052,6 @@ fn initialize_pane(
                 )
             });
             toolbar.add_item(buffer_search_bar.clone(), window, cx);
-            let proposed_change_bar = cx.new(|_| ProposedChangesEditorToolbar::new());
-            toolbar.add_item(proposed_change_bar, window, cx);
             let quick_action_bar =
                 cx.new(|cx| QuickActionBar::new(buffer_search_bar, workspace, cx));
             toolbar.add_item(quick_action_bar, window, cx);
@@ -2839,16 +2854,14 @@ mod tests {
         });
 
         // Split the pane with the first entry, then open the second entry again.
-        let (task1, task2) = window
+        window
             .update(cx, |w, window, cx| {
-                (
-                    w.split_and_clone(w.active_pane().clone(), SplitDirection::Right, window, cx),
-                    w.open_path(file2.clone(), None, true, window, cx),
-                )
+                w.split_and_clone(w.active_pane().clone(), SplitDirection::Right, window, cx);
+                w.open_path(file2.clone(), None, true, window, cx)
             })
+            .unwrap()
+            .await
             .unwrap();
-        task1.await.unwrap();
-        task2.await.unwrap();
 
         window
             .read_with(cx, |w, cx| {
@@ -3471,13 +3484,7 @@ mod tests {
                     SplitDirection::Right,
                     window,
                     cx,
-                )
-            })
-            .unwrap()
-            .await
-            .unwrap();
-        window
-            .update(cx, |workspace, window, cx| {
+                );
                 workspace.open_path(
                     (worktree.read(cx).id(), rel_path("the-new-name.rs")),
                     None,

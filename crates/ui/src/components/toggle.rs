@@ -514,7 +514,7 @@ impl RenderOnce for Switch {
                 self.tab_index.filter(|_| !self.disabled),
                 |this, tab_index| {
                     this.tab_index(tab_index)
-                        .focus(|mut style| {
+                        .focus_visible(|mut style| {
                             style.border_color = Some(cx.theme().colors().border_focused);
                             style
                         })
