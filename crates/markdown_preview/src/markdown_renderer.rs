@@ -553,6 +553,23 @@ fn render_markdown_table(parsed: &ParsedMarkdownTable, cx: &mut RenderContext) -
 
             col_idx += cell.col_span;
         }
+
+        // Fill remaining columns with empty cells if needed
+        while col_idx < max_column_count {
+            if grid_occupied[row_idx][col_idx] {
+                col_idx += 1;
+                continue;
+            }
+
+            let empty_cell = div()
+                .border_1()
+                .size_full()
+                .border_color(cx.border_color)
+                .when(row_idx % 2 == 1, |this| this.bg(cx.panel_background_color));
+
+            cells.push(empty_cell);
+            col_idx += 1;
+        }
     }
 
     cx.with_common_p(div())
