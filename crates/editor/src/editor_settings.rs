@@ -55,6 +55,7 @@ pub struct EditorSettings {
     pub drag_and_drop_selection: DragAndDropSelection,
     pub lsp_document_colors: DocumentColorsRenderMode,
     pub minimum_contrast_for_highlights: f32,
+    pub smart_tab: SmartTabSettings,
 }
 #[derive(Debug, Clone)]
 pub struct Jupyter {
@@ -161,6 +162,17 @@ pub struct SearchSettings {
     pub regex: bool,
 }
 
+/// Default options for smart tab settings.
+#[derive(Copy, Clone, Default, Debug, PartialEq, Eq)]
+pub struct SmartTabSettings {
+    /// Enable smart tab feature
+    pub enabled: bool,
+    /// When true, smart tab takes precedence over autocomplete menu
+    pub supersede_completions: bool,
+    /// When true, smart tab takes precedence over edit predictions
+    pub supersede_edit_predictions: bool,
+}
+
 impl EditorSettings {
     pub fn jupyter_enabled(cx: &App) -> bool {
         EditorSettings::get_global(cx).jupyter.enabled
@@ -183,6 +195,7 @@ impl Settings for EditorSettings {
         let toolbar = editor.toolbar.unwrap();
         let search = editor.search.unwrap();
         let drag_and_drop_selection = editor.drag_and_drop_selection.unwrap();
+        let smart_tab = editor.smart_tab.unwrap_or_default();
         Self {
             cursor_blink: editor.cursor_blink.unwrap(),
             cursor_shape: editor.cursor_shape.map(Into::into),
@@ -266,6 +279,11 @@ impl Settings for EditorSettings {
             },
             lsp_document_colors: editor.lsp_document_colors.unwrap(),
             minimum_contrast_for_highlights: editor.minimum_contrast_for_highlights.unwrap().0,
+            smart_tab: SmartTabSettings {
+                enabled: smart_tab.enabled.unwrap(),
+                supersede_completions: smart_tab.supersede_completions.unwrap(),
+                supersede_edit_predictions: smart_tab.supersede_edit_predictions.unwrap(),
+            }
         }
     }
 }

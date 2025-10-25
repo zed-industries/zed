@@ -145,6 +145,12 @@ pub struct EditorSettingsContent {
     ///
     /// Default: nothing is enabled
     pub search: Option<SearchSettingsContent>,
+    
+    /// Whether to enable smart tab feature (skip out of treesitter nodes using
+    /// tab key).
+    /// 
+    /// Default: enabled
+    pub smart_tab: Option<SmartTabSettingsContent>,
 
     /// Whether to automatically show a signature help pop-up or not.
     ///
@@ -699,6 +705,15 @@ pub struct SearchSettingsContent {
     pub case_sensitive: Option<bool>,
     pub include_ignored: Option<bool>,
     pub regex: Option<bool>,
+}
+
+#[skip_serializing_none]
+#[derive(Clone, Default, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
+pub struct SmartTabSettingsContent {
+    /// Whether to enable smart tab.
+    pub enabled: Option<bool>,
+    pub supersede_completions: Option<bool>,
+    pub supersede_edit_predictions: Option<bool>,
 }
 
 #[skip_serializing_none]

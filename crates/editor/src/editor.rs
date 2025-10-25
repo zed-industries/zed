@@ -15451,10 +15451,9 @@ impl Editor {
             _: &MoveToStartOfLargerSyntaxNode,
             window: &mut Window,
             cx: &mut Context<Self>,
-        ) {
-            self.hide_mouse_cursor(HideMouseCursorOrigin::MovementAction, cx);
-            self.move_cursors_after_syntax_nodes(window, cx, Direction::Prev);
-        }
+    ) {
+        self.move_cursors_to_syntax_nodes(window, cx, Direction::Prev);
+    }
 
     pub fn move_to_end_of_larger_syntax_node(
         &mut self,
@@ -15462,11 +15461,10 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.hide_mouse_cursor(HideMouseCursorOrigin::MovementAction, cx);
-        self.move_cursors_after_syntax_nodes(window, cx, Direction::Next);
+        self.move_cursors_to_syntax_nodes(window, cx, Direction::Next);
     }
     
-    fn move_cursors_after_syntax_nodes(
+    fn move_cursors_to_syntax_nodes(
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -15479,6 +15477,8 @@ impl Editor {
         if old_selections.is_empty() {
             return;
         }
+
+        self.hide_mouse_cursor(HideMouseCursorOrigin::MovementAction, cx);
 
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let buffer = self.buffer.read(cx).snapshot(cx);
