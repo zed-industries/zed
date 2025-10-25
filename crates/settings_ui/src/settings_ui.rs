@@ -18,13 +18,13 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use settings::{Settings, SettingsContent, SettingsStore};
 use std::{
-    any::{type_name, Any, TypeId},
+    any::{Any, TypeId, type_name},
     cell::RefCell,
     collections::HashMap,
     num::{NonZero, NonZeroU32},
     ops::Range,
     rc::Rc,
-    sync::{atomic::AtomicI32, Arc, LazyLock, RwLock},
+    sync::{Arc, LazyLock, RwLock},
 };
 use title_bar::platform_title_bar::PlatformTitleBar;
 use ui::{
@@ -238,6 +238,7 @@ struct SettingFieldRenderer {
                         &SettingItem,
                         SettingsUiFile,
                         Option<&SettingsFieldMetadata>,
+                        bool,
                         &mut Window,
                         &mut Context<SettingsWindow>,
                     ) -> Stateful<Div>,
@@ -267,6 +268,7 @@ impl SettingFieldRenderer {
                   field: SettingField<T>,
                   settings_file: SettingsUiFile,
                   metadata: Option<&SettingsFieldMetadata>,
+                  sub_field: bool,
                   window: &mut Window,
                   cx: &mut Context<SettingsWindow>| {
                 render_settings_item(
@@ -274,6 +276,7 @@ impl SettingFieldRenderer {
                     item,
                     settings_file.clone(),
                     render_control(field, settings_file, metadata, window, cx),
+                    sub_field,
                     window,
                     cx,
                 )
@@ -289,6 +292,7 @@ impl SettingFieldRenderer {
             SettingField<T>,
             SettingsUiFile,
             Option<&SettingsFieldMetadata>,
+            bool,
             &mut Window,
             &mut Context<SettingsWindow>,
         ) -> Stateful<Div>
@@ -300,6 +304,7 @@ impl SettingFieldRenderer {
                   item: &SettingItem,
                   settings_file: SettingsUiFile,
                   metadata: Option<&SettingsFieldMetadata>,
+                  sub_field: bool,
                   window: &mut Window,
                   cx: &mut Context<SettingsWindow>| {
                 let field = *item
@@ -314,6 +319,7 @@ impl SettingFieldRenderer {
                     field,
                     settings_file,
                     metadata,
+                    sub_field,
                     window,
                     cx,
                 )
@@ -706,18 +712,20 @@ impl SettingsPageItem {
     ) -> AnyElement {
         let file = settings_window.current_file.clone();
 
-        let border_variant = cx.theme().colors().border_variant;
         let apply_padding = |element: Stateful<Div>| -> Stateful<Div> {
             let element = element.pt_4();
             if is_last {
                 element.pb_10()
             } else {
-                element.pb_4().border_b_1().border_color(border_variant)
+                element.pb_4()
             }
         };
 
         let mut render_setting_item_inner =
-            |setting_item: &SettingItem, padding: bool, cx: &mut Context<SettingsWindow>| {
+            |setting_item: &SettingItem,
+             padding: bool,
+             sub_field: bool,
+             cx: &mut Context<SettingsWindow>| {
                 let renderer = cx.default_global::<SettingFieldRenderer>().clone();
                 let (_, found) = setting_item.field.file_set_in(file.clone(), cx);
 
@@ -741,6 +749,7 @@ impl SettingsPageItem {
                             setting_item,
                             file.clone(),
                             setting_item.metadata.as_deref(),
+                            sub_field,
                             window,
                             cx,
                         )
@@ -758,6 +767,7 @@ impl SettingsPageItem {
                             .tab_index(0_isize)
                             .tooltip(Tooltip::text(setting_item.field.type_name()))
                             .into_any_element(),
+                        sub_field,
                         window,
                         cx,
                     ),
@@ -775,6 +785,7 @@ impl SettingsPageItem {
         match self {
             SettingsPageItem::SectionHeader(header) => v_flex()
                 .w_full()
+                .px_8()
                 .gap_1p5()
                 .child(
                     Label::new(SharedString::new_static(header))
@@ -785,56 +796,72 @@ impl SettingsPageItem {
                 .child(Divider::horizontal().color(DividerColor::BorderFaded))
                 .into_any_element(),
             SettingsPageItem::SettingItem(setting_item) => {
-                let (field_with_padding, _) = render_setting_item_inner(setting_item, true, cx);
-                field_with_padding.into_any_element()
+                let (field_with_padding, _) =
+                    render_setting_item_inner(setting_item, true, false, cx);
+
+                v_flex()
+                    .group("setting-item")
+                    .px_8()
+                    .child(field_with_padding)
+                    .when(!is_last, |this| this.child(Divider::horizontal()))
+                    .into_any_element()
             }
-            SettingsPageItem::SubPageLink(sub_page_link) => h_flex()
-                .id(sub_page_link.title.clone())
-                .w_full()
-                .min_w_0()
-                .justify_between()
-                .map(apply_padding)
+            SettingsPageItem::SubPageLink(sub_page_link) => v_flex()
+                .group("setting-item")
+                .debug_bg_red()
+                .px_8()
                 .child(
-                    v_flex()
+                    h_flex()
+                        .id(sub_page_link.title.clone())
                         .w_full()
-                        .max_w_1_2()
-                        .child(Label::new(sub_page_link.title.clone())),
+                        .min_w_0()
+                        .justify_between()
+                        .map(apply_padding)
+                        .child(
+                            v_flex()
+                                .w_full()
+                                .max_w_1_2()
+                                .child(Label::new(sub_page_link.title.clone())),
+                        )
+                        .child(
+                            Button::new(
+                                ("sub-page".into(), sub_page_link.title.clone()),
+                                "Configure",
+                            )
+                            .icon(IconName::ChevronRight)
+                            .tab_index(0_isize)
+                            .icon_position(IconPosition::End)
+                            .icon_color(Color::Muted)
+                            .icon_size(IconSize::Small)
+                            .style(ButtonStyle::OutlinedGhost)
+                            .size(ButtonSize::Medium)
+                            .on_click({
+                                let sub_page_link = sub_page_link.clone();
+                                cx.listener(move |this, _, _, cx| {
+                                    let mut section_index = item_index;
+                                    let current_page = this.current_page();
+
+                                    while !matches!(
+                                        current_page.items[section_index],
+                                        SettingsPageItem::SectionHeader(_)
+                                    ) {
+                                        section_index -= 1;
+                                    }
+
+                                    let SettingsPageItem::SectionHeader(header) =
+                                        current_page.items[section_index]
+                                    else {
+                                        unreachable!(
+                                            "All items always have a section header above them"
+                                        )
+                                    };
+
+                                    this.push_sub_page(sub_page_link.clone(), header, cx)
+                                })
+                            }),
+                        ),
                 )
-                .child(
-                    Button::new(
-                        ("sub-page".into(), sub_page_link.title.clone()),
-                        "Configure",
-                    )
-                    .icon(IconName::ChevronRight)
-                    .tab_index(0_isize)
-                    .icon_position(IconPosition::End)
-                    .icon_color(Color::Muted)
-                    .icon_size(IconSize::Small)
-                    .style(ButtonStyle::OutlinedGhost)
-                    .size(ButtonSize::Medium)
-                    .on_click({
-                        let sub_page_link = sub_page_link.clone();
-                        cx.listener(move |this, _, _, cx| {
-                            let mut section_index = item_index;
-                            let current_page = this.current_page();
-
-                            while !matches!(
-                                current_page.items[section_index],
-                                SettingsPageItem::SectionHeader(_)
-                            ) {
-                                section_index -= 1;
-                            }
-
-                            let SettingsPageItem::SectionHeader(header) =
-                                current_page.items[section_index]
-                            else {
-                                unreachable!("All items always have a section header above them")
-                            };
-
-                            this.push_sub_page(sub_page_link.clone(), header, cx)
-                        })
-                    }),
-                )
+                .when(!is_last, |this| this.child(Divider::horizontal()))
                 .into_any_element(),
             SettingsPageItem::DynamicItem(DynamicItem {
                 discriminant: discriminant_setting_item,
@@ -847,18 +874,17 @@ impl SettingsPageItem {
                     .1;
 
                 let (discriminant_element, rendered_ok) =
-                    render_setting_item_inner(discriminant_setting_item, true, cx);
+                    render_setting_item_inner(discriminant_setting_item, true, false, cx);
 
                 let has_sub_fields =
                     rendered_ok && discriminant.map(|d| !fields[d].is_empty()).unwrap_or(false);
 
-                let discriminant_element = if has_sub_fields {
-                    discriminant_element.pb_4().border_b_0()
-                } else {
-                    discriminant_element
-                };
-
-                let mut content = v_flex().id("dynamic-item").child(discriminant_element);
+                let mut content = v_flex()
+                    .id("dynamic-item")
+                    .group("setting-item")
+                    .px_8()
+                    .child(discriminant_element.when(has_sub_fields, |this| this.pb_4()))
+                    .when(!has_sub_fields, |this| this.child(Divider::horizontal()));
 
                 if rendered_ok {
                     let discriminant =
@@ -868,12 +894,12 @@ impl SettingsPageItem {
 
                     for (index, field) in sub_fields.iter().enumerate() {
                         let is_last_sub_field = index == sub_field_count - 1;
-                        let (raw_field, _) = render_setting_item_inner(field, false, cx);
+                        let (raw_field, _) = render_setting_item_inner(field, false, true, cx);
 
                         content = content.child(
                             raw_field
+                                .group("setting-sub-item")
                                 .p_4()
-                                .border_x_1()
                                 .border_t_1()
                                 .when(is_last_sub_field, |this| this.border_b_1())
                                 .when(is_last_sub_field && is_last, |this| this.mb_8())
@@ -895,6 +921,7 @@ fn render_settings_item(
     setting_item: &SettingItem,
     file: SettingsUiFile,
     control: AnyElement,
+    sub_field: bool,
     _window: &mut Window,
     cx: &mut Context<'_, SettingsWindow>,
 ) -> Stateful<Div> {
@@ -907,41 +934,25 @@ fn render_settings_item(
         .map_or(false, |maybe_url| {
             maybe_url.strip_prefix("zed://settings/") == setting_item.field.json_path()
         });
+
     let (link_icon, link_icon_color) = if clipboard_has_link {
         (IconName::Check, Color::Success)
     } else {
-        (IconName::Hash, Color::Muted)
+        (IconName::Link, Color::Muted)
     };
 
     h_flex()
         .id(setting_item.title)
-        .relative()
         .min_w_0()
         .justify_between()
         .child(
             v_flex()
+                .relative()
                 .w_1_2()
-                .group("setting-item")
                 .child(
                     h_flex()
                         .w_full()
                         .gap_1()
-                        .ml_neg_8()
-                        // .group_hover("setting-item", |s| s.gap_10())
-                        .child(
-                            IconButton::new("copy-link-btn", link_icon)
-                                .icon_color(link_icon_color)
-                                .icon_size(IconSize::Small)
-                                .shape(IconButtonShape::Square)
-                                .tooltip(Tooltip::text("Copy Link"))
-                                .when_some(setting_item.field.json_path(), |this, path| {
-                                    this.on_click(cx.listener(move |_, _, _, cx| {
-                                        let link = format!("zed://settings/{}", path);
-                                        cx.write_to_clipboard(ClipboardItem::new_string(link));
-                                        cx.notify();
-                                    }))
-                                })
-)
                         .child(Label::new(SharedString::new_static(setting_item.title)))
                         .when_some(
                             setting_item
@@ -984,38 +995,41 @@ fn render_settings_item(
                 ),
         )
         .child(control)
-    // .when(sub_page_stack().is_empty(), |this| {
-    //     this.child(
-    //         div()
-    //             .visible_on_hover("setting-item")
-    //             .absolute()
-    //             .top_0()
-    //             .left_neg_5(
-    //             )
-    //             .child({
-    //                 IconButton::new("copy-link-btn", link_icon)
-    //                     .icon_color(link_icon_color)
-    //                     .icon_size(IconSize::Small)
-    //                     .shape(IconButtonShape::Square)
-    //                     .tooltip(Tooltip::text("Copy Link"))
-    //                     .when_some(
-    //                         setting_item.field.json_path(),
-    //                         |this, path| {
-    //                             this.on_click(cx.listener(
-    //                                 move |_, _, _, cx| {
-    //                                     let link =
-    //                                         format!("zed://settings/{}", path);
-    //                                     cx.write_to_clipboard(
-    //                                         ClipboardItem::new_string(link),
-    //                                     );
-    //                                     cx.notify();
-    //                                 },
-    //                             ))
-    //                         },
-    //                     )
-    //             }),
-    //     )
-    // })
+        .when(sub_page_stack().is_empty(), |this| {
+            // Intentionally using the description to make the icon button
+            // unique because some items share the same title (e.g., "Font Size")
+            let icon_button_id =
+                SharedString::new(format!("copy-link-btn-{}", setting_item.description));
+
+            this.child(
+                div()
+                    .absolute()
+                    .top(rems_from_px(18.))
+                    .map(|this| {
+                        if sub_field {
+                            this.visible_on_hover("setting-sub-item")
+                                .left(rems_from_px(-8.5))
+                        } else {
+                            this.visible_on_hover("setting-item")
+                                .left(rems_from_px(-22.))
+                        }
+                    })
+                    .child({
+                        IconButton::new(icon_button_id, link_icon)
+                            .icon_color(link_icon_color)
+                            .icon_size(IconSize::Small)
+                            .shape(IconButtonShape::Square)
+                            .tooltip(Tooltip::text("Copy Link"))
+                            .when_some(setting_item.field.json_path(), |this, path| {
+                                this.on_click(cx.listener(move |_, _, _, cx| {
+                                    let link = format!("zed://settings/{}", path);
+                                    cx.write_to_clipboard(ClipboardItem::new_string(link));
+                                    cx.notify();
+                                }))
+                            })
+                    }),
+            )
+        })
 }
 
 struct SettingItem {
@@ -1943,7 +1957,6 @@ impl SettingsWindow {
 
         h_flex()
             .w_full()
-            .pb_4()
             .gap_1()
             .justify_between()
             .track_focus(&self.files_focus_handle)
@@ -2549,6 +2562,7 @@ impl SettingsWindow {
                 cx.processor(move |this, index, window, cx| {
                     if index == 0 {
                         return div()
+                            .px_8()
                             .when(sub_page_stack().is_empty(), |this| {
                                 this.when_some(root_nav_label, |this, title| {
                                     this.child(
@@ -2576,9 +2590,9 @@ impl SettingsWindow {
 
                     v_flex()
                         .id(("settings-page-item", actual_item_index))
+                        .track_focus(&item_focus_handle)
                         .w_full()
                         .min_w_0()
-                        .track_focus(&item_focus_handle)
                         .child(item.render(
                             this,
                             actual_item_index,
@@ -2693,7 +2707,6 @@ impl SettingsWindow {
         } else {
             page_header = h_flex()
                 .ml_neg_1p5()
-                .pb_4()
                 .gap_1()
                 .child(
                     IconButton::new("back-btn", IconName::ArrowLeft)
@@ -2714,30 +2727,24 @@ impl SettingsWindow {
         if let Some(error) =
             SettingsStore::global(cx).error_for_file(self.current_file.to_settings())
         {
-            warning_banner = v_flex()
-                .pb_4()
+            warning_banner = Banner::new()
+                .severity(Severity::Warning)
                 .child(
-                    Banner::new()
-                        .severity(Severity::Warning)
-                        .child(
-                            v_flex()
-                                .my_0p5()
-                                .gap_0p5()
-                                .child(Label::new("Your settings file is in an invalid state."))
-                                .child(
-                                    Label::new(error).size(LabelSize::Small).color(Color::Muted),
-                                ),
-                        )
-                        .action_slot(
-                            div().pr_1().child(
-                                Button::new("fix-in-json", "Fix in settings.json")
-                                    .tab_index(0_isize)
-                                    .style(ButtonStyle::Tinted(ui::TintColor::Warning))
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.open_current_settings_file(cx);
-                                    })),
-                            ),
-                        ),
+                    v_flex()
+                        .my_0p5()
+                        .gap_0p5()
+                        .child(Label::new("Your settings file is in an invalid state."))
+                        .child(Label::new(error).size(LabelSize::Small).color(Color::Muted)),
+                )
+                .action_slot(
+                    div().pr_1().child(
+                        Button::new("fix-in-json", "Fix in settings.json")
+                            .tab_index(0_isize)
+                            .style(ButtonStyle::Tinted(ui::TintColor::Warning))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.open_current_settings_file(cx);
+                            })),
+                    ),
                 )
                 .into_any_element()
         }
@@ -2810,16 +2817,20 @@ impl SettingsWindow {
                 this.vertical_scrollbar_for(self.sub_page_scroll_handle.clone(), window, cx)
             })
             .track_focus(&self.content_focus_handle.focus_handle(cx))
-            .flex_1()
             .pt_6()
-            // .px_8()
+            .gap_4()
+            .flex_1()
             .bg(cx.theme().colors().editor_background)
-            .child(warning_banner)
-            .child(page_header)
+            .child(
+                v_flex()
+                    .px_8()
+                    .gap_2()
+                    .child(page_header)
+                    .child(warning_banner),
+            )
             .child(
                 div()
-                    .px_8()
-                    // .debug_bg_red()
+                    .flex_1()
                     .size_full()
                     .tab_group()
                     .tab_index(CONTENT_GROUP_TAB_INDEX)
