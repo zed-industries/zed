@@ -25,6 +25,7 @@ use std::{
     ops::Range,
     rc::Rc,
     sync::{Arc, LazyLock, RwLock},
+    time::Duration,
 };
 use title_bar::platform_title_bar::PlatformTitleBar;
 use ui::{
@@ -1196,6 +1197,8 @@ impl SettingsWindow {
                     window.remove_window();
                 })
                 .ok();
+
+                telemetry::event!("Settings Closed")
             }
         })
         .detach();
@@ -1579,6 +1582,9 @@ impl SettingsWindow {
                     );
                 })
                 .ok();
+
+            cx.background_executor().timer(Duration::from_secs(1)).await;
+            telemetry::event!("Settings Searched", query = query)
         }));
     }
 
@@ -1832,6 +1838,10 @@ impl SettingsWindow {
             return;
         }
         self.current_file = self.files[ix].0.clone();
+
+        if let SettingsUiFile::Project((_, _)) = &self.current_file {
+            telemetry::event!("Setting Project Clicked");
+        }
 
         self.build_ui(window, cx);
 
@@ -2219,8 +2229,18 @@ impl SettingsWindow {
                                                     },
                                                 ))
                                         })
-                                        .on_click(
+                                        .on_click({
+                                            let category = this.pages[entry.page_index].title;
+                                            let subcategory =
+                                                (!entry.is_root).then_some(entry.title);
+
                                             cx.listener(move |this, _, window, cx| {
+                                                telemetry::event!(
+                                                    "Settings Navigation Clicked",
+                                                    category = category,
+                                                    subcategory = subcategory
+                                                );
+
                                                 this.open_and_scroll_to_navbar_entry(
                                                     entry_index,
                                                     None,
@@ -2228,8 +2248,8 @@ impl SettingsWindow {
                                                     window,
                                                     cx,
                                                 );
-                                            }),
-                                        )
+                                            })
+                                        })
                                     })
                                     .collect()
                             }),
