@@ -465,6 +465,55 @@ impl ScrollDelta {
     }
 }
 
+/// A zoom event from the platform (e.g. pinch-to-zoom).
+#[derive(Clone, Debug, Default)]
+pub struct ZoomEvent {
+    /// The position of the mouse on the window.
+    pub position: Point<Pixels>,
+
+    /// The change in zoom amount for this event.
+    pub delta: ZoomDelta,
+
+    /// The modifiers that were held down when the zoom amount changed.
+    pub modifiers: Modifiers,
+
+    /// The phase of the touch event.
+    pub touch_phase: TouchPhase,
+}
+
+impl Sealed for ZoomEvent {}
+impl InputEvent for ZoomEvent {
+    fn to_platform_input(self) -> PlatformInput {
+        PlatformInput::Zoom(self)
+    }
+}
+impl MouseEvent for ZoomEvent {}
+
+impl Deref for ZoomEvent {
+    type Target = Modifiers;
+
+    fn deref(&self) -> &Self::Target {
+        &self.modifiers
+    }
+}
+
+/// The zoom delta for a zoom event.
+///
+/// Marked non-exhaustive until pinch-to-zoom is implemented for Windows/Linux, which
+/// may represent zoom amount with a pixel distance instead.
+#[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
+pub enum ZoomDelta {
+    /// How much the zoom amount (1 = no zoom) would change.
+    ZoomAmount(f32),
+}
+
+impl Default for ZoomDelta {
+    fn default() -> Self {
+        Self::ZoomAmount(Default::default())
+    }
+}
+
 /// A mouse exit event from the platform, generated when the mouse leaves the window.
 #[derive(Clone, Debug, Default)]
 pub struct MouseExitEvent {
@@ -561,6 +610,8 @@ pub enum PlatformInput {
     MouseExited(MouseExitEvent),
     /// The scroll wheel was used.
     ScrollWheel(ScrollWheelEvent),
+    /// The window was zoomed in or out (e.g. with pinch-to-zoom).
+    Zoom(ZoomEvent),
     /// Files were dragged and dropped onto the window.
     FileDrop(FileDropEvent),
 }
@@ -576,6 +627,7 @@ impl PlatformInput {
             PlatformInput::MouseMove(event) => Some(event),
             PlatformInput::MouseExited(event) => Some(event),
             PlatformInput::ScrollWheel(event) => Some(event),
+            PlatformInput::Zoom(event) => Some(event),
             PlatformInput::FileDrop(event) => Some(event),
         }
     }
@@ -590,6 +642,7 @@ impl PlatformInput {
             PlatformInput::MouseMove(_) => None,
             PlatformInput::MouseExited(_) => None,
             PlatformInput::ScrollWheel(_) => None,
+            PlatformInput::Zoom(_) => None,
             PlatformInput::FileDrop(_) => None,
         }
     }

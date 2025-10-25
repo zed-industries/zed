@@ -500,8 +500,8 @@ pub struct HitboxId(u64);
 
 impl HitboxId {
     /// Checks if the hitbox with this ID is currently hovered. Except when handling
-    /// `ScrollWheelEvent`, this is typically what you want when determining whether to handle mouse
-    /// events or paint hover styles.
+    /// `ScrollWheelEvent` and `ZoomEvent`, this is typically what you want when determining
+    /// whether to handle mouse events or paint hover styles.
     ///
     /// See [`Hitbox::is_hovered`] for details.
     pub fn is_hovered(self, window: &Window) -> bool {
@@ -514,10 +514,11 @@ impl HitboxId {
         false
     }
 
-    /// Checks if the hitbox with this ID contains the mouse and should handle scroll events.
-    /// Typically this should only be used when handling `ScrollWheelEvent`, and otherwise
-    /// `is_hovered` should be used. See the documentation of `Hitbox::is_hovered` for details about
-    /// this distinction.
+    /// Checks if the hitbox with this ID contains the mouse.
+    ///
+    /// Typically this should only be used when handling `ScrollWheelEvent` and `ZoomEvent`, and
+    /// otherwise `is_hovered` should be used. See the documentation of `Hitbox::is_hovered` for
+    /// details about this distinction.
     pub fn should_handle_scroll(self, window: &Window) -> bool {
         window.mouse_hit_test.ids.contains(&self)
     }
@@ -543,17 +544,17 @@ pub struct Hitbox {
 }
 
 impl Hitbox {
-    /// Checks if the hitbox is currently hovered. Except when handling `ScrollWheelEvent`, this is
-    /// typically what you want when determining whether to handle mouse events or paint hover
-    /// styles.
+    /// Checks if the hitbox is currently hovered. Except when handling `ScrollWheelEvent` and
+    /// `ZoomEvent`, this is typically what you want when determining whether to handle mouse events
+    /// or paint hover styles.
     ///
     /// This can return `false` even when the hitbox contains the mouse, if a hitbox in front of
     /// this sets `HitboxBehavior::BlockMouse` (`InteractiveElement::occlude`) or
     /// `HitboxBehavior::BlockMouseExceptScroll` (`InteractiveElement::block_mouse_except_scroll`).
     ///
-    /// Handling of `ScrollWheelEvent` should typically use `should_handle_scroll` instead.
-    /// Concretely, this is due to use-cases like overlays that cause the elements under to be
-    /// non-interactive while still allowing scrolling. More abstractly, this is because
+    /// Handling of `ScrollWheelEvent` and `ZoomEvent` should typically use `should_handle_scroll`
+    /// instead. Concretely, this is due to use-cases like overlays that cause the elements under to
+    /// be non-interactive while still allowing scrolling. More abstractly, this is because
     /// `is_hovered` is about element interactions directly under the mouse - mouse moves, clicks,
     /// hover styling, etc. In contrast, scrolling is about finding the current outer scrollable
     /// container.
@@ -562,8 +563,8 @@ impl Hitbox {
     }
 
     /// Checks if the hitbox contains the mouse and should handle scroll events. Typically this
-    /// should only be used when handling `ScrollWheelEvent`, and otherwise `is_hovered` should be
-    /// used. See the documentation of `Hitbox::is_hovered` for details about this distinction.
+    /// should only be used when handling `ScrollWheelEvent` and `ZoomEvent`, and otherwise `is_hovered`
+    /// should be used. See the documentation of `Hitbox::is_hovered` for details about this distinction.
     ///
     /// This can return `false` even when the hitbox contains the mouse, if a hitbox in front of
     /// this sets `HitboxBehavior::BlockMouse` (`InteractiveElement::occlude`).
@@ -604,12 +605,13 @@ pub enum HitboxBehavior {
 
     /// All hitboxes behind this hitbox will have `hitbox.is_hovered() == false`, even when
     /// `hitbox.should_handle_scroll() == true`. Typically for elements this causes all mouse
-    /// interaction except scroll events to be ignored - see the documentation of
-    /// [`Hitbox::is_hovered`] for details. This flag is set by
+    /// interaction except scroll and zoom (e.g. pinch-to-zoom) events to be ignored - see the
+    /// documentation of [`Hitbox::is_hovered`] for details. This flag is set by
     /// [`InteractiveElement::block_mouse_except_scroll`].
     ///
     /// For mouse handlers that check those hitboxes, this behaves the same as registering a
-    /// bubble-phase handler for every mouse event type **except** `ScrollWheelEvent`:
+    /// bubble-phase handler for every mouse event type **except** `ScrollWheelEvent` and
+    /// `ZoomEvent`:
     ///
     /// ```ignore
     /// window.on_mouse_event(move |_: &EveryMouseEventTypeExceptScroll, phase, window, cx| {
@@ -619,9 +621,10 @@ pub enum HitboxBehavior {
     /// })
     /// ```
     ///
-    /// See the documentation of [`Hitbox::is_hovered`] for details of why `ScrollWheelEvent` is
-    /// handled differently than other mouse events. If also blocking these scroll events is
-    /// desired, then a `cx.stop_propagation()` handler like the one above can be used.
+    /// See the documentation of [`Hitbox::is_hovered`] for details of why `ScrollWheelEvent`
+    /// and `ZoomEvent` are handled differently than other mouse events. If also blocking these
+    /// scroll and zoom events is desired, then a `cx.stop_propagation()` handler like the one
+    /// above can be used.
     ///
     /// This has effects beyond event handling - this affects any use of `is_hovered`, such as
     /// hover styles and tooltops. These other behaviors are the main point of this mechanism.
@@ -3637,6 +3640,11 @@ impl Window {
                 self.mouse_position = scroll_wheel.position;
                 self.modifiers = scroll_wheel.modifiers;
                 PlatformInput::ScrollWheel(scroll_wheel)
+            }
+            PlatformInput::Zoom(zoom) => {
+                self.mouse_position = zoom.position;
+                self.modifiers = zoom.modifiers;
+                PlatformInput::Zoom(zoom)
             }
             // Translate dragging and dropping of external files from the operating system
             // to internal drag and drop events.
