@@ -19,6 +19,28 @@ This configuration is merged with any local configuration inside your projects. 
 
 Although most projects will only need one settings file at the root, you can add more local settings files for subdirectories as needed. Not all settings can be set in local files, just those that impact the behavior of the editor and language tooling. For example you can set `tab_size`, `formatter` etc. but not `theme`, `vim_mode` and similar.
 
+### Per-release channel overrides
+
+Zed reads the same user `settings.json` no matter which release channel (Stable, Preview, Nightly) you launch, but you can scope overrides to a specific channel by adding top-level `stable`, `preview`, or `nightly` objects. Each section merges with the base config when that build starts. For example:
+
+```json [settings]
+{
+  "theme": "sunset",
+  "vim_mode": false,
+  "nightly": {
+    "theme": "cave-light",
+    "vim_mode": true
+  },
+  "preview": {
+    "theme": "zed-dark"
+  }
+}
+```
+
+In this configuration, Stable keeps the base preferences, Preview switches to `zed-dark`, and Nightly enables Vim mode with a different theme. Channel-specific blocks must include every setting you want overridden -- they do not merge arrays with the base copy.
+
+Note that changing options via the UI (for example toggling Vim mode or picking a theme) edits the root of `settings.json`. To keep per-channel differences, edit the relevant release section manually after making UI tweaks.
+
 The syntax for configuration files is a super-set of JSON that allows `//` comments.
 
 ## Default settings
