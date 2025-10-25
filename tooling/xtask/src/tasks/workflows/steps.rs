@@ -39,11 +39,11 @@ pub mod danger {
         named::run("pnpm run --dir script/danger danger ci")
             // This GitHub token is not used, but the value needs to be here to prevent
             // Danger from throwing an error.
-            .env(("GITHUB_TOKEN", "not_a_real_token"))
+            .add_env(("GITHUB_TOKEN", "not_a_real_token"))
             // All requests are instead proxied through an instance of
             // https://github.com/maxdeviant/danger-proxy that allows Danger to securely
             // authenticate with GitHub while still being able to run on PRs from forks.
-            .env((
+            .add_env((
                 "DANGER_GITHUB_API_BASE_URL",
                 "https://danger-proxy.fly.dev/github",
             ))
