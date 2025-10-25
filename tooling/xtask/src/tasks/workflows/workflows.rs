@@ -81,7 +81,7 @@ pub fn nix() -> Workflow {
                 ))
                 .runs_on(runners::LINUX_DEFAULT)
                 .env(env.clone())
-                .add_step(steps::checkout_repo().with(("clean", "false")))
+                .add_step(steps::checkout_repo().add_with(("clean", "false")))
                 .add_step(steps::nix::install_nix())
                 .add_step(steps::nix::cachix_action(&input_cachix_filter))
                 .add_step(steps::nix::build(&input_flake_output)),
@@ -96,7 +96,7 @@ pub fn nix() -> Workflow {
                 ))
                 .runs_on(runners::MAC_DEFAULT)
                 .env(env)
-                .add_step(steps::checkout_repo().with(("clean", "false")))
+                .add_step(steps::checkout_repo().add_with(("clean", "false")))
                 .add_step(steps::nix::set_path())
                 .add_step(steps::nix::cachix_action(&input_cachix_filter))
                 .add_step(steps::nix::build(&input_flake_output))
