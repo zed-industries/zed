@@ -7,28 +7,26 @@ use std::{
 };
 
 use blade_graphics as gpu;
-use collections::HashMap;
+use collections::{FxHashSet, HashMap};
 use futures::channel::oneshot::Receiver;
 
 use raw_window_handle as rwh;
 use wayland_backend::client::ObjectId;
 use wayland_client::WEnum;
 use wayland_client::{Proxy, protocol::wl_surface};
+use wayland_protocols::wp::fractional_scale::v1::client::wp_fractional_scale_v1;
 use wayland_protocols::wp::viewporter::client::wp_viewport;
 use wayland_protocols::xdg::decoration::zv1::client::zxdg_toplevel_decoration_v1;
 use wayland_protocols::xdg::shell::client::xdg_surface;
 use wayland_protocols::xdg::shell::client::xdg_toplevel::{self};
-use wayland_protocols::{
-    wp::fractional_scale::v1::client::wp_fractional_scale_v1,
-    xdg::shell::client::xdg_toplevel::XdgToplevel,
-};
 use wayland_protocols_plasma::blur::client::org_kde_kwin_blur;
 
 use crate::{
     AnyWindowHandle, Bounds, Decorations, Globals, GpuSpecs, Modifiers, Output, Pixels,
     PlatformDisplay, PlatformInput, Point, PromptButton, PromptLevel, RequestFrameOptions,
     ResizeEdge, Size, Tiling, WaylandClientStatePtr, WindowAppearance, WindowBackgroundAppearance,
-    WindowBounds, WindowControlArea, WindowControls, WindowDecorations, WindowParams, px, size,
+    WindowBounds, WindowControlArea, WindowControls, WindowDecorations, WindowParams, get_window,
+    px, size,
 };
 use crate::{
     Capslock,
@@ -85,6 +83,8 @@ struct InProgressConfigure {
 pub struct WaylandWindowState {
     xdg_surface: xdg_surface::XdgSurface,
     acknowledged_first_configure: bool,
+    parent: Option<WaylandWindowStatePtr>,
+    children: FxHashSet<ObjectId>,
     pub surface: wl_surface::WlSurface,
     decoration: Option<zxdg_toplevel_decoration_v1::ZxdgToplevelDecorationV1>,
     app_id: Option<String>,
@@ -135,6 +135,7 @@ impl WaylandWindowState {
         globals: Globals,
         gpu_context: &BladeContext,
         options: WindowParams,
+        parent: Option<WaylandWindowStatePtr>,
     ) -> anyhow::Result<Self> {
         let renderer = {
             let raw_window = RawWindow {
@@ -160,6 +161,8 @@ impl WaylandWindowState {
         Ok(Self {
             xdg_surface,
             acknowledged_first_configure: false,
+            parent,
+            children: FxHashSet::default(),
             surface,
             decoration,
             app_id: None,
@@ -234,6 +237,11 @@ impl Drop for WaylandWindow {
     fn drop(&mut self) {
         let mut state = self.0.state.borrow_mut();
         let surface_id = state.surface.id();
+        if let Some(parent) = state.parent.as_ref() {
+            parent.state.borrow_mut().children.remove(&surface_id);
+        }
+
+        let surface_id = state.surface.id();
         let client = state.client.clone();
 
         state.renderer.destroy();
@@ -279,7 +287,7 @@ impl WaylandWindow {
         client: WaylandClientStatePtr,
         params: WindowParams,
         appearance: WindowAppearance,
-        parent: Option<XdgToplevel>,
+        parent: Option<WaylandWindowStatePtr>,
     ) -> anyhow::Result<(Self, ObjectId)> {
         let surface = globals.compositor.create_surface(&globals.qh, ());
         let xdg_surface = globals
@@ -287,8 +295,21 @@ impl WaylandWindow {
             .get_xdg_surface(&surface, &globals.qh, surface.id());
         let toplevel = xdg_surface.get_toplevel(&globals.qh, surface.id());
 
-        if params.kind == WindowKind::Floating {
-            toplevel.set_parent(parent.as_ref());
+        let xdg_parent = parent.as_ref().map(|w| w.toplevel());
+        if params.kind == WindowKind::Floating || params.kind == WindowKind::Dialog {
+            toplevel.set_parent(xdg_parent.as_ref());
+        }
+
+        if params.kind == WindowKind::Dialog
+            && let Some(dialog) = &globals.dialog
+        {
+            let xdg_dialog = dialog.get_xdg_dialog(&toplevel, &globals.qh, ());
+
+            xdg_dialog.set_modal();
+
+            if let Some(parent) = parent.as_ref() {
+                parent.add_children(surface.id());
+            }
         }
 
         if let Some(size) = params.window_min_size {
@@ -325,6 +346,7 @@ impl WaylandWindow {
                 globals,
                 gpu_context,
                 params,
+                parent,
             )?)),
             callbacks: Rc::new(RefCell::new(Callbacks::default())),
         });
@@ -351,6 +373,16 @@ impl WaylandWindowStatePtr {
 
     pub fn ptr_eq(&self, other: &Self) -> bool {
         Rc::ptr_eq(&self.state, &other.state)
+    }
+
+    pub fn add_children(&self, child: ObjectId) {
+        let mut state = self.state.borrow_mut();
+        state.children.insert(child);
+    }
+
+    pub fn has_children(&self) -> bool {
+        let state = self.state.borrow();
+        !state.children.is_empty()
     }
 
     pub fn frame(&self) {
@@ -710,6 +742,21 @@ impl WaylandWindowStatePtr {
     }
 
     pub fn close(&self) {
+        let state = self.state.borrow();
+        let client = state.client.get_client();
+        #[allow(clippy::mutable_key_type)]
+        let childrens = state.children.clone();
+        drop(state);
+
+        for children in childrens {
+            let mut client_state = client.borrow_mut();
+            let window = get_window(&mut client_state, &children);
+            drop(client_state);
+
+            if let Some(children) = window {
+                children.close();
+            }
+        }
         let mut callbacks = self.callbacks.borrow_mut();
         if let Some(fun) = callbacks.close.take() {
             fun()
