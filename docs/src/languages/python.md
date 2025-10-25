@@ -7,6 +7,7 @@ Python support is available natively in Zed.
   - [DetachHead/basedpyright](https://github.com/DetachHead/basedpyright)
   - [astral-sh/ruff](https://github.com/astral-sh/ruff)
   - [astral-sh/ty](https://github.com/astral-sh/ty)
+  - [facebook/pyrefly](https://github.com/facebook/pyrefly)
   - [microsoft/pyright](https://github.com/microsoft/pyright)
   - [python-lsp/python-lsp-server](https://github.com/python-lsp/python-lsp-server) (PyLSP)
 - Debug Adapter: [debugpy](https://github.com/microsoft/debugpy)
@@ -72,6 +73,7 @@ Zed provides several Python language servers out of the box. By default, [basedp
 Other built-in language servers are:
 
 - [Ty](https://docs.astral.sh/ty/)&mdash;Up-and-coming language server from Astral, built for speed.
+- [Pyrefly](https://pyrefly.org)&mdash;Langauge server and type checker using inference for  accurate navigation and type safety.
 - [Pyright](https://github.com/microsoft/pyright)&mdash;The basis for basedpyright.
 - [PyLSP](https://github.com/python-lsp/python-lsp-server)&mdash;A plugin-based language server that integrates with tools like `pycodestyle`, `autopep8`, and `yapf`.
 
@@ -86,6 +88,7 @@ These are disabled by default, but can be enabled in your settings. For example:
         // use the default configuration.
         "ty",
         "!basedpyright",
+        "!pyrefly",
         "..."
       ]
     }
