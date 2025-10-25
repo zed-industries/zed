@@ -60,6 +60,9 @@ use std::ffi::OsStr;
 
 #[cfg(any(test, feature = "test-support"))]
 pub use fake_git_repo::{LOAD_HEAD_TEXT_TASK, LOAD_INDEX_TEXT_TASK};
+use encodings::Encoding;
+use encodings::from_utf8;
+use encodings::to_utf8;
 
 pub trait Watcher: Send + Sync {
     fn add(&self, path: &Path) -> Result<()>;
@@ -115,9 +118,34 @@ pub trait Fs: Send + Sync {
     async fn load(&self, path: &Path) -> Result<String> {
         Ok(String::from_utf8(self.load_bytes(path).await?)?)
     }
+
+    async fn load_with_encoding(
+        &self,
+        path: &Path,
+        encoding: Encoding,
+        force: bool,
+        detect_utf16: bool,
+        buffer_encoding: Option<Arc<Encoding>>,
+    ) -> Result<String> {
+        Ok(to_utf8(
+            self.load_bytes(path).await?,
+            encoding,
+            force,
+            detect_utf16,
+            buffer_encoding,
+        )
+        .await?)
+    }
+
     async fn load_bytes(&self, path: &Path) -> Result<Vec<u8>>;
     async fn atomic_write(&self, path: PathBuf, text: String) -> Result<()>;
-    async fn save(&self, path: &Path, text: &Rope, line_ending: LineEnding) -> Result<()>;
+    async fn save(
+        &self,
+        path: &Path,
+        text: &Rope,
+        line_ending: LineEnding,
+        encoding: Encoding,
+    ) -> Result<()>;
     async fn write(&self, path: &Path, content: &[u8]) -> Result<()>;
     async fn canonicalize(&self, path: &Path) -> Result<PathBuf>;
     async fn is_file(&self, path: &Path) -> bool;
@@ -599,9 +627,8 @@ impl Fs for RealFs {
 
     async fn load(&self, path: &Path) -> Result<String> {
         let path = path.to_path_buf();
-        self.executor
-            .spawn(async move { Ok(std::fs::read_to_string(path)?) })
-            .await
+        let text = smol::unblock(|| std::fs::read_to_string(path)).await?;
+        Ok(text)
     }
 
     async fn load_bytes(&self, path: &Path) -> Result<Vec<u8>> {
@@ -659,16 +686,37 @@ impl Fs for RealFs {
         Ok(())
     }
 
-    async fn save(&self, path: &Path, text: &Rope, line_ending: LineEnding) -> Result<()> {
+    async fn save(
+        &self,
+        path: &Path,
+        text: &Rope,
+        line_ending: LineEnding,
+        encoding: Encoding,
+    ) -> Result<()> {
         let buffer_size = text.summary().len.min(10 * 1024);
         if let Some(path) = path.parent() {
             self.create_dir(path).await?;
         }
         let file = smol::fs::File::create(path).await?;
         let mut writer = smol::io::BufWriter::with_capacity(buffer_size, file);
-        for chunk in chunks(text, line_ending) {
-            writer.write_all(chunk.as_bytes()).await?;
+
+        // BOM for UTF-16 is written at the start of the file here because
+        // if BOM is written in the `encode` function of `fs::encodings`, it would be written
+        // twice. Hence, it is written only here.
+        if encoding.get() == encodings::UTF_16BE {
+            // Write BOM for UTF-16BE
+            writer.write_all(&[0xFE, 0xFF]).await?;
+        } else if encoding.get() == encodings::UTF_16LE {
+            // Write BOM for UTF-16LE
+            writer.write_all(&[0xFF, 0xFE]).await?;
         }
+
+        for chunk in chunks(text, line_ending) {
+            writer
+                .write_all(&from_utf8(chunk.to_string(), Encoding::new(encoding.get())).await?)
+                .await?
+        }
+
         writer.flush().await?;
         Ok(())
     }
@@ -2380,14 +2428,22 @@ impl Fs for FakeFs {
         Ok(())
     }
 
-    async fn save(&self, path: &Path, text: &Rope, line_ending: LineEnding) -> Result<()> {
+    async fn save(
+        &self,
+        path: &Path,
+        text: &Rope,
+        line_ending: LineEnding,
+        encoding: Encoding,
+    ) -> Result<()> {
+        use encodings::from_utf8;
+
         self.simulate_random_delay().await;
         let path = normalize_path(path);
         let content = chunks(text, line_ending).collect::<String>();
         if let Some(path) = path.parent() {
             self.create_dir(path).await?;
         }
-        self.write_file_internal(path, content.into_bytes(), false)?;
+        self.write_file_internal(path, from_utf8(content, encoding).await?, false)?;
         Ok(())
     }
 

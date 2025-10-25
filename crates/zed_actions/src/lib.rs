@@ -293,6 +293,20 @@ pub mod settings_profile_selector {
     pub struct Toggle;
 }
 
+pub mod encodings_ui {
+    use std::sync::Arc;
+
+    use gpui::Action;
+    use schemars::JsonSchema;
+    use serde::Deserialize;
+
+    #[derive(PartialEq, Debug, Clone, Action, JsonSchema, Deserialize)]
+    pub struct Toggle(pub Arc<std::path::Path>);
+
+    #[derive(PartialEq, Debug, Clone, Action, JsonSchema, Deserialize)]
+    pub struct ForceOpen(pub Arc<std::path::Path>);
+}
+
 pub mod agent {
     use gpui::actions;
 

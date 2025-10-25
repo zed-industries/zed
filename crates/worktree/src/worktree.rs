@@ -7,6 +7,7 @@ use ::ignore::gitignore::{Gitignore, GitignoreBuilder};
 use anyhow::{Context as _, Result, anyhow};
 use clock::ReplicaId;
 use collections::{HashMap, HashSet, VecDeque};
+use encodings::Encoding;
 use fs::{Fs, MTime, PathEvent, RemoveOptions, Watcher, copy_recursive, read_dir_items};
 use futures::{
     FutureExt as _, Stream, StreamExt,
@@ -703,9 +704,19 @@ impl Worktree {
         }
     }
 
-    pub fn load_file(&self, path: &RelPath, cx: &Context<Worktree>) -> Task<Result<LoadedFile>> {
+    pub fn load_file(
+        &self,
+        path: &RelPath,
+        encoding: Option<Encoding>,
+        force: bool,
+        detect_utf16: bool,
+        buffer_encoding: Option<Arc<Encoding>>,
+        cx: &Context<Worktree>,
+    ) -> Task<Result<LoadedFile>> {
         match self {
-            Worktree::Local(this) => this.load_file(path, cx),
+            Worktree::Local(this) => {
+                this.load_file(path, encoding, force, detect_utf16, buffer_encoding, cx)
+            }
             Worktree::Remote(_) => {
                 Task::ready(Err(anyhow!("remote worktrees can't yet load files")))
             }
@@ -731,9 +742,10 @@ impl Worktree {
         text: Rope,
         line_ending: LineEnding,
         cx: &Context<Worktree>,
+        encoding: Encoding,
     ) -> Task<Result<Arc<File>>> {
         match self {
-            Worktree::Local(this) => this.write_file(path, text, line_ending, cx),
+            Worktree::Local(this) => this.write_file(path, text, line_ending, cx, encoding),
             Worktree::Remote(_) => {
                 Task::ready(Err(anyhow!("remote worktree can't yet write files")))
             }
@@ -1303,6 +1315,7 @@ impl LocalWorktree {
                         },
                         is_local: true,
                         is_private,
+                        encoding: None,
                     })
                 }
             };
@@ -1311,7 +1324,15 @@ impl LocalWorktree {
         })
     }
 
-    fn load_file(&self, path: &RelPath, cx: &Context<Worktree>) -> Task<Result<LoadedFile>> {
+    fn load_file(
+        &self,
+        path: &RelPath,
+        encoding: Option<Encoding>,
+        force: bool,
+        detect_utf16: bool,
+        buffer_encoding: Option<Arc<Encoding>>,
+        cx: &Context<Worktree>,
+    ) -> Task<Result<LoadedFile>> {
         let path = Arc::from(path);
         let abs_path = self.absolutize(&path);
         let fs = self.fs.clone();
@@ -1333,7 +1354,19 @@ impl LocalWorktree {
                     anyhow::bail!("File is too large to load");
                 }
             }
-            let text = fs.load(&abs_path).await?;
+            let text = fs
+                .load_with_encoding(
+                    &abs_path,
+                    if let Some(ref encoding) = encoding {
+                        Encoding::new(encoding.get())
+                    } else {
+                        Encoding::new(encodings::UTF_8)
+                    },
+                    force,
+                    detect_utf16,
+                    buffer_encoding.clone(),
+                )
+                .await?;
 
             let worktree = this.upgrade().context("worktree was dropped")?;
             let file = match entry.await? {
@@ -1357,6 +1390,7 @@ impl LocalWorktree {
                         },
                         is_local: true,
                         is_private,
+                        encoding: encoding.map(|e| Arc::new(Encoding::new(e.get()))),
                     })
                 }
             };
@@ -1445,6 +1479,7 @@ impl LocalWorktree {
         text: Rope,
         line_ending: LineEnding,
         cx: &Context<Worktree>,
+        encoding: Encoding,
     ) -> Task<Result<Arc<File>>> {
         let fs = self.fs.clone();
         let is_private = self.is_path_private(&path);
@@ -1453,7 +1488,10 @@ impl LocalWorktree {
         let write = cx.background_spawn({
             let fs = fs.clone();
             let abs_path = abs_path.clone();
-            async move { fs.save(&abs_path, &text, line_ending).await }
+            {
+                let encoding = encoding.clone();
+                async move { fs.save(&abs_path, &text, line_ending, encoding).await }
+            }
         });
 
         cx.spawn(async move |this, cx| {
@@ -1487,6 +1525,7 @@ impl LocalWorktree {
                     entry_id: None,
                     is_local: true,
                     is_private,
+                    encoding: Some(Arc::new(encoding)),
                 }))
             }
         })
@@ -3039,7 +3078,7 @@ impl fmt::Debug for Snapshot {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct File {
     pub worktree: Entity<Worktree>,
     pub path: Arc<RelPath>,
@@ -3047,8 +3086,35 @@ pub struct File {
     pub entry_id: Option<ProjectEntryId>,
     pub is_local: bool,
     pub is_private: bool,
+    pub encoding: Option<Arc<Encoding>>,
 }
 
+impl PartialEq for File {
+    fn eq(&self, other: &Self) -> bool {
+        if self.worktree == other.worktree
+            && self.path == other.path
+            && self.disk_state == other.disk_state
+            && self.entry_id == other.entry_id
+            && self.is_local == other.is_local
+            && self.is_private == other.is_private
+            && if let Some(encoding) = &self.encoding
+                && let Some(other_encoding) = &other.encoding
+            {
+                if encoding.get() != other_encoding.get() {
+                    false
+                } else {
+                    true
+                }
+            } else {
+                true
+            }
+        {
+            true
+        } else {
+            false
+        }
+    }
+}
 impl language::File for File {
     fn as_local(&self) -> Option<&dyn language::LocalFile> {
         if self.is_local { Some(self) } else { None }
@@ -3095,6 +3161,13 @@ impl language::File for File {
     fn path_style(&self, cx: &App) -> PathStyle {
         self.worktree.read(cx).path_style()
     }
+    fn encoding(&self) -> Option<Arc<Encoding>> {
+        if let Some(encoding) = &self.encoding {
+            Some(encoding.clone())
+        } else {
+            None
+        }
+    }
 }
 
 impl language::LocalFile for File {
@@ -3102,11 +3175,21 @@ impl language::LocalFile for File {
         self.worktree.read(cx).absolutize(&self.path)
     }
 
-    fn load(&self, cx: &App) -> Task<Result<String>> {
+    fn load(
+        &self,
+        cx: &App,
+        encoding: Encoding,
+        force: bool,
+        detect_utf16: bool,
+        buffer_encoding: Option<Arc<Encoding>>,
+    ) -> Task<Result<String>> {
         let worktree = self.worktree.read(cx).as_local().unwrap();
         let abs_path = worktree.absolutize(&self.path);
         let fs = worktree.fs.clone();
-        cx.background_spawn(async move { fs.load(&abs_path).await })
+        cx.background_spawn(async move {
+            fs.load_with_encoding(&abs_path, encoding, force, detect_utf16, buffer_encoding)
+                .await
+        })
     }
 
     fn load_bytes(&self, cx: &App) -> Task<Result<Vec<u8>>> {
@@ -3130,6 +3213,7 @@ impl File {
             entry_id: Some(entry.id),
             is_local: true,
             is_private: entry.is_private,
+            encoding: None,
         })
     }
 
@@ -3160,6 +3244,7 @@ impl File {
             entry_id: proto.entry_id.map(ProjectEntryId::from_proto),
             is_local: false,
             is_private: false,
+            encoding: None,
         })
     }
 

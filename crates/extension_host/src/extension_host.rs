@@ -12,6 +12,7 @@ use async_tar::Archive;
 use client::ExtensionProvides;
 use client::{Client, ExtensionMetadata, GetExtensionsResponse, proto, telemetry::Telemetry};
 use collections::{BTreeMap, BTreeSet, HashMap, HashSet, btree_map};
+use encodings::Encoding;
 pub use extension::ExtensionManifest;
 use extension::extension_builder::{CompileExtensionOptions, ExtensionBuilder};
 use extension::{
@@ -1501,10 +1502,15 @@ impl ExtensionStore {
             }
 
             if let Ok(index_json) = serde_json::to_string_pretty(&index) {
-                fs.save(&index_path, &index_json.as_str().into(), Default::default())
-                    .await
-                    .context("failed to save extension index")
-                    .log_err();
+                fs.save(
+                    &index_path,
+                    &index_json.as_str().into(),
+                    Default::default(),
+                    Encoding::default(),
+                )
+                .await
+                .context("failed to save extension index")
+                .log_err();
             }
 
             log::info!("rebuilt extension index in {:?}", start_time.elapsed());
@@ -1673,6 +1679,7 @@ impl ExtensionStore {
                     &tmp_dir.join(EXTENSION_TOML),
                     &Rope::from(manifest_toml),
                     language::LineEnding::Unix,
+                    Encoding::default(),
                 )
                 .await?;
             } else {

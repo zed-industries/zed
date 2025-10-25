@@ -19,6 +19,8 @@ mod workspace_settings;
 
 pub use crate::notifications::NotificationFrame;
 pub use dock::Panel;
+use encodings::Encoding;
+
 pub use path_list::PathList;
 pub use toast_layer::{ToastAction, ToastLayer, ToastView};
 
@@ -30,6 +32,8 @@ use client::{
 };
 use collections::{HashMap, HashSet, hash_map};
 use dock::{Dock, DockPosition, PanelButtons, PanelHandle, RESIZE_HANDLE_SIZE};
+use encodings::EncodingOptions;
+
 use futures::{
     Future, FutureExt, StreamExt,
     channel::{
@@ -619,6 +623,7 @@ type BuildProjectItemForPathFn =
     fn(
         &Entity<Project>,
         &ProjectPath,
+        Option<Encoding>,
         &mut Window,
         &mut App,
     ) -> Option<Task<Result<(Option<ProjectEntryId>, WorkspaceItemBuilder)>>>;
@@ -640,8 +645,12 @@ impl ProjectItemRegistry {
             },
         );
         self.build_project_item_for_path_fns
-            .push(|project, project_path, window, cx| {
+            .push(|project, project_path, encoding, window, cx| {
                 let project_path = project_path.clone();
+                let encoding = encoding.unwrap_or_default();
+
+                project.update(cx, |project, _| project.encoding_options.encoding.set(encoding.get()));
+
                 let is_file = project
                     .read(cx)
                     .entry_for_path(&project_path, cx)
@@ -710,14 +719,17 @@ impl ProjectItemRegistry {
         &self,
         project: &Entity<Project>,
         path: &ProjectPath,
+        encoding: Option<Encoding>,
         window: &mut Window,
         cx: &mut App,
     ) -> Task<Result<(Option<ProjectEntryId>, WorkspaceItemBuilder)>> {
-        let Some(open_project_item) = self
-            .build_project_item_for_path_fns
-            .iter()
-            .rev()
-            .find_map(|open_project_item| open_project_item(project, path, window, cx))
+        let Some(open_project_item) =
+            self.build_project_item_for_path_fns
+                .iter()
+                .rev()
+                .find_map(|open_project_item| {
+                    open_project_item(project, path, encoding.clone(), window, cx)
+                })
         else {
             return Task::ready(Err(anyhow!("cannot open file {:?}", path.path)));
         };
@@ -1176,6 +1188,7 @@ pub struct Workspace {
     _items_serializer: Task<Result<()>>,
     session_id: Option<String>,
     scheduled_tasks: Vec<Task<()>>,
+    pub encoding_options: EncodingOptions,
 }
 
 impl EventEmitter<Event> for Workspace {}
@@ -1516,8 +1529,8 @@ impl Workspace {
             serializable_items_tx,
             _items_serializer,
             session_id: Some(session_id),
-
             scheduled_tasks: Vec::new(),
+            encoding_options: Default::default(),
         }
     }
 
@@ -1928,6 +1941,10 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> Task<Result<()>> {
+        // This is done so that we would get an error when we try to open the file with wrong encoding,
+        // and not silently use the previously set encoding.
+        self.encoding_options.reset();
+
         let to_load = if let Some(pane) = pane.upgrade() {
             pane.update(cx, |pane, cx| {
                 window.focus(&pane.focus_handle(cx));
@@ -3489,8 +3506,25 @@ impl Workspace {
         window: &mut Window,
         cx: &mut App,
     ) -> Task<Result<(Option<ProjectEntryId>, WorkspaceItemBuilder)>> {
+        let project = self.project();
+
+        project.update(cx, |project, _| {
+            project.encoding_options.force.store(
+                self.encoding_options
+                    .force
+                    .load(std::sync::atomic::Ordering::Acquire),
+                std::sync::atomic::Ordering::Release,
+            );
+        });
+
         let registry = cx.default_global::<ProjectItemRegistry>().clone();
-        registry.open_path(self.project(), &path, window, cx)
+        registry.open_path(
+            project,
+            &path,
+            Some((*self.encoding_options.encoding).clone()),
+            window,
+            cx,
+        )
     }
 
     pub fn find_project_item<T>(
@@ -7484,8 +7518,13 @@ pub fn create_and_open_local_file(
         let fs = workspace.read_with(cx, |workspace, _| workspace.app_state().fs.clone())?;
         if !fs.is_file(path).await {
             fs.create_file(path, Default::default()).await?;
-            fs.save(path, &default_content(), Default::default())
-                .await?;
+            fs.save(
+                path,
+                &default_content(),
+                Default::default(),
+                Default::default(),
+            )
+            .await?;
         }
 
         let mut items = workspace

@@ -466,7 +466,14 @@ async fn test_open_gitignored_files(cx: &mut TestAppContext) {
     let prev_read_dir_count = fs.read_dir_call_count();
     let loaded = tree
         .update(cx, |tree, cx| {
-            tree.load_file(rel_path("one/node_modules/b/b1.js"), cx)
+            tree.load_file(
+                rel_path("one/node_modules/b/b1.js"),
+                None,
+                false,
+                false,
+                None,
+                cx,
+            )
         })
         .await
         .unwrap();
@@ -506,7 +513,14 @@ async fn test_open_gitignored_files(cx: &mut TestAppContext) {
     let prev_read_dir_count = fs.read_dir_call_count();
     let loaded = tree
         .update(cx, |tree, cx| {
-            tree.load_file(rel_path("one/node_modules/a/a2.js"), cx)
+            tree.load_file(
+                rel_path("one/node_modules/a/a2.js"),
+                None,
+                false,
+                false,
+                None,
+                cx,
+            )
         })
         .await
         .unwrap();
@@ -646,9 +660,14 @@ async fn test_dirs_no_longer_ignored(cx: &mut TestAppContext) {
 
     // Update the gitignore so that node_modules is no longer ignored,
     // but a subdirectory is ignored
-    fs.save("/root/.gitignore".as_ref(), &"e".into(), Default::default())
-        .await
-        .unwrap();
+    fs.save(
+        "/root/.gitignore".as_ref(),
+        &"e".into(),
+        Default::default(),
+        Default::default(),
+    )
+    .await
+    .unwrap();
     cx.executor().run_until_parked();
 
     // All of the directories that are no longer ignored are now loaded.
@@ -719,6 +738,7 @@ async fn test_write_file(cx: &mut TestAppContext) {
                 "hello".into(),
                 Default::default(),
                 cx,
+                Default::default(),
             )
         })
         .await
@@ -730,6 +750,7 @@ async fn test_write_file(cx: &mut TestAppContext) {
                 "world".into(),
                 Default::default(),
                 cx,
+                Default::default(),
             )
         })
         .await
@@ -1758,9 +1779,14 @@ fn randomly_mutate_worktree(
                     Ok(())
                 })
             } else {
-                log::info!("overwriting file {:?} ({})", &entry.path, entry.id.0);
-                let task =
-                    worktree.write_file(entry.path.clone(), "".into(), Default::default(), cx);
+                log::info!("overwriting file {:?} ({})", entry.path, entry.id.0);
+                let task = worktree.write_file(
+                    entry.path.clone(),
+                    "".into(),
+                    Default::default(),
+                    cx,
+                    Default::default(),
+                );
                 cx.background_spawn(async move {
                     task.await?;
                     Ok(())
@@ -1850,6 +1876,7 @@ async fn randomly_mutate_fs(
         fs.save(
             &ignore_path,
             &ignore_contents.as_str().into(),
+            Default::default(),
             Default::default(),
         )
         .await

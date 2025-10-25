@@ -16,6 +16,7 @@ anyhow.workspace = true
 async-tar.workspace = true
 async-trait.workspace = true
 collections.workspace = true
+encodings.workspace = true
 futures.workspace = true
 git.workspace = true
 gpui.workspace = true
@@ -33,6 +34,8 @@ tempfile.workspace = true
 text.workspace = true
 time.workspace = true
 util.workspace = true
+encoding = "0.2.33"
+
 
 [target.'cfg(target_os = "macos")'.dependencies]
 fsevent.workspace = true

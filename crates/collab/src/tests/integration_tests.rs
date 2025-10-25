@@ -12,6 +12,7 @@ use buffer_diff::{DiffHunkSecondaryStatus, DiffHunkStatus, assert_hunks};
 use call::{ActiveCall, ParticipantLocation, Room, room};
 use client::{RECEIVE_TIMEOUT, User};
 use collections::{HashMap, HashSet};
+use encodings::Encoding;
 use fs::{FakeFs, Fs as _, RemoveOptions};
 use futures::{StreamExt as _, channel::mpsc};
 use git::{
@@ -3701,6 +3702,7 @@ async fn test_buffer_reloading(
             path!("/dir/a.txt").as_ref(),
             &new_contents,
             LineEnding::Windows,
+            Encoding::default(),
         )
         .await
         .unwrap();
@@ -4481,6 +4483,7 @@ async fn test_reloading_buffer_manually(
             path!("/a/a.rs").as_ref(),
             &Rope::from("let seven = 7;"),
             LineEnding::Unix,
+            Encoding::default(),
         )
         .await
         .unwrap();

@@ -21,6 +21,7 @@ use anyhow::{Context as _, Result};
 use clock::Lamport;
 pub use clock::ReplicaId;
 use collections::HashMap;
+use encodings::Encoding;
 use fs::MTime;
 use futures::channel::oneshot;
 use gpui::{
@@ -126,6 +127,8 @@ pub struct Buffer {
     has_unsaved_edits: Cell<(clock::Global, bool)>,
     change_bits: Vec<rc::Weak<Cell<bool>>>,
     _subscriptions: Vec<gpui::Subscription>,
+    pub encoding: Arc<Encoding>,
+    pub observe_file_encoding: Option<gpui::Subscription>,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -371,6 +374,10 @@ pub trait File: Send + Sync + Any {
 
     /// Return whether Zed considers this to be a private file.
     fn is_private(&self) -> bool;
+
+    fn encoding(&self) -> Option<Arc<Encoding>> {
+        unimplemented!()
+    }
 }
 
 /// The file's storage status - whether it's stored (`Present`), and if so when it was last
@@ -412,7 +419,14 @@ pub trait LocalFile: File {
     fn abs_path(&self, cx: &App) -> PathBuf;
 
     /// Loads the file contents from disk and returns them as a UTF-8 encoded string.
-    fn load(&self, cx: &App) -> Task<Result<String>>;
+    fn load(
+        &self,
+        cx: &App,
+        encoding: Encoding,
+        force: bool,
+        detect_utf16: bool,
+        buffer_encoding: Option<Arc<Encoding>>,
+    ) -> Task<Result<String>>;
 
     /// Loads the file's contents from disk.
     fn load_bytes(&self, cx: &App) -> Task<Result<Vec<u8>>>;
@@ -838,6 +852,18 @@ impl Buffer {
         )
     }
 
+    /// Replace the text buffer. This function is in contrast to `set_text` in that it does not
+    /// change the buffer's editing state
+    pub fn replace_text_buffer(&mut self, new: TextBuffer, cx: &mut Context<Self>) {
+        self.text = new;
+        self.saved_version = self.version.clone();
+        self.has_unsaved_edits.set((self.version.clone(), false));
+
+        self.was_changed();
+        cx.emit(BufferEvent::DirtyChanged);
+        cx.notify();
+    }
+
     /// Create a new buffer with the given base text that has proper line endings and other normalization applied.
     pub fn local_normalized(
         base_text_normalized: Rope,
@@ -1003,6 +1029,8 @@ impl Buffer {
             has_conflict: false,
             change_bits: Default::default(),
             _subscriptions: Vec::new(),
+            encoding: Arc::new(Encoding::new(encodings::UTF_8)),
+            observe_file_encoding: None,
         }
     }
 
@@ -1337,12 +1365,18 @@ impl Buffer {
     /// Reloads the contents of the buffer from disk.
     pub fn reload(&mut self, cx: &Context<Self>) -> oneshot::Receiver<Option<Transaction>> {
         let (tx, rx) = futures::channel::oneshot::channel();
+        let encoding = (*self.encoding).clone();
+
+        let buffer_encoding = self.encoding.clone();
+
         let prev_version = self.text.version();
         self.reload_task = Some(cx.spawn(async move |this, cx| {
             let Some((new_mtime, new_text)) = this.update(cx, |this, cx| {
                 let file = this.file.as_ref()?.as_local()?;
 
-                Some((file.disk_state().mtime(), file.load(cx)))
+                Some((file.disk_state().mtime(), {
+                    file.load(cx, encoding, false, true, Some(buffer_encoding))
+                }))
             })?
             else {
                 return Ok(());
@@ -1395,6 +1429,9 @@ impl Buffer {
         cx.notify();
     }
 
+    pub fn replace_file(&mut self, new_file: Arc<dyn File>) {
+        self.file = Some(new_file);
+    }
     /// Updates the [`File`] backing this buffer. This should be called when
     /// the file has changed or has been deleted.
     pub fn file_updated(&mut self, new_file: Arc<dyn File>, cx: &mut Context<Self>) {
@@ -2888,6 +2925,17 @@ impl Buffer {
     /// Whether we should preserve the preview status of a tab containing this buffer.
     pub fn preserve_preview(&self) -> bool {
         !self.has_edits_since(&self.preview_version)
+    }
+
+    /// Update the `encoding` field, whenever the `encoding` field of the file changes
+    pub fn update_encoding(&mut self) {
+        if let Some(file) = self.file() {
+            if let Some(encoding) = file.encoding() {
+                self.encoding.set(encoding.get());
+            } else {
+                self.encoding.set(encodings::UTF_8);
+            };
+        }
     }
 }
 
@@ -5187,7 +5235,14 @@ impl LocalFile for TestFile {
             .join(self.path.as_std_path())
     }
 
-    fn load(&self, _cx: &App) -> Task<Result<String>> {
+    fn load(
+        &self,
+        _cx: &App,
+        _encoding: Encoding,
+        _force: bool,
+        _detect_utf16: bool,
+        _buffer_encoding: Option<Arc<Encoding>>,
+    ) -> Task<Result<String>> {
         unimplemented!()
     }
 
