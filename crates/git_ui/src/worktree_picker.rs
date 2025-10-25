@@ -3,13 +3,14 @@ use fuzzy::StringMatchCandidate;
 
 use git::repository::Worktree as GitWorktree;
 use gpui::{
-    Action, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
+    Action, App, AsyncApp, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
     InteractiveElement, IntoElement, Modifiers, ModifiersChangedEvent, ParentElement,
     PathPromptOptions, Render, SharedString, Styled, Subscription, Task, WeakEntity, Window,
     actions, rems,
 };
 use picker::{Picker, PickerDelegate, PickerEditorPosition};
 use project::{DirectoryLister, git_store::Repository};
+use remote::RemoteConnectionOptions;
 use std::{path::PathBuf, sync::Arc};
 use ui::{HighlightedLabel, KeyBinding, ListItem, ListItemSpacing, Tooltip, prelude::*};
 use util::ResultExt;
@@ -244,6 +245,7 @@ impl WorktreeListDelegate {
         };
 
         let branch = worktree_branch.to_string();
+        let window_handle = window.window_handle();
         cx.spawn_in(window, async move |_, cx| {
             let Some(paths) = worktree_path.await? else {
                 return anyhow::Ok(());
@@ -256,16 +258,39 @@ impl WorktreeListDelegate {
             .await??;
 
             let final_path = path.join(branch);
-            workspace
-                .update_in(cx, |workspace, window, cx| {
-                    workspace.open_workspace_for_paths(
-                        replace_current_window,
-                        vec![final_path],
-                        window,
-                        cx,
-                    )
-                })?
+
+            let (project, connection_options, app_state, is_local) =
+                workspace.update(cx, |workspace, cx| {
+                    let project = workspace.project().clone();
+                    let connection_options = project.read(cx).remote_connection_options(cx);
+                    let app_state = workspace.app_state().clone();
+                    let is_local = project.read(cx).is_local();
+                    (project, connection_options, app_state, is_local)
+                })?;
+
+            if is_local {
+                workspace
+                    .update_in(cx, |workspace, window, cx| {
+                        workspace.open_workspace_for_paths(
+                            replace_current_window,
+                            vec![final_path],
+                            window,
+                            cx,
+                        )
+                    })?
+                    .await?;
+            } else if let Some(connection_options) = connection_options {
+                open_remote_worktree(
+                    connection_options,
+                    project,
+                    vec![final_path],
+                    app_state,
+                    window_handle,
+                    replace_current_window,
+                    cx,
+                )
                 .await?;
+            }
 
             anyhow::Ok(())
         })
@@ -284,16 +309,54 @@ impl WorktreeListDelegate {
         let workspace = self.workspace.clone();
         let path = worktree_path.clone();
 
-        let open_task = workspace.update(cx, |workspace, cx| {
-            workspace.open_workspace_for_paths(replace_current_window, vec![path], window, cx)
-        });
-        cx.spawn(async move |_, _| {
-            open_task?.await?;
-            anyhow::Ok(())
-        })
-        .detach_and_prompt_err("Failed to open worktree", window, cx, |e, _, _| {
-            Some(e.to_string())
-        });
+        let Some((project, connection_options, app_state, is_local)) = workspace
+            .update(cx, |workspace, cx| {
+                let project = workspace.project().clone();
+                let connection_options = project.read(cx).remote_connection_options(cx);
+                let app_state = workspace.app_state().clone();
+                let is_local = project.read(cx).is_local();
+                (project, connection_options, app_state, is_local)
+            })
+            .log_err()
+        else {
+            return;
+        };
+
+        if is_local {
+            let open_task = workspace.update(cx, |workspace, cx| {
+                workspace.open_workspace_for_paths(replace_current_window, vec![path], window, cx)
+            });
+            cx.spawn(async move |_, _| {
+                open_task?.await?;
+                anyhow::Ok(())
+            })
+            .detach_and_prompt_err(
+                "Failed to open worktree",
+                window,
+                cx,
+                |e, _, _| Some(e.to_string()),
+            );
+        } else if let Some(connection_options) = connection_options {
+            let window_handle = window.window_handle();
+            cx.spawn_in(window, async move |_, cx| {
+                open_remote_worktree(
+                    connection_options,
+                    project,
+                    vec![path],
+                    app_state,
+                    window_handle,
+                    replace_current_window,
+                    cx,
+                )
+                .await
+            })
+            .detach_and_prompt_err(
+                "Failed to open worktree",
+                window,
+                cx,
+                |e, _, _| Some(e.to_string()),
+            );
+        }
 
         cx.emit(DismissEvent);
     }
@@ -303,6 +366,62 @@ impl WorktreeListDelegate {
             .as_ref()
             .and_then(|repo| repo.read(cx).branch.as_ref().map(|b| b.name()))
     }
+}
+
+async fn open_remote_worktree(
+    connection_options: RemoteConnectionOptions,
+    project: Entity<project::Project>,
+    paths: Vec<PathBuf>,
+    app_state: Arc<workspace::AppState>,
+    window: gpui::AnyWindowHandle,
+    replace_current_window: bool,
+    cx: &mut AsyncApp,
+) -> anyhow::Result<()> {
+    let window_to_use = if replace_current_window {
+        window
+            .downcast::<Workspace>()
+            .ok_or_else(|| anyhow::anyhow!("Window is not a Workspace window"))?
+    } else {
+        let workspace_position = cx
+            .update(|cx| {
+                workspace::remote_workspace_position_from_db(connection_options.clone(), &paths, cx)
+            })?
+            .await
+            .context("fetching ssh workspace position from db")?;
+
+        let mut options =
+            cx.update(|cx| (app_state.build_window_options)(workspace_position.display, cx))?;
+        options.window_bounds = workspace_position.window_bounds;
+
+        cx.open_window(options, |window, cx| {
+            let project = project::Project::local(
+                app_state.client.clone(),
+                app_state.node_runtime.clone(),
+                app_state.user_store.clone(),
+                app_state.languages.clone(),
+                app_state.fs.clone(),
+                None,
+                cx,
+            );
+            cx.new(|cx| {
+                let mut workspace = Workspace::new(None, project, app_state.clone(), window, cx);
+                workspace.centered_layout = workspace_position.centered_layout;
+                workspace
+            })
+        })?
+    };
+
+    workspace::open_remote_project_with_existing_connection(
+        connection_options,
+        project,
+        paths,
+        app_state,
+        window_to_use,
+        cx,
+    )
+    .await?;
+
+    Ok(())
 }
 
 impl PickerDelegate for WorktreeListDelegate {

@@ -45,6 +45,7 @@ notifications.workspace = true
 panel.workspace = true
 picker.workspace = true
 project.workspace = true
+remote.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
