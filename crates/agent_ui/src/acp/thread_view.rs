@@ -1449,6 +1449,7 @@ impl AcpThreadView {
                 // The connection keeps track of the mode
                 cx.notify();
             }
+            AcpThreadEvent::CleanupDetachedSendTask => {}
         }
         cx.notify();
     }
@@ -4616,10 +4617,21 @@ impl AcpThreadView {
                 .map(|worktree| worktree.read(cx).root_name_str().to_string())
         });
 
+        let session_id = match &self.thread_state {
+            ThreadState::Ready { thread, .. } => Some(thread.read(cx).session_id().clone()),
+            _ => None,
+        };
+
         if let Some(screen_window) = cx
             .open_window(options, |_, cx| {
                 cx.new(|_| {
-                    AgentNotification::new(title.clone(), caption.clone(), icon, project_name)
+                    AgentNotification::new(
+                        title.clone(),
+                        caption.clone(),
+                        icon,
+                        project_name,
+                        session_id,
+                    )
                 })
             })
             .log_err()
@@ -4630,11 +4642,19 @@ impl AcpThreadView {
                 .or_insert_with(Vec::new)
                 .push(cx.subscribe_in(&pop_up, window, {
                     |this, _, event, window, cx| match event {
-                        AgentNotificationEvent::Accepted => {
+                        AgentNotificationEvent::Accepted { session_id } => {
                             let handle = window.window_handle();
                             cx.activate(true);
 
                             let workspace_handle = this.workspace.clone();
+                            let thread_metadata = match session_id {
+                                Some(session_id) => this
+                                    .history_store
+                                    .read(cx)
+                                    .thread_from_session_id(&session_id)
+                                    .cloned(),
+                                None => None,
+                            };
 
                             // If there are multiple Zed windows, activate the correct one.
                             cx.defer(move |cx| {
@@ -4645,6 +4665,19 @@ impl AcpThreadView {
                                         if let Some(workspace) = workspace_handle.upgrade() {
                                             workspace.update(_cx, |workspace, cx| {
                                                 workspace.focus_panel::<AgentPanel>(window, cx);
+
+                                                if let Some(thread_metadata) = thread_metadata
+                                                    && let Some(panel) =
+                                                        workspace.panel::<AgentPanel>(cx)
+                                                {
+                                                    panel.update(cx, |panel, cx| {
+                                                        panel.load_agent_thread(
+                                                            thread_metadata,
+                                                            window,
+                                                            cx,
+                                                        );
+                                                    });
+                                                }
                                             });
                                         }
                                     })

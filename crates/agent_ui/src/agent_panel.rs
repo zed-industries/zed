@@ -1,10 +1,12 @@
+use std::collections::HashMap;
 use std::ops::Range;
 use std::path::Path;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use acp_thread::AcpThread;
+use acp_thread::{AcpThread, AcpThreadEvent};
 use agent::{ContextServerRegistry, DbThreadMetadata, HistoryEntry, HistoryStore};
+use agent_client_protocol as acp;
 use db::kvp::{Dismissable, KEY_VALUE_STORE};
 use project::{
     ExternalAgentServerName,
@@ -77,6 +79,12 @@ use zed_actions::{
     },
     assistant::{OpenRulesLibrary, ToggleFocus},
 };
+
+struct DetachedThread {
+    thread_view: Entity<AcpThreadView>,
+    _thread: Entity<AcpThread>,
+    _subscription: Subscription,
+}
 
 const AGENT_PANEL_KEY: &str = "agent_panel";
 
@@ -443,6 +451,7 @@ pub struct AgentPanel {
     pending_serialization: Option<Task<Result<()>>>,
     onboarding: Entity<AgentPanelOnboarding>,
     selected_agent: AgentType,
+    detached_threads: HashMap<acp::SessionId, DetachedThread>,
 }
 
 impl AgentPanel {
@@ -691,6 +700,7 @@ impl AgentPanel {
             acp_history,
             history_store,
             selected_agent: AgentType::default(),
+            detached_threads: HashMap::new(),
             loading: false,
         };
 
@@ -881,19 +891,69 @@ impl AgentPanel {
                     this.serialize(cx);
                 }
 
-                let thread_view = cx.new(|cx| {
-                    crate::acp::AcpThreadView::new(
-                        server,
-                        resume_thread,
-                        summarize_thread,
-                        workspace.clone(),
-                        project,
-                        this.history_store.clone(),
-                        this.prompt_store.clone(),
-                        window,
-                        cx,
-                    )
-                });
+                // Check thread view cache first to continue chat completion
+                let session_id = resume_thread.as_ref().map(|t| &t.id);
+                let thread_view = if let Some(session_id) = session_id {
+                    if let Some(detached) = this.detached_threads.get(session_id) {
+                        detached.thread_view.clone()
+                    } else {
+                        cx.new(|cx| {
+                            crate::acp::AcpThreadView::new(
+                                server.clone(),
+                                resume_thread.clone(),
+                                summarize_thread,
+                                workspace.clone(),
+                                project.clone(),
+                                this.history_store.clone(),
+                                this.prompt_store.clone(),
+                                window,
+                                cx,
+                            )
+                        })
+                    }
+                } else {
+                    cx.new(|cx| {
+                        crate::acp::AcpThreadView::new(
+                            server.clone(),
+                            resume_thread,
+                            summarize_thread,
+                            workspace.clone(),
+                            project.clone(),
+                            this.history_store.clone(),
+                            this.prompt_store.clone(),
+                            window,
+                            cx,
+                        )
+                    })
+                };
+                // Detach ongoing completion so it continues in background
+                if let Some(current_thread_view) = this.active_thread_view()
+                    && let Some(current_thread) = current_thread_view.read(cx).thread().cloned()
+                    && current_thread.read(cx).status() == acp_thread::ThreadStatus::Generating
+                {
+                    let session_id = current_thread.read(cx).session_id().clone();
+                    let session_id_for_cleanup = session_id.clone();
+                    let subscription = cx.subscribe(
+                        &current_thread,
+                        move |this: &mut AgentPanel,
+                              _thread: Entity<AcpThread>,
+                              event: &AcpThreadEvent,
+                              _cx: &mut Context<Self>| {
+                            if matches!(event, AcpThreadEvent::CleanupDetachedSendTask) {
+                                this.detached_threads.remove(&session_id_for_cleanup);
+                            }
+                        },
+                    );
+
+                    this.detached_threads.insert(
+                        session_id,
+                        DetachedThread {
+                            thread_view: current_thread_view.clone(),
+                            _thread: current_thread,
+                            _subscription: subscription,
+                        },
+                    );
+                }
 
                 this.set_active_view(ActiveView::ExternalAgentThread { thread_view }, window, cx);
             })
