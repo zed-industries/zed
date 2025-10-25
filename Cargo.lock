@@ -16947,6 +16947,7 @@ dependencies = [
  "alacritty_terminal",
  "anyhow",
  "collections",
+ "criterion",
  "futures 0.3.31",
  "gpui",
  "itertools 0.14.0",

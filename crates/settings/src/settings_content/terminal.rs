@@ -136,6 +136,19 @@ pub struct TerminalSettingsContent {
     /// Default: 45
     #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
     pub minimum_contrast: Option<f32>,
+    /// Regexes used to identify paths for hyperlink navigation.
+    ///
+    /// Default: [
+    ///   "File \"(?<path>[^\"]+)\", line (?<line>[0-9]+)",
+    ///   "[\"'`\\[({<]*(?<path>[^ \\t]+?:?\\([0-9]+([,:][0-9]+)?\\))(:[^ \\t0-9]|[:.,'\"`\\])}>]*([ \\t]+|$))",
+    ///   "[\"'`\\[({<]*(?<path>[^ \\t]+:[0-9]+(:[0-9]+)?)(:[^ \\t0-9]|[:.,'\"`\\])}>]*([ \\t]+|$))",
+    ///   "[\"'`\\[({<]*(?<path>[^ \\t]+?)[:.,'\"`\\])}>]*([ \\t]+|$)"
+    /// ],
+    pub path_hyperlink_regexes: Option<Vec<String>>,
+    /// Timeout for hover and Cmd-click path hyperlink discovery in milliseconds.
+    ///
+    /// Default: 10
+    pub path_hyperlink_timeout_ms: Option<u64>,
 }
 
 /// Shell configuration to open the terminal with.

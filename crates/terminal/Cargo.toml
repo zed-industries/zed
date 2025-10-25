@@ -11,6 +11,7 @@ test-support = [
     "gpui/test-support",
     "settings/test-support",
 ]
+bench-support = []
 
 [lints]
 workspace = true
@@ -25,6 +26,7 @@ anyhow.workspace = true
 collections.workspace = true
 futures.workspace = true
 gpui.workspace = true
+itertools.workspace = true
 libc.workspace = true
 log.workspace = true
 release_channel.workspace = true
@@ -39,7 +41,6 @@ thiserror.workspace = true
 util.workspace = true
 regex.workspace = true
 urlencoding.workspace = true
-itertools.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows.workspace = true
@@ -48,3 +49,8 @@ windows.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
 rand.workspace = true
 url.workspace = true
+criterion.workspace = true
+
+[[bench]]
+name = "hyperlink_benchmark"
+harness = false

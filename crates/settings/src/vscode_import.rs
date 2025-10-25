@@ -730,6 +730,8 @@ impl VsCodeSettings {
             project: self.project_terminal_settings_content(),
             scrollbar: None,
             toolbar: None,
+            path_hyperlink_regexes: None,
+            path_hyperlink_timeout_ms: None,
         })
     }
 

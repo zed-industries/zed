@@ -45,6 +45,8 @@ pub struct TerminalSettings {
     pub toolbar: Toolbar,
     pub scrollbar: ScrollbarSettings,
     pub minimum_contrast: f32,
+    pub path_hyperlink_regexes: Vec<String>,
+    pub path_hyperlink_timeout_ms: u64,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -113,6 +115,8 @@ impl settings::Settings for TerminalSettings {
                 show: user_content.scrollbar.unwrap().show,
             },
             minimum_contrast: user_content.minimum_contrast.unwrap(),
+            path_hyperlink_regexes: user_content.path_hyperlink_regexes.unwrap(),
+            path_hyperlink_timeout_ms: user_content.path_hyperlink_timeout_ms.unwrap(),
         }
     }
 }

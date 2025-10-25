@@ -3,6 +3,9 @@ pub mod mappings;
 pub use alacritty_terminal;
 
 mod pty_info;
+#[cfg(feature = "bench-support")]
+pub(crate) mod terminal_hyperlinks;
+#[cfg(not(feature = "bench-support"))]
 mod terminal_hyperlinks;
 pub mod terminal_settings;
 
@@ -385,7 +388,7 @@ impl TerminalBuilder {
             scroll_px: px(0.),
             next_link_id: 0,
             selection_phase: SelectionPhase::Ended,
-            hyperlink_regex_searches: RegexSearches::new(),
+            hyperlink_regex_searches: RegexSearches::default(),
             vi_mode_enabled: false,
             is_ssh_terminal: false,
             last_mouse_move_time: Instant::now(),
@@ -399,6 +402,8 @@ impl TerminalBuilder {
                 cursor_shape,
                 alternate_scroll,
                 max_scroll_history_lines,
+                path_hyperlink_regexes: Vec::default(),
+                path_hyperlink_timeout_ms: 0,
                 window_id,
             },
             child_exited: None,
@@ -418,6 +423,8 @@ impl TerminalBuilder {
         cursor_shape: CursorShape,
         alternate_scroll: AlternateScroll,
         max_scroll_history_lines: Option<usize>,
+        path_hyperlink_regexes: Vec<String>,
+        path_hyperlink_timeout_ms: u64,
         is_ssh_terminal: bool,
         window_id: u64,
         completion_tx: Option<Sender<Option<ExitStatus>>>,
@@ -604,7 +611,10 @@ impl TerminalBuilder {
             scroll_px: px(0.),
             next_link_id: 0,
             selection_phase: SelectionPhase::Ended,
-            hyperlink_regex_searches: RegexSearches::new(),
+            hyperlink_regex_searches: RegexSearches::new(
+                &path_hyperlink_regexes,
+                path_hyperlink_timeout_ms,
+            ),
             vi_mode_enabled: false,
             is_ssh_terminal,
             last_mouse_move_time: Instant::now(),
@@ -618,6 +628,8 @@ impl TerminalBuilder {
                 cursor_shape,
                 alternate_scroll,
                 max_scroll_history_lines,
+                path_hyperlink_regexes,
+                path_hyperlink_timeout_ms,
                 window_id,
             },
             child_exited: None,
@@ -844,6 +856,8 @@ struct CopyTemplate {
     cursor_shape: CursorShape,
     alternate_scroll: AlternateScroll,
     max_scroll_history_lines: Option<usize>,
+    path_hyperlink_regexes: Vec<String>,
+    path_hyperlink_timeout_ms: u64,
     window_id: u64,
 }
 
@@ -2161,6 +2175,8 @@ impl Terminal {
             self.template.cursor_shape,
             self.template.alternate_scroll,
             self.template.max_scroll_history_lines,
+            self.template.path_hyperlink_regexes.clone(),
+            self.template.path_hyperlink_timeout_ms,
             self.is_ssh_terminal,
             self.template.window_id,
             None,
@@ -2400,6 +2416,8 @@ mod tests {
                 CursorShape::default(),
                 AlternateScroll::On,
                 None,
+                vec![],
+                0,
                 false,
                 0,
                 Some(completion_tx),
@@ -2447,6 +2465,8 @@ mod tests {
                 CursorShape::default(),
                 AlternateScroll::On,
                 None,
+                Vec::new(),
+                0,
                 false,
                 0,
                 Some(completion_tx),
@@ -2519,6 +2539,8 @@ mod tests {
                 CursorShape::default(),
                 AlternateScroll::On,
                 None,
+                Vec::new(),
+                0,
                 false,
                 0,
                 Some(completion_tx),
@@ -2818,5 +2840,38 @@ mod tests {
             "Bare CR should allow overwriting: got '{}'",
             text
         );
+    }
+}
+
+#[cfg(feature = "bench-support")]
+pub mod bench {
+    use crate::terminal_hyperlinks::{RegexSearches, find_from_grid_point};
+    use alacritty_terminal::{
+        event::VoidListener,
+        index::Point as AlacPoint,
+        term::{Term, search::Match},
+    };
+    use std::cell::RefCell;
+
+    pub fn find_from_grid_point_bench(
+        term: &Term<VoidListener>,
+        point: AlacPoint,
+    ) -> Option<(String, bool, Match)> {
+        const PATH_HYPERLINK_REGEXES: [&str; 4] = [
+            r#"File "(?<path>[^"]+)", line (?P<line>[0-9]+)"#,
+            r#"["'`\[({<]*(?<path>[^ \t]+?:?\([0-9]+([,:][0-9]+)?\))(:[^ \t0-9]|[:.,'"`\])}>]*([ \t]+|$))"#,
+            r#"["'`\[({<]*(?<path>[^ \t]+:[0-9]+(:[0-9]+)?)(:[^ \t0-9]|[:.,'"`\])}>]*([ \t]+|$))"#,
+            r#"["'`\[({<]*(?<path>[^ \t]+?)[:.,'"`\])}>]*([ \t]+|$)"#,
+        ];
+        const PATH_HYPERLINK_TIMEOUT_MS: u64 = 1000;
+
+        thread_local! {
+            static TEST_REGEX_SEARCHES: RefCell<RegexSearches> =
+                RefCell::new(RegexSearches::new(&PATH_HYPERLINK_REGEXES, PATH_HYPERLINK_TIMEOUT_MS));
+        }
+
+        TEST_REGEX_SEARCHES.with(|regex_searches| {
+            find_from_grid_point(&term, point, &mut regex_searches.borrow_mut())
+        })
     }
 }
