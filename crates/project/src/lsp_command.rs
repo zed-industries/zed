@@ -2240,7 +2240,7 @@ impl LspCommand for GetCompletions {
                 let lsp_edit = lsp_completion.text_edit.clone().or_else(|| {
                     let default_text_edit = lsp_defaults.as_deref()?.edit_range.as_ref()?;
                     let new_text = lsp_completion
-                        .insert_text
+                        .text_edit_text
                         .as_ref()
                         .unwrap_or(&lsp_completion.label)
                         .clone();
