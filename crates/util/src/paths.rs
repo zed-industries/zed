@@ -2033,7 +2033,5 @@ mod tests {
 
         let path = r"\\windows.localhost\Distro\foo";
         assert_eq!(WslPath::from_path(&path), None);
-
-        // TODO: fix
     }
 }
