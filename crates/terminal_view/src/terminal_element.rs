@@ -1112,9 +1112,7 @@ impl Element for TerminalElement {
                                 len,
                                 font: text_style.font(),
                                 color: theme.colors().terminal_ansi_background,
-                                background_color: None,
-                                underline: Default::default(),
-                                strikethrough: None,
+                                ..Default::default()
                             }],
                             None,
                         )
@@ -1322,9 +1320,8 @@ impl Element for TerminalElement {
                                         len: text_to_mark.len(),
                                         font: ime_style.font(),
                                         color: ime_style.color,
-                                        background_color: None,
                                         underline: ime_style.underline,
-                                        strikethrough: None,
+                                        ..Default::default()
                                     }],
                                     None
                                 );
@@ -1842,27 +1839,21 @@ mod tests {
             len: 1,
             font: font("Helvetica"),
             color: Hsla::red(),
-            background_color: None,
-            underline: None,
-            strikethrough: None,
+            ..Default::default()
         };
 
         let style2 = TextRun {
             len: 1,
             font: font("Helvetica"),
             color: Hsla::red(),
-            background_color: None,
-            underline: None,
-            strikethrough: None,
+            ..Default::default()
         };
 
         let style3 = TextRun {
             len: 1,
             font: font("Helvetica"),
             color: Hsla::blue(), // Different color
-            background_color: None,
-            underline: None,
-            strikethrough: None,
+            ..Default::default()
         };
 
         let font_size = AbsoluteLength::Pixels(px(12.0));
@@ -1881,9 +1872,7 @@ mod tests {
             len: 1,
             font: font("Helvetica"),
             color: Hsla::red(),
-            background_color: None,
-            underline: None,
-            strikethrough: None,
+            ..Default::default()
         };
 
         let font_size = AbsoluteLength::Pixels(px(12.0));
@@ -1912,9 +1901,7 @@ mod tests {
             len: 1,
             font: font("Helvetica"),
             color: Hsla::red(),
-            background_color: None,
-            underline: None,
-            strikethrough: None,
+            ..Default::default()
         };
 
         let font_size = AbsoluteLength::Pixels(px(12.0));
@@ -1944,9 +1931,7 @@ mod tests {
             len: 1,
             font: font("Helvetica"),
             color: Hsla::red(),
-            background_color: None,
-            underline: None,
-            strikethrough: None,
+            ..Default::default()
         };
 
         let font_size = AbsoluteLength::Pixels(px(12.0));
