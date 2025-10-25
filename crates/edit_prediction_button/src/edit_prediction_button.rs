@@ -72,17 +72,17 @@ impl Render for EditPredictionButton {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // Return empty div if AI is disabled
         if DisableAiSettings::get_global(cx).disable_ai {
-            return div();
+            return div().hidden();
         }
 
         let all_language_settings = all_language_settings(None, cx);
 
         match all_language_settings.edit_predictions.provider {
-            EditPredictionProvider::None => div(),
+            EditPredictionProvider::None => div().hidden(),
 
             EditPredictionProvider::Copilot => {
                 let Some(copilot) = Copilot::global(cx) else {
-                    return div();
+                    return div().hidden();
                 };
                 let status = copilot.read(cx).status();
 
@@ -123,8 +123,8 @@ impl Render for EditPredictionButton {
                                     });
                                 }
                             }))
-                            .tooltip(|window, cx| {
-                                Tooltip::for_action("GitHub Copilot", &ToggleMenu, window, cx)
+                            .tooltip(|_window, cx| {
+                                Tooltip::for_action("GitHub Copilot", &ToggleMenu, cx)
                             }),
                     );
                 }
@@ -146,9 +146,7 @@ impl Render for EditPredictionButton {
                         .anchor(Corner::BottomRight)
                         .trigger_with_tooltip(
                             IconButton::new("copilot-icon", icon),
-                            |window, cx| {
-                                Tooltip::for_action("GitHub Copilot", &ToggleMenu, window, cx)
-                            },
+                            |_window, cx| Tooltip::for_action("GitHub Copilot", &ToggleMenu, cx),
                         )
                         .with_handle(self.popover_menu_handle.clone()),
                 )
@@ -220,12 +218,7 @@ impl Render for EditPredictionButton {
                             IconButton::new("supermaven-icon", icon),
                             move |window, cx| {
                                 if has_menu {
-                                    Tooltip::for_action(
-                                        tooltip_text.clone(),
-                                        &ToggleMenu,
-                                        window,
-                                        cx,
-                                    )
+                                    Tooltip::for_action(tooltip_text.clone(), &ToggleMenu, cx)
                                 } else {
                                     Tooltip::text(tooltip_text.clone())(window, cx)
                                 }
@@ -288,9 +281,7 @@ impl Render for EditPredictionButton {
                                             cx.theme().colors().status_bar_background,
                                         ))
                                 }),
-                            move |window, cx| {
-                                Tooltip::for_action("Codestral", &ToggleMenu, window, cx)
-                            },
+                            move |_window, cx| Tooltip::for_action("Codestral", &ToggleMenu, cx),
                         )
                         .with_handle(self.popover_menu_handle.clone()),
                 )
@@ -317,14 +308,8 @@ impl Render for EditPredictionButton {
                             .shape(IconButtonShape::Square)
                             .indicator(Indicator::dot().color(Color::Muted))
                             .indicator_border_color(Some(cx.theme().colors().status_bar_background))
-                            .tooltip(move |window, cx| {
-                                Tooltip::with_meta(
-                                    "Edit Predictions",
-                                    None,
-                                    tooltip_meta,
-                                    window,
-                                    cx,
-                                )
+                            .tooltip(move |_window, cx| {
+                                Tooltip::with_meta("Edit Predictions", None, tooltip_meta, cx)
                             })
                             .on_click(cx.listener(move |_, _, window, cx| {
                                 telemetry::event!(
@@ -365,16 +350,15 @@ impl Render for EditPredictionButton {
                         },
                     )
                     .when(!self.popover_menu_handle.is_deployed(), |element| {
-                        element.tooltip(move |window, cx| {
+                        element.tooltip(move |_window, cx| {
                             if enabled {
                                 if show_editor_predictions {
-                                    Tooltip::for_action("Edit Prediction", &ToggleMenu, window, cx)
+                                    Tooltip::for_action("Edit Prediction", &ToggleMenu, cx)
                                 } else {
                                     Tooltip::with_meta(
                                         "Edit Prediction",
                                         Some(&ToggleMenu),
                                         "Hidden For This File",
-                                        window,
                                         cx,
                                     )
                                 }
@@ -383,7 +367,6 @@ impl Render for EditPredictionButton {
                                     "Edit Prediction",
                                     Some(&ToggleMenu),
                                     "Disabled For This File",
-                                    window,
                                     cx,
                                 )
                             }

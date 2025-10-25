@@ -135,7 +135,7 @@ impl RenderOnce for TreeViewItem {
         let selected_bg = cx.theme().colors().element_active.opacity(0.5);
 
         let transparent_border = cx.theme().colors().border.opacity(0.);
-        let selected_border = cx.theme().colors().border.opacity(0.6);
+        let selected_border = cx.theme().colors().border.opacity(0.4);
         let focused_border = cx.theme().colors().border_focused;
 
         let item_size = rems_from_px(28.);
@@ -155,25 +155,21 @@ impl RenderOnce for TreeViewItem {
                     .id("inner_tree_view_item")
                     .cursor_pointer()
                     .size_full()
+                    .h(item_size)
+                    .rounded_sm()
+                    .border_1()
+                    .border_color(transparent_border)
+                    .focus_visible(|s| s.border_color(focused_border))
+                    .when(self.selected, |this| {
+                        this.border_color(selected_border).bg(selected_bg)
+                    })
+                    .hover(|s| s.bg(cx.theme().colors().element_hover))
                     .map(|this| {
                         let label = self.label;
 
                         if self.root_item {
-                            this.h(item_size)
-                                .px_1()
+                            this.px_1()
                                 .gap_2p5()
-                                .rounded_sm()
-                                .border_1()
-                                .border_color(transparent_border)
-                                .when(self.selected, |this| {
-                                    this.border_color(selected_border).bg(selected_bg)
-                                })
-                                .focus(|s| s.border_color(focused_border))
-                                .hover(|s| s.bg(cx.theme().colors().element_hover))
-                                .when_some(self.focus_handle, |this, handle| {
-                                    this.track_focus(&handle)
-                                })
-                                .when_some(self.tab_index, |this, index| this.tab_index(index))
                                 .child(
                                     Disclosure::new("toggle", self.expanded)
                                         .when_some(
@@ -189,18 +185,6 @@ impl RenderOnce for TreeViewItem {
                                     Label::new(label)
                                         .when(!self.selected, |this| this.color(Color::Muted)),
                                 )
-                                .when_some(self.on_hover, |this, on_hover| this.on_hover(on_hover))
-                                .when_some(
-                                    self.on_click.filter(|_| !self.disabled),
-                                    |this, on_click| this.on_click(on_click),
-                                )
-                                .when_some(self.on_secondary_mouse_down, |this, on_mouse_down| {
-                                    this.on_mouse_down(
-                                        MouseButton::Right,
-                                        move |event, window, cx| (on_mouse_down)(event, window, cx),
-                                    )
-                                })
-                                .when_some(self.tooltip, |this, tooltip| this.tooltip(tooltip))
                         } else {
                             this.child(indentation_line).child(
                                 h_flex()
@@ -208,44 +192,26 @@ impl RenderOnce for TreeViewItem {
                                     .w_full()
                                     .flex_grow()
                                     .px_1()
-                                    .rounded_sm()
-                                    .border_1()
-                                    .border_color(transparent_border)
-                                    .when(self.selected, |this| {
-                                        this.border_color(selected_border).bg(selected_bg)
-                                    })
-                                    .focus(|s| s.border_color(focused_border))
-                                    .hover(|s| s.bg(cx.theme().colors().element_hover))
-                                    .when_some(self.focus_handle, |this, handle| {
-                                        this.track_focus(&handle)
-                                    })
-                                    .when_some(self.tab_index, |this, index| this.tab_index(index))
                                     .child(
                                         Label::new(label)
                                             .when(!self.selected, |this| this.color(Color::Muted)),
-                                    )
-                                    .when_some(self.on_hover, |this, on_hover| {
-                                        this.on_hover(on_hover)
-                                    })
-                                    .when_some(
-                                        self.on_click.filter(|_| !self.disabled),
-                                        |this, on_click| this.on_click(on_click),
-                                    )
-                                    .when_some(
-                                        self.on_secondary_mouse_down,
-                                        |this, on_mouse_down| {
-                                            this.on_mouse_down(
-                                                MouseButton::Right,
-                                                move |event, window, cx| {
-                                                    (on_mouse_down)(event, window, cx)
-                                                },
-                                            )
-                                        },
-                                    )
-                                    .when_some(self.tooltip, |this, tooltip| this.tooltip(tooltip)),
+                                    ),
                             )
                         }
-                    }),
+                    })
+                    .when_some(self.focus_handle, |this, handle| this.track_focus(&handle))
+                    .when_some(self.tab_index, |this, index| this.tab_index(index))
+                    .when_some(self.on_hover, |this, on_hover| this.on_hover(on_hover))
+                    .when_some(
+                        self.on_click.filter(|_| !self.disabled),
+                        |this, on_click| this.on_click(on_click),
+                    )
+                    .when_some(self.on_secondary_mouse_down, |this, on_mouse_down| {
+                        this.on_mouse_down(MouseButton::Right, move |event, window, cx| {
+                            (on_mouse_down)(event, window, cx)
+                        })
+                    })
+                    .when_some(self.tooltip, |this, tooltip| this.tooltip(tooltip)),
             )
     }
 }

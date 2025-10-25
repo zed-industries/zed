@@ -159,6 +159,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                         .collect(),
                         language_servers: BTreeMap::default(),
                         context_servers: BTreeMap::default(),
+                        agent_servers: BTreeMap::default(),
                         slash_commands: BTreeMap::default(),
                         snippets: None,
                         capabilities: Vec::new(),
@@ -189,6 +190,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                         grammars: BTreeMap::default(),
                         language_servers: BTreeMap::default(),
                         context_servers: BTreeMap::default(),
+                        agent_servers: BTreeMap::default(),
                         slash_commands: BTreeMap::default(),
                         snippets: None,
                         capabilities: Vec::new(),
@@ -368,6 +370,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                 grammars: BTreeMap::default(),
                 language_servers: BTreeMap::default(),
                 context_servers: BTreeMap::default(),
+                agent_servers: BTreeMap::default(),
                 slash_commands: BTreeMap::default(),
                 snippets: None,
                 capabilities: Vec::new(),
@@ -868,5 +871,6 @@ fn init_test(cx: &mut TestAppContext) {
         Project::init_settings(cx);
         ExtensionSettings::register(cx);
         language::init(cx);
+        gpui_tokio::init(cx);
     });
 }

@@ -85,7 +85,7 @@ impl ThemeColors {
             panel_indent_guide_hover: neutral().light_alpha().step_6(),
             panel_indent_guide_active: neutral().light_alpha().step_6(),
             panel_overlay_background: neutral().light().step_2(),
-            panel_overlay_hover: neutral().light_alpha().step_4(),
+            panel_overlay_hover: neutral().light().step_4(),
             pane_focused_border: blue().light().step_5(),
             pane_group_border: neutral().light().step_6(),
             scrollbar_thumb_background: neutral().light_alpha().step_3(),
@@ -154,6 +154,15 @@ impl ThemeColors {
             version_control_ignored: gray().light().step_12(),
             version_control_conflict_marker_ours: green().light().step_10().alpha(0.5),
             version_control_conflict_marker_theirs: blue().light().step_10().alpha(0.5),
+            vim_normal_background: system.transparent,
+            vim_insert_background: system.transparent,
+            vim_replace_background: system.transparent,
+            vim_visual_background: system.transparent,
+            vim_visual_line_background: system.transparent,
+            vim_visual_block_background: system.transparent,
+            vim_helix_normal_background: system.transparent,
+            vim_helix_select_background: system.transparent,
+            vim_mode_text: system.transparent,
         }
     }
 
@@ -211,7 +220,7 @@ impl ThemeColors {
             panel_indent_guide_hover: neutral().dark_alpha().step_6(),
             panel_indent_guide_active: neutral().dark_alpha().step_6(),
             panel_overlay_background: neutral().dark().step_2(),
-            panel_overlay_hover: neutral().dark_alpha().step_4(),
+            panel_overlay_hover: neutral().dark().step_4(),
             pane_focused_border: blue().dark().step_5(),
             pane_group_border: neutral().dark().step_6(),
             scrollbar_thumb_background: neutral().dark_alpha().step_3(),
@@ -280,6 +289,15 @@ impl ThemeColors {
             version_control_ignored: gray().dark().step_12(),
             version_control_conflict_marker_ours: green().dark().step_10().alpha(0.5),
             version_control_conflict_marker_theirs: blue().dark().step_10().alpha(0.5),
+            vim_normal_background: system.transparent,
+            vim_insert_background: system.transparent,
+            vim_replace_background: system.transparent,
+            vim_visual_background: system.transparent,
+            vim_visual_line_background: system.transparent,
+            vim_visual_block_background: system.transparent,
+            vim_helix_normal_background: system.transparent,
+            vim_helix_select_background: system.transparent,
+            vim_mode_text: system.transparent,
         }
     }
 }

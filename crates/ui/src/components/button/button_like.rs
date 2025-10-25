@@ -135,9 +135,6 @@ pub enum ButtonStyle {
     /// a fully transparent button.
     Outlined,
 
-    /// Transparent button that always has an outline.
-    OutlinedTransparent,
-
     /// A more de-emphasized version of the outlined button.
     OutlinedGhost,
 
@@ -228,12 +225,6 @@ impl ButtonStyle {
                 label_color: Color::Default.color(cx),
                 icon_color: Color::Default.color(cx),
             },
-            ButtonStyle::OutlinedTransparent => ButtonLikeStyles {
-                background: cx.theme().colors().ghost_element_background,
-                border_color: cx.theme().colors().border_variant,
-                label_color: Color::Default.color(cx),
-                icon_color: Color::Default.color(cx),
-            },
             ButtonStyle::OutlinedGhost => ButtonLikeStyles {
                 background: transparent_black(),
                 border_color: cx.theme().colors().border_variant,
@@ -285,14 +276,8 @@ impl ButtonStyle {
                 label_color: Color::Default.color(cx),
                 icon_color: Color::Default.color(cx),
             },
-            ButtonStyle::OutlinedTransparent => ButtonLikeStyles {
-                background: cx.theme().colors().ghost_element_hover,
-                border_color: cx.theme().colors().border,
-                label_color: Color::Default.color(cx),
-                icon_color: Color::Default.color(cx),
-            },
             ButtonStyle::OutlinedGhost => ButtonLikeStyles {
-                background: transparent_black(),
+                background: cx.theme().colors().ghost_element_hover,
                 border_color: cx.theme().colors().border,
                 label_color: Color::Default.color(cx),
                 icon_color: Color::Default.color(cx),
@@ -331,12 +316,6 @@ impl ButtonStyle {
             },
             ButtonStyle::Outlined => ButtonLikeStyles {
                 background: cx.theme().colors().element_active,
-                border_color: cx.theme().colors().border_variant,
-                label_color: Color::Default.color(cx),
-                icon_color: Color::Default.color(cx),
-            },
-            ButtonStyle::OutlinedTransparent => ButtonLikeStyles {
-                background: cx.theme().colors().ghost_element_active,
                 border_color: cx.theme().colors().border_variant,
                 label_color: Color::Default.color(cx),
                 icon_color: Color::Default.color(cx),
@@ -380,12 +359,6 @@ impl ButtonStyle {
                 label_color: Color::Default.color(cx),
                 icon_color: Color::Default.color(cx),
             },
-            ButtonStyle::OutlinedTransparent => ButtonLikeStyles {
-                background: cx.theme().colors().ghost_element_background,
-                border_color: cx.theme().colors().border,
-                label_color: Color::Default.color(cx),
-                icon_color: Color::Default.color(cx),
-            },
             ButtonStyle::OutlinedGhost => ButtonLikeStyles {
                 background: transparent_black(),
                 border_color: cx.theme().colors().border,
@@ -424,12 +397,6 @@ impl ButtonStyle {
             },
             ButtonStyle::Outlined => ButtonLikeStyles {
                 background: cx.theme().colors().element_disabled,
-                border_color: cx.theme().colors().border_disabled,
-                label_color: Color::Default.color(cx),
-                icon_color: Color::Default.color(cx),
-            },
-            ButtonStyle::OutlinedTransparent => ButtonLikeStyles {
-                background: cx.theme().colors().ghost_element_disabled,
                 border_color: cx.theme().colors().border_disabled,
                 label_color: Color::Default.color(cx),
                 icon_color: Color::Default.color(cx),
@@ -673,6 +640,11 @@ impl RenderOnce for ButtonLike {
             .filter(|_| self.selected)
             .unwrap_or(self.style);
 
+        let is_outlined = matches!(
+            self.style,
+            ButtonStyle::Outlined | ButtonStyle::OutlinedGhost
+        );
+
         self.base
             .h_flex()
             .id(self.id.clone())
@@ -687,15 +659,7 @@ impl RenderOnce for ButtonLike {
             .when_some(self.width, |this, width| {
                 this.w(width).justify_center().text_center()
             })
-            .when(
-                matches!(
-                    self.style,
-                    ButtonStyle::Outlined
-                        | ButtonStyle::OutlinedTransparent
-                        | ButtonStyle::OutlinedGhost
-                ),
-                |this| this.border_1(),
-            )
+            .when(is_outlined, |this| this.border_1())
             .when_some(self.rounding, |this, rounding| {
                 this.when(rounding.top_left, |this| this.rounded_tl_sm())
                     .when(rounding.top_right, |this| this.rounded_tr_sm())
@@ -704,7 +668,7 @@ impl RenderOnce for ButtonLike {
             })
             .gap(DynamicSpacing::Base04.rems(cx))
             .map(|this| match self.size {
-                ButtonSize::Large | ButtonSize::Medium => this.px(DynamicSpacing::Base06.rems(cx)),
+                ButtonSize::Large | ButtonSize::Medium => this.px(DynamicSpacing::Base08.rems(cx)),
                 ButtonSize::Default | ButtonSize::Compact => {
                     this.px(DynamicSpacing::Base04.rems(cx))
                 }
@@ -723,13 +687,16 @@ impl RenderOnce for ButtonLike {
                 let hovered_style = style.hovered(self.layer, cx);
                 let focus_color =
                     |refinement: StyleRefinement| refinement.bg(hovered_style.background);
+
                 this.cursor(self.cursor_style)
                     .hover(focus_color)
                     .map(|this| {
-                        if matches!(self.style, ButtonStyle::Outlined) {
-                            this.focus(|s| s.border_color(cx.theme().colors().border_focused))
+                        if is_outlined {
+                            this.focus_visible(|s| {
+                                s.border_color(cx.theme().colors().border_focused)
+                            })
                         } else {
-                            this.focus(focus_color)
+                            this.focus_visible(focus_color)
                         }
                     })
                     .active(|active| active.bg(style.active(cx).background))

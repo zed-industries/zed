@@ -9,7 +9,9 @@ use html5ever::{ParseOpts, local_name, parse_document, tendril::TendrilSink};
 use language::LanguageRegistry;
 use markup5ever_rcdom::RcDom;
 use pulldown_cmark::{Alignment, Event, Options, Parser, Tag, TagEnd};
-use std::{cell::RefCell, collections::HashMap, ops::Range, path::PathBuf, rc::Rc, sync::Arc, vec};
+use std::{
+    cell::RefCell, collections::HashMap, mem, ops::Range, path::PathBuf, rc::Rc, sync::Arc, vec,
+};
 
 pub async fn parse_markdown(
     markdown_input: &str,
@@ -301,18 +303,16 @@ impl<'a> MarkdownParser<'a> {
                         finder.kinds(&[linkify::LinkKind::Url]);
                         let mut last_link_len = prev_len;
                         for link in finder.links(t) {
-                            let start = link.start();
-                            let end = link.end();
-                            let range = (prev_len + start)..(prev_len + end);
+                            let start = prev_len + link.start();
+                            let end = prev_len + link.end();
+                            let range = start..end;
                             link_ranges.push(range.clone());
                             link_urls.push(link.as_str().to_string());
 
                             // If there is a style before we match a link, we have to add this to the highlighted ranges
-                            if style != MarkdownHighlightStyle::default()
-                                && last_link_len < link.start()
-                            {
+                            if style != MarkdownHighlightStyle::default() && last_link_len < start {
                                 highlights.push((
-                                    last_link_len..link.start(),
+                                    last_link_len..start,
                                     MarkdownHighlight::Style(style.clone()),
                                 ));
                             }
@@ -385,15 +385,11 @@ impl<'a> MarkdownParser<'a> {
                         if !text.is_empty() {
                             let parsed_regions = MarkdownParagraphChunk::Text(ParsedMarkdownText {
                                 source_range: source_range.clone(),
-                                contents: text.into(),
-                                highlights: highlights.clone(),
-                                region_ranges: region_ranges.clone(),
-                                regions: regions.clone(),
+                                contents: mem::take(&mut text).into(),
+                                highlights: mem::take(&mut highlights),
+                                region_ranges: mem::take(&mut region_ranges),
+                                regions: mem::take(&mut regions),
                             });
-                            text = String::new();
-                            highlights = vec![];
-                            region_ranges = vec![];
-                            regions = vec![];
                             markdown_text_like.push(parsed_regions);
                         }
                         image = Image::identify(
@@ -418,6 +414,9 @@ impl<'a> MarkdownParser<'a> {
                         if let Some(mut image) = image.take() {
                             if !text.is_empty() {
                                 image.set_alt_text(std::mem::take(&mut text).into());
+                                mem::take(&mut highlights);
+                                mem::take(&mut region_ranges);
+                                mem::take(&mut regions);
                             }
                             markdown_text_like.push(MarkdownParagraphChunk::Image(image));
                         }
@@ -474,11 +473,14 @@ impl<'a> MarkdownParser<'a> {
     fn parse_table(&mut self, alignment: Vec<Alignment>) -> ParsedMarkdownTable {
         let (_event, source_range) = self.previous().unwrap();
         let source_range = source_range.clone();
-        let mut header = ParsedMarkdownTableRow::new();
+        let mut header = vec![];
         let mut body = vec![];
-        let mut current_row = vec![];
+        let mut row_columns = vec![];
         let mut in_header = true;
-        let column_alignments = alignment.iter().map(Self::convert_alignment).collect();
+        let column_alignments = alignment
+            .iter()
+            .map(Self::convert_alignment)
+            .collect::<Vec<_>>();
 
         loop {
             if self.eof() {
@@ -496,17 +498,25 @@ impl<'a> MarkdownParser<'a> {
                 Event::Start(Tag::TableCell) => {
                     self.cursor += 1;
                     let cell_contents = self.parse_text(false, Some(source_range));
-                    current_row.push(cell_contents);
+                    row_columns.push(ParsedMarkdownTableColumn {
+                        col_span: 1,
+                        row_span: 1,
+                        is_header: in_header,
+                        children: cell_contents,
+                        alignment: column_alignments
+                            .get(row_columns.len())
+                            .copied()
+                            .unwrap_or_default(),
+                    });
                 }
                 Event::End(TagEnd::TableHead) | Event::End(TagEnd::TableRow) => {
                     self.cursor += 1;
-                    let new_row = std::mem::take(&mut current_row);
+                    let columns = std::mem::take(&mut row_columns);
                     if in_header {
-                        header.children = new_row;
+                        header.push(ParsedMarkdownTableRow { columns: columns });
                         in_header = false;
                     } else {
-                        let row = ParsedMarkdownTableRow::with_children(new_row);
-                        body.push(row);
+                        body.push(ParsedMarkdownTableRow::with_columns(columns));
                     }
                 }
                 Event::End(TagEnd::Table) => {
@@ -523,7 +533,6 @@ impl<'a> MarkdownParser<'a> {
             source_range,
             header,
             body,
-            column_alignments,
         }
     }
 
@@ -969,6 +978,86 @@ impl<'a> MarkdownParser<'a> {
         }
     }
 
+    fn parse_table_row(
+        &self,
+        source_range: Range<usize>,
+        node: &Rc<markup5ever_rcdom::Node>,
+    ) -> Option<ParsedMarkdownTableRow> {
+        let mut columns = Vec::new();
+
+        match &node.data {
+            markup5ever_rcdom::NodeData::Element { name, .. } => {
+                if local_name!("tr") != name.local {
+                    return None;
+                }
+
+                for node in node.children.borrow().iter() {
+                    if let Some(column) = self.parse_table_column(source_range.clone(), node) {
+                        columns.push(column);
+                    }
+                }
+            }
+            _ => {}
+        }
+
+        if columns.is_empty() {
+            None
+        } else {
+            Some(ParsedMarkdownTableRow { columns })
+        }
+    }
+
+    fn parse_table_column(
+        &self,
+        source_range: Range<usize>,
+        node: &Rc<markup5ever_rcdom::Node>,
+    ) -> Option<ParsedMarkdownTableColumn> {
+        match &node.data {
+            markup5ever_rcdom::NodeData::Element { name, attrs, .. } => {
+                if !matches!(name.local, local_name!("th") | local_name!("td")) {
+                    return None;
+                }
+
+                let mut children = MarkdownParagraph::new();
+                self.consume_paragraph(source_range, node, &mut children);
+
+                let is_header = matches!(name.local, local_name!("th"));
+
+                Some(ParsedMarkdownTableColumn {
+                    col_span: std::cmp::max(
+                        Self::attr_value(attrs, local_name!("colspan"))
+                            .and_then(|span| span.parse().ok())
+                            .unwrap_or(1),
+                        1,
+                    ),
+                    row_span: std::cmp::max(
+                        Self::attr_value(attrs, local_name!("rowspan"))
+                            .and_then(|span| span.parse().ok())
+                            .unwrap_or(1),
+                        1,
+                    ),
+                    is_header,
+                    children,
+                    alignment: Self::attr_value(attrs, local_name!("align"))
+                        .and_then(|align| match align.as_str() {
+                            "left" => Some(ParsedMarkdownTableAlignment::Left),
+                            "center" => Some(ParsedMarkdownTableAlignment::Center),
+                            "right" => Some(ParsedMarkdownTableAlignment::Right),
+                            _ => None,
+                        })
+                        .unwrap_or_else(|| {
+                            if is_header {
+                                ParsedMarkdownTableAlignment::Center
+                            } else {
+                                ParsedMarkdownTableAlignment::default()
+                            }
+                        }),
+                })
+            }
+            _ => None,
+        }
+    }
+
     fn consume_children(
         &self,
         source_range: Range<usize>,
@@ -1141,7 +1230,7 @@ impl<'a> MarkdownParser<'a> {
         node: &Rc<markup5ever_rcdom::Node>,
         source_range: Range<usize>,
     ) -> Option<ParsedMarkdownTable> {
-        let mut header_columns = Vec::new();
+        let mut header_rows = Vec::new();
         let mut body_rows = Vec::new();
 
         // node should be a thead or tbody element
@@ -1151,21 +1240,16 @@ impl<'a> MarkdownParser<'a> {
                     if local_name!("thead") == name.local {
                         // node should be a tr element
                         for node in node.children.borrow().iter() {
-                            let mut paragraph = MarkdownParagraph::new();
-                            self.consume_paragraph(source_range.clone(), node, &mut paragraph);
-
-                            for paragraph in paragraph.into_iter() {
-                                header_columns.push(vec![paragraph]);
+                            if let Some(row) = self.parse_table_row(source_range.clone(), node) {
+                                header_rows.push(row);
                             }
                         }
                     } else if local_name!("tbody") == name.local {
                         // node should be a tr element
                         for node in node.children.borrow().iter() {
-                            let mut row = MarkdownParagraph::new();
-                            self.consume_paragraph(source_range.clone(), node, &mut row);
-                            body_rows.push(ParsedMarkdownTableRow::with_children(
-                                row.into_iter().map(|column| vec![column]).collect(),
-                            ));
+                            if let Some(row) = self.parse_table_row(source_range.clone(), node) {
+                                body_rows.push(row);
+                            }
                         }
                     }
                 }
@@ -1173,12 +1257,11 @@ impl<'a> MarkdownParser<'a> {
             }
         }
 
-        if !header_columns.is_empty() || !body_rows.is_empty() {
+        if !header_rows.is_empty() || !body_rows.is_empty() {
             Some(ParsedMarkdownTable {
                 source_range,
                 body: body_rows,
-                column_alignments: Vec::default(),
-                header: ParsedMarkdownTableRow::with_children(header_columns),
+                header: header_rows,
             })
         } else {
             None
@@ -1359,17 +1442,40 @@ mod tests {
             panic!("Expected a paragraph");
         };
         assert_eq!(
-            paragraph[0],
-            MarkdownParagraphChunk::Image(Image {
-                source_range: 0..111,
-                link: Link::Web {
-                    url: "https://blog.logrocket.com/wp-content/uploads/2024/04/exploring-zed-open-source-code-editor-rust-2.png".to_string(),
-                },
-                alt_text: Some("test".into()),
-                height: None,
-                width: None,
-            },)
-        );
+                paragraph[0],
+                MarkdownParagraphChunk::Image(Image {
+                    source_range: 0..111,
+                    link: Link::Web {
+                        url: "https://blog.logrocket.com/wp-content/uploads/2024/04/exploring-zed-open-source-code-editor-rust-2.png".to_string(),
+                    },
+                    alt_text: Some("test".into()),
+                    height: None,
+                    width: None,
+                },)
+            );
+    }
+
+    #[gpui::test]
+    async fn test_image_alt_text() {
+        let parsed = parse("[![Zed](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/zed-industries/zed/main/assets/badge/v0.json)](https://zed.dev)\n ").await;
+
+        let paragraph = if let ParsedMarkdownElement::Paragraph(text) = &parsed.children[0] {
+            text
+        } else {
+            panic!("Expected a paragraph");
+        };
+        assert_eq!(
+                    paragraph[0],
+                    MarkdownParagraphChunk::Image(Image {
+                        source_range: 0..142,
+                        link: Link::Web {
+                            url: "https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/zed-industries/zed/main/assets/badge/v0.json".to_string(),
+                        },
+                        alt_text: Some("Zed".into()),
+                        height: None,
+                        width: None,
+                    },)
+                );
     }
 
     #[gpui::test]
@@ -1813,10 +1919,55 @@ mod tests {
             ParsedMarkdown {
                 children: vec![ParsedMarkdownElement::Table(table(
                     0..366,
-                    row(vec![text("Id", 0..366), text("Name ", 0..366)]),
+                    vec![row(vec![
+                        column(
+                            1,
+                            1,
+                            true,
+                            text("Id", 0..366),
+                            ParsedMarkdownTableAlignment::Center
+                        ),
+                        column(
+                            1,
+                            1,
+                            true,
+                            text("Name ", 0..366),
+                            ParsedMarkdownTableAlignment::Center
+                        )
+                    ])],
                     vec![
-                        row(vec![text("1", 0..366), text("Chris", 0..366)]),
-                        row(vec![text("2", 0..366), text("Dennis", 0..366)]),
+                        row(vec![
+                            column(
+                                1,
+                                1,
+                                false,
+                                text("1", 0..366),
+                                ParsedMarkdownTableAlignment::None
+                            ),
+                            column(
+                                1,
+                                1,
+                                false,
+                                text("Chris", 0..366),
+                                ParsedMarkdownTableAlignment::None
+                            )
+                        ]),
+                        row(vec![
+                            column(
+                                1,
+                                1,
+                                false,
+                                text("2", 0..366),
+                                ParsedMarkdownTableAlignment::None
+                            ),
+                            column(
+                                1,
+                                1,
+                                false,
+                                text("Dennis", 0..366),
+                                ParsedMarkdownTableAlignment::None
+                            )
+                        ]),
                     ],
                 ))],
             },
@@ -1846,10 +1997,40 @@ mod tests {
             ParsedMarkdown {
                 children: vec![ParsedMarkdownElement::Table(table(
                     0..240,
-                    row(vec![]),
+                    vec![],
                     vec![
-                        row(vec![text("1", 0..240), text("Chris", 0..240)]),
-                        row(vec![text("2", 0..240), text("Dennis", 0..240)]),
+                        row(vec![
+                            column(
+                                1,
+                                1,
+                                false,
+                                text("1", 0..240),
+                                ParsedMarkdownTableAlignment::None
+                            ),
+                            column(
+                                1,
+                                1,
+                                false,
+                                text("Chris", 0..240),
+                                ParsedMarkdownTableAlignment::None
+                            )
+                        ]),
+                        row(vec![
+                            column(
+                                1,
+                                1,
+                                false,
+                                text("2", 0..240),
+                                ParsedMarkdownTableAlignment::None
+                            ),
+                            column(
+                                1,
+                                1,
+                                false,
+                                text("Dennis", 0..240),
+                                ParsedMarkdownTableAlignment::None
+                            )
+                        ]),
                     ],
                 ))],
             },
@@ -1875,7 +2056,22 @@ mod tests {
             ParsedMarkdown {
                 children: vec![ParsedMarkdownElement::Table(table(
                     0..150,
-                    row(vec![text("Id", 0..150), text("Name", 0..150)]),
+                    vec![row(vec![
+                        column(
+                            1,
+                            1,
+                            true,
+                            text("Id", 0..150),
+                            ParsedMarkdownTableAlignment::Center
+                        ),
+                        column(
+                            1,
+                            1,
+                            true,
+                            text("Name", 0..150),
+                            ParsedMarkdownTableAlignment::Center
+                        )
+                    ])],
                     vec![],
                 ))],
             },
@@ -2057,7 +2253,22 @@ Some other content
 
         let expected_table = table(
             0..48,
-            row(vec![text("Header 1", 1..11), text("Header 2", 12..22)]),
+            vec![row(vec![
+                column(
+                    1,
+                    1,
+                    true,
+                    text("Header 1", 1..11),
+                    ParsedMarkdownTableAlignment::None,
+                ),
+                column(
+                    1,
+                    1,
+                    true,
+                    text("Header 2", 12..22),
+                    ParsedMarkdownTableAlignment::None,
+                ),
+            ])],
             vec![],
         );
 
@@ -2077,10 +2288,55 @@ Some other content
 
         let expected_table = table(
             0..95,
-            row(vec![text("Header 1", 1..11), text("Header 2", 12..22)]),
+            vec![row(vec![
+                column(
+                    1,
+                    1,
+                    true,
+                    text("Header 1", 1..11),
+                    ParsedMarkdownTableAlignment::None,
+                ),
+                column(
+                    1,
+                    1,
+                    true,
+                    text("Header 2", 12..22),
+                    ParsedMarkdownTableAlignment::None,
+                ),
+            ])],
             vec![
-                row(vec![text("Cell 1", 49..59), text("Cell 2", 60..70)]),
-                row(vec![text("Cell 3", 73..83), text("Cell 4", 84..94)]),
+                row(vec![
+                    column(
+                        1,
+                        1,
+                        false,
+                        text("Cell 1", 49..59),
+                        ParsedMarkdownTableAlignment::None,
+                    ),
+                    column(
+                        1,
+                        1,
+                        false,
+                        text("Cell 2", 60..70),
+                        ParsedMarkdownTableAlignment::None,
+                    ),
+                ]),
+                row(vec![
+                    column(
+                        1,
+                        1,
+                        false,
+                        text("Cell 3", 73..83),
+                        ParsedMarkdownTableAlignment::None,
+                    ),
+                    column(
+                        1,
+                        1,
+                        false,
+                        text("Cell 4", 84..94),
+                        ParsedMarkdownTableAlignment::None,
+                    ),
+                ]),
             ],
         );
 
@@ -2553,19 +2809,34 @@ fn main() {
 
     fn table(
         source_range: Range<usize>,
-        header: ParsedMarkdownTableRow,
+        header: Vec<ParsedMarkdownTableRow>,
         body: Vec<ParsedMarkdownTableRow>,
     ) -> ParsedMarkdownTable {
         ParsedMarkdownTable {
-            column_alignments: Vec::new(),
             source_range,
             header,
             body,
         }
     }
 
-    fn row(children: Vec<MarkdownParagraph>) -> ParsedMarkdownTableRow {
-        ParsedMarkdownTableRow { children }
+    fn row(columns: Vec<ParsedMarkdownTableColumn>) -> ParsedMarkdownTableRow {
+        ParsedMarkdownTableRow { columns }
+    }
+
+    fn column(
+        col_span: usize,
+        row_span: usize,
+        is_header: bool,
+        children: MarkdownParagraph,
+        alignment: ParsedMarkdownTableAlignment,
+    ) -> ParsedMarkdownTableColumn {
+        ParsedMarkdownTableColumn {
+            col_span,
+            row_span,
+            is_header,
+            children,
+            alignment,
+        }
     }
 
     impl PartialEq for ParsedMarkdownTable {

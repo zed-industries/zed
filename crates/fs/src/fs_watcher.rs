@@ -46,6 +46,7 @@ impl Drop for FsWatcher {
 
 impl Watcher for FsWatcher {
     fn add(&self, path: &std::path::Path) -> anyhow::Result<()> {
+        log::trace!("watcher add: {path:?}");
         let tx = self.tx.clone();
         let pending_paths = self.pending_path_events.clone();
 
@@ -63,11 +64,15 @@ impl Watcher for FsWatcher {
                 .next_back()
                 && path.starts_with(watched_path.as_ref())
             {
+                log::trace!(
+                    "path to watch is covered by existing registration: {path:?}, {watched_path:?}"
+                );
                 return Ok(());
             }
         }
         #[cfg(target_os = "linux")]
         {
+            log::trace!("path to watch is already watched: {path:?}");
             if self.registrations.lock().contains_key(path) {
                 return Ok(());
             }
@@ -85,6 +90,7 @@ impl Watcher for FsWatcher {
             let path = path.clone();
             |g| {
                 g.add(path, mode, move |event: &notify::Event| {
+                    log::trace!("watcher received event: {event:?}");
                     let kind = match event.kind {
                         EventKind::Create(_) => Some(PathEventKind::Created),
                         EventKind::Modify(_) => Some(PathEventKind::Changed),
@@ -126,6 +132,7 @@ impl Watcher for FsWatcher {
     }
 
     fn remove(&self, path: &std::path::Path) -> anyhow::Result<()> {
+        log::trace!("remove watched path: {path:?}");
         let Some(registration) = self.registrations.lock().remove(path) else {
             return Ok(());
         };
@@ -215,6 +222,7 @@ static FS_WATCHER_INSTANCE: OnceLock<anyhow::Result<GlobalWatcher, notify::Error
     OnceLock::new();
 
 fn handle_event(event: Result<notify::Event, notify::Error>) {
+    log::trace!("global handle event: {event:?}");
     // Filter out access events, which could lead to a weird bug on Linux after upgrading notify
     // https://github.com/zed-industries/zed/actions/runs/14085230504/job/39449448832
     let Some(event) = event

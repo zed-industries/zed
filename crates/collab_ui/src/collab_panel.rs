@@ -2250,7 +2250,7 @@ impl CollabPanel {
                             })),
                     )
                     .child(
-                        div().flex().w_full().items_center().child(
+                        v_flex().w_full().items_center().child(
                             Label::new("Sign in to enable collaboration.")
                                 .color(Color::Muted)
                                 .size(LabelSize::Small),
@@ -3035,6 +3035,10 @@ impl Panel for CollabPanel {
 
     fn persistent_name() -> &'static str {
         "CollabPanel"
+    }
+
+    fn panel_key() -> &'static str {
+        COLLABORATION_PANEL_KEY
     }
 
     fn activation_priority(&self) -> u32 {

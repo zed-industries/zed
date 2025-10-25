@@ -30,22 +30,26 @@ pub struct OpenZedUrl {
 actions!(
     zed,
     [
-        /// Opens the settings JSON file.
-        OpenSettings,
         /// Opens the settings editor.
-        OpenSettingsEditor,
+        #[action(deprecated_aliases = ["zed_actions::OpenSettingsEditor"])]
+        OpenSettings,
+        /// Opens the settings JSON file.
+        #[action(deprecated_aliases = ["zed_actions::OpenSettings"])]
+        OpenSettingsFile,
         /// Opens the default keymap file.
         OpenDefaultKeymap,
+        /// Opens the user keymap file.
+        #[action(deprecated_aliases = ["zed_actions::OpenKeymap"])]
+        OpenKeymapFile,
+        /// Opens the keymap editor.
+        #[action(deprecated_aliases = ["zed_actions::OpenKeymapEditor"])]
+        OpenKeymap,
         /// Opens account settings.
         OpenAccountSettings,
-        /// Opens the keymap editor.
-        OpenKeymapEditor,
         /// Opens server settings.
         OpenServerSettings,
         /// Quits the application.
         Quit,
-        /// Opens the user keymap file.
-        OpenKeymap,
         /// Shows information about Zed.
         About,
         /// Opens the documentation website.
@@ -66,6 +70,7 @@ pub enum ExtensionCategoryFilter {
     Grammars,
     LanguageServers,
     ContextServers,
+    AgentServers,
     SlashCommands,
     IndexedDocsProviders,
     Snippets,
@@ -103,6 +108,16 @@ pub struct IncreaseBufferFontSize {
     pub persist: bool,
 }
 
+/// Increases the font size in the editor buffer.
+#[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
+#[action(namespace = zed)]
+#[serde(deny_unknown_fields)]
+pub struct OpenSettingsAt {
+    /// A path to a specific setting (e.g. `theme.mode`)
+    #[serde(default)]
+    pub path: String,
+}
+
 /// Resets the buffer font size to the default value.
 #[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
 #[action(namespace = zed)]
@@ -135,6 +150,15 @@ pub struct IncreaseUiFontSize {
 #[action(namespace = zed)]
 #[serde(deny_unknown_fields)]
 pub struct ResetUiFontSize {
+    #[serde(default)]
+    pub persist: bool,
+}
+
+/// Resets all zoom levels (UI and buffer font sizes, including in the agent panel) to their default values.
+#[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
+#[action(namespace = zed)]
+#[serde(deny_unknown_fields)]
+pub struct ResetAllZoom {
     #[serde(default)]
     pub persist: bool,
 }
@@ -219,10 +243,12 @@ pub mod feedback {
     actions!(
         feedback,
         [
+            /// Opens email client to send feedback to Zed support.
+            EmailZed,
             /// Opens the bug report form.
             FileBugReport,
-            /// Opens the feedback form.
-            GiveFeedback
+            /// Opens the feature request form.
+            RequestFeature
         ]
     );
 }
@@ -290,7 +316,12 @@ pub mod agent {
             #[action(deprecated_aliases = ["assistant::ToggleModelSelector", "assistant2::ToggleModelSelector"])]
             ToggleModelSelector,
             /// Triggers re-authentication on Gemini
-            ReauthenticateAgent
+            ReauthenticateAgent,
+            /// Add the current selection as context for threads in the agent panel.
+            #[action(deprecated_aliases = ["assistant::QuoteSelection", "agent::QuoteSelection"])]
+            AddSelectionToThread,
+            /// Resets the agent panel zoom levels (agent UI and buffer font sizes).
+            ResetAgentZoom,
         ]
     );
 }
@@ -487,6 +518,12 @@ actions!(
         OpenProjectDebugTasks,
     ]
 );
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct WslConnectionOptions {
+    pub distro_name: String,
+    pub user: Option<String>,
+}
 
 #[cfg(target_os = "windows")]
 pub mod wsl_actions {

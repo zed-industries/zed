@@ -9,7 +9,8 @@ use std::{
 
 use client::parse_zed_link;
 use command_palette_hooks::{
-    CommandInterceptResult, CommandPaletteFilter, CommandPaletteInterceptor,
+    CommandInterceptItem, CommandInterceptResult, CommandPaletteFilter,
+    GlobalCommandPaletteInterceptor,
 };
 
 use fuzzy::{StringMatch, StringMatchCandidate};
@@ -81,14 +82,17 @@ impl CommandPalette {
         let Some(previous_focus_handle) = window.focused(cx) else {
             return;
         };
+
+        let entity = cx.weak_entity();
         workspace.toggle_modal(window, cx, move |window, cx| {
-            CommandPalette::new(previous_focus_handle, query, window, cx)
+            CommandPalette::new(previous_focus_handle, query, entity, window, cx)
         });
     }
 
     fn new(
         previous_focus_handle: FocusHandle,
         query: &str,
+        entity: WeakEntity<Workspace>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -109,8 +113,12 @@ impl CommandPalette {
             })
             .collect();
 
-        let delegate =
-            CommandPaletteDelegate::new(cx.entity().downgrade(), commands, previous_focus_handle);
+        let delegate = CommandPaletteDelegate::new(
+            cx.entity().downgrade(),
+            entity,
+            commands,
+            previous_focus_handle,
+        );
 
         let picker = cx.new(|cx| {
             let picker = Picker::uniform_list(delegate, window, cx);
@@ -146,6 +154,7 @@ impl Render for CommandPalette {
 pub struct CommandPaletteDelegate {
     latest_query: String,
     command_palette: WeakEntity<CommandPalette>,
+    workspace: WeakEntity<Workspace>,
     all_commands: Vec<Command>,
     commands: Vec<Command>,
     matches: Vec<StringMatch>,
@@ -153,7 +162,7 @@ pub struct CommandPaletteDelegate {
     previous_focus_handle: FocusHandle,
     updating_matches: Option<(
         Task<()>,
-        postage::dispatch::Receiver<(Vec<Command>, Vec<StringMatch>)>,
+        postage::dispatch::Receiver<(Vec<Command>, Vec<StringMatch>, CommandInterceptResult)>,
     )>,
 }
 
@@ -174,11 +183,13 @@ impl Clone for Command {
 impl CommandPaletteDelegate {
     fn new(
         command_palette: WeakEntity<CommandPalette>,
+        workspace: WeakEntity<Workspace>,
         commands: Vec<Command>,
         previous_focus_handle: FocusHandle,
     ) -> Self {
         Self {
             command_palette,
+            workspace,
             all_commands: commands.clone(),
             matches: vec![],
             commands,
@@ -194,30 +205,19 @@ impl CommandPaletteDelegate {
         query: String,
         mut commands: Vec<Command>,
         mut matches: Vec<StringMatch>,
-        cx: &mut Context<Picker<Self>>,
+        intercept_result: CommandInterceptResult,
+        _: &mut Context<Picker<Self>>,
     ) {
         self.updating_matches.take();
-        self.latest_query = query.clone();
-
-        let mut intercept_results = CommandPaletteInterceptor::try_global(cx)
-            .map(|interceptor| interceptor.intercept(&query, cx))
-            .unwrap_or_default();
-
-        if parse_zed_link(&query, cx).is_some() {
-            intercept_results = vec![CommandInterceptResult {
-                action: OpenZedUrl { url: query.clone() }.boxed_clone(),
-                string: query,
-                positions: vec![],
-            }]
-        }
+        self.latest_query = query;
 
         let mut new_matches = Vec::new();
 
-        for CommandInterceptResult {
+        for CommandInterceptItem {
             action,
             string,
             positions,
-        } in intercept_results
+        } in intercept_result.results
         {
             if let Some(idx) = matches
                 .iter()
@@ -236,7 +236,9 @@ impl CommandPaletteDelegate {
                 score: 0.0,
             })
         }
-        new_matches.append(&mut matches);
+        if !intercept_result.exclusive {
+            new_matches.append(&mut matches);
+        }
         self.commands = commands;
         self.matches = new_matches;
         if self.matches.is_empty() {
@@ -295,12 +297,22 @@ impl PickerDelegate for CommandPaletteDelegate {
         if let Some(alias) = settings.command_aliases.get(&query) {
             query = alias.to_string();
         }
+
+        let workspace = self.workspace.clone();
+
+        let intercept_task = GlobalCommandPaletteInterceptor::intercept(&query, workspace, cx);
+
         let (mut tx, mut rx) = postage::dispatch::channel(1);
+
+        let query_str = query.as_str();
+        let is_zed_link = parse_zed_link(query_str, cx).is_some();
+
         let task = cx.background_spawn({
             let mut commands = self.all_commands.clone();
             let hit_counts = self.hit_counts();
             let executor = cx.background_executor().clone();
-            let query = normalize_action_query(query.as_str());
+            let query = normalize_action_query(query_str);
+            let query_for_link = query_str.to_string();
             async move {
                 commands.sort_by_key(|action| {
                     (
@@ -326,13 +338,34 @@ impl PickerDelegate for CommandPaletteDelegate {
                 )
                 .await;
 
-                tx.send((commands, matches)).await.log_err();
+                let intercept_result = if is_zed_link {
+                    CommandInterceptResult {
+                        results: vec![CommandInterceptItem {
+                            action: OpenZedUrl {
+                                url: query_for_link.clone(),
+                            }
+                            .boxed_clone(),
+                            string: query_for_link,
+                            positions: vec![],
+                        }],
+                        exclusive: false,
+                    }
+                } else if let Some(task) = intercept_task {
+                    task.await
+                } else {
+                    CommandInterceptResult::default()
+                };
+
+                tx.send((commands, matches, intercept_result))
+                    .await
+                    .log_err();
             }
         });
+
         self.updating_matches = Some((task, rx.clone()));
 
         cx.spawn_in(window, async move |picker, cx| {
-            let Some((commands, matches)) = rx.recv().await else {
+            let Some((commands, matches, intercept_result)) = rx.recv().await else {
                 return;
             };
 
@@ -340,7 +373,7 @@ impl PickerDelegate for CommandPaletteDelegate {
                 .update(cx, |picker, cx| {
                     picker
                         .delegate
-                        .matches_updated(query, commands, matches, cx)
+                        .matches_updated(query, commands, matches, intercept_result, cx)
                 })
                 .log_err();
         })
@@ -361,8 +394,8 @@ impl PickerDelegate for CommandPaletteDelegate {
             .background_executor()
             .block_with_timeout(duration, rx.clone().recv())
         {
-            Ok(Some((commands, matches))) => {
-                self.matches_updated(query, commands, matches, cx);
+            Ok(Some((commands, matches, interceptor_result))) => {
+                self.matches_updated(query, commands, matches, interceptor_result, cx);
                 true
             }
             _ => {
@@ -410,7 +443,7 @@ impl PickerDelegate for CommandPaletteDelegate {
         &self,
         ix: usize,
         selected: bool,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let matching_command = self.matches.get(ix)?;
@@ -429,10 +462,9 @@ impl PickerDelegate for CommandPaletteDelegate {
                             command.name.clone(),
                             matching_command.positions.clone(),
                         ))
-                        .children(KeyBinding::for_action_in(
+                        .child(KeyBinding::for_action_in(
                             &*command.action,
                             &self.previous_focus_handle,
-                            window,
                             cx,
                         )),
                 ),
@@ -665,7 +697,11 @@ mod tests {
         editor.update_in(cx, |editor, window, cx| {
             assert!(editor.focus_handle(cx).is_focused(window));
             assert_eq!(
-                editor.selections.last::<Point>(cx).range().start,
+                editor
+                    .selections
+                    .last::<Point>(&editor.display_snapshot(cx))
+                    .range()
+                    .start,
                 Point::new(2, 0)
             );
         });

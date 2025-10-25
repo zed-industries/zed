@@ -17,6 +17,7 @@ test-support = []
 
 [dependencies]
 anyhow.workspace = true
+bm25 = "2.3.2"
 heck.workspace = true
 editor.workspace = true
 feature_flags.workspace = true
@@ -25,7 +26,9 @@ fuzzy.workspace = true
 gpui.workspace = true
 menu.workspace = true
 paths.workspace = true
+picker.workspace = true
 project.workspace = true
+release_channel.workspace = true
 schemars.workspace = true
 search.workspace = true
 serde.workspace = true
@@ -35,10 +38,10 @@ theme.workspace = true
 ui_input.workspace = true
 ui.workspace = true
 util.workspace = true
-workspace-hack.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
 log.workspace = true
+title_bar.workspace = true
 
 [dev-dependencies]
 assets.workspace = true

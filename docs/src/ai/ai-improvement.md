@@ -63,7 +63,7 @@ Zed will intentionally exclude certain files from Predictive Edits entirely, eve
 
 You can inspect this exclusion list by opening `zed: open default settings` from the command palette:
 
-```json
+```json [settings]
 {
   "edit_predictions": {
     // A list of globs representing files that edit predictions should be disabled for.
@@ -83,7 +83,7 @@ You can inspect this exclusion list by opening `zed: open default settings` from
 
 Users may explicitly exclude additional paths and/or file extensions by adding them to [`edit_predictions.disabled_globs`](https://zed.dev/docs/configuring-zed#edit-predictions) in their Zed settings.json:
 
-```json
+```json [settings]
 {
   "edit_predictions": {
     "disabled_globs": ["secret_dir/*", "**/*.log"]

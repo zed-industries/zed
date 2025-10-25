@@ -154,7 +154,7 @@ pub fn hover_at_inlay(
             hide_hover(editor, cx);
         }
 
-        let hover_popover_delay = EditorSettings::get_global(cx).hover_popover_delay;
+        let hover_popover_delay = EditorSettings::get_global(cx).hover_popover_delay.0;
 
         let task = cx.spawn_in(window, async move |this, cx| {
             async move {
@@ -275,7 +275,7 @@ fn show_hover(
         return None;
     }
 
-    let hover_popover_delay = EditorSettings::get_global(cx).hover_popover_delay;
+    let hover_popover_delay = EditorSettings::get_global(cx).hover_popover_delay.0;
     let all_diagnostics_active = editor.active_diagnostics == ActiveDiagnostic::All;
     let active_group_id = if let ActiveDiagnostic::Group(group) = &editor.active_diagnostics {
         Some(group.group_id)
@@ -467,13 +467,10 @@ fn show_hover(
                 let range = hover_result
                     .range
                     .and_then(|range| {
-                        let start = snapshot
+                        let range = snapshot
                             .buffer_snapshot()
-                            .anchor_in_excerpt(excerpt_id, range.start)?;
-                        let end = snapshot
-                            .buffer_snapshot()
-                            .anchor_in_excerpt(excerpt_id, range.end)?;
-                        Some(start..end)
+                            .anchor_range_in_excerpt(excerpt_id, range)?;
+                        Some(range)
                     })
                     .or_else(|| {
                         let snapshot = &snapshot.buffer_snapshot();
@@ -989,17 +986,17 @@ impl DiagnosticPopover {
 mod tests {
     use super::*;
     use crate::{
-        InlayId, PointForPosition,
+        PointForPosition,
         actions::ConfirmCompletion,
         editor_tests::{handle_completion_request, init_test},
-        hover_links::update_inlay_link_and_hover_points,
-        inlay_hint_cache::tests::{cached_hint_labels, visible_hint_labels},
+        inlays::inlay_hints::tests::{cached_hint_labels, visible_hint_labels},
         test::editor_lsp_test_context::EditorLspTestContext,
     };
     use collections::BTreeSet;
     use gpui::App;
     use indoc::indoc;
     use markdown::parser::MarkdownEvent;
+    use project::InlayId;
     use settings::InlayHintSettingsContent;
     use smol::stream::StreamExt;
     use std::sync::atomic;
@@ -1007,7 +1004,7 @@ mod tests {
     use text::Bias;
 
     fn get_hover_popover_delay(cx: &gpui::TestAppContext) -> u64 {
-        cx.read(|cx: &App| -> u64 { EditorSettings::get_global(cx).hover_popover_delay })
+        cx.read(|cx: &App| -> u64 { EditorSettings::get_global(cx).hover_popover_delay.0 })
     }
 
     impl InfoPopover {
@@ -1651,7 +1648,7 @@ mod tests {
         cx.background_executor.run_until_parked();
         cx.update_editor(|editor, _, cx| {
             let expected_layers = vec![entire_hint_label.to_string()];
-            assert_eq!(expected_layers, cached_hint_labels(editor));
+            assert_eq!(expected_layers, cached_hint_labels(editor, cx));
             assert_eq!(expected_layers, visible_hint_labels(editor, cx));
         });
 
@@ -1690,10 +1687,9 @@ mod tests {
             }
         });
         cx.update_editor(|editor, window, cx| {
-            update_inlay_link_and_hover_points(
+            editor.update_inlay_link_and_hover_points(
                 &editor.snapshot(window, cx),
                 new_type_hint_part_hover_position,
-                editor,
                 true,
                 false,
                 window,
@@ -1761,10 +1757,9 @@ mod tests {
         cx.background_executor.run_until_parked();
 
         cx.update_editor(|editor, window, cx| {
-            update_inlay_link_and_hover_points(
+            editor.update_inlay_link_and_hover_points(
                 &editor.snapshot(window, cx),
                 new_type_hint_part_hover_position,
-                editor,
                 true,
                 false,
                 window,
@@ -1816,10 +1811,9 @@ mod tests {
             }
         });
         cx.update_editor(|editor, window, cx| {
-            update_inlay_link_and_hover_points(
+            editor.update_inlay_link_and_hover_points(
                 &editor.snapshot(window, cx),
                 struct_hint_part_hover_position,
-                editor,
                 true,
                 false,
                 window,

@@ -15,11 +15,11 @@ path = "src/rope.rs"
 arrayvec = "0.7.1"
 log.workspace = true
 rayon.workspace = true
+regex.workspace = true
 smallvec.workspace = true
 sum_tree.workspace = true
 unicode-segmentation.workspace = true
 util.workspace = true
-workspace-hack.workspace = true
 
 [dev-dependencies]
 ctor.workspace = true

@@ -1,6 +1,54 @@
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use std::{borrow::Cow, fmt, path::Path, sync::LazyLock};
 
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
+/// Shell configuration to open the terminal with.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum Shell {
+    /// Use the system's default terminal configuration in /etc/passwd
+    #[default]
+    System,
+    /// Use a specific program with no arguments.
+    Program(String),
+    /// Use a specific program with arguments.
+    WithArguments {
+        /// The program to run.
+        program: String,
+        /// The arguments to pass to the program.
+        args: Vec<String>,
+        /// An optional string to override the title of the terminal tab
+        title_override: Option<String>,
+    },
+}
+
+impl Shell {
+    pub fn program(&self) -> String {
+        match self {
+            Shell::Program(program) => program.clone(),
+            Shell::WithArguments { program, .. } => program.clone(),
+            Shell::System => get_system_shell(),
+        }
+    }
+
+    pub fn program_and_args(&self) -> (String, &[String]) {
+        match self {
+            Shell::Program(program) => (program.clone(), &[]),
+            Shell::WithArguments { program, args, .. } => (program.clone(), args),
+            Shell::System => (get_system_shell(), &[]),
+        }
+    }
+
+    pub fn shell_kind(&self, is_windows: bool) -> ShellKind {
+        match self {
+            Shell::Program(program) => ShellKind::new(program, is_windows),
+            Shell::WithArguments { program, .. } => ShellKind::new(program, is_windows),
+            Shell::System => ShellKind::system(),
+        }
+    }
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ShellKind {
     #[default]
     Posix,
@@ -45,6 +93,7 @@ pub fn get_windows_git_bash() -> Option<String> {
         let git = which::which("git").ok()?;
         let git_bash = git.parent()?.parent()?.join("bin").join("bash.exe");
         if git_bash.is_file() {
+            log::info!("Found git-bash at {}", git_bash.display());
             Some(git_bash.to_string_lossy().to_string())
         } else {
             None
@@ -173,44 +222,30 @@ impl fmt::Display for ShellKind {
 
 impl ShellKind {
     pub fn system() -> Self {
-        Self::new(&get_system_shell())
+        Self::new(&get_system_shell(), cfg!(windows))
     }
 
-    pub fn new(program: impl AsRef<Path>) -> Self {
+    pub fn new(program: impl AsRef<Path>, is_windows: bool) -> Self {
         let program = program.as_ref();
-        let Some(program) = program.file_stem().and_then(|s| s.to_str()) else {
-            return if cfg!(windows) {
-                ShellKind::PowerShell
-            } else {
-                ShellKind::Posix
-            };
-        };
-        if program == "powershell" || program == "pwsh" {
-            ShellKind::PowerShell
-        } else if program == "cmd" {
-            ShellKind::Cmd
-        } else if program == "nu" {
-            ShellKind::Nushell
-        } else if program == "fish" {
-            ShellKind::Fish
-        } else if program == "csh" {
-            ShellKind::Csh
-        } else if program == "tcsh" {
-            ShellKind::Tcsh
-        } else if program == "rc" {
-            ShellKind::Rc
-        } else if program == "xonsh" {
-            ShellKind::Xonsh
-        } else if program == "sh" || program == "bash" {
-            ShellKind::Posix
-        } else {
-            if cfg!(windows) {
-                ShellKind::PowerShell
-            } else {
-                // Some other shell detected, the user might install and use a
-                // unix-like shell.
-                ShellKind::Posix
-            }
+        let program = program
+            .file_stem()
+            .unwrap_or_else(|| program.as_os_str())
+            .to_string_lossy();
+
+        match &*program {
+            "powershell" | "pwsh" => ShellKind::PowerShell,
+            "cmd" => ShellKind::Cmd,
+            "nu" => ShellKind::Nushell,
+            "fish" => ShellKind::Fish,
+            "csh" => ShellKind::Csh,
+            "tcsh" => ShellKind::Tcsh,
+            "rc" => ShellKind::Rc,
+            "xonsh" => ShellKind::Xonsh,
+            "sh" | "bash" | "zsh" => ShellKind::Posix,
+            _ if is_windows => ShellKind::PowerShell,
+            // Some other shell detected, the user might install and use a
+            // unix-like shell.
+            _ => ShellKind::Posix,
         }
     }
 
@@ -363,14 +398,27 @@ impl ShellKind {
         match self {
             ShellKind::PowerShell => Some('&'),
             ShellKind::Nushell => Some('^'),
-            _ => None,
+            ShellKind::Posix
+            | ShellKind::Csh
+            | ShellKind::Tcsh
+            | ShellKind::Rc
+            | ShellKind::Fish
+            | ShellKind::Cmd
+            | ShellKind::Xonsh => None,
         }
     }
 
     pub const fn sequential_commands_separator(&self) -> char {
         match self {
             ShellKind::Cmd => '&',
-            _ => ';',
+            ShellKind::Posix
+            | ShellKind::Csh
+            | ShellKind::Tcsh
+            | ShellKind::Rc
+            | ShellKind::Fish
+            | ShellKind::PowerShell
+            | ShellKind::Nushell
+            | ShellKind::Xonsh => ';',
         }
     }
 
@@ -378,10 +426,20 @@ impl ShellKind {
         shlex::try_quote(arg).ok().map(|arg| match self {
             // If we are running in PowerShell, we want to take extra care when escaping strings.
             // In particular, we want to escape strings with a backtick (`) rather than a backslash (\).
-            // TODO double escaping backslashes is not necessary in PowerShell and probably CMD
-            ShellKind::PowerShell => Cow::Owned(arg.replace("\\\"", "`\"")),
-            _ => arg,
+            ShellKind::PowerShell => Cow::Owned(arg.replace("\\\"", "`\"").replace("\\\\", "\\")),
+            ShellKind::Cmd => Cow::Owned(arg.replace("\\\\", "\\")),
+            ShellKind::Posix
+            | ShellKind::Csh
+            | ShellKind::Tcsh
+            | ShellKind::Rc
+            | ShellKind::Fish
+            | ShellKind::Nushell
+            | ShellKind::Xonsh => arg,
         })
+    }
+
+    pub fn split(&self, input: &str) -> Option<Vec<String>> {
+        shlex::split(input)
     }
 
     pub const fn activate_keyword(&self) -> &'static str {
@@ -389,18 +447,82 @@ impl ShellKind {
             ShellKind::Cmd => "",
             ShellKind::Nushell => "overlay use",
             ShellKind::PowerShell => ".",
-            ShellKind::Fish => "source",
-            ShellKind::Csh => "source",
-            ShellKind::Tcsh => "source",
-            ShellKind::Posix | ShellKind::Rc => "source",
-            ShellKind::Xonsh => "source",
+            ShellKind::Fish
+            | ShellKind::Csh
+            | ShellKind::Tcsh
+            | ShellKind::Posix
+            | ShellKind::Rc
+            | ShellKind::Xonsh => "source",
         }
     }
 
     pub const fn clear_screen_command(&self) -> &'static str {
         match self {
             ShellKind::Cmd => "cls",
-            _ => "clear",
+            ShellKind::Posix
+            | ShellKind::Csh
+            | ShellKind::Tcsh
+            | ShellKind::Rc
+            | ShellKind::Fish
+            | ShellKind::PowerShell
+            | ShellKind::Nushell
+            | ShellKind::Xonsh => "clear",
         }
+    }
+
+    #[cfg(windows)]
+    /// We do not want to escape arguments if we are using CMD as our shell.
+    /// If we do we end up with too many quotes/escaped quotes for CMD to handle.
+    pub const fn tty_escape_args(&self) -> bool {
+        match self {
+            ShellKind::Cmd => false,
+            ShellKind::Posix
+            | ShellKind::Csh
+            | ShellKind::Tcsh
+            | ShellKind::Rc
+            | ShellKind::Fish
+            | ShellKind::PowerShell
+            | ShellKind::Nushell
+            | ShellKind::Xonsh => true,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Examples
+    // WSL
+    // wsl.exe --distribution NixOS --cd /home/user -- /usr/bin/zsh -c "echo hello"
+    // wsl.exe --distribution NixOS --cd /home/user -- /usr/bin/zsh -c "\"echo hello\"" | grep hello"
+    // wsl.exe --distribution NixOS --cd ~ env RUST_LOG=info,remote=debug .zed_wsl_server/zed-remote-server-dev-build proxy --identifier dev-workspace-53
+    // PowerShell from Nushell
+    // nu -c overlay use "C:\Users\kubko\dev\python\39007\tests\.venv\Scripts\activate.nu"; ^"C:\Program Files\PowerShell\7\pwsh.exe" -C "C:\Users\kubko\dev\python\39007\tests\.venv\Scripts\python.exe -m pytest \"test_foo.py::test_foo\""
+    // PowerShell from CMD
+    // cmd /C \" \"C:\\\\Users\\\\kubko\\\\dev\\\\python\\\\39007\\\\tests\\\\.venv\\\\Scripts\\\\activate.bat\"& \"C:\\\\Program Files\\\\PowerShell\\\\7\\\\pwsh.exe\" -C \"C:\\\\Users\\\\kubko\\\\dev\\\\python\\\\39007\\\\tests\\\\.venv\\\\Scripts\\\\python.exe -m pytest \\\"test_foo.py::test_foo\\\"\"\"
+
+    #[test]
+    fn test_try_quote_powershell() {
+        let shell_kind = ShellKind::PowerShell;
+        assert_eq!(
+            shell_kind
+                .try_quote("C:\\Users\\johndoe\\dev\\python\\39007\\tests\\.venv\\Scripts\\python.exe -m pytest \"test_foo.py::test_foo\"")
+                .unwrap()
+                .into_owned(),
+            "\"C:\\Users\\johndoe\\dev\\python\\39007\\tests\\.venv\\Scripts\\python.exe -m pytest `\"test_foo.py::test_foo`\"\"".to_string()
+        );
+    }
+
+    #[test]
+    fn test_try_quote_cmd() {
+        let shell_kind = ShellKind::Cmd;
+        assert_eq!(
+            shell_kind
+                .try_quote("C:\\Users\\johndoe\\dev\\python\\39007\\tests\\.venv\\Scripts\\python.exe -m pytest \"test_foo.py::test_foo\"")
+                .unwrap()
+                .into_owned(),
+            "\"C:\\Users\\johndoe\\dev\\python\\39007\\tests\\.venv\\Scripts\\python.exe -m pytest \\\"test_foo.py::test_foo\\\"\"".to_string()
+        );
     }
 }

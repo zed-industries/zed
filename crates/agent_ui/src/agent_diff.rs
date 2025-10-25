@@ -452,7 +452,10 @@ fn update_editor_selection(
     window: &mut Window,
     cx: &mut Context<Editor>,
 ) {
-    let newest_cursor = editor.selections.newest::<Point>(cx).head();
+    let newest_cursor = editor
+        .selections
+        .newest::<Point>(&editor.display_snapshot(cx))
+        .head();
 
     if !diff_hunks.iter().any(|hunk| {
         hunk.row_range
@@ -666,7 +669,7 @@ impl Item for AgentDiffPane {
 }
 
 impl Render for AgentDiffPane {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let is_empty = self.multibuffer.read(cx).is_empty();
         let focus_handle = &self.focus_handle;
 
@@ -699,7 +702,6 @@ impl Render for AgentDiffPane {
                                 .key_binding(KeyBinding::for_action_in(
                                     &ToggleFocus,
                                     &focus_handle.clone(),
-                                    window,
                                     cx,
                                 ))
                                 .on_click(|_event, window, cx| {
@@ -716,14 +718,7 @@ fn diff_hunk_controls(thread: &AgentDiffThread) -> editor::RenderDiffHunkControl
     let thread = thread.clone();
 
     Arc::new(
-        move |row,
-              status: &DiffHunkStatus,
-              hunk_range,
-              is_created_file,
-              line_height,
-              editor: &Entity<Editor>,
-              window: &mut Window,
-              cx: &mut App| {
+        move |row, status, hunk_range, is_created_file, line_height, editor, _, cx| {
             {
                 render_diff_hunk_controls(
                     row,
@@ -733,7 +728,6 @@ fn diff_hunk_controls(thread: &AgentDiffThread) -> editor::RenderDiffHunkControl
                     line_height,
                     &thread,
                     editor,
-                    window,
                     cx,
                 )
             }
@@ -749,7 +743,6 @@ fn render_diff_hunk_controls(
     line_height: Pixels,
     thread: &AgentDiffThread,
     editor: &Entity<Editor>,
-    window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
     let editor = editor.clone();
@@ -772,13 +765,8 @@ fn render_diff_hunk_controls(
             Button::new(("reject", row as u64), "Reject")
                 .disabled(is_created_file)
                 .key_binding(
-                    KeyBinding::for_action_in(
-                        &Reject,
-                        &editor.read(cx).focus_handle(cx),
-                        window,
-                        cx,
-                    )
-                    .map(|kb| kb.size(rems_from_px(12.))),
+                    KeyBinding::for_action_in(&Reject, &editor.read(cx).focus_handle(cx), cx)
+                        .map(|kb| kb.size(rems_from_px(12.))),
                 )
                 .on_click({
                     let editor = editor.clone();
@@ -799,7 +787,7 @@ fn render_diff_hunk_controls(
                 }),
             Button::new(("keep", row as u64), "Keep")
                 .key_binding(
-                    KeyBinding::for_action_in(&Keep, &editor.read(cx).focus_handle(cx), window, cx)
+                    KeyBinding::for_action_in(&Keep, &editor.read(cx).focus_handle(cx), cx)
                         .map(|kb| kb.size(rems_from_px(12.))),
                 )
                 .on_click({
@@ -830,14 +818,8 @@ fn render_diff_hunk_controls(
                         // .disabled(!has_multiple_hunks)
                         .tooltip({
                             let focus_handle = editor.focus_handle(cx);
-                            move |window, cx| {
-                                Tooltip::for_action_in(
-                                    "Next Hunk",
-                                    &GoToHunk,
-                                    &focus_handle,
-                                    window,
-                                    cx,
-                                )
+                            move |_window, cx| {
+                                Tooltip::for_action_in("Next Hunk", &GoToHunk, &focus_handle, cx)
                             }
                         })
                         .on_click({
@@ -866,12 +848,11 @@ fn render_diff_hunk_controls(
                         // .disabled(!has_multiple_hunks)
                         .tooltip({
                             let focus_handle = editor.focus_handle(cx);
-                            move |window, cx| {
+                            move |_window, cx| {
                                 Tooltip::for_action_in(
                                     "Previous Hunk",
                                     &GoToPreviousHunk,
                                     &focus_handle,
-                                    window,
                                     cx,
                                 )
                             }
@@ -1036,7 +1017,7 @@ impl ToolbarItemView for AgentDiffToolbar {
 }
 
 impl Render for AgentDiffToolbar {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let spinner_icon = div()
             .px_0p5()
             .id("generating")
@@ -1111,7 +1092,6 @@ impl Render for AgentDiffToolbar {
                                         KeyBinding::for_action_in(
                                             &RejectAll,
                                             &editor_focus_handle,
-                                            window,
                                             cx,
                                         )
                                         .map(|kb| kb.size(rems_from_px(12.)))
@@ -1126,7 +1106,6 @@ impl Render for AgentDiffToolbar {
                                         KeyBinding::for_action_in(
                                             &KeepAll,
                                             &editor_focus_handle,
-                                            window,
                                             cx,
                                         )
                                         .map(|kb| kb.size(rems_from_px(12.)))
@@ -1203,13 +1182,8 @@ impl Render for AgentDiffToolbar {
                             .child(
                                 Button::new("reject-all", "Reject All")
                                     .key_binding({
-                                        KeyBinding::for_action_in(
-                                            &RejectAll,
-                                            &focus_handle,
-                                            window,
-                                            cx,
-                                        )
-                                        .map(|kb| kb.size(rems_from_px(12.)))
+                                        KeyBinding::for_action_in(&RejectAll, &focus_handle, cx)
+                                            .map(|kb| kb.size(rems_from_px(12.)))
                                     })
                                     .on_click(cx.listener(|this, _, window, cx| {
                                         this.dispatch_action(&RejectAll, window, cx)
@@ -1218,13 +1192,8 @@ impl Render for AgentDiffToolbar {
                             .child(
                                 Button::new("keep-all", "Keep All")
                                     .key_binding({
-                                        KeyBinding::for_action_in(
-                                            &KeepAll,
-                                            &focus_handle,
-                                            window,
-                                            cx,
-                                        )
-                                        .map(|kb| kb.size(rems_from_px(12.)))
+                                        KeyBinding::for_action_in(&KeepAll, &focus_handle, cx)
+                                            .map(|kb| kb.size(rems_from_px(12.)))
                                     })
                                     .on_click(cx.listener(|this, _, window, cx| {
                                         this.dispatch_action(&KeepAll, window, cx)
@@ -1895,7 +1864,9 @@ mod tests {
         );
         assert_eq!(
             editor
-                .update(cx, |editor, cx| editor.selections.newest::<Point>(cx))
+                .update(cx, |editor, cx| editor
+                    .selections
+                    .newest::<Point>(&editor.display_snapshot(cx)))
                 .range(),
             Point::new(1, 0)..Point::new(1, 0)
         );
@@ -1909,7 +1880,9 @@ mod tests {
         );
         assert_eq!(
             editor
-                .update(cx, |editor, cx| editor.selections.newest::<Point>(cx))
+                .update(cx, |editor, cx| editor
+                    .selections
+                    .newest::<Point>(&editor.display_snapshot(cx)))
                 .range(),
             Point::new(3, 0)..Point::new(3, 0)
         );
@@ -1930,7 +1903,9 @@ mod tests {
         );
         assert_eq!(
             editor
-                .update(cx, |editor, cx| editor.selections.newest::<Point>(cx))
+                .update(cx, |editor, cx| editor
+                    .selections
+                    .newest::<Point>(&editor.display_snapshot(cx)))
                 .range(),
             Point::new(3, 0)..Point::new(3, 0)
         );
@@ -1962,7 +1937,9 @@ mod tests {
         );
         assert_eq!(
             editor
-                .update(cx, |editor, cx| editor.selections.newest::<Point>(cx))
+                .update(cx, |editor, cx| editor
+                    .selections
+                    .newest::<Point>(&editor.display_snapshot(cx)))
                 .range(),
             Point::new(3, 0)..Point::new(3, 0)
         );
@@ -2119,7 +2096,9 @@ mod tests {
         );
         assert_eq!(
             editor1
-                .update(cx, |editor, cx| editor.selections.newest::<Point>(cx))
+                .update(cx, |editor, cx| editor
+                    .selections
+                    .newest::<Point>(&editor.display_snapshot(cx)))
                 .range(),
             Point::new(1, 0)..Point::new(1, 0)
         );
@@ -2160,7 +2139,9 @@ mod tests {
         );
         assert_eq!(
             editor1
-                .update(cx, |editor, cx| editor.selections.newest::<Point>(cx))
+                .update(cx, |editor, cx| editor
+                    .selections
+                    .newest::<Point>(&editor.display_snapshot(cx)))
                 .range(),
             Point::new(3, 0)..Point::new(3, 0)
         );
@@ -2181,7 +2162,9 @@ mod tests {
         );
         assert_eq!(
             editor1
-                .update(cx, |editor, cx| editor.selections.newest::<Point>(cx))
+                .update(cx, |editor, cx| editor
+                    .selections
+                    .newest::<Point>(&editor.display_snapshot(cx)))
                 .range(),
             Point::new(3, 0)..Point::new(3, 0)
         );
@@ -2207,7 +2190,9 @@ mod tests {
         );
         assert_eq!(
             editor1
-                .update(cx, |editor, cx| editor.selections.newest::<Point>(cx))
+                .update(cx, |editor, cx| editor
+                    .selections
+                    .newest::<Point>(&editor.display_snapshot(cx)))
                 .range(),
             Point::new(3, 0)..Point::new(3, 0)
         );
@@ -2240,7 +2225,9 @@ mod tests {
         );
         assert_eq!(
             editor2
-                .update(cx, |editor, cx| editor.selections.newest::<Point>(cx))
+                .update(cx, |editor, cx| editor
+                    .selections
+                    .newest::<Point>(&editor.display_snapshot(cx)))
                 .range(),
             Point::new(0, 0)..Point::new(0, 0)
         );

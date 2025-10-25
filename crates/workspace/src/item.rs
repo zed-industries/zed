@@ -1,7 +1,7 @@
 use crate::{
     CollaboratorId, DelayedDebouncedEditAction, FollowableViewRegistry, ItemNavHistory,
     SerializableItemRegistry, ToolbarItemLocation, ViewId, Workspace, WorkspaceId,
-    invalid_buffer_view::InvalidBufferView,
+    invalid_item_view::InvalidItemView,
     pane::{self, Pane},
     persistence::model::ItemId,
     searchable::SearchableItemHandle,
@@ -76,40 +76,6 @@ impl Settings for ItemSettings {
             show_close_button: tabs.show_close_button.unwrap(),
         }
     }
-
-    fn import_from_vscode(
-        vscode: &settings::VsCodeSettings,
-        current: &mut settings::SettingsContent,
-    ) {
-        if let Some(b) = vscode.read_bool("workbench.editor.tabActionCloseVisibility") {
-            current.tabs.get_or_insert_default().show_close_button = Some(if b {
-                ShowCloseButton::Always
-            } else {
-                ShowCloseButton::Hidden
-            })
-        }
-        if let Some(s) = vscode.read_enum("workbench.editor.tabActionLocation", |s| match s {
-            "right" => Some(ClosePosition::Right),
-            "left" => Some(ClosePosition::Left),
-            _ => None,
-        }) {
-            current.tabs.get_or_insert_default().close_position = Some(s)
-        }
-        if let Some(b) = vscode.read_bool("workbench.editor.focusRecentEditorAfterClose") {
-            current.tabs.get_or_insert_default().activate_on_close = Some(if b {
-                ActivateOnClose::History
-            } else {
-                ActivateOnClose::LeftNeighbour
-            })
-        }
-
-        if let Some(b) = vscode.read_bool("workbench.editor.showIcons") {
-            current.tabs.get_or_insert_default().file_icons = Some(b);
-        };
-        if let Some(b) = vscode.read_bool("git.decorations.enabled") {
-            current.tabs.get_or_insert_default().git_status = Some(b);
-        }
-    }
 }
 
 impl Settings for PreviewTabsSettings {
@@ -121,31 +87,6 @@ impl Settings for PreviewTabsSettings {
             enable_preview_from_code_navigation: preview_tabs
                 .enable_preview_from_code_navigation
                 .unwrap(),
-        }
-    }
-
-    fn import_from_vscode(
-        vscode: &settings::VsCodeSettings,
-        current: &mut settings::SettingsContent,
-    ) {
-        if let Some(enabled) = vscode.read_bool("workbench.editor.enablePreview") {
-            current.preview_tabs.get_or_insert_default().enabled = Some(enabled);
-        }
-        if let Some(enable_preview_from_code_navigation) =
-            vscode.read_bool("workbench.editor.enablePreviewFromCodeNavigation")
-        {
-            current
-                .preview_tabs
-                .get_or_insert_default()
-                .enable_preview_from_code_navigation = Some(enable_preview_from_code_navigation)
-        }
-        if let Some(enable_preview_from_file_finder) =
-            vscode.read_bool("workbench.editor.enablePreviewFromQuickOpen")
-        {
-            current
-                .preview_tabs
-                .get_or_insert_default()
-                .enable_preview_from_file_finder = Some(enable_preview_from_file_finder)
         }
     }
 }
@@ -870,7 +811,7 @@ impl<T: Item> ItemHandle for Entity<T> {
                             let autosave = item.workspace_settings(cx).autosave;
 
                             if let AutosaveSetting::AfterDelay { milliseconds } = autosave {
-                                let delay = Duration::from_millis(milliseconds);
+                                let delay = Duration::from_millis(milliseconds.0);
                                 let item = item.clone();
                                 pending_autosave.fire_new(
                                     delay,
@@ -1117,7 +1058,7 @@ pub trait ProjectItem: Item {
         _e: &anyhow::Error,
         _window: &mut Window,
         _cx: &mut App,
-    ) -> Option<InvalidBufferView>
+    ) -> Option<InvalidItemView>
     where
         Self: Sized,
     {

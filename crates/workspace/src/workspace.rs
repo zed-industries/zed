@@ -1,6 +1,6 @@
 pub mod dock;
 pub mod history_manager;
-pub mod invalid_buffer_view;
+pub mod invalid_item_view;
 pub mod item;
 mod modal_layer;
 pub mod notifications;
@@ -76,11 +76,14 @@ use project::{
     debugger::{breakpoint_store::BreakpointStoreEvent, session::ThreadStatus},
     toolchain_store::ToolchainStoreEvent,
 };
-use remote::{RemoteClientDelegate, RemoteConnectionOptions, remote_client::ConnectionIdentifier};
+use remote::{
+    RemoteClientDelegate, RemoteConnection, RemoteConnectionOptions,
+    remote_client::ConnectionIdentifier,
+};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use session::AppSession;
-use settings::{Settings, SettingsLocation, update_settings_file};
+use settings::{CenteredPaddingSettings, Settings, SettingsLocation, update_settings_file};
 use shared_screen::SharedScreen;
 use sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
@@ -99,7 +102,10 @@ use std::{
     path::{Path, PathBuf},
     process::ExitStatus,
     rc::Rc,
-    sync::{Arc, LazyLock, Weak, atomic::AtomicUsize},
+    sync::{
+        Arc, LazyLock, Weak,
+        atomic::{AtomicBool, AtomicUsize},
+    },
     time::Duration,
 };
 use task::{DebugScenario, SpawnInTerminal, TaskContext};
@@ -299,6 +305,12 @@ pub struct MoveItemToPaneInDirection {
     pub clone: bool,
 }
 
+/// Creates a new file in a split of the desired direction.
+#[derive(Clone, Deserialize, PartialEq, JsonSchema, Action)]
+#[action(namespace = workspace)]
+#[serde(deny_unknown_fields)]
+pub struct NewFileSplit(pub SplitDirection);
+
 fn default_right() -> SplitDirection {
     SplitDirection::Right
 }
@@ -421,6 +433,14 @@ actions!(
         SwapPaneUp,
         /// Swaps the current pane with the one below.
         SwapPaneDown,
+        /// Move the current pane to be at the far left.
+        MovePaneLeft,
+        /// Move the current pane to be at the far right.
+        MovePaneRight,
+        /// Move the current pane to be at the very top.
+        MovePaneUp,
+        /// Move the current pane to be at the very bottom.
+        MovePaneDown,
     ]
 );
 
@@ -1179,9 +1199,6 @@ struct FollowerView {
 }
 
 impl Workspace {
-    const DEFAULT_PADDING: f32 = 0.2;
-    const MAX_PADDING: f32 = 0.4;
-
     pub fn new(
         workspace_id: Option<WorkspaceId>,
         project: Entity<Project>,
@@ -1314,6 +1331,7 @@ impl Workspace {
                 pane_history_timestamp.clone(),
                 None,
                 NewFile.boxed_clone(),
+                true,
                 window,
                 cx,
             );
@@ -1440,7 +1458,7 @@ impl Workspace {
             }),
             cx.on_release(move |this, cx| {
                 this.app_state.workspace_store.update(cx, move |store, _| {
-                    store.workspaces.remove(&window_handle.clone());
+                    store.workspaces.remove(&window_handle);
                 })
             }),
         ];
@@ -1539,7 +1557,7 @@ impl Workspace {
                 persistence::DB.workspace_for_roots(paths_to_open.as_slice());
 
             if let Some(paths) = serialized_workspace.as_ref().map(|ws| &ws.paths) {
-                paths_to_open = paths.paths().to_vec();
+                paths_to_open = paths.ordered_paths().cloned().collect();
                 if !paths.is_lexicographically_ordered() {
                     project_handle
                         .update(cx, |project, cx| {
@@ -3218,6 +3236,7 @@ impl Workspace {
                 self.pane_history_timestamp.clone(),
                 None,
                 NewFile.boxed_clone(),
+                true,
                 window,
                 cx,
             );
@@ -3283,10 +3302,6 @@ impl Workspace {
         window: &mut Window,
         cx: &mut App,
     ) {
-        if let Some(text) = item.telemetry_event_text(cx) {
-            telemetry::event!(text);
-        }
-
         pane.update(cx, |pane, cx| {
             pane.add_item(
                 item,
@@ -3862,6 +3877,16 @@ impl Workspace {
     pub fn swap_pane_in_direction(&mut self, direction: SplitDirection, cx: &mut Context<Self>) {
         if let Some(to) = self.find_pane_in_direction(direction, cx) {
             self.center.swap(&self.active_pane, &to);
+            cx.notify();
+        }
+    }
+
+    pub fn move_pane_to_border(&mut self, direction: SplitDirection, cx: &mut Context<Self>) {
+        if self
+            .center
+            .move_to_border(&self.active_pane, direction)
+            .unwrap()
+        {
             cx.notify();
         }
     }
@@ -5674,6 +5699,18 @@ impl Workspace {
             .on_action(cx.listener(|workspace, _: &SwapPaneDown, _, cx| {
                 workspace.swap_pane_in_direction(SplitDirection::Down, cx)
             }))
+            .on_action(cx.listener(|workspace, _: &MovePaneLeft, _, cx| {
+                workspace.move_pane_to_border(SplitDirection::Left, cx)
+            }))
+            .on_action(cx.listener(|workspace, _: &MovePaneRight, _, cx| {
+                workspace.move_pane_to_border(SplitDirection::Right, cx)
+            }))
+            .on_action(cx.listener(|workspace, _: &MovePaneUp, _, cx| {
+                workspace.move_pane_to_border(SplitDirection::Up, cx)
+            }))
+            .on_action(cx.listener(|workspace, _: &MovePaneDown, _, cx| {
+                workspace.move_pane_to_border(SplitDirection::Down, cx)
+            }))
             .on_action(cx.listener(|this, _: &ToggleLeftDock, window, cx| {
                 this.toggle_dock(DockPosition::Left, window, cx);
             }))
@@ -5864,6 +5901,11 @@ impl Workspace {
         })
     }
 
+    pub fn hide_modal(&mut self, window: &mut Window, cx: &mut App) -> bool {
+        self.modal_layer
+            .update(cx, |modal_layer, cx| modal_layer.hide_modal(window, cx))
+    }
+
     pub fn toggle_status_toast<V: ToastView>(&mut self, entity: Entity<V>, cx: &mut App) {
         self.toast_layer
             .update(cx, |toast_layer, cx| toast_layer.toggle_toast(cx, entity))
@@ -5885,8 +5927,11 @@ impl Workspace {
 
     fn adjust_padding(padding: Option<f32>) -> f32 {
         padding
-            .unwrap_or(Self::DEFAULT_PADDING)
-            .clamp(0.0, Self::MAX_PADDING)
+            .unwrap_or(CenteredPaddingSettings::default().0)
+            .clamp(
+                CenteredPaddingSettings::MIN_PADDING,
+                CenteredPaddingSettings::MAX_PADDING,
+            )
     }
 
     fn render_dock(
@@ -6316,6 +6361,10 @@ impl Render for DraggedDock {
 
 impl Render for Workspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        static FIRST_PAINT: AtomicBool = AtomicBool::new(true);
+        if FIRST_PAINT.swap(false, std::sync::atomic::Ordering::Relaxed) {
+            log::info!("Rendered first frame");
+        }
         let mut context = KeyContext::new_with_defaults();
         context.add("Workspace");
         context.set("keyboard_layout", cx.keyboard_layout().name().to_string());
@@ -6330,6 +6379,24 @@ impl Render for Workspace {
                 }
                 ThreadStatus::Stopped => context.add("debugger_stopped"),
                 ThreadStatus::Exited | ThreadStatus::Ended => {}
+            }
+        }
+
+        if self.left_dock.read(cx).is_open() {
+            if let Some(active_panel) = self.left_dock.read(cx).active_panel() {
+                context.set("left_dock", active_panel.panel_key());
+            }
+        }
+
+        if self.right_dock.read(cx).is_open() {
+            if let Some(active_panel) = self.right_dock.read(cx).active_panel() {
+                context.set("right_dock", active_panel.panel_key());
+            }
+        }
+
+        if self.bottom_dock.read(cx).is_open() {
+            if let Some(active_panel) = self.bottom_dock.read(cx).active_panel() {
+                context.set("bottom_dock", active_panel.panel_key());
             }
         }
 
@@ -6348,8 +6415,12 @@ impl Render for Workspace {
         let paddings = if centered_layout {
             let settings = WorkspaceSettings::get_global(cx).centered_layout;
             (
-                render_padding(Self::adjust_padding(settings.left_padding)),
-                render_padding(Self::adjust_padding(settings.right_padding)),
+                render_padding(Self::adjust_padding(
+                    settings.left_padding.map(|padding| padding.0),
+                )),
+                render_padding(Self::adjust_padding(
+                    settings.right_padding.map(|padding| padding.0),
+                )),
             )
         } else {
             (None, None)
@@ -6940,7 +7011,9 @@ actions!(
     zed,
     [
         /// Opens the Zed log file.
-        OpenLog
+        OpenLog,
+        /// Reveals the Zed log file in the system file manager.
+        RevealLogInFileManager
     ]
 );
 
@@ -7245,6 +7318,10 @@ pub fn open_paths(
     let mut existing = None;
     let mut best_match = None;
     let mut open_visible = OpenVisible::All;
+    #[cfg(target_os = "windows")]
+    let wsl_path = abs_paths
+        .iter()
+        .find_map(|p| util::paths::WslPath::from_path(p));
 
     cx.spawn(async move |cx| {
         if open_options.open_new_workspace != Some(true) {
@@ -7308,7 +7385,7 @@ pub fn open_paths(
             }
         }
 
-        if let Some(existing) = existing {
+        let result = if let Some(existing) = existing {
             let open_task = existing
                 .update(cx, |workspace, window, cx| {
                     window.activate_window();
@@ -7345,7 +7422,37 @@ pub fn open_paths(
                 )
             })?
             .await
-        }
+        };
+
+        #[cfg(target_os = "windows")]
+        if let Some(util::paths::WslPath{distro, path}) = wsl_path
+            && let Ok((workspace, _)) = &result
+        {
+            workspace
+                .update(cx, move |workspace, _window, cx| {
+                    struct OpenInWsl;
+                    workspace.show_notification(NotificationId::unique::<OpenInWsl>(), cx, move |cx| {
+                        let display_path = util::markdown::MarkdownInlineCode(&path.to_string_lossy());
+                        let msg = format!("{display_path} is inside a WSL filesystem, some features may not work unless you open it with WSL remote");
+                        cx.new(move |cx| {
+                            MessageNotification::new(msg, cx)
+                                .primary_message("Open in WSL")
+                                .primary_icon(IconName::FolderOpen)
+                                .primary_on_click(move |window, cx| {
+                                    window.dispatch_action(Box::new(remote::OpenWslPath {
+                                            distro: remote::WslConnectionOptions {
+                                                    distro_name: distro.clone(),
+                                                user: None,
+                                            },
+                                            paths: vec![path.clone().into()],
+                                        }), cx)
+                                })
+                        })
+                    });
+                })
+                .unwrap();
+        };
+        result
     })
 }
 
@@ -7406,22 +7513,23 @@ pub fn create_and_open_local_file(
 
 pub fn open_remote_project_with_new_connection(
     window: WindowHandle<Workspace>,
-    connection_options: RemoteConnectionOptions,
+    remote_connection: Arc<dyn RemoteConnection>,
     cancel_rx: oneshot::Receiver<()>,
     delegate: Arc<dyn RemoteClientDelegate>,
     app_state: Arc<AppState>,
     paths: Vec<PathBuf>,
     cx: &mut App,
-) -> Task<Result<()>> {
+) -> Task<Result<Vec<Option<Box<dyn ItemHandle>>>>> {
     cx.spawn(async move |cx| {
         let (workspace_id, serialized_workspace) =
-            serialize_remote_project(connection_options.clone(), paths.clone(), cx).await?;
+            serialize_remote_project(remote_connection.connection_options(), paths.clone(), cx)
+                .await?;
 
         let session = match cx
             .update(|cx| {
                 remote::RemoteClient::new(
                     ConnectionIdentifier::Workspace(workspace_id.0),
-                    connection_options,
+                    remote_connection,
                     cancel_rx,
                     delegate,
                     cx,
@@ -7430,7 +7538,7 @@ pub fn open_remote_project_with_new_connection(
             .await?
         {
             Some(result) => result,
-            None => return Ok(()),
+            None => return Ok(Vec::new()),
         };
 
         let project = cx.update(|cx| {
@@ -7465,7 +7573,7 @@ pub fn open_remote_project_with_existing_connection(
     app_state: Arc<AppState>,
     window: WindowHandle<Workspace>,
     cx: &mut AsyncApp,
-) -> Task<Result<()>> {
+) -> Task<Result<Vec<Option<Box<dyn ItemHandle>>>>> {
     cx.spawn(async move |cx| {
         let (workspace_id, serialized_workspace) =
             serialize_remote_project(connection_options.clone(), paths.clone(), cx).await?;
@@ -7491,7 +7599,7 @@ async fn open_remote_project_inner(
     app_state: Arc<AppState>,
     window: WindowHandle<Workspace>,
     cx: &mut AsyncApp,
-) -> Result<()> {
+) -> Result<Vec<Option<Box<dyn ItemHandle>>>> {
     let toolchains = DB.toolchains(workspace_id).await?;
     for (toolchain, worktree_id, path) in toolchains {
         project
@@ -7548,7 +7656,7 @@ async fn open_remote_project_inner(
         });
     })?;
 
-    window
+    let items = window
         .update(cx, |_, window, cx| {
             window.activate_window();
             open_items(serialized_workspace, project_paths_to_open, window, cx)
@@ -7567,7 +7675,7 @@ async fn open_remote_project_inner(
         }
     })?;
 
-    Ok(())
+    Ok(items.into_iter().map(|item| item?.ok()).collect())
 }
 
 fn serialize_remote_project(
@@ -8764,8 +8872,9 @@ mod tests {
         item.update(cx, |item, cx| {
             SettingsStore::update_global(cx, |settings, cx| {
                 settings.update_user_settings(cx, |settings| {
-                    settings.workspace.autosave =
-                        Some(AutosaveSetting::AfterDelay { milliseconds: 500 });
+                    settings.workspace.autosave = Some(AutosaveSetting::AfterDelay {
+                        milliseconds: 500.into(),
+                    });
                 })
             });
             item.is_dirty = true;
