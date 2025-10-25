@@ -23,17 +23,16 @@ pub struct ZetaEditPredictionProvider {
     pending_predictions: ArrayVec<PendingPrediction, 2>,
     last_request_timestamp: Instant,
     project: Entity<Project>,
-    context: Option<CursorContext>,
+    context: Option<Vec<RelatedExcerpt>>,
     refresh_context_task: Option<Task<Option<()>>>,
-}
-
-struct CursorContext {
-    timestamp: Instant,
-    related_excerpts: Vec<RelatedExcerpt>,
+    refresh_context_debounce_task: Option<Task<Option<()>>>,
+    refresh_context_timestamp: Option<Instant>,
 }
 
 impl ZetaEditPredictionProvider {
     pub const THROTTLE_TIMEOUT: Duration = Duration::from_millis(300);
+    pub const CONTEXT_RETRIEVAL_DEBOUNCE_DURATION: Duration = Duration::from_secs(3);
+    pub const CONTEXT_RETRIEVAL_IDLE_DURATION: Duration = Duration::from_secs(10);
 
     pub fn new(
         project: Entity<Project>,
@@ -53,8 +52,76 @@ impl ZetaEditPredictionProvider {
             last_request_timestamp: Instant::now(),
             project: project,
             refresh_context_task: None,
+            refresh_context_debounce_task: None,
+            refresh_context_timestamp: None,
             context: None,
         }
+    }
+
+    // Refresh the related excerpts when the user just beguns editing after
+    // an idle period, and after they pause editing.
+    fn refresh_context_if_needed(
+        &mut self,
+        buffer: &Entity<language::Buffer>,
+        cursor_position: language::Anchor,
+        cx: &mut Context<'_, ZetaEditPredictionProvider>,
+    ) {
+        let now = Instant::now();
+        let was_idle = self.refresh_context_timestamp.map_or(true, |timestamp| {
+            now - timestamp > Self::CONTEXT_RETRIEVAL_IDLE_DURATION
+        });
+        self.refresh_context_timestamp = Some(now);
+        self.refresh_context_debounce_task = Some(cx.spawn({
+            let buffer = buffer.clone();
+            async move |this, cx| {
+                if was_idle {
+                    log::debug!("refetching edit prediction context after idle");
+                } else {
+                    cx.background_executor()
+                        .timer(Self::CONTEXT_RETRIEVAL_DEBOUNCE_DURATION)
+                        .await;
+                    log::debug!("refetching edit prediction context after pause");
+                }
+                this.update(cx, |this, cx| {
+                    this.refresh_context(buffer, cursor_position, cx);
+                })
+                .ok()
+            }
+        }));
+    }
+
+    // Refresh the related excerpts asynchronously. Ensure the task runs to completion,
+    // and avoid spawning more than one concurrent task.
+    fn refresh_context(
+        &mut self,
+        buffer: Entity<language::Buffer>,
+        cursor_position: language::Anchor,
+        cx: &mut Context<Self>,
+    ) {
+        self.refresh_context_task
+            .get_or_insert(cx.spawn(async move |this, cx| {
+                let related_excerpts = this
+                    .update(cx, |this, cx| {
+                        let zeta = this.zeta.read(cx);
+                        find_related_excerpts(
+                            buffer.clone(),
+                            cursor_position,
+                            &this.project,
+                            zeta.history_for_project(&this.project),
+                            &zeta.options().context.excerpt,
+                            cx,
+                        )
+                    })
+                    .ok()?
+                    .await
+                    .log_err()
+                    .unwrap_or_default();
+                this.update(cx, |this, _cx| {
+                    this.context = Some(related_excerpts);
+                    this.refresh_context_task.take();
+                })
+                .ok()
+            }));
     }
 }
 
@@ -127,6 +194,8 @@ impl EditPredictionProvider for ZetaEditPredictionProvider {
         {
             return;
         }
+
+        self.refresh_context_if_needed(&buffer, cursor_position, cx);
 
         let pending_prediction_id = self.next_pending_prediction_id;
         self.next_pending_prediction_id += 1;
@@ -210,49 +279,6 @@ impl EditPredictionProvider for ZetaEditPredictionProvider {
         cursor_position: language::Anchor,
         cx: &mut Context<Self>,
     ) -> Option<edit_prediction::EditPrediction> {
-        let last_context_timestamp = self.context.as_ref().map(|c| c.timestamp);
-
-        self.refresh_context_task.get_or_insert_with(|| {
-            let buffer = buffer.clone();
-            cx.spawn(async move |this, cx| {
-                if let Some(timestamp) = last_context_timestamp {
-                    let now = Instant::now();
-                    let next_request_time = timestamp + Self::THROTTLE_TIMEOUT;
-                    if next_request_time > now {
-                        cx.background_executor()
-                            .timer(next_request_time - now)
-                            .await;
-                    }
-                }
-
-                let related_excerpts = this
-                    .update(cx, |this, cx| {
-                        let zeta = this.zeta.read(cx);
-                        find_related_excerpts(
-                            buffer,
-                            cursor_position,
-                            &this.project,
-                            zeta.history_for_project(&this.project),
-                            &zeta.options().context.excerpt,
-                            cx,
-                        )
-                    })
-                    .ok()?
-                    .await
-                    .log_err()
-                    .unwrap_or_default();
-
-                this.update(cx, |this, _cx| {
-                    this.context = Some(CursorContext {
-                        timestamp: Instant::now(),
-                        related_excerpts,
-                    });
-                    this.refresh_context_task.take();
-                })
-                .ok()
-            })
-        });
-
         let prediction =
             self.zeta
                 .read(cx)
