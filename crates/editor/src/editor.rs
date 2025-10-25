@@ -10208,14 +10208,12 @@ impl Editor {
 
             // Only apply smart backtab to empty selections (cursors, not ranges)
             let has_any_non_empty_selection = selections.iter().any(|s| !s.is_empty());
-
-            if !has_any_non_empty_selection {
-                // If any cursors do not have trailing whitespace, activate smart tab
-                if !self.all_cursors_in_trailing_whitespace(cx) {
-                    self.move_cursors_to_syntax_nodes(window, cx, Direction::Prev);
-                    return;
+                if !has_any_non_empty_selection {
+                    // If no cursor moved, fall through, otherwise return
+                    if self.move_cursors_to_syntax_nodes(window, cx, Direction::Prev) {
+                        return;
+                    }
                 }
-            }
         }
 
         self.outdent(&Outdent, window, cx);
@@ -10246,9 +10244,10 @@ impl Editor {
             if !has_non_empty_selection {
                 // If any cursors do not have whitespace to their left, activate smart tab
                 if !self.all_cursors_in_leading_whitespace(cx) {
-                    self.move_cursors_to_syntax_nodes(window, cx, Direction::Next);
-                    self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
-                    return;
+                    // If no cursor moved, fall through, otherwise return
+                    if self.move_cursors_to_syntax_nodes(window, cx, Direction::Next) {
+                        return;
+                    }
                 }
             }
         }
@@ -15495,10 +15494,10 @@ impl Editor {
     }
 
     pub fn move_to_start_of_larger_syntax_node(
-            &mut self,
-            _: &MoveToStartOfLargerSyntaxNode,
-            window: &mut Window,
-            cx: &mut Context<Self>,
+        &mut self,
+        _: &MoveToStartOfLargerSyntaxNode,
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) {
         self.move_cursors_to_syntax_nodes(window, cx, Direction::Prev);
     }
@@ -15512,7 +15511,6 @@ impl Editor {
         self.move_cursors_to_syntax_nodes(window, cx, Direction::Next);
     }
 
-    /// Check if all cursors have only whitespace to their right (until line end)
     fn all_cursors_in_trailing_whitespace(&self, cx: &mut Context<Self>) -> bool {
         let snapshot = self.display_snapshot(cx);
         let buffer_snapshot = self.buffer.read(cx).snapshot(cx);
@@ -15539,7 +15537,6 @@ impl Editor {
         })
     }
 
-    /// Check if all cursors have only whitespace to their left (from start of line)
     fn all_cursors_in_leading_whitespace(&self, cx: &mut Context<Self>) -> bool {
         let snapshot = self.display_snapshot(cx);
         let buffer_snapshot = self.buffer.read(cx).snapshot(cx);
@@ -15566,13 +15563,13 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
         direction: Direction,
-    ) {
+    ) -> bool {
         let old_selections: Box<[_]> = self
             .selections
             .all::<usize>(&self.display_snapshot(cx))
             .into();
         if old_selections.is_empty() {
-            return;
+            return false;
         }
 
         self.hide_mouse_cursor(HideMouseCursorOrigin::MovementAction, cx);
@@ -15598,8 +15595,6 @@ impl Editor {
                     if !node.is_named()
                         || display_map.intersects_fold(range.start)
                         || display_map.intersects_fold(range.end)
-                        // Skip out of string contents
-                        || node.kind() == "string_content"
                         // If cursor is already at the end of the syntax node, continue searching (when direction = next)
                         || (direction == Direction::Next && range.end == selection_pos)
                         // If cursror is already at the start of the syntax node, continue searching (when direction = prev)
@@ -15608,9 +15603,28 @@ impl Editor {
                         continue;
                     }
 
+                    // If we found a string_content node, find the largest parent that is still string_content
+                    // Enables us to skip to the end of strings, but not outside
+                    let (_, final_range) = if node.kind() == "string_content" {
+                        let mut current_node = node;
+                        let mut current_range = range;
+                        while let Some((parent, parent_range)) = buffer.syntax_ancestor(current_range.clone()) {
+                            if parent.kind() == "string_content" {
+                                current_node = parent;
+                                current_range = parent_range;
+                            } else {
+                                break;
+                            }
+                        }
+
+                        (current_node, current_range)
+                    } else {
+                        (node, range)
+                    };
+
                     match direction {
-                        Direction::Next => new_pos = range.end,
-                        Direction::Prev => new_pos = range.start,
+                        Direction::Next => new_pos = final_range.end,
+                        Direction::Prev => new_pos = final_range.start,
                     }
 
                     break;
@@ -15632,6 +15646,8 @@ impl Editor {
             s.select(new_selections);
         });
         self.request_autoscroll(Autoscroll::newest(), cx);
+
+        any_cursor_moved
     }
 
     pub fn unwrap_syntax_node(
