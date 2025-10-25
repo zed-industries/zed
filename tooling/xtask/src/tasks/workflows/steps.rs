@@ -50,6 +50,60 @@ pub mod danger {
     }
 }
 
+pub mod nix {
+    use indoc::indoc;
+
+    use crate::tasks::workflows::vars;
+
+    use super::*;
+
+    // on our macs we manually install nix. for some reason the cachix action is running
+    // under a non-login /bin/bash shell which doesn't source the proper script to add the
+    // nix profile to PATH, so we manually add them here
+    pub fn set_path() -> Step<Run> {
+        named::run(indoc! {r#"
+            echo "/nix/var/nix/profiles/default/bin" >> "$GITHUB_PATH"
+            echo "/Users/administrator/.nix-profile/bin" >> "$GITHUB_PATH"
+        "#})
+    }
+
+    pub fn install_nix() -> Step<Use> {
+        named::uses(
+            "cachix",
+            "install-nix-action",
+            "02a151ada4993995686f9ed4f1be7cfbb229e56f", // v31
+        )
+        .add_with(("github_access_token", vars::GITHUB_TOKEN))
+    }
+
+    pub fn cachix_action(cachix_filter: &str) -> Step<Use> {
+        named::uses(
+            "cachix",
+            "cachix-action",
+            "0fc020193b5a1fa3ac4575aa3a7d3aa6a35435ad", // v16
+        )
+        .add_with(("name", "zed"))
+        .add_with(("authToken", vars::CACHIX_AUTH_TOKEN))
+        .add_with(("pushFilter", cachix_filter))
+        .add_with(("cachixArgs", "-v"))
+    }
+
+    pub fn build(flake_output: &str) -> Step<Run> {
+        named::run(&format!(
+            "nix build .#{} -L --accept-flake-config",
+            flake_output
+        ))
+    }
+
+    pub fn limit_store() -> Step<Run> {
+        named::run(indoc! {r#"
+            if [ "$(du -sm /nix/store | cut -f1)" -gt 50000 ]; then
+                nix-collect-garbage -d || true
+            fi"#
+        })
+    }
+}
+
 // (janky) helpers to generate steps with a name that coresponds
 // to the name of the calling function.
 mod named {
