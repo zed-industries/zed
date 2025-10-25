@@ -11,6 +11,7 @@ test-support = [
     "gpui/test-support",
     "settings/test-support",
 ]
+bench-support = []
 
 [lints]
 workspace = true

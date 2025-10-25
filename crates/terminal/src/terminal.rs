@@ -3,7 +3,10 @@ pub mod mappings;
 pub use alacritty_terminal;
 
 mod pty_info;
+#[cfg(feature = "bench-support")]
 pub(crate) mod terminal_hyperlinks;
+#[cfg(not(feature = "bench-support"))]
+mod terminal_hyperlinks;
 pub mod terminal_settings;
 
 use alacritty_terminal::{
@@ -2840,6 +2843,7 @@ mod tests {
     }
 }
 
+#[cfg(feature = "bench-support")]
 pub mod bench {
     use crate::terminal_hyperlinks::{RegexSearches, find_from_grid_point};
     use alacritty_terminal::{
