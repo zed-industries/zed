@@ -1991,6 +1991,76 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                         metadata: None,
                         files: USER,
                     }),
+                    SettingsPageItem::SectionHeader("Smart Tab"),
+                    SettingsPageItem::SettingItem(SettingItem {
+                        title: "Enabled",
+                        description: "Enable smart tab feature to skip out of syntax nodes using the Tab key",
+                        field: Box::new(SettingField {
+                            pick: |settings_content| {
+                                settings_content
+                                    .editor
+                                    .smart_tab
+                                    .as_ref()?
+                                    .enabled
+                                    .as_ref()
+                            },
+                            write: |settings_content, value| {
+                                settings_content
+                                    .editor
+                                    .smart_tab
+                                    .get_or_insert_default()
+                                    .enabled = value;
+                            },
+                        }),
+                        metadata: None,
+                        files: USER,
+                    }),
+                    SettingsPageItem::SettingItem(SettingItem {
+                        title: "Supersede Completions",
+                        description: "Whether smart tab should take precedence over accepting completions",
+                        field: Box::new(SettingField {
+                            pick: |settings_content| {
+                                settings_content
+                                    .editor
+                                    .smart_tab
+                                    .as_ref()?
+                                    .supersede_completions
+                                    .as_ref()
+                            },
+                            write: |settings_content, value| {
+                                settings_content
+                                    .editor
+                                    .smart_tab
+                                    .get_or_insert_default()
+                                    .supersede_completions = value;
+                            },
+                        }),
+                        metadata: None,
+                        files: USER,
+                    }),
+                    SettingsPageItem::SettingItem(SettingItem {
+                        title: "Supersede Edit Predictions",
+                        description: "Whether smart tab should take precedence over accepting edit predictions",
+                        field: Box::new(SettingField {
+                            pick: |settings_content| {
+                                settings_content
+                                    .editor
+                                    .smart_tab
+                                    .as_ref()?
+                                    .supersede_edit_predictions
+                                    .as_ref()
+                            },
+                            write: |settings_content, value| {
+                                settings_content
+                                    .editor
+                                    .smart_tab
+                                    .get_or_insert_default()
+                                    .supersede_edit_predictions = value;
+                            },
+                        }),
+                        metadata: None,
+                        files: USER,
+                    }),
                 ];
                 items.extend(language_settings_data());
                 items
@@ -2351,76 +2421,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     metadata: None,
                     files: USER,
                 }),
-                SettingsPageItem::SectionHeader("Smart Tab"),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Enabled",
-                    description: "Enable smart tab feature to skip out of syntax nodes using the Tab key",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            settings_content
-                                .editor
-                                .smart_tab
-                                .as_ref()?
-                                .enabled
-                                .as_ref()
-                        },
-                        write: |settings_content, value| {
-                            settings_content
-                                .editor
-                                .smart_tab
-                                .get_or_insert_default()
-                                .enabled = value;
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Supersede Completions",
-                    description: "Whether smart tab should take precedence over accepting completions",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            settings_content
-                                .editor
-                                .smart_tab
-                                .as_ref()?
-                                .supersede_completions
-                                .as_ref()
-                        },
-                        write: |settings_content, value| {
-                            settings_content
-                                .editor
-                                .smart_tab
-                                .get_or_insert_default()
-                                .supersede_completions = value;
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Supersede Edit Predictions",
-                    description: "Whether smart tab should take precedence over accepting edit predictions",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            settings_content
-                                .editor
-                                .smart_tab
-                                .as_ref()?
-                                .supersede_edit_predictions
-                                .as_ref()
-                        },
-                        write: |settings_content, value| {
-                            settings_content
-                                .editor
-                                .smart_tab
-                                .get_or_insert_default()
-                                .supersede_edit_predictions = value;
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
+                
                 SettingsPageItem::SectionHeader("File Finder"),
                 // todo: null by default
                 SettingsPageItem::SettingItem(SettingItem {
