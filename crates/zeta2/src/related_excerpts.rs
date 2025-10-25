@@ -130,12 +130,10 @@ pub fn find_related_excerpts<'a>(
 
     // TODO [zeta2] include breadcrumbs?
     let snapshot = buffer.read(cx).snapshot();
-    let Some(cursor_excerpt) = EditPredictionExcerpt::select_from_buffer(
-        cursor_position.to_point(&snapshot),
-        &snapshot,
-        excerpt_options,
-        None,
-    ) else {
+    let cursor_point = cursor_position.to_point(&snapshot);
+    let Some(cursor_excerpt) =
+        EditPredictionExcerpt::select_from_buffer(cursor_point, &snapshot, excerpt_options, None)
+    else {
         return Task::ready(Ok(Vec::new()));
     };
 
@@ -148,7 +146,6 @@ pub fn find_related_excerpts<'a>(
         .replace("{edits}", &edits_string)
         .replace("{current_file_path}", &current_file_path)
         .replace("{cursor_excerpt}", &cursor_excerpt.text(&snapshot).body);
-    eprintln!("\n\n{prompt}");
 
     let schema = schemars::schema_for!(SearchToolInput);
 
@@ -230,6 +227,10 @@ pub fn find_related_excerpts<'a>(
             return anyhow::Ok(Vec::new());
         }
 
+        for query in &queries {
+            eprintln!("query. regex: {}, glob: {}", query.regex, query.glob);
+        }
+
         let mut excerpts_by_buffer = HashMap::default();
 
         // todo! parallelize?
@@ -270,6 +271,8 @@ pub fn find_related_excerpts<'a>(
                 .ok();
         }
 
+        eprintln!("{}", merged);
+
         anyhow::Ok(vec![])
     })
 }
@@ -309,9 +312,6 @@ async fn run_query(
         if ranges.is_empty() {
             continue;
         }
-        if total_bytes + MIN_EXCERPT_LEN >= MAX_RESULT_BYTES_PER_QUERY {
-            break;
-        }
 
         let excerpts_for_buffer = excerpts_by_buffer
             .entry(buffer.clone())
@@ -340,8 +340,14 @@ async fn run_query(
 
             if let Some(excerpt) = excerpt {
                 total_bytes += excerpt.range.len();
-                excerpts_for_buffer.push(excerpt.line_range);
+                if !excerpt.line_range.is_empty() {
+                    excerpts_for_buffer.push(excerpt.line_range);
+                }
             }
+        }
+
+        if excerpts_for_buffer.is_empty() {
+            excerpts_by_buffer.remove(&buffer);
         }
     }
 
