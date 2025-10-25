@@ -142,6 +142,11 @@ pub struct CodestralSettingsContent {
     /// Default: 150
     #[serde(default)]
     pub max_tokens: Option<u32>,
+    /// Api URL to use for completions.
+    ///
+    /// Default: "https://codestral.mistral.ai"
+    #[serde(default)]
+    pub api_url: Option<String>,
 }
 
 /// The mode in which edit predictions should be displayed.
