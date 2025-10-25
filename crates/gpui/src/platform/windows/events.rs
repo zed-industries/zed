@@ -1347,8 +1347,12 @@ where
             } else {
                 vkey
             };
-            let keystroke = parse_normal_key(vkey, lparam, modifiers)?;
-            Some(f(keystroke))
+            if let Some(keystroke) = parse_normal_key(vkey, lparam, modifiers) {
+                Some(f(keystroke))
+            } else {
+                translate_message(handle, wparam, lparam);
+                None
+            }
         }
     }
 }
