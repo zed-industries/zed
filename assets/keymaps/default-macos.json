@@ -793,13 +793,6 @@
     }
   },
   {
-    "context": "Editor && smart_tab_supersede_completions && showing_completions",
-    "use_key_equivalents": true,
-    "bindings": {
-      "tab": "editor::Tab"
-    }
-  },
-  {
     "context": "Editor && showing_completions",
     "use_key_equivalents": true,
     "bindings": {
@@ -809,7 +802,8 @@
     }
   },
   {
-    "context": "Editor && smart_tab_supersede_edit_predictions && edit_prediction",
+    "context": "Editor && smart_tab_supersede_completions && showing_completions",
+    "use_key_equivalents": true,
     "bindings": {
       "tab": "editor::Tab"
     }
@@ -823,11 +817,23 @@
     }
   },
   {
+    "context": "Editor && smart_tab_supersede_edit_predictions && edit_prediction",
+    "bindings": {
+      "tab": "editor::Tab"
+    }
+  },
+  {
     "context": "Editor && edit_prediction_conflict",
     "use_key_equivalents": true,
     "bindings": {
       "alt-tab": "editor::AcceptEditPrediction",
       "ctrl-cmd-right": "editor::AcceptPartialEditPrediction"
+    }
+  },
+  {
+    "context": "Editor && smart_tab_supersede_edit_predictions && edit_prediction_conflict",
+    "bindings": {
+      "tab": "editor::Tab"
     }
   },
   {

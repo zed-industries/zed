@@ -15511,32 +15511,6 @@ impl Editor {
         self.move_cursors_to_syntax_nodes(window, cx, Direction::Next);
     }
 
-    fn all_cursors_in_trailing_whitespace(&self, cx: &mut Context<Self>) -> bool {
-        let snapshot = self.display_snapshot(cx);
-        let buffer_snapshot = self.buffer.read(cx).snapshot(cx);
-        let selections = self.selections.all_adjusted(&snapshot);
-
-        selections.iter().all(|selection| {
-            if !selection.is_empty() {
-                return false;
-            }
-
-            let cursor_pos = selection.head();
-            let line = cursor_pos.row;
-
-            if line >= buffer_snapshot.max_point().row {
-                return true;
-            }
-
-            let line_end = Point::new(line, buffer_snapshot.line_len(MultiBufferRow(line)));
-            let text_after: String = buffer_snapshot
-                .text_for_range(cursor_pos..line_end)
-                .collect();
-
-            text_after.chars().all(|c| c.is_whitespace())
-        })
-    }
-
     fn all_cursors_in_leading_whitespace(&self, cx: &mut Context<Self>) -> bool {
         let snapshot = self.display_snapshot(cx);
         let buffer_snapshot = self.buffer.read(cx).snapshot(cx);

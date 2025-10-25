@@ -989,6 +989,18 @@
     }
   },
   {
+    "context": "Editor && smart_tab_supersede_edit_predictions && edit_prediction",
+    "bindings": {
+      "tab": "editor::Tab"
+    }
+  },
+  {
+    "context": "Editor && smart_tab_supersede_edit_predictions && edit_prediction_conflict",
+    "bindings": {
+      "tab": "editor::Tab"
+    }
+  },
+  {
     "context": "MessageEditor > Editor && VimControl",
     "bindings": {
       "enter": "agent::Chat"
