@@ -42,7 +42,7 @@ async fn test_fuzzy_score(cx: &mut TestAppContext) {
             CompletionBuilder::constant("ElementType", None, "7fffffff"),
         ];
         let matches =
-            filter_and_sort_matches("Elem", &completions, SnippetSortOrder::default(), cx).await;
+            filter_and_sort_matches("elem", &completions, SnippetSortOrder::default(), cx).await;
         assert_eq!(
             matches
                 .iter()
@@ -325,7 +325,7 @@ async fn filter_and_sort_matches(
     let matches = fuzzy::match_strings(
         &candidates,
         query,
-        query.chars().any(|c| c.is_uppercase()),
+        true,
         false,
         100,
         &cancel_flag,
