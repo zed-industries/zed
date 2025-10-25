@@ -159,6 +159,7 @@ pub struct SearchSettings {
     pub case_sensitive: bool,
     pub include_ignored: bool,
     pub regex: bool,
+    pub center_on_match: bool,
 }
 
 impl EditorSettings {
@@ -249,6 +250,7 @@ impl Settings for EditorSettings {
                 case_sensitive: search.case_sensitive.unwrap(),
                 include_ignored: search.include_ignored.unwrap(),
                 regex: search.regex.unwrap(),
+                center_on_match: search.center_on_match.unwrap(),
             },
             auto_signature_help: editor.auto_signature_help.unwrap(),
             show_signature_help_after_edits: editor.show_signature_help_after_edits.unwrap(),

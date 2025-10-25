@@ -2800,6 +2800,7 @@ mod tests {
                 case_sensitive: false,
                 include_ignored: false,
                 regex: false,
+                center_on_match: false,
             },
             cx,
         );
@@ -2862,6 +2863,7 @@ mod tests {
                 case_sensitive: true,
                 include_ignored: false,
                 regex: false,
+                center_on_match: false,
             },
             cx,
         );
@@ -2899,6 +2901,7 @@ mod tests {
                 case_sensitive: true,
                 include_ignored: false,
                 regex: false,
+                center_on_match: false,
             },
             cx,
         );
@@ -2925,6 +2928,7 @@ mod tests {
                         case_sensitive: Some(search_settings.case_sensitive),
                         include_ignored: Some(search_settings.include_ignored),
                         regex: Some(search_settings.regex),
+                        center_on_match: Some(search_settings.center_on_match),
                     });
                 });
             });
