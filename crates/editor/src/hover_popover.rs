@@ -27,7 +27,6 @@ use ui::{Scrollbars, WithScrollbar, prelude::*, theme_is_transparent};
 use url::Url;
 use util::TryFutureExt;
 use workspace::{OpenOptions, OpenVisible, Workspace};
-pub const HOVER_REQUEST_DELAY_MILLIS: u64 = 200;
 
 pub const MIN_POPOVER_CHARACTER_WIDTH: f32 = 20.;
 pub const MIN_POPOVER_LINE_HEIGHT: f32 = 4.;
@@ -287,26 +286,13 @@ fn show_hover(
     let task = cx.spawn_in(window, async move |this, cx| {
         async move {
             // If we need to delay, delay a set amount initially before making the lsp request
-            let delay = if ignore_timeout {
-                None
-            } else {
-                // Construct delay task to wait for later
-                let total_delay = Some(
-                    cx.background_executor()
-                        .timer(Duration::from_millis(hover_popover_delay)),
-                );
-
+            if !ignore_timeout {
                 cx.background_executor()
-                    .timer(Duration::from_millis(HOVER_REQUEST_DELAY_MILLIS))
+                    .timer(Duration::from_millis(hover_popover_delay))
                     .await;
-                total_delay
             };
 
             let hover_request = cx.update(|_, cx| provider.hover(&buffer, buffer_position, cx))?;
-
-            if let Some(delay) = delay {
-                delay.await;
-            }
 
             let offset = anchor.to_offset(&snapshot.buffer_snapshot());
             let local_diagnostic = if all_diagnostics_active {
