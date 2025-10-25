@@ -106,17 +106,18 @@ impl Workspace {
                     .as_ref()
                     .map_or(false, |r| r.actions.is_empty())
                 {
-                    cx.spawn({
+                    let task = cx.spawn({
                         let id = id.clone();
                         async move |this, cx| {
                             cx.background_executor().timer(Duration::from_secs(5)).await;
-                            this.update(cx, |workspace, cx| {
+                            let _ = this.update(cx, |workspace, cx| {
                                 workspace.dismiss_notification(&id, cx);
-                            })
-                            .ok()
+                            });
                         }
-                    })
-                    .detach();
+                    });
+                    prompt.update(cx, |prompt, _| {
+                        prompt.dismiss_task = Some(task);
+                    });
                 }
             }
             notification.into()
@@ -239,6 +240,7 @@ pub struct LanguageServerPrompt {
     focus_handle: FocusHandle,
     request: Option<project::LanguageServerPromptRequest>,
     scroll_handle: ScrollHandle,
+    dismiss_task: Option<Task<()>>,
 }
 
 impl Focusable for LanguageServerPrompt {
@@ -255,6 +257,7 @@ impl LanguageServerPrompt {
             focus_handle: cx.focus_handle(),
             request: Some(request),
             scroll_handle: ScrollHandle::new(),
+            dismiss_task: None,
         }
     }
 
@@ -269,12 +272,19 @@ impl LanguageServerPrompt {
                 .await
                 .context("Stream already closed")?;
 
-            this.update(cx, |_, cx| cx.emit(DismissEvent))?;
+            this.update(cx, |this, cx| {
+                this.cancel_dismiss_task();
+                cx.emit(DismissEvent)
+            })?;
 
             anyhow::Ok(())
         })
         .await
         .log_err();
+    }
+
+    fn cancel_dismiss_task(&mut self) {
+        self.dismiss_task = None;
     }
 }
 
@@ -354,10 +364,11 @@ impl Render for LanguageServerPrompt {
                                                 }
                                             })
                                             .on_click(cx.listener(
-                                                move |_, _: &ClickEvent, _, cx| {
+                                                move |this, _: &ClickEvent, _, cx| {
                                                     if suppress {
                                                         cx.emit(SuppressEvent);
                                                     } else {
+                                                        this.cancel_dismiss_task();
                                                         cx.emit(DismissEvent);
                                                     }
                                                 },
