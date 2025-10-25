@@ -3,10 +3,9 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::{
-    AnyElement, App, Element, ElementId, GlobalElementId, InspectorElementId, IntoElement, Window,
-};
+use crate::{AnyElement, App, ElementId, GlobalElementId, InspectorElementId, IntoElement, Window};
 
+pub use animatable::*;
 pub use easing::*;
 use smallvec::SmallVec;
 
@@ -106,29 +105,25 @@ impl<E> AnimationElement<E> {
     }
 }
 
-impl<E: IntoElement + 'static> IntoElement for AnimationElement<E> {
-    type Element = AnimationElement<E>;
-
-    fn into_element(self) -> Self::Element {
-        self
-    }
-}
-
 struct AnimationState {
     start: Instant,
     animation_ix: usize,
 }
 
-impl<E: IntoElement + 'static> Element for AnimationElement<E> {
-    type RequestLayoutState = AnyElement;
-    type PrepaintState = ();
+impl<E: IntoElement + 'static> animatable::AnimatableExt for AnimationElement<E> {
+    type Element = E;
+
+    fn element_mut(&mut self) -> Option<&mut E> {
+        self.element.as_mut()
+    }
+
+    fn map_element(mut self, f: impl FnOnce(E) -> E) -> Self {
+        self.element = self.element.map(f);
+        self
+    }
 
     fn id(&self) -> Option<ElementId> {
         Some(self.id.clone())
-    }
-
-    fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
-        None
     }
 
     fn request_layout(
@@ -136,9 +131,9 @@ impl<E: IntoElement + 'static> Element for AnimationElement<E> {
         global_id: Option<&GlobalElementId>,
         _inspector_id: Option<&InspectorElementId>,
         window: &mut Window,
-        cx: &mut App,
-    ) -> (crate::LayoutId, Self::RequestLayoutState) {
-        window.with_element_state(global_id.unwrap(), |state, window| {
+        _cx: &mut App,
+    ) -> (bool, AnyElement) {
+        window.with_element_state(global_id.unwrap(), |state, _window| {
             let mut state = state.unwrap_or_else(|| AnimationState {
                 start: Instant::now(),
                 animation_ix: 0,
@@ -172,37 +167,149 @@ impl<E: IntoElement + 'static> Element for AnimationElement<E> {
             let element = self.element.take().expect("should only be called once");
             let mut element = (self.animator)(element, animation_ix, delta).into_any_element();
 
-            if !done {
+            ((done, element), state)
+        })
+    }
+}
+
+mod animatable {
+    use crate::{
+        AnyElement, App, Element, ElementId, GlobalElementId, InspectorElementId,
+        InteractiveElement, IntoElement, ParentElement, StatefulInteractiveElement,
+        StyleRefinement, Styled, Window,
+    };
+
+    /// An extension trait that reduces the boilerplate required to make an element animated.
+    pub trait AnimatableExt {
+        /// The underlying element type.
+        type Element;
+
+        /// Gets a mutable reference to the underlying element.
+        fn element_mut(&mut self) -> Option<&mut Self::Element>;
+
+        /// Returns a new animatable element after applying the given function
+        /// to the animatable element.
+        fn map_element(self, f: impl FnOnce(Self::Element) -> Self::Element) -> Self;
+
+        /// If this element has a unique identifier, return it here. This is used to track elements across frames, and
+        /// will cause a GlobalElementId to be passed to the request_layout, prepaint, and paint methods.
+        ///
+        /// The global id can in turn be used to access state that's connected to an element with the same id across
+        /// frames. This id must be unique among children of the first containing element with an id.
+        fn id(&self) -> Option<ElementId> {
+            None
+        }
+
+        /// Source location where this element was constructed, used to disambiguate elements in the
+        /// inspector and navigate to their source code.
+        fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
+            None
+        }
+
+        /// Before an element can be painted, we need to know where it's going to be and how big it is.
+        /// Use this method to request a layout from Taffy and initialize the element's state.
+        fn request_layout(
+            &mut self,
+            global_id: Option<&GlobalElementId>,
+            inspector_id: Option<&InspectorElementId>,
+            window: &mut Window,
+            cx: &mut App,
+        ) -> (bool, AnyElement);
+    }
+
+    impl<E: AnimatableExt + IntoElement + 'static> Element for E {
+        type RequestLayoutState = AnyElement;
+        type PrepaintState = ();
+
+        fn id(&self) -> Option<ElementId> {
+            AnimatableExt::id(self)
+        }
+
+        fn source_location(&self) -> Option<&'static std::panic::Location<'static>> {
+            AnimatableExt::source_location(self)
+        }
+
+        fn request_layout(
+            &mut self,
+            global_id: Option<&GlobalElementId>,
+            inspector_id: Option<&InspectorElementId>,
+            window: &mut Window,
+            cx: &mut App,
+        ) -> (crate::LayoutId, Self::RequestLayoutState) {
+            let (request_frame, mut element) =
+                AnimatableExt::request_layout(self, global_id, inspector_id, window, cx);
+
+            if request_frame {
                 window.request_animation_frame();
             }
 
-            ((element.request_layout(window, cx), element), state)
-        })
+            (element.request_layout(window, cx), element)
+        }
+
+        fn prepaint(
+            &mut self,
+            _id: Option<&GlobalElementId>,
+            _inspector_id: Option<&InspectorElementId>,
+            _bounds: crate::Bounds<crate::Pixels>,
+            element: &mut Self::RequestLayoutState,
+            window: &mut Window,
+            cx: &mut App,
+        ) -> Self::PrepaintState {
+            element.prepaint(window, cx);
+        }
+
+        fn paint(
+            &mut self,
+            _id: Option<&GlobalElementId>,
+            _inspector_id: Option<&InspectorElementId>,
+            _bounds: crate::Bounds<crate::Pixels>,
+            element: &mut Self::RequestLayoutState,
+            _prepaint: &mut Self::PrepaintState,
+            window: &mut Window,
+            cx: &mut App,
+        ) {
+            element.paint(window, cx)
+        }
     }
 
-    fn prepaint(
-        &mut self,
-        _id: Option<&GlobalElementId>,
-        _inspector_id: Option<&InspectorElementId>,
-        _bounds: crate::Bounds<crate::Pixels>,
-        element: &mut Self::RequestLayoutState,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> Self::PrepaintState {
-        element.prepaint(window, cx);
+    impl<E: AnimatableExt + 'static> IntoElement for E {
+        type Element = E;
+
+        fn into_element(self) -> Self::Element {
+            self
+        }
     }
 
-    fn paint(
-        &mut self,
-        _id: Option<&GlobalElementId>,
-        _inspector_id: Option<&InspectorElementId>,
-        _bounds: crate::Bounds<crate::Pixels>,
-        element: &mut Self::RequestLayoutState,
-        _: &mut Self::PrepaintState,
-        window: &mut Window,
-        cx: &mut App,
-    ) {
-        element.paint(window, cx);
+    impl<E: AnimatableExt + 'static> Styled for E
+    where
+        <Self as AnimatableExt>::Element: Styled,
+    {
+        fn style(&mut self) -> &mut StyleRefinement {
+            self.element_mut().unwrap().style()
+        }
+    }
+
+    impl<E: AnimatableExt + 'static> InteractiveElement for E
+    where
+        <Self as AnimatableExt>::Element: InteractiveElement,
+    {
+        fn interactivity(&mut self) -> &mut crate::Interactivity {
+            self.element_mut().unwrap().interactivity()
+        }
+    }
+
+    impl<E: AnimatableExt + 'static> ParentElement for E
+    where
+        <Self as AnimatableExt>::Element: ParentElement,
+    {
+        fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>) {
+            self.element_mut().unwrap().extend(elements);
+        }
+    }
+
+    impl<E: AnimatableExt + 'static> StatefulInteractiveElement for E where
+        <Self as AnimatableExt>::Element: StatefulInteractiveElement
+    {
     }
 }
 
