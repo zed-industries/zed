@@ -468,6 +468,12 @@ impl Focusable for BufferSearchBar {
 }
 
 impl ToolbarItemView for BufferSearchBar {
+    fn contribute_context(&self, context: &mut KeyContext, _cx: &App) {
+        if !self.dismissed {
+            context.add("buffer_search_deployed");
+        }
+    }
+
     fn set_active_pane_item(
         &mut self,
         item: Option<&dyn ItemHandle>,
