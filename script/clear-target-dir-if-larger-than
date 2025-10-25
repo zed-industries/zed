@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-set -eu
+set -euxo pipefail
 
 if [[ $# -ne 1 ]]; then
     echo "usage: $0 <MAX_SIZE_IN_GB>"
