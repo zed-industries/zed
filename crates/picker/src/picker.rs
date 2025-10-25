@@ -149,6 +149,15 @@ pub trait PickerDelegate: Sized + 'static {
         None
     }
     fn confirm(&mut self, secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>);
+    /// Confirms the selected item without dismissing the picker
+    fn confirm_without_dismiss(
+        &mut self,
+        _secondary: bool,
+        _window: &mut Window,
+        _cx: &mut Context<Picker<Self>>,
+    ) {
+        // Default implementation does nothing
+    }
     /// Instead of interacting with currently selected entry, treats editor input literally,
     /// performing some kind of action on it.
     fn confirm_input(
