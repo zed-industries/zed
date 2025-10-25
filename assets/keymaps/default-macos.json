@@ -793,12 +793,25 @@
     }
   },
   {
+    "context": "Editor && smart_tab_supersede_completions && showing_completions",
+    "use_key_equivalents": true,
+    "bindings": {
+      "tab": "editor::Tab"
+    }
+  },
+  {
     "context": "Editor && showing_completions",
     "use_key_equivalents": true,
     "bindings": {
       "enter": "editor::ConfirmCompletion",
       "shift-enter": "editor::ConfirmCompletionReplace",
       "tab": "editor::ComposeCompletion"
+    }
+  },
+  {
+    "context": "Editor && smart_tab_supersede_edit_predictions && edit_prediction",
+    "bindings": {
+      "tab": "editor::Tab"
     }
   },
   {

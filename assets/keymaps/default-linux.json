@@ -724,6 +724,12 @@
     }
   },
   {
+    "context": "Editor && smart_tab_supersede_completions && showing_completions",
+    "bindings": {
+      "tab": "editor::Tab"
+    }
+  },
+  {
     "context": "Editor && showing_completions",
     "bindings": {
       "enter": "editor::ConfirmCompletion",
@@ -735,6 +741,12 @@
   //
   // alt-l is provided as an alternative to tab/alt-tab. and will be displayed in the UI. This is
   // because alt-tab may not be available, as it is often used for window switching.
+  {
+    "context": "Editor && smart_tab_supersede_edit_predictions && edit_prediction",
+    "bindings": {
+      "tab": "editor::Tab"
+    }
+  },
   {
     "context": "Editor && edit_prediction",
     "bindings": {

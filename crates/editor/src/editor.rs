@@ -2547,6 +2547,17 @@ impl Editor {
             }
         }
 
+        // Add smart tab contexts
+        let settings = EditorSettings::get(None, cx);
+        if settings.smart_tab.enabled {
+            if settings.smart_tab.supersede_completions {
+                key_context.add("smart_tab_supersede_completions");
+            }
+            if settings.smart_tab.supersede_edit_predictions {
+                key_context.add("smart_tab_supersede_edit_predictions");
+            }
+        }
+
         if self.selection_mark_mode {
             key_context.add("selection_mode");
         }
@@ -10189,6 +10200,24 @@ impl Editor {
         if self.move_to_prev_snippet_tabstop(window, cx) {
             return;
         }
+
+        // Smart tab backward navigation
+        let settings = EditorSettings::get(None, cx);
+        if settings.smart_tab.enabled {
+            let selections = self.selections.all_adjusted(&self.display_snapshot(cx));
+
+            // Only apply smart backtab to empty selections (cursors, not ranges)
+            let has_any_non_empty_selection = selections.iter().any(|s| !s.is_empty());
+
+            if !has_any_non_empty_selection {
+                // If any cursors do not have trailing whitespace, activate smart tab
+                if !self.all_cursors_in_trailing_whitespace(cx) {
+                    self.move_cursors_to_syntax_nodes(window, cx, Direction::Prev);
+                    return;
+                }
+            }
+        }
+
         self.outdent(&Outdent, window, cx);
     }
 
@@ -10205,6 +10234,25 @@ impl Editor {
         if self.read_only(cx) {
             return;
         }
+
+        // Smart tab logic
+        let settings = EditorSettings::get(None, cx);
+        if settings.smart_tab.enabled {
+            let selections = self.selections.all_adjusted(&self.display_snapshot(cx));
+
+            // Don't use smart tab if any selection is non-empty
+            let has_non_empty_selection = selections.iter().any(|s| !s.is_empty());
+
+            if !has_non_empty_selection {
+                // If any cursors do not have whitespace to their left, activate smart tab
+                if !self.all_cursors_in_leading_whitespace(cx) {
+                    self.move_cursors_to_syntax_nodes(window, cx, Direction::Next);
+                    self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
+                    return;
+                }
+            }
+        }
+
         self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
         let mut selections = self.selections.all_adjusted(&self.display_snapshot(cx));
         let buffer = self.buffer.read(cx);
@@ -15463,7 +15511,56 @@ impl Editor {
     ) {
         self.move_cursors_to_syntax_nodes(window, cx, Direction::Next);
     }
-    
+
+    /// Check if all cursors have only whitespace to their right (until line end)
+    fn all_cursors_in_trailing_whitespace(&self, cx: &mut Context<Self>) -> bool {
+        let snapshot = self.display_snapshot(cx);
+        let buffer_snapshot = self.buffer.read(cx).snapshot(cx);
+        let selections = self.selections.all_adjusted(&snapshot);
+
+        selections.iter().all(|selection| {
+            if !selection.is_empty() {
+                return false;
+            }
+
+            let cursor_pos = selection.head();
+            let line = cursor_pos.row;
+
+            if line >= buffer_snapshot.max_point().row {
+                return true;
+            }
+
+            let line_end = Point::new(line, buffer_snapshot.line_len(MultiBufferRow(line)));
+            let text_after: String = buffer_snapshot
+                .text_for_range(cursor_pos..line_end)
+                .collect();
+
+            text_after.chars().all(|c| c.is_whitespace())
+        })
+    }
+
+    /// Check if all cursors have only whitespace to their left (from start of line)
+    fn all_cursors_in_leading_whitespace(&self, cx: &mut Context<Self>) -> bool {
+        let snapshot = self.display_snapshot(cx);
+        let buffer_snapshot = self.buffer.read(cx).snapshot(cx);
+        let selections = self.selections.all_adjusted(&snapshot);
+
+        selections.iter().all(|selection| {
+            if !selection.is_empty() {
+                return false;
+            }
+
+            let cursor_pos = selection.head();
+            let line_start = Point::new(cursor_pos.row, 0);
+
+            let text_before: String = buffer_snapshot
+                .text_for_range(line_start..cursor_pos)
+                .collect();
+
+            text_before.chars().all(|c| c.is_whitespace())
+        })
+    }
+
     fn move_cursors_to_syntax_nodes(
         &mut self,
         window: &mut Window,
