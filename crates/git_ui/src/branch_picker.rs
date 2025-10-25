@@ -1,4 +1,5 @@
 use anyhow::Context as _;
+use chrono;
 use fuzzy::StringMatchCandidate;
 
 use collections::HashSet;
@@ -14,7 +15,6 @@ use project::project_settings::ProjectSettings;
 use settings::Settings;
 use std::sync::Arc;
 use time::OffsetDateTime;
-use time_format::format_local_timestamp;
 use ui::{HighlightedLabel, ListItem, ListItemSpacing, Tooltip, prelude::*};
 use util::ResultExt;
 use workspace::notifications::DetachAndPromptErr;
@@ -447,9 +447,11 @@ impl PickerDelegate for BranchListDelegate {
                 let subject = commit.subject.clone();
                 let commit_time = OffsetDateTime::from_unix_timestamp(commit.commit_timestamp)
                     .unwrap_or_else(|_| OffsetDateTime::now_utc());
-                let formatted_time = format_local_timestamp(
+                let local = chrono::Local::now().offset().local_minus_utc();
+                let formatted_time = time_format::format_localized_timestamp(
                     commit_time,
                     OffsetDateTime::now_utc(),
+                    time::UtcOffset::from_whole_seconds(local).unwrap(),
                     time_format::TimestampFormat::Relative,
                 );
                 let author = commit.author_name.clone();
