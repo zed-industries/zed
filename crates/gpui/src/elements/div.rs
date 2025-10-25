@@ -322,7 +322,7 @@ impl Interactivity {
     }
 
     /// Bind the given callback to zoom events (e.g. from pinch-to-zoom) during the bubble phase.
-    /// The imperative API equivalent to [`InteractiveElement::on_scroll_wheel`].
+    /// The imperative API equivalent to [`InteractiveElement::on_zoom`].
     ///
     /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
     pub fn on_zoom(&mut self, listener: impl Fn(&ZoomEvent, &mut Window, &mut App) + 'static) {
@@ -849,7 +849,7 @@ pub trait InteractiveElement: Sized {
     }
 
     /// Bind the given callback to zoom events (e.g. from pinch-to-zoom) during the bubble phase.
-    /// The fluent API equivalent to [`Interactivity::on_scroll_wheel`].
+    /// The fluent API equivalent to [`Interactivity::on_zoom`].
     ///
     /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
     fn on_zoom(mut self, listener: impl Fn(&ZoomEvent, &mut Window, &mut App) + 'static) -> Self {
