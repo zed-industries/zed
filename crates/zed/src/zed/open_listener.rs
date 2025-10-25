@@ -43,13 +43,19 @@ pub struct OpenRequest {
 #[derive(Debug)]
 pub enum OpenRequestKind {
     CliConnection((mpsc::Receiver<CliRequest>, IpcSender<CliResponse>)),
-    Extension { extension_id: String },
+    Extension {
+        extension_id: String,
+    },
     AgentPanel,
-    DockMenuAction { index: usize },
-    BuiltinJsonSchema { schema_path: String },
-    Setting { 
+    DockMenuAction {
+        index: usize,
+    },
+    BuiltinJsonSchema {
+        schema_path: String,
+    },
+    Setting {
         // None just opens settings without navigating to a specific path
-        setting_path: Option<String> ,
+        setting_path: Option<String>,
     },
 }
 
@@ -97,12 +103,9 @@ impl OpenRequest {
                 this.kind = Some(OpenRequestKind::BuiltinJsonSchema {
                     schema_path: schema_path.to_string(),
                 });
-            } else if url == "zed://settings" || url == "zed://settings/"  {
-                this.kind = Some(OpenRequestKind::Setting {
-                    setting_path: None
-                });
-            }
-            else if let Some(setting_path) = url.strip_prefix("zed://settings/") {
+            } else if url == "zed://settings" || url == "zed://settings/" {
+                this.kind = Some(OpenRequestKind::Setting { setting_path: None });
+            } else if let Some(setting_path) = url.strip_prefix("zed://settings/") {
                 this.kind = Some(OpenRequestKind::Setting {
                     setting_path: Some(setting_path.to_string()),
                 });
