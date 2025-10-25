@@ -2,7 +2,10 @@ use editor::EditorSettings;
 use gpui::Pixels;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{DockSide, ProjectPanelEntrySpacing, Settings, ShowDiagnostics, ShowIndentGuides};
+use settings::{
+    DockSide, ProjectPanelEntrySpacing, ProjectPanelSortMode, Settings, ShowDiagnostics,
+    ShowIndentGuides,
+};
 use ui::{
     px,
     scrollbars::{ScrollbarVisibility, ShowScrollbar},
@@ -30,6 +33,7 @@ pub struct ProjectPanelSettings {
     pub hide_hidden: bool,
     pub drag_and_drop: bool,
     pub open_file_on_paste: bool,
+    pub sort_mode: ProjectPanelSortMode,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -81,6 +85,9 @@ impl Settings for ProjectPanelSettings {
             hide_hidden: project_panel.hide_hidden.unwrap(),
             drag_and_drop: project_panel.drag_and_drop.unwrap(),
             open_file_on_paste: project_panel.open_file_on_paste.unwrap(),
+            sort_mode: project_panel
+                .sort_mode
+                .unwrap_or(ProjectPanelSortMode::DirectoriesFirst),
         }
     }
 }

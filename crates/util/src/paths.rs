@@ -952,36 +952,74 @@ pub fn natural_sort(a: &str, b: &str) -> Ordering {
         }
     }
 }
+
+/// Case-insensitive variant of natural sorting to match macOS Finder behavior.
+///
+/// While `natural_sort` is case-sensitive with lowercase priority (lowercase 'a' < uppercase 'A'),
+/// this function treats 'a' and 'A' as equal during comparison. When characters differ only in case,
+/// it falls back to case-sensitive comparison to ensure deterministic ordering on case-sensitive
+/// filesystems (preventing "Apple" and "apple" from being considered equal).
+fn natural_sort_case_insensitive(a: &str, b: &str) -> Ordering {
+    let mut a_iter = a.chars().peekable();
+    let mut b_iter = b.chars().peekable();
+
+    loop {
+        match (a_iter.peek(), b_iter.peek()) {
+            (None, None) => return Ordering::Equal,
+            (None, _) => return Ordering::Less,
+            (_, None) => return Ordering::Greater,
+            (Some(&a_char), Some(&b_char)) => {
+                if a_char.is_ascii_digit() && b_char.is_ascii_digit() {
+                    match compare_numeric_segments(&mut a_iter, &mut b_iter) {
+                        Ordering::Equal => continue,
+                        ordering => return ordering,
+                    }
+                } else {
+                    let a_lower = a_char.to_ascii_lowercase();
+                    let b_lower = b_char.to_ascii_lowercase();
+                    match a_lower.cmp(&b_lower) {
+                        Ordering::Equal => {
+                            a_iter.next();
+                            b_iter.next();
+                        }
+                        ordering => return ordering,
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn stem_and_extension(filename: &str) -> (Option<&str>, Option<&str>) {
+    if filename.is_empty() {
+        return (None, None);
+    }
+
+    match filename.rsplit_once('.') {
+        // Case 1: No dot was found. The entire name is the stem.
+        None => (Some(filename), None),
+
+        // Case 2: A dot was found.
+        Some((before, after)) => {
+            // This is the crucial check for dotfiles like ".bashrc".
+            // If `before` is empty, the dot was the first character.
+            // In that case, we revert to the "whole name is the stem" logic.
+            if before.is_empty() {
+                (Some(filename), None)
+            } else {
+                // Otherwise, we have a standard stem and extension.
+                (Some(before), Some(after))
+            }
+        }
+    }
+}
+
 pub fn compare_rel_paths(
     (path_a, a_is_file): (&RelPath, bool),
     (path_b, b_is_file): (&RelPath, bool),
 ) -> Ordering {
     let mut components_a = path_a.components();
     let mut components_b = path_b.components();
-
-    fn stem_and_extension(filename: &str) -> (Option<&str>, Option<&str>) {
-        if filename.is_empty() {
-            return (None, None);
-        }
-
-        match filename.rsplit_once('.') {
-            // Case 1: No dot was found. The entire name is the stem.
-            None => (Some(filename), None),
-
-            // Case 2: A dot was found.
-            Some((before, after)) => {
-                // This is the crucial check for dotfiles like ".bashrc".
-                // If `before` is empty, the dot was the first character.
-                // In that case, we revert to the "whole name is the stem" logic.
-                if before.is_empty() {
-                    (Some(filename), None)
-                } else {
-                    // Otherwise, we have a standard stem and extension.
-                    (Some(before), Some(after))
-                }
-            }
-        }
-    }
     loop {
         match (components_a.next(), components_b.next()) {
             (Some(component_a), Some(component_b)) => {
@@ -1024,6 +1062,157 @@ pub fn compare_rel_paths(
             (Some(_), None) => break Ordering::Greater,
             (None, Some(_)) => break Ordering::Less,
             (None, None) => break Ordering::Equal,
+        }
+    }
+}
+
+/// Compare two relative paths for a mixed ordering (files and directories
+/// mixed together) using natural ordering of path components. Differs from
+/// `compare_rel_paths` only in that it omits the initial file/dir bias so that
+/// directories and files sort together purely by name. Maintains identical
+/// stem / extension handling for files so that e.g. `foo` and `foo.txt` are
+/// ordered deterministically. Adds a final full-path tie breaker to guarantee
+/// a total ordering when earlier comparisons consider two distinct entries
+/// equal (e.g. a directory `foo/` vs file `foo.rs`).
+pub fn compare_rel_paths_mixed(
+    (path_a, a_is_file): (&RelPath, bool),
+    (path_b, b_is_file): (&RelPath, bool),
+) -> Ordering {
+    let original_paths_equal = std::ptr::eq(path_a, path_b) || path_a == path_b;
+    let mut components_a = path_a.components();
+    let mut components_b = path_b.components();
+
+    loop {
+        match (components_a.next(), components_b.next()) {
+            (Some(component_a), Some(component_b)) => {
+                let a_leaf_file = a_is_file && components_a.rest().is_empty();
+                let b_leaf_file = b_is_file && components_b.rest().is_empty();
+
+                let (a_stem, a_ext) = a_leaf_file
+                    .then(|| stem_and_extension(component_a))
+                    .unwrap_or_default();
+                let (b_stem, b_ext) = b_leaf_file
+                    .then(|| stem_and_extension(component_b))
+                    .unwrap_or_default();
+                let a_key = if a_leaf_file {
+                    a_stem
+                } else {
+                    Some(component_a)
+                };
+                let b_key = if b_leaf_file {
+                    b_stem
+                } else {
+                    Some(component_b)
+                };
+
+                let ordering = match (a_key, b_key) {
+                    (Some(a), Some(b)) => natural_sort(a, b).then_with(|| {
+                        if a_leaf_file && b_leaf_file {
+                            a_ext.unwrap_or_default().cmp(b_ext.unwrap_or_default())
+                        } else if a_leaf_file && !b_leaf_file {
+                            // Directory contents stay grouped together even when there's a similarly-named file
+                            Ordering::Greater
+                        } else if !a_leaf_file && b_leaf_file {
+                            Ordering::Less
+                        } else {
+                            Ordering::Equal
+                        }
+                    }),
+                    (Some(_), None) => Ordering::Greater,
+                    (None, Some(_)) => Ordering::Less,
+                    (None, None) => Ordering::Equal,
+                };
+
+                if !ordering.is_eq() {
+                    return ordering;
+                }
+            }
+            (Some(_), None) => return Ordering::Greater,
+            (None, Some(_)) => return Ordering::Less,
+            (None, None) => {
+                // Deterministic tie-break: When all component comparisons yield Equal
+                // but the paths are distinct (e.g. directory "foo/" vs file "foo.rs"),
+                // fall back to lexical full-path comparison to guarantee total ordering.
+                // This ensures stable sort behavior and prevents distinct entries from
+                // being considered equivalent.
+                if !original_paths_equal {
+                    return path_a.cmp(path_b);
+                }
+                return Ordering::Equal;
+            }
+        }
+    }
+}
+
+/// Compare two relative paths for macOS Finder-like ordering: mixed files
+/// and directories with case-insensitive natural sorting. This matches the actual
+/// behavior of macOS Finder where "Apple", "aardvark.txt", and "Zebra" would be
+/// sorted as: aardvark.txt, Apple, Zebra (case-insensitive alphabetical).
+pub fn compare_rel_paths_macos_like(
+    (path_a, a_is_file): (&RelPath, bool),
+    (path_b, b_is_file): (&RelPath, bool),
+) -> Ordering {
+    let original_paths_equal = std::ptr::eq(path_a, path_b) || path_a == path_b;
+    let mut components_a = path_a.components();
+    let mut components_b = path_b.components();
+
+    loop {
+        match (components_a.next(), components_b.next()) {
+            (Some(component_a), Some(component_b)) => {
+                let a_leaf_file = a_is_file && components_a.rest().is_empty();
+                let b_leaf_file = b_is_file && components_b.rest().is_empty();
+
+                let (a_stem, a_ext) = a_leaf_file
+                    .then(|| stem_and_extension(component_a))
+                    .unwrap_or_default();
+                let (b_stem, b_ext) = b_leaf_file
+                    .then(|| stem_and_extension(component_b))
+                    .unwrap_or_default();
+                let a_key = if a_leaf_file {
+                    a_stem
+                } else {
+                    Some(component_a)
+                };
+                let b_key = if b_leaf_file {
+                    b_stem
+                } else {
+                    Some(component_b)
+                };
+
+                let ordering = match (a_key, b_key) {
+                    (Some(a), Some(b)) => natural_sort_case_insensitive(a, b).then_with(|| {
+                        if a_leaf_file && b_leaf_file {
+                            let a_ext_str = a_ext.unwrap_or_default();
+                            let b_ext_str = b_ext.unwrap_or_default();
+                            a_ext_str.to_lowercase().cmp(&b_ext_str.to_lowercase())
+                        } else if a_leaf_file && !b_leaf_file {
+                            // Directory contents stay grouped together even when there's a similarly-named file
+                            Ordering::Greater
+                        } else if !a_leaf_file && b_leaf_file {
+                            Ordering::Less
+                        } else {
+                            Ordering::Equal
+                        }
+                    }),
+                    (Some(_), None) => Ordering::Greater,
+                    (None, Some(_)) => Ordering::Less,
+                    (None, None) => Ordering::Equal,
+                };
+
+                if !ordering.is_eq() {
+                    return ordering;
+                }
+            }
+            (Some(_), None) => return Ordering::Greater,
+            (None, Some(_)) => return Ordering::Less,
+            (None, None) => {
+                // Deterministic tie-break: use case-sensitive comparison as final tiebreaker
+                // so that paths that are equal case-insensitively still have a consistent order
+                if !original_paths_equal {
+                    return path_a.cmp(path_b);
+                }
+                return Ordering::Equal;
+            }
         }
     }
 }
@@ -1242,6 +1431,394 @@ mod tests {
                 (Path::new("test_DIRS/BAR"), true),
                 (Path::new("test_DIRS/foo_1"), true),
                 (Path::new("test_DIRS/foo_2"), true),
+            ]
+        );
+    }
+
+    #[perf]
+    fn compare_rel_paths_mixed_mixed_types() {
+        // Test that directories and files are mixed by natural name ordering
+        let mut paths = vec![
+            (RelPath::unix("zebra.txt").unwrap(), true),
+            (RelPath::unix("Apple").unwrap(), false),
+            (RelPath::unix("banana.rs").unwrap(), true),
+            (RelPath::unix("Carrot").unwrap(), false),
+            (RelPath::unix("aardvark.txt").unwrap(), true),
+        ];
+        paths.sort_by(|&a, &b| compare_rel_paths_mixed(a, b));
+        assert_eq!(
+            paths,
+            vec![
+                (RelPath::unix("aardvark.txt").unwrap(), true),
+                (RelPath::unix("Apple").unwrap(), false),
+                (RelPath::unix("banana.rs").unwrap(), true),
+                (RelPath::unix("Carrot").unwrap(), false),
+                (RelPath::unix("zebra.txt").unwrap(), true),
+            ]
+        );
+    }
+
+    #[perf]
+    fn compare_rel_paths_mixed_numeric_segments() {
+        // Test natural sort with numeric segments across mixed types
+        let mut paths = vec![
+            (RelPath::unix("file10.txt").unwrap(), true),
+            (RelPath::unix("dir2").unwrap(), false),
+            (RelPath::unix("file2.txt").unwrap(), true),
+            (RelPath::unix("dir10").unwrap(), false),
+            (RelPath::unix("file1.txt").unwrap(), true),
+        ];
+        paths.sort_by(|&a, &b| compare_rel_paths_mixed(a, b));
+        assert_eq!(
+            paths,
+            vec![
+                (RelPath::unix("dir2").unwrap(), false),
+                (RelPath::unix("dir10").unwrap(), false),
+                (RelPath::unix("file1.txt").unwrap(), true),
+                (RelPath::unix("file2.txt").unwrap(), true),
+                (RelPath::unix("file10.txt").unwrap(), true),
+            ]
+        );
+    }
+
+    #[perf]
+    fn compare_rel_paths_mixed_basename_collision() {
+        // Test deterministic ordering when directory and file share basename (e.g. foo/ vs foo.rs)
+        let mut paths = vec![
+            (RelPath::unix("foo.rs").unwrap(), true),
+            (RelPath::unix("foo").unwrap(), false),
+            (RelPath::unix("bar.rs").unwrap(), true),
+            (RelPath::unix("bar").unwrap(), false),
+        ];
+        paths.sort_by(|&a, &b| compare_rel_paths_mixed(a, b));
+        // Expect deterministic tie-break via full-path fallback; directory "bar" before "bar.rs",
+        // directory "foo" before "foo.rs" (lexical full-path fallback when stem equal)
+        assert_eq!(
+            paths,
+            vec![
+                (RelPath::unix("bar").unwrap(), false),
+                (RelPath::unix("bar.rs").unwrap(), true),
+                (RelPath::unix("foo").unwrap(), false),
+                (RelPath::unix("foo.rs").unwrap(), true),
+            ]
+        );
+    }
+
+    #[perf]
+    fn compare_rel_paths_mixed_stability() {
+        // Test that double-sorting yields identical result (stability)
+        let mut paths = vec![
+            (RelPath::unix("c.txt").unwrap(), true),
+            (RelPath::unix("a").unwrap(), false),
+            (RelPath::unix("b.rs").unwrap(), true),
+        ];
+        paths.sort_by(|&a, &b| compare_rel_paths_mixed(a, b));
+        let first_sort = paths.clone();
+        paths.sort_by(|&a, &b| compare_rel_paths_mixed(a, b));
+        assert_eq!(
+            first_sort, paths,
+            "Double sort should yield identical order"
+        );
+    }
+
+    #[perf]
+    fn compare_rel_paths_mixed_nested_paths() {
+        // Ensure parent directories still precede descendants (same as directories_first mode)
+        let mut paths = vec![
+            (RelPath::unix("root/child.txt").unwrap(), true),
+            (RelPath::unix("root").unwrap(), false),
+            (RelPath::unix("other.txt").unwrap(), true),
+        ];
+        paths.sort_by(|&a, &b| compare_rel_paths_mixed(a, b));
+        assert_eq!(
+            paths,
+            vec![
+                (RelPath::unix("other.txt").unwrap(), true),
+                (RelPath::unix("root").unwrap(), false),
+                (RelPath::unix("root/child.txt").unwrap(), true),
+            ]
+        );
+    }
+
+    #[perf]
+    fn compare_rel_paths_mixed_extensions() {
+        // Files with same stem but different extensions should sort by extension
+        let mut paths = vec![
+            (RelPath::unix("file.rs").unwrap(), true),
+            (RelPath::unix("file.txt").unwrap(), true),
+            (RelPath::unix("file.md").unwrap(), true),
+            (RelPath::unix("file").unwrap(), true),
+            (RelPath::unix("file.a").unwrap(), true),
+        ];
+        paths.sort_by(|&a, &b| compare_rel_paths_mixed(a, b));
+        assert_eq!(
+            paths,
+            vec![
+                (RelPath::unix("file").unwrap(), true),
+                (RelPath::unix("file.a").unwrap(), true),
+                (RelPath::unix("file.md").unwrap(), true),
+                (RelPath::unix("file.rs").unwrap(), true),
+                (RelPath::unix("file.txt").unwrap(), true),
+            ]
+        );
+    }
+
+    #[perf]
+    fn compare_rel_paths_macos_like_case_insensitive() {
+        // Test that macOS-like mode is case-insensitive
+        let mut paths = vec![
+            (RelPath::unix("zebra.txt").unwrap(), true),
+            (RelPath::unix("Apple").unwrap(), false),
+            (RelPath::unix("banana.rs").unwrap(), true),
+            (RelPath::unix("Carrot").unwrap(), false),
+            (RelPath::unix("aardvark.txt").unwrap(), true),
+        ];
+        paths.sort_by(|&a, &b| compare_rel_paths_macos_like(a, b));
+        // Case-insensitive: aardvark < Apple < banana < Carrot < zebra
+        assert_eq!(
+            paths,
+            vec![
+                (RelPath::unix("aardvark.txt").unwrap(), true),
+                (RelPath::unix("Apple").unwrap(), false),
+                (RelPath::unix("banana.rs").unwrap(), true),
+                (RelPath::unix("Carrot").unwrap(), false),
+                (RelPath::unix("zebra.txt").unwrap(), true),
+            ]
+        );
+    }
+
+    #[perf]
+    fn compare_rel_paths_macos_like_mixed_case() {
+        // Test case-insensitive sorting with varied capitalization
+        let mut paths = vec![
+            (RelPath::unix("README.md").unwrap(), true),
+            (RelPath::unix("readme.txt").unwrap(), true),
+            (RelPath::unix("ReadMe.rs").unwrap(), true),
+        ];
+        paths.sort_by(|&a, &b| compare_rel_paths_macos_like(a, b));
+        // All "readme" variants should group together, sorted by extension
+        assert_eq!(
+            paths,
+            vec![
+                (RelPath::unix("README.md").unwrap(), true),
+                (RelPath::unix("ReadMe.rs").unwrap(), true),
+                (RelPath::unix("readme.txt").unwrap(), true),
+            ]
+        );
+    }
+
+    #[perf]
+    fn compare_rel_paths_macos_like_mixed() {
+        // Verify directories and files are still mixed
+        let mut paths = vec![
+            (RelPath::unix("file2.txt").unwrap(), true),
+            (RelPath::unix("Dir1").unwrap(), false),
+            (RelPath::unix("file1.txt").unwrap(), true),
+            (RelPath::unix("dir2").unwrap(), false),
+        ];
+        paths.sort_by(|&a, &b| compare_rel_paths_macos_like(a, b));
+        // Case-insensitive: dir1, dir2, file1, file2 (all mixed)
+        assert_eq!(
+            paths,
+            vec![
+                (RelPath::unix("Dir1").unwrap(), false),
+                (RelPath::unix("dir2").unwrap(), false),
+                (RelPath::unix("file1.txt").unwrap(), true),
+                (RelPath::unix("file2.txt").unwrap(), true),
+            ]
+        );
+    }
+
+    #[perf]
+    fn compare_rel_paths_directories_first_directory_vs_similar_file() {
+        let mut paths = vec![
+            (RelPath::unix("lib").unwrap(), false),
+            (RelPath::unix("lib.rs").unwrap(), true),
+            (RelPath::unix("lib/mod.rs").unwrap(), true),
+            (RelPath::unix("lib/helper.rs").unwrap(), true),
+        ];
+        paths.sort_by(|&a, &b| compare_rel_paths(a, b));
+        assert_eq!(
+            paths,
+            vec![
+                (RelPath::unix("lib").unwrap(), false),
+                (RelPath::unix("lib/helper.rs").unwrap(), true),
+                (RelPath::unix("lib/mod.rs").unwrap(), true),
+                (RelPath::unix("lib.rs").unwrap(), true),
+            ]
+        );
+    }
+
+    #[perf]
+    fn compare_rel_paths_directories_first_multiple_similar_names() {
+        let mut paths = vec![
+            (RelPath::unix("config").unwrap(), false),
+            (RelPath::unix("config.json").unwrap(), true),
+            (RelPath::unix("config.toml").unwrap(), true),
+            (RelPath::unix("config/default.json").unwrap(), true),
+            (RelPath::unix("config/prod.json").unwrap(), true),
+            (RelPath::unix("src").unwrap(), false),
+            (RelPath::unix("src.backup").unwrap(), true),
+            (RelPath::unix("src/main.rs").unwrap(), true),
+        ];
+        paths.sort_by(|&a, &b| compare_rel_paths(a, b));
+        assert_eq!(
+            paths,
+            vec![
+                (RelPath::unix("config").unwrap(), false),
+                (RelPath::unix("config/default.json").unwrap(), true),
+                (RelPath::unix("config/prod.json").unwrap(), true),
+                (RelPath::unix("src").unwrap(), false),
+                (RelPath::unix("src/main.rs").unwrap(), true),
+                (RelPath::unix("config.json").unwrap(), true),
+                (RelPath::unix("config.toml").unwrap(), true),
+                (RelPath::unix("src.backup").unwrap(), true),
+            ]
+        );
+    }
+
+    #[perf]
+    fn compare_rel_paths_mixed_directory_vs_similar_file() {
+        let mut paths = vec![
+            (RelPath::unix("karafka").unwrap(), false),
+            (RelPath::unix("karafka.rb").unwrap(), true),
+            (RelPath::unix("karafka/config.rb").unwrap(), true),
+        ];
+        paths.sort_by(|&a, &b| compare_rel_paths_mixed(a, b));
+        assert_eq!(
+            paths,
+            vec![
+                (RelPath::unix("karafka").unwrap(), false),
+                (RelPath::unix("karafka/config.rb").unwrap(), true),
+                (RelPath::unix("karafka.rb").unwrap(), true),
+            ]
+        );
+    }
+
+    #[perf]
+    fn compare_rel_paths_macos_like_directory_vs_similar_file() {
+        let mut paths = vec![
+            (RelPath::unix("karafka").unwrap(), false),
+            (RelPath::unix("karafka.rb").unwrap(), true),
+            (RelPath::unix("karafka/config.rb").unwrap(), true),
+        ];
+        paths.sort_by(|&a, &b| compare_rel_paths_macos_like(a, b));
+        assert_eq!(
+            paths,
+            vec![
+                (RelPath::unix("karafka").unwrap(), false),
+                (RelPath::unix("karafka/config.rb").unwrap(), true),
+                (RelPath::unix("karafka.rb").unwrap(), true),
+            ]
+        );
+    }
+
+    #[perf]
+    fn compare_rel_paths_edge_cases() {
+        // Test with deeper nesting and similar names at multiple levels
+        let paths = vec![
+            (RelPath::unix("a").unwrap(), false),
+            (RelPath::unix("A").unwrap(), false),
+            (RelPath::unix("a.txt").unwrap(), true),
+            (RelPath::unix("A.txt").unwrap(), true),
+            (RelPath::unix("a/b").unwrap(), false),
+            (RelPath::unix("A/B").unwrap(), false),
+            (RelPath::unix("a/b.txt").unwrap(), true),
+            (RelPath::unix("A/B.txt").unwrap(), true),
+            (RelPath::unix("a/b/c.txt").unwrap(), true),
+            (RelPath::unix("A/B/C.txt").unwrap(), true),
+            (RelPath::unix("A/B/b.txt").unwrap(), true),
+            (RelPath::unix("A/B/d.txt").unwrap(), true),
+        ];
+
+        // Test with Mixed mode - case-sensitive, lowercase before uppercase
+        let mut mixed = paths.clone();
+        mixed.sort_by(|&a, &b| compare_rel_paths_mixed(a, b));
+        assert_eq!(
+            mixed,
+            vec![
+                (RelPath::unix("a").unwrap(), false),
+                (RelPath::unix("a/b").unwrap(), false),
+                (RelPath::unix("a/b/c.txt").unwrap(), true),
+                (RelPath::unix("a/b.txt").unwrap(), true),
+                (RelPath::unix("a.txt").unwrap(), true),
+                (RelPath::unix("A").unwrap(), false),
+                (RelPath::unix("A/B").unwrap(), false),
+                (RelPath::unix("A/B/b.txt").unwrap(), true),
+                (RelPath::unix("A/B/C.txt").unwrap(), true),
+                (RelPath::unix("A/B/d.txt").unwrap(), true),
+                (RelPath::unix("A/B.txt").unwrap(), true),
+                (RelPath::unix("A.txt").unwrap(), true),
+            ]
+        );
+
+        // Test with MacosLike mode - case-insensitive, with case-sensitive tiebreaker
+        let mut macos = paths.clone();
+        macos.sort_by(|&a, &b| compare_rel_paths_macos_like(a, b));
+        assert_eq!(
+            macos,
+            vec![
+                (RelPath::unix("A").unwrap(), false),
+                (RelPath::unix("a").unwrap(), false),
+                (RelPath::unix("A/B").unwrap(), false),
+                (RelPath::unix("a/b").unwrap(), false),
+                (RelPath::unix("A/B/b.txt").unwrap(), true),
+                (RelPath::unix("A/B/C.txt").unwrap(), true),
+                (RelPath::unix("a/b/c.txt").unwrap(), true),
+                (RelPath::unix("A/B/d.txt").unwrap(), true),
+                (RelPath::unix("A/B.txt").unwrap(), true),
+                (RelPath::unix("a/b.txt").unwrap(), true),
+                (RelPath::unix("A.txt").unwrap(), true),
+                (RelPath::unix("a.txt").unwrap(), true),
+            ]
+        );
+
+        // Test with DirectoriesFirst mode
+        let mut dirs_first = paths.clone();
+        dirs_first.sort_by(|&a, &b| compare_rel_paths(a, b));
+        assert_eq!(
+            dirs_first,
+            vec![
+                (RelPath::unix("a").unwrap(), false),
+                (RelPath::unix("a/b").unwrap(), false),
+                (RelPath::unix("a/b/c.txt").unwrap(), true),
+                (RelPath::unix("a/b.txt").unwrap(), true),
+                (RelPath::unix("A").unwrap(), false),
+                (RelPath::unix("A/B").unwrap(), false),
+                (RelPath::unix("A/B/b.txt").unwrap(), true),
+                (RelPath::unix("A/B/C.txt").unwrap(), true),
+                (RelPath::unix("A/B/d.txt").unwrap(), true),
+                (RelPath::unix("A/B.txt").unwrap(), true),
+                (RelPath::unix("a.txt").unwrap(), true),
+                (RelPath::unix("A.txt").unwrap(), true),
+            ]
+        );
+    }
+
+    #[perf]
+    fn compare_rel_paths_basename_prefix_scenarios() {
+        // Test various scenarios where one name is a prefix of another
+        let paths = vec![
+            (RelPath::unix("test").unwrap(), false),
+            (RelPath::unix("test_helper").unwrap(), false),
+            (RelPath::unix("test.rs").unwrap(), true),
+            (RelPath::unix("test_helper.rs").unwrap(), true),
+            (RelPath::unix("test/unit.rs").unwrap(), true),
+            (RelPath::unix("test_helper/common.rs").unwrap(), true),
+        ];
+
+        // Mixed mode
+        let mut mixed = paths.clone();
+        mixed.sort_by(|&a, &b| compare_rel_paths_mixed(a, b));
+        assert_eq!(
+            mixed,
+            vec![
+                (RelPath::unix("test").unwrap(), false),
+                (RelPath::unix("test/unit.rs").unwrap(), true),
+                (RelPath::unix("test.rs").unwrap(), true),
+                (RelPath::unix("test_helper").unwrap(), false),
+                (RelPath::unix("test_helper/common.rs").unwrap(), true),
+                (RelPath::unix("test_helper.rs").unwrap(), true),
             ]
         );
     }
