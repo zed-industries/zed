@@ -71,7 +71,7 @@ impl UserMessage {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct AssistantMessage {
     pub chunks: Vec<AssistantMessageChunk>,
 }
@@ -86,9 +86,21 @@ impl AssistantMessage {
                 .join("\n\n")
         )
     }
+
+    pub fn to_markdown_without_thoughts(&self, cx: &App) -> String {
+        self.chunks
+            .iter()
+            .filter_map(|chunk| match chunk {
+                AssistantMessageChunk::Message { block } => {
+                    Some(block.to_markdown(cx).to_string())
+                }
+                AssistantMessageChunk::Thought { .. } => None,
+            })
+            .join("\n\n")
+    }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum AssistantMessageChunk {
     Message { block: ContentBlock },
     Thought { block: ContentBlock },
