@@ -12479,7 +12479,7 @@ impl Editor {
                 for trimmed_range in trimmed_selections {
                     if is_first {
                         is_first = false;
-                    } else {
+                    } else if !is_entire_line {
                         text += "\n";
                     }
                     let mut len = 0;
