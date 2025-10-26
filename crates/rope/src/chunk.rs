@@ -131,6 +131,7 @@ impl Chunk {
 
         #[cold]
         #[inline(never)]
+        #[track_caller]
         fn panic_char_boundary(chunk: &Chunk, offset: usize) {
             if offset > chunk.text.len() {
                 panic!(
