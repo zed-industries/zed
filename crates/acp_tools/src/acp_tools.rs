@@ -259,6 +259,15 @@ impl AcpTools {
         serde_json::to_string_pretty(&messages).ok()
     }
 
+    fn clear_messages(&mut self, cx: &mut Context<Self>) {
+        if let Some(connection) = self.watched_connection.as_mut() {
+            connection.messages.clear();
+            connection.list_state.reset(0);
+            self.expanded.clear();
+            cx.notify();
+        }
+    }
+
     fn render_message(
         &mut self,
         index: usize,
@@ -547,10 +556,16 @@ impl Render for AcpToolsToolbarItemView {
         };
 
         let acp_tools = acp_tools.clone();
+        let has_messages = acp_tools
+            .read(cx)
+            .watched_connection
+            .as_ref()
+            .is_some_and(|connection| !connection.messages.is_empty());
 
         h_flex()
             .gap_2()
-            .child(
+            .child({
+                let acp_tools = acp_tools.clone();
                 IconButton::new(
                     "copy_all_messages",
                     if self.just_copied {
@@ -565,13 +580,7 @@ impl Render for AcpToolsToolbarItemView {
                 } else {
                     "Copy All Messages"
                 }))
-                .disabled(
-                    acp_tools
-                        .read(cx)
-                        .watched_connection
-                        .as_ref()
-                        .is_none_or(|connection| connection.messages.is_empty()),
-                )
+                .disabled(!has_messages)
                 .on_click(cx.listener(move |this, _, _window, cx| {
                     if let Some(content) = acp_tools.read(cx).serialize_observed_messages() {
                         cx.write_to_clipboard(ClipboardItem::new_string(content));
@@ -586,7 +595,18 @@ impl Render for AcpToolsToolbarItemView {
                         })
                         .detach();
                     }
-                })),
+                }))
+            })
+            .child(
+                IconButton::new("clear_messages", IconName::Trash)
+                    .icon_size(IconSize::Small)
+                    .tooltip(Tooltip::text("Clear Messages"))
+                    .disabled(!has_messages)
+                    .on_click(cx.listener(move |_this, _, _window, cx| {
+                        acp_tools.update(cx, |acp_tools, cx| {
+                            acp_tools.clear_messages(cx);
+                        });
+                    })),
             )
             .into_any()
     }
