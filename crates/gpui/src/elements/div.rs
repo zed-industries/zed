@@ -836,7 +836,7 @@ pub trait InteractiveElement: Sized {
     }
 
     /// Capture the given action, before normal action dispatch can fire
-    /// The fluent API equivalent to [`Interactivity::on_scroll_wheel`]
+    /// The fluent API equivalent to [`Interactivity::capture_action`]
     ///
     /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
     fn capture_action<A: Action>(
