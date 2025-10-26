@@ -170,8 +170,7 @@ impl BlameRenderer for GitBlameRenderer {
         cx: &mut App,
     ) -> Option<AnyElement> {
         let commit_time = blame
-            .committer_time
-            .and_then(|t| OffsetDateTime::from_unix_timestamp(t).ok())
+            .committer_offset_date_time()
             .unwrap_or(OffsetDateTime::now_utc());
 
         let sha = blame.sha.to_string().into();
@@ -193,6 +192,14 @@ impl BlameRenderer for GitBlameRenderer {
             OffsetDateTime::now_utc(),
             time_format::TimestampFormat::MediumAbsolute,
         );
+        let absolute_timestamp_with_tz = match commit_time.offset().whole_hours() {
+            0 => absolute_timestamp,
+            _ => format!(
+                "{} ({})",
+                absolute_timestamp,
+                commit_time.offset().to_string()
+            ),
+        };
         let link_color = cx.theme().colors().text_accent;
         let markdown_style = {
             let mut style = hover_markdown_style(window, cx);
@@ -286,7 +293,7 @@ impl BlameRenderer for GitBlameRenderer {
                                     .pt_1()
                                     .border_t_1()
                                     .border_color(cx.theme().colors().border_variant)
-                                    .child(absolute_timestamp)
+                                    .child(absolute_timestamp_with_tz)
                                     .child(
                                         h_flex()
                                             .gap_1()

@@ -183,6 +183,21 @@ impl BlameEntry {
             Ok(time::OffsetDateTime::now_utc())
         }
     }
+
+    pub fn committer_offset_date_time(&self) -> Result<time::OffsetDateTime> {
+        if let (Some(committer_time), Some(committer_tz)) =
+            (self.committer_time, &self.committer_tz)
+        {
+            let format = format_description!("[offset_hour][offset_minute]");
+            let offset = UtcOffset::parse(committer_tz, &format)?;
+            let date_time_utc = OffsetDateTime::from_unix_timestamp(committer_time)?;
+
+            Ok(date_time_utc.to_offset(offset))
+        } else {
+            // Directly return current time in UTC if there's no committer time or timezone
+            Ok(time::OffsetDateTime::now_utc())
+        }
+    }
 }
 
 // parse_git_blame parses the output of `git blame --incremental`, which returns
