@@ -461,11 +461,11 @@ impl TerminalPanel {
         cx.spawn_in(window, async move |panel, cx| {
             let terminal = project
                 .update(cx, |project, cx| match terminal_view {
-                    Some(view) => Task::ready(project.clone_terminal(
+                    Some(view) => project.clone_terminal(
                         &view.read(cx).terminal.clone(),
                         cx,
                         working_directory,
-                    )),
+                    ),
                     None => project.create_terminal_shell(working_directory, cx),
                 })
                 .ok()?
