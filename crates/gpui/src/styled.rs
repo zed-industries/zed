@@ -763,4 +763,70 @@ pub trait Styled: Sized {
         self.style().debug_below = Some(true);
         self
     }
+
+    /// Sets the corner smoothness (0.0 = circle, 0.5 = squircle, 1.0 = square).
+    fn smoothness(mut self, smoothness: f32) -> Self {
+        self.style().smoothness = Some(smoothness.clamp(0.0, 1.0));
+        self
+    }
+
+    /// Sets corner smoothness to 0.1.
+    fn smoothness_0p1(mut self) -> Self {
+        self.style().smoothness = Some(0.1);
+        self
+    }
+
+    /// Sets corner smoothness to 0.2.
+    fn smoothness_0p2(mut self) -> Self {
+        self.style().smoothness = Some(0.2);
+        self
+    }
+
+    /// Sets corner smoothness to 0.3.
+    fn smoothness_0p3(mut self) -> Self {
+        self.style().smoothness = Some(0.3);
+        self
+    }
+
+    /// Sets corner smoothness to 0.4.
+    fn smoothness_0p4(mut self) -> Self {
+        self.style().smoothness = Some(0.4);
+        self
+    }
+
+    /// Sets corner smoothness to 0.5 (squircle).
+    fn smoothness_0p5(mut self) -> Self {
+        self.style().smoothness = Some(0.5);
+        self
+    }
+
+    /// Sets corner smoothness to 0.6.
+    fn smoothness_0p6(mut self) -> Self {
+        self.style().smoothness = Some(0.6);
+        self
+    }
+
+    /// Sets corner smoothness to 0.7.
+    fn smoothness_0p7(mut self) -> Self {
+        self.style().smoothness = Some(0.7);
+        self
+    }
+
+    /// Sets corner smoothness to 0.8.
+    fn smoothness_0p8(mut self) -> Self {
+        self.style().smoothness = Some(0.8);
+        self
+    }
+
+    /// Sets corner smoothness to 0.9.
+    fn smoothness_0p9(mut self) -> Self {
+        self.style().smoothness = Some(0.9);
+        self
+    }
+
+    /// Sets corner smoothness to 1.0 (more rounded).
+    fn smoothness_1(mut self) -> Self {
+        self.style().smoothness = Some(1.0);
+        self
+    }
 }
