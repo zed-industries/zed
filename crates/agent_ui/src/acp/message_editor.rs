@@ -704,7 +704,8 @@ impl MessageEditor {
             let result = editor.update(cx, |editor, cx| {
                 let mut ix = 0;
                 let mut chunks: Vec<acp::ContentBlock> = Vec::new();
-                let text = editor.text(cx);
+                let editor_text = editor.text(cx);
+                let text = editor_text.trim().to_string();
                 editor.display_map.update(cx, |map, cx| {
                     let snapshot = map.snapshot(cx);
                     for (crease_id, crease) in snapshot.crease_snapshot.creases() {
