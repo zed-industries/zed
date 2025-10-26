@@ -751,6 +751,7 @@ pub struct DisplaySnapshot {
     diagnostics_max_severity: DiagnosticSeverity,
     pub(crate) fold_placeholder: FoldPlaceholder,
 }
+
 impl DisplaySnapshot {
     pub fn wrap_snapshot(&self) -> &WrapSnapshot {
         &self.block_snapshot.wrap_snapshot
@@ -1405,6 +1406,14 @@ impl DisplaySnapshot {
             ),
             Bias::Right,
         )
+    }
+}
+
+impl std::ops::Deref for DisplaySnapshot {
+    type Target = BlockSnapshot;
+
+    fn deref(&self) -> &Self::Target {
+        &self.block_snapshot
     }
 }
 
