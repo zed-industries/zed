@@ -38,7 +38,7 @@ use ui::{
     prelude::*,
     scrollbars::{self, GlobalSetting, ScrollbarVisibility},
 };
-use util::ResultExt;
+use util::{ResultExt, maybe};
 use workspace::{
     CloseActiveItem, NewCenterTerminal, NewTerminal, ToolbarItemLocation, Workspace, WorkspaceId,
     delete_unloaded_items,
@@ -1218,27 +1218,29 @@ impl Item for TerminalView {
         workspace_id: Option<WorkspaceId>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Option<Entity<Self>> {
-        let terminal = self
-            .project
-            .update(cx, |project, cx| {
-                let cwd = project
-                    .active_project_directory(cx)
-                    .map(|it| it.to_path_buf());
-                project.clone_terminal(self.terminal(), cx, cwd)
-            })
-            .ok()?
-            .log_err()?;
+    ) -> Task<Option<Entity<Self>>> {
+        Task::ready(maybe!({
+            let terminal = self
+                .project
+                .update(cx, |project, cx| {
+                    let cwd = project
+                        .active_project_directory(cx)
+                        .map(|it| it.to_path_buf());
+                    project.clone_terminal(self.terminal(), cx, cwd)
+                })
+                .ok()?
+                .log_err()?;
 
-        Some(cx.new(|cx| {
-            TerminalView::new(
-                terminal,
-                self.workspace.clone(),
-                workspace_id,
-                self.project.clone(),
-                window,
-                cx,
-            )
+            Some(cx.new(|cx| {
+                TerminalView::new(
+                    terminal,
+                    self.workspace.clone(),
+                    workspace_id,
+                    self.project.clone(),
+                    window,
+                    cx,
+                )
+            }))
         }))
     }
 
