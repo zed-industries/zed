@@ -16,7 +16,7 @@ use text::{Bias, Point};
 use theme::ActiveTheme;
 use ui::prelude::*;
 use util::paths::FILE_ROW_COLUMN_DELIMITER;
-use workspace::ModalView;
+use workspace::{DismissDecision, ModalView};
 
 pub fn init(cx: &mut App) {
     LineIndicatorFormat::register(cx);
@@ -31,7 +31,16 @@ pub struct GoToLine {
     _subscriptions: Vec<Subscription>,
 }
 
-impl ModalView for GoToLine {}
+impl ModalView for GoToLine {
+    fn on_before_dismiss(
+        &mut self,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> DismissDecision {
+        self.prev_scroll_position.take();
+        DismissDecision::Dismiss(true)
+    }
+}
 
 impl Focusable for GoToLine {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
