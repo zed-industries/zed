@@ -43,7 +43,7 @@ use project::{
 use serde_json::{self, json};
 use settings::{
     AllLanguageSettingsContent, IndentGuideBackgroundColoring, IndentGuideColoring,
-    ProjectSettingsContent,
+    ProjectSettingsContent, SmartTabSettingsContent,
 };
 use std::{cell::RefCell, future::Future, rc::Rc, sync::atomic::AtomicBool, time::Instant};
 use std::{
@@ -26857,5 +26857,467 @@ async fn test_end_of_editor_context(cx: &mut TestAppContext) {
     cx.set_state("line1ˇ\nline2");
     cx.update_editor(|e, window, cx| {
         assert!(!e.key_context(window, cx).contains("end_of_input"));
+    });
+}
+
+#[gpui::test]
+async fn test_smart_tab_primitive_actions(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            ..Default::default()
+        },
+        cx,
+    )
+    .await;
+
+    cx.set_state(indoc! {"
+        fn main() {
+            let x = foo(ˇ1, 2);
+        }
+    "});
+
+    cx.update_editor(|editor, window, cx| {
+        editor.move_to_end_of_larger_syntax_node(&MoveToEndOfLargerSyntaxNode, window, cx);
+    });
+
+    cx.assert_editor_state(indoc! {"
+        fn main() {
+            let x = foo(1ˇ, 2);
+        }
+    "});
+
+    cx.update_editor(|editor, window, cx| {
+        editor.move_to_end_of_larger_syntax_node(&MoveToEndOfLargerSyntaxNode, window, cx);
+    });
+
+    cx.assert_editor_state(indoc! {"
+        fn main() {
+            let x = foo(1, 2)ˇ;
+        }
+    "});
+
+    cx.update_editor(|editor, window, cx| {
+        editor.move_to_end_of_larger_syntax_node(&MoveToEndOfLargerSyntaxNode, window, cx);
+    });
+
+    cx.assert_editor_state(indoc! {"
+        fn main() {
+            let x = foo(1, 2);ˇ
+        }
+    "});
+
+    cx.update_editor(|editor, window, cx| {
+        editor.move_to_end_of_larger_syntax_node(&MoveToEndOfLargerSyntaxNode, window, cx);
+    });
+
+    cx.assert_editor_state(indoc! {"
+        fn main() {
+            let x = foo(1, 2);
+        }ˇ
+    "});
+
+    cx.set_state(indoc! {"
+        fn main() {
+            let x = foo(1, 2ˇ);
+        }
+    "});
+
+    cx.update_editor(|editor, window, cx| {
+        editor.move_to_start_of_larger_syntax_node(&MoveToStartOfLargerSyntaxNode, window, cx);
+    });
+
+    cx.assert_editor_state(indoc! {"
+        fn main() {
+            let x = fooˇ(1, 2);
+        }
+    "});
+
+    cx.update_editor(|editor, window, cx| {
+        editor.move_to_start_of_larger_syntax_node(&MoveToStartOfLargerSyntaxNode, window, cx);
+    });
+
+    cx.assert_editor_state(indoc! {"
+        fn main() {
+            let x = ˇfoo(1, 2);
+        }
+    "});
+
+    cx.update_editor(|editor, window, cx| {
+        editor.move_to_start_of_larger_syntax_node(&MoveToStartOfLargerSyntaxNode, window, cx);
+    });
+
+    cx.assert_editor_state(indoc! {"
+        fn main() {
+            ˇlet x = foo(1, 2);
+        }
+    "});
+
+    cx.update_editor(|editor, window, cx| {
+        editor.move_to_start_of_larger_syntax_node(&MoveToStartOfLargerSyntaxNode, window, cx);
+    });
+
+    cx.assert_editor_state(indoc! {"
+        fn main() ˇ{
+            let x = foo(1, 2);
+        }
+    "});
+
+    cx.update_editor(|editor, window, cx| {
+        editor.move_to_start_of_larger_syntax_node(&MoveToStartOfLargerSyntaxNode, window, cx);
+    });
+
+    cx.assert_editor_state(indoc! {"
+        ˇfn main() {
+            let x = foo(1, 2);
+        }
+    "});
+
+    cx.set_state(indoc! {"
+        fn main() {
+            let x = foo(1, 2ˇ);
+            let y = bar(3, 4ˇ);
+        }
+    "});
+
+    cx.update_editor(|editor, window, cx| {
+        editor.move_to_end_of_larger_syntax_node(&MoveToEndOfLargerSyntaxNode, window, cx);
+    });
+
+    cx.assert_editor_state(indoc! {"
+        fn main() {
+            let x = foo(1, 2)ˇ;
+            let y = bar(3, 4)ˇ;
+        }
+    "});
+
+    cx.update_editor(|editor, window, cx| {
+        editor.move_to_end_of_larger_syntax_node(&MoveToEndOfLargerSyntaxNode, window, cx);
+    });
+
+    cx.assert_editor_state(indoc! {"
+        fn main() {
+            let x = foo(1, 2);ˇ
+            let y = bar(3, 4);ˇ
+        }
+    "});
+
+    cx.set_state(indoc! {"
+        fn main() {
+            let x = «foo(1, 2)ˇ»;
+        }
+    "});
+
+    cx.update_editor(|editor, window, cx| {
+        editor.move_to_end_of_larger_syntax_node(&MoveToEndOfLargerSyntaxNode, window, cx);
+    });
+
+    cx.assert_editor_state(indoc! {"
+        fn main() {
+            let x = «foo(1, 2)ˇ»;
+        }
+    "});
+
+    cx.set_state(indoc! {r#"
+        fn main() {
+            let msg = "ˇhello world";
+        }
+    "#});
+
+    cx.update_editor(|editor, window, cx| {
+        editor.move_to_end_of_larger_syntax_node(&MoveToEndOfLargerSyntaxNode, window, cx);
+    });
+
+    cx.assert_editor_state(indoc! {r#"
+        fn main() {
+            let msg = "hello worldˇ";
+        }
+    "#});
+
+    cx.set_state(indoc! {r#"
+        fn main() {
+            let msg = "hello ˇworld";
+        }
+    "#});
+
+    cx.update_editor(|editor, window, cx| {
+        editor.move_to_start_of_larger_syntax_node(&MoveToStartOfLargerSyntaxNode, window, cx);
+    });
+
+    cx.assert_editor_state(indoc! {r#"
+        fn main() {
+            let msg = "ˇhello world";
+        }
+    "#});
+}
+
+#[gpui::test]
+async fn test_smart_tab_navigation(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|settings, cx| {
+            settings.update_user_settings(cx, |settings| {
+                settings.editor.smart_tab = Some(SmartTabSettingsContent {
+                    enabled: Some(true),
+                    supersede_completions: Some(false),
+                    supersede_edit_predictions: Some(false),
+                });
+            });
+        });
+    });
+
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            completion_provider: Some(lsp::CompletionOptions {
+                trigger_characters: Some(vec![".".to_string()]),
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+        cx,
+    )
+    .await;
+
+    cx.set_state(indoc! {"
+        fn main() {
+            ˇ
+            let y = bar();
+        }
+    "});
+
+    cx.update_editor(|editor, window, cx| {
+        editor.tab(&Tab, window, cx);
+    });
+
+    cx.assert_editor_state(indoc! {"
+        fn main() {
+                ˇ
+            let y = bar();
+        }
+    "});
+
+    cx.set_state(indoc! {"
+        fn main() {
+        ˇlet x = foo();
+            let y = bar();
+        }
+    "});
+
+    cx.update_editor(|editor, window, cx| {
+        editor.tab(&Tab, window, cx);
+    });
+
+    cx.assert_editor_state(indoc! {"
+        fn main() {
+            ˇlet x = foo();
+            let y = bar();
+        }
+    "});
+
+    cx.set_state(indoc! {"
+        fn main() {
+            let x = foo(bar(ˇ));
+        }
+    "});
+
+    cx.update_editor(|editor, window, cx| {
+        editor.tab(&Tab, window, cx);
+    });
+
+    cx.assert_editor_state(indoc! {"
+        fn main() {
+            let x = foo(bar()ˇ);
+        }
+    "});
+
+    cx.update_editor(|editor, window, cx| {
+        editor.tab(&Tab, window, cx);
+    });
+
+    cx.assert_editor_state(indoc! {"
+        fn main() {
+            let x = foo(bar())ˇ;
+        }
+    "});
+
+    cx.set_state(indoc! {"
+        fn main() {
+            let x = (ˇfoo);
+        }
+    "});
+
+    cx.update_editor(|editor, window, cx| {
+        editor.backtab(&Backtab, window, cx);
+    });
+
+    cx.assert_editor_state(indoc! {"
+        fn main() {
+            let x = ˇ(foo);
+        }
+    "});
+
+    cx.set_state(indoc! {"
+        fn main() {
+            let x = foo((ˇbar));
+        }
+    "});
+
+    cx.update_editor(|editor, window, cx| {
+        editor.backtab(&Backtab, window, cx);
+    });
+
+    cx.assert_editor_state(indoc! {"
+        fn main() {
+            let x = foo(ˇ(bar));
+        }
+    "});
+
+    cx.update_editor(|editor, window, cx| {
+        editor.backtab(&Backtab, window, cx);
+    });
+
+    cx.assert_editor_state(indoc! {"
+        fn main() {
+            let x = fooˇ((bar));
+        }
+    "});
+
+    cx.update_editor(|editor, window, cx| {
+        editor.backtab(&Backtab, window, cx);
+    });
+
+    cx.assert_editor_state(indoc! {"
+        fn main() {
+            let x = ˇfoo((bar));
+        }
+    "});
+
+    cx.set_state(indoc! {"
+        fn main() {
+            ˇ
+            let x = foo(ˇ);
+        }
+    "});
+
+    cx.update_editor(|editor, window, cx| {
+        editor.tab(&Tab, window, cx);
+    });
+
+    cx.assert_editor_state(indoc! {"
+        fn main() {
+                ˇ
+            let x = foo(    ˇ);
+        }
+    "});
+
+    cx.set_state(indoc! {"
+        fn main() {
+            let x = a.ˇ
+        }
+    "});
+
+    let snippet = Snippet::parse("f($1, $2)$0").unwrap();
+    cx.update_editor(|editor, window, cx| {
+        let ranges = editor
+            .selections
+            .all(&editor.display_snapshot(cx))
+            .iter()
+            .map(|s| s.range())
+            .collect::<Vec<_>>();
+        editor.insert_snippet(&ranges, snippet, window, cx).unwrap();
+    });
+
+    cx.assert_editor_state(indoc! {"
+        fn main() {
+            let x = a.f(«ˇ», )
+        }
+    "});
+
+    cx.update_editor(|editor, window, cx| {
+        editor.tab(&Tab, window, cx);
+    });
+
+    cx.assert_editor_state(indoc! {"
+        fn main() {
+            let x = a.f(, «ˇ»)
+        }
+    "});
+
+    cx.update_editor(|editor, window, cx| {
+        editor.backtab(&Backtab, window, cx);
+    });
+
+    cx.assert_editor_state(indoc! {"
+        fn main() {
+            let x = a.f(«ˇ», )
+        }
+    "});
+
+    cx.set_state(indoc! {"
+        fn main() {
+            «let x = foo(1, 2);ˇ»
+        }
+    "});
+
+    cx.update_editor(|editor, window, cx| {
+        editor.tab(&Tab, window, cx);
+    });
+
+    cx.assert_editor_state(indoc! {"
+        fn main() {
+                «let x = foo(1, 2);ˇ»
+        }
+    "});
+
+    cx.update_editor(|editor, window, cx| {
+        editor.backtab(&Backtab, window, cx);
+    });
+
+    cx.assert_editor_state(indoc! {"
+        fn main() {
+            «let x = foo(1, 2);ˇ»
+        }
+    "});
+
+    cx.update(|_, cx| {
+        cx.update_global::<SettingsStore, _>(|settings, cx| {
+            settings.update_user_settings(cx, |settings| {
+                settings.editor.smart_tab = Some(SmartTabSettingsContent {
+                    enabled: Some(false),
+                    supersede_completions: Some(false),
+                    supersede_edit_predictions: Some(false),
+                });
+            });
+        });
+    });
+
+    cx.set_state(indoc! {"
+        fn main() {
+            let x = foo(ˇ);
+        }
+    "});
+
+    cx.update_editor(|editor, window, cx| {
+        editor.tab(&Tab, window, cx);
+    });
+
+    cx.assert_editor_state(indoc! {"
+        fn main() {
+            let x = foo(    ˇ);
+        }
+    "});
+
+    cx.update(|_, cx| {
+        cx.update_global::<SettingsStore, _>(|settings, cx| {
+            settings.update_user_settings(cx, |settings| {
+                settings.editor.smart_tab = Some(SmartTabSettingsContent {
+                    enabled: Some(true),
+                    supersede_completions: Some(false),
+                    supersede_edit_predictions: Some(false),
+                });
+            });
+        });
     });
 }

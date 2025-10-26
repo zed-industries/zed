@@ -10242,8 +10242,8 @@ impl Editor {
             let has_non_empty_selection = selections.iter().any(|s| !s.is_empty());
 
             if !has_non_empty_selection {
-                // If any cursors do not have whitespace to their left, activate smart tab
-                if !self.all_cursors_in_leading_whitespace(cx) {
+                // If all cursors do not have whitespace to their left, activate smart tab
+                if !self.any_cursor_in_leading_whitespace(cx) {
                     // If no cursor moved, fall through, otherwise return
                     if self.move_cursors_to_syntax_nodes(window, cx, Direction::Next) {
                         return;
@@ -15511,12 +15511,12 @@ impl Editor {
         self.move_cursors_to_syntax_nodes(window, cx, Direction::Next);
     }
 
-    fn all_cursors_in_leading_whitespace(&self, cx: &mut Context<Self>) -> bool {
+    fn any_cursor_in_leading_whitespace(&self, cx: &mut Context<Self>) -> bool {
         let snapshot = self.display_snapshot(cx);
         let buffer_snapshot = self.buffer.read(cx).snapshot(cx);
         let selections = self.selections.all_adjusted(&snapshot);
 
-        selections.iter().all(|selection| {
+        selections.iter().any(|selection| {
             if !selection.is_empty() {
                 return false;
             }
