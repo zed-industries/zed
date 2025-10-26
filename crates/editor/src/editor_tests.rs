@@ -26987,6 +26987,43 @@ async fn test_copy_line_without_trailing_newline(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_multi_selection_copy_with_newline_between_copied_lines(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state("line1\nline2\nline3\nˇ");
+
+    cx.update_editor(|e, window, cx| {
+        e.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_display_ranges([
+                DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 0),
+                DisplayPoint::new(DisplayRow(1), 0)..DisplayPoint::new(DisplayRow(1), 0),
+                DisplayPoint::new(DisplayRow(2), 0)..DisplayPoint::new(DisplayRow(2), 0),
+            ]);
+        });
+    });
+
+    cx.update_editor(|e, window, cx| e.copy(&Copy, window, cx));
+
+    let clipboard_text = cx
+        .read_from_clipboard()
+        .and_then(|item| item.text().as_deref().map(str::to_string));
+
+    assert_eq!(
+        clipboard_text,
+        Some("line1\nline2\nline3\n".to_string()),
+        "Copying multiple lines should include a single newline between lines"
+    );
+
+    cx.set_state("lineA\nˇ");
+
+    cx.update_editor(|e, window, cx| e.paste(&Paste, window, cx));
+
+    cx.assert_editor_state("lineA\nline1\nline2\nline3\nˇ");
+}
+
+#[gpui::test]
 async fn test_end_of_editor_context(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
