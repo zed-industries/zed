@@ -1,5 +1,14 @@
+use core::time::Duration;
+
 use gpui::{App, AppContext, Entity, Styled, Subscription, Task, WeakEntity};
 use settings::Settings;
+use time::{
+    OffsetDateTime,
+    format_description::{
+        BorrowedFormatItem, Component,
+        modifier::{Hour, Minute, Padding, Period, Second},
+    },
+};
 use ui::{
     BorrowAppContext, Button, ButtonCommon, Clickable, Context, FluentBuilder, IntoElement,
     LabelSize, ParentElement, Render, Tooltip, Window, div,
@@ -26,9 +35,22 @@ impl Clock {
         // });
 
         self.update_time = cx.spawn(async move |clock, cx| {
-            cx.background_executor()
-                .timer(std::time::Duration::from_secs(60))
-                .await;
+            let now = time::OffsetDateTime::now_utc();
+
+            // compute the start of the next minute
+            let next_minute = (now + time::Duration::minutes(1))
+                .replace_second(0)
+                .unwrap() // should not fail, 0 is in the expected range
+                .replace_millisecond(0)
+                .unwrap();
+
+            // compute how long to wait, fall back to full minute
+            let wait: Duration = (next_minute - now)
+                .try_into()
+                .log_err()
+                .unwrap_or(Duration::from_secs(60));
+
+            cx.background_executor().timer(wait).await;
             cx.update(|cx| {
                 cx.notify(clock.entity_id());
             })
@@ -38,19 +60,15 @@ impl Clock {
 }
 
 impl Render for Clock {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let clock = ClockSettings::get_global(cx);
         if !clock.show {
             return div().hidden();
         }
 
-        let time = time::OffsetDateTime::now_local()
+        let time = OffsetDateTime::now_local()
             .log_err()
-            .unwrap_or_else(|| time::OffsetDateTime::now_utc());
-        use time::format_description::{
-            BorrowedFormatItem, Component,
-            modifier::{Hour, Minute, Padding, Period, Second},
-        };
+            .unwrap_or_else(|| OffsetDateTime::now_utc());
 
         let mut hour = Hour::default();
         hour.is_12_hour_clock = clock.use_12_hour_clock;
@@ -71,7 +89,10 @@ impl Render for Clock {
             BorrowedFormatItem::Component(Component::Minute(Minute::default())),
             end,
         ];
-        let text = time.format(&format[..]).unwrap();
+        let text = time
+            .format(&format[..])
+            .log_err()
+            .unwrap_or_else(|| "00:00".to_owned());
 
         // struct CurrentTime(time::OffsetDateTime);
         // cx.observe_window_activation(window, |clock, window, cx| {
