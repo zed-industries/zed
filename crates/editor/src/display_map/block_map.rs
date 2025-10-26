@@ -69,6 +69,8 @@ impl From<CustomBlockId> for ElementId {
     }
 }
 
+/// A zero-indexed point in a text buffer consisting of a row and column
+/// adjusted for inserted blocks, wrapped rows, tabs, folds and inlays.
 #[derive(Copy, Clone, Debug, Default, Eq, Ord, PartialOrd, PartialEq)]
 pub struct BlockPoint(pub Point);
 

@@ -288,9 +288,9 @@ impl Rope {
         #[cfg(test)]
         const NUM_CHUNKS: usize = 4;
 
-        // We accomodate for NUM_CHUNKS chunks of size MAX_BASE
+        // We accommodate for NUM_CHUNKS chunks of size MAX_BASE
         // but given the chunk boundary can land within a character
-        // we need to accomodate for the worst case where every chunk gets cut short by up to 4 bytes
+        // we need to accommodate for the worst case where every chunk gets cut short by up to 4 bytes
         if text.len() > NUM_CHUNKS * chunk::MAX_BASE - NUM_CHUNKS * 4 {
             return self.push_large(text);
         }

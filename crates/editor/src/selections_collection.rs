@@ -185,27 +185,6 @@ impl SelectionsCollection {
         selections
     }
 
-    /// Returns all of the selections, adjusted to take into account the selection line_mode. Uses a provided snapshot to resolve selections.
-    pub fn all_adjusted_with_snapshot(
-        &self,
-        snapshot: &MultiBufferSnapshot,
-    ) -> Vec<Selection<Point>> {
-        let mut selections = self
-            .disjoint
-            .iter()
-            .chain(self.pending_anchor())
-            .map(|anchor| anchor.map(|anchor| anchor.to_point(&snapshot)))
-            .collect::<Vec<_>>();
-        if self.line_mode {
-            for selection in &mut selections {
-                let new_range = snapshot.expand_to_line(selection.range());
-                selection.start = new_range.start;
-                selection.end = new_range.end;
-            }
-        }
-        selections
-    }
-
     /// Returns the newest selection, adjusted to take into account the selection line_mode
     pub fn newest_adjusted(&self, snapshot: &DisplaySnapshot) -> Selection<Point> {
         let mut selection = self.newest::<Point>(&snapshot);
@@ -1025,6 +1004,7 @@ fn resolve_selections_point<'a>(
 }
 
 /// Panics if passed selections are not in order
+/// Resolves the anchors to display positions
 fn resolve_selections_display<'a>(
     selections: impl 'a + IntoIterator<Item = &'a Selection<Anchor>>,
     map: &'a DisplaySnapshot,
@@ -1056,6 +1036,10 @@ fn resolve_selections_display<'a>(
     coalesce_selections(selections)
 }
 
+// todo(lw): What does this even resolve?? https://github.com/zed-industries/zed/pull/20092
+// This weirdly enough resolves `D -> Point -> DisplayPoint -> Point -> D`
+// what exactly happems there? That transform is not idempotent somehow
+// presumably this messes with the `diff_base_anchor`?
 /// Panics if passed selections are not in order
 pub(crate) fn resolve_selections<'a, D, I>(
     selections: I,
