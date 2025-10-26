@@ -8,7 +8,7 @@ pub use settings::{
     BottomDockLayout, PaneSplitDirectionHorizontal, PaneSplitDirectionVertical,
     RestoreOnStartupBehavior,
 };
-use settings::{InactiveOpacity, Settings};
+use settings::{ClockLocation, InactiveOpacity, Settings};
 
 pub struct WorkspaceSettings {
     pub active_pane_modifiers: ActivePanelModifiers,
@@ -124,7 +124,19 @@ impl Settings for TabBarSettings {
 #[derive(Deserialize)]
 pub struct ClockSettings {
     pub show: bool,
+    pub position: ClockLocation,
     pub use_12_hour_clock: bool,
+}
+
+impl Settings for ClockSettings {
+    fn from_settings(content: &settings::SettingsContent) -> Self {
+        let clock = content.clock.clone().unwrap();
+        ClockSettings {
+            show: clock.show.unwrap(),
+            position: clock.position.unwrap(),
+            use_12_hour_clock: clock.use_12_hour_clock.unwrap(),
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -133,22 +145,16 @@ pub struct StatusBarSettings {
     pub active_language_button: bool,
     pub cursor_position_button: bool,
     pub line_endings_button: bool,
-    pub clock: ClockSettings,
 }
 
 impl Settings for StatusBarSettings {
     fn from_settings(content: &settings::SettingsContent) -> Self {
         let status_bar = content.status_bar.clone().unwrap();
-        let clock = status_bar.clock.clone().unwrap_or_default();
         StatusBarSettings {
             show: status_bar.show.unwrap(),
             active_language_button: status_bar.active_language_button.unwrap(),
             cursor_position_button: status_bar.cursor_position_button.unwrap(),
             line_endings_button: status_bar.line_endings_button.unwrap(),
-            clock: ClockSettings {
-                show: clock.show.unwrap_or(false),
-                use_12_hour_clock: clock.use_12_hour_clock.unwrap_or(false),
-            },
         }
     }
 }

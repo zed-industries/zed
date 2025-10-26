@@ -2777,6 +2777,52 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     metadata: None,
                     files: USER,
                 }),
+                SettingsPageItem::SectionHeader("Clock"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Show Clock",
+                    description: "Whether to show the clock.",
+                    field: Box::new(SettingField {
+                        json_path: Some("clock.show"),
+                        pick: |settings_content| {
+                            settings_content.clock.as_ref()?.show.as_ref()
+                        },
+                        write: |settings_content, value| {
+                            settings_content.clock.get_or_insert_default().show = value;
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Clock Position",
+                    description: "Where to display the clock.",
+                    field: Box::new(SettingField {
+                        json_path: Some("clock.position"),
+                        pick: |settings_content| {
+                            settings_content.clock.as_ref()?.position.as_ref()
+                        },
+                        write: |settings_content, value| {
+                            settings_content.clock.get_or_insert_default().position = value;
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Use 12 hour clock",
+                    description: "Whether to display hours using a 12 or 24-hour clock.",
+                    field: Box::new(SettingField {
+                        json_path: Some("clock.use_12_hour_clock"),
+                        pick: |settings_content| {
+                            settings_content.clock.as_ref()?.use_12_hour_clock.as_ref()
+                        },
+                        write: |settings_content, value| {
+                            settings_content.clock.get_or_insert_default().use_12_hour_clock = value;
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
                 SettingsPageItem::SectionHeader("Title Bar"),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Show Branch Icon",

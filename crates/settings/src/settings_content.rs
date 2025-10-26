@@ -61,6 +61,7 @@ pub struct SettingsContent {
     pub tabs: Option<ItemSettingsContent>,
     pub tab_bar: Option<TabBarSettingsContent>,
     pub status_bar: Option<StatusBarSettingsContent>,
+    pub clock: Option<ClockSettingsContent>,
 
     pub preview_tabs: Option<PreviewTabsSettingsContent>,
 

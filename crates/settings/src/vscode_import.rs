@@ -205,6 +205,7 @@ impl VsCodeSettings {
             repl: None,
             server_url: None,
             session: None,
+            clock: None,
             status_bar: self.status_bar_settings_content(),
             tab_bar: self.tab_bar_settings_content(),
             tabs: self.item_settings_content(),
@@ -636,7 +637,6 @@ impl VsCodeSettings {
             active_language_button: None,
             cursor_position_button: None,
             line_endings_button: None,
-            clock: None,
         })
     }
 

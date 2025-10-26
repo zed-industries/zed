@@ -367,6 +367,29 @@ pub struct TabBarSettingsContent {
     pub show_tab_bar_buttons: Option<bool>,
 }
 
+#[derive(
+    Copy,
+    Clone,
+    PartialEq,
+    Eq,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    Debug,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum ClockLocation {
+    /// Show in the TitleBar.
+    TitleBar,
+    /// Show in the StatusBar.
+    #[default]
+    StatusBar,
+}
+
 #[skip_serializing_none]
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug, PartialEq, Eq)]
 pub struct ClockSettingsContent {
@@ -374,6 +397,10 @@ pub struct ClockSettingsContent {
     ///
     /// Default: false
     pub show: Option<bool>,
+    /// Where to display the clock.
+    ///
+    /// Default: StatusBar
+    pub position: Option<ClockLocation>,
     /// Whether to display hours using a 12 or 24-hour clock.
     ///
     /// Default: false
@@ -400,8 +427,6 @@ pub struct StatusBarSettingsContent {
     ///
     /// Default: false
     pub line_endings_button: Option<bool>,
-    /// Settings for the clock in the status bar.
-    pub clock: Option<ClockSettingsContent>,
 }
 
 #[derive(

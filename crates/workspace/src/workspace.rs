@@ -121,8 +121,8 @@ use util::{
 };
 use uuid::Uuid;
 pub use workspace_settings::{
-    AutosaveSetting, BottomDockLayout, RestoreOnStartupBehavior, StatusBarSettings, TabBarSettings,
-    WorkspaceSettings,
+    AutosaveSetting, BottomDockLayout, ClockSettings, RestoreOnStartupBehavior, StatusBarSettings,
+    TabBarSettings, WorkspaceSettings,
 };
 use zed_actions::{Spawn, feedback::FileBugReport};
 
@@ -533,6 +533,7 @@ pub fn init_settings(cx: &mut App) {
     PreviewTabsSettings::register(cx);
     TabBarSettings::register(cx);
     StatusBarSettings::register(cx);
+    ClockSettings::register(cx);
 }
 
 fn prompt_and_open_paths(app_state: Arc<AppState>, options: PathPromptOptions, cx: &mut App) {
