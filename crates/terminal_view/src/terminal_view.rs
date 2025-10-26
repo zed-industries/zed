@@ -38,7 +38,7 @@ use ui::{
     prelude::*,
     scrollbars::{self, GlobalSetting, ScrollbarVisibility},
 };
-use util::{ResultExt, maybe};
+use util::ResultExt;
 use workspace::{
     CloseActiveItem, NewCenterTerminal, NewTerminal, ToolbarItemLocation, Workspace, WorkspaceId,
     delete_unloaded_items,
@@ -1219,29 +1219,30 @@ impl Item for TerminalView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Option<Entity<Self>>> {
-        Task::ready(maybe!({
-            let terminal = self
-                .project
-                .update(cx, |project, cx| {
-                    let cwd = project
-                        .active_project_directory(cx)
-                        .map(|it| it.to_path_buf());
-                    project.clone_terminal(self.terminal(), cx, cwd)
-                })
-                .ok()?
-                .log_err()?;
+        let Some(terminal_task) = self
+            .project
+            .update(cx, |project, cx| {
+                let cwd = project
+                    .active_project_directory(cx)
+                    .map(|it| it.to_path_buf());
+                project.clone_terminal(self.terminal(), cx, cwd)
+            })
+            .ok()
+        else {
+            return Task::ready(None);
+        };
 
-            Some(cx.new(|cx| {
-                TerminalView::new(
-                    terminal,
-                    self.workspace.clone(),
-                    workspace_id,
-                    self.project.clone(),
-                    window,
-                    cx,
-                )
-            }))
-        }))
+        let workspace = self.workspace.clone();
+        let project = self.project.clone();
+        cx.spawn_in(window, async move |_, cx| {
+            let terminal = terminal_task.await.log_err()?;
+            cx.update(|window, cx| {
+                cx.new(|cx| {
+                    TerminalView::new(terminal, workspace, workspace_id, project, window, cx)
+                })
+            })
+            .ok()
+        })
     }
 
     fn is_dirty(&self, cx: &gpui::App) -> bool {
