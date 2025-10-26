@@ -16170,6 +16170,25 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
+name = "status_clock"
+version = "0.1.0"
+dependencies = [
+ "gpui",
+ "indoc",
+ "language",
+ "menu",
+ "project",
+ "rope",
+ "settings",
+ "theme",
+ "time",
+ "ui",
+ "util",
+ "workspace",
+ "zed_actions",
+]
+
+[[package]]
 name = "stop-words"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -21222,6 +21241,7 @@ dependencies = [
  "smol",
  "snippet_provider",
  "snippets_ui",
+ "status_clock",
  "supermaven",
  "svg_preview",
  "sysinfo 0.37.2",
