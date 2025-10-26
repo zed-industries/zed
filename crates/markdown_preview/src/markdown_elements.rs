@@ -64,6 +64,8 @@ pub struct ParsedMarkdownListItem {
     pub depth: u16,
     pub item_type: ParsedMarkdownListItemType,
     pub content: Vec<ParsedMarkdownElement>,
+    /// Whether we can expect nested list items inside of this items `content`.
+    pub nested: bool,
 }
 
 #[derive(Debug)]
@@ -106,7 +108,6 @@ pub struct ParsedMarkdownTable {
     pub source_range: Range<usize>,
     pub header: Vec<ParsedMarkdownTableRow>,
     pub body: Vec<ParsedMarkdownTableRow>,
-    pub column_alignments: Vec<ParsedMarkdownTableAlignment>,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -126,6 +127,7 @@ pub struct ParsedMarkdownTableColumn {
     pub row_span: usize,
     pub is_header: bool,
     pub children: MarkdownParagraph,
+    pub alignment: ParsedMarkdownTableAlignment,
 }
 
 #[derive(Debug)]

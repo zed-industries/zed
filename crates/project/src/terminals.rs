@@ -410,14 +410,19 @@ impl Project {
         terminal: &Entity<Terminal>,
         cx: &mut Context<'_, Project>,
         cwd: Option<PathBuf>,
-    ) -> Result<Entity<Terminal>> {
+    ) -> Task<Result<Entity<Terminal>>> {
+        // We cannot clone the task's terminal, as it will effectively re-spawn the task, which might not be desirable.
+        // For now, create a new shell instead.
+        if terminal.read(cx).task().is_some() {
+            return self.create_terminal_shell(cwd, cx);
+        }
         let local_path = if self.is_via_remote_server() {
             None
         } else {
             cwd
         };
 
-        terminal
+        let new_terminal = terminal
             .read(cx)
             .clone_builder(cx, local_path)
             .map(|builder| {
@@ -442,7 +447,8 @@ impl Project {
                 .detach();
 
                 terminal_handle
-            })
+            });
+        Task::ready(new_terminal)
     }
 
     pub fn terminal_settings<'a>(

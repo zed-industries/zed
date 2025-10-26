@@ -4,6 +4,8 @@ pub mod proxy;
 pub mod remote_client;
 mod transport;
 
+#[cfg(target_os = "windows")]
+pub use remote_client::OpenWslPath;
 pub use remote_client::{
     ConnectionIdentifier, ConnectionState, RemoteClient, RemoteClientDelegate, RemoteClientEvent,
     RemoteConnection, RemoteConnectionOptions, RemotePlatform, connect,
