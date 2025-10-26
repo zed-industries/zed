@@ -120,6 +120,87 @@ pub enum WaylandSurfaceState {
     LayerShell(WaylandLayerSurfaceState),
 }
 
+impl WaylandSurfaceState {
+    fn new(
+        surface: &wl_surface::WlSurface,
+        globals: &Globals,
+        params: &WindowParams,
+        parent: Option<XdgToplevel>,
+    ) -> anyhow::Result<Self> {
+        // For layer_shell windows, create a layer surface instead of an xdg surface
+        if let WindowKind::LayerShell(options) = &params.kind {
+            let Some(layer_shell) = globals.layer_shell.as_ref() else {
+                anyhow::bail!("Compositor doesn't support zwlr_layer_shell_v1");
+            };
+
+            let layer_surface = layer_shell.get_layer_surface(
+                &surface,
+                None,
+                options.layer.into(),
+                options.namespace.clone(),
+                &globals.qh,
+                surface.id(),
+            );
+
+            let width = params.bounds.size.width.0;
+            let height = params.bounds.size.height.0;
+            layer_surface.set_size(width as u32, height as u32);
+
+            layer_surface.set_anchor(options.anchor.into());
+            layer_surface.set_keyboard_interactivity(options.keyboard_interactivity.into());
+
+            if let Some(margin) = options.margin {
+                layer_surface.set_margin(
+                    margin.0.0 as i32,
+                    margin.1.0 as i32,
+                    margin.2.0 as i32,
+                    margin.3.0 as i32,
+                )
+            }
+
+            if let Some(exclusive_zone) = options.exclusive_zone {
+                layer_surface.set_exclusive_zone(exclusive_zone.0 as i32);
+            }
+
+            if let Some(exclusive_edge) = options.exclusive_edge {
+                layer_surface.set_exclusive_edge(exclusive_edge.into());
+            }
+
+            return Ok(WaylandSurfaceState::LayerShell(WaylandLayerSurfaceState {
+                layer_surface,
+            }));
+        }
+
+        // All other WindowKinds result in a regular xdg surface
+        let xdg_surface = globals
+            .wm_base
+            .get_xdg_surface(&surface, &globals.qh, surface.id());
+
+        let toplevel = xdg_surface.get_toplevel(&globals.qh, surface.id());
+        if params.kind == WindowKind::Floating {
+            toplevel.set_parent(parent.as_ref());
+        }
+
+        if let Some(size) = params.window_min_size {
+            toplevel.set_min_size(size.width.0 as i32, size.height.0 as i32);
+        }
+
+        // Attempt to set up window decorations based on the requested configuration
+        let decoration = globals
+            .decoration_manager
+            .as_ref()
+            .map(|decoration_manager| {
+                decoration_manager.get_toplevel_decoration(&toplevel, &globals.qh, surface.id())
+            });
+
+        Ok(WaylandSurfaceState::Xdg(WaylandXdgSurfaceState {
+            xdg_surface,
+            toplevel,
+            decoration,
+        }))
+    }
+}
+
 pub struct WaylandXdgSurfaceState {
     xdg_surface: xdg_surface::XdgSurface,
     toplevel: xdg_toplevel::XdgToplevel,
@@ -354,86 +435,7 @@ impl WaylandWindow {
         parent: Option<XdgToplevel>,
     ) -> anyhow::Result<(Self, ObjectId)> {
         let surface = globals.compositor.create_surface(&globals.qh, ());
-
-        let surface_state = match (&params.kind, globals.layer_shell.as_ref()) {
-            // By matching on layer_shell here, we can fall back to creating a normal xdg_surface
-            // if the user requested a LayerShell but the compositor doesn't support the protocol.
-            (WindowKind::LayerShell(options), Some(layer_shell)) => {
-                let layer_surface = layer_shell.get_layer_surface(
-                    &surface,
-                    None,
-                    options.layer.into(),
-                    options.namespace.clone(),
-                    &globals.qh,
-                    surface.id(),
-                );
-
-                let width = params.bounds.size.width.0;
-                let height = params.bounds.size.height.0;
-                layer_surface.set_size(width as u32, height as u32);
-
-                layer_surface.set_anchor(options.anchor.into());
-                layer_surface.set_keyboard_interactivity(options.keyboard_interactivity.into());
-
-                if let Some(margin) = options.margin {
-                    layer_surface.set_margin(
-                        margin.0.0 as i32,
-                        margin.1.0 as i32,
-                        margin.2.0 as i32,
-                        margin.3.0 as i32,
-                    )
-                }
-
-                if let Some(exclusive_zone) = options.exclusive_zone {
-                    layer_surface.set_exclusive_zone(exclusive_zone.0 as i32);
-                }
-
-                if let Some(exclusive_edge) = options.exclusive_edge {
-                    layer_surface.set_exclusive_edge(exclusive_edge.into());
-                }
-
-                WaylandSurfaceState::LayerShell(WaylandLayerSurfaceState { layer_surface })
-            }
-            _ => {
-                if matches!(params.kind, WindowKind::LayerShell(_)) {
-                    log::warn!(
-                        "Compositor doesn't support layer_shell, falling back to xdg_surface"
-                    );
-                }
-
-                let xdg_surface =
-                    globals
-                        .wm_base
-                        .get_xdg_surface(&surface, &globals.qh, surface.id());
-
-                let toplevel = xdg_surface.get_toplevel(&globals.qh, surface.id());
-                if params.kind == WindowKind::Floating {
-                    toplevel.set_parent(parent.as_ref());
-                }
-
-                if let Some(size) = params.window_min_size {
-                    toplevel.set_min_size(size.width.0 as i32, size.height.0 as i32);
-                }
-
-                // Attempt to set up window decorations based on the requested configuration
-                let decoration = globals
-                    .decoration_manager
-                    .as_ref()
-                    .map(|decoration_manager| {
-                        decoration_manager.get_toplevel_decoration(
-                            &toplevel,
-                            &globals.qh,
-                            surface.id(),
-                        )
-                    });
-
-                WaylandSurfaceState::Xdg(WaylandXdgSurfaceState {
-                    xdg_surface,
-                    toplevel,
-                    decoration,
-                })
-            }
-        };
+        let surface_state = WaylandSurfaceState::new(&surface, &globals, &params, parent)?;
 
         if let Some(fractional_scale_manager) = globals.fractional_scale_manager.as_ref() {
             fractional_scale_manager.get_fractional_scale(&surface, &globals.qh, surface.id());
