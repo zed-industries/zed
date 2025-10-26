@@ -368,7 +368,7 @@ pub fn initialize_workspace(
             if let Some((crash_server, message)) = crashes::CRASH_HANDLER
                 .get()
                 .zip(bincode::serialize(&specs).ok())
-                && let Err(err) = crash_server.send_message(3, message)
+                && let Err(err) = smol::block_on(crash_server.lock()).send_message(3, message)
             {
                 log::warn!(
                     "Failed to store active gpu info for crash reporting: {}",

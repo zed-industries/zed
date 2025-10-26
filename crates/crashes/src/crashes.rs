@@ -1,9 +1,9 @@
 use crash_handler::{CrashEventResult, CrashHandler};
-use log::info;
+use log::{error, info, warn};
 use minidumper::{Client, LoopAction, MinidumpBinary};
 use release_channel::{RELEASE_CHANNEL, ReleaseChannel};
 use serde::{Deserialize, Serialize};
-use smol::process::Command;
+use smol::{lock::Mutex, process::Command};
 
 #[cfg(target_os = "macos")]
 use std::sync::atomic::AtomicU32;
@@ -23,7 +23,7 @@ use std::{
 };
 
 // set once the crash handler has initialized and the client has connected to it
-pub static CRASH_HANDLER: OnceLock<Arc<Client>> = OnceLock::new();
+pub static CRASH_HANDLER: OnceLock<Mutex<Client>> = OnceLock::new();
 // set when the first minidump request is made to avoid generating duplicate crash reports
 pub static REQUESTED_MINIDUMP: AtomicBool = AtomicBool::new(false);
 const CRASH_HANDLER_PING_TIMEOUT: Duration = Duration::from_secs(60);
@@ -31,6 +31,43 @@ const CRASH_HANDLER_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[cfg(target_os = "macos")]
 static PANIC_THREAD_ID: AtomicU32 = AtomicU32::new(0);
+
+pub async fn spawn_sidecar(crash_init: InitCrashHandler) -> Client {
+    let exe = env::current_exe().expect("unable to find ourselves");
+    let zed_pid = process::id();
+    // TODO: we should be able to get away with using 1 crash-handler process per machine,
+    // but for now we append the PID of the current process which makes it unique per remote
+    // server or interactive zed instance. This solves an issue where occasionally the socket
+    // used by the crash handler isn't destroyed correctly which causes it to stay on the file
+    // system and block further attempts to initialize crash handlers with that socket path.
+    let socket_name = paths::temp_dir().join(format!("zed-crash-handler-{zed_pid}"));
+    let crash_handler = Command::new(exe)
+        .arg("--crash-handler")
+        .arg(&socket_name)
+        .spawn()
+        .expect("unable to spawn server process");
+
+    let server_pid = crash_handler.id();
+    info!("spawned crash handler process with pid: {server_pid}");
+
+    let mut elapsed = Duration::ZERO;
+    let retry_frequency = Duration::from_millis(100);
+    let mut maybe_client = None;
+    while maybe_client.is_none() {
+        if let Ok(client) = Client::with_name(socket_name.as_path()) {
+            maybe_client = Some(client);
+            info!("connected to crash handler process after {elapsed:?}");
+            break;
+        }
+        elapsed += retry_frequency;
+        smol::Timer::after(retry_frequency).await;
+    }
+    let client = maybe_client.unwrap();
+    client
+        .send_message(1, serde_json::to_vec(&crash_init).unwrap())
+        .unwrap();
+    client
+}
 
 pub async fn init(crash_init: InitCrashHandler) {
     let gen_var = match env::var("ZED_GENERATE_MINIDUMPS") {
@@ -60,49 +97,24 @@ pub async fn init(crash_init: InitCrashHandler) {
         }
     }
 
-    let exe = env::current_exe().expect("unable to find ourselves");
-    let zed_pid = process::id();
-    // TODO: we should be able to get away with using 1 crash-handler process per machine,
-    // but for now we append the PID of the current process which makes it unique per remote
-    // server or interactive zed instance. This solves an issue where occasionally the socket
-    // used by the crash handler isn't destroyed correctly which causes it to stay on the file
-    // system and block further attempts to initialize crash handlers with that socket path.
-    let socket_name = paths::temp_dir().join(format!("zed-crash-handler-{zed_pid}"));
-    let _crash_handler = Command::new(exe)
-        .arg("--crash-handler")
-        .arg(&socket_name)
-        .spawn()
-        .expect("unable to spawn server process");
-    #[cfg(target_os = "linux")]
-    let server_pid = _crash_handler.id();
-    info!("spawning crash handler process");
+    CRASH_HANDLER
+        .set(Mutex::new(spawn_sidecar(crash_init.clone()).await))
+        .ok();
 
-    let mut elapsed = Duration::ZERO;
-    let retry_frequency = Duration::from_millis(100);
-    let mut maybe_client = None;
-    while maybe_client.is_none() {
-        if let Ok(client) = Client::with_name(socket_name.as_path()) {
-            maybe_client = Some(client);
-            info!("connected to crash handler process after {elapsed:?}");
-            break;
-        }
-        elapsed += retry_frequency;
-        smol::Timer::after(retry_frequency).await;
-    }
-    let client = maybe_client.unwrap();
-    client
-        .send_message(1, serde_json::to_vec(&crash_init).unwrap())
-        .unwrap();
-
-    let client = Arc::new(client);
     let handler = CrashHandler::attach(unsafe {
-        let client = client.clone();
         crash_handler::make_crash_event(move |crash_context: &crash_handler::CrashContext| {
             // only request a minidump once
             let res = if REQUESTED_MINIDUMP
                 .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
                 .is_ok()
             {
+                let Some(mutex) = CRASH_HANDLER.get() else {
+                    return false.into();
+                };
+                let Some(client) = mutex.try_lock() else {
+                    return false.into();
+                };
+
                 #[cfg(target_os = "macos")]
                 suspend_all_other_threads();
 
@@ -123,12 +135,20 @@ pub async fn init(crash_init: InitCrashHandler) {
     {
         handler.set_ptracer(Some(server_pid));
     }
-    CRASH_HANDLER.set(client.clone()).ok();
     std::mem::forget(handler);
     info!("crash handler registered");
 
+    // This loop keeps the crash handler process alive by repeatedly messaging it, if the
+    // ping ever fails we assume the crash handler has somehow been killed and attempt to
+    // restart it.
     loop {
-        client.ping().ok();
+        if let Some(client) = CRASH_HANDLER.get() {
+            let mut client = client.lock().await;
+            if client.ping().is_err() {
+                warn!("failed to ping crash handler process, relaunching it now.");
+                *client = spawn_sidecar(crash_init.clone()).await;
+            }
+        }
         smol::Timer::after(Duration::from_secs(10)).await;
     }
 }
@@ -222,7 +242,7 @@ impl minidumper::ServerHandler for CrashServer {
         let gpus = match system_specs::read_gpu_info_from_sys_class_drm() {
             Ok(gpus) => gpus,
             Err(err) => {
-                log::warn!("Failed to collect GPU information for crash report: {err}");
+                warn!("Failed to collect GPU information for crash report: {err}");
                 vec![]
             }
         };
@@ -307,14 +327,14 @@ pub fn panic_hook(info: &PanicHookInfo) {
     // if it's still not there just write panic info and no minidump
     let retry_frequency = Duration::from_millis(100);
     for _ in 0..5 {
-        if let Some(client) = CRASH_HANDLER.get() {
+        if let Some(client) = CRASH_HANDLER.get().and_then(|c| c.try_lock()) {
             client
                 .send_message(
                     2,
                     serde_json::to_vec(&CrashPanic { message, span }).unwrap(),
                 )
                 .ok();
-            log::error!("triggering a crash to generate a minidump...");
+            error!("triggering a crash to generate a minidump...");
 
             #[cfg(target_os = "macos")]
             PANIC_THREAD_ID.store(
@@ -338,7 +358,7 @@ pub fn panic_hook(info: &PanicHookInfo) {
 
 pub fn crash_server(socket: &Path) {
     let Ok(mut server) = minidumper::Server::with_name(socket) else {
-        log::info!("Couldn't create socket, there may already be a running crash server");
+        info!("couldn't create socket, there may already be a running crash server");
         return;
     };
 
