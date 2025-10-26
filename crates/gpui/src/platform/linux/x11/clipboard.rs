@@ -62,7 +62,6 @@ x11rb::atom_manager! {
         CLIPBOARD_MANAGER,
         SAVE_TARGETS,
         TARGETS,
-        ATOM,
         INCR,
 
         UTF8_STRING,
@@ -305,7 +304,7 @@ impl Inner {
                     None
                 }
                 Ok(ClipboardData { bytes, format }) => {
-                    if format == self.atoms.ATOM {
+                    if format == AtomEnum::ATOM {
                         let available_formats = Self::parse_formats(&bytes);
                         formats
                             .iter()
@@ -639,7 +638,7 @@ impl Inner {
                 event.window,
                 event.atom,
                 if target_format == self.atoms.TARGETS {
-                    self.atoms.ATOM
+                    AtomEnum::ATOM
                 } else {
                     target_format
                 },
@@ -703,8 +702,7 @@ impl Inner {
                     PropMode::REPLACE,
                     event.requestor,
                     event.property,
-                    // TODO: change to `AtomEnum::ATOM`
-                    self.atoms.ATOM,
+                    AtomEnum::ATOM,
                     &targets,
                 )
                 .map_err(into_unknown)?;
