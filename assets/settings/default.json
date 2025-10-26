@@ -488,7 +488,7 @@
   // Smart tab related settings
   "smart_tab": {
     // Whether to enable the smart tab feature.
-    "enabled": true,
+    "enabled": false,
     // Whether to supersede accepting completions for smart tab.
     "supersede_completions": false,
     // Whether to supersede accepting edit predictions for smart tab.
