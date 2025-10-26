@@ -186,6 +186,118 @@ Since v0.196.0, on Linux, if the key that you type doesn't produce an ASCII char
 
 We do not yet move shortcuts around to ensure that all the built-in shortcuts can be typed on every layout, so if there are some ASCII characters that cannot be typed, and your keyboard layout has different ASCII characters on the same keys as would be needed to type them, you may need to add custom key bindings to make this work. We do intend to fix this at some point, and help is very much appreciated!
 
+## Smart Tab
+
+Smart Tab provides context-aware navigation of your code
+using the Tab and Shift-Tab keys by taking advantage of syntax information using Tree-sitter. Smart Tab modifies the behavior of Tab and Shift-Tab in the following ways:
+- Tab:
+  - If only whitespace is to the left of the cursor, inserts a tab as usual
+  - Otherwise, moves the cursor to the end of the parent Tree-sitter syntax node
+
+- Shift-Tab:
+  - Moves the cursor to the start of the parent Tree-sitter syntax node
+  - If no suitable node is found, performs a normal outdent
+
+When the cursor has an active selection, Tab and Shift-Tab behave as normal indent and outdent operations. Smart Tab also respects snippet tabstops, autocomplete suggestions, and edit predictions by default.
+
+
+### Enabling Smart Tab
+
+Smart Tab is disabled by default. To enable it, add the following to your settings:
+
+```json [settings]
+{
+  "smart_tab": {
+    "enabled": true
+  }
+}
+```
+
+### Advanced configuration
+
+You can configure Smart Tab to supersede autocomplete and edit predictions:
+
+```json [settings]
+{
+  "smart_tab": {
+    "enabled": true,
+    "supersede_completions": true,      // Tab navigates instead of accepting completions
+    "supersede_edit_predictions": true  // Tab navigates instead of accepting edit predictions
+  }
+}
+```
+
+### Standalone actions
+
+Smart Tab functionality is powered by two standalone actions that you can bind to custom keys:
+
+- `editor::MoveToEndOfLargerSyntaxNode` - Move cursor to the end of the parent syntax node
+- `editor::MoveToStartOfLargerSyntaxNode` - Move cursor to the start of the parent syntax node
+
+Example custom keybindings:
+
+```json [keymap]
+[
+  {
+    "context": "Editor",
+    "bindings": {
+      "ctrl-]": "editor::MoveToEndOfLargerSyntaxNode",
+      "ctrl-[": "editor::MoveToStartOfLargerSyntaxNode"
+    }
+  }
+]
+```
+
+### Example usage
+
+Consider this Rust code with the cursor at `|`:
+
+```rust
+fn example() {
+    let result = calculate(1, 2|);
+}
+```
+
+Pressing Tab will move the cursor to the end of the function call:
+
+```rust
+fn example() {
+    let result = calculate(1, 2)|;
+}
+```
+
+Pressing Tab again moves to the end of the statement:
+
+```rust
+fn example() {
+    let result = calculate(1, 2);|
+}
+```
+
+Pressing Shift-Tab from inside a string navigates to the beginning of the string:
+
+```rust
+fn example() {
+    let msg = "hello wo|rld";
+}
+```
+
+After Shift-Tab:
+
+```rust
+fn example() {
+    let msg = "|hello world";
+}
+```
+
+Pressing Tab moves to the end of the string:
+
+```rust
+fn example() {
+    let msg = "hello world|";
+}
+```
+
 ## Tips and tricks
 
 ### Disabling a binding
