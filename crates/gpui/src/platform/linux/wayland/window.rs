@@ -258,6 +258,8 @@ impl WaylandSurfaceState {
                 toplevel,
                 decoration: _decoration,
             }) => {
+                // The role object (toplevel) must always be destroyed before the xdg_surface.
+                // See https://wayland.app/protocols/xdg-shell#xdg_surface:request:destroy
                 toplevel.destroy();
                 xdg_surface.destroy();
             }
@@ -391,16 +393,29 @@ impl Drop for WaylandWindow {
         let client = state.client.clone();
 
         state.renderer.destroy();
-        if let Some(decoration) = &state.surface_state.decoration() {
-            decoration.destroy();
-        }
+
+        // Destroy blur first, this has no dependencies.
         if let Some(blur) = &state.blur {
             blur.release();
         }
+
+        // Decorations must be destroyed before the xdg state.
+        // See https://wayland.app/protocols/xdg-decoration-unstable-v1#zxdg_toplevel_decoration_v1
+        if let Some(decoration) = &state.surface_state.decoration() {
+            decoration.destroy();
+        }
+
+        // Surface state might contain xdg_toplevel/xdg_surface which can be destroyed now that
+        // decorations are gone. layer_surface has no dependencies.
         state.surface_state.destroy();
+
+        // Viewport must be destroyed before the wl_surface.
+        // See https://wayland.app/protocols/viewporter#wp_viewport
         if let Some(viewport) = &state.viewport {
             viewport.destroy();
         }
+
+        // The wl_surface itself should always be destroyed last.
         state.surface.destroy();
 
         let state_ptr = self.0.clone();
