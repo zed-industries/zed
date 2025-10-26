@@ -567,6 +567,10 @@ impl Item for ProjectSearchView {
             .update(cx, |editor, cx| editor.reload(project, window, cx))
     }
 
+    fn can_split(&self) -> bool {
+        true
+    }
+
     fn clone_on_split(
         &self,
         _workspace_id: Option<WorkspaceId>,
