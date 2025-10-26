@@ -94,8 +94,22 @@ pub fn match_fixed_path_set(
     max_results: usize,
     path_style: PathStyle,
 ) -> Vec<PathMatch> {
-    let lowercase_query = query.to_lowercase().chars().collect::<Vec<_>>();
-    let query = query.chars().collect::<Vec<_>>();
+    // Check if query contains spaces (word-based search)
+    let has_spaces = query.contains(' ');
+    let query_words: Vec<&str> = if has_spaces {
+        query.split_whitespace().collect()
+    } else {
+        vec![]
+    };
+
+    let query_without_spaces = if has_spaces {
+        query.chars().filter(|c| !c.is_whitespace()).collect::<String>()
+    } else {
+        query.to_string()
+    };
+
+    let lowercase_query = query_without_spaces.to_lowercase().chars().collect::<Vec<_>>();
+    let query = query_without_spaces.chars().collect::<Vec<_>>();
     let query_char_bag = CharBag::from(&lowercase_query[..]);
 
     let mut matcher = Matcher::new(&query, &lowercase_query, query_char_bag, smart_case, true);
@@ -122,7 +136,7 @@ pub fn match_fixed_path_set(
         ),
     };
 
-    matcher.match_candidates(
+    matcher.match_candidates_with_words(
         &path_prefix_chars,
         &lowercase_prefix,
         candidates.into_iter(),
@@ -137,6 +151,7 @@ pub fn match_fixed_path_set(
             path_prefix: path_prefix.clone(),
             distance_to_relative_ancestor: usize::MAX,
         },
+        &query_words,
     );
     util::truncate_to_bottom_n_sorted_by(&mut results, max_results, &|a, b| b.cmp(a));
     results
@@ -158,7 +173,22 @@ pub async fn match_path_sets<'a, Set: PathMatchCandidateSet<'a>>(
 
     let path_style = candidate_sets[0].path_style();
 
-    let query = query
+    // Check if query contains spaces (word-based search)
+    let has_spaces = query.contains(' ');
+    let query_words: Vec<String> = if has_spaces {
+        query.split_whitespace().map(|s| s.to_string()).collect()
+    } else {
+        vec![]
+    };
+
+    // For word-based queries, concatenate words for char bag but keep words separate for matching
+    let query_for_processing = if has_spaces {
+        query.chars().filter(|c| !c.is_whitespace()).collect::<String>()
+    } else {
+        query.to_string()
+    };
+
+    let query = query_for_processing
         .chars()
         .map(|char| {
             if path_style.is_windows() && char == '\\' {
@@ -177,6 +207,7 @@ pub async fn match_path_sets<'a, Set: PathMatchCandidateSet<'a>>(
     let query = &query;
     let lowercase_query = &lowercase_query;
     let query_char_bag = CharBag::from_iter(lowercase_query.iter().copied());
+    let query_words = &query_words;
 
     let num_cpus = executor.num_cpus().min(path_count);
     let segment_size = path_count.div_ceil(num_cpus);
@@ -187,6 +218,7 @@ pub async fn match_path_sets<'a, Set: PathMatchCandidateSet<'a>>(
     executor
         .scoped(|scope| {
             for (segment_idx, results) in segment_results.iter_mut().enumerate() {
+                let query_words_refs: Vec<&str> = query_words.iter().map(|s| s.as_str()).collect();
                 scope.spawn(async move {
                     let segment_start = segment_idx * segment_size;
                     let segment_end = segment_start + segment_size;
@@ -219,7 +251,7 @@ pub async fn match_path_sets<'a, Set: PathMatchCandidateSet<'a>>(
                                 .iter()
                                 .map(|c| c.to_ascii_lowercase())
                                 .collect::<Vec<_>>();
-                            matcher.match_candidates(
+                            matcher.match_candidates_with_words(
                                 &prefix,
                                 &lowercase_prefix,
                                 candidates,
@@ -242,6 +274,7 @@ pub async fn match_path_sets<'a, Set: PathMatchCandidateSet<'a>>(
                                         },
                                     ),
                                 },
+                                &query_words_refs,
                             );
                         }
                         if tree_end >= segment_end {
