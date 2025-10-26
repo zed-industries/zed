@@ -812,7 +812,6 @@ impl SettingsPageItem {
             }
             SettingsPageItem::SubPageLink(sub_page_link) => v_flex()
                 .group("setting-item")
-                .debug_bg_red()
                 .px_8()
                 .child(
                     h_flex()
