@@ -1274,7 +1274,6 @@ fn fs_poly_sprite(input: PolySpriteVarying) -> @location(0) vec4<f32> {
 
     let sprite = b_poly_sprites[input.sprite_id];
 
-    // Use squircle SDF if smoothness > 0, otherwise use circular SDF
     var distance: f32;
     if (sprite.smoothness > 0.0) {
         distance = squircle_sdf(input.position.xy, sprite.bounds, sprite.corner_radii, sprite.smoothness);

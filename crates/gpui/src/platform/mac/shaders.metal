@@ -712,7 +712,6 @@ fragment float4 polychrome_sprite_fragment(
   float4 sample =
       atlas_texture.sample(atlas_texture_sampler, input.tile_position);
 
-  // Use squircle SDF if smoothness > 0, otherwise use circular SDF
   float distance;
   if (sprite.smoothness > 0.0) {
     distance = squircle_sdf(input.position.xy, sprite.bounds, sprite.corner_radii, sprite.smoothness);
