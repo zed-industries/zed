@@ -1213,6 +1213,10 @@ impl Item for TerminalView {
         workspace::item::ItemBufferKind::Singleton
     }
 
+    fn can_split(&self) -> bool {
+        true
+    }
+
     fn clone_on_split(
         &self,
         workspace_id: Option<WorkspaceId>,
