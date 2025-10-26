@@ -703,8 +703,7 @@ impl Inner {
                     PropMode::REPLACE,
                     event.requestor,
                     event.property,
-                    // TODO: change to `AtomEnum::ATOM`
-                    self.atoms.ATOM,
+                    AtomEnum::ATOM,
                     &targets,
                 )
                 .map_err(into_unknown)?;
