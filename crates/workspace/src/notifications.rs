@@ -109,7 +109,7 @@ impl Workspace {
                     let task = cx.spawn({
                         let id = id.clone();
                         async move |this, cx| {
-                            cx.background_executor().timer(Duration::from_secs(5)).await;
+                            gpui::Timer::after(Duration::from_secs(5)).await;
                             let _ = this.update(cx, |workspace, cx| {
                                 workspace.dismiss_notification(&id, cx);
                             });
