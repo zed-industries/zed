@@ -51,7 +51,7 @@ impl Render for SquircleDemo {
                     .font_weight(FontWeight::BOLD)
                     .child("Squircle Corner Rendering"),
                 div().flex().gap_4().children([
-                    example_card("Circular", ".smoothness(0.0)", 0.0, rgb(0x3b82f6)),
+                    example_card("Circular", ".smoothness_0()", 0.0, rgb(0x3b82f6)),
                     example_card("Subtle", ".smoothness_0p3()", 0.3, rgb(0x06b6d4)),
                     example_card("Squircle", ".smoothness_0p5()", 0.5, rgb(0x8b5cf6)),
                     example_card("Rounded", ".smoothness_0p7()", 0.7, rgb(0xec4899)),

@@ -770,6 +770,12 @@ pub trait Styled: Sized {
         self
     }
 
+    /// Sets corner smoothness to 0.0 (circular).
+    fn smoothness_0(mut self) -> Self {
+        self.style().smoothness = Some(0.0);
+        self
+    }
+
     /// Sets corner smoothness to 0.1.
     fn smoothness_0p1(mut self) -> Self {
         self.style().smoothness = Some(0.1);
