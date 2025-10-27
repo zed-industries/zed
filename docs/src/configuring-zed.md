@@ -21,6 +21,28 @@ Although most projects will only need one settings file at the root, you can add
 
 The syntax for configuration files is a super-set of JSON that allows `//` comments.
 
+### Per-release channel overrides
+
+Zed reads the same `settings.json` across all release channels (Stable, Preview or Nightly). However, you can scope overrides to a specific channel by adding top-level `stable`, `preview`, `nightly` or `dev` objects. They are merged into the base configuration with settings from these keys taking precedence upon launching the specified build. For example:
+
+```json [settings]
+{
+  "theme": "sunset",
+  "vim_mode": false,
+  "nightly": {
+    "theme": "cave-light",
+    "vim_mode": true
+  },
+  "preview": {
+    "theme": "zed-dark"
+  }
+}
+```
+
+With this configuration, Stable keeps all base preferences, Preview switches to `zed-dark`, and Nightly enables Vim mode with a different theme.
+
+Changing settings via the UI will always apply the change across all channels.
+
 ## Default settings
 
 You can find the default settings for your current Zed by running {#action zed::OpenDefaultSettings} from the command palette.
