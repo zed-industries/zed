@@ -2,12 +2,17 @@ use gh_workflow::*;
 
 use crate::tasks::workflows::vars;
 
+const BASH_SHELL: &str = "bash -euxo pipefail {0}";
+
 pub fn checkout_repo() -> Step<Use> {
     named::uses(
         "actions",
         "checkout",
         "11bd71901bbe5b1630ceea73d27597364c9af683", // v4
     )
+    // prevent checkout action from running `git clean -ffdx` which
+    // would delete the target directory
+    .add_with(("clean", false))
 }
 
 pub fn setup_pnpm() -> Step<Use> {
@@ -53,12 +58,8 @@ pub fn clean_target_dir() -> Step<Run> {
     named::run("script/clear-target-dir-if-larger-than 100")
 }
 
-pub mod bundling {
-    use super::*;
-
-    pub fn bundle_mac() -> Step<Run> {
-        named::run("./script/bundle-mac")
-    }
+pub fn script(name: &str) -> Step<Run> {
+    Step::new(name).run(name).shell(BASH_SHELL)
 }
 
 pub mod danger {
@@ -153,9 +154,7 @@ mod named {
     }
 
     pub(super) fn run(script: &str) -> Step<Run> {
-        Step::new(function_name(1))
-            .run(script)
-            .shell("bash -euxo pipefail {0}")
+        Step::new(function_name(1)).run(script).shell(BASH_SHELL);
     }
 
     fn function_name(i: usize) -> String {

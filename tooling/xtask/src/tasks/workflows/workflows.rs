@@ -31,6 +31,10 @@ pub fn danger() -> Workflow {
 }
 
 pub fn run_bundling() -> Workflow {
+    let condition = Expression::new(
+        "(github.event.action == 'labeled' && github.event.label.name == 'run-bundling') || (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'run-bundling'))",
+    );
+
     Workflow::default()
         .name("Bundle macOS")
         .on(Event::default().pull_request(
@@ -42,26 +46,140 @@ pub fn run_bundling() -> Workflow {
             ))
             .cancel_in_progress(true),
         )
+        .add_job("bundle-mac", bundle_mac(condition.clone()))
         .add_job(
-            "bundle-mac",
-            Job::default()
-                .cond(Expression::new(
-                    "(github.event.action == 'labeled' && github.event.label.name == 'run-bundling') || (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'run-bundling'))",
-                ))
-                .runs_on(runners::MAC_DEFAULT)
-                .timeout_minutes(120u32)
-                .add_env(("MACOS_CERTIFICATE", vars::MACOS_CERTIFICATE))
-                .add_env(("MACOS_CERTIFICATE_PASSWORD", vars::MACOS_CERTIFICATE_PASSWORD))
-                .add_env(("APPLE_NOTARIZATION_KEY", vars::APPLE_NOTARIZATION_KEY))
-                .add_env(("APPLE_NOTARIZATION_KEY_ID", vars::APPLE_NOTARIZATION_KEY_ID))
-                .add_env(("APPLE_NOTARIZATION_ISSUER_ID", vars::APPLE_NOTARIZATION_ISSUER_ID))
-                .add_step(steps::setup_node())
-                .add_step(steps::setup_sentry())
-                .add_step(steps::clean_target_dir())
-                .add_step(steps::bundling::bundle_mac())
-                .add_step(steps::upload_artifact("Zed_${{ github.event.pull_request.head.sha || github.sha }}-aarch64.dmg", "target/aarch64-apple-darwin/release/Zed.dmg"))
-                .add_step(steps::upload_artifact( "Zed_${{ github.event.pull_request.head.sha || github.sha }}-x86_64.dmg",  "target/x86_64-apple-darwin/release/Zed.dmg"))
+            "bundle-linux-x86_64",
+            bundle_linux(condition.clone(), runners::Arch::X86_64),
         )
+        .add_job(
+            "bundle-linux-aarch64",
+            bundle_linux(condition.clone(), runners::Arch::AARCH64),
+        )
+        .add_job("bundle-windows", bundle_windows(condition.clone()))
+}
+
+fn bundle_mac(condition: Expression) -> Job {
+    Job::default()
+        .cond(condition.clone())
+        .runs_on(runners::MAC_DEFAULT)
+        .timeout_minutes(120u32)
+        .add_env(("MACOS_CERTIFICATE", vars::MACOS_CERTIFICATE))
+        .add_env((
+            "MACOS_CERTIFICATE_PASSWORD",
+            vars::MACOS_CERTIFICATE_PASSWORD,
+        ))
+        .add_env(("APPLE_NOTARIZATION_KEY", vars::APPLE_NOTARIZATION_KEY))
+        .add_env(("APPLE_NOTARIZATION_KEY_ID", vars::APPLE_NOTARIZATION_KEY_ID))
+        .add_env((
+            "APPLE_NOTARIZATION_ISSUER_ID",
+            vars::APPLE_NOTARIZATION_ISSUER_ID,
+        ))
+        .add_step(steps::checkout_repo())
+        .add_step(steps::setup_node())
+        .add_step(steps::setup_sentry())
+        .add_step(steps::clean_target_dir())
+        .add_step(steps::script("./script/bundle-mac"))
+        .add_step(steps::upload_artifact(
+            "Zed_${{ github.event.pull_request.head.sha || github.sha }}-aarch64.dmg",
+            "target/aarch64-apple-darwin/release/Zed.dmg",
+        ))
+        .add_step(steps::upload_artifact(
+            "Zed_${{ github.event.pull_request.head.sha || github.sha }}-x86_64.dmg",
+            "target/x86_64-apple-darwin/release/Zed.dmg",
+        ))
+}
+
+fn bundle_linux(condition: Expression, arch: runners::Arch) -> Job {
+    let sha = "${{ github.event.pull_request.head.sha || github.sha }}";
+    let artifact_name = format!("zed-{}-{}.tar.gz", sha, arch.triple());
+    let remote_server_artifact_name = format!("zed-remote-server-{}-{}.tar.gz", sha, arch.triple());
+    let mut job = Job::default()
+        .cond(condition)
+        .runs_on(arch.linux_runner())
+        .add_step(steps::checkout_repo())
+        .add_step(steps::setup_sentry())
+        .add_step(steps::script("./script/linux"));
+    // todo(ci) can we do this on arm too?
+    if arch == runners::Arch::X86_64 {
+        job = job.add_step(steps::script("./script/install-mold"));
+    }
+    job.add_step(steps::script("./script/bundle-linux"))
+        .add_step(steps::upload_artifact(
+            &artifact_name,
+            "target/release/zed-*.tar.gz",
+        ))
+        .add_step(steps::upload_artifact(
+            &remote_server_artifact_name,
+            "target/release/zed-remote-server-*.tar.gz",
+        ))
+}
+
+fn bundle_windows(condition: Expression) -> Job {
+    Job::default()
+        .cond(condition.clone())
+        .runs_on(runners::WINDOWS_DEFAULT)
+        .timeout_minutes(120u32)
+        .add_env(("AZURE_TENANT_ID", vars::AZURE_SIGNING_TENANT_ID))
+        .add_env(("AZURE_CLIENT_ID", vars::AZURE_SIGNING_CLIENT_ID))
+        .add_env(("AZURE_CLIENT_SECRET", vars::AZURE_SIGNING_CLIENT_SECRET))
+        .add_env(("ACCOUNT_NAME", vars::AZURE_SIGNING_ACCOUNT_NAME))
+        .add_env(("CERT_PROFILE_NAME", vars::AZURE_SIGNING_CERT_PROFILE_NAME))
+        .add_env(("ENDPOINT", vars::AZURE_SIGNING_ENDPOINT))
+        .add_env(("FILE_DIGEST", "SHA256"))
+        .add_env(("TIMESTAMP_DIGEST", "SHA256"))
+        .add_env(("TIMESTAMP_SERVER", "http://timestamp.acs.microsoft.com"))
+        .add_step(steps::checkout_repo().with(("clean", "false")))
+        .add_step(steps::setup_sentry())
+        .add_step(Step::new("build_zed_installer").working_directory())
+
+    // env:
+    //   AZURE_TENANT_ID: ${{ secrets.AZURE_SIGNING_TENANT_ID }}
+    //   AZURE_CLIENT_ID: ${{ secrets.AZURE_SIGNING_CLIENT_ID }}
+    //   AZURE_CLIENT_SECRET: ${{ secrets.AZURE_SIGNING_CLIENT_SECRET }}
+    //   ACCOUNT_NAME: ${{ vars.AZURE_SIGNING_ACCOUNT_NAME }}
+    //   CERT_PROFILE_NAME: ${{ vars.AZURE_SIGNING_CERT_PROFILE_NAME }}
+    //   ENDPOINT: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+    //   FILE_DIGEST: SHA256
+    //   TIMESTAMP_DIGEST: SHA256
+    //   TIMESTAMP_SERVER: "http://timestamp.acs.microsoft.com"
+    // steps:
+    //   - name: Checkout repo
+    //     uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+    //     with:
+    //       clean: false
+
+    //   - name: Setup Sentry CLI
+    //     uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b #v2
+    //     with:
+    //       token: ${{ SECRETS.SENTRY_AUTH_TOKEN }}
+
+    //   - name: Determine version and release channel
+    //     working-directory: ${{ env.ZED_WORKSPACE }}
+    //     if: ${{ startsWith(github.ref, 'refs/tags/v') }}
+    //     run: |
+    //       # This exports RELEASE_CHANNEL into env (GITHUB_ENV)
+    //       script/determine-release-channel.ps1
+
+    //   - name: Build Zed installer
+    //     working-directory: ${{ env.ZED_WORKSPACE }}
+    //     run: script/bundle-windows.ps1
+
+    //   - name: Upload installer (x86_64) to Workflow - zed (run-bundling)
+    //     uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+    //     if: contains(github.event.pull_request.labels.*.name, 'run-bundling')
+    //     with:
+    //       name: Zed_${{ github.event.pull_request.head.sha || github.sha }}-x86_64.exe
+    //       path: ${{ env.SETUP_PATH }}
+
+    //   - name: Upload Artifacts to release
+    //     uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844 # v1
+    //     if: ${{ !(contains(github.event.pull_request.labels.*.name, 'run-bundling')) }}
+    //     with:
+    //       draft: true
+    //       prerelease: ${{ env.RELEASE_CHANNEL == 'preview' }}
+    //       files: ${{ env.SETUP_PATH }}
+    //     env:
+    //       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 }
 
 /// Generates the nix.yml workflow
