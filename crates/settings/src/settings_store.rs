@@ -675,26 +675,6 @@ impl SettingsStore {
         return (Some(settings), result);
     }
 
-    fn handle_potential_file_error<R>(
-        &mut self,
-        file: SettingsFile,
-        result: Result<R>,
-    ) -> Result<R> {
-        if let Err(err) = result.as_ref() {
-            let message = err.to_string();
-            self.file_errors.insert(
-                file,
-                SettingsParseResult {
-                    parse_status: ParseStatus::Failed { error: message },
-                    migration_status: MigrationStatus::NotNeeded,
-                },
-            );
-        } else {
-            self.file_errors.remove(&file);
-        }
-        return result;
-    }
-
     pub fn error_for_file(&self, file: SettingsFile) -> Option<SettingsParseResult> {
         self.file_errors
             .get(&file)
@@ -1232,7 +1212,7 @@ impl SettingsParseResult {
         }
     }
 
-    /// Returns true if there parsing or migration failed, as well as if migration was required
+    /// Returns true if there were any errors migrating and parsing the settings content or if migration was required but there were no errors
     pub fn requires_user_action(&self) -> bool {
         matches!(self.parse_status, ParseStatus::Failed { .. })
             || matches!(
