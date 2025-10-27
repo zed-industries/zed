@@ -20917,7 +20917,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.210.1"
+version = "0.210.2"
 dependencies = [
  "acp_tools",
  "activity_indicator",
