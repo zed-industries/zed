@@ -1,3 +1,4 @@
+use std::mem;
 use std::sync::Arc;
 
 use editor::Editor;
@@ -16,8 +17,7 @@ use crate::{OpenFollowingPreview, OpenPreview, OpenPreviewToTheSide};
 pub struct SvgPreviewView {
     focus_handle: FocusHandle,
     buffer: Option<Entity<Buffer>>,
-    current_svg: Option<Arc<RenderImage>>,
-    error: Option<SharedString>,
+    current_svg: Option<Result<Arc<RenderImage>, SharedString>>,
     _refresh: Task<()>,
     _buffer_subscription: Option<Subscription>,
     _workspace_subscription: Option<Subscription>,
@@ -61,7 +61,6 @@ impl SvgPreviewView {
             let mut this = Self {
                 focus_handle: cx.focus_handle(),
                 buffer,
-                error: None,
                 current_svg: None,
                 _buffer_subscription: subscription,
                 _workspace_subscription: workspace_subscription,
@@ -98,6 +97,8 @@ impl SvgPreviewView {
                             this.render_image(window, cx);
                             cx.notify();
                         }
+                    } else {
+                        this.set_current(None, window, cx);
                     }
                 }
             },
@@ -119,19 +120,24 @@ impl SvgPreviewView {
         self._refresh = cx.spawn_in(window, async move |this, cx| {
             let result = background_task.await;
 
-            this.update_in(cx, |view, window, cx| match result {
-                Ok(image) => {
-                    if let Some(image) = view.current_svg.take() {
-                        window.drop_image(image).ok();
-                    }
-                    view.current_svg = Some(image);
-                    view.error = None;
-                    cx.notify();
-                }
-                Err(e) => view.error = Some(format!("{}", e).into()),
+            this.update_in(cx, |view, window, cx| {
+                let current = result.map_err(|e| e.to_string().into());
+                view.set_current(Some(current), window, cx);
             })
             .ok();
         });
+    }
+
+    fn set_current(
+        &mut self,
+        image: Option<Result<Arc<RenderImage>, SharedString>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(Ok(image)) = mem::replace(&mut self.current_svg, image) {
+            window.drop_image(image).ok();
+        }
+        cx.notify();
     }
 
     fn find_existing_preview_item_idx(
@@ -288,9 +294,9 @@ impl Render for SvgPreviewView {
             .flex()
             .justify_center()
             .items_center()
-            .map(|this| {
-                if let Some(content) = self.current_svg.clone() {
-                    this.child(img(content).max_w_full().max_h_full().with_fallback(|| {
+            .map(|this| match self.current_svg.clone() {
+                Some(Ok(image)) => {
+                    this.child(img(image).max_w_full().max_h_full().with_fallback(|| {
                         h_flex()
                             .p_4()
                             .gap_2()
@@ -298,9 +304,9 @@ impl Render for SvgPreviewView {
                             .child("Failed to load SVG image")
                             .into_any_element()
                     }))
-                } else {
-                    this.child(div().p_4().child("No SVG file selected").into_any_element())
                 }
+                Some(Err(e)) => this.child(div().p_4().child(e).into_any_element()),
+                None => this.child(div().p_4().child("No SVG file selected")),
             })
     }
 }
