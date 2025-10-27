@@ -75,6 +75,7 @@ impl KeyBinding {
                 focus_handle: Some(focus),
             } => window
                 .highest_precedence_binding_for_action_in(action.as_ref(), focus)
+                .or_else(|| window.highest_precedence_binding_for_action(action.as_ref()))
                 .is_some(),
             _ => false,
         }

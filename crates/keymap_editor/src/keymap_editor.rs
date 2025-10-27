@@ -42,7 +42,7 @@ use workspace::{
 };
 
 pub use ui_components::*;
-use zed_actions::{OpenKeymap, OpenKeymapWithFilter};
+use zed_actions::{ChangeKeybinding, OpenKeymap};
 
 use crate::{
     persistence::KEYBINDING_EDITORS,
@@ -81,7 +81,7 @@ pub fn init(cx: &mut App) {
     let keymap_event_channel = KeymapEventChannel::new();
     cx.set_global(keymap_event_channel);
 
-    fn common(filter: String, cx: &mut App) {
+    fn common(filter: Option<String>, cx: &mut App) {
         workspace::with_active_or_new_workspace(cx, move |workspace, window, cx| {
             workspace
                 .with_local_workspace(window, cx, move |workspace, window, cx| {
@@ -107,22 +107,24 @@ pub fn init(cx: &mut App) {
                         keymap_editor
                     };
 
-                    keymap_editor.update(cx, |editor, cx| {
-                        editor.filter_editor.update(cx, |editor, cx| {
-                            editor.clear(window, cx);
-                            editor.insert(&filter, window, cx);
-                        });
-                        if !editor.has_binding_for(&filter) {
-                            open_binding_modal_after_loading(cx)
-                        }
-                    })
+                    if let Some(filter) = filter {
+                        keymap_editor.update(cx, |editor, cx| {
+                            editor.filter_editor.update(cx, |editor, cx| {
+                                editor.clear(window, cx);
+                                editor.insert(&filter, window, cx);
+                            });
+                            if !editor.has_binding_for(&filter) {
+                                open_binding_modal_after_loading(cx)
+                            }
+                        })
+                    }
                 })
                 .detach();
         })
     }
 
-    cx.on_action(|_: &OpenKeymap, cx| common(String::new(), cx));
-    cx.on_action(|action: &OpenKeymapWithFilter, cx| common(action.filter.clone(), cx));
+    cx.on_action(|_: &OpenKeymap, cx| common(None, cx));
+    cx.on_action(|action: &ChangeKeybinding, cx| common(Some(action.action.clone()), cx));
 
     register_serializable_item::<KeymapEditor>(cx);
 }

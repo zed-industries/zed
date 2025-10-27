@@ -25,10 +25,7 @@ use settings::Settings;
 use ui::{HighlightedLabel, KeyBinding, ListItem, ListItemSpacing, prelude::*};
 use util::ResultExt;
 use workspace::{ModalView, Workspace, WorkspaceSettings};
-use zed_actions::{
-    OpenZedUrl,
-    command_palette::{AddKeybinding, ChangeKeybinding, Toggle},
-};
+use zed_actions::{ChangeKeybinding, OpenZedUrl, command_palette::Toggle};
 
 pub fn init(cx: &mut App) {
     client::init_settings(cx);
@@ -136,20 +133,19 @@ impl CommandPalette {
             .update(cx, |picker, cx| picker.set_query(query, window, cx))
     }
 
-    fn handle_add_keybinding(
+    fn handle_open_keymap(
         &mut self,
-        _: &AddKeybinding,
+        _: &ChangeKeybinding,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let picker = &self.picker.read(cx).delegate;
-        let action_ix = picker.matches[picker.selected_ix].candidate_id;
-        let selected_command = &picker.commands[action_ix];
+        let selected_command = picker.selected_command();
 
         let action_name = selected_command.action.name();
         let open_keymap_action = move || {
-            Box::new(zed_actions::OpenKeymapWithFilter {
-                filter: action_name.to_string(),
+            Box::new(zed_actions::ChangeKeybinding {
+                action: action_name.to_string(),
             })
         };
 
@@ -169,9 +165,9 @@ impl Render for CommandPalette {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .key_context("CommandPalette")
-            .on_action(cx.listener(|this, action, window, cx| {
-                this.handle_add_keybinding(action, window, cx)
-            }))
+            .on_action(
+                cx.listener(|this, action, window, cx| this.handle_open_keymap(action, window, cx)),
+            )
             .w(rems(34.))
             .child(self.picker.clone())
     }
@@ -286,6 +282,15 @@ impl CommandPaletteDelegate {
         } else {
             HashMap::new()
         }
+    }
+
+    fn selected_command(&self) -> &Command {
+        let action_ix = self
+            .matches
+            .get(self.selected_ix)
+            .map(|m| m.candidate_id)
+            .unwrap_or(self.selected_ix);
+        &self.commands[action_ix]
     }
 }
 
@@ -437,7 +442,19 @@ impl PickerDelegate for CommandPaletteDelegate {
             .log_err();
     }
 
-    fn confirm(&mut self, _: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
+    fn confirm(&mut self, secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
+        if secondary {
+            let selected_command = self.selected_command();
+            let action_name = selected_command.action.name();
+            let open_keymap = Box::new(zed_actions::ChangeKeybinding {
+                action: action_name.to_string(),
+            });
+            // window.focus(&self.previous_focus_handle);
+            window.dispatch_action(open_keymap, cx);
+            self.dismissed(window, cx);
+            return;
+        }
+
         if self.matches.is_empty() {
             self.dismissed(window, cx);
             return;
@@ -503,37 +520,31 @@ impl PickerDelegate for CommandPaletteDelegate {
         window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<AnyElement> {
-        let action_ix = self.matches[self.selected_ix].candidate_id;
-        let selected_command = &self.commands[action_ix];
+        let selected_command = self.selected_command();
         let keybind =
             KeyBinding::for_action_in(&*selected_command.action, &self.previous_focus_handle, cx);
 
-        let action_name = selected_command.action.name();
-        let open_keymap = move || {
-            Box::new(zed_actions::OpenKeymapWithFilter {
-                filter: action_name.to_string(),
-            })
-        };
-
         let focus_handle = &self.previous_focus_handle;
-
         let keybinding_buttons = if keybind.has_binding(window) {
             Button::new("change", "Change Keybinding…")
                 .key_binding(
-                    KeyBinding::for_action_in(&ChangeKeybinding, focus_handle, cx)
+                    KeyBinding::for_action_in(&menu::SecondaryConfirm, focus_handle, cx)
                         .map(|kb| kb.size(rems_from_px(12.))),
                 )
                 .on_click(move |_, window, cx| {
-                    window.dispatch_action(open_keymap(), cx);
+                    window.dispatch_action(menu::SecondaryConfirm.boxed_clone(), cx);
                 })
         } else {
             Button::new("add", "Add Keybinding…")
                 .key_binding(
-                    KeyBinding::for_action_in(&AddKeybinding, focus_handle, cx)
+                    KeyBinding::for_action_in(&menu::SecondaryConfirm, focus_handle, cx)
                         .map(|kb| kb.size(rems_from_px(12.))),
                 )
                 .on_click(move |_, window, cx| {
-                    window.dispatch_action(open_keymap(), cx);
+                    let open_keymap = Box::new(zed_actions::ChangeKeybinding { action: "".to_string() });
+                    // window.focus(&self.previous_focus_handle);
+                    window.dispatch_action(open_keymap, cx);
+                    // window.dispatch_action(menu::SecondaryConfirm.boxed_clone(), cx);
                 })
         };
 
@@ -542,7 +553,7 @@ impl PickerDelegate for CommandPaletteDelegate {
                 .w_full()
                 .p_1p5()
                 .gap_1()
-                .justify_end()
+                .justify_between()
                 .border_t_1()
                 .border_color(cx.theme().colors().border_variant)
                 .child(keybinding_buttons)
