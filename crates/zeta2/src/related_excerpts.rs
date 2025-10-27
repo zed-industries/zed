@@ -1,47 +1,32 @@
 mod merge_excerpts;
 
-use std::{cmp::Reverse, fmt::Write, ops::Range, path::Path, sync::Arc};
+use std::{cmp::Reverse, fmt::Write, ops::Range, path::PathBuf, sync::Arc};
 
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Result, anyhow};
 use collections::HashMap;
 use edit_prediction_context::{EditPredictionExcerpt, EditPredictionExcerptOptions, Line};
 use futures::{StreamExt, stream::BoxStream};
 use gpui::{App, AsyncApp, Entity, Task};
 use indoc::indoc;
-use language::{Anchor, Buffer, OffsetRangeExt, Rope, ToPoint as _};
+use language::{Anchor, Bias, Buffer, OffsetRangeExt, Point, TextBufferSnapshot, ToPoint as _};
 use language_model::{
     LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId,
     LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
-    LanguageModelRequestTool, LanguageModelToolResult, LanguageModelToolResultContent,
-    MessageContent, Role,
+    LanguageModelRequestTool, LanguageModelToolResult, MessageContent, Role,
 };
+use merge_excerpts::write_merged_excerpts;
 use project::{
-    Project, WorktreeId, WorktreeSettings,
+    Project, WorktreeSettings,
     search::{SearchQuery, SearchResult},
 };
 use schemars::JsonSchema;
-use serde::{Deserialize, de::DeserializeOwned};
-use util::{
-    paths::{PathMatcher, PathStyle},
-    rel_path::RelPath,
-};
+use serde::Deserialize;
+use util::paths::{PathMatcher, PathStyle};
 use workspace::item::Settings as _;
 
-use crate::related_excerpts::merge_excerpts::write_merged_excerpts;
-
-pub(crate) enum RelatedExcerpt {
-    Buffer {
-        worktree_id: WorktreeId,
-        path: Arc<RelPath>,
-        rope: Rope,
-        range: Range<Anchor>,
-    },
-    File {
-        worktree_id: WorktreeId,
-        path: Arc<RelPath>,
-        text: Arc<str>,
-        row_range: Range<u32>,
-    },
+pub(crate) struct RelatedExcerpt {
+    buffer: Entity<Buffer>,
+    range: Range<Anchor>,
 }
 
 const SEARCH_PROMPT: &str = indoc! {r#"
@@ -125,7 +110,7 @@ struct SelectToolInput {
 struct SelectLineRange {
     /// The file path containing the lines to select
     /// Exactly as it appears in the search result codeblocks.
-    path: Arc<Path>,
+    path: PathBuf,
     /// The starting line number (1-based)
     #[schemars(range(min = 1))]
     start_line: u32,
@@ -240,7 +225,12 @@ pub fn find_related_excerpts<'a>(
                     }
                 }
                 LanguageModelCompletionEvent::Text(txt) => {
-                    if let Some(LanguageModelRequestMessage { role: Role::Assistant, content, .. }) = select_request_messages.last_mut() {
+                    if let Some(LanguageModelRequestMessage {
+                        role: Role::Assistant,
+                        content,
+                        ..
+                    }) = select_request_messages.last_mut()
+                    {
                         if let Some(MessageContent::Text(existing_text)) = content.last_mut() {
                             existing_text.push_str(&txt);
                         } else {
@@ -255,24 +245,40 @@ pub fn find_related_excerpts<'a>(
                     }
                 }
                 LanguageModelCompletionEvent::Thinking { text, signature } => {
-                    if let Some(LanguageModelRequestMessage { role: Role::Assistant, content, .. }) = select_request_messages.last_mut() {
-                        if let Some(MessageContent::Thinking { text: existing_text, signature: existing_signature }) = content.last_mut() {
+                    if let Some(LanguageModelRequestMessage {
+                        role: Role::Assistant,
+                        content,
+                        ..
+                    }) = select_request_messages.last_mut()
+                    {
+                        if let Some(MessageContent::Thinking {
+                            text: existing_text,
+                            signature: existing_signature,
+                        }) = content.last_mut()
+                        {
                             existing_text.push_str(&text);
                             *existing_signature = signature;
                         } else {
-                            content.push(MessageContent::Thinking{text, signature});
+                            content.push(MessageContent::Thinking { text, signature });
                         }
                     } else {
                         select_request_messages.push(LanguageModelRequestMessage {
                             role: Role::Assistant,
-                            content: vec![MessageContent::Thinking { text, signature } ],
+                            content: vec![MessageContent::Thinking { text, signature }],
                             cache: false,
                         });
                     }
                 }
                 LanguageModelCompletionEvent::RedactedThinking { data } => {
-                    if let Some(LanguageModelRequestMessage { role: Role::Assistant, content, .. }) = select_request_messages.last_mut() {
-                        if let Some(MessageContent::RedactedThinking(existing_data)) = content.last_mut() {
+                    if let Some(LanguageModelRequestMessage {
+                        role: Role::Assistant,
+                        content,
+                        ..
+                    }) = select_request_messages.last_mut()
+                    {
+                        if let Some(MessageContent::RedactedThinking(existing_data)) =
+                            content.last_mut()
+                        {
                             existing_data.push_str(&data);
                         } else {
                             content.push(MessageContent::RedactedThinking(data));
@@ -285,15 +291,8 @@ pub fn find_related_excerpts<'a>(
                         });
                     }
                 }
-                LanguageModelCompletionEvent::ToolUseJsonParseError {
-                    tool_name,
-                    raw_input,
-                    json_parse_error,
-                    ..
-                } => {
-                    log::error!(
-                        "invalid {tool_name} call from context model:\n Input: {raw_input}\n Error: {json_parse_error}"
-                    );
+                ev @ LanguageModelCompletionEvent::ToolUseJsonParseError { .. } => {
+                    log::error!("{ev:?}");
                 }
                 ev => {
                     log::trace!("context search event: {ev:?}")
@@ -301,7 +300,12 @@ pub fn find_related_excerpts<'a>(
             }
         }
 
-        let mut any_results = false;
+        struct ResultBuffer {
+            buffer: Entity<Buffer>,
+            snapshot: TextBufferSnapshot,
+        }
+
+        let mut result_buffers_by_path = HashMap::default();
 
         for (index, tool_use) in search_calls.into_iter().rev() {
             let call = serde_json::from_value::<SearchToolInput>(tool_use.input.clone())?;
@@ -326,32 +330,35 @@ pub fn find_related_excerpts<'a>(
                 continue;
             }
 
-            any_results = true;
             let mut merged_result = RESULTS_MESSAGE.to_string();
 
-            for (buffer, mut excerpts_for_buffer) in excerpts_by_buffer {
+            for (buffer_entity, mut excerpts_for_buffer) in excerpts_by_buffer {
                 excerpts_for_buffer.sort_unstable_by_key(|range| (range.start, Reverse(range.end)));
 
-                buffer
+                buffer_entity
+                    .clone()
                     .read_with(cx, |buffer, cx| {
                         let Some(file) = buffer.file() else {
                             return;
                         };
 
-                        writeln!(
-                            &mut merged_result,
-                            "`````filename={}",
-                            file.full_path(cx).display()
-                        )
-                        .unwrap();
+                        let path = file.full_path(cx);
 
-                        write_merged_excerpts(
-                            &buffer.snapshot(),
-                            excerpts_for_buffer,
-                            &mut merged_result,
-                        );
+                        writeln!(&mut merged_result, "`````filename={}", path.display()).unwrap();
+
+                        let snapshot = buffer.snapshot();
+
+                        write_merged_excerpts(&snapshot, excerpts_for_buffer, &mut merged_result);
 
                         merged_result.push_str("`````\n\n");
+
+                        result_buffers_by_path.insert(
+                            path,
+                            ResultBuffer {
+                                buffer: buffer_entity,
+                                snapshot: snapshot.text,
+                            },
+                        );
                     })
                     .ok();
             }
@@ -364,27 +371,43 @@ pub fn find_related_excerpts<'a>(
                 output: None,
             };
 
-            // Almost always appends at the end, but in theory, the model could return some text after the tool call,
+            // Almost always appends at the end, but in theory, the model could return some text after the tool call
             // or perform parallel tool calls, so we splice at the message index for correctness.
-            select_request_messages.splice(index..index, [LanguageModelRequestMessage {
-                role: Role::Assistant,
-                content: vec![MessageContent::ToolUse(tool_use)],
-                cache: false,
-            }, LanguageModelRequestMessage {
-                role: Role::User,
-                content: vec![MessageContent::ToolResult(tool_result)],
-                cache: false,
-            }]);
+            select_request_messages.splice(
+                index..index,
+                [
+                    LanguageModelRequestMessage {
+                        role: Role::Assistant,
+                        content: vec![MessageContent::ToolUse(tool_use)],
+                        cache: false,
+                    },
+                    LanguageModelRequestMessage {
+                        role: Role::User,
+                        content: vec![MessageContent::ToolResult(tool_result)],
+                        cache: false,
+                    },
+                ],
+            );
         }
 
-        if !any_results {
+        if result_buffers_by_path.is_empty() {
             log::trace!("context gathering queries produced no results");
             return anyhow::Ok(vec![]);
         }
 
-        select_request_messages.push(LanguageModelRequestMessage { role: Role::User, content: vec![SELECT_PROMPT.into()], cache: false });
+        select_request_messages.push(LanguageModelRequestMessage {
+            role: Role::User,
+            content: vec![SELECT_PROMPT.into()],
+            cache: false,
+        });
 
-        let mut select_stream = request_tool_call::<SelectToolInput>(select_request_messages, SELECT_TOOL_NAME, &model, cx).await?;
+        let mut select_stream = request_tool_call::<SelectToolInput>(
+            select_request_messages,
+            SELECT_TOOL_NAME,
+            &model,
+            cx,
+        )
+        .await?;
         let mut selected_ranges = Vec::new();
 
         while let Some(event) = select_stream.next().await {
@@ -395,7 +418,8 @@ pub fn find_related_excerpts<'a>(
                     }
 
                     if tool_use.name.as_ref() == SELECT_TOOL_NAME {
-                        let call = serde_json::from_value::<SelectToolInput>(tool_use.input.clone())?;
+                        let call =
+                            serde_json::from_value::<SelectToolInput>(tool_use.input.clone())?;
                         selected_ranges.extend(call.ranges);
                     } else {
                         log::warn!(
@@ -404,15 +428,8 @@ pub fn find_related_excerpts<'a>(
                         );
                     }
                 }
-                LanguageModelCompletionEvent::ToolUseJsonParseError {
-                    tool_name,
-                    raw_input,
-                    json_parse_error,
-                    ..
-                } => {
-                    log::error!(
-                        "invalid {tool_name} call from context model:\n Input: {raw_input}\n Error: {json_parse_error}"
-                    );
+                ev @ LanguageModelCompletionEvent::ToolUseJsonParseError { .. } => {
+                    log::error!("{ev:?}");
                 }
                 ev => {
                     log::trace!("context select event: {ev:?}")
@@ -424,7 +441,30 @@ pub fn find_related_excerpts<'a>(
             log::trace!("context gathering selected no ranges")
         }
 
-        anyhow::Ok(vec![])
+        let mut related_excerpts = Vec::with_capacity(selected_ranges.len());
+
+        for selected_range in selected_ranges {
+            if let Some(ResultBuffer { buffer, snapshot }) =
+                result_buffers_by_path.get(&selected_range.path)
+            {
+                let start_point = Point::new(selected_range.start_line.saturating_sub(1), 0);
+                let end_point =
+                    snapshot.clip_point(Point::new(selected_range.end_line, 0), Bias::Left);
+                let range = snapshot.anchor_after(start_point)..snapshot.anchor_before(end_point);
+
+                related_excerpts.push(RelatedExcerpt {
+                    buffer: buffer.clone(),
+                    range,
+                });
+            } else {
+                log::warn!(
+                    "selected path that wasn't included in search results: {}",
+                    selected_range.path.display()
+                );
+            }
+        }
+
+        anyhow::Ok(related_excerpts)
     })
 }
 
