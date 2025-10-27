@@ -1139,10 +1139,6 @@ impl SettingsStore {
     }
 }
 
-// did we migrate?
-// was the migration successful?
-// was settings parsing successful?
-// todo! can this type be improved?
 /// The result of parsing settings, including any migration attempts
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SettingsParseResult {
