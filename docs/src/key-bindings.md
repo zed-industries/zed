@@ -189,16 +189,16 @@ We do not yet move shortcuts around to ensure that all the built-in shortcuts ca
 ## Smart Tab
 
 Smart Tab provides context-aware navigation of your code
-using the Tab and Shift-Tab keys by taking advantage of syntax information using Tree-sitter. Smart Tab modifies the behavior of Tab and Shift-Tab in the following ways:
-- Tab:
+using the `tab` and `shift-tab` keys by taking advantage of syntax information using Tree-sitter. Smart Tab modifies the behavior of `tab` and `shift-tab` in the following ways:
+- `tab`:
   - If only whitespace is to the left of the cursor, inserts a tab as usual
   - Otherwise, moves the cursor to the end of the parent Tree-sitter syntax node
 
-- Shift-Tab:
+- `shift-tab`:
   - Moves the cursor to the start of the parent Tree-sitter syntax node
   - If no suitable node is found, performs a normal outdent
 
-When the cursor has an active selection, Tab and Shift-Tab behave as normal indent and outdent operations. Smart Tab also respects snippet tabstops, autocomplete suggestions, and edit predictions by default.
+When the cursor has an active selection, `tab` and `shift-tab` behave as normal indent and outdent operations. Smart Tab also respects snippet tabstops, autocomplete suggestions, and edit predictions by default.
 
 
 ### Enabling Smart Tab
@@ -258,7 +258,7 @@ fn example() {
 }
 ```
 
-Pressing Tab will move the cursor to the end of the function call:
+Pressing `tab` will move the cursor to the end of the function call:
 
 ```rust
 fn example() {
@@ -266,7 +266,7 @@ fn example() {
 }
 ```
 
-Pressing Tab again moves to the end of the statement:
+Pressing `tab` again moves to the end of the statement:
 
 ```rust
 fn example() {
@@ -274,7 +274,7 @@ fn example() {
 }
 ```
 
-Pressing Shift-Tab from inside a string navigates to the beginning of the string:
+Pressing `shift-tab` from inside a string navigates to the beginning of the string:
 
 ```rust
 fn example() {
@@ -282,7 +282,7 @@ fn example() {
 }
 ```
 
-After Shift-Tab:
+Pressing `shift-tab` again:
 
 ```rust
 fn example() {
@@ -290,7 +290,7 @@ fn example() {
 }
 ```
 
-Pressing Tab moves to the end of the string:
+Pressing `tab` moves to the end of the string:
 
 ```rust
 fn example() {
