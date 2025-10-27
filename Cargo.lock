@@ -14226,7 +14226,6 @@ dependencies = [
  "rand 0.9.2",
  "rayon",
  "regex",
- "smallvec",
  "sum_tree",
  "unicode-segmentation",
  "util",
