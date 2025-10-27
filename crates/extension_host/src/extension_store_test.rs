@@ -529,10 +529,6 @@ async fn test_extension_store(cx: &mut TestAppContext) {
     });
 }
 
-// todo(windows)
-// Disable this test on Windows for now. Because this test hangs at
-// `let fake_server = fake_servers.next().await.unwrap();`.
-// Reenable this test when we figure out why.
 #[gpui::test]
 async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
     init_test(cx);

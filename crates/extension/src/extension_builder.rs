@@ -5,7 +5,7 @@ use crate::{
 use anyhow::{Context as _, Result, bail};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
-use futures::io::BufReader;
+use futures::{AsyncReadExt, io::Cursor};
 use heck::ToSnakeCase;
 use http_client::{self, AsyncBody, HttpClient};
 use serde::Deserialize;
@@ -423,8 +423,12 @@ impl ExtensionBuilder {
 
         log::info!("downloading wasi-sdk to {}", wasi_sdk_dir.display());
         let mut response = self.http.get(&url, AsyncBody::default(), true).await?;
-        let body = BufReader::new(response.body_mut());
-        let body = GzipDecoder::new(body);
+        let body = GzipDecoder::new({
+            // stream the entire request into memory at once as the artifact is quite big (100MB+)
+            let mut b = vec![];
+            response.body_mut().read_to_end(&mut b).await?;
+            Cursor::new(b)
+        });
         let tar = Archive::new(body);
 
         tar.unpack(&tar_out_dir)
