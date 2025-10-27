@@ -7945,7 +7945,7 @@ impl Editor {
 
         let snapshot = self.snapshot(window, cx);
 
-        let multi_buffer_snapshot = snapshot.display_snapshot.buffer_snapshot();
+        let multi_buffer_snapshot = snapshot.buffer_snapshot();
         let Some(project) = self.project() else {
             return breakpoint_display_points;
         };
@@ -7975,7 +7975,7 @@ impl Editor {
                 let multi_buffer_anchor =
                     Anchor::in_buffer(excerpt_id, buffer_snapshot.remote_id(), breakpoint.position);
                 let position = multi_buffer_anchor
-                    .to_point(multi_buffer_snapshot)
+                    .to_point(&multi_buffer_snapshot)
                     .to_display_point(&snapshot);
 
                 breakpoint_display_points.insert(

@@ -727,16 +727,20 @@ impl Item for ProjectDiagnosticsEditor {
         });
     }
 
+    fn can_split(&self) -> bool {
+        true
+    }
+
     fn clone_on_split(
         &self,
         _workspace_id: Option<workspace::WorkspaceId>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Option<Entity<Self>>
+    ) -> Task<Option<Entity<Self>>>
     where
         Self: Sized,
     {
-        Some(cx.new(|cx| {
+        Task::ready(Some(cx.new(|cx| {
             ProjectDiagnosticsEditor::new(
                 self.include_warnings,
                 self.project.clone(),
@@ -744,7 +748,7 @@ impl Item for ProjectDiagnosticsEditor {
                 window,
                 cx,
             )
-        }))
+        })))
     }
 
     fn is_dirty(&self, cx: &App) -> bool {

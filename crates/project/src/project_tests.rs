@@ -3408,7 +3408,7 @@ async fn test_completions_with_edit_ranges(cx: &mut gpui::TestAppContext) {
     let fake_server = fake_language_servers.next().await.unwrap();
     let text = "let a = obj.fqn";
 
-    // Test 1: When text_edit is None but insert_text exists with default edit_range
+    // Test 1: When text_edit is None but text_edit_text exists with default edit_range
     {
         buffer.update(cx, |buffer, cx| buffer.set_text(text, cx));
         let completions = project.update(cx, |project, cx| {
@@ -3430,7 +3430,7 @@ async fn test_completions_with_edit_ranges(cx: &mut gpui::TestAppContext) {
                     }),
                     items: vec![lsp::CompletionItem {
                         label: "labelText".into(),
-                        insert_text: Some("insertText".into()),
+                        text_edit_text: Some("textEditText".into()),
                         text_edit: None,
                         ..Default::default()
                     }],
@@ -3448,14 +3448,14 @@ async fn test_completions_with_edit_ranges(cx: &mut gpui::TestAppContext) {
         let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
 
         assert_eq!(completions.len(), 1);
-        assert_eq!(completions[0].new_text, "insertText");
+        assert_eq!(completions[0].new_text, "textEditText");
         assert_eq!(
             completions[0].replace_range.to_offset(&snapshot),
             text.len() - 3..text.len()
         );
     }
 
-    // Test 2: When both text_edit and insert_text are None with default edit_range
+    // Test 2: When both text_edit and text_edit_text are None with default edit_range
     {
         buffer.update(cx, |buffer, cx| buffer.set_text(text, cx));
         let completions = project.update(cx, |project, cx| {
@@ -3477,7 +3477,8 @@ async fn test_completions_with_edit_ranges(cx: &mut gpui::TestAppContext) {
                     }),
                     items: vec![lsp::CompletionItem {
                         label: "labelText".into(),
-                        insert_text: None,
+                        text_edit_text: None,
+                        insert_text: Some("irrelevant".into()),
                         text_edit: None,
                         ..Default::default()
                     }],
