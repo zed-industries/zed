@@ -884,10 +884,15 @@ impl SettingsPageItem {
 
                 let mut content = v_flex()
                     .id("dynamic-item")
-                    .group("setting-item")
-                    .px_8()
-                    .child(discriminant_element.when(has_sub_fields, |this| this.pb_4()))
-                    .when(!has_sub_fields, |this| this.child(Divider::horizontal()));
+                    .child(
+                        div()
+                            .group("setting-item")
+                            .px_8()
+                            .child(discriminant_element.when(has_sub_fields, |this| this.pb_4())),
+                    )
+                    .when(!has_sub_fields, |this| {
+                        this.child(h_flex().px_8().child(Divider::horizontal()))
+                    });
 
                 if rendered_ok {
                     let discriminant =
@@ -902,6 +907,7 @@ impl SettingsPageItem {
                         content = content.child(
                             raw_field
                                 .group("setting-sub-item")
+                                .mx_8()
                                 .p_4()
                                 .border_t_1()
                                 .when(is_last_sub_field, |this| this.border_b_1())
