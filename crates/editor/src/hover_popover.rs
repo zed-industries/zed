@@ -286,14 +286,29 @@ fn show_hover(
     let task = cx.spawn_in(window, async move |this, cx| {
         async move {
             // If we need to delay, delay a set amount initially before making the lsp request
-            if !ignore_timeout {
+            let delay = if ignore_timeout {
+                None
+            } else {
+                let lsp_request_early = hover_popover_delay / 2;
                 cx.background_executor()
-                    .timer(Duration::from_millis(hover_popover_delay))
+                    .timer(Duration::from_millis(
+                        hover_popover_delay - lsp_request_early,
+                    ))
                     .await;
+
+                // Construct delay task to wait for later
+                let total_delay = Some(
+                    cx.background_executor()
+                        .timer(Duration::from_millis(lsp_request_early)),
+                );
+                total_delay
             };
 
             let hover_request = cx.update(|_, cx| provider.hover(&buffer, buffer_position, cx))?;
 
+            if let Some(delay) = delay {
+                delay.await;
+            }
             let offset = anchor.to_offset(&snapshot.buffer_snapshot());
             let local_diagnostic = if all_diagnostics_active {
                 None
