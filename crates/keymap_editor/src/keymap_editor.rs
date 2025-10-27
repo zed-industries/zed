@@ -521,6 +521,11 @@ impl KeymapEditor {
         }
     }
 
+    fn clear_action_query(&self, window: &mut Window, cx: &mut Context<Self>) {
+        self.filter_editor
+            .update(cx, |editor, cx| editor.clear(window, cx))
+    }
+
     fn on_query_changed(&mut self, cx: &mut Context<Self>) {
         let action_query = self.current_action_query(cx);
         let keystroke_query = self.current_keystroke_query(cx);
@@ -2447,7 +2452,7 @@ impl KeybindingEditorModal {
     }
 
     fn get_matching_bindings_count(&self, cx: &Context<Self>) -> usize {
-        let current_keystrokes = self.keybind_editor.read(cx).keystrokes().to_vec();
+        let current_keystrokes = self.keybind_editor.read(cx).keystrokes();
 
         if current_keystrokes.is_empty() {
             return 0;
@@ -2464,16 +2469,19 @@ impl KeybindingEditorModal {
                     return false;
                 }
 
-                binding
-                    .keystrokes()
-                    .map(|keystrokes| keystrokes_match_exactly(keystrokes, &current_keystrokes))
-                    .unwrap_or(false)
+                binding.keystrokes().is_some_and(|keystrokes| {
+                    keystrokes_match_exactly(keystrokes, current_keystrokes)
+                })
             })
             .count()
     }
 
-    fn show_matching_bindings(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+    fn show_matching_bindings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let keystrokes = self.keybind_editor.read(cx).keystrokes().to_vec();
+
+        self.keymap_editor.update(cx, |keymap_editor, cx| {
+            keymap_editor.clear_action_query(window, cx)
+        });
 
         // Dismiss the modal
         cx.emit(DismissEvent);
