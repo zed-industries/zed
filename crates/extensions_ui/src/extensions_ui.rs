@@ -24,8 +24,8 @@ use settings::{Settings, SettingsContent};
 use strum::IntoEnumIterator as _;
 use theme::ThemeSettings;
 use ui::{
-    Banner, Chip, ContextMenu, PopoverMenu, ScrollableHandle, Switch, ToggleButton, Tooltip,
-    WithScrollbar, prelude::*,
+    Banner, Chip, ContextMenu, Divider, PopoverMenu, ScrollableHandle, Switch, ToggleButton,
+    Tooltip, WithScrollbar, prelude::*,
 };
 use vim_mode_setting::VimModeSetting;
 use workspace::{
@@ -1373,29 +1373,41 @@ impl ExtensionsPage {
                         if vim {
                             this.action_slot(
                                 h_flex()
+                                    .gap_1()
+                                    .child(docs_url_button)
+                                    .child(Divider::vertical().color(ui::DividerColor::Border))
                                     .child(
-                                        Switch::new(
-                                            "enable-vim",
-                                            if VimModeSetting::get_global(cx).0 {
-                                                ui::ToggleState::Selected
-                                            } else {
-                                                ui::ToggleState::Unselected
-                                            },
-                                        )
-                                        .on_click(cx.listener(move |this, selection, _, cx| {
-                                            telemetry::event!(
-                                                "Vim Mode Toggled",
-                                                source = "Feature Upsell"
-                                            );
-                                            this.update_settings(
-                                                selection,
-                                                cx,
-                                                |setting, value| setting.vim_mode = Some(value),
-                                            );
-                                        }))
-                                        .label("Enable Vim mode"),
-                                    )
-                                    .child(docs_url_button),
+                                        h_flex()
+                                            .pl_1()
+                                            .gap_1()
+                                            .child(Label::new("Enable Vim mode"))
+                                            .child(
+                                                Switch::new(
+                                                    "enable-vim",
+                                                    if VimModeSetting::get_global(cx).0 {
+                                                        ui::ToggleState::Selected
+                                                    } else {
+                                                        ui::ToggleState::Unselected
+                                                    },
+                                                )
+                                                .on_click(cx.listener(
+                                                    move |this, selection, _, cx| {
+                                                        telemetry::event!(
+                                                            "Vim Mode Toggled",
+                                                            source = "Feature Upsell"
+                                                        );
+                                                        this.update_settings(
+                                                            selection,
+                                                            cx,
+                                                            |setting, value| {
+                                                                setting.vim_mode = Some(value)
+                                                            },
+                                                        );
+                                                    },
+                                                ))
+                                                .color(ui::SwitchColor::Accent),
+                                            ),
+                                    ),
                             )
                         } else {
                             this.action_slot(docs_url_button)
