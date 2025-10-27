@@ -150,7 +150,7 @@ pub mod nix {
     }
 }
 
-// (janky) helpers to generate steps with a name that coresponds
+// (janky) helpers to generate steps with a name that corresponds
 // to the name of the calling function.
 mod named {
     use gh_workflow::*;
@@ -160,7 +160,9 @@ mod named {
     }
 
     pub(super) fn run(script: &str) -> Step<Run> {
-        Step::new(function_name(1)).run(script).shell(BASH_SHELL);
+        Step::new(function_name(1))
+            .run(script)
+            .shell(super::BASH_SHELL)
     }
 
     fn function_name(i: usize) -> String {
