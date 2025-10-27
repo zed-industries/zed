@@ -7,7 +7,7 @@ mod ssh_config;
 mod wsl_picker;
 
 use remote::RemoteConnectionOptions;
-pub use remote_connections::open_remote_project;
+pub use remote_connections::{RemoteConnectionModal, connect, open_remote_project};
 
 use disconnected_overlay::DisconnectedOverlay;
 use fuzzy::{StringMatch, StringMatchCandidate};

@@ -10,7 +10,8 @@ use gpui::{
 };
 use picker::{Picker, PickerDelegate, PickerEditorPosition};
 use project::{DirectoryLister, git_store::Repository};
-use remote::RemoteConnectionOptions;
+use recent_projects::{RemoteConnectionModal, connect};
+use remote::{RemoteConnectionOptions, remote_client::ConnectionIdentifier};
 use std::{path::PathBuf, sync::Arc};
 use ui::{HighlightedLabel, KeyBinding, ListItem, ListItemSpacing, Tooltip, prelude::*};
 use util::ResultExt;
@@ -259,13 +260,13 @@ impl WorktreeListDelegate {
 
             let final_path = path.join(branch);
 
-            let (project, connection_options, app_state, is_local) =
+            let (connection_options, app_state, is_local) =
                 workspace.update(cx, |workspace, cx| {
                     let project = workspace.project().clone();
                     let connection_options = project.read(cx).remote_connection_options(cx);
                     let app_state = workspace.app_state().clone();
                     let is_local = project.read(cx).is_local();
-                    (project, connection_options, app_state, is_local)
+                    (connection_options, app_state, is_local)
                 })?;
 
             if is_local {
@@ -282,7 +283,6 @@ impl WorktreeListDelegate {
             } else if let Some(connection_options) = connection_options {
                 open_remote_worktree(
                     connection_options,
-                    project,
                     vec![final_path],
                     app_state,
                     window_handle,
@@ -309,13 +309,13 @@ impl WorktreeListDelegate {
         let workspace = self.workspace.clone();
         let path = worktree_path.clone();
 
-        let Some((project, connection_options, app_state, is_local)) = workspace
+        let Some((connection_options, app_state, is_local)) = workspace
             .update(cx, |workspace, cx| {
                 let project = workspace.project().clone();
                 let connection_options = project.read(cx).remote_connection_options(cx);
                 let app_state = workspace.app_state().clone();
                 let is_local = project.read(cx).is_local();
-                (project, connection_options, app_state, is_local)
+                (connection_options, app_state, is_local)
             })
             .log_err()
         else {
@@ -341,7 +341,6 @@ impl WorktreeListDelegate {
             cx.spawn_in(window, async move |_, cx| {
                 open_remote_worktree(
                     connection_options,
-                    project,
                     vec![path],
                     app_state,
                     window_handle,
@@ -370,41 +369,80 @@ impl WorktreeListDelegate {
 
 async fn open_remote_worktree(
     connection_options: RemoteConnectionOptions,
-    project: Entity<project::Project>,
     paths: Vec<PathBuf>,
     app_state: Arc<workspace::AppState>,
     window: gpui::AnyWindowHandle,
     replace_current_window: bool,
     cx: &mut AsyncApp,
 ) -> anyhow::Result<()> {
+    let workspace_window = window
+        .downcast::<Workspace>()
+        .ok_or_else(|| anyhow::anyhow!("Window is not a Workspace window"))?;
+
+    let connect_task = workspace_window.update(cx, |workspace, window, cx| {
+        workspace.toggle_modal(window, cx, |window, cx| {
+            RemoteConnectionModal::new(&connection_options, Vec::new(), window, cx)
+        });
+
+        let prompt = workspace
+            .active_modal::<RemoteConnectionModal>(cx)
+            .expect("Modal just created")
+            .read(cx)
+            .prompt
+            .clone();
+
+        connect(
+            ConnectionIdentifier::setup(),
+            connection_options.clone(),
+            prompt,
+            window,
+            cx,
+        )
+        .prompt_err("Failed to connect", window, cx, |_, _, _| None)
+    })?;
+
+    let session = connect_task.await;
+
+    workspace_window.update(cx, |workspace, _window, cx| {
+        if let Some(prompt) = workspace.active_modal::<RemoteConnectionModal>(cx) {
+            prompt.update(cx, |prompt, cx| prompt.finished(cx))
+        }
+    })?;
+
+    let Some(Some(session)) = session else {
+        return Ok(());
+    };
+
+    let new_project = cx.update(|cx| {
+        project::Project::remote(
+            session,
+            app_state.client.clone(),
+            app_state.node_runtime.clone(),
+            app_state.user_store.clone(),
+            app_state.languages.clone(),
+            app_state.fs.clone(),
+            cx,
+        )
+    })?;
+
     let window_to_use = if replace_current_window {
-        window
-            .downcast::<Workspace>()
-            .ok_or_else(|| anyhow::anyhow!("Window is not a Workspace window"))?
+        workspace_window
     } else {
         let workspace_position = cx
             .update(|cx| {
                 workspace::remote_workspace_position_from_db(connection_options.clone(), &paths, cx)
             })?
             .await
-            .context("fetching ssh workspace position from db")?;
+            .context("fetching workspace position from db")?;
 
         let mut options =
             cx.update(|cx| (app_state.build_window_options)(workspace_position.display, cx))?;
         options.window_bounds = workspace_position.window_bounds;
 
         cx.open_window(options, |window, cx| {
-            let project = project::Project::local(
-                app_state.client.clone(),
-                app_state.node_runtime.clone(),
-                app_state.user_store.clone(),
-                app_state.languages.clone(),
-                app_state.fs.clone(),
-                None,
-                cx,
-            );
             cx.new(|cx| {
-                let mut workspace = Workspace::new(None, project, app_state.clone(), window, cx);
+                let mut workspace =
+                    Workspace::new(None, new_project.clone(), app_state.clone(), window, cx);
                 workspace.centered_layout = workspace_position.centered_layout;
                 workspace
             })
@@ -413,7 +451,7 @@ async fn open_remote_worktree(
 
     workspace::open_remote_project_with_existing_connection(
         connection_options,
-        project,
+        new_project,
         paths,
         app_state,
         window_to_use,
