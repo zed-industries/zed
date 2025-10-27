@@ -2,6 +2,7 @@ mod base_keymap_setting;
 mod editable_setting_control;
 mod keymap_file;
 pub mod merge_from;
+mod serde_helper;
 mod settings_content;
 mod settings_file;
 mod settings_json;
@@ -21,6 +22,7 @@ pub use keymap_file::{
     KeyBindingValidator, KeyBindingValidatorRegistration, KeybindSource, KeybindUpdateOperation,
     KeybindUpdateTarget, KeymapFile, KeymapFileLoadResult,
 };
+pub use serde_helper::*;
 pub use settings_file::*;
 pub use settings_json::*;
 pub use settings_store::{
@@ -29,6 +31,8 @@ pub use settings_store::{
 };
 
 pub use vscode_import::{VsCodeSettings, VsCodeSettingsSource};
+
+pub use keymap_file::ActionSequence;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ActiveSettingsProfileName(pub String);

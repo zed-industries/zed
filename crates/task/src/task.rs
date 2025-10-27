@@ -3,15 +3,14 @@
 mod adapter_schema;
 mod debug_format;
 mod serde_helpers;
-mod shell_builder;
 pub mod static_source;
 mod task_template;
 mod vscode_debug_format;
 mod vscode_format;
 
+use anyhow::Context as _;
 use collections::{HashMap, HashSet, hash_map};
 use gpui::SharedString;
-use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 use std::path::PathBuf;
@@ -22,11 +21,12 @@ pub use debug_format::{
     AttachRequest, BuildTaskDefinition, DebugRequest, DebugScenario, DebugTaskFile, LaunchRequest,
     Request, TcpArgumentsTemplate, ZedDebugConfig,
 };
-pub use shell_builder::{ShellBuilder, ShellKind};
 pub use task_template::{
     DebugArgsRequest, HideStrategy, RevealStrategy, TaskTemplate, TaskTemplates,
     substitute_variables_in_map, substitute_variables_in_str,
 };
+pub use util::shell::{Shell, ShellKind};
+pub use util::shell_builder::ShellBuilder;
 pub use vscode_debug_format::VsCodeDebugTaskFile;
 pub use vscode_format::VsCodeTaskFile;
 pub use zed_actions::RevealTarget;
@@ -316,24 +316,33 @@ pub struct TaskContext {
 #[derive(Clone, Debug)]
 pub struct RunnableTag(pub SharedString);
 
-/// Shell configuration to open the terminal with.
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum Shell {
-    /// Use the system's default terminal configuration in /etc/passwd
-    #[default]
-    System,
-    /// Use a specific program with no arguments.
-    Program(String),
-    /// Use a specific program with arguments.
-    WithArguments {
-        /// The program to run.
-        program: String,
-        /// The arguments to pass to the program.
-        args: Vec<String>,
-        /// An optional string to override the title of the terminal tab
-        title_override: Option<SharedString>,
-    },
+pub fn shell_from_proto(proto: proto::Shell) -> anyhow::Result<Shell> {
+    let shell_type = proto.shell_type.context("invalid shell type")?;
+    let shell = match shell_type {
+        proto::shell::ShellType::System(_) => Shell::System,
+        proto::shell::ShellType::Program(program) => Shell::Program(program),
+        proto::shell::ShellType::WithArguments(program) => Shell::WithArguments {
+            program: program.program,
+            args: program.args,
+            title_override: None,
+        },
+    };
+    Ok(shell)
+}
+
+pub fn shell_to_proto(shell: Shell) -> proto::Shell {
+    let shell_type = match shell {
+        Shell::System => proto::shell::ShellType::System(proto::System {}),
+        Shell::Program(program) => proto::shell::ShellType::Program(program),
+        Shell::WithArguments {
+            program,
+            args,
+            title_override: _,
+        } => proto::shell::ShellType::WithArguments(proto::shell::WithArguments { program, args }),
+    };
+    proto::Shell {
+        shell_type: Some(shell_type),
+    }
 }
 
 type VsCodeEnvVariable = String;

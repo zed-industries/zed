@@ -102,6 +102,33 @@ pub fn init(cx: &mut App) {
         });
     });
 
+    #[cfg(target_os = "windows")]
+    cx.on_action(|open_wsl: &remote::OpenWslPath, cx| {
+        let open_wsl = open_wsl.clone();
+        with_active_or_new_workspace(cx, move |workspace, window, cx| {
+            let fs = workspace.project().read(cx).fs().clone();
+            add_wsl_distro(fs, &open_wsl.distro, cx);
+            let open_options = OpenOptions {
+                replace_window: window.window_handle().downcast::<Workspace>(),
+                ..Default::default()
+            };
+
+            let app_state = workspace.app_state().clone();
+
+            cx.spawn_in(window, async move |_, cx| {
+                open_remote_project(
+                    RemoteConnectionOptions::Wsl(open_wsl.distro.clone()),
+                    open_wsl.paths,
+                    app_state,
+                    open_options,
+                    cx,
+                )
+                .await
+            })
+            .detach();
+        });
+    });
+
     cx.on_action(|open_recent: &OpenRecent, cx| {
         let create_new_window = open_recent.create_new_window;
         with_active_or_new_workspace(cx, move |workspace, window, cx| {
@@ -134,6 +161,38 @@ pub fn init(cx: &mut App) {
     });
 
     cx.observe_new(DisconnectedOverlay::register).detach();
+}
+
+#[cfg(target_os = "windows")]
+pub fn add_wsl_distro(
+    fs: Arc<dyn project::Fs>,
+    connection_options: &remote::WslConnectionOptions,
+    cx: &App,
+) {
+    use gpui::ReadGlobal;
+    use settings::SettingsStore;
+
+    let distro_name = SharedString::from(&connection_options.distro_name);
+    let user = connection_options.user.clone();
+    SettingsStore::global(cx).update_settings_file(fs, move |setting, _| {
+        let connections = setting
+            .remote
+            .wsl_connections
+            .get_or_insert(Default::default());
+
+        if !connections
+            .iter()
+            .any(|conn| conn.distro_name == distro_name && conn.user == user)
+        {
+            use std::collections::BTreeSet;
+
+            connections.push(settings::WslConnection {
+                distro_name,
+                user,
+                projects: BTreeSet::new(),
+            })
+        }
+    });
 }
 
 pub struct RecentProjects {
@@ -311,8 +370,7 @@ impl PickerDelegate for RecentProjectsDelegate {
             .filter(|(_, (id, _, _))| !self.is_current_workspace(*id, cx))
             .map(|(id, (_, _, paths))| {
                 let combined_string = paths
-                    .paths()
-                    .iter()
+                    .ordered_paths()
                     .map(|path| path.compact().to_string_lossy().into_owned())
                     .collect::<Vec<_>>()
                     .join("");
@@ -462,8 +520,7 @@ impl PickerDelegate for RecentProjectsDelegate {
         let mut path_start_offset = 0;
 
         let (match_labels, paths): (Vec<_>, Vec<_>) = paths
-            .paths()
-            .iter()
+            .ordered_paths()
             .map(|p| p.compact())
             .map(|path| {
                 let highlighted_text =
@@ -473,7 +530,15 @@ impl PickerDelegate for RecentProjectsDelegate {
             })
             .unzip();
 
+        let prefix = match &location {
+            SerializedWorkspaceLocation::Remote(RemoteConnectionOptions::Wsl(wsl)) => {
+                Some(SharedString::from(&wsl.distro_name))
+            }
+            _ => None,
+        };
+
         let highlighted_match = HighlightedMatchWithPaths {
+            prefix,
             match_label: HighlightedMatch::join(match_labels.into_iter().flatten(), ", "),
             paths,
         };
@@ -541,11 +606,7 @@ impl PickerDelegate for RecentProjectsDelegate {
         )
     }
 
-    fn render_footer(
-        &self,
-        window: &mut Window,
-        cx: &mut Context<Picker<Self>>,
-    ) -> Option<AnyElement> {
+    fn render_footer(&self, _: &mut Window, cx: &mut Context<Picker<Self>>) -> Option<AnyElement> {
         Some(
             h_flex()
                 .w_full()
@@ -561,7 +622,6 @@ impl PickerDelegate for RecentProjectsDelegate {
                                 from_existing_connection: false,
                                 create_new_window: false,
                             },
-                            window,
                             cx,
                         ))
                         .on_click(|_, window, cx| {
@@ -577,7 +637,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                 )
                 .child(
                     Button::new("local", "Open Local Folder")
-                        .key_binding(KeyBinding::for_action(&workspace::Open, window, cx))
+                        .key_binding(KeyBinding::for_action(&workspace::Open, cx))
                         .on_click(|_, window, cx| {
                             window.dispatch_action(workspace::Open.boxed_clone(), cx)
                         }),

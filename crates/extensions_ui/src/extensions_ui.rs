@@ -13,8 +13,8 @@ use editor::{Editor, EditorElement, EditorStyle};
 use extension_host::{ExtensionManifest, ExtensionOperation, ExtensionStore};
 use fuzzy::{StringMatchCandidate, match_strings};
 use gpui::{
-    Action, App, ClipboardItem, Context, Entity, EventEmitter, Flatten, Focusable,
-    InteractiveElement, KeyContext, ParentElement, Render, Styled, Task, TextStyle,
+    Action, App, ClipboardItem, Context, Corner, Entity, EventEmitter, Flatten, Focusable,
+    InteractiveElement, KeyContext, ParentElement, Point, Render, Styled, Task, TextStyle,
     UniformListScrollHandle, WeakEntity, Window, actions, point, uniform_list,
 };
 use num_format::{Locale, ToFormattedString};
@@ -29,7 +29,7 @@ use ui::{
 };
 use vim_mode_setting::VimModeSetting;
 use workspace::{
-    Workspace, WorkspaceId,
+    Workspace,
     item::{Item, ItemEvent},
 };
 use zed_actions::ExtensionCategoryFilter;
@@ -66,6 +66,7 @@ pub fn init(cx: &mut App) {
                         ExtensionCategoryFilter::ContextServers => {
                             ExtensionProvides::ContextServers
                         }
+                        ExtensionCategoryFilter::AgentServers => ExtensionProvides::AgentServers,
                         ExtensionCategoryFilter::SlashCommands => ExtensionProvides::SlashCommands,
                         ExtensionCategoryFilter::IndexedDocsProviders => {
                             ExtensionProvides::IndexedDocsProviders
@@ -189,6 +190,7 @@ fn extension_provides_label(provides: ExtensionProvides) -> &'static str {
         ExtensionProvides::Grammars => "Grammars",
         ExtensionProvides::LanguageServers => "Language Servers",
         ExtensionProvides::ContextServers => "MCP Servers",
+        ExtensionProvides::AgentServers => "Agent Servers",
         ExtensionProvides::SlashCommands => "Slash Commands",
         ExtensionProvides::IndexedDocsProviders => "Indexed Docs Providers",
         ExtensionProvides::Snippets => "Snippets",
@@ -727,7 +729,7 @@ impl ExtensionsPage {
                             .gap_2()
                             .child(
                                 Headline::new(extension.manifest.name.clone())
-                                    .size(HeadlineSize::Medium),
+                                    .size(HeadlineSize::Small),
                             )
                             .child(Headline::new(format!("v{version}")).size(HeadlineSize::XSmall))
                             .children(
@@ -777,20 +779,12 @@ impl ExtensionsPage {
                 h_flex()
                     .gap_2()
                     .justify_between()
-                    .child(
-                        Label::new(format!(
-                            "{}: {}",
-                            if extension.manifest.authors.len() > 1 {
-                                "Authors"
-                            } else {
-                                "Author"
-                            },
-                            extension.manifest.authors.join(", ")
-                        ))
-                        .size(LabelSize::Small)
-                        .color(Color::Muted)
-                        .truncate(),
-                    )
+                    .children(extension.manifest.description.as_ref().map(|description| {
+                        Label::new(description.clone())
+                            .size(LabelSize::Small)
+                            .color(Color::Default)
+                            .truncate()
+                    }))
                     .child(
                         Label::new(format!(
                             "Downloads: {}",
@@ -803,21 +797,29 @@ impl ExtensionsPage {
                 h_flex()
                     .gap_2()
                     .justify_between()
-                    .children(extension.manifest.description.as_ref().map(|description| {
-                        Label::new(description.clone())
-                            .size(LabelSize::Small)
-                            .color(Color::Default)
-                            .truncate()
-                    }))
                     .child(
                         h_flex()
-                            .gap_2()
+                            .gap_1()
+                            .child(
+                                Icon::new(IconName::Person)
+                                    .size(IconSize::XSmall)
+                                    .color(Color::Muted),
+                            )
+                            .child(
+                                Label::new(extension.manifest.authors.join(", "))
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted)
+                                    .truncate(),
+                            ),
+                    )
+                    .child(
+                        h_flex()
+                            .gap_1()
                             .child(
                                 IconButton::new(
                                     SharedString::from(format!("repository-{}", extension.id)),
                                     IconName::Github,
                                 )
-                                .icon_color(Color::Accent)
                                 .icon_size(IconSize::Small)
                                 .on_click(cx.listener({
                                     let repository_url = repository_url.clone();
@@ -837,9 +839,13 @@ impl ExtensionsPage {
                                         SharedString::from(format!("more-{}", extension.id)),
                                         IconName::Ellipsis,
                                     )
-                                    .icon_color(Color::Accent)
                                     .icon_size(IconSize::Small),
                                 )
+                                .anchor(Corner::TopRight)
+                                .offset(Point {
+                                    x: px(0.0),
+                                    y: px(2.0),
+                                })
                                 .menu(move |window, cx| {
                                     Some(Self::render_remote_extension_context_menu(
                                         &this,
@@ -961,6 +967,11 @@ impl ExtensionsPage {
                     SharedString::from(extension.id.clone()),
                     "Install",
                 )
+                .style(ButtonStyle::Tinted(ui::TintColor::Accent))
+                .icon(IconName::Download)
+                .icon_size(IconSize::Small)
+                .icon_color(Color::Muted)
+                .icon_position(IconPosition::Start)
                 .on_click({
                     let extension_id = extension.id.clone();
                     move |_, _, cx| {
@@ -978,6 +989,11 @@ impl ExtensionsPage {
                     SharedString::from(extension.id.clone()),
                     "Install",
                 )
+                .style(ButtonStyle::Tinted(ui::TintColor::Accent))
+                .icon(IconName::Download)
+                .icon_size(IconSize::Small)
+                .icon_color(Color::Muted)
+                .icon_position(IconPosition::Start)
                 .disabled(true),
                 configure: None,
                 upgrade: None,
@@ -987,6 +1003,7 @@ impl ExtensionsPage {
                     SharedString::from(extension.id.clone()),
                     "Uninstall",
                 )
+                .style(ButtonStyle::OutlinedGhost)
                 .disabled(true),
                 configure: is_configurable.then(|| {
                     Button::new(
@@ -1004,6 +1021,7 @@ impl ExtensionsPage {
                     SharedString::from(extension.id.clone()),
                     "Uninstall",
                 )
+                .style(ButtonStyle::OutlinedGhost)
                 .on_click({
                     let extension_id = extension.id.clone();
                     move |_, _, cx| {
@@ -1020,6 +1038,7 @@ impl ExtensionsPage {
                         SharedString::from(format!("configure-{}", extension.id)),
                         "Configure",
                     )
+                    .style(ButtonStyle::OutlinedGhost)
                     .on_click({
                         let extension_id = extension.id.clone();
                         move |_, _, cx| {
@@ -1044,6 +1063,7 @@ impl ExtensionsPage {
                 } else {
                     Some(
                         Button::new(SharedString::from(extension.id.clone()), "Upgrade")
+                          .style(ButtonStyle::Tinted(ui::TintColor::Accent))
                             .when(!is_compatible, |upgrade_button| {
                                 upgrade_button.disabled(true).tooltip({
                                     let version = extension.manifest.version.clone();
@@ -1082,6 +1102,7 @@ impl ExtensionsPage {
                     SharedString::from(extension.id.clone()),
                     "Uninstall",
                 )
+                .style(ButtonStyle::OutlinedGhost)
                 .disabled(true),
                 configure: is_configurable.then(|| {
                     Button::new(
@@ -1503,39 +1524,28 @@ impl Render for ExtensionsPage {
                     })),
             )
             .child(self.render_feature_upsells(cx))
-            .child(
-                v_flex()
-                    .pl_4()
-                    .pr_6()
-                    .size_full()
-                    .overflow_y_hidden()
-                    .map(|this| {
-                        let mut count = self.filtered_remote_extension_indices.len();
-                        if self.filter.include_dev_extensions() {
-                            count += self.dev_extension_entries.len();
-                        }
+            .child(v_flex().px_4().size_full().overflow_y_hidden().map(|this| {
+                let mut count = self.filtered_remote_extension_indices.len();
+                if self.filter.include_dev_extensions() {
+                    count += self.dev_extension_entries.len();
+                }
 
-                        if count == 0 {
-                            this.py_4()
-                                .child(self.render_empty_state(cx))
-                                .into_any_element()
-                        } else {
-                            let scroll_handle = self.list.clone();
-                            this.child(
-                                uniform_list(
-                                    "entries",
-                                    count,
-                                    cx.processor(Self::render_extensions),
-                                )
-                                .flex_grow()
-                                .pb_4()
-                                .track_scroll(scroll_handle.clone()),
-                            )
-                            .vertical_scrollbar_for(scroll_handle, window, cx)
-                            .into_any_element()
-                        }
-                    }),
-            )
+                if count == 0 {
+                    this.py_4()
+                        .child(self.render_empty_state(cx))
+                        .into_any_element()
+                } else {
+                    let scroll_handle = self.list.clone();
+                    this.child(
+                        uniform_list("entries", count, cx.processor(Self::render_extensions))
+                            .flex_grow()
+                            .pb_4()
+                            .track_scroll(scroll_handle.clone()),
+                    )
+                    .vertical_scrollbar_for(scroll_handle, window, cx)
+                    .into_any_element()
+                }
+            }))
     }
 }
 
@@ -1560,15 +1570,6 @@ impl Item for ExtensionsPage {
 
     fn show_toolbar(&self) -> bool {
         false
-    }
-
-    fn clone_on_split(
-        &self,
-        _workspace_id: Option<WorkspaceId>,
-        _window: &mut Window,
-        _: &mut Context<Self>,
-    ) -> Option<Entity<Self>> {
-        None
     }
 
     fn to_item_events(event: &Self::Event, mut f: impl FnMut(workspace::item::ItemEvent)) {

@@ -1,9 +1,9 @@
 use super::*;
 use collections::{HashMap, HashSet};
 use editor::{
-    DisplayPoint, EditorSettings,
+    DisplayPoint, EditorSettings, Inlay,
     actions::{GoToDiagnostic, GoToPreviousDiagnostic, Hover, MoveToBeginning},
-    display_map::{DisplayRow, Inlay},
+    display_map::DisplayRow,
     test::{
         editor_content_with_blocks, editor_lsp_test_context::EditorLspTestContext,
         editor_test_context::EditorTestContext,
@@ -863,20 +863,20 @@ async fn test_random_diagnostics_with_inlays(cx: &mut TestAppContext, mut rng: S
             21..=50 => mutated_diagnostics.update_in(cx, |diagnostics, window, cx| {
                 diagnostics.editor.update(cx, |editor, cx| {
                     let snapshot = editor.snapshot(window, cx);
-                    if !snapshot.buffer_snapshot.is_empty() {
-                        let position = rng.random_range(0..snapshot.buffer_snapshot.len());
-                        let position = snapshot.buffer_snapshot.clip_offset(position, Bias::Left);
+                    if !snapshot.buffer_snapshot().is_empty() {
+                        let position = rng.random_range(0..snapshot.buffer_snapshot().len());
+                        let position = snapshot.buffer_snapshot().clip_offset(position, Bias::Left);
                         log::info!(
                             "adding inlay at {position}/{}: {:?}",
-                            snapshot.buffer_snapshot.len(),
-                            snapshot.buffer_snapshot.text(),
+                            snapshot.buffer_snapshot().len(),
+                            snapshot.buffer_snapshot().text(),
                         );
 
                         editor.splice_inlays(
                             &[],
                             vec![Inlay::edit_prediction(
                                 post_inc(&mut next_inlay_id),
-                                snapshot.buffer_snapshot.anchor_before(position),
+                                snapshot.buffer_snapshot().anchor_before(position),
                                 Rope::from_iter(["Test inlay ", "next_inlay_id"]),
                             )],
                             cx,
@@ -1341,7 +1341,7 @@ async fn test_hover_diagnostic_and_info_popovers(cx: &mut gpui::TestAppContext) 
             range: Some(range),
         }))
     });
-    let delay = cx.update(|_, cx| EditorSettings::get_global(cx).hover_popover_delay + 1);
+    let delay = cx.update(|_, cx| EditorSettings::get_global(cx).hover_popover_delay.0 + 1);
     cx.background_executor
         .advance_clock(Duration::from_millis(delay));
 

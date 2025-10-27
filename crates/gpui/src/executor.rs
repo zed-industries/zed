@@ -2,21 +2,20 @@ use crate::{App, PlatformDispatcher};
 use async_task::Runnable;
 use futures::channel::mpsc;
 use smol::prelude::*;
-use std::mem::ManuallyDrop;
-use std::panic::Location;
-use std::thread::{self, ThreadId};
 use std::{
     fmt::Debug,
     marker::PhantomData,
-    mem,
+    mem::{self, ManuallyDrop},
     num::NonZeroUsize,
+    panic::Location,
     pin::Pin,
     rc::Rc,
     sync::{
         Arc,
-        atomic::{AtomicUsize, Ordering::SeqCst},
+        atomic::{AtomicUsize, Ordering},
     },
     task::{Context, Poll},
+    thread::{self, ThreadId},
     time::{Duration, Instant},
 };
 use util::TryFutureExt;
@@ -123,7 +122,12 @@ impl TaskLabel {
     /// Construct a new task label.
     pub fn new() -> Self {
         static NEXT_TASK_LABEL: AtomicUsize = AtomicUsize::new(1);
-        Self(NEXT_TASK_LABEL.fetch_add(1, SeqCst).try_into().unwrap())
+        Self(
+            NEXT_TASK_LABEL
+                .fetch_add(1, Ordering::SeqCst)
+                .try_into()
+                .unwrap(),
+        )
     }
 }
 
@@ -210,7 +214,8 @@ impl BackgroundExecutor {
         }
         let deadline = timeout.map(|timeout| Instant::now() + timeout);
 
-        let unparker = self.dispatcher.unparker();
+        let parker = parking::Parker::new();
+        let unparker = parker.unparker();
         let waker = waker_fn(move || {
             unparker.unpark();
         });
@@ -222,10 +227,14 @@ impl BackgroundExecutor {
                 Poll::Pending => {
                     let timeout =
                         deadline.map(|deadline| deadline.saturating_duration_since(Instant::now()));
-                    if !self.dispatcher.park(timeout)
-                        && deadline.is_some_and(|deadline| deadline < Instant::now())
-                    {
-                        return Err(future);
+                    if let Some(timeout) = timeout {
+                        if !parker.park_timeout(timeout)
+                            && deadline.is_some_and(|deadline| deadline < Instant::now())
+                        {
+                            return Err(future);
+                        }
+                    } else {
+                        parker.park();
                     }
                 }
             }
@@ -242,6 +251,8 @@ impl BackgroundExecutor {
     ) -> Result<Fut::Output, impl Future<Output = Fut::Output> + use<Fut>> {
         use std::sync::atomic::AtomicBool;
 
+        use parking::Parker;
+
         let mut future = Box::pin(future);
         if timeout == Some(Duration::ZERO) {
             return Err(future);
@@ -255,12 +266,16 @@ impl BackgroundExecutor {
         } else {
             usize::MAX
         };
-        let unparker = self.dispatcher.unparker();
+
+        let parker = Parker::new();
+        let unparker = parker.unparker();
+
         let awoken = Arc::new(AtomicBool::new(false));
         let waker = waker_fn({
             let awoken = awoken.clone();
+            let unparker = unparker.clone();
             move || {
-                awoken.store(true, SeqCst);
+                awoken.store(true, Ordering::SeqCst);
                 unparker.unpark();
             }
         });
@@ -276,7 +291,7 @@ impl BackgroundExecutor {
                     max_ticks -= 1;
 
                     if !dispatcher.tick(background_only) {
-                        if awoken.swap(false, SeqCst) {
+                        if awoken.swap(false, Ordering::SeqCst) {
                             continue;
                         }
 
@@ -297,7 +312,8 @@ impl BackgroundExecutor {
                                 "parked with nothing left to run{waiting_message}{backtrace_message}",
                             )
                         }
-                        self.dispatcher.park(None);
+                        dispatcher.set_unparker(unparker.clone());
+                        parker.park();
                     }
                 }
             }
@@ -513,9 +529,7 @@ where
                 "local task dropped by a thread that didn't spawn it. Task spawned at {}",
                 self.location
             );
-            unsafe {
-                ManuallyDrop::drop(&mut self.inner);
-            }
+            unsafe { ManuallyDrop::drop(&mut self.inner) };
         }
     }
 

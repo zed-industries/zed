@@ -138,7 +138,7 @@ impl editor::DiagnosticRenderer for DiagnosticRenderer {
                 BlockProperties {
                     placement: BlockPlacement::Near(
                         snapshot
-                            .buffer_snapshot
+                            .buffer_snapshot()
                             .anchor_after(block.initial_range.start),
                     ),
                     height: Some(1),
@@ -278,7 +278,7 @@ impl DiagnosticBlock {
             }
         } else if let Some(diagnostic) = editor
             .snapshot(window, cx)
-            .buffer_snapshot
+            .buffer_snapshot()
             .diagnostic_group(buffer_id, group_id)
             .nth(ix)
         {

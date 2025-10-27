@@ -9,7 +9,6 @@ pub use gpui_macros::{
     overflow_style_methods, padding_style_methods, position_style_methods,
     visibility_style_methods,
 };
-
 const ELLIPSIS: SharedString = SharedString::new_static("…");
 
 /// A trait for elements that can be styled.
@@ -50,6 +49,13 @@ pub trait Styled: Sized {
     /// [Docs](https://tailwindcss.com/docs/display)
     fn grid(mut self) -> Self {
         self.style().display = Some(Display::Grid);
+        self
+    }
+
+    /// Sets the display type of the element to `none`.
+    /// [Docs](https://tailwindcss.com/docs/display)
+    fn hidden(mut self) -> Self {
+        self.style().display = Some(Display::None);
         self
     }
 

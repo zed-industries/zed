@@ -6,9 +6,8 @@ mod tool_picker;
 
 use std::{ops::Range, sync::Arc};
 
-use agent_settings::AgentSettings;
+use agent::ContextServerRegistry;
 use anyhow::Result;
-use assistant_tool::{ToolSource, ToolWorkingSet};
 use cloud_llm_client::{Plan, PlanV1, PlanV2};
 use collections::HashMap;
 use context_server::ContextServerId;
@@ -18,7 +17,7 @@ use extension_host::ExtensionStore;
 use fs::Fs;
 use gpui::{
     Action, AnyView, App, AsyncWindowContext, Corner, Entity, EventEmitter, FocusHandle, Focusable,
-    Hsla, ScrollHandle, Subscription, Task, WeakEntity,
+    ScrollHandle, Subscription, Task, WeakEntity,
 };
 use language::LanguageRegistry;
 use language_model::{
@@ -26,13 +25,13 @@ use language_model::{
 };
 use notifications::status_toast::{StatusToast, ToastIcon};
 use project::{
-    agent_server_store::{AgentServerStore, CLAUDE_CODE_NAME, GEMINI_NAME},
+    agent_server_store::{AgentServerStore, CLAUDE_CODE_NAME, CODEX_NAME, GEMINI_NAME},
     context_server_store::{ContextServerConfiguration, ContextServerStatus, ContextServerStore},
 };
-use settings::{Settings, SettingsStore, update_settings_file};
+use settings::{SettingsStore, update_settings_file};
 use ui::{
     Chip, CommonAnimationExt, ContextMenu, Disclosure, Divider, DividerColor, ElevationIndex,
-    Indicator, PopoverMenu, Switch, SwitchColor, SwitchField, Tooltip, WithScrollbar, prelude::*,
+    Indicator, PopoverMenu, Switch, SwitchColor, Tooltip, WithScrollbar, prelude::*,
 };
 use util::ResultExt as _;
 use workspace::{Workspace, create_and_open_local_file};
@@ -55,9 +54,8 @@ pub struct AgentConfiguration {
     focus_handle: FocusHandle,
     configuration_views_by_provider: HashMap<LanguageModelProviderId, AnyView>,
     context_server_store: Entity<ContextServerStore>,
-    expanded_context_server_tools: HashMap<ContextServerId, bool>,
     expanded_provider_configurations: HashMap<LanguageModelProviderId, bool>,
-    tools: Entity<ToolWorkingSet>,
+    context_server_registry: Entity<ContextServerRegistry>,
     _registry_subscription: Subscription,
     scroll_handle: ScrollHandle,
     _check_for_gemini: Task<()>,
@@ -68,7 +66,7 @@ impl AgentConfiguration {
         fs: Arc<dyn Fs>,
         agent_server_store: Entity<AgentServerStore>,
         context_server_store: Entity<ContextServerStore>,
-        tools: Entity<ToolWorkingSet>,
+        context_server_registry: Entity<ContextServerRegistry>,
         language_registry: Arc<LanguageRegistry>,
         workspace: WeakEntity<Workspace>,
         window: &mut Window,
@@ -104,9 +102,8 @@ impl AgentConfiguration {
             configuration_views_by_provider: HashMap::default(),
             agent_server_store,
             context_server_store,
-            expanded_context_server_tools: HashMap::default(),
             expanded_provider_configurations: HashMap::default(),
-            tools,
+            context_server_registry,
             _registry_subscription: registry_subscription,
             scroll_handle: ScrollHandle::new(),
             _check_for_gemini: Task::ready(()),
@@ -402,101 +399,6 @@ impl AgentConfiguration {
             )
     }
 
-    fn render_command_permission(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
-        let always_allow_tool_actions = AgentSettings::get_global(cx).always_allow_tool_actions;
-        let fs = self.fs.clone();
-
-        SwitchField::new(
-            "always-allow-tool-actions-switch",
-            "Allow running commands without asking for confirmation",
-            Some(
-                "The agent can perform potentially destructive actions without asking for your confirmation.".into(),
-            ),
-            always_allow_tool_actions,
-            move |state, _window, cx| {
-                let allow = state == &ToggleState::Selected;
-                update_settings_file(fs.clone(), cx, move |settings, _| {
-                    settings.agent.get_or_insert_default().set_always_allow_tool_actions(allow);
-                });
-            },
-        )
-    }
-
-    fn render_single_file_review(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
-        let single_file_review = AgentSettings::get_global(cx).single_file_review;
-        let fs = self.fs.clone();
-
-        SwitchField::new(
-            "single-file-review",
-            "Enable single-file agent reviews",
-            Some("Agent edits are also displayed in single-file editors for review.".into()),
-            single_file_review,
-            move |state, _window, cx| {
-                let allow = state == &ToggleState::Selected;
-                update_settings_file(fs.clone(), cx, move |settings, _| {
-                    settings
-                        .agent
-                        .get_or_insert_default()
-                        .set_single_file_review(allow);
-                });
-            },
-        )
-    }
-
-    fn render_sound_notification(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
-        let play_sound_when_agent_done = AgentSettings::get_global(cx).play_sound_when_agent_done;
-        let fs = self.fs.clone();
-
-        SwitchField::new(
-            "sound-notification",
-            "Play sound when finished generating",
-            Some(
-                "Hear a notification sound when the agent is done generating changes or needs your input.".into(),
-            ),
-            play_sound_when_agent_done,
-            move |state, _window, cx| {
-                let allow = state == &ToggleState::Selected;
-                update_settings_file(fs.clone(), cx, move |settings, _| {
-                    settings.agent.get_or_insert_default().set_play_sound_when_agent_done(allow);
-                });
-            },
-        )
-    }
-
-    fn render_modifier_to_send(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
-        let use_modifier_to_send = AgentSettings::get_global(cx).use_modifier_to_send;
-        let fs = self.fs.clone();
-
-        SwitchField::new(
-            "modifier-send",
-            "Use modifier to submit a message",
-            Some(
-                "Make a modifier (cmd-enter on macOS, ctrl-enter on Linux or Windows) required to send messages.".into(),
-            ),
-            use_modifier_to_send,
-            move |state, _window, cx| {
-                let allow = state == &ToggleState::Selected;
-                update_settings_file(fs.clone(), cx, move |settings, _| {
-                    settings.agent.get_or_insert_default().set_use_modifier_to_send(allow);
-                });
-            },
-        )
-    }
-
-    fn render_general_settings_section(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
-        v_flex()
-            .p(DynamicSpacing::Base16.rems(cx))
-            .pr(DynamicSpacing::Base20.rems(cx))
-            .gap_2p5()
-            .border_b_1()
-            .border_color(cx.theme().colors().border)
-            .child(Headline::new("General Settings"))
-            .child(self.render_command_permission(cx))
-            .child(self.render_single_file_review(cx))
-            .child(self.render_sound_notification(cx))
-            .child(self.render_modifier_to_send(cx))
-    }
-
     fn render_zed_plan_info(&self, plan: Option<Plan>, cx: &mut Context<Self>) -> impl IntoElement {
         if let Some(plan) = plan {
             let free_chip_bg = cx
@@ -532,10 +434,6 @@ impl AgentConfiguration {
         } else {
             div().into_any_element()
         }
-    }
-
-    fn card_item_border_color(&self, cx: &mut Context<Self>) -> Hsla {
-        cx.theme().colors().border.opacity(0.6)
     }
 
     fn render_context_servers_section(
@@ -663,7 +561,6 @@ impl AgentConfiguration {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl use<> + IntoElement {
-        let tools_by_source = self.tools.read(cx).tools_by_source(cx);
         let server_status = self
             .context_server_store
             .read(cx)
@@ -692,17 +589,11 @@ impl AgentConfiguration {
             None
         };
 
-        let are_tools_expanded = self
-            .expanded_context_server_tools
-            .get(&context_server_id)
-            .copied()
-            .unwrap_or_default();
-        let tools = tools_by_source
-            .get(&ToolSource::ContextServer {
-                id: context_server_id.0.clone().into(),
-            })
-            .map_or([].as_slice(), |tools| tools.as_slice());
-        let tool_count = tools.len();
+        let tool_count = self
+            .context_server_registry
+            .read(cx)
+            .tools_for_server(&context_server_id)
+            .count();
 
         let (source_icon, source_tooltip) = if is_from_extension {
             (
@@ -756,7 +647,7 @@ impl AgentConfiguration {
                 let language_registry = self.language_registry.clone();
                 let context_server_store = self.context_server_store.clone();
                 let workspace = self.workspace.clone();
-                let tools = self.tools.clone();
+                let context_server_registry = self.context_server_registry.clone();
 
                 move |window, cx| {
                     Some(ContextMenu::build(window, cx, |menu, _window, _cx| {
@@ -774,20 +665,16 @@ impl AgentConfiguration {
                                 )
                                 .detach_and_log_err(cx);
                             }
-                        }).when(tool_count >= 1, |this| this.entry("View Tools", None, {
+                        }).when(tool_count > 0, |this| this.entry("View Tools", None, {
                             let context_server_id = context_server_id.clone();
-                            let tools = tools.clone();
+                            let context_server_registry = context_server_registry.clone();
                             let workspace = workspace.clone();
-
                             move |window, cx| {
                                 let context_server_id = context_server_id.clone();
-                                let tools = tools.clone();
-                                let workspace = workspace.clone();
-
                                 workspace.update(cx, |workspace, cx| {
                                     ConfigureContextServerToolsModal::toggle(
                                         context_server_id,
-                                        tools,
+                                        context_server_registry.clone(),
                                         workspace,
                                         window,
                                         cx,
@@ -869,14 +756,6 @@ impl AgentConfiguration {
             .child(
                 h_flex()
                     .justify_between()
-                    .when(
-                        error.is_none() && are_tools_expanded && tool_count >= 1,
-                        |element| {
-                            element
-                                .border_b_1()
-                                .border_color(self.card_item_border_color(cx))
-                        },
-                    )
                     .child(
                         h_flex()
                             .flex_1()
@@ -1000,11 +879,6 @@ impl AgentConfiguration {
                             ),
                     );
                 }
-
-                if !are_tools_expanded || tools.is_empty() {
-                    return parent;
-                }
-
                 parent
             })
     }
@@ -1014,7 +888,9 @@ impl AgentConfiguration {
             .agent_server_store
             .read(cx)
             .external_agents()
-            .filter(|name| name.0 != GEMINI_NAME && name.0 != CLAUDE_CODE_NAME)
+            .filter(|name| {
+                name.0 != GEMINI_NAME && name.0 != CLAUDE_CODE_NAME && name.0 != CODEX_NAME
+            })
             .cloned()
             .collect::<Vec<_>>();
 
@@ -1078,13 +954,18 @@ impl AgentConfiguration {
                             ),
                     )
                     .child(self.render_agent_server(
-                        IconName::AiGemini,
-                        "Gemini CLI",
+                        IconName::AiClaude,
+                        "Claude Code",
                     ))
                     .child(Divider::horizontal().color(DividerColor::BorderFaded))
                     .child(self.render_agent_server(
-                        IconName::AiClaude,
-                        "Claude Code",
+                        IconName::AiOpenAi,
+                        "Codex",
+                    ))
+                    .child(Divider::horizontal().color(DividerColor::BorderFaded))
+                    .child(self.render_agent_server(
+                        IconName::AiGemini,
+                        "Gemini CLI",
                     ))
                     .map(|mut parent| {
                         for agent in user_defined_agents {
@@ -1134,7 +1015,6 @@ impl Render for AgentConfiguration {
                             .track_scroll(&self.scroll_handle)
                             .size_full()
                             .overflow_y_scroll()
-                            .child(self.render_general_settings_section(cx))
                             .child(self.render_agent_servers_section(cx))
                             .child(self.render_context_servers_section(window, cx))
                             .child(self.render_provider_configuration_section(cx)),

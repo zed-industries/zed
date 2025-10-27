@@ -688,16 +688,20 @@ impl Item for BufferDiagnosticsEditor {
         true
     }
 
+    fn can_split(&self) -> bool {
+        true
+    }
+
     fn clone_on_split(
         &self,
         _workspace_id: Option<workspace::WorkspaceId>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Option<Entity<Self>>
+    ) -> Task<Option<Entity<Self>>>
     where
         Self: Sized,
     {
-        Some(cx.new(|cx| {
+        Task::ready(Some(cx.new(|cx| {
             BufferDiagnosticsEditor::new(
                 self.project_path.clone(),
                 self.project.clone(),
@@ -706,7 +710,7 @@ impl Item for BufferDiagnosticsEditor {
                 window,
                 cx,
             )
-        }))
+        })))
     }
 
     fn deactivated(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -728,10 +732,6 @@ impl Item for BufferDiagnosticsEditor {
 
     fn is_dirty(&self, cx: &App) -> bool {
         self.multibuffer.read(cx).is_dirty(cx)
-    }
-
-    fn is_singleton(&self, _cx: &App) -> bool {
-        false
     }
 
     fn navigate(

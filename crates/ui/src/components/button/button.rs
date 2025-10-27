@@ -402,6 +402,11 @@ impl ButtonCommon for Button {
         self.base = self.base.layer(elevation);
         self
     }
+
+    fn track_focus(mut self, focus_handle: &gpui::FocusHandle) -> Self {
+        self.base = self.base.track_focus(focus_handle);
+        self
+    }
 }
 
 impl RenderOnce for Button {
@@ -469,7 +474,6 @@ impl RenderOnce for Button {
     }
 }
 
-// View this component preview using `workspace: open component-preview`
 impl Component for Button {
     fn scope() -> ComponentScope {
         ComponentScope::Input

@@ -3,7 +3,8 @@ pub mod cursor_position;
 use cursor_position::{LineIndicatorFormat, UserCaretPosition};
 use editor::{
     Anchor, Editor, MultiBufferSnapshot, RowHighlightOptions, SelectionEffects, ToOffset, ToPoint,
-    actions::Tab, scroll::Autoscroll,
+    actions::Tab,
+    scroll::{Autoscroll, ScrollOffset},
 };
 use gpui::{
     App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Render, SharedString, Styled,
@@ -26,7 +27,7 @@ pub struct GoToLine {
     line_editor: Entity<Editor>,
     active_editor: Entity<Editor>,
     current_text: SharedString,
-    prev_scroll_position: Option<gpui::Point<f32>>,
+    prev_scroll_position: Option<gpui::Point<ScrollOffset>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -73,7 +74,9 @@ impl GoToLine {
     ) -> Self {
         let (user_caret, last_line, scroll_position) = active_editor.update(cx, |editor, cx| {
             let user_caret = UserCaretPosition::at_selection_end(
-                &editor.selections.last::<Point>(cx),
+                &editor
+                    .selections
+                    .last::<Point>(&editor.display_snapshot(cx)),
                 &editor.buffer().read(cx).snapshot(cx),
             );
 
@@ -738,7 +741,7 @@ mod tests {
         let selections = editor.update(cx, |editor, cx| {
             editor
                 .selections
-                .all::<rope::Point>(cx)
+                .all::<rope::Point>(&editor.display_snapshot(cx))
                 .into_iter()
                 .map(|s| s.start..s.end)
                 .collect::<Vec<_>>()
