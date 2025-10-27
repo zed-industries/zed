@@ -40,10 +40,7 @@ jobs:
     continue-on-error: true
   nix-build-mac-arm:
     if: github.repository_owner == 'zed-industries'
-    runs-on:
-    - macOS
-    - ARM64
-    - test
+    runs-on: self-mini-macos
     env:
       ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
       ZED_MINIDUMP_ENDPOINT: ${{ secrets.ZED_MINIDUMP_ENDPOINT }}

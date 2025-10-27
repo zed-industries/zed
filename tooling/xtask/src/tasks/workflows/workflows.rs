@@ -30,6 +30,67 @@ pub fn danger() -> Workflow {
         )
 }
 
+pub fn bundle_mac() -> Workflow {
+    Workflow::default()
+        .name("Bundle macOS")
+        .on(Event::default().pull_request(
+            PullRequest::default().types([PullRequestType::Labeled, PullRequestType::Synchronize]),
+        ))
+        .concurrency(
+            Concurrency::new(Expression::new(
+                "${{ github.workflow }}-${{ github.head_ref || github.ref }}",
+            ))
+            .cancel_in_progress(true),
+        )
+        .add_job(
+            "bundle-mac",
+            Job::default()
+                .cond(Expression::new(
+                    "(github.event.action == 'labeled' && github.event.label.name == 'run-bundling') || (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'run-bundling'))",
+                ))
+                .runs_on(runners::MAC_DEFAULT)
+                .timeout_minutes(120u32)
+                .add_env(("MACOS_CERTIFICATE", vars::MACOS_CERTIFICATE))
+                .add_env(("MACOS_CERTIFICATE_PASSWORD", vars::MACOS_CERTIFICATE_PASSWORD))
+                .add_env(("APPLE_NOTARIZATION_KEY", vars::APPLE_NOTARIZATION_KEY))
+                .add_env(("APPLE_NOTARIZATION_KEY_ID", vars::APPLE_NOTARIZATION_KEY_ID))
+                .add_env(("APPLE_NOTARIZATION_ISSUER_ID", vars::APPLE_NOTARIZATION_ISSUER_ID))
+                .add_step(
+                    Step::new("Install Node")
+                        .uses("actions", "setup-node", "49933ea5288caeca8642d1e84afbd3f7d6820020")
+                        .add_with(("node-version", "18"))
+                )
+                .add_step(
+                    Step::new("Setup Sentry CLI")
+                        .uses("matbour", "setup-sentry-cli", "3e938c54b3018bdd019973689ef984e033b0454b")
+                        .add_with(("token", vars::SENTRY_AUTH_TOKEN))
+                )
+                .add_step(
+                    steps::checkout_repo()
+                        .add_with(("fetch-depth", "25"))
+                        .add_with(("clean", "false"))
+                )
+                .add_step(Step::new("Limit target directory size").run("script/clear-target-dir-if-larger-than 100"))
+                .add_step(Step::new("Create macOS app bundle").run("script/bundle-mac"))
+                .add_step(
+                    Step::new("Rename binaries")
+                        .run("mv target/aarch64-apple-darwin/release/Zed.dmg target/aarch64-apple-darwin/release/Zed-aarch64.dmg\nmv target/x86_64-apple-darwin/release/Zed.dmg target/x86_64-apple-darwin/release/Zed-x86_64.dmg")
+                )
+                .add_step(
+                    Step::new("Upload app bundle (aarch64)")
+                        .uses("actions", "upload-artifact", "ea165f8d65b6e75b540449e92b4886f43607fa02")
+                        .add_with(("name", "Zed_${{ github.event.pull_request.head.sha || github.sha }}-aarch64.dmg"))
+                        .add_with(("path", "target/aarch64-apple-darwin/release/Zed-aarch64.dmg"))
+                )
+                .add_step(
+                    Step::new("Upload app bundle (x86_64)")
+                        .uses("actions", "upload-artifact", "ea165f8d65b6e75b540449e92b4886f43607fa02")
+                        .add_with(("name", "Zed_${{ github.event.pull_request.head.sha || github.sha }}-x86_64.dmg"))
+                        .add_with(("path", "target/x86_64-apple-darwin/release/Zed-x86_64.dmg"))
+                ),
+        )
+}
+
 /// Generates the nix.yml workflow
 pub fn nix() -> Workflow {
     let env: IndexMap<_, _> = [

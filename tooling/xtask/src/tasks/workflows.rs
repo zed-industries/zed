@@ -16,7 +16,11 @@ pub struct GenerateWorkflowArgs {}
 pub fn run_workflows(_: GenerateWorkflowArgs) -> Result<()> {
     let dir = Path::new(".github/workflows");
 
-    let workflows = vec![("danger.yml", danger()), ("nix.yml", nix())];
+    let workflows = vec![
+        ("danger.yml", danger()),
+        ("nix.yml", nix()),
+        ("bundle_mac.yml", bundle_mac()),
+    ];
     fs::create_dir_all(dir)
         .with_context(|| format!("Failed to create directory: {}", dir.display()))?;
 
