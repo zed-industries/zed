@@ -1090,6 +1090,15 @@ impl From<WslConnectionOptions> for RemoteConnectionOptions {
     }
 }
 
+#[cfg(target_os = "windows")]
+/// Open a wsl path (\\wsl.localhost\<distro>\path)
+#[derive(Debug, Clone, PartialEq, Eq, gpui::Action)]
+#[action(namespace = workspace, no_json, no_register)]
+pub struct OpenWslPath {
+    pub distro: WslConnectionOptions,
+    pub paths: Vec<PathBuf>,
+}
+
 #[async_trait(?Send)]
 pub trait RemoteConnection: Send + Sync {
     fn start_proxy(

@@ -455,7 +455,7 @@ impl TerminalBuilder {
                 args: Option<Vec<String>>,
                 title_override: Option<String>,
             ) -> Self {
-                log::info!("Using {program} as shell");
+                log::debug!("Using {program} as shell");
                 Self {
                     program,
                     args,

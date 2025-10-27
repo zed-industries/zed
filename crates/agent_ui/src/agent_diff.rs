@@ -576,16 +576,22 @@ impl Item for AgentDiffPane {
         });
     }
 
+    fn can_split(&self) -> bool {
+        true
+    }
+
     fn clone_on_split(
         &self,
         _workspace_id: Option<workspace::WorkspaceId>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Option<Entity<Self>>
+    ) -> Task<Option<Entity<Self>>>
     where
         Self: Sized,
     {
-        Some(cx.new(|cx| Self::new(self.thread.clone(), self.workspace.clone(), window, cx)))
+        Task::ready(Some(cx.new(|cx| {
+            Self::new(self.thread.clone(), self.workspace.clone(), window, cx)
+        })))
     }
 
     fn is_dirty(&self, cx: &App) -> bool {

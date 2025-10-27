@@ -709,17 +709,25 @@ impl Item for ProjectDiff {
         });
     }
 
+    fn can_split(&self) -> bool {
+        true
+    }
+
     fn clone_on_split(
         &self,
         _workspace_id: Option<workspace::WorkspaceId>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Option<Entity<Self>>
+    ) -> Task<Option<Entity<Self>>>
     where
         Self: Sized,
     {
-        let workspace = self.workspace.upgrade()?;
-        Some(cx.new(|cx| ProjectDiff::new(self.project.clone(), workspace, window, cx)))
+        let Some(workspace) = self.workspace.upgrade() else {
+            return Task::ready(None);
+        };
+        Task::ready(Some(cx.new(|cx| {
+            ProjectDiff::new(self.project.clone(), workspace, window, cx)
+        })))
     }
 
     fn is_dirty(&self, cx: &App) -> bool {

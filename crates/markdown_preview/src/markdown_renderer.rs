@@ -6,10 +6,10 @@ use crate::markdown_elements::{
 };
 use fs::normalize_path;
 use gpui::{
-    AbsoluteLength, AnyElement, App, AppContext as _, ClipboardItem, Context, DefiniteLength, Div,
-    Element, ElementId, Entity, HighlightStyle, Hsla, ImageSource, InteractiveText, IntoElement,
-    Keystroke, Modifiers, ParentElement, Render, Resource, SharedString, Styled, StyledText,
-    TextStyle, WeakEntity, Window, div, img, rems,
+    AbsoluteLength, AnyElement, App, AppContext as _, ClipboardItem, Context, Div, Element,
+    ElementId, Entity, HighlightStyle, Hsla, ImageSource, InteractiveText, IntoElement, Keystroke,
+    Modifiers, ParentElement, Render, Resource, SharedString, Styled, StyledText, TextStyle,
+    WeakEntity, Window, div, img, rems,
 };
 use settings::Settings;
 use std::{
@@ -234,8 +234,6 @@ fn render_markdown_list_item(
 ) -> AnyElement {
     use ParsedMarkdownListItemType::*;
 
-    let padding = cx.scaled_rems((parsed.depth - 1) as f32);
-
     let bullet = match &parsed.item_type {
         Ordered(order) => format!("{}.", order).into_any_element(),
         Unordered => "•".into_any_element(),
@@ -294,13 +292,16 @@ fn render_markdown_list_item(
         .collect();
 
     let item = h_flex()
-        .pl(DefiniteLength::Absolute(AbsoluteLength::Rems(padding)))
+        .when(!parsed.nested, |this| {
+            this.pl(cx.scaled_rems(parsed.depth.saturating_sub(1) as f32))
+        })
+        .when(parsed.nested && parsed.depth > 1, |this| this.ml_neg_1p5())
         .items_start()
         .children(vec![
             bullet,
             v_flex()
                 .children(contents)
-                .gap(cx.scaled_rems(1.0))
+                .when(!parsed.nested, |this| this.gap(cx.scaled_rems(1.0)))
                 .pr(cx.scaled_rems(1.0))
                 .w_full(),
         ]);
@@ -497,7 +498,7 @@ fn render_markdown_table(parsed: &ParsedMarkdownTable, cx: &mut RenderContext) -
     for (row_idx, row) in parsed.header.iter().chain(parsed.body.iter()).enumerate() {
         let mut col_idx = 0;
 
-        for (cell_idx, cell) in row.columns.iter().enumerate() {
+        for cell in row.columns.iter() {
             // Skip columns occupied by row-spanning cells from previous rows
             while col_idx < max_column_count && grid_occupied[row_idx][col_idx] {
                 col_idx += 1;
@@ -507,19 +508,7 @@ fn render_markdown_table(parsed: &ParsedMarkdownTable, cx: &mut RenderContext) -
                 break;
             }
 
-            let alignment = parsed
-                .column_alignments
-                .get(cell_idx)
-                .copied()
-                .unwrap_or_else(|| {
-                    if cell.is_header {
-                        ParsedMarkdownTableAlignment::Center
-                    } else {
-                        ParsedMarkdownTableAlignment::None
-                    }
-                });
-
-            let container = match alignment {
+            let container = match cell.alignment {
                 ParsedMarkdownTableAlignment::Left | ParsedMarkdownTableAlignment::None => div(),
                 ParsedMarkdownTableAlignment::Center => v_flex().items_center(),
                 ParsedMarkdownTableAlignment::Right => v_flex().items_end(),
@@ -552,6 +541,23 @@ fn render_markdown_table(parsed: &ParsedMarkdownTable, cx: &mut RenderContext) -
             }
 
             col_idx += cell.col_span;
+        }
+
+        // Fill remaining columns with empty cells if needed
+        while col_idx < max_column_count {
+            if grid_occupied[row_idx][col_idx] {
+                col_idx += 1;
+                continue;
+            }
+
+            let empty_cell = div()
+                .border_1()
+                .size_full()
+                .border_color(cx.border_color)
+                .when(row_idx % 2 == 1, |this| this.bg(cx.panel_background_color));
+
+            cells.push(empty_cell);
+            col_idx += 1;
         }
     }
 
@@ -900,6 +906,7 @@ mod tests {
             row_span,
             is_header: false,
             children,
+            alignment: ParsedMarkdownTableAlignment::None,
         }
     }
 
@@ -913,6 +920,7 @@ mod tests {
             row_span,
             is_header: false,
             children,
+            alignment: ParsedMarkdownTableAlignment::None,
         }
     }
 

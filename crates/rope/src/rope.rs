@@ -4,9 +4,9 @@ mod point;
 mod point_utf16;
 mod unclipped;
 
+use arrayvec::ArrayVec;
 use rayon::iter::{IntoParallelIterator, ParallelIterator as _};
 use regex::Regex;
-use smallvec::SmallVec;
 use std::{
     borrow::Cow,
     cmp, fmt, io, mem,
@@ -283,10 +283,19 @@ impl Rope {
             (),
         );
 
-        if text.len() > 2048 {
+        #[cfg(not(test))]
+        const NUM_CHUNKS: usize = 16;
+        #[cfg(test)]
+        const NUM_CHUNKS: usize = 4;
+
+        // We accommodate for NUM_CHUNKS chunks of size MAX_BASE
+        // but given the chunk boundary can land within a character
+        // we need to accommodate for the worst case where every chunk gets cut short by up to 4 bytes
+        if text.len() > NUM_CHUNKS * chunk::MAX_BASE - NUM_CHUNKS * 4 {
             return self.push_large(text);
         }
-        let mut new_chunks = SmallVec::<[_; 16]>::new();
+        // 16 is enough as otherwise we will hit the branch above
+        let mut new_chunks = ArrayVec::<_, NUM_CHUNKS>::new();
 
         while !text.is_empty() {
             let mut split_ix = cmp::min(chunk::MAX_BASE, text.len());
@@ -297,19 +306,8 @@ impl Rope {
             new_chunks.push(chunk);
             text = remainder;
         }
-
-        #[cfg(test)]
-        const PARALLEL_THRESHOLD: usize = 4;
-        #[cfg(not(test))]
-        const PARALLEL_THRESHOLD: usize = 4 * (2 * sum_tree::TREE_BASE);
-
-        if new_chunks.len() >= PARALLEL_THRESHOLD {
-            self.chunks
-                .par_extend(new_chunks.into_vec().into_par_iter().map(Chunk::new), ());
-        } else {
-            self.chunks
-                .extend(new_chunks.into_iter().map(Chunk::new), ());
-        }
+        self.chunks
+            .extend(new_chunks.into_iter().map(Chunk::new), ());
 
         self.check_invariants();
     }

@@ -102,6 +102,33 @@ pub fn init(cx: &mut App) {
         });
     });
 
+    #[cfg(target_os = "windows")]
+    cx.on_action(|open_wsl: &remote::OpenWslPath, cx| {
+        let open_wsl = open_wsl.clone();
+        with_active_or_new_workspace(cx, move |workspace, window, cx| {
+            let fs = workspace.project().read(cx).fs().clone();
+            add_wsl_distro(fs, &open_wsl.distro, cx);
+            let open_options = OpenOptions {
+                replace_window: window.window_handle().downcast::<Workspace>(),
+                ..Default::default()
+            };
+
+            let app_state = workspace.app_state().clone();
+
+            cx.spawn_in(window, async move |_, cx| {
+                open_remote_project(
+                    RemoteConnectionOptions::Wsl(open_wsl.distro.clone()),
+                    open_wsl.paths,
+                    app_state,
+                    open_options,
+                    cx,
+                )
+                .await
+            })
+            .detach();
+        });
+    });
+
     cx.on_action(|open_recent: &OpenRecent, cx| {
         let create_new_window = open_recent.create_new_window;
         with_active_or_new_workspace(cx, move |workspace, window, cx| {
@@ -134,6 +161,38 @@ pub fn init(cx: &mut App) {
     });
 
     cx.observe_new(DisconnectedOverlay::register).detach();
+}
+
+#[cfg(target_os = "windows")]
+pub fn add_wsl_distro(
+    fs: Arc<dyn project::Fs>,
+    connection_options: &remote::WslConnectionOptions,
+    cx: &App,
+) {
+    use gpui::ReadGlobal;
+    use settings::SettingsStore;
+
+    let distro_name = SharedString::from(&connection_options.distro_name);
+    let user = connection_options.user.clone();
+    SettingsStore::global(cx).update_settings_file(fs, move |setting, _| {
+        let connections = setting
+            .remote
+            .wsl_connections
+            .get_or_insert(Default::default());
+
+        if !connections
+            .iter()
+            .any(|conn| conn.distro_name == distro_name && conn.user == user)
+        {
+            use std::collections::BTreeSet;
+
+            connections.push(settings::WslConnection {
+                distro_name,
+                user,
+                projects: BTreeSet::new(),
+            })
+        }
+    });
 }
 
 pub struct RecentProjects {

@@ -519,6 +519,12 @@ actions!(
     ]
 );
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct WslConnectionOptions {
+    pub distro_name: String,
+    pub user: Option<String>,
+}
+
 #[cfg(target_os = "windows")]
 pub mod wsl_actions {
     use gpui::Action;

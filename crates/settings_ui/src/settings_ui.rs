@@ -7,9 +7,9 @@ use feature_flags::FeatureFlag;
 use fuzzy::StringMatchCandidate;
 use gpui::{
     Action, App, DEFAULT_ADDITIONAL_WINDOW_SIZE, Div, Entity, FocusHandle, Focusable, Global,
-    ListState, ReadGlobal as _, ScrollHandle, Stateful, Subscription, Task, TitlebarOptions,
-    UniformListScrollHandle, Window, WindowBounds, WindowHandle, WindowOptions, actions, div, list,
-    point, prelude::*, px, uniform_list,
+    KeyContext, ListState, ReadGlobal as _, ScrollHandle, Stateful, Subscription, Task,
+    TitlebarOptions, UniformListScrollHandle, Window, WindowBounds, WindowHandle, WindowOptions,
+    actions, div, list, point, prelude::*, px, uniform_list,
 };
 use heck::ToTitleCase as _;
 use project::{Project, WorktreeId};
@@ -20,11 +20,12 @@ use settings::{Settings, SettingsContent, SettingsStore};
 use std::{
     any::{Any, TypeId, type_name},
     cell::RefCell,
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     num::{NonZero, NonZeroU32},
     ops::Range,
     rc::Rc,
     sync::{Arc, LazyLock, RwLock},
+    time::Duration,
 };
 use title_bar::platform_title_bar::PlatformTitleBar;
 use ui::{
@@ -213,7 +214,7 @@ impl<T: PartialEq + Clone + Send + Sync + 'static> AnySettingField for SettingFi
             } else {
                 None
             };
-            update_settings_file(current_file.clone(), cx, move |settings, _| {
+            update_settings_file(current_file.clone(), None, cx, move |settings, _| {
                 (this.write)(settings, value_to_set);
             })
             // todo(settings_ui): Don't log err
@@ -500,6 +501,8 @@ pub fn open_settings_editor(
     workspace_handle: WindowHandle<Workspace>,
     cx: &mut App,
 ) {
+    telemetry::event!("Settings Viewed");
+
     /// Assumes a settings GUI window is already open
     fn open_path(
         path: &str,
@@ -668,6 +671,7 @@ pub struct SettingsWindow {
     files_focus_handle: FocusHandle,
     search_index: Option<Arc<SearchIndex>>,
     list_state: ListState,
+    shown_errors: HashSet<String>,
 }
 
 struct SearchIndex {
@@ -1109,6 +1113,14 @@ enum SettingsUiFile {
 }
 
 impl SettingsUiFile {
+    fn setting_type(&self) -> &'static str {
+        match self {
+            SettingsUiFile::User => "User",
+            SettingsUiFile::Project(_) => "Project",
+            SettingsUiFile::Server(_) => "Server",
+        }
+    }
+
     fn is_server(&self) -> bool {
         matches!(self, SettingsUiFile::Server(_))
     }
@@ -1127,6 +1139,7 @@ impl SettingsUiFile {
             settings::SettingsFile::Project(location) => SettingsUiFile::Project(location),
             settings::SettingsFile::Server => SettingsUiFile::Server("todo: server name"),
             settings::SettingsFile::Default => return None,
+            settings::SettingsFile::Global => return None,
         })
     }
 
@@ -1196,6 +1209,8 @@ impl SettingsWindow {
                     window.remove_window();
                 })
                 .ok();
+
+                telemetry::event!("Settings Closed")
             }
         })
         .detach();
@@ -1286,6 +1301,7 @@ impl SettingsWindow {
                 .tab_index(HEADER_CONTAINER_TAB_INDEX)
                 .tab_stop(false),
             search_index: None,
+            shown_errors: HashSet::default(),
             list_state,
         };
 
@@ -1579,6 +1595,9 @@ impl SettingsWindow {
                     );
                 })
                 .ok();
+
+            cx.background_executor().timer(Duration::from_secs(1)).await;
+            telemetry::event!("Settings Searched", query = query)
         }));
     }
 
@@ -1712,7 +1731,10 @@ impl SettingsWindow {
         let prev_files = self.files.clone();
         let settings_store = cx.global::<SettingsStore>();
         let mut ui_files = vec![];
-        let all_files = settings_store.get_all_files();
+        let mut all_files = settings_store.get_all_files();
+        if !all_files.contains(&settings::SettingsFile::User) {
+            all_files.push(settings::SettingsFile::User);
+        }
         for file in all_files {
             let Some(settings_ui_file) = SettingsUiFile::from_settings(file) else {
                 continue;
@@ -1832,6 +1854,10 @@ impl SettingsWindow {
             return;
         }
         self.current_file = self.files[ix].0.clone();
+
+        if let SettingsUiFile::Project((_, _)) = &self.current_file {
+            telemetry::event!("Setting Project Clicked");
+        }
 
         self.build_ui(window, cx);
 
@@ -2056,8 +2082,15 @@ impl SettingsWindow {
             "Focus Navbar"
         };
 
+        let mut key_context = KeyContext::new_with_defaults();
+        key_context.add("NavigationMenu");
+        key_context.add("menu");
+        if self.search_bar.focus_handle(cx).is_focused(window) {
+            key_context.add("search");
+        }
+
         v_flex()
-            .key_context("NavigationMenu")
+            .key_context(key_context)
             .on_action(cx.listener(|this, _: &CollapseNavEntry, window, cx| {
                 let Some(focused_entry) = this.focused_nav_entry(window, cx) else {
                     return;
@@ -2219,8 +2252,18 @@ impl SettingsWindow {
                                                     },
                                                 ))
                                         })
-                                        .on_click(
+                                        .on_click({
+                                            let category = this.pages[entry.page_index].title;
+                                            let subcategory =
+                                                (!entry.is_root).then_some(entry.title);
+
                                             cx.listener(move |this, _, window, cx| {
+                                                telemetry::event!(
+                                                    "Settings Navigation Clicked",
+                                                    category = category,
+                                                    subcategory = subcategory
+                                                );
+
                                                 this.open_and_scroll_to_navbar_entry(
                                                     entry_index,
                                                     None,
@@ -2228,8 +2271,8 @@ impl SettingsWindow {
                                                     window,
                                                     cx,
                                                 );
-                                            }),
-                                        )
+                                            })
+                                        })
                                     })
                                     .collect()
                             }),
@@ -2646,36 +2689,72 @@ impl SettingsWindow {
         if let Some(error) =
             SettingsStore::global(cx).error_for_file(self.current_file.to_settings())
         {
-            warning_banner = v_flex()
-                .pb_4()
-                .child(
-                    Banner::new()
-                        .severity(Severity::Warning)
-                        .child(
-                            v_flex()
-                                .my_0p5()
-                                .gap_0p5()
-                                .child(Label::new("Your settings file is in an invalid state."))
-                                .child(
-                                    Label::new(error).size(LabelSize::Small).color(Color::Muted),
-                                ),
-                        )
-                        .action_slot(
-                            div().pr_1().child(
-                                Button::new("fix-in-json", "Fix in settings.json")
-                                    .tab_index(0_isize)
-                                    .style(ButtonStyle::Tinted(ui::TintColor::Warning))
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.open_current_settings_file(cx);
-                                    })),
-                            ),
+            fn banner(
+                label: &'static str,
+                error: String,
+                shown_errors: &mut HashSet<String>,
+                cx: &mut Context<SettingsWindow>,
+            ) -> impl IntoElement {
+                if shown_errors.insert(error.clone()) {
+                    telemetry::event!("Settings Error Shown", label = label, error = &error);
+                }
+                Banner::new()
+                    .severity(Severity::Warning)
+                    .child(
+                        v_flex()
+                            .my_0p5()
+                            .gap_0p5()
+                            .child(Label::new(label))
+                            .child(Label::new(error).size(LabelSize::Small).color(Color::Muted)),
+                    )
+                    .action_slot(
+                        div().pr_1().child(
+                            Button::new("fix-in-json", "Fix in settings.json")
+                                .tab_index(0_isize)
+                                .style(ButtonStyle::Tinted(ui::TintColor::Warning))
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.open_current_settings_file(cx);
+                                })),
                         ),
-                )
+                    )
+            }
+            let parse_error = error.parse_error();
+            let parse_failed = parse_error.is_some();
+            warning_banner = v_flex()
+                .gap_2()
+                .pb_4()
+                .when_some(parse_error, |this, err| {
+                    this.child(banner(
+                        "Failed to load your settings. Some values may be incorrect and changes may be lost.",
+                        err,
+                        &mut self.shown_errors,
+                        cx,
+                    ))
+                })
+                .map(|this| match &error.migration_status {
+                    settings::MigrationStatus::Succeeded => this.child(banner(
+                        "Your settings are out of date, and need to be updated.",
+                        match &self.current_file {
+                            SettingsUiFile::User => "They can be automatically migrated to the latest version.",
+                            SettingsUiFile::Server(_) | SettingsUiFile::Project(_)  => "They must be manually migrated to the latest version."
+                        }.to_string(),
+                        &mut self.shown_errors,
+                        cx,
+                    )),
+                    settings::MigrationStatus::Failed { error: err } if !parse_failed => this
+                        .child(banner(
+                            "Your settings file is out of date, automatic migration failed",
+                            err.clone(),
+                            &mut self.shown_errors,
+                            cx,
+                        )),
+                    _ => this,
+                })
                 .into_any_element()
         }
 
         return v_flex()
-            .id("Settings-ui-page")
+            .id("settings-ui-page")
             .on_action(cx.listener(|this, _: &menu::SelectNext, window, cx| {
                 if !sub_page_stack().is_empty() {
                     window.focus_next();
@@ -2746,8 +2825,8 @@ impl SettingsWindow {
             .pt_6()
             .px_8()
             .bg(cx.theme().colors().editor_background)
-            .child(warning_banner)
             .child(page_header)
+            .child(warning_banner)
             .child(
                 div()
                     .size_full()
@@ -3097,9 +3176,12 @@ fn all_projects(cx: &App) -> impl Iterator<Item = Entity<project::Project>> {
 
 fn update_settings_file(
     file: SettingsUiFile,
+    file_name: Option<&'static str>,
     cx: &mut App,
     update: impl 'static + Send + FnOnce(&mut SettingsContent, &App),
 ) -> Result<()> {
+    telemetry::event!("Settings Change", setting = file_name, type = file.setting_type());
+
     match file {
         SettingsUiFile::Project((worktree_id, rel_path)) => {
             let rel_path = rel_path.join(paths::local_settings_file_relative_path());
@@ -3170,7 +3252,7 @@ fn render_text_field<T: From<String> + Into<String> + AsRef<str> + Clone>(
         )
         .on_confirm({
             move |new_text, cx| {
-                update_settings_file(file.clone(), cx, move |settings, _cx| {
+                update_settings_file(file.clone(), field.json_path, cx, move |settings, _cx| {
                     (field.write)(settings, new_text.map(Into::into));
                 })
                 .log_err(); // todo(settings_ui) don't log err
@@ -3199,8 +3281,10 @@ fn render_toggle_button<B: Into<bool> + From<bool> + Copy>(
         .color(SwitchColor::Accent)
         .on_click({
             move |state, _window, cx| {
+                telemetry::event!("Settings Change", setting = field.json_path, type = file.setting_type());
+
                 let state = *state == ui::ToggleState::Selected;
-                update_settings_file(file.clone(), cx, move |settings, _cx| {
+                update_settings_file(file.clone(), field.json_path, cx, move |settings, _cx| {
                     (field.write)(settings, Some(state.into()));
                 })
                 .log_err(); // todo(settings_ui) don't log err
@@ -3222,7 +3306,7 @@ fn render_number_field<T: NumberFieldType + Send + Sync>(
         .on_change({
             move |value, _window, cx| {
                 let value = *value;
-                update_settings_file(file.clone(), cx, move |settings, _cx| {
+                update_settings_file(file.clone(), field.json_path, cx, move |settings, _cx| {
                     (field.write)(settings, Some(value));
                 })
                 .log_err(); // todo(settings_ui) don't log err
@@ -3278,9 +3362,14 @@ where
                             if value == current_value {
                                 return;
                             }
-                            update_settings_file(file.clone(), cx, move |settings, _cx| {
-                                (field.write)(settings, Some(value));
-                            })
+                            update_settings_file(
+                                file.clone(),
+                                field.json_path,
+                                cx,
+                                move |settings, _cx| {
+                                    (field.write)(settings, Some(value));
+                                },
+                            )
                             .log_err(); // todo(settings_ui) don't log err
                         },
                     );
@@ -3336,9 +3425,14 @@ fn render_font_picker(
                 font_picker(
                     current_value.clone().into(),
                     move |font_name, cx| {
-                        update_settings_file(file.clone(), cx, move |settings, _cx| {
-                            (field.write)(settings, Some(font_name.into()));
-                        })
+                        update_settings_file(
+                            file.clone(),
+                            field.json_path,
+                            cx,
+                            move |settings, _cx| {
+                                (field.write)(settings, Some(font_name.into()));
+                            },
+                        )
                         .log_err(); // todo(settings_ui) don't log err
                     },
                     window,
@@ -3380,9 +3474,17 @@ fn render_theme_picker(
                 theme_picker(
                     current_value,
                     move |theme_name, cx| {
-                        update_settings_file(file.clone(), cx, move |settings, _cx| {
-                            (field.write)(settings, Some(settings::ThemeName(theme_name.into())));
-                        })
+                        update_settings_file(
+                            file.clone(),
+                            field.json_path,
+                            cx,
+                            move |settings, _cx| {
+                                (field.write)(
+                                    settings,
+                                    Some(settings::ThemeName(theme_name.into())),
+                                );
+                            },
+                        )
                         .log_err(); // todo(settings_ui) don't log err
                     },
                     window,
@@ -3424,12 +3526,17 @@ fn render_icon_theme_picker(
                 icon_theme_picker(
                     current_value,
                     move |theme_name, cx| {
-                        update_settings_file(file.clone(), cx, move |settings, _cx| {
-                            (field.write)(
-                                settings,
-                                Some(settings::IconThemeName(theme_name.into())),
-                            );
-                        })
+                        update_settings_file(
+                            file.clone(),
+                            field.json_path,
+                            cx,
+                            move |settings, _cx| {
+                                (field.write)(
+                                    settings,
+                                    Some(settings::IconThemeName(theme_name.into())),
+                                );
+                            },
+                        )
                         .log_err(); // todo(settings_ui) don't log err
                     },
                     window,
@@ -3565,6 +3672,7 @@ pub mod test {
             files_focus_handle: cx.focus_handle(),
             search_index: None,
             list_state: ListState::new(0, gpui::ListAlignment::Top, px(0.0)),
+            shown_errors: HashSet::default(),
         };
 
         settings_window.build_filter_table();
