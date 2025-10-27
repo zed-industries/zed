@@ -1,5 +1,5 @@
-use crate::{Editor, RangeToAnchorExt, display_map::DisplaySnapshot};
-use gpui::{Context, HighlightStyle};
+use crate::{Editor, RangeToAnchorExt};
+use gpui::{Context, HighlightStyle, Window};
 use language::CursorShape;
 use theme::ActiveTheme;
 
@@ -8,13 +8,14 @@ enum MatchingBracketHighlight {}
 impl Editor {
     pub fn refresh_matching_bracket_highlights(
         &mut self,
-        snapshot: &DisplaySnapshot,
+        window: &Window,
         cx: &mut Context<Editor>,
     ) {
         self.clear_highlights::<MatchingBracketHighlight>(cx);
 
+        let snapshot = self.snapshot(window, cx);
         let buffer_snapshot = snapshot.buffer_snapshot();
-        let newest_selection = self.selections.newest::<usize>(snapshot);
+        let newest_selection = self.selections.newest::<usize>(&snapshot);
         // Don't highlight brackets if the selection isn't empty
         if !newest_selection.is_empty() {
             return;
