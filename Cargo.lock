@@ -16380,8 +16380,12 @@ version = "0.1.0"
 dependencies = [
  "editor",
  "file_icons",
+ "futures 0.3.31",
  "gpui",
- "multi_buffer",
+ "image",
+ "language",
+ "smallvec",
+ "smol",
  "ui",
  "workspace",
 ]

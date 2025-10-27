@@ -41,6 +41,7 @@ const DEFAULT_FILTERS: &[(&str, log::LevelFilter)] = &[
     ("blade_graphics", log::LevelFilter::Warn),
     #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "windows"))]
     ("naga::back::spv::writer", log::LevelFilter::Warn),
+    ("usvg::parser::style", log::LevelFilter::Error),
 ];
 
 pub fn init_env_filter(filter: env_config::EnvFilter) {
