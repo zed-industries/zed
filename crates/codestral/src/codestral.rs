@@ -217,7 +217,7 @@ impl EditPredictionProvider for CodestralCompletionProvider {
             .codestral
             .api_url
             .clone()
-            .unwrap_or_else(|| CODESTRAL_API_URL.to_string() );
+            .unwrap_or_else(|| CODESTRAL_API_URL.to_string());
 
         self.pending_request = Some(cx.spawn(async move |this, cx| {
             if debounce {
@@ -249,7 +249,7 @@ impl EditPredictionProvider for CodestralCompletionProvider {
                 suffix,
                 model,
                 max_tokens,
-                api_url
+                api_url,
             )
             .await
             {
