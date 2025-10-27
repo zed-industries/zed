@@ -82,11 +82,16 @@ struct WrapRow(u32);
 
 pub type RenderBlock = Arc<dyn Send + Sync + Fn(&mut BlockContext) -> AnyElement>;
 
+/// Where to place a block.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum BlockPlacement<T> {
+    /// Place the block above the given position.
     Above(T),
+    /// Place the block below the given position.
     Below(T),
+    /// Place the block next the given position.
     Near(T),
+    /// Replace the given range of positions with the block.
     Replace(RangeInclusive<T>),
 }
 

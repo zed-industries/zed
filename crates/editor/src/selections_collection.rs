@@ -131,7 +131,7 @@ impl SelectionsCollection {
         &self,
         snapshot: &DisplaySnapshot,
     ) -> Option<Selection<D>> {
-        resolve_selections(self.pending_anchor(), &snapshot).next()
+        resolve_selections_wrapping_blocks(self.pending_anchor(), &snapshot).next()
     }
 
     pub(crate) fn pending_mode(&self) -> Option<SelectMode> {
@@ -144,7 +144,8 @@ impl SelectionsCollection {
     {
         let disjoint_anchors = &self.disjoint;
         let mut disjoint =
-            resolve_selections::<D, _>(disjoint_anchors.iter(), &snapshot).peekable();
+            resolve_selections_wrapping_blocks::<D, _>(disjoint_anchors.iter(), &snapshot)
+                .peekable();
         let mut pending_opt = self.pending::<D>(&snapshot);
         iter::from_fn(move || {
             if let Some(pending) = pending_opt.as_mut() {
@@ -238,7 +239,7 @@ impl SelectionsCollection {
             Ok(ix) => ix + 1,
             Err(ix) => ix,
         };
-        resolve_selections(&self.disjoint[start_ix..end_ix], snapshot).collect()
+        resolve_selections_wrapping_blocks(&self.disjoint[start_ix..end_ix], snapshot).collect()
     }
 
     pub fn all_display(&self, snapshot: &DisplaySnapshot) -> Vec<Selection<DisplayPoint>> {
@@ -284,7 +285,7 @@ impl SelectionsCollection {
         &self,
         snapshot: &DisplaySnapshot,
     ) -> Selection<D> {
-        resolve_selections([self.newest_anchor()], &snapshot)
+        resolve_selections_wrapping_blocks([self.newest_anchor()], &snapshot)
             .next()
             .unwrap()
     }
@@ -307,7 +308,7 @@ impl SelectionsCollection {
         &self,
         snapshot: &DisplaySnapshot,
     ) -> Selection<D> {
-        resolve_selections([self.oldest_anchor()], &snapshot)
+        resolve_selections_wrapping_blocks([self.oldest_anchor()], &snapshot)
             .next()
             .unwrap()
     }
@@ -637,7 +638,7 @@ impl<'a> MutableSelectionsCollection<'a> {
     pub fn select_anchors(&mut self, selections: Vec<Selection<Anchor>>) {
         let map = self.display_map();
         let resolved_selections =
-            resolve_selections::<usize, _>(&selections, &map).collect::<Vec<_>>();
+            resolve_selections_wrapping_blocks::<usize, _>(&selections, &map).collect::<Vec<_>>();
         self.select(resolved_selections);
     }
 
@@ -919,7 +920,8 @@ impl<'a> MutableSelectionsCollection<'a> {
 
         if !adjusted_disjoint.is_empty() {
             let map = self.display_map();
-            let resolved_selections = resolve_selections(adjusted_disjoint.iter(), &map).collect();
+            let resolved_selections =
+                resolve_selections_wrapping_blocks(adjusted_disjoint.iter(), &map).collect();
             self.select::<usize>(resolved_selections);
         }
 
@@ -1036,12 +1038,13 @@ fn resolve_selections_display<'a>(
     coalesce_selections(selections)
 }
 
-// todo(lw): What does this even resolve?? https://github.com/zed-industries/zed/pull/20092
-// This weirdly enough resolves `D -> Point -> DisplayPoint -> Point -> D`
-// what exactly happems there? That transform is not idempotent somehow
-// presumably this messes with the `diff_base_anchor`?
+/// Resolves the passed in anchors to [`TextDimension`]s `D`
+/// wrapping around blocks inbetween.
+///
+/// # Panics
+///
 /// Panics if passed selections are not in order
-pub(crate) fn resolve_selections<'a, D, I>(
+pub(crate) fn resolve_selections_wrapping_blocks<'a, D, I>(
     selections: I,
     map: &'a DisplaySnapshot,
 ) -> impl 'a + Iterator<Item = Selection<D>>
@@ -1049,6 +1052,8 @@ where
     D: TextDimension + Ord + Sub<D, Output = D>,
     I: 'a + IntoIterator<Item = &'a Selection<Anchor>>,
 {
+    // Transforms `Anchor -> DisplayPoint -> Point -> DisplayPoint -> D`
+    // todo(lw): We should be able to short circuit the `Anchor -> DisplayPoint -> Point` to `Anchor -> Point`
     let (to_convert, selections) = resolve_selections_display(selections, map).tee();
     let mut converted_endpoints =
         map.buffer_snapshot()

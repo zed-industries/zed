@@ -113,7 +113,6 @@ impl CursorPosition {
                                 let mut last_selection = None::<Selection<Point>>;
                                 let snapshot = editor.display_snapshot(cx);
                                 if snapshot.buffer_snapshot().excerpts().count() > 0 {
-                                    // this was not resolvig the selections
                                     for selection in editor.selections.all_adjusted(&snapshot) {
                                         let selection_summary = snapshot
                                             .buffer_snapshot()

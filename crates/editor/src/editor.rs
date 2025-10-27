@@ -162,7 +162,7 @@ use rand::seq::SliceRandom;
 use rpc::{ErrorCode, ErrorExt, proto::PeerId};
 use scroll::{Autoscroll, OngoingScroll, ScrollAnchor, ScrollManager};
 use selections_collection::{
-    MutableSelectionsCollection, SelectionsCollection, resolve_selections,
+    MutableSelectionsCollection, SelectionsCollection, resolve_selections_wrapping_blocks,
 };
 use serde::{Deserialize, Serialize};
 use settings::{GitGutterSetting, Settings, SettingsLocation, SettingsStore, update_settings_file};
@@ -4319,16 +4319,17 @@ impl Editor {
             let new_anchor_selections = new_selections.iter().map(|e| &e.0);
             let new_selection_deltas = new_selections.iter().map(|e| e.1);
             let map = this.display_map.update(cx, |map, cx| map.snapshot(cx));
-            let new_selections = resolve_selections::<usize, _>(new_anchor_selections, &map)
-                .zip(new_selection_deltas)
-                .map(|(selection, delta)| Selection {
-                    id: selection.id,
-                    start: selection.start + delta,
-                    end: selection.end + delta,
-                    reversed: selection.reversed,
-                    goal: SelectionGoal::None,
-                })
-                .collect::<Vec<_>>();
+            let new_selections =
+                resolve_selections_wrapping_blocks::<usize, _>(new_anchor_selections, &map)
+                    .zip(new_selection_deltas)
+                    .map(|(selection, delta)| Selection {
+                        id: selection.id,
+                        start: selection.start + delta,
+                        end: selection.end + delta,
+                        reversed: selection.reversed,
+                        goal: SelectionGoal::None,
+                    })
+                    .collect::<Vec<_>>();
 
             let mut i = 0;
             for (position, delta, selection_id, pair) in new_autoclose_regions {
