@@ -9837,7 +9837,7 @@ dependencies = [
  "pretty_assertions",
  "serde_json",
  "serde_json_lenient",
- "settings",
+ "settings_json",
  "streaming-iterator",
  "tree-sitter",
  "tree-sitter-json",
@@ -15260,6 +15260,7 @@ dependencies = [
  "indoc",
  "inventory",
  "log",
+ "migrator",
  "paths",
  "pretty_assertions",
  "release_channel",
@@ -15268,17 +15269,31 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_json_lenient",
- "serde_path_to_error",
  "serde_repr",
  "serde_with",
+ "settings_json",
  "settings_macros",
  "smallvec",
  "strum 0.27.2",
+ "unindent",
+ "util",
+ "zlog",
+]
+
+[[package]]
+name = "settings_json"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "pretty_assertions",
+ "serde",
+ "serde_json",
+ "serde_json_lenient",
+ "serde_path_to_error",
  "tree-sitter",
  "tree-sitter-json",
  "unindent",
  "util",
- "zlog",
 ]
 
 [[package]]

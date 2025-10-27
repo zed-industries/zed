@@ -39,7 +39,7 @@ use language_onboarding::BasedPyrightBanner;
 use language_tools::lsp_button::{self, LspButton};
 use language_tools::lsp_log_view::LspLogToolbarItemView;
 use migrate::{MigrationBanner, MigrationEvent, MigrationNotification, MigrationType};
-use migrator::{migrate_keymap, migrate_settings};
+use migrator::migrate_keymap;
 use onboarding::DOCS_URL;
 use onboarding::multibuffer_hint::MultibufferHint;
 pub use open_listener::*;
@@ -1298,18 +1298,24 @@ pub fn handle_settings_file_changes(
                                  store: &mut SettingsStore,
                                  cx: &mut App|
           -> bool {
+        let result = if is_user {
+            store.set_user_settings(&content, cx)
+        } else {
+            store.set_global_settings(&content, cx)
+        };
+
         let id = NotificationId::Named("failed-to-migrate-settings".into());
         // Apply migrations to both user and global settings
-        let (processed_content, content_migrated) = match migrate_settings(&content) {
-            Ok(result) => {
+        let content_migrated = match result.migration_status {
+            settings::MigrationStatus::Succeeded => {
                 dismiss_app_notification(&id, cx);
-                if let Some(migrated_content) = result {
-                    (migrated_content, true)
-                } else {
-                    (content, false)
-                }
+                true
             }
-            Err(err) => {
+            settings::MigrationStatus::NotNeeded => {
+                dismiss_app_notification(&id, cx);
+                false
+            }
+            settings::MigrationStatus::Failed { error: err } => {
                 show_app_notification(id, cx, move |cx| {
                     cx.new(|cx| {
                         MessageNotification::new(
@@ -1328,22 +1334,22 @@ pub fn handle_settings_file_changes(
                     })
                 });
                 // notify user here
-                (content, false)
+                false
             }
         };
 
-        let result = if is_user {
-            store.set_user_settings(&processed_content, cx)
-        } else {
-            store.set_global_settings(&processed_content, cx)
-        };
-
-        if let Err(err) = &result {
+        if let settings::ParseStatus::Failed { error: err } = &result.parse_status {
             let settings_type = if is_user { "user" } else { "global" };
             log::error!("Failed to load {} settings: {err}", settings_type);
         }
 
-        settings_changed(result.err(), cx);
+        settings_changed(
+            match result.parse_status {
+                settings::ParseStatus::Failed { error } => Some(anyhow::format_err!(error)),
+                settings::ParseStatus::Success => None,
+            },
+            cx,
+        );
 
         content_migrated
     };
