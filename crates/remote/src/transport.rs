@@ -176,6 +176,10 @@ async fn build_remote_server_from_source(
     };
     if platform.os == "linux" && use_musl {
         rust_flags.push_str(" -C target-feature=+crt-static");
+
+        if let Ok(path) = std::env::var("ZED_ZSTD_MUSL_LIB") {
+            rust_flags.push_str(&format!(" -C link-arg=-L{path}"));
+        }
     }
     if build_remote_server.contains("mold") {
         rust_flags.push_str(" -C link-arg=-fuse-ld=mold");
@@ -221,13 +225,15 @@ async fn build_remote_server_from_source(
             }
         }
 
-        delegate.set_status(Some("Adding rustup target for cross-compilation"), cx);
-        log::info!("adding rustup target");
-        run_cmd(Command::new("rustup").args(["target", "add"]).arg(&triple)).await?;
+        if build_remote_server.contains("noinstall") {
+            delegate.set_status(Some("Adding rustup target for cross-compilation"), cx);
+            log::info!("adding rustup target");
+            run_cmd(Command::new("rustup").args(["target", "add"]).arg(&triple)).await?;
 
-        delegate.set_status(Some("Installing cargo-zigbuild for cross-compilation"), cx);
-        log::info!("installing cargo-zigbuild");
-        run_cmd(Command::new("cargo").args(["install", "--locked", "cargo-zigbuild"])).await?;
+            delegate.set_status(Some("Installing cargo-zigbuild for cross-compilation"), cx);
+            log::info!("installing cargo-zigbuild");
+            run_cmd(Command::new("cargo").args(["install", "--locked", "cargo-zigbuild"])).await?;
+        }
 
         delegate.set_status(
             Some(&format!(
