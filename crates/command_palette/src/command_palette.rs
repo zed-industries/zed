@@ -22,12 +22,13 @@ use persistence::COMMAND_PALETTE_HISTORY;
 use picker::{Picker, PickerDelegate};
 use postage::{sink::Sink, stream::Stream};
 use settings::Settings;
-use ui::{
-    ButtonLike, HighlightedLabel, KeyBinding, ListItem, ListItemSpacing, h_flex, prelude::*, v_flex,
-};
+use ui::{HighlightedLabel, KeyBinding, ListItem, ListItemSpacing, prelude::*};
 use util::ResultExt;
 use workspace::{ModalView, Workspace, WorkspaceSettings};
-use zed_actions::{OpenZedUrl, command_palette::Toggle};
+use zed_actions::{
+    OpenZedUrl,
+    command_palette::{AddKeybinding, ChangeKeybinding, Toggle},
+};
 
 pub fn init(cx: &mut App) {
     client::init_settings(cx);
@@ -134,6 +135,26 @@ impl CommandPalette {
         self.picker
             .update(cx, |picker, cx| picker.set_query(query, window, cx))
     }
+
+    fn handle_add_keybinding(
+        &mut self,
+        _: &AddKeybinding,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let picker = &self.picker.read(cx).delegate;
+        let action_ix = picker.matches[picker.selected_ix].candidate_id;
+        let selected_command = &picker.commands[action_ix];
+
+        let action_name = selected_command.action.name();
+        let open_keymap_action = move || {
+            Box::new(zed_actions::OpenKeymapWithFilter {
+                filter: action_name.to_string(),
+            })
+        };
+
+        window.dispatch_action(open_keymap_action(), cx);
+    }
 }
 
 impl EventEmitter<DismissEvent> for CommandPalette {}
@@ -145,9 +166,12 @@ impl Focusable for CommandPalette {
 }
 
 impl Render for CommandPalette {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .key_context("CommandPalette")
+            .on_action(cx.listener(|this, action, window, cx| {
+                this.handle_add_keybinding(action, window, cx)
+            }))
             .w(rems(34.))
             .child(self.picker.clone())
     }
@@ -445,13 +469,11 @@ impl PickerDelegate for CommandPaletteDelegate {
         &self,
         ix: usize,
         selected: bool,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let matching_command = self.matches.get(ix)?;
         let command = self.commands.get(matching_command.candidate_id)?;
-        let name = command.action.name();
-        let keybind = KeyBinding::for_action_in(&*command.action, &self.previous_focus_handle, cx);
 
         Some(
             ListItem::new(ix)
@@ -467,47 +489,74 @@ impl PickerDelegate for CommandPaletteDelegate {
                             command.name.clone(),
                             matching_command.positions.clone(),
                         ))
-                        .when_else(
-                            keybind.has_binding(window),
-                            |this| {
-                                this.child(
-                                    ButtonLike::new(name)
-                                        .style(ButtonStyle::Transparent)
-                                        .child(keybind)
-                                        .tooltip(ui::Tooltip::text("Change key binding…"))
-                                        .on_click(|_, window, cx| {
-                                            window.dispatch_action(
-                                                zed_actions::OpenKeymapWithFilter {
-                                                    filter: name.to_string(),
-                                                }
-                                                .boxed_clone(),
-                                                cx,
-                                            );
-                                        })
-                                        .into_any_element(),
-                                )
-                            },
-                            |this| {
-                                this.child(
-                                    IconButton::new(command.action.name(), IconName::Keyboard)
-                                        .style(ButtonStyle::Transparent)
-                                        .alpha(0.8)
-                                        .icon_size(IconSize::XSmall)
-                                        .tooltip(ui::Tooltip::text("Add key binding…"))
-                                        .on_click(|_, window, cx| {
-                                            window.dispatch_action(
-                                                zed_actions::OpenKeymapWithFilter {
-                                                    filter: name.to_string(),
-                                                }
-                                                .boxed_clone(),
-                                                cx,
-                                            );
-                                        })
-                                        .into_any_element(),
-                                )
-                            },
-                        ),
+                        .child(KeyBinding::for_action_in(
+                            &*command.action,
+                            &self.previous_focus_handle,
+                            cx,
+                        )),
                 ),
+        )
+    }
+
+    fn render_footer(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) -> Option<AnyElement> {
+        let action_ix = self.matches[self.selected_ix].candidate_id;
+        let selected_command = &self.commands[action_ix];
+        let keybind =
+            KeyBinding::for_action_in(&*selected_command.action, &self.previous_focus_handle, cx);
+
+        let action_name = selected_command.action.name();
+        let open_keymap = move || {
+            Box::new(zed_actions::OpenKeymapWithFilter {
+                filter: action_name.to_string(),
+            })
+        };
+
+        let focus_handle = &self.previous_focus_handle;
+
+        let keybinding_buttons = if keybind.has_binding(window) {
+            Button::new("change", "Change Keybinding…")
+                .key_binding(
+                    KeyBinding::for_action_in(&ChangeKeybinding, focus_handle, cx)
+                        .map(|kb| kb.size(rems_from_px(12.))),
+                )
+                .on_click(move |_, window, cx| {
+                    window.dispatch_action(open_keymap(), cx);
+                })
+        } else {
+            Button::new("add", "Add Keybinding…")
+                .key_binding(
+                    KeyBinding::for_action_in(&AddKeybinding, focus_handle, cx)
+                        .map(|kb| kb.size(rems_from_px(12.))),
+                )
+                .on_click(move |_, window, cx| {
+                    window.dispatch_action(open_keymap(), cx);
+                })
+        };
+
+        Some(
+            h_flex()
+                .w_full()
+                .p_1p5()
+                .gap_1()
+                .justify_end()
+                .border_t_1()
+                .border_color(cx.theme().colors().border_variant)
+                .child(keybinding_buttons)
+                .child(
+                    Button::new("run-action", "Run")
+                        .key_binding(
+                            KeyBinding::for_action_in(&menu::Confirm, &focus_handle, cx)
+                                .map(|kb| kb.size(rems_from_px(12.))),
+                        )
+                        .on_click(|_, window, cx| {
+                            window.dispatch_action(menu::Confirm.boxed_clone(), cx)
+                        }),
+                )
+                .into_any(),
         )
     }
 }

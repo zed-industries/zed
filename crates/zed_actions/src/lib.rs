@@ -239,7 +239,11 @@ pub mod command_palette {
         command_palette,
         [
             /// Toggles the command palette.
-            Toggle
+            Toggle,
+            /// Change keybinding for the selected action in the command palette.
+            ChangeKeybinding,
+            /// Add keybinding for the selected action in the command palette.
+            AddKeybinding,
         ]
     );
 }

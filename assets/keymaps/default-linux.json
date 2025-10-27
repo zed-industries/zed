@@ -1059,6 +1059,13 @@
     }
   },
   {
+    "context": "CommandPalette || (CommandPalette > Picker > Editor)",
+    "bindings": {
+      "ctrl-enter": "command_palette::AddKeybinding",
+      "alt-enter": "command_palette::ChangeKeybinding"
+    }
+  },
+  {
     "context": "FileFinder || (FileFinder > Picker > Editor) || (FileFinder > Picker > menu)",
     "bindings": {
       "ctrl-shift-p": "file_finder::SelectPrevious",
