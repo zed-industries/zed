@@ -45,7 +45,7 @@ pub fn nix() -> Workflow {
     .map(|(key, value)| (key.into(), value.into()))
     .collect();
 
-    // todo!() instead of having these as optional YAML inputs,
+    // todo(ci) instead of having these as optional YAML inputs,
     // should we just generate two copies of the job (one for release-nightly
     // and one for CI?)
     let (input_flake_output, flake_output) = vars::input(
