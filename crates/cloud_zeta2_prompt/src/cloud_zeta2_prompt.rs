@@ -660,7 +660,7 @@ impl<'a> SyntaxBasedPrompt<'a> {
                             if found {
                                 excerpt_index = Some(section_index);
                                 let insertion_line_ix = (point.line.0 - range.start.0) as usize;
-                                for line_ix in dbg!(last_line_ix..insertion_line_ix) {
+                                for line_ix in last_line_ix..insertion_line_ix {
                                     push_line(output, line_ix)?;
                                 }
                                 if let Some(next_line) = lines.get(insertion_line_ix) {
