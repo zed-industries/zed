@@ -93,6 +93,12 @@ impl Render for ModeIndicator {
         };
 
         let vim_readable = vim.read(cx);
+
+        // Hide mode indicator in passive mode
+        if vim_readable.passive_mode {
+            return div().hidden().into_any_element();
+        }
+
         let status_label = vim_readable.status_label.clone();
         let temp_mode = vim_readable.temp_mode;
         let mode = vim_readable.mode;
