@@ -58,9 +58,8 @@ use rope::Rope;
 use search::project_search::ProjectSearchBar;
 use settings::{
     BaseKeymap, DEFAULT_KEYMAP_PATH, InvalidSettingsError, KeybindSource, KeymapFile,
-    KeymapFileLoadResult, Settings, SettingsStore, VIM_KEYMAP_PATH,
-    initial_local_debug_tasks_content, initial_project_settings_content, initial_tasks_content,
-    update_settings_file,
+    KeymapFileLoadResult, Settings, SettingsStore, initial_local_debug_tasks_content,
+    initial_project_settings_content, initial_tasks_content, update_settings_file,
 };
 use std::time::Duration;
 use std::{
@@ -1637,11 +1636,9 @@ pub fn load_default_keymap(cx: &mut App) {
         cx.bind_keys(KeymapFile::load_asset(asset_path, Some(KeybindSource::Base), cx).unwrap());
     }
 
-    if VimModeSetting::get_global(cx).0 || vim_mode_setting::HelixModeSetting::get_global(cx).0 {
-        cx.bind_keys(
-            KeymapFile::load_asset(VIM_KEYMAP_PATH, Some(KeybindSource::Vim), cx).unwrap(),
-        );
-    }
+    // Always ensure Vim keymap is bound in case the user has a vimMotion::Shortcut binding;
+    // The Context(s) control when it applies.
+    vim::bind_keymap(cx);
 }
 
 pub fn handle_settings_changed(error: Option<anyhow::Error>, cx: &mut App) {

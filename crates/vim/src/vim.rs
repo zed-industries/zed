@@ -26,8 +26,8 @@ use editor::{
     movement::{self, FindRange},
 };
 use gpui::{
-    Action, App, AppContext, Axis, Context, Entity, EventEmitter, KeyContext, KeystrokeEvent,
-    Render, Subscription, Task, WeakEntity, Window, actions,
+    Action, App, AppContext, Axis, Context, Entity, EventEmitter, KeyContext, Keystroke,
+    KeystrokeEvent, Render, Subscription, Task, WeakEntity, Window, actions,
 };
 use insert::{NormalBefore, TemporaryNormal};
 use language::{
@@ -39,6 +39,7 @@ use normal::search::SearchSubmit;
 use object::Object;
 use schemars::JsonSchema;
 use serde::Deserialize;
+use settings::{KeybindSource, KeymapFile, VIM_KEYMAP_PATH};
 pub use settings::{
     ModeContent, Settings, SettingsStore, UseSystemClipboard, update_settings_file,
 };
@@ -47,6 +48,7 @@ use std::{mem, ops::Range, sync::Arc};
 use surrounds::SurroundsType;
 use theme::ThemeSettings;
 use ui::{IntoElement, SharedString, px};
+use util::ResultExt;
 use vim_mode_setting::HelixModeSetting;
 use vim_mode_setting::VimModeSetting;
 use workspace::{self, Pane, Workspace};
@@ -150,6 +152,20 @@ struct PushDigraph {
 #[serde(deny_unknown_fields)]
 struct PushLiteral {
     prefix: Option<String>,
+}
+
+/// Replays a sequence of keystrokes (e.g., "v i q") as a vim-agnostic
+/// motion shortcut. When Vim is disabled, it temporarily attaches a Vim
+/// addon to the focused editor to execute the sequence, then restores
+/// the original state.
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vimMotion, name = "Shortcut")]
+pub struct MotionShortcut(pub String);
+
+impl MotionShortcut {
+    pub fn new<S: Into<String>>(seq: S) -> Self {
+        Self(seq.into())
+    }
 }
 
 actions!(
@@ -452,8 +468,68 @@ pub fn init(cx: &mut App) {
                 window.dispatch_action(workspace::pane::ActivatePreviousItem.boxed_clone(), cx);
             }
         });
+
+        // Always available: run a sequence of keystrokes as a Vim motion shortcut,
+        // loaning a Vim context temporarily if needed.
+        workspace.register_action(|workspace, shortcut: &MotionShortcut, window, cx| {
+            // Parse the sequence into keystrokes
+            let keystrokes: Vec<Keystroke> = shortcut
+                .0
+                .split(' ')
+                .flat_map(|k| Keystroke::parse(k).log_err())
+                .collect();
+
+            // Resolve focused editor
+            let editor = workspace
+                .focused_pane(window, cx)
+                .read(cx)
+                .active_item()
+                .and_then(|item| item.act_as::<Editor>(cx));
+
+            // If no editor is focused, just dispatch the keystrokes globally.
+            let Some(editor) = editor else {
+                let _ = workspace.send_keystrokes_impl(keystrokes, window, cx);
+                return;
+            };
+
+            let editor_entity = editor.clone();
+            let had_vim = editor.read(cx).addon::<VimAddon>().is_some();
+            let original_modal = editor.read(cx).use_modal_editing();
+
+            // Run activation, keystrokes, and deactivation within a visual context.
+            cx.spawn_in(window, async move |workspace, cx| {
+                if !had_vim {
+                    let _ = editor_entity.update_in(cx, |editor, window, cx| {
+                        editor.set_use_modal_editing(true);
+                        Vim::activate(editor, window, cx);
+                    });
+                }
+
+                let task = workspace.update_in(cx, |workspace, window, cx| {
+                    workspace.send_keystrokes_impl(keystrokes, window, cx)
+                });
+                if let Ok(task) = task {
+                    task.await;
+                }
+                let _ = editor_entity.update_in(cx, |editor, _window, cx| {
+                    if !had_vim {
+                        Vim::deactivate(editor, cx);
+                        editor.set_use_modal_editing(original_modal);
+                    }
+                });
+            })
+            .detach();
+        });
     })
     .detach();
+}
+
+/// Bind Vim keymap assets to the app keymap. Intended to be called at startup and
+/// after keymap reloads; safe to call multiple times after a keymap clear.
+pub fn bind_keymap(cx: &mut App) {
+    let bindings =
+        KeymapFile::load_asset(VIM_KEYMAP_PATH, Some(KeybindSource::Vim), cx).unwrap_or_default();
+    cx.bind_keys(bindings);
 }
 
 #[derive(Clone)]

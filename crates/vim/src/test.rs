@@ -24,7 +24,10 @@ pub use vim_test_context::*;
 use indoc::indoc;
 use search::BufferSearchBar;
 
-use crate::{PushSneak, PushSneakBackward, insert::NormalBefore, motion, state::Mode};
+use crate::{
+    MotionShortcut, PushSneak, PushSneakBackward, VimAddon, insert::NormalBefore, motion,
+    state::Mode,
+};
 
 use util_macros::perf;
 
@@ -150,6 +153,145 @@ async fn test_count_down(cx: &mut gpui::TestAppContext) {
     cx.assert_editor_state("aa\nbb\ncˇc\ndd\nee");
     cx.simulate_keystrokes("9 down");
     cx.assert_editor_state("aa\nbb\ncc\ndd\neˇe");
+}
+
+#[gpui::test]
+async fn test_motion_shortcut_matches_keystrokes(cx: &mut gpui::TestAppContext) {
+    struct Case {
+        seq: &'static str,
+        text: &'static str,
+    }
+
+    let cases = [
+        Case {
+            seq: "v i q",
+            text: r#"call("baˇr")"#,
+        },
+        Case {
+            seq: "d i w",
+            text: r#"call("baˇr")"#,
+        },
+        Case {
+            seq: "shift-v j",
+            text: "ˇfoo\nbar\nbaz",
+        },
+        Case {
+            seq: "y y",
+            text: "ˇfoo\nbar\nbaz",
+        },
+        Case {
+            seq: "g g",
+            text: "foo\nbaˇr\nbaz",
+        },
+        Case {
+            seq: "v a w",
+            text: "foo bˇar baz",
+        },
+        Case {
+            seq: "shift-f o",
+            text: "abcˇdoe",
+        },
+        Case {
+            seq: "ctrl-d",
+            text: "ˇl1\nl2\nl3\nl4\nl5\nl6",
+        },
+    ];
+
+    for case in cases {
+        let shortcut_state = {
+            let mut vim_cx = VimTestContext::new(cx, true).await;
+            vim_cx.set_state(case.text, Mode::Normal);
+            vim_cx.cx.cx.update(|window, cx| {
+                window.dispatch_action(Box::new(MotionShortcut::new(case.seq)), cx);
+            });
+            vim_cx.cx.cx.run_until_parked();
+            vim_cx.cx.editor_state()
+        };
+
+        let keystroke_state = {
+            let mut vim_cx = VimTestContext::new(cx, true).await;
+            vim_cx.set_state(case.text, Mode::Normal);
+            vim_cx.cx.simulate_keystrokes(case.seq);
+            vim_cx.cx.editor_state()
+        };
+
+        assert_eq!(
+            shortcut_state, keystroke_state,
+            "sequence {} diverged",
+            case.seq
+        );
+    }
+}
+
+#[gpui::test]
+async fn test_motion_shortcut_runs_with_vim_disabled(cx: &mut gpui::TestAppContext) {
+    struct Case {
+        seq: &'static str,
+        text: &'static str,
+    }
+
+    let cases = [
+        Case {
+            seq: "v i q",
+            text: r#"call("baˇr")"#,
+        },
+        Case {
+            seq: "shift-v j",
+            text: "ˇfoo\nbar\nbaz",
+        },
+        Case {
+            seq: "y y",
+            text: "ˇfoo\nbar\nbaz",
+        },
+        Case {
+            seq: "g g",
+            text: "foo\nbaˇr\nbaz",
+        },
+        Case {
+            seq: "v a w",
+            text: "foo bˇar baz",
+        },
+        Case {
+            seq: "shift-f o",
+            text: "abcˇdoe",
+        },
+        Case {
+            seq: "ctrl-d",
+            text: "ˇl1\nl2\nl3\nl4\nl5\nl6",
+        },
+    ];
+
+    for case in cases {
+        let disabled_shortcut_state = {
+            let mut ctx = VimTestContext::new(cx, false).await;
+            // Set only the buffer/selection state without touching Vim mode
+            ctx.cx.set_state(case.text);
+            ctx.cx.cx.update(|window, cx| {
+                window.dispatch_action(Box::new(MotionShortcut::new(case.seq)), cx);
+            });
+            ctx.cx.cx.run_until_parked();
+
+            // Ensure Vim addon isn't left attached after running the shortcut
+            ctx.update_editor(|editor, _, _cx| {
+                assert!(editor.addon::<VimAddon>().is_none());
+            });
+
+            ctx.cx.editor_state()
+        };
+
+        let enabled_keystroke_state = {
+            let mut ctx = VimTestContext::new(cx, true).await;
+            ctx.set_state(case.text, Mode::Normal);
+            ctx.cx.simulate_keystrokes(case.seq);
+            ctx.cx.editor_state()
+        };
+
+        assert_eq!(
+            disabled_shortcut_state, enabled_keystroke_state,
+            "vimMotion::Shortcut should work when Vim is disabled for sequence {}",
+            case.seq
+        );
+    }
 }
 
 #[perf]

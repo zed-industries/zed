@@ -101,15 +101,14 @@ impl VimTestContext {
             key_binding.set_meta(settings::KeybindSource::Default.meta());
         }
         cx.bind_keys(default_key_bindings);
-        if enabled {
-            let vim_key_bindings = settings::KeymapFile::load_asset(
-                "keymaps/vim.json",
-                Some(settings::KeybindSource::Vim),
-                cx,
-            )
-            .unwrap();
-            cx.bind_keys(vim_key_bindings);
-        }
+        // Always bind Vim keymap; contexts keep it inert unless Vim is active.
+        let vim_key_bindings = settings::KeymapFile::load_asset(
+            "keymaps/vim.json",
+            Some(settings::KeybindSource::Vim),
+            cx,
+        )
+        .unwrap();
+        cx.bind_keys(vim_key_bindings);
     }
 
     pub fn new_with_lsp(mut cx: EditorLspTestContext, enabled: bool) -> VimTestContext {
