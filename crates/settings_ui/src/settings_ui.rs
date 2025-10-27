@@ -7,9 +7,9 @@ use feature_flags::FeatureFlag;
 use fuzzy::StringMatchCandidate;
 use gpui::{
     Action, App, DEFAULT_ADDITIONAL_WINDOW_SIZE, Div, Entity, FocusHandle, Focusable, Global,
-    ListState, ReadGlobal as _, ScrollHandle, Stateful, Subscription, Task, TitlebarOptions,
-    UniformListScrollHandle, Window, WindowBounds, WindowHandle, WindowOptions, actions, div, list,
-    point, prelude::*, px, uniform_list,
+    KeyContext, ListState, ReadGlobal as _, ScrollHandle, Stateful, Subscription, Task,
+    TitlebarOptions, UniformListScrollHandle, Window, WindowBounds, WindowHandle, WindowOptions,
+    actions, div, list, point, prelude::*, px, uniform_list,
 };
 use heck::ToTitleCase as _;
 use project::{Project, WorktreeId};
@@ -2078,8 +2078,15 @@ impl SettingsWindow {
             "Focus Navbar"
         };
 
+        let mut key_context = KeyContext::new_with_defaults();
+        key_context.add("NavigationMenu");
+        key_context.add("menu");
+        if self.search_bar.focus_handle(cx).is_focused(window) {
+            key_context.add("search");
+        }
+
         v_flex()
-            .key_context("NavigationMenu")
+            .key_context(key_context)
             .on_action(cx.listener(|this, _: &CollapseNavEntry, window, cx| {
                 let Some(focused_entry) = this.focused_nav_entry(window, cx) else {
                     return;
