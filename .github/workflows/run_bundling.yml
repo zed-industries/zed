@@ -36,9 +36,11 @@ jobs:
       uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b
       with:
         token: ${{ secrets.SENTRY_AUTH_TOKEN }}
-    - name: steps::clean_target_dir
-      run: script/clear-target-dir-if-larger-than 100
+    - name: steps::clear_target_dir_if_large
+      run: script/clear-target-dir-if-larger-than ${{ env.MAX_SIZE }}
       shell: bash -euxo pipefail {0}
+      env:
+        MAX_SIZE: ${{ runner.os == 'macOS' && 300 || 100 }}
     - name: ./script/bundle-mac
       run: ./script/bundle-mac
       shell: bash -euxo pipefail {0}
@@ -57,7 +59,7 @@ jobs:
     if: |-
       (github.event.action == 'labeled' && github.event.label.name == 'run-bundling') ||
                        (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'run-bundling'))
-    runs-on: namespace-profile-16x32-ubuntu-2204
+    runs-on: namespace-profile-16x32-ubuntu-2004
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -91,7 +93,7 @@ jobs:
     if: |-
       (github.event.action == 'labeled' && github.event.label.name == 'run-bundling') ||
                        (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'run-bundling'))
-    runs-on: namespace-profile-8x32-ubuntu-2204-arm-m4
+    runs-on: namespace-profile-8x32-ubuntu-2004-arm-m4
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683

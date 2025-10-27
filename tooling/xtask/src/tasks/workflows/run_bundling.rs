@@ -50,7 +50,7 @@ fn bundle_mac() -> Job {
         .add_step(steps::checkout_repo())
         .add_step(steps::setup_node())
         .add_step(steps::setup_sentry())
-        .add_step(steps::clean_target_dir())
+        .add_step(steps::clear_target_dir_if_large())
         .add_step(steps::script("./script/bundle-mac"))
         .add_step(steps::upload_artifact(
             "Zed_${{ github.event.pull_request.head.sha || github.sha }}-aarch64.dmg",
@@ -67,7 +67,7 @@ fn bundle_linux(arch: runners::Arch) -> Job {
     let artifact_name = format!("zed-{}-{}.tar.gz", sha, arch.triple());
     let remote_server_artifact_name = format!("zed-remote-server-{}-{}.tar.gz", sha, arch.triple());
     let mut job = bundle_job()
-        .runs_on(arch.linux_runner())
+        .runs_on(arch.linux_bundler())
         .add_step(steps::checkout_repo())
         .add_step(steps::setup_sentry())
         .add_step(steps::script("./script/linux"));

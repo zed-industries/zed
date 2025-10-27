@@ -1,6 +1,10 @@
 pub const LINUX_CHEAP: Runner = Runner("namespace-profile-2x4-ubuntu-2404");
 pub const LINUX_DEFAULT: Runner = Runner("namespace-profile-16x32-ubuntu-2204");
-pub const LINUX_ARM: Runner = Runner("namespace-profile-8x32-ubuntu-2204-arm-m4");
+
+// Using Ubuntu 20.04 for minimal glibc version
+pub const LINUX_X86_BUNDLER: Runner = Runner("namespace-profile-16x32-ubuntu-2004");
+pub const LINUX_ARM_BUNDLER: Runner = Runner("namespace-profile-8x32-ubuntu-2004-arm-m4");
+
 pub const MAC_DEFAULT: Runner = Runner("self-mini-macos");
 pub const WINDOWS_DEFAULT: Runner = Runner("self-32vcpu-windows-2022");
 
@@ -26,10 +30,10 @@ impl Arch {
         }
     }
 
-    pub fn linux_runner(&self) -> Runner {
+    pub fn linux_bundler(&self) -> Runner {
         match self {
-            Arch::X86_64 => LINUX_DEFAULT,
-            Arch::AARCH64 => LINUX_ARM,
+            Arch::X86_64 => LINUX_X86_BUNDLER,
+            Arch::AARCH64 => LINUX_ARM_BUNDLER,
         }
     }
 }

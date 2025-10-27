@@ -7,6 +7,7 @@ mod danger;
 mod nix;
 mod run_bundling;
 
+mod release;
 mod runners;
 mod steps;
 mod vars;
@@ -21,6 +22,7 @@ pub fn run_workflows(_: GenerateWorkflowArgs) -> Result<()> {
         ("danger.yml", danger::danger()),
         ("nix.yml", nix::nix()),
         ("run_bundling.yml", run_bundling::run_bundling()),
+        ("release.yml", release::release()),
     ];
     fs::create_dir_all(dir)
         .with_context(|| format!("Failed to create directory: {}", dir.display()))?;

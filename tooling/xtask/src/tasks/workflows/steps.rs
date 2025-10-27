@@ -55,9 +55,9 @@ pub fn upload_artifact(name: &str, path: &str) -> Step<Use> {
         .add_with(("path", path))
 }
 
-// todo! we used to do 300Mb on macOS and 100Mb on Windows
-pub fn clean_target_dir() -> Step<Run> {
-    named::bash("script/clear-target-dir-if-larger-than 100")
+pub fn clear_target_dir_if_large() -> Step<Run> {
+    named::bash("script/clear-target-dir-if-larger-than ${{ env.MAX_SIZE }}")
+        .add_env(("MAX_SIZE", "${{ runner.os == 'macOS' && 300 || 100 }}"))
 }
 
 pub fn script(name: &str) -> Step<Run> {
@@ -81,7 +81,7 @@ pub(crate) mod named {
         Step::new(function_name(1)).run(script).shell(BASH_SHELL)
     }
 
-    fn function_name(i: usize) -> String {
+    pub(crate) fn function_name(i: usize) -> String {
         let mut name = "<unknown>".to_string();
         let mut count = 0;
         backtrace::trace(|frame| {
