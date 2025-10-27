@@ -1,5 +1,4 @@
 use anyhow::Context as _;
-use chrono;
 use fuzzy::StringMatchCandidate;
 
 use collections::HashSet;
