@@ -454,9 +454,11 @@ impl Vim {
     ) {
         let mut waiting_operator: Option<Operator> = None;
         match self.maybe_pop_operator() {
-            Some(Operator::Object { around }) => match self.maybe_pop_operator() {
+            Some(Operator::Object { around, whitespace }) => match self.maybe_pop_operator() {
                 Some(Operator::Change) => self.change_object(object, around, times, window, cx),
-                Some(Operator::Delete) => self.delete_object(object, around, times, window, cx),
+                Some(Operator::Delete) => {
+                    self.delete_object(object, around, whitespace, times, window, cx)
+                }
                 Some(Operator::Yank) => self.yank_object(object, around, times, window, cx),
                 Some(Operator::Indent) => {
                     self.indent_object(object, around, IndentDirection::In, times, window, cx)

@@ -2057,7 +2057,7 @@ impl Vim {
                 .selections
                 .newest_display(&editor.display_snapshot(cx));
             let range = object
-                .range(&snapshot, start.clone(), around, None)
+                .range(&snapshot, start.clone(), around, true, None)
                 .unwrap_or(start.range());
             if range.start != start.start {
                 editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {

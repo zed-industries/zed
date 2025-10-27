@@ -426,7 +426,7 @@ impl Vim {
         window: &mut Window,
         cx: &mut Context<Vim>,
     ) {
-        if let Some(Operator::Object { around }) = self.active_operator() {
+        if let Some(Operator::Object { around, .. }) = self.active_operator() {
             self.pop_operator(window, cx);
             let current_mode = self.mode;
             let target_mode = object.target_visual_mode(current_mode, around);
@@ -453,7 +453,7 @@ impl Vim {
 
                         let original_point = selection.tail().to_point(map);
 
-                        if let Some(range) = object.range(map, mut_selection, around, count) {
+                        if let Some(range) = object.range(map, mut_selection, around, true, count) {
                             if !range.is_empty() {
                                 let expand_both_ways = object.always_expands_both_ways()
                                     || selection.is_empty()
@@ -464,9 +464,13 @@ impl Vim {
                                         && selection.end == range.end
                                         && object.always_expands_both_ways()
                                     {
-                                        if let Some(range) =
-                                            object.range(map, selection.clone(), around, count)
-                                        {
+                                        if let Some(range) = object.range(
+                                            map,
+                                            selection.clone(),
+                                            around,
+                                            true,
+                                            count,
+                                        ) {
                                             selection.start = range.start;
                                             selection.end = range.end;
                                         }

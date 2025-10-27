@@ -20,7 +20,8 @@ impl Vim {
                     let Some(range) = object
                         .helix_range(map, selection.clone(), around)
                         .unwrap_or({
-                            let vim_range = object.range(map, selection.clone(), around, None);
+                            let vim_range =
+                                object.range(map, selection.clone(), around, true, None);
                             vim_range.filter(|r| r.start <= cursor_range(selection, map).start)
                         })
                     else {

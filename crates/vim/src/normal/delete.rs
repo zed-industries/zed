@@ -93,6 +93,7 @@ impl Vim {
         &mut self,
         object: Object,
         around: bool,
+        whitespace: bool,
         times: Option<usize>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -118,7 +119,7 @@ impl Vim {
                             column_before_move.insert(selection.id, cursor_point.column);
                         }
 
-                        object.expand_selection(map, selection, around, times);
+                        object.expand_selection(map, selection, around, whitespace, times);
                         let offset_range = selection.map(|p| p.to_offset(map, Bias::Left)).range();
                         let mut move_selection_start_to_previous_line =
                             |map: &DisplaySnapshot, selection: &mut Selection<DisplayPoint>| {

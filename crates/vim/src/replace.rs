@@ -154,7 +154,7 @@ impl Vim {
                 .selections
                 .newest_display(&editor.display_snapshot(cx));
             let snapshot = editor.snapshot(window, cx);
-            object.expand_selection(&snapshot, &mut selection, around, None);
+            object.expand_selection(&snapshot, &mut selection, around, true, None);
             let start = snapshot
                 .buffer_snapshot()
                 .anchor_before(selection.start.to_point(&snapshot));

@@ -244,7 +244,7 @@ impl Vim {
                 editor.set_clip_at_line_ends(false, cx);
                 editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                     s.move_with(|map, selection| {
-                        object.expand_selection(map, selection, around, None);
+                        object.expand_selection(map, selection, around, true, None);
                     });
                 });
 

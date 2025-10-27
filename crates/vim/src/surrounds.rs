@@ -53,7 +53,7 @@ impl Vim {
                 for selection in &display_selections {
                     let range = match &target {
                         SurroundsType::Object(object, around) => {
-                            object.range(&display_map, selection.clone(), *around, None)
+                            object.range(&display_map, selection.clone(), *around, true, None)
                         }
                         SurroundsType::Motion(motion) => {
                             motion
@@ -153,7 +153,7 @@ impl Vim {
                 for selection in &display_selections {
                     let start = selection.start.to_offset(&display_map, Bias::Left);
                     if let Some(range) =
-                        pair_object.range(&display_map, selection.clone(), true, None)
+                        pair_object.range(&display_map, selection.clone(), true, true, None)
                     {
                         // If the current parenthesis object is single-line,
                         // then we need to filter whether it is the current line or not
@@ -266,7 +266,7 @@ impl Vim {
                     for selection in &selections {
                         let start = selection.start.to_offset(&display_map, Bias::Left);
                         if let Some(range) =
-                            target.range(&display_map, selection.clone(), true, None)
+                            target.range(&display_map, selection.clone(), true, true, None)
                         {
                             if !target.is_multiline() {
                                 let is_same_row = selection.start.row() == range.start.row()
@@ -392,7 +392,7 @@ impl Vim {
                     for selection in &selections {
                         let start = selection.start.to_offset(&display_map, Bias::Left);
                         if let Some(range) =
-                            object.range(&display_map, selection.clone(), true, None)
+                            object.range(&display_map, selection.clone(), true, true, None)
                         {
                             // If the current parenthesis object is single-line,
                             // then we need to filter whether it is the current line or not
@@ -533,6 +533,7 @@ impl Vim {
                             if let Some(range) = surrounding_markers(
                                 &display_map,
                                 relative_to,
+                                true,
                                 true,
                                 false,
                                 open,

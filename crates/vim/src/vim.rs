@@ -47,6 +47,7 @@ use std::{mem, ops::Range, sync::Arc};
 use surrounds::SurroundsType;
 use theme::ThemeSettings;
 use ui::{IntoElement, SharedString, px};
+use util::serde::default_true;
 use vim_mode_setting::HelixModeSetting;
 use vim_mode_setting::VimModeSetting;
 use workspace::{self, Pane, Workspace};
@@ -71,6 +72,8 @@ struct SelectRegister(String);
 #[serde(deny_unknown_fields)]
 struct PushObject {
     around: bool,
+    #[serde(default = "default_true")]
+    whitespace: bool,
 }
 
 #[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
@@ -662,6 +665,7 @@ impl Vim {
                 vim.push_operator(
                     Operator::Object {
                         around: action.around,
+                        whitespace: action.whitespace,
                     },
                     window,
                     cx,

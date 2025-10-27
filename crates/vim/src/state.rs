@@ -88,6 +88,7 @@ pub enum Operator {
     Replace,
     Object {
         around: bool,
+        whitespace: bool,
     },
     FindForward {
         before: bool,
@@ -996,8 +997,8 @@ pub struct SearchState {
 impl Operator {
     pub fn id(&self) -> &'static str {
         match self {
-            Operator::Object { around: false } => "i",
-            Operator::Object { around: true } => "a",
+            Operator::Object { around: false, .. } => "i",
+            Operator::Object { around: true, .. } => "a",
             Operator::Change => "c",
             Operator::Delete => "d",
             Operator::Yank => "y",

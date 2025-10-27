@@ -117,7 +117,8 @@ impl Vim {
             editor.transact(window, cx, |editor, window, cx| {
                 editor.change_selections(Default::default(), window, cx, |s| {
                     s.move_with(|map, selection| {
-                        objects_found |= object.expand_selection(map, selection, around, times);
+                        objects_found |=
+                            object.expand_selection(map, selection, around, true, times);
                     });
                 });
                 if objects_found {

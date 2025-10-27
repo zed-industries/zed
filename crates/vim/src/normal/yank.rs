@@ -76,7 +76,7 @@ impl Vim {
                 let mut start_positions: HashMap<_, _> = Default::default();
                 editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                     s.move_with(|map, selection| {
-                        object.expand_selection(map, selection, around, times);
+                        object.expand_selection(map, selection, around, true, times);
                         let start_position = (selection.start, selection.goal);
                         start_positions.insert(selection.id, start_position);
                     });

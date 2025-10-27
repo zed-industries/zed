@@ -406,7 +406,14 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     });
     Vim::action(editor, cx, |vim, _: &Comment, window, cx| {
         if !matches!(vim.active_operator(), Some(Operator::Object { .. })) {
-            vim.push_operator(Operator::Object { around: true }, window, cx);
+            vim.push_operator(
+                Operator::Object {
+                    around: true,
+                    whitespace: true,
+                },
+                window,
+                cx,
+            );
         }
         vim.object(Object::Comment, window, cx)
     });
@@ -547,6 +554,7 @@ impl Object {
         map: &DisplaySnapshot,
         selection: Selection<DisplayPoint>,
         around: bool,
+        whitespace: bool,
         times: Option<usize>,
     ) -> Option<Range<DisplayPoint>> {
         let relative_to = selection.head();
@@ -568,12 +576,24 @@ impl Object {
             Object::Sentence => sentence(map, relative_to, around),
             //change others later
             Object::Paragraph => paragraph(map, relative_to, around, times.unwrap_or(1)),
-            Object::Quotes => {
-                surrounding_markers(map, relative_to, around, self.is_multiline(), '\'', '\'')
-            }
-            Object::BackQuotes => {
-                surrounding_markers(map, relative_to, around, self.is_multiline(), '`', '`')
-            }
+            Object::Quotes => surrounding_markers(
+                map,
+                relative_to,
+                around,
+                whitespace,
+                self.is_multiline(),
+                '\'',
+                '\'',
+            ),
+            Object::BackQuotes => surrounding_markers(
+                map,
+                relative_to,
+                around,
+                whitespace,
+                self.is_multiline(),
+                '`',
+                '`',
+            ),
             Object::AnyQuotes => {
                 let quote_types = ['\'', '"', '`'];
                 let cursor_offset = relative_to.to_offset(map, Bias::Left);
@@ -588,6 +608,7 @@ impl Object {
                         map,
                         relative_to,
                         around,
+                        whitespace,
                         self.is_multiline(),
                         quote,
                         quote,
@@ -617,6 +638,7 @@ impl Object {
                             map,
                             relative_to,
                             around,
+                            whitespace,
                             self.is_multiline(),
                             quote,
                             quote,
@@ -635,15 +657,33 @@ impl Object {
                     })
             }
             Object::MiniQuotes => find_mini_quotes(map, relative_to, around),
-            Object::DoubleQuotes => {
-                surrounding_markers(map, relative_to, around, self.is_multiline(), '"', '"')
-            }
-            Object::VerticalBars => {
-                surrounding_markers(map, relative_to, around, self.is_multiline(), '|', '|')
-            }
-            Object::Parentheses => {
-                surrounding_markers(map, relative_to, around, self.is_multiline(), '(', ')')
-            }
+            Object::DoubleQuotes => surrounding_markers(
+                map,
+                relative_to,
+                around,
+                whitespace,
+                self.is_multiline(),
+                '"',
+                '"',
+            ),
+            Object::VerticalBars => surrounding_markers(
+                map,
+                relative_to,
+                around,
+                whitespace,
+                self.is_multiline(),
+                '|',
+                '|',
+            ),
+            Object::Parentheses => surrounding_markers(
+                map,
+                relative_to,
+                around,
+                whitespace,
+                self.is_multiline(),
+                '(',
+                ')',
+            ),
             Object::Tag => {
                 let head = selection.head();
                 let range = selection.range();
@@ -662,6 +702,7 @@ impl Object {
                         map,
                         relative_to,
                         around,
+                        whitespace,
                         self.is_multiline(),
                         open,
                         close,
@@ -691,6 +732,7 @@ impl Object {
                             map,
                             relative_to,
                             around,
+                            whitespace,
                             self.is_multiline(),
                             open,
                             close,
@@ -709,15 +751,33 @@ impl Object {
                     })
             }
             Object::MiniBrackets => find_mini_brackets(map, relative_to, around),
-            Object::SquareBrackets => {
-                surrounding_markers(map, relative_to, around, self.is_multiline(), '[', ']')
-            }
-            Object::CurlyBrackets => {
-                surrounding_markers(map, relative_to, around, self.is_multiline(), '{', '}')
-            }
-            Object::AngleBrackets => {
-                surrounding_markers(map, relative_to, around, self.is_multiline(), '<', '>')
-            }
+            Object::SquareBrackets => surrounding_markers(
+                map,
+                relative_to,
+                around,
+                whitespace,
+                self.is_multiline(),
+                '[',
+                ']',
+            ),
+            Object::CurlyBrackets => surrounding_markers(
+                map,
+                relative_to,
+                around,
+                whitespace,
+                self.is_multiline(),
+                '{',
+                '}',
+            ),
+            Object::AngleBrackets => surrounding_markers(
+                map,
+                relative_to,
+                around,
+                whitespace,
+                self.is_multiline(),
+                '<',
+                '>',
+            ),
             Object::Method => text_object(
                 map,
                 relative_to,
@@ -756,9 +816,10 @@ impl Object {
         map: &DisplaySnapshot,
         selection: &mut Selection<DisplayPoint>,
         around: bool,
+        whitespace: bool,
         times: Option<usize>,
     ) -> bool {
-        if let Some(range) = self.range(map, selection.clone(), around, times) {
+        if let Some(range) = self.range(map, selection.clone(), around, whitespace, times) {
             selection.start = range.start;
             selection.end = range.end;
             true
@@ -1559,6 +1620,7 @@ pub fn surrounding_markers(
     map: &DisplaySnapshot,
     relative_to: DisplayPoint,
     around: bool,
+    whitespace: bool,
     search_across_lines: bool,
     open_marker: char,
     close_marker: char,
@@ -1669,7 +1731,12 @@ pub fn surrounding_markers(
         for (ch, range) in movement::chars_after(map, closing.end) {
             if ch.is_whitespace() && ch != '\n' {
                 found = true;
-                closing.end = range.end;
+
+                // Only update closing range's `end` value if whitespace is
+                // meant to be included.
+                if whitespace {
+                    closing.end = range.end;
+                }
             } else {
                 break;
             }
@@ -1678,7 +1745,11 @@ pub fn surrounding_markers(
         if !found {
             for (ch, range) in movement::chars_before(map, opening.start) {
                 if ch.is_whitespace() && ch != '\n' {
-                    opening.start = range.start
+                    // Only update closing range's `start` value if whitespace
+                    // is meant to be included.
+                    if whitespace {
+                        opening.start = range.start
+                    }
                 } else {
                     break;
                 }

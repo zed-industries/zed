@@ -107,7 +107,7 @@ impl Vim {
                     s.move_with(|map, selection| {
                         let anchor = map.display_point_to_anchor(selection.head(), Bias::Right);
                         original_positions.insert(selection.id, anchor);
-                        object.expand_selection(map, selection, around, times);
+                        object.expand_selection(map, selection, around, true, times);
                     });
                 });
                 editor.rewrap_impl(
