@@ -4903,6 +4903,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "derive_setters"
+version = "0.1.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ae5c625eda104c228c06ecaf988d1c60e542176bd7a490e60eeda3493244c0c9"
+dependencies = [
+ "darling 0.20.11",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.106",
+]
+
+[[package]]
 name = "deunicode"
 version = "1.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6940,6 +6952,33 @@ dependencies = [
  "r-efi",
  "wasip2",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "gh-workflow"
+version = "0.8.0"
+source = "git+https://github.com/zed-industries/gh-workflow?rev=a0b197dd77c0ed2390c150e601f9d4f9a0ca7105#a0b197dd77c0ed2390c150e601f9d4f9a0ca7105"
+dependencies = [
+ "async-trait",
+ "derive_more 2.0.1",
+ "derive_setters",
+ "gh-workflow-macros",
+ "indexmap 2.11.4",
+ "merge",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "strum_macros 0.27.2",
+]
+
+[[package]]
+name = "gh-workflow-macros"
+version = "0.8.0"
+source = "git+https://github.com/zed-industries/gh-workflow?rev=a0b197dd77c0ed2390c150e601f9d4f9a0ca7105#a0b197dd77c0ed2390c150e601f9d4f9a0ca7105"
+dependencies = [
+ "heck 0.5.0",
+ "quote",
+ "syn 2.0.106",
 ]
 
 [[package]]
@@ -9809,6 +9848,28 @@ name = "menu"
 version = "0.1.0"
 dependencies = [
  "gpui",
+]
+
+[[package]]
+name = "merge"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "10bbef93abb1da61525bbc45eeaff6473a41907d19f8f9aa5168d214e10693e9"
+dependencies = [
+ "merge_derive",
+ "num-traits",
+]
+
+[[package]]
+name = "merge_derive"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "209d075476da2e63b4b29e72a2ef627b840589588e71400a25e3565c4f849d07"
+dependencies = [
+ "proc-macro-error",
+ "proc-macro2",
+ "quote",
+ "syn 1.0.109",
 ]
 
 [[package]]
@@ -12801,6 +12862,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "proc-macro-error"
+version = "1.0.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "da25490ff9892aab3fcf7c36f08cfb902dd3e71ca0f9f9517bea02a73a5ce38c"
+dependencies = [
+ "proc-macro-error-attr",
+ "proc-macro2",
+ "quote",
+ "syn 1.0.109",
+ "version_check",
+]
+
+[[package]]
+name = "proc-macro-error-attr"
+version = "1.0.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a1be40180e52ecc98ad80b184934baf3d0d29f979574e439af5a55274b35f869"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "version_check",
+]
+
+[[package]]
 name = "proc-macro-error-attr2"
 version = "2.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -15222,6 +15307,19 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.106",
+]
+
+[[package]]
+name = "serde_yaml"
+version = "0.9.34+deprecated"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6a8b1a1a2ebf674015cc02edccce75287f1a0130d394307b36743c2f5d504b47"
+dependencies = [
+ "indexmap 2.11.4",
+ "itoa",
+ "ryu",
+ "serde",
+ "unsafe-libyaml",
 ]
 
 [[package]]
@@ -18412,6 +18510,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7264e107f553ccae879d21fbea1d6724ac785e8c3bfc762137959b5802826ef3"
 
 [[package]]
+name = "unsafe-libyaml"
+version = "0.2.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "673aac59facbab8a9007c7f6108d11f63b603f7cabff99fabf650fea5c32b861"
+
+[[package]]
 name = "untrusted"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -20818,9 +20922,12 @@ name = "xtask"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "backtrace",
  "cargo_metadata",
  "cargo_toml",
  "clap",
+ "gh-workflow",
+ "indexmap 2.11.4",
  "indoc",
  "toml 0.8.23",
  "toml_edit 0.22.27",
