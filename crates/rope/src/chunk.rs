@@ -93,6 +93,71 @@ impl Chunk {
     pub fn tabs(&self) -> Bitmap {
         self.tabs
     }
+
+    #[inline(always)]
+    pub fn is_char_boundary(&self, offset: usize) -> bool {
+        (1 as Bitmap).unbounded_shl(offset as u32) & self.chars != 0 || offset == self.text.len()
+    }
+
+    pub fn floor_char_boundary(&self, index: usize) -> usize {
+        #[inline]
+        pub(crate) const fn is_utf8_char_boundary(u8: u8) -> bool {
+            // This is bit magic equivalent to: b < 128 || b >= 192
+            (u8 as i8) >= -0x40
+        }
+
+        if index >= self.text.len() {
+            self.text.len()
+        } else {
+            let mut i = index;
+            while i > 0 {
+                if is_utf8_char_boundary(self.text.as_bytes()[i]) {
+                    break;
+                }
+                i -= 1;
+            }
+
+            i
+        }
+    }
+
+    #[track_caller]
+    #[inline(always)]
+    pub fn assert_char_boundary(&self, offset: usize) {
+        if self.is_char_boundary(offset) {
+            return;
+        }
+        panic_char_boundary(self, offset);
+
+        #[cold]
+        #[inline(never)]
+        #[track_caller]
+        fn panic_char_boundary(chunk: &Chunk, offset: usize) {
+            if offset > chunk.text.len() {
+                panic!(
+                    "byte index {} is out of bounds of `{:?}` (length: {})",
+                    offset,
+                    chunk.text,
+                    chunk.text.len()
+                );
+            }
+            // find the character
+            let char_start = chunk.floor_char_boundary(offset);
+            // `char_start` must be less than len and a char boundary
+            let ch = chunk
+                .text
+                .get(char_start..)
+                .unwrap()
+                .chars()
+                .next()
+                .unwrap();
+            let char_range = char_start..char_start + ch.len_utf8();
+            panic!(
+                "byte index {} is not a char boundary; it is inside {:?} (bytes {:?})",
+                offset, ch, char_range,
+            );
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug)]

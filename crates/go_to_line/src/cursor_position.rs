@@ -111,15 +111,14 @@ impl CursorPosition {
                             }
                             editor::EditorMode::Full { .. } => {
                                 let mut last_selection = None::<Selection<Point>>;
-                                let snapshot = editor.buffer().read(cx).snapshot(cx);
-                                if snapshot.excerpts().count() > 0 {
-                                    for selection in
-                                        editor.selections.all_adjusted_with_snapshot(&snapshot)
-                                    {
+                                let snapshot = editor.display_snapshot(cx);
+                                if snapshot.buffer_snapshot().excerpts().count() > 0 {
+                                    for selection in editor.selections.all_adjusted(&snapshot) {
                                         let selection_summary = snapshot
+                                            .buffer_snapshot()
                                             .text_summary_for_range::<text::TextSummary, _>(
-                                                selection.start..selection.end,
-                                            );
+                                            selection.start..selection.end,
+                                        );
                                         cursor_position.selected_count.characters +=
                                             selection_summary.chars;
                                         if selection.end != selection.start {
@@ -136,8 +135,12 @@ impl CursorPosition {
                                         }
                                     }
                                 }
-                                cursor_position.position = last_selection
-                                    .map(|s| UserCaretPosition::at_selection_end(&s, &snapshot));
+                                cursor_position.position = last_selection.map(|s| {
+                                    UserCaretPosition::at_selection_end(
+                                        &s,
+                                        snapshot.buffer_snapshot(),
+                                    )
+                                });
                                 cursor_position.context = Some(editor.focus_handle(cx));
                             }
                         }

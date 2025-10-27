@@ -111,7 +111,6 @@ use gpui::{
     UTF16Selection, UnderlineStyle, UniformListScrollHandle, WeakEntity, WeakFocusHandle, Window,
     div, point, prelude::*, pulsating_between, px, relative, size,
 };
-use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_links::{HoverLink, HoveredLinkState, InlayHighlight, find_file};
 use hover_popover::{HoverState, hide_hover};
 use indent_guides::ActiveIndentGuidesState;
@@ -164,7 +163,7 @@ use rand::seq::SliceRandom;
 use rpc::{ErrorCode, ErrorExt, proto::PeerId};
 use scroll::{Autoscroll, OngoingScroll, ScrollAnchor, ScrollManager};
 use selections_collection::{
-    MutableSelectionsCollection, SelectionsCollection, resolve_selections,
+    MutableSelectionsCollection, SelectionsCollection, resolve_selections_wrapping_blocks,
 };
 use serde::{Deserialize, Serialize};
 use settings::{GitGutterSetting, Settings, SettingsLocation, SettingsStore, update_settings_file};
@@ -2874,7 +2873,7 @@ impl Editor {
         self.edit_prediction_provider = provider.map(|provider| RegisteredEditPredictionProvider {
             _subscription: cx.observe_in(&provider, window, |this, _, window, cx| {
                 if this.focus_handle.is_focused(window) {
-                    this.update_visible_edit_prediction(window, cx);
+                    this.update_visible_edit_prediction(&this.display_snapshot(cx), window, cx);
                 }
             }),
             provider: Arc::new(provider),
@@ -2963,7 +2962,7 @@ impl Editor {
         if hidden != self.edit_predictions_hidden_for_vim_mode {
             self.edit_predictions_hidden_for_vim_mode = hidden;
             if hidden {
-                self.update_visible_edit_prediction(window, cx);
+                self.update_visible_edit_prediction(&self.display_snapshot(cx), window, cx);
             } else {
                 self.refresh_edit_prediction(true, false, window, cx);
             }
@@ -3188,9 +3187,9 @@ impl Editor {
             self.refresh_document_highlights(cx);
             refresh_linked_ranges(self, window, cx);
 
-            self.refresh_selected_text_highlights(false, window, cx);
-            refresh_matching_bracket_highlights(self, cx);
-            self.update_visible_edit_prediction(window, cx);
+            self.refresh_selected_text_highlights(false, &display_map, window, cx);
+            self.refresh_matching_bracket_highlights(&display_map, cx);
+            self.update_visible_edit_prediction(&display_map, window, cx);
             self.edit_prediction_requires_modifier_in_indent_conflict = true;
             self.inline_blame_popover.take();
             if self.git_blame_inline_enabled {
@@ -4373,16 +4372,17 @@ impl Editor {
             let new_anchor_selections = new_selections.iter().map(|e| &e.0);
             let new_selection_deltas = new_selections.iter().map(|e| e.1);
             let map = this.display_map.update(cx, |map, cx| map.snapshot(cx));
-            let new_selections = resolve_selections::<usize, _>(new_anchor_selections, &map)
-                .zip(new_selection_deltas)
-                .map(|(selection, delta)| Selection {
-                    id: selection.id,
-                    start: selection.start + delta,
-                    end: selection.end + delta,
-                    reversed: selection.reversed,
-                    goal: SelectionGoal::None,
-                })
-                .collect::<Vec<_>>();
+            let new_selections =
+                resolve_selections_wrapping_blocks::<usize, _>(new_anchor_selections, &map)
+                    .zip(new_selection_deltas)
+                    .map(|(selection, delta)| Selection {
+                        id: selection.id,
+                        start: selection.start + delta,
+                        end: selection.end + delta,
+                        reversed: selection.reversed,
+                        goal: SelectionGoal::None,
+                    })
+                    .collect::<Vec<_>>();
 
             let mut i = 0;
             for (position, delta, selection_id, pair) in new_autoclose_regions {
@@ -5894,7 +5894,11 @@ impl Editor {
 
                         crate::hover_popover::hide_hover(editor, cx);
                         if editor.show_edit_predictions_in_menu() {
-                            editor.update_visible_edit_prediction(window, cx);
+                            editor.update_visible_edit_prediction(
+                                &editor.display_snapshot(cx),
+                                window,
+                                cx,
+                            );
                         } else {
                             editor.discard_edit_prediction(false, cx);
                         }
@@ -5909,7 +5913,11 @@ impl Editor {
                         // If it was already hidden and we don't show edit predictions in the menu,
                         // we should also show the edit prediction when available.
                         if was_hidden && editor.show_edit_predictions_in_menu() {
-                            editor.update_visible_edit_prediction(window, cx);
+                            editor.update_visible_edit_prediction(
+                                &editor.display_snapshot(cx),
+                                window,
+                                cx,
+                            );
                         }
                     }
                 })
@@ -6974,6 +6982,7 @@ impl Editor {
 
     fn prepare_highlight_query_from_selection(
         &mut self,
+        window: &Window,
         cx: &mut Context<Editor>,
     ) -> Option<(String, Range<Anchor>)> {
         if matches!(self.mode, EditorMode::SingleLine) {
@@ -6985,24 +6994,23 @@ impl Editor {
         if self.selections.count() != 1 || self.selections.line_mode() {
             return None;
         }
-        let selection = self.selections.newest_anchor();
-        let multi_buffer_snapshot = self.buffer().read(cx).snapshot(cx);
-        let selection_point_range = selection.start.to_point(&multi_buffer_snapshot)
-            ..selection.end.to_point(&multi_buffer_snapshot);
+        let snapshot = self.snapshot(window, cx);
+        let selection = self.selections.newest::<Point>(&snapshot);
         // If the selection spans multiple rows OR it is empty
-        if selection_point_range.start.row != selection_point_range.end.row
-            || selection_point_range.start.column == selection_point_range.end.column
+        if selection.start.row != selection.end.row
+            || selection.start.column == selection.end.column
         {
             return None;
         }
-
-        let query = multi_buffer_snapshot
-            .text_for_range(selection.range())
+        let selection_anchor_range = selection.range().to_anchors(snapshot.buffer_snapshot());
+        let query = snapshot
+            .buffer_snapshot()
+            .text_for_range(selection_anchor_range.clone())
             .collect::<String>();
         if query.trim().is_empty() {
             return None;
         }
-        Some((query, selection.range()))
+        Some((query, selection_anchor_range))
     }
 
     fn update_selection_occurrence_highlights(
@@ -7078,32 +7086,36 @@ impl Editor {
         })
     }
 
-    fn refresh_single_line_folds(&mut self, window: &mut Window, cx: &mut Context<Editor>) {
+    fn refresh_single_line_folds(
+        &mut self,
+        display_snapshot: &DisplaySnapshot,
+        cx: &mut Context<Editor>,
+    ) {
         struct NewlineFold;
         let type_id = std::any::TypeId::of::<NewlineFold>();
         if !self.mode.is_single_line() {
             return;
         }
-        let snapshot = self.snapshot(window, cx);
-        if snapshot.buffer_snapshot().max_point().row == 0 {
+        let display_snapshot = display_snapshot.clone();
+        if display_snapshot.buffer_snapshot().max_point().row == 0 {
             return;
         }
         let task = cx.background_spawn(async move {
-            let new_newlines = snapshot
+            let new_newlines = display_snapshot
                 .buffer_chars_at(0)
                 .filter_map(|(c, i)| {
                     if c == '\n' {
                         Some(
-                            snapshot.buffer_snapshot().anchor_after(i)
-                                ..snapshot.buffer_snapshot().anchor_before(i + 1),
+                            display_snapshot.buffer_snapshot().anchor_after(i)
+                                ..display_snapshot.buffer_snapshot().anchor_before(i + 1),
                         )
                     } else {
                         None
                     }
                 })
                 .collect::<Vec<_>>();
-            let existing_newlines = snapshot
-                .folds_in_range(0..snapshot.buffer_snapshot().len())
+            let existing_newlines = display_snapshot
+                .folds_in_range(0..display_snapshot.buffer_snapshot().len())
                 .filter_map(|fold| {
                     if fold.placeholder.type_tag == Some(type_id) {
                         Some(fold.range.start..fold.range.end)
@@ -7152,17 +7164,19 @@ impl Editor {
     fn refresh_selected_text_highlights(
         &mut self,
         on_buffer_edit: bool,
+        display_snapshot: &DisplaySnapshot,
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) {
-        let Some((query_text, query_range)) = self.prepare_highlight_query_from_selection(cx)
+        let Some((query_text, query_range)) =
+            self.prepare_highlight_query_from_selection(window, cx)
         else {
             self.clear_background_highlights::<SelectedTextHighlight>(cx);
             self.quick_selection_highlight_task.take();
             self.debounced_selection_highlight_task.take();
             return;
         };
-        let multi_buffer_snapshot = self.buffer().read(cx).snapshot(cx);
+        let multi_buffer_snapshot = display_snapshot.buffer_snapshot();
         if on_buffer_edit
             || self
                 .quick_selection_highlight_task
@@ -7240,7 +7254,7 @@ impl Editor {
             return None;
         }
 
-        self.update_visible_edit_prediction(window, cx);
+        self.update_visible_edit_prediction(&self.display_snapshot(cx), window, cx);
 
         if !user_requested
             && (!self.should_show_edit_predictions()
@@ -7402,7 +7416,7 @@ impl Editor {
         }
 
         provider.cycle(buffer, cursor_buffer_position, direction, cx);
-        self.update_visible_edit_prediction(window, cx);
+        self.update_visible_edit_prediction(&self.display_snapshot(cx), window, cx);
 
         Some(())
     }
@@ -7418,7 +7432,7 @@ impl Editor {
             return;
         }
 
-        self.update_visible_edit_prediction(window, cx);
+        self.update_visible_edit_prediction(&self.display_snapshot(cx), window, cx);
     }
 
     pub fn display_cursor_names(
@@ -7557,8 +7571,13 @@ impl Editor {
                 // Store the transaction ID and selections before applying the edit
                 let transaction_id_prev = self.buffer.read(cx).last_transaction_id(cx);
 
-                let snapshot = self.buffer.read(cx).snapshot(cx);
-                let last_edit_end = edits.last().unwrap().0.end.bias_right(&snapshot);
+                let snapshot = self.display_snapshot(cx);
+                let last_edit_end = edits
+                    .last()
+                    .unwrap()
+                    .0
+                    .end
+                    .bias_right(snapshot.buffer_snapshot());
 
                 self.buffer.update(cx, |buffer, cx| {
                     buffer.edit(edits.iter().cloned(), None, cx)
@@ -7577,7 +7596,7 @@ impl Editor {
                     }
                 }
 
-                self.update_visible_edit_prediction(window, cx);
+                self.update_visible_edit_prediction(&snapshot, window, cx);
                 if self.active_edit_prediction.is_none() {
                     self.refresh_edit_prediction(true, true, window, cx);
                 }
@@ -7910,7 +7929,7 @@ impl Editor {
                     since: Instant::now(),
                 };
 
-                self.update_visible_edit_prediction(window, cx);
+                self.update_visible_edit_prediction(&self.display_snapshot(cx), window, cx);
                 cx.notify();
             }
         } else if let EditPredictionPreview::Active {
@@ -7933,13 +7952,14 @@ impl Editor {
                 released_too_fast: since.elapsed() < Duration::from_millis(200),
             };
             self.clear_row_highlights::<EditPredictionPreview>();
-            self.update_visible_edit_prediction(window, cx);
+            self.update_visible_edit_prediction(&self.display_snapshot(cx), window, cx);
             cx.notify();
         }
     }
 
     fn update_visible_edit_prediction(
         &mut self,
+        display_snapshot: &DisplaySnapshot,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<()> {
@@ -7954,7 +7974,7 @@ impl Editor {
 
         let selection = self.selections.newest_anchor();
         let cursor = selection.head();
-        let multibuffer = self.buffer.read(cx).snapshot(cx);
+        let multibuffer = display_snapshot.buffer_snapshot();
         let offset_selection = selection.map(|endpoint| endpoint.to_offset(&multibuffer));
         let excerpt_id = cursor.excerpt_id;
 
@@ -9787,7 +9807,7 @@ impl Editor {
         self.completion_tasks.clear();
         let context_menu = self.context_menu.borrow_mut().take();
         self.stale_edit_prediction_in_menu.take();
-        self.update_visible_edit_prediction(window, cx);
+        self.update_visible_edit_prediction(&self.display_snapshot(cx), window, cx);
         if let Some(CodeContextMenu::Completions(_)) = &context_menu
             && let Some(completion_provider) = &self.completion_provider
         {
@@ -17651,13 +17671,17 @@ impl Editor {
         window.show_character_palette();
     }
 
-    fn refresh_active_diagnostics(&mut self, cx: &mut Context<Editor>) {
+    fn refresh_active_diagnostics(
+        &mut self,
+        display_snapshot: &DisplaySnapshot,
+        cx: &mut Context<Editor>,
+    ) {
         if !self.diagnostics_enabled() {
             return;
         }
 
         if let ActiveDiagnostic::Group(active_diagnostics) = &mut self.active_diagnostics {
-            let buffer = self.buffer.read(cx).snapshot(cx);
+            let buffer = display_snapshot.buffer_snapshot();
             let primary_range_start = active_diagnostics.active_range.start.to_offset(&buffer);
             let primary_range_end = active_diagnostics.active_range.end.to_offset(&buffer);
             let is_valid = buffer
@@ -20959,15 +20983,16 @@ impl Editor {
     ) {
         match event {
             multi_buffer::Event::Edited { edited_buffer } => {
+                let display_snapshot = self.display_snapshot(cx);
                 self.scrollbar_marker_state.dirty = true;
                 self.active_indent_guides_state.dirty = true;
-                self.refresh_active_diagnostics(cx);
+                self.refresh_active_diagnostics(&display_snapshot, cx);
                 self.refresh_code_actions(window, cx);
-                self.refresh_selected_text_highlights(true, window, cx);
-                self.refresh_single_line_folds(window, cx);
-                refresh_matching_bracket_highlights(self, cx);
+                self.refresh_selected_text_highlights(true, &display_snapshot, window, cx);
+                self.refresh_single_line_folds(&display_snapshot, cx);
+                self.refresh_matching_bracket_highlights(&display_snapshot, cx);
                 if self.has_active_edit_prediction() {
-                    self.update_visible_edit_prediction(window, cx);
+                    self.update_visible_edit_prediction(&display_snapshot, window, cx);
                 }
 
                 if let Some(edited_buffer) = edited_buffer {
@@ -21105,7 +21130,7 @@ impl Editor {
         if !self.diagnostics_enabled() {
             return;
         }
-        self.refresh_active_diagnostics(cx);
+        self.refresh_active_diagnostics(&self.display_snapshot(cx), cx);
         self.refresh_inline_diagnostics(true, window, cx);
         self.scrollbar_marker_state.dirty = true;
         cx.notify();
