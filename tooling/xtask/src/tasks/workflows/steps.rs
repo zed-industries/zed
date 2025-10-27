@@ -1,5 +1,7 @@
 use gh_workflow::*;
 
+use crate::tasks::workflows::vars;
+
 pub fn checkout_repo() -> Step<Use> {
     named::uses(
         "actions",
@@ -17,18 +19,55 @@ pub fn setup_pnpm() -> Step<Use> {
     .add_with(("version", "9"))
 }
 
+pub fn setup_node() -> Step<Use> {
+    named::uses(
+        "actions",
+        "setup-node",
+        "49933ea5288caeca8642d1e84afbd3f7d6820020", // v4
+    )
+    .add_with(("node-version", "20"))
+}
+
+pub fn setup_sentry() -> Step<Use> {
+    named::uses(
+        "matbour",
+        "setup-sentry-cli",
+        "3e938c54b3018bdd019973689ef984e033b0454b",
+    )
+    .add_with(("token", vars::SENTRY_AUTH_TOKEN))
+}
+
+pub fn upload_artifact(name: &str, path: &str) -> Step<Use> {
+    Step::new(format!("@actions/upload-artifact {}", name))
+        .uses(
+            "actions",
+            "upload-artifact",
+            "330a01c490aca151604b8cf639adc76d48f6c5d4", // v5
+        )
+        .add_with(("name", name))
+        .add_with(("path", path))
+}
+
+// todo! we used to do 300Mb on macOS and 100Mb on Windows
+pub fn clean_target_dir() -> Step<Run> {
+    named::run("script/clear-target-dir-if-larger-than 100")
+}
+
+pub mod bundling {
+    use super::*;
+
+    pub fn bundle_mac() -> Step<Run> {
+        named::run("./script/bundle-mac")
+    }
+}
+
 pub mod danger {
     use super::*;
 
     pub fn setup_node() -> Step<Use> {
-        named::uses(
-            "actions",
-            "setup-node",
-            "49933ea5288caeca8642d1e84afbd3f7d6820020", // v4
-        )
-        .add_with(("node-version", "20"))
-        .add_with(("cache", "pnpm"))
-        .add_with(("cache-dependency-path", "script/danger/pnpm-lock.yaml"))
+        super::setup_node()
+            .add_with(("cache", "pnpm"))
+            .add_with(("cache-dependency-path", "script/danger/pnpm-lock.yaml"))
     }
 
     pub fn install_deps() -> Step<Run> {

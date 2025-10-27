@@ -19,7 +19,7 @@ pub fn run_workflows(_: GenerateWorkflowArgs) -> Result<()> {
     let workflows = vec![
         ("danger.yml", danger()),
         ("nix.yml", nix()),
-        ("bundle_mac.yml", bundle_mac()),
+        ("run_bundling.yml", run_bundling()),
     ];
     fs::create_dir_all(dir)
         .with_context(|| format!("Failed to create directory: {}", dir.display()))?;

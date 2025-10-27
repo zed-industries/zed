@@ -30,7 +30,7 @@ pub fn danger() -> Workflow {
         )
 }
 
-pub fn bundle_mac() -> Workflow {
+pub fn run_bundling() -> Workflow {
     Workflow::default()
         .name("Bundle macOS")
         .on(Event::default().pull_request(
@@ -55,39 +55,12 @@ pub fn bundle_mac() -> Workflow {
                 .add_env(("APPLE_NOTARIZATION_KEY", vars::APPLE_NOTARIZATION_KEY))
                 .add_env(("APPLE_NOTARIZATION_KEY_ID", vars::APPLE_NOTARIZATION_KEY_ID))
                 .add_env(("APPLE_NOTARIZATION_ISSUER_ID", vars::APPLE_NOTARIZATION_ISSUER_ID))
-                .add_step(
-                    Step::new("Install Node")
-                        .uses("actions", "setup-node", "49933ea5288caeca8642d1e84afbd3f7d6820020")
-                        .add_with(("node-version", "18"))
-                )
-                .add_step(
-                    Step::new("Setup Sentry CLI")
-                        .uses("matbour", "setup-sentry-cli", "3e938c54b3018bdd019973689ef984e033b0454b")
-                        .add_with(("token", vars::SENTRY_AUTH_TOKEN))
-                )
-                .add_step(
-                    steps::checkout_repo()
-                        .add_with(("fetch-depth", "25"))
-                        .add_with(("clean", "false"))
-                )
-                .add_step(Step::new("Limit target directory size").run("script/clear-target-dir-if-larger-than 100"))
-                .add_step(Step::new("Create macOS app bundle").run("script/bundle-mac"))
-                .add_step(
-                    Step::new("Rename binaries")
-                        .run("mv target/aarch64-apple-darwin/release/Zed.dmg target/aarch64-apple-darwin/release/Zed-aarch64.dmg\nmv target/x86_64-apple-darwin/release/Zed.dmg target/x86_64-apple-darwin/release/Zed-x86_64.dmg")
-                )
-                .add_step(
-                    Step::new("Upload app bundle (aarch64)")
-                        .uses("actions", "upload-artifact", "ea165f8d65b6e75b540449e92b4886f43607fa02")
-                        .add_with(("name", "Zed_${{ github.event.pull_request.head.sha || github.sha }}-aarch64.dmg"))
-                        .add_with(("path", "target/aarch64-apple-darwin/release/Zed-aarch64.dmg"))
-                )
-                .add_step(
-                    Step::new("Upload app bundle (x86_64)")
-                        .uses("actions", "upload-artifact", "ea165f8d65b6e75b540449e92b4886f43607fa02")
-                        .add_with(("name", "Zed_${{ github.event.pull_request.head.sha || github.sha }}-x86_64.dmg"))
-                        .add_with(("path", "target/x86_64-apple-darwin/release/Zed-x86_64.dmg"))
-                ),
+                .add_step(steps::setup_node())
+                .add_step(steps::setup_sentry())
+                .add_step(steps::clean_target_dir())
+                .add_step(steps::bundling::bundle_mac())
+                .add_step(steps::upload_artifact("Zed_${{ github.event.pull_request.head.sha || github.sha }}-aarch64.dmg", "target/aarch64-apple-darwin/release/Zed.dmg"))
+                .add_step(steps::upload_artifact( "Zed_${{ github.event.pull_request.head.sha || github.sha }}-x86_64.dmg",  "target/x86_64-apple-darwin/release/Zed.dmg"))
         )
 }
 

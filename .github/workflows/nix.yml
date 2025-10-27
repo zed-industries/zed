@@ -3,11 +3,11 @@ name: Nix build
 on:
   workflow_call:
     inputs:
+      cachix-filter:
+        type: string
       flake-output:
         type: string
         default: default
-      cachix-filter:
-        type: string
 jobs:
   nix-build-linux-x86:
     if: github.repository_owner == 'zed-industries'

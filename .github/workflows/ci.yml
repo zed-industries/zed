@@ -517,8 +517,7 @@ jobs:
     runs-on:
       - self-mini-macos
     if: |
-      ( startsWith(github.ref, 'refs/tags/v')
-      || contains(github.event.pull_request.labels.*.name, 'run-bundling') )
+      ( startsWith(github.ref, 'refs/tags/v') )
     needs: [macos_tests]
     env:
       MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
@@ -610,8 +609,7 @@ jobs:
     runs-on:
       - namespace-profile-16x32-ubuntu-2004 # ubuntu 20.04 for minimal glibc
     if: |
-      ( startsWith(github.ref, 'refs/tags/v')
-      || contains(github.event.pull_request.labels.*.name, 'run-bundling') )
+      ( startsWith(github.ref, 'refs/tags/v') )
     needs: [linux_tests]
     steps:
       - name: Checkout repo
@@ -669,7 +667,6 @@ jobs:
       - namespace-profile-8x32-ubuntu-2004-arm-m4 # ubuntu 20.04 for minimal glibc
     if: |
       startsWith(github.ref, 'refs/tags/v')
-      || contains(github.event.pull_request.labels.*.name, 'run-bundling')
     needs: [linux_tests]
     steps:
       - name: Checkout repo
@@ -724,8 +721,7 @@ jobs:
     timeout-minutes: 60
     runs-on: github-8vcpu-ubuntu-2404
     if: |
-      false && ( startsWith(github.ref, 'refs/tags/v')
-      || contains(github.event.pull_request.labels.*.name, 'run-bundling') )
+      false && ( startsWith(github.ref, 'refs/tags/v') )
     needs: [linux_tests]
     name: Build Zed on FreeBSD
     steps:
@@ -792,8 +788,7 @@ jobs:
     name: Create a Windows installer
     runs-on: [self-32vcpu-windows-2022]
     if: |
-      ( startsWith(github.ref, 'refs/tags/v')
-      || contains(github.event.pull_request.labels.*.name, 'run-bundling') )
+      ( startsWith(github.ref, 'refs/tags/v') )
     needs: [windows_tests]
     env:
       AZURE_TENANT_ID: ${{ secrets.AZURE_SIGNING_TENANT_ID }}

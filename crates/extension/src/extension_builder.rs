@@ -224,6 +224,7 @@ impl ExtensionBuilder {
         grammar_metadata: &GrammarManifestEntry,
     ) -> Result<()> {
         let clang_path = self.install_wasi_sdk_if_needed().await?;
+        dbg!(&clang_path);
 
         let mut grammar_repo_dir = extension_dir.to_path_buf();
         grammar_repo_dir.extend(["grammars", grammar_name]);
@@ -250,8 +251,8 @@ impl ExtensionBuilder {
         let scanner_path = src_path.join("scanner.c");
 
         log::info!("compiling {grammar_name} parser");
-        let clang_output = util::command::new_smol_command(&clang_path)
-            .args(["-fPIC", "-shared", "-Os"])
+        let clang_output = util::command::new_smol_command("clang")
+            .args(["-fPIC", "-shared", "-Os", "-target", "wasm32-unknown-wasi"])
             .arg(format!("-Wl,--export=tree_sitter_{grammar_name}"))
             .arg("-o")
             .arg(&grammar_wasm_path)

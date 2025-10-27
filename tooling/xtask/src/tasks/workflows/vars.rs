@@ -16,6 +16,7 @@ secret!(MACOS_CERTIFICATE_PASSWORD);
 secret!(APPLE_NOTARIZATION_KEY);
 secret!(APPLE_NOTARIZATION_KEY_ID);
 secret!(APPLE_NOTARIZATION_ISSUER_ID);
+secret!(SENTRY_AUTH_TOKEN);
 
 pub fn input(name: &str, input: WorkflowCallInput) -> (String, (&str, WorkflowCallInput)) {
     return (format!("${{{{ inputs.{name} }}}}"), (name, input));

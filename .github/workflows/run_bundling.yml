@@ -1,0 +1,46 @@
+# generated `cargo xtask workflows`. Do not edit.
+name: Bundle macOS
+on:
+  pull_request:
+    types:
+    - labeled
+    - synchronize
+jobs:
+  bundle-mac:
+    if: (github.event.action == 'labeled' && github.event.label.name == 'run-bundling') || (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'run-bundling'))
+    runs-on: self-mini-macos
+    env:
+      MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+      MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+      APPLE_NOTARIZATION_KEY: ${{ secrets.APPLE_NOTARIZATION_KEY }}
+      APPLE_NOTARIZATION_KEY_ID: ${{ secrets.APPLE_NOTARIZATION_KEY_ID }}
+      APPLE_NOTARIZATION_ISSUER_ID: ${{ secrets.APPLE_NOTARIZATION_ISSUER_ID }}
+    steps:
+    - name: steps::setup_node
+      uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+      with:
+        node-version: '20'
+    - name: steps::setup_sentry
+      uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b
+      with:
+        token: ${{ secrets.SENTRY_AUTH_TOKEN }}
+    - name: steps::clean_target_dir
+      run: script/clear-target-dir-if-larger-than 100
+      shell: bash -euxo pipefail {0}
+    - name: steps::bundling::bundle_mac
+      run: ./script/bundle-mac
+      shell: bash -euxo pipefail {0}
+    - name: '@actions/upload-artifact Zed_${{ github.event.pull_request.head.sha || github.sha }}-aarch64.dmg'
+      uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+      with:
+        name: Zed_${{ github.event.pull_request.head.sha || github.sha }}-aarch64.dmg
+        path: target/aarch64-apple-darwin/release/Zed.dmg
+    - name: '@actions/upload-artifact Zed_${{ github.event.pull_request.head.sha || github.sha }}-x86_64.dmg'
+      uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+      with:
+        name: Zed_${{ github.event.pull_request.head.sha || github.sha }}-x86_64.dmg
+        path: target/x86_64-apple-darwin/release/Zed.dmg
+    timeout-minutes: 120
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
