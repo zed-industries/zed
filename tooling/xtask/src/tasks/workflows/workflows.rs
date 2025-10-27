@@ -36,7 +36,7 @@ pub fn run_bundling() -> Workflow {
     );
 
     Workflow::default()
-        .name("Bundle macOS")
+        .name("Run Bundling")
         .on(Event::default().pull_request(
             PullRequest::default().types([PullRequestType::Labeled, PullRequestType::Synchronize]),
         ))

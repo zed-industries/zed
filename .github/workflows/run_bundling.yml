@@ -1,5 +1,5 @@
 # generated `cargo xtask workflows`. Do not edit.
-name: Bundle macOS
+name: Run Bundling
 on:
   pull_request:
     types:
@@ -16,6 +16,10 @@ jobs:
       APPLE_NOTARIZATION_KEY_ID: ${{ secrets.APPLE_NOTARIZATION_KEY_ID }}
       APPLE_NOTARIZATION_ISSUER_ID: ${{ secrets.APPLE_NOTARIZATION_ISSUER_ID }}
     steps:
+    - name: steps::checkout_repo
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        clean: 'false'
     - name: steps::setup_node
       uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
       with:
@@ -27,7 +31,7 @@ jobs:
     - name: steps::clean_target_dir
       run: script/clear-target-dir-if-larger-than 100
       shell: bash -euxo pipefail {0}
-    - name: steps::bundling::bundle_mac
+    - name: ./script/bundle-mac
       run: ./script/bundle-mac
       shell: bash -euxo pipefail {0}
     - name: '@actions/upload-artifact Zed_${{ github.event.pull_request.head.sha || github.sha }}-aarch64.dmg'
@@ -40,6 +44,97 @@ jobs:
       with:
         name: Zed_${{ github.event.pull_request.head.sha || github.sha }}-x86_64.dmg
         path: target/x86_64-apple-darwin/release/Zed.dmg
+    timeout-minutes: 120
+  bundle-linux-x86_64:
+    if: (github.event.action == 'labeled' && github.event.label.name == 'run-bundling') || (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'run-bundling'))
+    runs-on: namespace-profile-16x32-ubuntu-2204
+    steps:
+    - name: steps::checkout_repo
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        clean: 'false'
+    - name: steps::setup_sentry
+      uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b
+      with:
+        token: ${{ secrets.SENTRY_AUTH_TOKEN }}
+    - name: ./script/linux
+      run: ./script/linux
+      shell: bash -euxo pipefail {0}
+    - name: ./script/install-mold
+      run: ./script/install-mold
+      shell: bash -euxo pipefail {0}
+    - name: ./script/bundle-linux
+      run: ./script/bundle-linux
+      shell: bash -euxo pipefail {0}
+    - name: '@actions/upload-artifact zed-${{ github.event.pull_request.head.sha || github.sha }}-x86_64-unknown-linux-gnu.tar.gz'
+      uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+      with:
+        name: zed-${{ github.event.pull_request.head.sha || github.sha }}-x86_64-unknown-linux-gnu.tar.gz
+        path: target/release/zed-*.tar.gz
+    - name: '@actions/upload-artifact zed-remote-server-${{ github.event.pull_request.head.sha || github.sha }}-x86_64-unknown-linux-gnu.tar.gz'
+      uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+      with:
+        name: zed-remote-server-${{ github.event.pull_request.head.sha || github.sha }}-x86_64-unknown-linux-gnu.tar.gz
+        path: target/release/zed-remote-server-*.tar.gz
+  bundle-linux-aarch64:
+    if: (github.event.action == 'labeled' && github.event.label.name == 'run-bundling') || (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'run-bundling'))
+    runs-on: namespace-profile-8x32-ubuntu-2204-arm-m4
+    steps:
+    - name: steps::checkout_repo
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        clean: 'false'
+    - name: steps::setup_sentry
+      uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b
+      with:
+        token: ${{ secrets.SENTRY_AUTH_TOKEN }}
+    - name: ./script/linux
+      run: ./script/linux
+      shell: bash -euxo pipefail {0}
+    - name: ./script/bundle-linux
+      run: ./script/bundle-linux
+      shell: bash -euxo pipefail {0}
+    - name: '@actions/upload-artifact zed-${{ github.event.pull_request.head.sha || github.sha }}-aarch64-unknown-linux-gnu.tar.gz'
+      uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+      with:
+        name: zed-${{ github.event.pull_request.head.sha || github.sha }}-aarch64-unknown-linux-gnu.tar.gz
+        path: target/release/zed-*.tar.gz
+    - name: '@actions/upload-artifact zed-remote-server-${{ github.event.pull_request.head.sha || github.sha }}-aarch64-unknown-linux-gnu.tar.gz'
+      uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+      with:
+        name: zed-remote-server-${{ github.event.pull_request.head.sha || github.sha }}-aarch64-unknown-linux-gnu.tar.gz
+        path: target/release/zed-remote-server-*.tar.gz
+  bundle-windows:
+    if: (github.event.action == 'labeled' && github.event.label.name == 'run-bundling') || (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'run-bundling'))
+    runs-on: self-32vcpu-windows-2022
+    env:
+      AZURE_TENANT_ID: ${{ secrets.AZURE_SIGNING_TENANT_ID }}
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_SIGNING_CLIENT_ID }}
+      AZURE_CLIENT_SECRET: ${{ secrets.AZURE_SIGNING_CLIENT_SECRET }}
+      ACCOUNT_NAME: ${{ vars.AZURE_SIGNING_ACCOUNT_NAME }}
+      CERT_PROFILE_NAME: ${{ vars.AZURE_SIGNING_CERT_PROFILE_NAME }}
+      ENDPOINT: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+      FILE_DIGEST: SHA256
+      TIMESTAMP_DIGEST: SHA256
+      TIMESTAMP_SERVER: http://timestamp.acs.microsoft.com
+    steps:
+    - name: steps::checkout_repo
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        clean: 'false'
+    - name: steps::setup_sentry
+      uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b
+      with:
+        token: ${{ secrets.SENTRY_AUTH_TOKEN }}
+    - name: script/bundle-windows.ps1
+      run: script/bundle-windows.ps1
+      shell: pwsh
+      working-directory: ${{ env.ZED_WORKSPACE }}
+    - name: '@actions/upload-artifact Zed_${{ github.event.pull_request.head.sha || github.sha }}-x86_64.exe'
+      uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+      with:
+        name: Zed_${{ github.event.pull_request.head.sha || github.sha }}-x86_64.exe
+        path: ${{ env.SETUP_PATH }}
     timeout-minutes: 120
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}

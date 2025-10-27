@@ -64,6 +64,7 @@ pub fn script(name: &str) -> Step<Run> {
     Step::new(name).run(name).shell(BASH_SHELL)
 }
 
+// todo! can probably combine with script with `if name.ends_with(".ps1")`
 pub fn script_windows(name: &str) -> Step<Run> {
     Step::new(name).run(name).shell(POWERSHELL_SHELL)
 }
