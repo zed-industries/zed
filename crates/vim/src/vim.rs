@@ -1073,7 +1073,11 @@ impl Vim {
             }
             EditorEvent::Edited { .. } => self.push_to_change_list(window, cx),
             EditorEvent::FocusedIn => self.sync_vim_settings(window, cx),
-            EditorEvent::CursorShapeChanged => self.cursor_shape_changed(window, cx),
+            EditorEvent::CursorShapeChanged => {
+                if !self.passive_mode {
+                    self.cursor_shape_changed(window, cx);
+                }
+            }
             EditorEvent::PushedToNavHistory {
                 anchor,
                 is_deactivate,
@@ -1269,6 +1273,12 @@ impl Vim {
     }
 
     pub fn cursor_shape(&self, cx: &mut App) -> CursorShape {
+        if self.passive_mode {
+            return EditorSettings::get_global(cx)
+                .cursor_shape
+                .unwrap_or_default();
+        }
+
         let cursor_shape = VimSettings::get_global(cx).cursor_shape;
         match self.mode {
             Mode::Normal => {
@@ -1303,6 +1313,11 @@ impl Vim {
     }
 
     pub fn editor_input_enabled(&self) -> bool {
+        // In passive mode, we do not want Vim to disable the editor's input.
+        if self.passive_mode {
+            return true;
+        }
+
         match self.mode {
             Mode::Insert => {
                 if let Some(operator) = self.operator_stack.last() {
@@ -1326,6 +1341,12 @@ impl Vim {
     }
 
     pub fn clip_at_line_ends(&self) -> bool {
+        // In passive mode, we only want to clip during operations
+        if self.passive_mode {
+            return (self.mode.is_visual() || self.active_operator().is_some())
+                && matches!(self.mode, Mode::Normal);
+        }
+
         match self.mode {
             Mode::Insert
             | Mode::Visual
@@ -1396,7 +1417,8 @@ impl Vim {
         let editor = editor.read(cx);
         let editor_mode = editor.mode();
 
-        if editor_mode.is_full()
+        if !self.passive_mode
+            && editor_mode.is_full()
             && !newest_selection_empty
             && self.mode == Mode::Normal
             // When following someone, don't switch vim mode.
@@ -1937,7 +1959,8 @@ impl Vim {
                 .selections
                 .set_line_mode(matches!(vim.mode, Mode::VisualLine));
 
-            let hide_edit_predictions = !matches!(vim.mode, Mode::Insert | Mode::Replace);
+            let hide_edit_predictions =
+                !(vim.passive_mode || matches!(vim.mode, Mode::Insert | Mode::Replace));
             editor.set_edit_predictions_hidden_for_vim_mode(hide_edit_predictions, window, cx);
         });
         cx.notify()
