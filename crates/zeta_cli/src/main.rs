@@ -302,7 +302,6 @@ async fn get_context(
 impl Zeta2Args {
     fn to_options(&self, omit_excerpt_overlaps: bool) -> zeta2::ZetaOptions {
         zeta2::ZetaOptions {
-            // todo!
             context: ContextMode::Syntax(EditPredictionContextOptions {
                 max_retrieved_declarations: self.max_retrieved_definitions,
                 use_imports: !self.disable_imports_gathering,

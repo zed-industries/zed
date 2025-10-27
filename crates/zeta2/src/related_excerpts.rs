@@ -312,7 +312,7 @@ pub fn find_related_excerpts<'a>(
             let mut excerpts_by_buffer = HashMap::default();
 
             for query in call.queries {
-                // todo! parallelize?
+                // TODO [zeta2] parallelize?
 
                 run_query(
                     query,

@@ -1175,9 +1175,15 @@ impl Zeta {
                 cursor_point,
                 &snapshot,
                 parent_abs_path.as_deref(),
-                // todo!
-                // &options.context,
-                &DEFAULT_SYNTAX_CONTEXT_OPTIONS,
+                match &options.context {
+                    ContextMode::Llm(_) => {
+                        // TODO
+                        panic!("Llm mode not supported in zeta cli yet");
+                    }
+                    ContextMode::Syntax(edit_prediction_context_options) => {
+                        edit_prediction_context_options
+                    }
+                },
                 index_state.as_deref(),
             )
             .context("Failed to select excerpt")
