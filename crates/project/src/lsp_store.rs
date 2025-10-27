@@ -193,7 +193,7 @@ pub struct DocumentDiagnostics {
 #[derive(Default)]
 struct DynamicRegistrations {
     did_change_watched_files: HashMap<String, Vec<FileSystemWatcher>>,
-    diagnostics: HashMap<String, DiagnosticServerCapabilities>,
+    diagnostics: HashMap<Option<String>, DiagnosticServerCapabilities>,
 }
 
 pub struct LocalLspStore {
@@ -6499,23 +6499,23 @@ impl LspStore {
                 Ok(None)
             })
         } else {
-            let server_ids = buffer.update(cx, |buffer, cx| {
+            let servers = buffer.update(cx, |buffer, cx| {
                 self.language_servers_for_local_buffer(buffer, cx)
-                    .map(|(_, server)| server.server_id())
+                    .map(|(_, server)| server.clone())
                     .collect::<Vec<_>>()
             });
 
-            let pull_diagnostics = server_ids
+            let pull_diagnostics = servers
                 .into_iter()
-                .flat_map(|server_id| {
+                .flat_map(|server| {
                     let result = maybe!({
                         let local = self.as_local()?;
+                        let server_id = server.server_id();
                         let providers_with_identifiers = local
                             .language_server_dynamic_registrations
-                            .get(&server_id)?
-                            .diagnostics
-                            .values()
-                            .cloned()
+                            .get(&server_id)
+                            .into_iter()
+                            .flat_map(|registrations| registrations.diagnostics.values().cloned())
                             .collect::<Vec<_>>();
                         Some(
                             providers_with_identifiers
@@ -10843,8 +10843,20 @@ impl LspStore {
             .capabilities()
             .diagnostic_provider
             .and_then(|provider| {
-                lsp_workspace_diagnostics_refresh(None, provider, language_server.clone(), cx)
-                    .map(|task| (None, task))
+                let workspace_refresher = lsp_workspace_diagnostics_refresh(
+                    None,
+                    provider.clone(),
+                    language_server.clone(),
+                    cx,
+                )?;
+                local
+                    .language_server_dynamic_registrations
+                    .entry(server_id)
+                    .or_default()
+                    .diagnostics
+                    .entry(None)
+                    .or_insert(provider);
+                Some((None, workspace_refresher))
             })
             .into_iter()
             .collect();
@@ -11929,7 +11941,7 @@ impl LspStore {
                             .and_then(|registrations| {
                                 registrations
                                     .diagnostics
-                                    .insert(reg.id.clone(), caps.clone())
+                                    .insert(Some(reg.id.clone()), caps.clone())
                             });
 
                         let mut can_now_provide_diagnostics = false;
@@ -12132,7 +12144,7 @@ impl LspStore {
                         .with_context(|| {
                             format!("Expected dynamic registration to exist for server {server_id}")
                         })?.diagnostics
-                        .remove(&unreg.id)
+                        .remove(&Some(unreg.id.clone()))
                         .with_context(|| format!(
                             "Attempted to unregister non-existent diagnostic registration with ID {}",
                             unreg.id)
