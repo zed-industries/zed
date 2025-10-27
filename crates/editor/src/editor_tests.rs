@@ -27308,16 +27308,4 @@ async fn test_smart_tab_navigation(cx: &mut TestAppContext) {
             let x = foo(    ˇ);
         }
     "});
-
-    cx.update(|_, cx| {
-        cx.update_global::<SettingsStore, _>(|settings, cx| {
-            settings.update_user_settings(cx, |settings| {
-                settings.editor.smart_tab = Some(SmartTabSettingsContent {
-                    enabled: Some(true),
-                    supersede_completions: Some(false),
-                    supersede_edit_predictions: Some(false),
-                });
-            });
-        });
-    });
 }
