@@ -23,7 +23,7 @@ The syntax for configuration files is a super-set of JSON that allows `//` comme
 
 ### Per-release channel overrides
 
-Zed reads the same user `settings.json` no matter which release channel (Stable, Preview, Nightly) you launch, but you can scope overrides to a specific channel by adding top-level `stable`, `preview`, or `nightly` objects. Each section merges with the base config when that build starts. For example:
+Zed reads the same `settings.json` across all release channels (Stable, Preview or Nightly). However, you can scope overrides to a specific channel by adding top-level `stable`, `preview`, `nightly` or `dev` objects. They are merged into the base configuration with settings from these keys taking precedence upon launching the speficied build. For example:
 
 ```json [settings]
 {
@@ -39,9 +39,9 @@ Zed reads the same user `settings.json` no matter which release channel (Stable,
 }
 ```
 
-In this configuration, Stable keeps the base preferences, Preview switches to `zed-dark`, and Nightly enables Vim mode with a different theme. Channel-specific blocks must include every setting you want overridden -- they do not merge arrays with the base copy.
+With this configuration, Stable keeps all base preferences, Preview switches to `zed-dark`, and Nightly enables Vim mode with a different theme.
 
-Note that changing options via the UI (for example toggling Vim mode or picking a theme) edits the root of `settings.json`. To keep per-channel differences, edit the relevant release section manually after making UI tweaks.
+Changing settings via the UI will always apply the change across all channels.
 
 ## Default settings
 
