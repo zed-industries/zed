@@ -2585,7 +2585,7 @@ async fn test_lsp_pull_diagnostics(
             capabilities: capabilities.clone(),
             initializer: Some(Box::new(move |fake_language_server| {
                 let expected_workspace_diagnostic_token = lsp::ProgressToken::String(format!(
-                    "workspace/diagnostic-{}-1",
+                    "workspace/diagnostic/{}/1",
                     fake_language_server.server.server_id()
                 ));
                 let closure_workspace_diagnostics_pulls_result_ids = closure_workspace_diagnostics_pulls_result_ids.clone();

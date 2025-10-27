@@ -6,8 +6,8 @@ use editor::{Editor, EditorEvent};
 use feature_flags::FeatureFlag;
 use fuzzy::StringMatchCandidate;
 use gpui::{
-    Action, App, ClipboardItem, DEFAULT_ADDITIONAL_WINDOW_SIZE, Div, Entity, FocusHandle,
-    Focusable, Global, ListState, ReadGlobal as _, ScrollHandle, Stateful, Subscription, Task,
+    Action, App, DEFAULT_ADDITIONAL_WINDOW_SIZE, Div, Entity, FocusHandle, Focusable, Global,
+    KeyContext, ListState, ReadGlobal as _, ScrollHandle, Stateful, Subscription, Task,
     TitlebarOptions, UniformListScrollHandle, Window, WindowBounds, WindowHandle, WindowOptions,
     actions, div, list, point, prelude::*, px, uniform_list,
 };
@@ -1188,6 +1188,7 @@ impl SettingsUiFile {
             settings::SettingsFile::Project(location) => SettingsUiFile::Project(location),
             settings::SettingsFile::Server => SettingsUiFile::Server("todo: server name"),
             settings::SettingsFile::Default => return None,
+            settings::SettingsFile::Global => return None,
         })
     }
 
@@ -1817,7 +1818,10 @@ impl SettingsWindow {
         let prev_files = self.files.clone();
         let settings_store = cx.global::<SettingsStore>();
         let mut ui_files = vec![];
-        let all_files = settings_store.get_all_files();
+        let mut all_files = settings_store.get_all_files();
+        if !all_files.contains(&settings::SettingsFile::User) {
+            all_files.push(settings::SettingsFile::User);
+        }
         for file in all_files {
             let Some(settings_ui_file) = SettingsUiFile::from_settings(file) else {
                 continue;
@@ -2164,8 +2168,15 @@ impl SettingsWindow {
             "Focus Navbar"
         };
 
+        let mut key_context = KeyContext::new_with_defaults();
+        key_context.add("NavigationMenu");
+        key_context.add("menu");
+        if self.search_bar.focus_handle(cx).is_focused(window) {
+            key_context.add("search");
+        }
+
         v_flex()
-            .key_context("NavigationMenu")
+            .key_context(key_context)
             .on_action(cx.listener(|this, _: &CollapseNavEntry, window, cx| {
                 let Some(focused_entry) = this.focused_nav_entry(window, cx) else {
                     return;
@@ -2764,34 +2775,71 @@ impl SettingsWindow {
         if let Some(error) =
             SettingsStore::global(cx).error_for_file(self.current_file.to_settings())
         {
-            if self.shown_errors.insert(error.clone()) {
-                telemetry::event!("Settings Error Shown", error = &error);
+            fn banner(
+                label: &'static str,
+                error: String,
+                shown_errors: &mut HashSet<String>,
+                cx: &mut Context<SettingsWindow>,
+            ) -> impl IntoElement {
+                if shown_errors.insert(error.clone()) {
+                    telemetry::event!("Settings Error Shown", label = label, error = &error);
+                }
+                Banner::new()
+                    .severity(Severity::Warning)
+                    .child(
+                        v_flex()
+                            .my_0p5()
+                            .gap_0p5()
+                            .child(Label::new(label))
+                            .child(Label::new(error).size(LabelSize::Small).color(Color::Muted)),
+                    )
+                    .action_slot(
+                        div().pr_1().child(
+                            Button::new("fix-in-json", "Fix in settings.json")
+                                .tab_index(0_isize)
+                                .style(ButtonStyle::Tinted(ui::TintColor::Warning))
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.open_current_settings_file(cx);
+                                })),
+                        ),
+                    )
             }
-
-            warning_banner = Banner::new()
-                .severity(Severity::Warning)
-                .child(
-                    v_flex()
-                        .my_0p5()
-                        .gap_0p5()
-                        .child(Label::new("Your settings file is in an invalid state."))
-                        .child(Label::new(error).size(LabelSize::Small).color(Color::Muted)),
-                )
-                .action_slot(
-                    div().pr_1().child(
-                        Button::new("fix-in-json", "Fix in settings.json")
-                            .tab_index(0_isize)
-                            .style(ButtonStyle::Tinted(ui::TintColor::Warning))
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.open_current_settings_file(cx);
-                            })),
-                    ),
-                )
+            let parse_error = error.parse_error();
+            let parse_failed = parse_error.is_some();
+            warning_banner = v_flex()
+                .gap_2()
+                .when_some(parse_error, |this, err| {
+                    this.child(banner(
+                        "Failed to load your settings. Some values may be incorrect and changes may be lost.",
+                        err,
+                        &mut self.shown_errors,
+                        cx,
+                    ))
+                })
+                .map(|this| match &error.migration_status {
+                    settings::MigrationStatus::Succeeded => this.child(banner(
+                        "Your settings are out of date, and need to be updated.",
+                        match &self.current_file {
+                            SettingsUiFile::User => "They can be automatically migrated to the latest version.",
+                            SettingsUiFile::Server(_) | SettingsUiFile::Project(_)  => "They must be manually migrated to the latest version."
+                        }.to_string(),
+                        &mut self.shown_errors,
+                        cx,
+                    )),
+                    settings::MigrationStatus::Failed { error: err } if !parse_failed => this
+                        .child(banner(
+                            "Your settings file is out of date, automatic migration failed",
+                            err.clone(),
+                            &mut self.shown_errors,
+                            cx,
+                        )),
+                    _ => this,
+                })
                 .into_any_element()
         }
 
         return v_flex()
-            .id("Settings-ui-page")
+            .id("settings-ui-page")
             .on_action(cx.listener(|this, _: &menu::SelectNext, window, cx| {
                 if !sub_page_stack().is_empty() {
                     window.focus_next();
