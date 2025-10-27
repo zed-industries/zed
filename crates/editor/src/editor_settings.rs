@@ -195,7 +195,7 @@ impl Settings for EditorSettings {
         let toolbar = editor.toolbar.unwrap();
         let search = editor.search.unwrap();
         let drag_and_drop_selection = editor.drag_and_drop_selection.unwrap();
-        let smart_tab = editor.smart_tab.unwrap_or_default();
+        let smart_tab = editor.smart_tab.unwrap();
         Self {
             cursor_blink: editor.cursor_blink.unwrap(),
             cursor_shape: editor.cursor_shape.map(Into::into),
@@ -283,7 +283,7 @@ impl Settings for EditorSettings {
                 enabled: smart_tab.enabled.unwrap(),
                 supersede_completions: smart_tab.supersede_completions.unwrap(),
                 supersede_edit_predictions: smart_tab.supersede_edit_predictions.unwrap(),
-            }
+            },
         }
     }
 }

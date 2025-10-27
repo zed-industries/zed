@@ -2421,7 +2421,6 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                     metadata: None,
                     files: USER,
                 }),
-                
                 SettingsPageItem::SectionHeader("File Finder"),
                 // todo: null by default
                 SettingsPageItem::SettingItem(SettingItem {

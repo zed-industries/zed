@@ -10208,12 +10208,12 @@ impl Editor {
 
             // Only apply smart backtab to empty selections (cursors, not ranges)
             let has_any_non_empty_selection = selections.iter().any(|s| !s.is_empty());
-                if !has_any_non_empty_selection {
-                    // If no cursor moved, fall through, otherwise return
-                    if self.move_cursors_to_syntax_nodes(window, cx, Direction::Prev) {
-                        return;
-                    }
+            if !has_any_non_empty_selection {
+                // If no cursor moved, fall through, otherwise return
+                if self.move_cursors_to_syntax_nodes(window, cx, Direction::Prev) {
+                    return;
                 }
+            }
         }
 
         self.outdent(&Outdent, window, cx);
@@ -15563,7 +15563,7 @@ impl Editor {
                 let old_range = selection_pos..selection_pos;
 
                 let mut new_pos = selection_pos;
-                let mut search_range = old_range.clone();
+                let mut search_range = old_range;
                 while let Some((node, range)) = buffer.syntax_ancestor(search_range.clone()) {
                     search_range = range.clone();
                     if !node.is_named()
@@ -15582,7 +15582,9 @@ impl Editor {
                     let (_, final_range) = if node.kind() == "string_content" {
                         let mut current_node = node;
                         let mut current_range = range;
-                        while let Some((parent, parent_range)) = buffer.syntax_ancestor(current_range.clone()) {
+                        while let Some((parent, parent_range)) =
+                            buffer.syntax_ancestor(current_range.clone())
+                        {
                             if parent.kind() == "string_content" {
                                 current_node = parent;
                                 current_range = parent_range;
