@@ -6955,30 +6955,12 @@ dependencies = [
 [[package]]
 name = "gh-workflow"
 version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1fffeec7bd9dfa73ffe1db38979cca5716ec6ffd944f03fae65fee81f16082ae"
+source = "git+https://github.com/zed-industries/gh-workflow?rev=a0b197dd77c0ed2390c150e601f9d4f9a0ca7105#a0b197dd77c0ed2390c150e601f9d4f9a0ca7105"
 dependencies = [
  "async-trait",
  "derive_more 2.0.1",
  "derive_setters",
- "gh-workflow-macros 0.8.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "indexmap 2.11.4",
- "merge",
- "serde",
- "serde_json",
- "serde_yaml",
- "strum_macros 0.27.2",
-]
-
-[[package]]
-name = "gh-workflow"
-version = "0.8.0"
-source = "git+https://github.com/ConradIrwin/gh-workflow?rev=a0b197dd77c0ed2390c150e601f9d4f9a0ca7105#a0b197dd77c0ed2390c150e601f9d4f9a0ca7105"
-dependencies = [
- "async-trait",
- "derive_more 2.0.1",
- "derive_setters",
- "gh-workflow-macros 0.8.0 (git+https://github.com/ConradIrwin/gh-workflow?rev=a0b197dd77c0ed2390c150e601f9d4f9a0ca7105)",
+ "gh-workflow-macros",
  "indexmap 2.11.4",
  "merge",
  "serde",
@@ -6990,18 +6972,7 @@ dependencies = [
 [[package]]
 name = "gh-workflow-macros"
 version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5eafb4d2a1005d4ac6d041ce929af10be1de1e1eae478795d9d634b84ccf8191"
-dependencies = [
- "heck 0.5.0",
- "quote",
- "syn 2.0.106",
-]
-
-[[package]]
-name = "gh-workflow-macros"
-version = "0.8.0"
-source = "git+https://github.com/ConradIrwin/gh-workflow?rev=a0b197dd77c0ed2390c150e601f9d4f9a0ca7105#a0b197dd77c0ed2390c150e601f9d4f9a0ca7105"
+source = "git+https://github.com/zed-industries/gh-workflow?rev=a0b197dd77c0ed2390c150e601f9d4f9a0ca7105#a0b197dd77c0ed2390c150e601f9d4f9a0ca7105"
 dependencies = [
  "heck 0.5.0",
  "quote",
@@ -20935,10 +20906,9 @@ dependencies = [
  "cargo_metadata",
  "cargo_toml",
  "clap",
- "gh-workflow 0.8.0 (git+https://github.com/ConradIrwin/gh-workflow?rev=a0b197dd77c0ed2390c150e601f9d4f9a0ca7105)",
+ "gh-workflow",
  "indexmap 2.11.4",
  "indoc",
- "serde_json",
  "toml 0.8.23",
  "toml_edit 0.22.27",
 ]
@@ -21169,7 +21139,6 @@ dependencies = [
  "file_finder",
  "fs",
  "futures 0.3.31",
- "gh-workflow 0.8.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "git",
  "git_hosting_providers",
  "git_ui",

@@ -165,7 +165,6 @@ zeta.workspace = true
 zeta2.workspace = true
 zlog.workspace = true
 zlog_settings.workspace = true
-gh-workflow = "0.8.0"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows.workspace = true
