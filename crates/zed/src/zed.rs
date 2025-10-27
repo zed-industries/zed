@@ -266,6 +266,11 @@ pub fn init(cx: &mut App) {
             );
         });
     });
+    cx.on_action(|_: &zed_actions::About, cx| {
+        with_active_or_new_workspace(cx, |workspace, window, cx| {
+            about(workspace, window, cx);
+        });
+    });
 }
 
 fn bind_on_window_closed(cx: &mut App) -> Option<gpui::Subscription> {
@@ -693,7 +698,6 @@ fn register_actions(
     cx: &mut Context<Workspace>,
 ) {
     workspace
-        .register_action(about)
         .register_action(|_, _: &OpenDocs, _, cx| cx.open_url(DOCS_URL))
         .register_action(|_, _: &Minimize, window, _| {
             window.minimize_window();
@@ -1081,12 +1085,7 @@ fn initialize_pane(
     });
 }
 
-fn about(
-    _: &mut Workspace,
-    _: &zed_actions::About,
-    window: &mut Window,
-    cx: &mut Context<Workspace>,
-) {
+fn about(_: &mut Workspace, window: &mut Window, cx: &mut Context<Workspace>) {
     let release_channel = ReleaseChannel::global(cx).display_name();
     let version = env!("CARGO_PKG_VERSION");
     let debug = if cfg!(debug_assertions) {
