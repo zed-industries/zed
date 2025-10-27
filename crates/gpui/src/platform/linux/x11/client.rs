@@ -1,4 +1,4 @@
-use crate::{Capslock, xcb_flush};
+use crate::{Capslock, LinuxDispatcher, RunnableVariant, TaskTiming, xcb_flush};
 use anyhow::{Context as _, anyhow};
 use ashpd::WindowIdentifier;
 use calloop::{
@@ -313,7 +313,25 @@ impl X11Client {
                         // events have higher priority and runnables are only worked off after the event
                         // callbacks.
                         handle.insert_idle(|_| {
-                            runnable.run();
+                            let start = Instant::now();
+                            let location = match runnable {
+                                RunnableVariant::Meta(runnable) => {
+                                    let location = runnable.metadata().location;
+                                    runnable.run();
+                                    location
+                                }
+                                RunnableVariant::Compat(runnable) => {
+                                    runnable.run();
+                                    core::panic::Location::caller()
+                                }
+                            };
+                            let end = Instant::now();
+
+                            LinuxDispatcher::add_task_timing(TaskTiming {
+                                location,
+                                start,
+                                end,
+                            });
                         });
                     }
                 }

@@ -1,4 +1,4 @@
-use crate::{App, PlatformDispatcher};
+use crate::{App, PlatformDispatcher, RunnableMeta, RunnableVariant};
 use async_task::Runnable;
 use futures::channel::mpsc;
 use smol::prelude::*;
@@ -62,7 +62,7 @@ enum TaskState<T> {
     Ready(Option<T>),
 
     /// A task that is currently running.
-    Spawned(async_task::Task<T>),
+    Spawned(async_task::Task<T, RunnableMeta>),
 }
 
 impl<T> Task<T> {
@@ -172,8 +172,13 @@ impl BackgroundExecutor {
         label: Option<TaskLabel>,
     ) -> Task<R> {
         let dispatcher = self.dispatcher.clone();
-        let (runnable, task) =
-            async_task::spawn(future, move |runnable| dispatcher.dispatch(runnable, label));
+        let location = core::panic::Location::caller();
+        let (runnable, task) = async_task::Builder::new()
+            .metadata(RunnableMeta { location })
+            .spawn(
+                move |_| future,
+                move |runnable| dispatcher.dispatch(RunnableVariant::Meta(runnable), label),
+            );
         runnable.schedule();
         Task(TaskState::Spawned(task))
     }
@@ -370,10 +375,13 @@ impl BackgroundExecutor {
         if duration.is_zero() {
             return Task::ready(());
         }
-        let (runnable, task) = async_task::spawn(async move {}, {
-            let dispatcher = self.dispatcher.clone();
-            move |runnable| dispatcher.dispatch_after(duration, runnable)
-        });
+        let location = core::panic::Location::caller();
+        let (runnable, task) = async_task::Builder::new()
+            .metadata(RunnableMeta { location })
+            .spawn(move |_| async move {}, {
+                let dispatcher = self.dispatcher.clone();
+                move |runnable| dispatcher.dispatch_after(duration, RunnableVariant::Meta(runnable))
+            });
         runnable.schedule();
         Task(TaskState::Spawned(task))
     }
@@ -484,19 +492,23 @@ impl ForegroundExecutor {
         R: 'static,
     {
         let dispatcher = self.dispatcher.clone();
+        let location = core::panic::Location::caller();
 
         #[track_caller]
         fn inner<R: 'static>(
             dispatcher: Arc<dyn PlatformDispatcher>,
             future: AnyLocalFuture<R>,
+            location: &'static core::panic::Location<'static>,
         ) -> Task<R> {
-            let (runnable, task) = spawn_local_with_source_location(future, move |runnable| {
-                dispatcher.dispatch_on_main_thread(runnable)
-            });
+            let (runnable, task) = spawn_local_with_source_location(
+                future,
+                move |runnable| dispatcher.dispatch_on_main_thread(RunnableVariant::Meta(runnable)),
+                RunnableMeta { location },
+            );
             runnable.schedule();
             Task(TaskState::Spawned(task))
         }
-        inner::<R>(dispatcher, Box::pin(future))
+        inner::<R>(dispatcher, Box::pin(future), location)
     }
 }
 
@@ -505,14 +517,16 @@ impl ForegroundExecutor {
 /// Copy-modified from:
 /// <https://github.com/smol-rs/async-task/blob/ca9dbe1db9c422fd765847fa91306e30a6bb58a9/src/runnable.rs#L405>
 #[track_caller]
-fn spawn_local_with_source_location<Fut, S>(
+fn spawn_local_with_source_location<Fut, S, M>(
     future: Fut,
     schedule: S,
-) -> (Runnable<()>, async_task::Task<Fut::Output, ()>)
+    metadata: M,
+) -> (Runnable<M>, async_task::Task<Fut::Output, M>)
 where
     Fut: Future + 'static,
     Fut::Output: 'static,
-    S: async_task::Schedule<()> + Send + Sync + 'static,
+    S: async_task::Schedule<M> + Send + Sync + 'static,
+    M: 'static,
 {
     #[inline]
     fn thread_id() -> ThreadId {
@@ -560,7 +574,11 @@ where
         location: Location::caller(),
     };
 
-    unsafe { async_task::spawn_unchecked(future, schedule) }
+    unsafe {
+        async_task::Builder::new()
+            .metadata(metadata)
+            .spawn_unchecked(move |_| future, schedule)
+    }
 }
 
 /// Scope manages a set of tasks that are enqueued and waited on together. See [`BackgroundExecutor::scoped`].

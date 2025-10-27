@@ -65,6 +65,8 @@ actions!(
         OpenLicenses,
         /// Opens the telemetry log.
         OpenTelemetryLog,
+        /// Opens the performance profiler.
+        OpenPerformanceProfiler,
     ]
 );
 

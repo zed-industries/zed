@@ -71,7 +71,6 @@ use super::{
     window::{ImeInput, WaylandWindowStatePtr},
 };
 
-use crate::platform::{PlatformWindow, blade::BladeContext};
 use crate::{
     AnyWindowHandle, Bounds, Capslock, CursorStyle, DOUBLE_CLICK_INTERVAL, DevicePixels, DisplayId,
     FileDropEvent, ForegroundExecutor, KeyDownEvent, KeyUpEvent, Keystroke, LinuxCommon,
@@ -79,6 +78,10 @@ use crate::{
     MouseExitEvent, MouseMoveEvent, MouseUpEvent, NavigationDirection, Pixels, PlatformDisplay,
     PlatformInput, PlatformKeyboardLayout, Point, SCROLL_LINES, ScrollDelta, ScrollWheelEvent,
     Size, TouchPhase, WindowParams, point, px, size,
+};
+use crate::{
+    LinuxDispatcher, RunnableVariant, TaskTiming,
+    platform::{PlatformWindow, blade::BladeContext},
 };
 use crate::{
     SharedString,
@@ -491,7 +494,25 @@ impl WaylandClient {
                 move |event, _, _: &mut WaylandClientStatePtr| {
                     if let calloop::channel::Event::Msg(runnable) = event {
                         handle.insert_idle(|_| {
-                            runnable.run();
+                            let start = Instant::now();
+                            let location = match runnable {
+                                RunnableVariant::Meta(runnable) => {
+                                    let location = runnable.metadata().location;
+                                    runnable.run();
+                                    location
+                                }
+                                RunnableVariant::Compat(runnable) => {
+                                    runnable.run();
+                                    core::panic::Location::caller()
+                                }
+                            };
+                            let end = Instant::now();
+
+                            LinuxDispatcher::add_task_timing(TaskTiming {
+                                location,
+                                start,
+                                end,
+                            });
                         });
                     }
                 }

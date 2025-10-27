@@ -40,8 +40,8 @@ use crate::{
     DEFAULT_WINDOW_SIZE, DevicePixels, DispatchEventResult, Font, FontId, FontMetrics, FontRun,
     ForegroundExecutor, GlyphId, GpuSpecs, ImageSource, Keymap, LineLayout, Pixels, PlatformInput,
     Point, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Scene, ShapedGlyph,
-    ShapedRun, SharedString, Size, SvgRenderer, SystemWindowTab, Task, TaskLabel, Window,
-    WindowControlArea, hash, point, px, size,
+    ShapedRun, SharedString, Size, SvgRenderer, SystemWindowTab, Task, TaskLabel, TaskTiming,
+    ThreadTaskTimings, Window, WindowControlArea, hash, point, px, size,
 };
 use anyhow::Result;
 use async_task::Runnable;
@@ -562,11 +562,29 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
 /// This type is public so that our test macro can generate and use it, but it should not
 /// be considered part of our public API.
 #[doc(hidden)]
+#[derive(Debug)]
+pub struct RunnableMeta {
+    /// Location of the runnable
+    pub location: &'static core::panic::Location<'static>,
+}
+
+#[doc(hidden)]
+pub enum RunnableVariant {
+    Meta(Runnable<RunnableMeta>),
+    Compat(Runnable),
+}
+
+/// This type is public so that our test macro can generate and use it, but it should not
+/// be considered part of our public API.
+#[doc(hidden)]
 pub trait PlatformDispatcher: Send + Sync {
+    fn get_all_timings(&self) -> Vec<ThreadTaskTimings>;
+    fn get_current_thread_timings(&self) -> Vec<TaskTiming>;
     fn is_main_thread(&self) -> bool;
-    fn dispatch(&self, runnable: Runnable, label: Option<TaskLabel>);
-    fn dispatch_on_main_thread(&self, runnable: Runnable);
-    fn dispatch_after(&self, duration: Duration, runnable: Runnable);
+    fn dispatch(&self, runnable: RunnableVariant, label: Option<TaskLabel>);
+    fn dispatch_on_main_thread(&self, runnable: RunnableVariant);
+    fn dispatch_after(&self, duration: Duration, runnable: RunnableVariant);
+
     fn now(&self) -> Instant {
         Instant::now()
     }

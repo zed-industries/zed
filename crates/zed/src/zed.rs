@@ -93,6 +93,7 @@ use zed_actions::{
     OpenAccountSettings, OpenBrowser, OpenDocs, OpenServerSettings, OpenSettingsFile, OpenZedUrl,
     Quit,
 };
+use zlog::info;
 
 actions!(
     zed,
@@ -243,6 +244,14 @@ pub fn init(cx: &mut App) {
         });
     });
     cx.on_action(|_: &OpenDefaultSettings, cx| {
+        cx.foreground_executor()
+            .spawn(async move {
+                info!("starting hang");
+                std::thread::sleep(Duration::from_secs(10));
+                info!("hang over");
+            })
+            .detach();
+
         with_active_or_new_workspace(cx, |workspace, window, cx| {
             open_bundled_file(
                 workspace,
