@@ -38,6 +38,7 @@ language_model.workspace = true
 language_models.workspace = true
 log.workspace = true
 project.workspace = true
+release_channel.workspace = true
 reqwest_client = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true
