@@ -151,9 +151,12 @@ impl BranchList {
 
         let delegate = BranchListDelegate::new(repository, style);
         let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx));
+        let focus_handle = picker.focus_handle(cx);
 
-        let _subscription = cx.subscribe(&picker, |_, _, _, cx| {
-            cx.emit(DismissEvent);
+        let _subscription = cx.on_focus_out(&focus_handle, window,  |_, _, window, cx| {
+            if window.is_window_active() {
+                cx.emit(DismissEvent);
+            }
         });
 
         Self {
