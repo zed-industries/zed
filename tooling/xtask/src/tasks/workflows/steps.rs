@@ -104,7 +104,7 @@ pub mod nix {
     }
 }
 
-// (janky) helpers to generate steps with a name that coresponds
+// (janky) helpers to generate steps with a name that corresponds
 // to the name of the calling function.
 mod named {
     use gh_workflow::*;
