@@ -23,7 +23,11 @@ pub struct PredictEditsRequest {
     pub cursor_point: Point,
     /// Within `signatures`
     pub excerpt_parent: Option<usize>,
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub included_files: Vec<IncludedFile>,
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub signatures: Vec<Signature>,
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub referenced_declarations: Vec<ReferencedDeclaration>,
     pub events: Vec<Event>,
     #[serde(default)]
@@ -42,6 +46,19 @@ pub struct PredictEditsRequest {
     pub prompt_max_bytes: Option<usize>,
     #[serde(default)]
     pub prompt_format: PromptFormat,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IncludedFile {
+    pub path: Arc<Path>,
+    pub max_row: Line,
+    pub excerpts: Vec<Excerpt>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Excerpt {
+    pub start_line: Line,
+    pub text: Arc<str>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, EnumIter)]

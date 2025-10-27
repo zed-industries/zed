@@ -1,12 +1,13 @@
+use cloud_llm_client::predict_edits_v3::{self, Excerpt};
 use edit_prediction_context::Line;
-use language::{Bias, BufferSnapshot, Point};
-use std::{fmt::Write, ops::Range};
+use language::{BufferSnapshot, Point};
+use std::ops::Range;
 
-pub fn write_merged_excerpts(
+pub fn merge_excerpts(
     buffer: &BufferSnapshot,
     sorted_line_ranges: impl IntoIterator<Item = Range<Line>>,
-    merged: &mut String,
-) {
+) -> Vec<Excerpt> {
+    let mut output = Vec::new();
     let mut merged_ranges = Vec::<Range<Line>>::new();
 
     for line_range in sorted_line_ranges {
@@ -22,7 +23,6 @@ pub fn write_merged_excerpts(
     let outline_items = buffer.outline_items_as_points_containing(0..buffer.len(), false, None);
     let mut outline_items = outline_items.into_iter().peekable();
 
-    let mut position = Point::new(0, 0);
     for range in merged_ranges {
         let point_range = Point::new(range.start.0, 0)..Point::new(range.end.0, 0);
 
@@ -33,52 +33,44 @@ pub fn write_merged_excerpts(
             if outline_item.range.end > point_range.start {
                 let mut point_range = outline_item.source_range_for_text.clone();
                 point_range.start.column = 0;
-                if point_range.end.column != 0 {
-                    point_range.end.row += 1;
-                    point_range.end.column = 0;
-                }
+                point_range.end.column = buffer.line_len(point_range.end.row);
 
-                write_numbered_lines(point_range, buffer, merged, &mut position);
+                output.push(Excerpt {
+                    start_line: Line(point_range.start.row),
+                    text: buffer
+                        .text_for_range(point_range.clone())
+                        .collect::<String>()
+                        .into(),
+                })
             }
             outline_items.next();
         }
 
-        write_numbered_lines(point_range, buffer, merged, &mut position);
+        output.push(Excerpt {
+            start_line: Line(point_range.start.row),
+            text: buffer
+                .text_for_range(point_range.clone())
+                .collect::<String>()
+                .into(),
+        })
     }
 
-    write_numbered_lines(
-        buffer.max_point()..buffer.max_point(),
-        buffer,
-        merged,
-        &mut position,
-    );
+    output
 }
 
-fn write_numbered_lines(
-    range: Range<Point>,
+pub fn write_merged_excerpts(
     buffer: &BufferSnapshot,
-    text: &mut String,
-    position: &mut Point,
+    sorted_line_ranges: impl IntoIterator<Item = Range<Line>>,
+    sorted_insertions: &[(predict_edits_v3::Point, &str)],
+    output: &mut String,
 ) {
-    if range.start > *position {
-        writeln!(text, "…").unwrap();
-    }
-    if range.is_empty() {
-        return;
-    }
-    let mut range = range.start.max(*position)..range.end;
-    *position = range.end;
-    if range.end.column == 0 && range.end.row > range.start.row {
-        range.end = Point::new(range.end.row - 1, u32::MAX);
-    }
-    let range =
-        buffer.clip_point(range.start, Bias::Left)..buffer.clip_point(range.end, Bias::Right);
-    let mut lines = buffer.text_for_range(range.clone()).lines();
-    let mut line_number = range.start.row;
-    while let Some(line) = lines.next() {
-        line_number += 1;
-        writeln!(text, "{line_number}|{line}").unwrap();
-    }
+    cloud_zeta2_prompt::write_excerpts(
+        merge_excerpts(buffer, sorted_line_ranges).iter(),
+        sorted_insertions,
+        Line(buffer.max_point().row),
+        true,
+        output,
+    );
 }
 
 #[cfg(test)]
@@ -100,7 +92,7 @@ mod tests {
                     struct User {
                         first_name: String,
                     «    last_name: String,
-                        age: u32,
+                        ageˇ: u32,
                     »    email: String,
                         create_at: Instant,
                     }
@@ -119,7 +111,7 @@ mod tests {
                     1|struct User {
                     …
                     3|    last_name: String,
-                    4|    age: u32,
+                    4|    age<|cursor|>: u32,
                     …
                     9|impl User {
                     …
@@ -148,10 +140,25 @@ mod tests {
         ];
 
         for (input, expected_output) in table {
-            let (input, ranges) = marked_text_ranges(input, false);
+            let input_without_ranges = input.replace('«', "").replace('»', "");
+            let input_without_caret = input.replace('ˇ', "");
+            let cursor_offset = input_without_ranges.find('ˇ');
+            let (input, ranges) = marked_text_ranges(&input_without_caret, false);
             let buffer =
                 cx.new(|cx| Buffer::local(input, cx).with_language(Arc::new(rust_lang()), cx));
             buffer.read_with(cx, |buffer, _cx| {
+                let insertions = cursor_offset
+                    .map(|offset| {
+                        let point = buffer.offset_to_point(offset);
+                        vec![(
+                            predict_edits_v3::Point {
+                                line: Line(point.row),
+                                column: point.column,
+                            },
+                            "<|cursor|>",
+                        )]
+                    })
+                    .unwrap_or_default();
                 let ranges: Vec<Range<Line>> = ranges
                     .into_iter()
                     .map(|range| {
@@ -161,7 +168,7 @@ mod tests {
                     .collect();
 
                 let mut output = String::new();
-                write_merged_excerpts(&buffer.snapshot(), ranges, &mut output);
+                write_merged_excerpts(&buffer.snapshot(), ranges, &insertions, &mut output);
                 assert_eq!(output, expected_output);
             });
         }
@@ -179,7 +186,7 @@ mod tests {
             },
             Some(language::tree_sitter_rust::LANGUAGE.into()),
         )
-        .with_outline_query(include_str!("../../../languages/src/rust/outline.scm"))
+        .with_outline_query(include_str!("../../languages/src/rust/outline.scm"))
         .unwrap()
     }
 }

@@ -1,7 +1,6 @@
-mod merge_excerpts;
-
 use std::{cmp::Reverse, fmt::Write, ops::Range, path::PathBuf, sync::Arc};
 
+use crate::merge_excerpts::write_merged_excerpts;
 use anyhow::{Result, anyhow};
 use collections::HashMap;
 use edit_prediction_context::{EditPredictionExcerpt, EditPredictionExcerptOptions, Line};
@@ -14,7 +13,6 @@ use language_model::{
     LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
     LanguageModelRequestTool, LanguageModelToolResult, MessageContent, Role,
 };
-use merge_excerpts::write_merged_excerpts;
 use project::{
     Project, WorktreeSettings,
     search::{SearchQuery, SearchResult},
@@ -23,11 +21,6 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use util::paths::{PathMatcher, PathStyle};
 use workspace::item::Settings as _;
-
-pub(crate) struct RelatedExcerpt {
-    buffer: Entity<Buffer>,
-    range: Range<Anchor>,
-}
 
 const SEARCH_PROMPT: &str = indoc! {r#"
     ## Task
@@ -96,12 +89,13 @@ const SELECT_TOOL_NAME: &str = "select";
 const SELECT_PROMPT: &str = indoc! {"
     Use the `select` tool now to pick the most relevant line ranges according to the user state provided in the first message.
     Make sure to include enough lines of context so that the edit prediction model can suggest accurate edits.
+    Include up to 200 lines in total.
 "};
 
 /// Select line ranges from search results
 #[derive(Deserialize, JsonSchema)]
 struct SelectToolInput {
-    /// The line ranges to select from search results. Ordered from most to least relevant.
+    /// The line ranges to select from search results.
     ranges: Vec<SelectLineRange>,
 }
 
@@ -131,7 +125,7 @@ pub fn find_related_excerpts<'a>(
     events: impl Iterator<Item = &'a crate::Event>,
     options: &LlmContextOptions,
     cx: &App,
-) -> Task<Result<Vec<RelatedExcerpt>>> {
+) -> Task<Result<HashMap<Entity<Buffer>, Vec<Range<Anchor>>>>> {
     let language_model_registry = LanguageModelRegistry::global(cx);
     let Some(model) = language_model_registry
         .read(cx)
@@ -162,7 +156,7 @@ pub fn find_related_excerpts<'a>(
     let Some(cursor_excerpt) =
         EditPredictionExcerpt::select_from_buffer(cursor_point, &snapshot, &options.excerpt, None)
     else {
-        return Task::ready(Ok(Vec::new()));
+        return Task::ready(Ok(HashMap::default()));
     };
 
     let current_file_path = snapshot
@@ -353,7 +347,12 @@ pub fn find_related_excerpts<'a>(
 
                         let snapshot = buffer.snapshot();
 
-                        write_merged_excerpts(&snapshot, excerpts_for_buffer, &mut merged_result);
+                        write_merged_excerpts(
+                            &snapshot,
+                            excerpts_for_buffer,
+                            &[],
+                            &mut merged_result,
+                        );
 
                         merged_result.push_str("`````\n\n");
 
@@ -397,7 +396,7 @@ pub fn find_related_excerpts<'a>(
 
         if result_buffers_by_path.is_empty() {
             log::trace!("context gathering queries produced no results");
-            return anyhow::Ok(vec![]);
+            return anyhow::Ok(HashMap::default());
         }
 
         select_request_messages.push(LanguageModelRequestMessage {
@@ -446,7 +445,7 @@ pub fn find_related_excerpts<'a>(
             log::trace!("context gathering selected no ranges")
         }
 
-        let mut related_excerpts = Vec::with_capacity(selected_ranges.len());
+        let mut related_excerpts_by_buffer: HashMap<_, Vec<_>> = HashMap::default();
 
         for selected_range in selected_ranges {
             if let Some(ResultBuffer { buffer, snapshot }) =
@@ -457,10 +456,10 @@ pub fn find_related_excerpts<'a>(
                     snapshot.clip_point(Point::new(selected_range.end_line, 0), Bias::Left);
                 let range = snapshot.anchor_after(start_point)..snapshot.anchor_before(end_point);
 
-                related_excerpts.push(RelatedExcerpt {
-                    buffer: buffer.clone(),
-                    range,
-                });
+                related_excerpts_by_buffer
+                    .entry(buffer.clone())
+                    .or_default()
+                    .push(range);
             } else {
                 log::warn!(
                     "selected path that wasn't included in search results: {}",
@@ -469,7 +468,17 @@ pub fn find_related_excerpts<'a>(
             }
         }
 
-        anyhow::Ok(related_excerpts)
+        for (buffer, ranges) in &mut related_excerpts_by_buffer {
+            buffer.read_with(cx, |buffer, _cx| {
+                ranges.sort_unstable_by(|a, b| {
+                    a.start
+                        .cmp(&b.start, buffer)
+                        .then(b.end.cmp(&a.end, buffer))
+                });
+            })?;
+        }
+
+        anyhow::Ok(related_excerpts_by_buffer)
     })
 }
 

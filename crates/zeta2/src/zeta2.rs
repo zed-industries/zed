@@ -6,11 +6,12 @@ use cloud_llm_client::{
     AcceptEditPredictionBody, EXPIRED_LLM_TOKEN_HEADER_NAME, MINIMUM_REQUIRED_VERSION_HEADER_NAME,
     ZED_VERSION_HEADER_NAME,
 };
-use cloud_zeta2_prompt::{DEFAULT_MAX_PROMPT_BYTES, PlannedPrompt};
+use cloud_zeta2_prompt::{DEFAULT_MAX_PROMPT_BYTES, build_prompt};
+use collections::HashMap;
 use edit_prediction_context::{
     DeclarationId, DeclarationStyle, EditPredictionContext, EditPredictionContextOptions,
-    EditPredictionExcerpt, EditPredictionExcerptOptions, EditPredictionScoreOptions, SyntaxIndex,
-    SyntaxIndexState,
+    EditPredictionExcerpt, EditPredictionExcerptOptions, EditPredictionScoreOptions, Line,
+    SyntaxIndex, SyntaxIndexState,
 };
 use feature_flags::{FeatureFlag, FeatureFlagAppExt as _};
 use futures::AsyncReadExt as _;
@@ -20,27 +21,32 @@ use gpui::{
     App, Entity, EntityId, Global, SemanticVersion, SharedString, Subscription, Task, WeakEntity,
     http_client, prelude::*,
 };
-use language::BufferSnapshot;
-use language::{Buffer, DiagnosticSet, LanguageServerId, ToOffset as _, ToPoint};
+use language::{Anchor, Buffer, DiagnosticSet, LanguageServerId, ToOffset as _, ToPoint};
+use language::{BufferSnapshot, OffsetRangeExt};
 use language_model::{LlmApiToken, RefreshLlmTokenListener};
 use project::Project;
 use release_channel::AppVersion;
 use serde::de::DeserializeOwned;
-use std::collections::{HashMap, VecDeque, hash_map};
+use std::collections::{VecDeque, hash_map};
+use std::ops::Range;
 use std::path::Path;
 use std::str::FromStr as _;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use thiserror::Error;
+use util::ResultExt as _;
 use util::rel_path::RelPathBuf;
 use workspace::notifications::{ErrorMessagePrompt, NotificationId, show_app_notification};
 
+mod merge_excerpts;
 mod prediction;
 mod provider;
 mod related_excerpts;
 
+use crate::merge_excerpts::merge_excerpts;
 use crate::prediction::EditPrediction;
 pub use crate::related_excerpts::LlmContextOptions;
+use crate::related_excerpts::find_related_excerpts;
 pub use provider::ZetaEditPredictionProvider;
 
 const BUFFER_CHANGE_GROUPING_INTERVAL: Duration = Duration::from_secs(1);
@@ -144,6 +150,10 @@ struct ZetaProject {
     events: VecDeque<Event>,
     registered_buffers: HashMap<gpui::EntityId, RegisteredBuffer>,
     current_prediction: Option<CurrentEditPrediction>,
+    context: Option<HashMap<Entity<Buffer>, Vec<Range<Anchor>>>>,
+    refresh_context_task: Option<Task<Option<()>>>,
+    refresh_context_debounce_task: Option<Task<Option<()>>>,
+    refresh_context_timestamp: Option<Instant>,
 }
 
 #[derive(Debug, Clone)]
@@ -271,7 +281,7 @@ impl Zeta {
         let refresh_llm_token_listener = RefreshLlmTokenListener::global(cx);
 
         Self {
-            projects: HashMap::new(),
+            projects: HashMap::default(),
             client,
             user_store,
             options: DEFAULT_OPTIONS,
@@ -351,8 +361,12 @@ impl Zeta {
                     SyntaxIndex::new(project, self.options.file_indexing_parallelism, cx)
                 }),
                 events: VecDeque::new(),
-                registered_buffers: HashMap::new(),
+                registered_buffers: HashMap::default(),
                 current_prediction: None,
+                context: None,
+                refresh_context_task: None,
+                refresh_context_debounce_task: None,
+                refresh_context_timestamp: None,
             })
     }
 
@@ -580,7 +594,10 @@ impl Zeta {
         });
         let options = self.options.clone();
         let snapshot = buffer.read(cx).snapshot();
-        let Some(excerpt_path) = snapshot.file().map(|path| path.full_path(cx).into()) else {
+        let Some(excerpt_path) = snapshot
+            .file()
+            .map(|path| -> Arc<Path> { path.full_path(cx).into() })
+        else {
             return Task::ready(Err(anyhow!("No file path for excerpt")));
         };
         let client = self.client.clone();
@@ -612,6 +629,20 @@ impl Zeta {
 
         // TODO data collection
         let can_collect_data = cx.is_staff();
+
+        let mut included_files = project_state
+            .and_then(|project_state| project_state.context.as_ref())
+            .unwrap_or(&HashMap::default())
+            .iter()
+            .filter_map(|(buffer, ranges)| {
+                let buffer = buffer.read(cx);
+                Some((
+                    buffer.snapshot(),
+                    buffer.file()?.full_path(cx).into(),
+                    ranges.clone(),
+                ))
+            })
+            .collect::<Vec<_>>();
 
         let request_task = cx.background_spawn({
             let snapshot = snapshot.clone();
@@ -646,20 +677,64 @@ impl Zeta {
                         ) else {
                             return Ok((None, None));
                         };
-                        let excerpt_text = excerpt.text(&snapshot);
 
-                        let referenced_declarations = vec![];
+                        let excerpt_anchor_range = snapshot.anchor_after(excerpt.range.start)
+                            ..snapshot.anchor_before(excerpt.range.end);
+
+                        if let Some(buffer_ix) = included_files
+                            .iter()
+                            .position(|(buffer, _, _)| buffer.remote_id() == snapshot.remote_id())
+                        {
+                            let (buffer, _, ranges) = &mut included_files[buffer_ix];
+                            let range_ix = ranges
+                                .binary_search_by(|probe| {
+                                    probe
+                                        .start
+                                        .cmp(&excerpt_anchor_range.start, buffer)
+                                        .then(excerpt_anchor_range.end.cmp(&probe.end, buffer))
+                                })
+                                .unwrap_or_else(|ix| ix);
+
+                            ranges.insert(range_ix, excerpt_anchor_range);
+                            let last_ix = included_files.len() - 1;
+                            included_files.swap(buffer_ix, last_ix);
+                        } else {
+                            included_files.push((
+                                snapshot,
+                                excerpt_path.clone(),
+                                vec![excerpt_anchor_range],
+                            ));
+                        }
+
+                        let included_files = included_files
+                            .into_iter()
+                            .map(|(buffer, path, ranges)| {
+                                let excerpts = merge_excerpts(
+                                    &buffer,
+                                    ranges.iter().map(|range| {
+                                        let point_range = range.to_point(&buffer);
+                                        Line(point_range.start.row)..Line(point_range.end.row)
+                                    }),
+                                );
+                                predict_edits_v3::IncludedFile {
+                                    path,
+                                    max_row: Line(buffer.max_point().row),
+                                    excerpts,
+                                }
+                            })
+                            .collect::<Vec<_>>();
 
                         predict_edits_v3::PredictEditsRequest {
                             excerpt_path,
-                            excerpt: excerpt_text.body,
-                            excerpt_line_range: excerpt.line_range,
-                            excerpt_range: excerpt.range,
+                            excerpt: String::new(),
+                            excerpt_line_range: Line(0)..Line(0),
+                            excerpt_range: 0..0,
                             cursor_point: predict_edits_v3::Point {
                                 line: predict_edits_v3::Line(cursor_point.row),
                                 column: cursor_point.column,
                             },
-                            referenced_declarations,
+                            included_files,
+                            referenced_declarations: vec![],
                             events,
                             can_collect_data,
                             diagnostic_groups,
@@ -706,8 +781,13 @@ impl Zeta {
                 let debug_response_tx = if let Some(debug_tx) = &debug_tx {
                     let (response_tx, response_rx) = oneshot::channel();
 
-                    let local_prompt = PlannedPrompt::populate(&request)
-                        .and_then(|p| p.to_prompt_string().map(|p| p.0))
+                    if !request.referenced_declarations.is_empty() || !request.signatures.is_empty()
+                    {
+                    } else {
+                    };
+
+                    let local_prompt = build_prompt(&request)
+                        .map(|(prompt, _)| prompt)
                         .map_err(|err| err.to_string());
 
                     debug_tx
@@ -905,6 +985,103 @@ impl Zeta {
                 );
             }
         }
+    }
+
+    pub const CONTEXT_RETRIEVAL_IDLE_DURATION: Duration = Duration::from_secs(10);
+    pub const CONTEXT_RETRIEVAL_DEBOUNCE_DURATION: Duration = Duration::from_secs(3);
+
+    // Refresh the related excerpts when the user just beguns editing after
+    // an idle period, and after they pause editing.
+    fn refresh_context_if_needed(
+        &mut self,
+        project: &Entity<Project>,
+        buffer: &Entity<language::Buffer>,
+        cursor_position: language::Anchor,
+        cx: &mut Context<Self>,
+    ) {
+        if !matches!(&self.options().context, ContextMode::Llm { .. }) {
+            return;
+        }
+
+        let Some(zeta_project) = self.projects.get_mut(&project.entity_id()) else {
+            return;
+        };
+
+        let now = Instant::now();
+        let was_idle = zeta_project
+            .refresh_context_timestamp
+            .map_or(true, |timestamp| {
+                now - timestamp > Self::CONTEXT_RETRIEVAL_IDLE_DURATION
+            });
+        zeta_project.refresh_context_timestamp = Some(now);
+        zeta_project.refresh_context_debounce_task = Some(cx.spawn({
+            let buffer = buffer.clone();
+            let project = project.clone();
+            async move |this, cx| {
+                if was_idle {
+                    log::debug!("refetching edit prediction context after idle");
+                } else {
+                    cx.background_executor()
+                        .timer(Self::CONTEXT_RETRIEVAL_DEBOUNCE_DURATION)
+                        .await;
+                    log::debug!("refetching edit prediction context after pause");
+                }
+                this.update(cx, |this, cx| {
+                    this.refresh_context(project, buffer, cursor_position, cx);
+                })
+                .ok()
+            }
+        }));
+    }
+
+    // Refresh the related excerpts asynchronously. Ensure the task runs to completion,
+    // and avoid spawning more than one concurrent task.
+    fn refresh_context(
+        &mut self,
+        project: Entity<Project>,
+        buffer: Entity<language::Buffer>,
+        cursor_position: language::Anchor,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(zeta_project) = self.projects.get_mut(&project.entity_id()) else {
+            return;
+        };
+
+        zeta_project
+            .refresh_context_task
+            .get_or_insert(cx.spawn(async move |this, cx| {
+                let related_excerpts = this
+                    .update(cx, |this, cx| {
+                        let Some(zeta_project) = this.projects.get(&project.entity_id()) else {
+                            return Task::ready(anyhow::Ok(HashMap::default()));
+                        };
+
+                        let ContextMode::Llm(options) = &this.options().context else {
+                            return Task::ready(anyhow::Ok(HashMap::default()));
+                        };
+
+                        find_related_excerpts(
+                            buffer.clone(),
+                            cursor_position,
+                            &project,
+                            zeta_project.events.iter(),
+                            options,
+                            cx,
+                        )
+                    })
+                    .ok()?
+                    .await
+                    .log_err()
+                    .unwrap_or_default();
+                this.update(cx, |this, _cx| {
+                    let Some(zeta_project) = this.projects.get_mut(&project.entity_id()) else {
+                        return;
+                    };
+                    zeta_project.context = Some(related_excerpts);
+                    zeta_project.refresh_context_task.take();
+                })
+                .ok()
+            }));
     }
 
     fn gather_nearby_diagnostics(
@@ -1126,6 +1303,7 @@ fn make_syntax_context_cloud_request(
             column: context.cursor_point.column,
         },
         referenced_declarations,
+        included_files: vec![],
         signatures,
         excerpt_parent,
         events,

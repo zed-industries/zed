@@ -12,10 +12,7 @@ use language::ToPoint as _;
 use project::Project;
 use util::ResultExt as _;
 
-use crate::{
-    BufferEditPrediction, ContextMode, Zeta,
-    related_excerpts::{RelatedExcerpt, find_related_excerpts},
-};
+use crate::{BufferEditPrediction, Zeta};
 
 pub struct ZetaEditPredictionProvider {
     zeta: Entity<Zeta>,
@@ -23,16 +20,10 @@ pub struct ZetaEditPredictionProvider {
     pending_predictions: ArrayVec<PendingPrediction, 2>,
     last_request_timestamp: Instant,
     project: Entity<Project>,
-    context: Option<Vec<RelatedExcerpt>>,
-    refresh_context_task: Option<Task<Option<()>>>,
-    refresh_context_debounce_task: Option<Task<Option<()>>>,
-    refresh_context_timestamp: Option<Instant>,
 }
 
 impl ZetaEditPredictionProvider {
     pub const THROTTLE_TIMEOUT: Duration = Duration::from_millis(300);
-    pub const CONTEXT_RETRIEVAL_DEBOUNCE_DURATION: Duration = Duration::from_secs(3);
-    pub const CONTEXT_RETRIEVAL_IDLE_DURATION: Duration = Duration::from_secs(10);
 
     pub fn new(
         project: Entity<Project>,
@@ -51,88 +42,7 @@ impl ZetaEditPredictionProvider {
             pending_predictions: ArrayVec::new(),
             last_request_timestamp: Instant::now(),
             project: project,
-            refresh_context_task: None,
-            refresh_context_debounce_task: None,
-            refresh_context_timestamp: None,
-            context: None,
         }
-    }
-
-    // Refresh the related excerpts when the user just beguns editing after
-    // an idle period, and after they pause editing.
-    fn refresh_context_if_needed(
-        &mut self,
-        buffer: &Entity<language::Buffer>,
-        cursor_position: language::Anchor,
-        cx: &mut Context<'_, ZetaEditPredictionProvider>,
-    ) {
-        if !matches!(
-            &self.zeta.read(cx).options().context,
-            ContextMode::Llm { .. }
-        ) {
-            return;
-        }
-
-        let now = Instant::now();
-        let was_idle = self.refresh_context_timestamp.map_or(true, |timestamp| {
-            now - timestamp > Self::CONTEXT_RETRIEVAL_IDLE_DURATION
-        });
-        self.refresh_context_timestamp = Some(now);
-        self.refresh_context_debounce_task = Some(cx.spawn({
-            let buffer = buffer.clone();
-            async move |this, cx| {
-                if was_idle {
-                    log::debug!("refetching edit prediction context after idle");
-                } else {
-                    cx.background_executor()
-                        .timer(Self::CONTEXT_RETRIEVAL_DEBOUNCE_DURATION)
-                        .await;
-                    log::debug!("refetching edit prediction context after pause");
-                }
-                this.update(cx, |this, cx| {
-                    this.refresh_context(buffer, cursor_position, cx);
-                })
-                .ok()
-            }
-        }));
-    }
-
-    // Refresh the related excerpts asynchronously. Ensure the task runs to completion,
-    // and avoid spawning more than one concurrent task.
-    fn refresh_context(
-        &mut self,
-        buffer: Entity<language::Buffer>,
-        cursor_position: language::Anchor,
-        cx: &mut Context<Self>,
-    ) {
-        self.refresh_context_task
-            .get_or_insert(cx.spawn(async move |this, cx| {
-                let related_excerpts = this
-                    .update(cx, |this, cx| {
-                        let zeta = this.zeta.read(cx);
-                        let ContextMode::Llm(options) = &zeta.options().context else {
-                            return Task::ready(anyhow::Ok(vec![]));
-                        };
-
-                        find_related_excerpts(
-                            buffer.clone(),
-                            cursor_position,
-                            &this.project,
-                            zeta.history_for_project(&this.project),
-                            options,
-                            cx,
-                        )
-                    })
-                    .ok()?
-                    .await
-                    .log_err()
-                    .unwrap_or_default();
-                this.update(cx, |this, _cx| {
-                    this.context = Some(related_excerpts);
-                    this.refresh_context_task.take();
-                })
-                .ok()
-            }));
     }
 }
 
@@ -206,7 +116,9 @@ impl EditPredictionProvider for ZetaEditPredictionProvider {
             return;
         }
 
-        self.refresh_context_if_needed(&buffer, cursor_position, cx);
+        self.zeta.update(cx, |zeta, cx| {
+            zeta.refresh_context_if_needed(&self.project, &buffer, cursor_position, cx);
+        });
 
         let pending_prediction_id = self.next_pending_prediction_id;
         self.next_pending_prediction_id += 1;
