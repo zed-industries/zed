@@ -55,12 +55,12 @@ pub fn run_bundling() -> Workflow {
             "bundle-linux-aarch64",
             bundle_linux(condition.clone(), runners::Arch::AARCH64),
         )
-        .add_job("bundle-windows", bundle_windows(condition.clone()))
+        .add_job("bundle-windows", bundle_windows(condition))
 }
 
 fn bundle_mac(condition: Expression) -> Job {
     Job::default()
-        .cond(condition.clone())
+        .cond(condition)
         .runs_on(runners::MAC_DEFAULT)
         .timeout_minutes(120u32)
         .add_env(("MACOS_CERTIFICATE", vars::MACOS_CERTIFICATE))
@@ -116,7 +116,7 @@ fn bundle_linux(condition: Expression, arch: runners::Arch) -> Job {
 
 fn bundle_windows(condition: Expression) -> Job {
     Job::default()
-        .cond(condition.clone())
+        .cond(condition)
         .runs_on(runners::WINDOWS_DEFAULT)
         .timeout_minutes(120u32)
         .add_env(("AZURE_TENANT_ID", vars::AZURE_SIGNING_TENANT_ID))
