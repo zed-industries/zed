@@ -216,7 +216,12 @@ impl Render for CommandPalette {
                 .right(px(0.))
                 .w(RESIZE_HANDLE_SIZE)
                 .h(RESIZE_HANDLE_SIZE)
-                .cursor_nwse_resize(),
+                .cursor_nwse_resize()
+                .child(
+                    Icon::new(IconName::Resize)
+                        .size(IconSize::XSmall)
+                        .color(Color::Muted),
+                ),
         );
 
         v_flex()
