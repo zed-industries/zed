@@ -210,9 +210,9 @@ dependencies = [
 
 [[package]]
 name = "agent-client-protocol"
-version = "0.5.0"
+version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2f655394a107cd601bd2e5375c2d909ea83adc65678a0e0e8d77613d3c848a7d"
+checksum = "525705e39c11cd73f7bc784e3681a9386aa30c8d0630808d3dc2237eb4f9cb1b"
 dependencies = [
  "agent-client-protocol-schema",
  "anyhow",
@@ -228,9 +228,9 @@ dependencies = [
 
 [[package]]
 name = "agent-client-protocol-schema"
-version = "0.4.11"
+version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "61be4454304d7df1a5b44c4ae55e707ffe72eac4dfb1ef8762510ce8d8f6d924"
+checksum = "ecf16c18fea41282d6bbadd1549a06be6836bddb1893f44a6235f340fa24e2af"
 dependencies = [
  "anyhow",
  "derive_more 2.0.1",
@@ -266,6 +266,7 @@ dependencies = [
  "log",
  "nix 0.29.0",
  "project",
+ "release_channel",
  "reqwest_client",
  "serde",
  "serde_json",
@@ -3073,6 +3074,7 @@ dependencies = [
  "parking_lot",
  "paths",
  "plist",
+ "rayon",
  "release_channel",
  "serde",
  "tempfile",
@@ -13890,6 +13892,7 @@ dependencies = [
  "pretty_assertions",
  "project",
  "proto",
+ "rayon",
  "release_channel",
  "remote",
  "reqwest_client",
@@ -14224,7 +14227,6 @@ dependencies = [
  "rand 0.9.2",
  "rayon",
  "regex",
- "smallvec",
  "sum_tree",
  "unicode-segmentation",
  "util",

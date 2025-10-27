@@ -2291,7 +2291,13 @@ impl BufferSnapshot {
                 insertion_cursor.prev();
             }
             let insertion = insertion_cursor.item().expect("invalid insertion");
-            assert_eq!(insertion.timestamp, anchor.timestamp, "invalid insertion");
+            assert_eq!(
+                insertion.timestamp,
+                anchor.timestamp,
+                "invalid insertion for buffer {} with anchor {:?}",
+                self.remote_id(),
+                anchor
+            );
 
             fragment_cursor.seek_forward(&Some(&insertion.fragment_id), Bias::Left);
             let fragment = fragment_cursor.item().unwrap();

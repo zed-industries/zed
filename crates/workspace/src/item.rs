@@ -213,16 +213,21 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
         ItemBufferKind::None
     }
     fn set_nav_history(&mut self, _: ItemNavHistory, _window: &mut Window, _: &mut Context<Self>) {}
+
+    fn can_split(&self) -> bool {
+        false
+    }
     fn clone_on_split(
         &self,
-        _workspace_id: Option<WorkspaceId>,
-        _window: &mut Window,
-        _: &mut Context<Self>,
+        workspace_id: Option<WorkspaceId>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) -> Task<Option<Entity<Self>>>
     where
         Self: Sized,
     {
-        Task::ready(None)
+        _ = (workspace_id, window, cx);
+        unimplemented!("clone_on_split() must be implemented if can_split() returns true")
     }
     fn is_dirty(&self, _: &App) -> bool {
         false
@@ -418,6 +423,7 @@ pub trait ItemHandle: 'static + Send {
     );
     fn buffer_kind(&self, cx: &App) -> ItemBufferKind;
     fn boxed_clone(&self) -> Box<dyn ItemHandle>;
+    fn can_split(&self, cx: &App) -> bool;
     fn clone_on_split(
         &self,
         workspace_id: Option<WorkspaceId>,
@@ -629,6 +635,10 @@ impl<T: Item> ItemHandle for Entity<T> {
 
     fn boxed_clone(&self) -> Box<dyn ItemHandle> {
         Box::new(self.clone())
+    }
+
+    fn can_split(&self, cx: &App) -> bool {
+        self.read(cx).can_split()
     }
 
     fn clone_on_split(
@@ -1501,6 +1511,10 @@ pub mod test {
 
         fn deactivated(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
             self.push_to_nav_history(cx);
+        }
+
+        fn can_split(&self) -> bool {
+            true
         }
 
         fn clone_on_split(

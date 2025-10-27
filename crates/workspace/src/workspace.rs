@@ -3663,24 +3663,31 @@ impl Workspace {
         };
 
         if action.clone {
-            clone_active_item(
-                self.database_id(),
-                &self.active_pane,
-                &destination,
-                action.focus,
-                window,
-                cx,
-            )
-        } else {
-            move_active_item(
-                &self.active_pane,
-                &destination,
-                action.focus,
-                true,
-                window,
-                cx,
-            )
+            if self
+                .active_pane
+                .read(cx)
+                .active_item()
+                .is_some_and(|item| item.can_split(cx))
+            {
+                clone_active_item(
+                    self.database_id(),
+                    &self.active_pane,
+                    &destination,
+                    action.focus,
+                    window,
+                    cx,
+                );
+                return;
+            }
         }
+        move_active_item(
+            &self.active_pane,
+            &destination,
+            action.focus,
+            true,
+            window,
+            cx,
+        )
     }
 
     pub fn activate_next_pane(&mut self, window: &mut Window, cx: &mut App) {
@@ -3841,24 +3848,31 @@ impl Workspace {
         };
 
         if action.clone {
-            clone_active_item(
-                self.database_id(),
-                &self.active_pane,
-                &destination,
-                action.focus,
-                window,
-                cx,
-            )
-        } else {
-            move_active_item(
-                &self.active_pane,
-                &destination,
-                action.focus,
-                true,
-                window,
-                cx,
-            );
+            if self
+                .active_pane
+                .read(cx)
+                .active_item()
+                .is_some_and(|item| item.can_split(cx))
+            {
+                clone_active_item(
+                    self.database_id(),
+                    &self.active_pane,
+                    &destination,
+                    action.focus,
+                    window,
+                    cx,
+                );
+                return;
+            }
         }
+        move_active_item(
+            &self.active_pane,
+            &destination,
+            action.focus,
+            true,
+            window,
+            cx,
+        );
     }
 
     pub fn bounding_box_for_pane(&self, pane: &Entity<Pane>) -> Option<Bounds<Pixels>> {
@@ -4141,6 +4155,9 @@ impl Workspace {
         let Some(item) = pane.read(cx).active_item() else {
             return Task::ready(None);
         };
+        if !item.can_split(cx) {
+            return Task::ready(None);
+        }
         let task = item.clone_on_split(self.database_id(), window, cx);
         cx.spawn_in(window, async move |this, cx| {
             if let Some(clone) = task.await {
@@ -8225,6 +8242,9 @@ pub fn clone_active_item(
     let Some(active_item) = source.read(cx).active_item() else {
         return;
     };
+    if !active_item.can_split(cx) {
+        return;
+    }
     let destination = destination.downgrade();
     let task = active_item.clone_on_split(workspace_id, window, cx);
     window

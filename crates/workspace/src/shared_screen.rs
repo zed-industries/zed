@@ -109,6 +109,10 @@ impl Item for SharedScreen {
         self.nav_history = Some(history);
     }
 
+    fn can_split(&self) -> bool {
+        true
+    }
+
     fn clone_on_split(
         &self,
         _workspace_id: Option<WorkspaceId>,
