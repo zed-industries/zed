@@ -527,6 +527,7 @@ impl RemoteClient {
         let reconnect_task = cx.spawn(async move |this, cx| {
             macro_rules! failed {
                 ($error:expr, $attempts:expr, $ssh_connection:expr, $delegate:expr) => {
+                    delegate.set_status(Some(&format!("{error:#}", error = $error)), cx);
                     return State::ReconnectFailed {
                         error: anyhow!($error),
                         attempts: $attempts,
@@ -998,11 +999,10 @@ impl ConnectionPool {
         let connection = self.connections.get(&opts);
         match connection {
             Some(ConnectionPoolEntry::Connecting(task)) => {
-                let delegate = delegate.clone();
-                cx.spawn(async move |cx| {
-                    delegate.set_status(Some("Waiting for existing connection attempt"), cx);
-                })
-                .detach();
+                delegate.set_status(
+                    Some("Waiting for existing connection attempt"),
+                    &mut cx.to_async(),
+                );
                 return task.clone();
             }
             Some(ConnectionPoolEntry::Connected(ssh)) => {
