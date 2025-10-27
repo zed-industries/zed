@@ -23,7 +23,7 @@ The syntax for configuration files is a super-set of JSON that allows `//` comme
 
 ### Per-release channel overrides
 
-Zed reads the same `settings.json` across all release channels (Stable, Preview or Nightly). However, you can scope overrides to a specific channel by adding top-level `stable`, `preview`, `nightly` or `dev` objects. They are merged into the base configuration with settings from these keys taking precedence upon launching the speficied build. For example:
+Zed reads the same `settings.json` across all release channels (Stable, Preview or Nightly). However, you can scope overrides to a specific channel by adding top-level `stable`, `preview`, `nightly` or `dev` objects. They are merged into the base configuration with settings from these keys taking precedence upon launching the specified build. For example:
 
 ```json [settings]
 {
@@ -2814,7 +2814,6 @@ Configuration object for defining settings profiles. Example:
 - Description:
   Preview tabs allow you to open files in preview mode, where they close automatically when you switch to another file unless you explicitly pin them. This is useful for quickly viewing files without cluttering your workspace. Preview tabs display their file names in italics. \
    There are several ways to convert a preview tab into a regular tab:
-
   - Double-clicking on the file
   - Double-clicking on the tab header
   - Using the {#action project_panel::OpenPermanent} action
