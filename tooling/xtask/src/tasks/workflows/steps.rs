@@ -3,6 +3,8 @@ use gh_workflow::*;
 use crate::tasks::workflows::vars;
 
 const BASH_SHELL: &str = "bash -euxo pipefail {0}";
+// https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#jobsjob_idstepsshell
+const POWERSHELL_SHELL: &str = "pwsh";
 
 pub fn checkout_repo() -> Step<Use> {
     named::uses(
@@ -60,6 +62,10 @@ pub fn clean_target_dir() -> Step<Run> {
 
 pub fn script(name: &str) -> Step<Run> {
     Step::new(name).run(name).shell(BASH_SHELL)
+}
+
+pub fn script_windows(name: &str) -> Step<Run> {
+    Step::new(name).run(name).shell(POWERSHELL_SHELL)
 }
 
 pub mod danger {

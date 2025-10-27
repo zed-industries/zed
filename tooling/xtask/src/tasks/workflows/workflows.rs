@@ -128,58 +128,16 @@ fn bundle_windows(condition: Expression) -> Job {
         .add_env(("FILE_DIGEST", "SHA256"))
         .add_env(("TIMESTAMP_DIGEST", "SHA256"))
         .add_env(("TIMESTAMP_SERVER", "http://timestamp.acs.microsoft.com"))
-        .add_step(steps::checkout_repo().with(("clean", "false")))
+        .add_step(steps::checkout_repo())
         .add_step(steps::setup_sentry())
-        .add_step(Step::new("build_zed_installer").working_directory())
-
-    // env:
-    //   AZURE_TENANT_ID: ${{ secrets.AZURE_SIGNING_TENANT_ID }}
-    //   AZURE_CLIENT_ID: ${{ secrets.AZURE_SIGNING_CLIENT_ID }}
-    //   AZURE_CLIENT_SECRET: ${{ secrets.AZURE_SIGNING_CLIENT_SECRET }}
-    //   ACCOUNT_NAME: ${{ vars.AZURE_SIGNING_ACCOUNT_NAME }}
-    //   CERT_PROFILE_NAME: ${{ vars.AZURE_SIGNING_CERT_PROFILE_NAME }}
-    //   ENDPOINT: ${{ vars.AZURE_SIGNING_ENDPOINT }}
-    //   FILE_DIGEST: SHA256
-    //   TIMESTAMP_DIGEST: SHA256
-    //   TIMESTAMP_SERVER: "http://timestamp.acs.microsoft.com"
-    // steps:
-    //   - name: Checkout repo
-    //     uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
-    //     with:
-    //       clean: false
-
-    //   - name: Setup Sentry CLI
-    //     uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b #v2
-    //     with:
-    //       token: ${{ SECRETS.SENTRY_AUTH_TOKEN }}
-
-    //   - name: Determine version and release channel
-    //     working-directory: ${{ env.ZED_WORKSPACE }}
-    //     if: ${{ startsWith(github.ref, 'refs/tags/v') }}
-    //     run: |
-    //       # This exports RELEASE_CHANNEL into env (GITHUB_ENV)
-    //       script/determine-release-channel.ps1
-
-    //   - name: Build Zed installer
-    //     working-directory: ${{ env.ZED_WORKSPACE }}
-    //     run: script/bundle-windows.ps1
-
-    //   - name: Upload installer (x86_64) to Workflow - zed (run-bundling)
-    //     uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-    //     if: contains(github.event.pull_request.labels.*.name, 'run-bundling')
-    //     with:
-    //       name: Zed_${{ github.event.pull_request.head.sha || github.sha }}-x86_64.exe
-    //       path: ${{ env.SETUP_PATH }}
-
-    //   - name: Upload Artifacts to release
-    //     uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844 # v1
-    //     if: ${{ !(contains(github.event.pull_request.labels.*.name, 'run-bundling')) }}
-    //     with:
-    //       draft: true
-    //       prerelease: ${{ env.RELEASE_CHANNEL == 'preview' }}
-    //       files: ${{ env.SETUP_PATH }}
-    //     env:
-    //       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        .add_step(
+            steps::script_windows("script/bundle-windows.ps1")
+                .working_directory("${{ env.ZED_WORKSPACE }}"),
+        )
+        .add_step(steps::upload_artifact(
+            "Zed_${{ github.event.pull_request.head.sha || github.sha }}-x86_64.exe",
+            "${{ env.SETUP_PATH }}",
+        ))
 }
 
 /// Generates the nix.yml workflow
