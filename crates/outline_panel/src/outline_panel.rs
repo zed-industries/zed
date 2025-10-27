@@ -2484,6 +2484,7 @@ impl OutlinePanel {
                 annotation_range: None,
                 range: search_data.context_range.clone(),
                 text: search_data.context_text.clone(),
+                source_range_for_text: search_data.context_range.clone(),
                 highlight_ranges: search_data
                     .highlights_data
                     .get()
